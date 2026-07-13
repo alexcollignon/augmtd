@@ -171,7 +171,7 @@ export const slackPostMessageDefinition = {
     type: 'object',
     properties: {
       channel: { type: 'string', description: 'Channel id (e.g. C0123ABCD) or name (e.g. #general). Use "@me" to send the user a direct message instead of posting to a channel.' },
-      text: { type: 'string', description: 'Message text (Slack mrkdwn: *bold*, _italic_, <url|label>). To @-mention someone, write <@Their Name> (e.g. <@Rene>) — it resolves to the real person; <@me> tags the user. Never invent an email. If unsure who is in the channel, call slack_list_members first. <!channel> / <!here> also work.' },
+      text: { type: 'string', description: 'Message text (Slack mrkdwn: *bold*, _italic_, <url|label>). To @-mention someone, write <@Their Name> (e.g. <@Sam>) — it resolves to the real person; <@me> tags the user. Never invent an email. If unsure who is in the channel, call slack_list_members first. <!channel> / <!here> also work.' },
       thread_ts: { type: 'string', description: 'Optional. Reply inside a thread by passing the parent message ts (from slack_read_messages, shown as [ts:…]).' },
     },
     required: ['channel', 'text'],

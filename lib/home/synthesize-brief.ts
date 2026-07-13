@@ -29,7 +29,12 @@ export interface MustRespondCandidate {
   subject: string;
   snippet: string;
   receivedAt: string;  // ISO
+  effort?: 'quick' | 'medium' | 'deep' | null; // Track A — "feels doable" cue
+  dueDate?: string | null;                     // Track A — a real stated deadline (YYYY-MM-DD)
+  initiative?: string | null;                  // Phase 5 — the initiative cluster this belongs to
+  initiativeTotal?: number | null;             // Phase 5 — total items in that cluster (context)
 }
+// (MustRespondCandidate — the deterministic input shape the route feeds in; initiative fields shared above.)
 export interface WaitingCandidate {
   id?: string;
   counterparty: string | null;
@@ -111,7 +116,7 @@ export type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null 
 export type FollowUp = { id?: string; who: string; status: string; nextMove: string };
 export type Followups = { teaser: string; items: FollowUp[]; closing: string | null };
 export type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
-export type Reply = { who: string; ask: string; angle: string; itemId: string; subject?: string; snippet?: string; receivedAt?: string };
+export type Reply = { who: string; ask: string; angle: string; itemId: string; subject?: string; snippet?: string; receivedAt?: string; effort?: 'quick' | 'medium' | 'deep' | null; dueDate?: string | null; initiative?: string | null; initiativeTotal?: number | null };
 export type MustRespond = { teaser: string; items: Reply[] };
 // "Keep an eye on" — glanceable awareness, NO action. Each item traces back to a real inbox item.
 export type KeepAnEye = { who: string; why: string; itemId: string };
@@ -160,7 +165,15 @@ function renderPeople(input: SynthesisInput): string {
       // Structural reply-state (direction+time, no text match): if the user already replied on this
       // thread it is HANDLED — surface that flag so the synthesis can drop/deprioritize by REASONING.
       const replied = e.userResponded ? ' — YOU ALREADY REPLIED on this thread (handled)' : '';
-      parts.push(`email ${age}d ago "${e.subject}" [${e.posture}]${replied}`);
+      const timing = [
+        e.explicitDeadline ? `deadline ${e.explicitDeadline}` : '',
+        e.isTimebound ? 'time-bound' : '',
+        e.isFollowUp ? 'follow-up' : '',
+        e.hasPreviousCommitment ? 'references a prior commitment' : '',
+        e.impliedUrgency && e.impliedUrgency !== 'flexible' ? `urgency ${e.impliedUrgency}` : '',
+        e.initiative ? `initiative "${e.initiative}"` : '',
+      ].filter(Boolean).join(', ');
+      parts.push(`email ${age}d ago "${e.subject}" [${e.posture}]${timing ? ` {${timing}}` : ''}${replied}`);
     }
     for (const c of p.commitments.slice(0, 4)) {
       parts.push(`${c.direction === 'you_owe' ? 'you owe' : 'they owe'}: "${c.description}"${c.dueDate ? ` (due ${c.dueDate})` : ''}`);
@@ -352,6 +365,11 @@ If a section has no items, return it with an empty items/groups array (or null f
           // the row's name always matches its subject + itemId; the model only supplies ask/angle judgment.
           who: cand.from, ask: x?.ask || '', angle: x?.angle || '', itemId: cand.itemId,
           subject: cand.subject, snippet: cand.snippet, receivedAt: cand.receivedAt,
+          // Track A signals ride from the deterministic candidate (never the model) — "feels doable" cue
+          // + a real stated deadline; they survive the enriched load, not just the basic one.
+          effort: cand.effort ?? null, dueDate: cand.dueDate ?? null,
+          // Phase 5 — the initiative cluster (a deal/client/program) + its size, also deterministic.
+          initiative: cand.initiative ?? null, initiativeTotal: cand.initiativeTotal ?? null,
         };
       })
       // High safety bound only — NOT a functional gate. Real replies must never be hidden by a cap;

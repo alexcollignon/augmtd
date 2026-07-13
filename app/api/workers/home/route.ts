@@ -87,7 +87,7 @@ export async function GET() {
     .order('updated_at', { ascending: false })
     .limit(20);
 
-  type Review = { artifactId: string; title: string; type: string; workerId: string | null; workerName: string | null; threadId: string; createdAt: string };
+  type Review = { artifactId: string; title: string; type: string; workerId: string | null; workerName: string | null; workerRole: string | null; threadId: string; createdAt: string };
   const needsReview: Review[] = [];
   for (const t of (threads ?? [])) {
     const w = workerMap.get(t.agent_id as string);
@@ -100,6 +100,7 @@ export async function GET() {
         type: a.type ?? 'document',
         workerId: w?.id ?? null,
         workerName: w?.name ?? null,
+        workerRole: (w as { worker_role?: string } | undefined)?.worker_role ?? null,
         threadId: t.id as string,
         createdAt: a.generated_at ?? (t.updated_at as string),
       });

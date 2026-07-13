@@ -10,6 +10,8 @@ import {
   ClipboardDocumentCheckIcon,
   ArchiveBoxXMarkIcon,
   SpeakerXMarkIcon,
+  EyeSlashIcon,
+  FolderPlusIcon,
   BoltIcon,
 } from '@heroicons/react/24/outline';
 import { EmptyState, Button } from '@/components/ui';
@@ -34,6 +36,10 @@ const TYPE_META: Record<string, { icon: React.ComponentType<{ className?: string
   commitment_done:       { icon: ClipboardDocumentCheckIcon,  ring: 'bg-emerald-50 ring-emerald-100', text: 'text-emerald-500' },
   commitment_dismissed:  { icon: ArchiveBoxXMarkIcon,         ring: 'bg-neutral-100 ring-neutral-200', text: 'text-neutral-400' },
   sender_muted:          { icon: SpeakerXMarkIcon,            ring: 'bg-neutral-100 ring-neutral-200', text: 'text-neutral-400' },
+  initiative_muted:      { icon: EyeSlashIcon,                ring: 'bg-neutral-100 ring-neutral-200', text: 'text-neutral-400' },
+  initiative_tracked:    { icon: FolderPlusIcon,              ring: 'bg-indigo-50 ring-indigo-100',   text: 'text-indigo-500' },
+  project_status:        { icon: CheckCircleIcon,             ring: 'bg-emerald-50 ring-emerald-100', text: 'text-emerald-500' },
+  project_ungrouped:     { icon: ArchiveBoxXMarkIcon,         ring: 'bg-neutral-100 ring-neutral-200', text: 'text-neutral-400' },
 };
 const DEFAULT_META = { icon: BoltIcon, ring: 'bg-indigo-50 ring-indigo-100', text: 'text-indigo-500' };
 

@@ -1918,7 +1918,7 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, cur
             <textarea
               value={(step.config.instruction as string) ?? ''}
               onChange={e => onUpdate({ config: { ...step.config, instruction: e.target.value } })}
-              placeholder={'Post a 2-line summary of the brief and tag <@Rene> to review.'}
+              placeholder={'Post a 2-line summary of the brief and tag <@teammate> to review.'}
               rows={3}
               className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] resize-y" />
           </Field>
@@ -2529,7 +2529,7 @@ function OutputEditor({ output, onChange }: { output: OutputConfig; onChange: (o
                 <textarea
                   value={output.slack_announcement ?? ''}
                   onChange={e => onChange({ ...output, slack_announcement: e.target.value })}
-                  placeholder={'e.g. Post a 2-line summary highlighting the top risk, and tag <@Rene> to review.'}
+                  placeholder={'e.g. Post a 2-line summary highlighting the top risk, and tag <@teammate> to review.'}
                   rows={2}
                   className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] resize-y" />
               </Field>

@@ -26,6 +26,10 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: false,
+  // Keep Turbopack's mutable development manifests away from the production build output. Without
+  // this, running `next dev` while a build/start process touches `.next` can race on app-path and
+  // build manifests, producing intermittent ENOENT errors for files that are being regenerated.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   serverExternalPackages: ['pdf-parse', 'mammoth', 'pdfjs-dist', 'canvas', 'pptxgenjs', 'xlsx', '@sparticuz/chromium', 'playwright-core'],
   async headers() {
     return [{ source: '/(.*)', headers: securityHeaders }];

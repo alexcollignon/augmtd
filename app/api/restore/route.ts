@@ -39,6 +39,7 @@ export async function POST(request: NextRequest) {
       const preSd = { ...((pre?.source_data ?? {}) as Record<string, unknown>) };
       delete preSd.resolved_at;
       delete preSd.resolved_reason;
+      delete preSd.resolution_reason;
       const { error } = await supabase
         .from('inbox_items')
         .update({ status: 'pending', source_data: preSd, updated_at: new Date().toISOString() })
@@ -125,6 +126,23 @@ export async function POST(request: NextRequest) {
         title: `Unmuted sender: ${sender}`,
         entityType: 'sender',
         entityId: sender,
+      });
+      await bustBriefCache();
+      return NextResponse.json({ success: true });
+    }
+
+    if (entityType === 'initiative') {
+      // Un-mute an initiative CLUSTER (entityId = the initiative key) → delete its muted_initiatives row so
+      // it reappears in In-motion + Projects suggestions. Cluster-only; the underlying items were never
+      // touched. Grab the label first so the log reads "Restored: <initiative>".
+      const { data: row } = await supabase.from('muted_initiatives').select('label').eq('user_id', user.id).eq('initiative_key', entityId).maybeSingle();
+      const { error } = await supabase.from('muted_initiatives').delete().eq('user_id', user.id).eq('initiative_key', entityId);
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      await logActivity(supabase, user.id, {
+        type: 'restored',
+        title: `Restored: ${row?.label || 'an initiative'}`,
+        entityType: 'initiative',
+        entityId,
       });
       await bustBriefCache();
       return NextResponse.json({ success: true });

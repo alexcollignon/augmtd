@@ -42,7 +42,7 @@ function itemToRuleEmail(item: Item): RuleEmail | null {
   };
 }
 
-export function classifyItem(item: Item): ItemType {
+export function classifyItem(item: Item, rules?: InboxRule[] | null): ItemType {
   // Resolved items never show.
   if (item.status === 'completed' || item.status === 'dismissed' || item.status === 'rejected') return 'hidden';
 
@@ -59,7 +59,7 @@ export function classifyItem(item: Item): ItemType {
   // first, so this junk never leaks into "Needs reply" or "To do". Rule-driven, not hardcoded.
   const ruleEmail = itemToRuleEmail(item);
   if (ruleEmail) {
-    const matched = evaluateDeterministic(ruleEmail, cachedRules ?? DEFAULT_RULES);
+    const matched = evaluateDeterministic(ruleEmail, rules ?? cachedRules ?? DEFAULT_RULES);
     if (matched?.outcome.set_type) return LABEL_TO_TYPE[matched.outcome.set_type];
   }
 

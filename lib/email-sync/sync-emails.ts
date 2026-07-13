@@ -1354,7 +1354,7 @@ export async function syncEmailsForConnection(
 
         // Recipient role from the stored email's own To/CC vs the user's addresses — reliable and
         // independent of whether the user was matched among org users (which is what left is_cc_only
-        // undefined for CC-only threads like Omantel). Stamped into both process-path source_data below.
+        // undefined for CC-only bystander threads). Stamped into both process-path source_data below.
         const _recipientRole = computeRecipientRole(
           storedEmail.to_addresses,
           storedEmail.cc_addresses,

@@ -60,7 +60,7 @@ export async function buildUserContextBlock(
     if (email.signature) {
       lines.push(`Signature: "${email.signature.replace(/\n/g, ', ')}"`);
     }
-    // Extract base greeting words (e.g. "Hello Madalena," → "Hello", "Dear Sanela," → "Dear")
+    // Extract base greeting words (e.g. "Hello Alex," → "Hello", "Dear Sam," → "Dear")
     const baseGreetings = [...new Set(
       (email.greetingPatterns || [])
         .map((g: string) => g.split(' ')[0].replace(/[,.]$/, ''))

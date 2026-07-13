@@ -19,7 +19,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const { data: item } = await supabase
     .from('inbox_items')
-    .select('id, work_title, source_data, created_at, work_state, rule_type, type_override, status, source')
+    .select('id, work_title, source_data, created_at, work_state, rule_type, type_override, status, source, project_id')
     .eq('id', id)
     .eq('user_id', user.id)
     .single();
@@ -48,6 +48,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const emailId: string | null = sd.email_id ?? null;
 
   const subject = item.work_title || sd.subject || '(no subject)';
+
+  let projectName: string | null = null;
+  if (item.project_id) {
+    const { data: project } = await supabase.from('projects').select('id, name').eq('id', item.project_id).eq('user_id', user.id).maybeSingle();
+    projectName = project?.name ?? null;
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type EmailRow = Record<string, any>;
@@ -108,6 +114,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     // The understood relevance — drives the deep-dive's PRIMARY surface (reply=composer / awareness=
     // dismiss+collapsed / action=action) so the visible action + the plan can't disagree.
     relevance,
+    projectId: item.project_id ?? null,
+    projectName,
     fromName: newest?.fromName ?? sd.from_name ?? null,
     fromAddress: newest?.from ?? sd.from ?? null,
     receivedAt: newest?.receivedAt ?? sd.received_at ?? item.created_at ?? null,

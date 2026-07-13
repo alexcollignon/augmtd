@@ -5,6 +5,14 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --augmtd-ink: #171717;
+  --augmtd-muted: #737373;
+  --augmtd-subtle: #a3a3a3;
+  --augmtd-line: rgba(229, 229, 229, 0.82);
+  --augmtd-accent: #4f46e5;
+  --augmtd-accent-soft: #eef2ff;
+  --augmtd-surface: rgba(255, 255, 255, 0.84);
+  --augmtd-ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 html, body {
@@ -16,6 +24,39 @@ body {
   background: #F9FAFB; /* Light gray background */
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
   overflow: hidden;
+}
+
+/* AUGMTD interaction language — restrained surfaces, one easing curve, and visible focus. */
+@layer components {
+  .aug-surface {
+    background: var(--augmtd-surface);
+    border: 1px solid var(--augmtd-line);
+    box-shadow: 0 8px 30px -24px rgba(23, 23, 23, 0.34);
+    backdrop-filter: blur(14px);
+  }
+
+  .aug-interactive {
+    transition: transform 240ms var(--augmtd-ease), box-shadow 240ms var(--augmtd-ease), border-color 180ms ease, background-color 180ms ease;
+  }
+
+  .aug-interactive:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 28px -22px rgba(23, 23, 23, 0.42);
+  }
+
+  .aug-focus:focus-visible {
+    outline: 2px solid rgba(79, 70, 229, 0.55);
+    outline-offset: 3px;
+  }
+
+  .aug-eyebrow {
+    color: var(--augmtd-subtle);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    line-height: 1.2;
+    text-transform: uppercase;
+  }
 }
 
 @layer utilities {
@@ -60,6 +101,8 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .rise-in, .rise-in-stagger > *, .animate-prompt-in { animation: none; }
+  .aug-interactive { transition: none; }
+  .aug-interactive:hover { transform: none; }
 }
 
 /* Week calendar — expands left from the sidebar edge */

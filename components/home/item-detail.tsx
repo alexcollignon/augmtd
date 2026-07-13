@@ -22,6 +22,7 @@ import {
   ArrowUturnLeftIcon,
   EllipsisHorizontalIcon,
   Bars2Icon,
+  FolderIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
@@ -2153,6 +2154,7 @@ function StepOverflowMenu({
 // aside, not removed); the ⋯ "Restore" un-crosses it. The strike + grey animates smoothly.
 function StepperRow({
   task,
+  primary = false,
   isLast,
   draggable = false,
   dragging = false,
@@ -2186,6 +2188,7 @@ function StepperRow({
   busy,
 }: {
   task: PlanTask;
+  primary?: boolean;
   isLast: boolean;
   draggable?: boolean;              // this step can be drag-reordered (unsettled steps only)
   dragging?: boolean;              // this step is the one currently being dragged (dim it)
@@ -2265,7 +2268,7 @@ function StepperRow({
 
   return (
     <li
-      className={`group/row relative pl-8 transition-opacity ${dragging ? 'opacity-40' : ''}`}
+      className={`group/row relative pl-8 transition-opacity ${primary ? 'rounded-xl bg-indigo-50/45 py-1.5 pr-2 ring-1 ring-indigo-100/70' : ''} ${dragging ? 'opacity-40' : ''}`}
       // Drop target for drag-reorder: allow the drop + report hover so WhatThisTakes can re-slot.
       onDragOver={draggable || dragOver ? (e) => { e.preventDefault(); onDragOverStep?.(); } : undefined}
       onDragLeave={onDragLeaveStep}
@@ -2330,7 +2333,7 @@ function StepperRow({
       )}
 
       {/* Row body */}
-      <div className="group/step pb-3">
+      <div className="group/step rounded-xl px-2 py-2 -mx-2 pb-3 transition-colors duration-200 hover:bg-neutral-50/80">
         <div className="flex items-start gap-2">
           {editing ? (
             // Inline edit — the title becomes an editable input; Enter (or blur) saves → re-classify,
@@ -2789,7 +2792,7 @@ function WhatThisTakes({
     if (variant === 'panel') return null;
     return (
       <section>
-        <h2 className={SECTION_LABEL}>Identified tasks</h2>
+        <h2 className={SECTION_LABEL}>What happens next</h2>
         <div className="space-y-2 animate-pulse">
           <div className="h-9 rounded-lg bg-neutral-100" />
           <div className="h-9 rounded-lg bg-neutral-100" />
@@ -2845,6 +2848,9 @@ function WhatThisTakes({
   // in 'panel' the parent owns the sticky "Identified tasks" header + legend, so we render just the <ol>.
   const stepper = (
     <ol className="relative">
+      {tasks.some((t) => !t.dismissed && !t.done && !t.handedTo) && (
+        <li className="mb-2 pl-8 text-[10px] font-semibold uppercase tracking-[0.08em] text-indigo-500">Next unresolved step</li>
+      )}
       {tasks.map((t) => {
         const action = stepAction(t);
         // A whole-item hand-off (sentinel id) shows every live step delegating; a per-step hand-off
@@ -2865,6 +2871,7 @@ function WhatThisTakes({
           <StepperRow
             key={t.id}
             task={t}
+            primary={t.id === tasks.find((candidate) => !candidate.dismissed && !candidate.done && !candidate.handedTo)?.id}
             // Never the last node — the "+ Add a step" row always follows, so the connector runs down to it.
             isLast={false}
             draggable={draggable}
@@ -2917,7 +2924,7 @@ function WhatThisTakes({
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-1.5">
           <AugmtdMark size={13} />
-          <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">Identified tasks</h2>
+          <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">What happens next</h2>
         </div>
         <span className="inline-flex items-center gap-1 text-[10.5px] text-neutral-400">
           <AugmtdMark size={10} /> AUGMTD · <span className="text-neutral-400">○</span> you
@@ -3008,31 +3015,38 @@ function TasksPanel({ hasBreakdown, plan, onDraft, onInvite, onForward, children
   return (
     <aside
       aria-hidden={!hasBreakdown}
-      className={`hidden lg:flex flex-col min-h-0 flex-shrink-0 bg-white border-l border-neutral-200 overflow-hidden transition-[width] duration-300 ease-out ${
+      className={`hidden lg:flex flex-col min-h-0 flex-shrink-0 bg-indigo-50/[0.18] border-l border-neutral-200 overflow-hidden transition-[width] duration-300 ease-out ${
         hasBreakdown ? 'w-[300px] xl:w-[320px]' : 'w-0 pointer-events-none border-l-0'
       }`}
     >
       {/* Inner card — fixed width so it clips cleanly while the column animates. Flat, border-only,
           white (the lane's own left border is what separates it from the email column). */}
       <div className="flex-1 min-h-0 p-2 w-[300px] xl:w-[320px]">
-        <div className="h-full flex flex-col rounded-2xl bg-white border border-neutral-200/70 overflow-hidden">
+        <div className="h-full flex flex-col rounded-2xl bg-white/95 border border-neutral-200/70 shadow-[0_10px_34px_-24px_rgba(23,23,23,0.35)] overflow-hidden">
           {/* Sticky header — a tasks/checklist glyph + "Identified tasks" + a LIVE "N of M done" progress
               indicator (counts every completed/sent/handled/set-aside step, updates as steps resolve).
               Matches the Activity panel header. NB: the header icon is a task glyph (not the AUGMTD mark);
               the AUGMTD mark stays on the per-step SYSTEM nodes/chips where it means "AUGMTD owns this". */}
-          <div className="flex-shrink-0 flex items-center justify-between gap-2 h-10 px-3.5 border-b border-neutral-200">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <ClipboardDocumentListIcon className="w-4 h-4 text-neutral-400 flex-shrink-0" />
-              <span className="text-[13px] font-semibold text-neutral-700 whitespace-nowrap">Identified tasks</span>
+          <div className="flex-shrink-0 px-3.5 py-3 border-b border-neutral-200 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <ClipboardDocumentListIcon className="w-4 h-4 text-neutral-400 flex-shrink-0" />
+                <span className="text-[13px] font-semibold text-neutral-700 whitespace-nowrap">What happens next</span>
+              </div>
+              {progress.total > 0 && (
+                <span className="text-[10.5px] font-medium text-neutral-400 whitespace-nowrap flex-shrink-0 tabular-nums transition-colors duration-300">
+                  {progress.done === progress.total ? (
+                    <span className="inline-flex items-center gap-1 text-emerald-600"><CheckIcon className="w-3 h-3" />All done</span>
+                  ) : (
+                    <>{progress.done} of {progress.total}</>
+                  )}
+                </span>
+              )}
             </div>
             {progress.total > 0 && (
-              <span className="text-[10.5px] font-medium text-neutral-400 whitespace-nowrap flex-shrink-0 tabular-nums transition-colors duration-300">
-                {progress.done === progress.total ? (
-                  <span className="inline-flex items-center gap-1 text-emerald-600"><CheckIcon className="w-3 h-3" />All done</span>
-                ) : (
-                  <>{progress.done} of {progress.total} done</>
-                )}
-              </span>
+              <div className="h-1 rounded-full bg-neutral-100 overflow-hidden" aria-label={`${progress.done} of ${progress.total} steps complete`}>
+                <div className="h-full rounded-full bg-emerald-500 transition-[width] duration-500 ease-out" style={{ width: `${Math.min(100, Math.round((progress.done / progress.total) * 100))}%` }} />
+              </div>
             )}
           </div>
           {/* Body — its own scroll when long. min-w keeps the stepper from crushing during animation. */}
@@ -3104,12 +3118,12 @@ function DeepDiveShell({
   return (
     <div
       className={`w-full h-full min-h-0 flex flex-row transition-[max-width] duration-300 ease-out ${
-        hasBreakdown ? 'max-w-none' : 'mx-auto max-w-3xl'
+        hasBreakdown ? 'max-w-none' : 'mx-auto max-w-5xl'
       }`}
     >
       <div className="flex-1 min-w-0 flex flex-col h-full min-h-0">
         {hasBreakdown ? (
-          <div className="w-full max-w-4xl mx-auto flex flex-col h-full min-h-0">{children}</div>
+          <div className="w-full px-4 xl:px-8 flex flex-col h-full min-h-0">{children}</div>
         ) : (
           children
         )}
@@ -3192,6 +3206,8 @@ type ThreadData = {
   messages: ThreadMsg[];
   body: string | null;
   counterparty?: string | null;
+  projectId?: string | null;
+  projectName?: string | null;
 };
 
 // The header badge for the email deep-dive, from the item's REAL classification — never a hardcoded
@@ -3212,6 +3228,7 @@ const EMAIL_BADGE: Record<NonNullable<ThreadData['type']>, { label: string }> = 
 //   • Reply    — opens/reveals the composer (the reply task's surface, owner=you). On an awareness/
 //                action item the composer was merely collapsed; this is how the user replies anyway.
 //   • Dismiss  — acknowledges the item (the primary action for awareness). Reuses the inbox dismiss.
+//   • Done     — explicitly resolves a suggestion that is already handled (e.g. the call already happened).
 //   • Forward  — opens the grounded prepared forward (approve-before-commit).
 //   • Coworker — hands the reply to AUGMTD/a coworker (the owner model): they own it, the composer stays
 //                the owner=you surface. Reuses the shared CoworkerPicker + the plan's delegateItem.
@@ -3224,6 +3241,8 @@ function EmailActionPalette({
   composerOpen,
   onReply,
   onDismiss,
+  onDone,
+  onNoLongerRelevant,
   onForward,
   onDelegate,
   dismissing,
@@ -3232,6 +3251,8 @@ function EmailActionPalette({
   composerOpen: boolean;
   onReply: () => void;
   onDismiss: () => void;
+  onDone: () => void;
+  onNoLongerRelevant: () => void;
   onForward: () => void;
   onDelegate: (w: Coworker) => void;
   dismissing: boolean;
@@ -3261,6 +3282,22 @@ function EmailActionPalette({
         title="Acknowledge and clear this from your Home"
       >
         <CheckCircleIcon className="w-3.5 h-3.5" />{dismissing ? 'Dismissing…' : 'Dismiss'}
+      </button>
+      <button
+        onClick={onDone}
+        disabled={dismissing}
+        className={btn(false)}
+        title="Resolve this suggestion because it is already handled"
+      >
+        <CheckIcon className="w-3.5 h-3.5" />Done
+      </button>
+      <button
+        onClick={onNoLongerRelevant}
+        disabled={dismissing}
+        className={btn(false)}
+        title="Resolve this suggestion because it is no longer relevant"
+      >
+        <XMarkIcon className="w-3.5 h-3.5" />Not relevant
       </button>
       <button onClick={onForward} className={btn(false)} title="Forward this email">
         <ArrowUturnRightIcon className="w-3.5 h-3.5" />Forward
@@ -3307,6 +3344,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
 
   // ── Item-level actions from the palette (freedom — always available regardless of section).
   const [itemDismissed, setItemDismissed] = useState(false);
+  const [itemResolution, setItemResolution] = useState<'dismissed' | 'done' | 'not_relevant' | null>(null);
   const [dismissing, setDismissing] = useState(false);
   const [forwarding, setForwarding] = useState(false); // the item-level forward card is open
 
@@ -3433,6 +3471,46 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
     try {
       const res = await fetch(`/api/inbox/${id}/dismiss`, { method: 'POST' });
       if (res.ok) {
+        setItemResolution('dismissed');
+        setItemDismissed(true);
+        setTimeout(() => router.back(), 700);
+      }
+    } finally {
+      setDismissing(false);
+    }
+  };
+
+  // A suggestion can become obsolete without being wrong: for example, the user already had the
+  // call that an email was asking to schedule. Preserve that distinction from ordinary dismissal
+  // so the Home, activity history, and future learning can tell the two outcomes apart.
+  const markNoLongerRelevant = async () => {
+    if (dismissing || itemDismissed) return;
+    setDismissing(true);
+    try {
+      const res = await fetch(`/api/inbox/${id}/dismiss`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resolution_reason: 'no_longer_relevant' }),
+      });
+      if (res.ok) {
+        setItemResolution('not_relevant');
+        setItemDismissed(true);
+        setTimeout(() => router.back(), 700);
+      }
+    } finally {
+      setDismissing(false);
+    }
+  };
+
+  const markHandled = async () => {
+    if (dismissing || itemDismissed) return;
+    setDismissing(true);
+    try {
+      const res = await fetch(`/api/inbox/${id}/complete`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resolution_reason: 'already_handled' }),
+      });
+      if (res.ok) {
+        setItemResolution('done');
         setItemDismissed(true);
         setTimeout(() => router.back(), 700);
       }
@@ -3464,6 +3542,11 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
         meta={
           <>
             {senderLine && <span className="min-w-0 truncate">From: {senderLine}</span>}
+            {thread?.projectId && thread.projectName && (
+              <a href="/home?view=projects" className="inline-flex min-w-0 max-w-[220px] items-center gap-1 rounded-full border border-indigo-100 bg-indigo-50/70 px-2 py-0.5 text-[11px] font-medium text-indigo-600 hover:bg-indigo-100">
+                <FolderIcon className="h-3 w-3 flex-shrink-0" /><span className="truncate">{thread.projectName}</span>
+              </a>
+            )}
             {thread?.receivedAt && (
               <span className="text-neutral-400 flex-shrink-0 tabular-nums ml-auto">{fmtWhen(thread.receivedAt)}</span>
             )}
@@ -3494,6 +3577,8 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
             composerOpen={composerOpen}
             onReply={openComposer}
             onDismiss={dismissItem}
+            onDone={markHandled}
+            onNoLongerRelevant={markNoLongerRelevant}
             onForward={openForward}
             onDelegate={(w) => { plan.delegateItem(w.id, w.name); }}
             dismissing={dismissing}
@@ -3502,7 +3587,9 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
         {itemDismissed && (
           <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3">
             <CheckCircleIcon className="w-4 h-4 text-emerald-600" />
-            <p className="text-[13px] font-medium text-emerald-700">Dismissed.</p>
+            <p className="text-[13px] font-medium text-emerald-700">
+              {itemResolution === 'done' ? 'Done — already handled.' : itemResolution === 'not_relevant' ? 'Marked not relevant.' : 'Dismissed.'}
+            </p>
           </div>
         )}
 
