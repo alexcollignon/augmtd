@@ -20,7 +20,16 @@ import { readMutedMap } from './muted-initiatives';
 
 // Clean a display name from a raw `who` ("Jane <j@x>" / "Jane (Acme)" → "Jane"). Local copy to avoid a
 // circular import with cluster.ts (which now derives from this module).
-const personName = (who: string): string => who.replace(/<[^>]*>/g, '').replace(/\([^)]*\)/g, '').replace(/["']/g, '').trim() || who.trim();
+const personName = (who: string): string => {
+  const base = who.replace(/<[^>]*>/g, '').replace(/\([^)]*\)/g, '').replace(/["']/g, '').trim() || who.trim();
+  // A bare email (no display name) → prettify the localpart: "ella.cullen1@x" → "Ella Cullen". Agnostic
+  // (no name list) — just splits on separators, drops digits, title-cases. Falls back to the localpart.
+  const m = base.match(/^([^\s@]+)@[^\s@]+$/);
+  if (!m) return base;
+  const pretty = m[1].replace(/[._-]+/g, ' ').replace(/\d+/g, ' ').trim()
+    .split(/\s+/).filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join(' ').trim();
+  return pretty || m[1];
+};
 
 export type InitiativeState = 'needs_attention' | 'active' | 'waiting' | 'awareness';
 export type InitiativeActionKind = 'reply' | 'action' | 'commitment' | 'followup';
@@ -29,6 +38,7 @@ export type InitiativeAction = {
   entityId: string;
   kind: InitiativeActionKind;
   title: string;
+  who: string | null; // the counterparty — who you reply to / owe / are waiting on. Powers the tile's "next" line.
   href: string;
   dueDate?: string | null;
 };
@@ -127,7 +137,7 @@ export async function getActiveInitiatives(
     const kind: InitiativeActionKind | null =
       REPLY_RT.has(rt) ? 'reply' : WAIT_RT.has(rt) ? 'followup' : (TODO_RT.has(rt) || ACTION_WS.has(ws)) ? 'action' : null;
     if (isMeeting) b.meetings++;
-    if (kind) b.actions.push({ id: `inbox:${it.id}`, entityId: String(it.id), kind, title: String(it.work_title || sd.subject || 'Email'), href: `/item/${it.id}`, dueDate: (u.deadline as string) ?? null });
+    if (kind) b.actions.push({ id: `inbox:${it.id}`, entityId: String(it.id), kind, title: String(it.work_title || sd.subject || 'Email'), who: personName(String((sd.from_name as string) || (sd.from as string) || '')) || null, href: `/item/${it.id}`, dueDate: (u.deadline as string) ?? null });
   }
 
   // ── Commitments ──
@@ -140,7 +150,7 @@ export async function getActiveInitiatives(
     if (c.counterparty) b.people.add(personName(String(c.counterparty)));
     if (c.project_id && !b.projectId) b.projectId = String(c.project_id);
     const waiting = String(c.direction || 'you_owe') === 'awaiting';
-    b.actions.push({ id: `commit:${c.id}`, entityId: String(c.id), kind: waiting ? 'followup' : 'commitment', title: String(c.description || 'Commitment'), href: `/item/${c.id}?kind=commitment`, dueDate: (c.due_date as string) ?? null });
+    b.actions.push({ id: `commit:${c.id}`, entityId: String(c.id), kind: waiting ? 'followup' : 'commitment', title: String(c.description || 'Commitment'), who: c.counterparty ? personName(String(c.counterparty)) : null, href: `/item/${c.id}?kind=commitment`, dueDate: (c.due_date as string) ?? null });
   }
 
   // ── Calendar meetings (members + recency; NOT actions — meetings are context). Resolved via the shared
@@ -168,7 +178,7 @@ export async function getActiveInitiatives(
     const b = bump(key, o.initiative, o.lastSentAt);
     if (!b.outreach.includes(o.recipient)) b.outreach.push(o.recipient);
     if (o.who) b.people.add(personName(o.who));
-    b.actions.push({ id: `outbound:${o.recipient}`, entityId: o.recipient, kind: 'followup', title: o.subject || `Reached out to ${o.who || 'someone'}`, href: '/inbox', dueDate: null });
+    b.actions.push({ id: `outbound:${o.recipient}`, entityId: o.recipient, kind: 'followup', title: o.subject || `Reached out to ${o.who || 'someone'}`, who: o.who ? personName(o.who) : null, href: '/inbox', dueDate: null });
   }
 
   // ── Keep real clusters (≥2 members), compute state, sort action-first ──
@@ -185,6 +195,15 @@ export async function getActiveInitiatives(
     const toDos = b.actions.filter((a) => a.kind === 'reply' || a.kind === 'action' || a.kind === 'commitment').length;
     const waiting = b.actions.filter((a) => a.kind === 'followup').length;
     const state: InitiativeState = overdue ? 'needs_attention' : toDos > 0 ? 'active' : waiting > 0 ? 'waiting' : 'awareness';
+    // Sort actions so actions[0] is the "next" the tile shows: overdue → due-soon → your to-dos (reply/
+    // action/commitment) before waiting (followup). Deterministic, no AI.
+    const actRank = (a: InitiativeAction): number => {
+      if (a.dueDate && a.dueDate < todayStr) return 0;           // overdue
+      const isToDo = a.kind === 'reply' || a.kind === 'action' || a.kind === 'commitment';
+      if (a.dueDate) return isToDo ? 1 : 2;                       // dated (to-do before waiting)
+      return isToDo ? 3 : 4;                                      // undated (to-do before waiting)
+    };
+    b.actions.sort((x, y) => actRank(x) - actRank(y) || (x.dueDate || '￿').localeCompare(y.dueDate || '￿'));
     out.push({
       key, label: b.label, total, state, stateLabel: STATE_LABEL[state],
       actions: b.actions, actionCount: toDos, waitingCount: waiting, meetings: b.meetings,

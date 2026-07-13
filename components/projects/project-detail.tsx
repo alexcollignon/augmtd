@@ -3,10 +3,11 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { ChevronLeftIcon, PencilSquareIcon, FlagIcon, ShieldCheckIcon, SparklesIcon, UsersIcon, XMarkIcon, ArrowRightIcon, CheckCircleIcon, ArchiveBoxIcon, ArrowUturnLeftIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { ChevronLeftIcon, PencilSquareIcon, FlagIcon, ShieldCheckIcon, SparklesIcon, UsersIcon, XMarkIcon, ArrowRightIcon, CheckCircleIcon, ArchiveBoxIcon, ArrowUturnLeftIcon, TrashIcon, BoltIcon, ClockIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import type { WorkItem, WorkItemState } from '@/lib/work-items/model';
-import { TimelineStations } from '@/components/timeline/timeline-view';
-import { Button } from '@/components/ui';
+import ProjectGantt from '@/components/projects/project-gantt';
+import { Button, Card } from '@/components/ui';
+import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import HealthChip from '@/components/projects/health-chip';
 import type { ProjectHealth } from '@/lib/projects/health';
 import { computeProjectStatus, STATUS_TONE } from '@/lib/projects/status';
@@ -16,44 +17,87 @@ type Project = {
   goals: string[]; rules: string[]; color: string | null; auto: boolean; itemCount?: number; health?: ProjectHealth;
 };
 
-// A compact "what's here" list — the brief's Needs-you / Team lanes (not a board).
-function MiniList({ title, tint, items, onRemove }: { title: string; tint: string; items: WorkItem[]; onRemove?: (w: WorkItem) => void }) {
-  if (!items.length) return null;
-  return (
-    <div>
-      <h3 className={`text-[11px] font-semibold uppercase tracking-[0.07em] mb-2 ${tint}`}>{title} <span className="text-neutral-300">{items.length}</span></h3>
-      <div className="space-y-1.5">
-        {items.slice(0, 5).map((w) => <WorkCard key={w.id} w={w} onRemove={onRemove ? () => onRemove(w) : undefined} />)}
-        {items.length > 5 && <p className="text-[11px] text-neutral-400 pl-1">+{items.length - 5} more</p>}
-      </div>
-    </div>
-  );
-}
-
 const STATE_COL: Array<{ key: WorkItemState; label: string; dot: string }> = [
   { key: 'todo', label: 'To do', dot: 'bg-indigo-500' },
   { key: 'waiting', label: 'Waiting on', dot: 'bg-amber-500' },
   { key: 'done', label: 'Done', dot: 'bg-emerald-500' },
 ];
 
-function IntentCard({ icon: Icon, title, hint, items }: { icon: React.ElementType; title: string; hint: string; items: string[] }) {
+// A stat tile (icon · count · label) — the at-a-glance pulse, mirroring a modern project dashboard.
+// Clickable tiles jump to the Work board filtered by that state.
+const TILE_TONE = {
+  indigo:  { bg: 'bg-indigo-50',  fg: 'text-indigo-500' },
+  amber:   { bg: 'bg-amber-50',   fg: 'text-amber-500' },
+  emerald: { bg: 'bg-emerald-50', fg: 'text-emerald-500' },
+  rose:    { bg: 'bg-rose-50',    fg: 'text-rose-500' },
+} as const;
+function StatTile({ icon: Icon, count, label, tone, onClick }: { icon: React.ElementType; count: number; label: string; tone: keyof typeof TILE_TONE; onClick?: () => void }) {
+  const t = TILE_TONE[tone];
+  const Comp = onClick ? 'button' : 'div';
+  return (
+    <Comp onClick={onClick} className={`text-left rounded-xl border border-neutral-200/70 bg-white/70 px-3 py-3 ${onClick ? 'aug-interactive hover:border-indigo-200 cursor-pointer' : ''}`}>
+      <span className={`inline-flex items-center justify-center w-7 h-7 rounded-lg ${t.bg} ${t.fg}`}><Icon className="w-4 h-4" /></span>
+      <div className="text-[22px] font-semibold text-neutral-900 tabular-nums leading-none mt-2.5">{count}</div>
+      <div className="text-[10.5px] font-medium uppercase tracking-[0.06em] text-neutral-400 mt-1">{label}</div>
+    </Comp>
+  );
+}
+
+// Goals / Rules — INLINE editable with instant auto-save. Each line is an editable input (Enter or blur
+// commits; clearing it removes the line); the last row is an "Add…" input. Every commit PATCHes the
+// project's goals/rules array straight away (optimistic) — no modal, no Save button.
+function EditableIntentCard({ icon: Icon, title, hint, field, initial, projectId }: {
+  icon: React.ElementType; title: string; hint: string; field: 'goals' | 'rules'; initial: string[]; projectId: string;
+}) {
+  const [items, setItems] = useState<string[]>(initial);
+  const [draft, setDraft] = useState('');
+  const persist = (next: string[]) => {
+    setItems(next);
+    fetch(`/api/projects/${projectId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [field]: next }) }).catch(() => {});
+  };
+  const commitAt = (i: number, value: string) => {
+    const v = value.trim();
+    if (v === items[i]) return;                                  // no change
+    persist(v ? items.map((x, j) => (j === i ? v : x)) : items.filter((_, j) => j !== i));
+  };
+  const addDraft = () => { const t = draft.trim(); if (!t) return; persist([...items, t]); setDraft(''); };
+  const noun = field === 'goals' ? 'goal' : 'rule';
   return (
     <div className="rounded-xl border border-neutral-200/70 bg-white p-4">
-      <div className="flex items-center gap-1.5 mb-1">
+      <div className="flex items-center gap-1.5 mb-2">
         <Icon className="w-3.5 h-3.5 text-indigo-500" />
         <h3 className="text-[12.5px] font-semibold text-neutral-700">{title}</h3>
       </div>
-      {items.length === 0 ? (
-        <p className="text-[12px] text-neutral-400 mt-1">{hint}</p>
-      ) : (
-        <ul className="mt-2 space-y-1.5">
-          {items.map((it, i) => (
-            <li key={i} className="text-[12.5px] text-neutral-600 flex items-start gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-300 mt-1.5 flex-shrink-0" />{it}
-            </li>
-          ))}
-        </ul>
-      )}
+      {items.length === 0 && <p className="text-[12px] text-neutral-400 mb-2">{hint}</p>}
+      <ul className="space-y-0.5">
+        {items.map((it, i) => (
+          // Key by value+index so an uncontrolled input refreshes its defaultValue after add/edit/remove
+          // (a plain index key would leave a removed row showing the previous line's text).
+          <li key={`${i}-${it}`} className="group/row flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-indigo-300 flex-shrink-0" />
+            <input
+              defaultValue={it}
+              onBlur={(e) => commitAt(i, e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }}
+              className="flex-1 min-w-0 bg-transparent text-[12.5px] text-neutral-700 focus:outline-none rounded px-1 py-1 -mx-1 focus:bg-indigo-50/40"
+            />
+            <button onClick={() => persist(items.filter((_, j) => j !== i))} title={`Remove ${noun}`} className="flex-shrink-0 opacity-0 group-hover/row:opacity-100 text-neutral-300 hover:text-rose-500 transition-all">
+              <XMarkIcon className="w-3.5 h-3.5" />
+            </button>
+          </li>
+        ))}
+        <li className="flex items-center gap-2">
+          <span className="w-1.5 h-1.5 rounded-full border border-neutral-200 flex-shrink-0" />
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addDraft(); } }}
+            onBlur={addDraft}
+            placeholder={`Add a ${noun}…`}
+            className="flex-1 min-w-0 bg-transparent text-[12.5px] text-neutral-600 placeholder:text-neutral-300 focus:outline-none rounded px-1 py-1 -mx-1 focus:bg-indigo-50/40"
+          />
+        </li>
+      </ul>
     </div>
   );
 }
@@ -81,14 +125,17 @@ function WorkCard({ w, onRemove }: { w: WorkItem; onRemove?: () => void }) {
 }
 
 export default function ProjectDetail({ project, onBack, onEdit, onStatus, onUngroup }: { project: Project; onBack: () => void; onEdit: () => void; onStatus: (s: 'active' | 'done' | 'archived') => void; onUngroup: () => void }) {
-  const [items, setItems] = useState<WorkItem[] | null>(null);
+  // Instant-load: hydrate this project's items from localStorage (no skeleton flash on re-open), then
+  // refresh in the background — same pattern as the Home / Timeline / item deep-dive.
+  const [items, setItems] = useState<WorkItem[] | null>(() => loadLS<WorkItem[]>(`aug-project-items-${project.id}`));
   const [tab, setTab] = useState<'overview' | 'timeline' | 'work'>('overview');
   const [ungroupConfirm, setUngroupConfirm] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    fetch(`/api/projects/${project.id}/items`).then((r) => r.json()).then((d) => { if (alive) setItems(d.items ?? []); }).catch(() => { if (alive) setItems([]); });
+    fetch(`/api/projects/${project.id}/items`).then((r) => r.json()).then((d) => { if (alive) { setItems(d.items ?? []); saveLS(`aug-project-items-${project.id}`, d.items ?? []); } }).catch(() => { if (alive && !items) setItems([]); });
     return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
 
   const list = items ?? [];
@@ -157,63 +204,92 @@ export default function ProjectDetail({ project, onBack, onEdit, onStatus, onUng
       {items === null ? (
         <div className="mt-6 grid grid-cols-3 gap-3">{[0, 1, 2].map((i) => <div key={i} className="h-[68px] rounded-xl bg-gradient-to-br from-neutral-100 to-neutral-50 animate-pulse" />)}</div>
       ) : tab === 'overview' ? (
-        <div className="mt-5 space-y-6">
-          {/* STATE — the human "current state + next move" line. What's happening (Active / Waiting / On
-              hold / Needs attention / Clear) and the single next action, one glance. The zoom-out the Home
-              deliberately doesn't carry (the Home is actions; the project owns state). */}
-          {(() => {
-            const t = STATUS_TONE[status.tone];
-            return (
-              <div className={`rounded-xl border ${t.border} ${t.bg} px-4 py-3`}>
-                <div className="flex items-center gap-2">
-                  <span className={`w-2 h-2 rounded-full ${t.dot} flex-shrink-0`} />
-                  <span className={`text-[13px] font-semibold ${t.text}`}>{status.label}</span>
-                  <span className="text-[12.5px] text-neutral-500">· {status.detail}</span>
-                </div>
-                {status.nextAction && (
-                  <Link href={status.nextAction.href} className="group mt-2 inline-flex items-center gap-1.5 text-[12.5px] text-neutral-700 hover:text-indigo-600 transition-colors">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Next</span>
-                    <span className="font-medium truncate max-w-[420px]">{status.nextAction.title}</span>
-                    <ArrowRightIcon className="w-3.5 h-3.5 text-neutral-300 group-hover:text-indigo-500" />
-                  </Link>
+        // Card DASHBOARD: main column (state + pulse tiles, then the needs-you / team lanes) beside a
+        // right rail of intent (Goals / Rules). A calm command center, not a flat list.
+        (() => {
+          const t = STATUS_TONE[status.tone];
+          const todos = list.filter((w) => w.state === 'todo');
+          const teamItems = list.filter((w) => w.actor === 'team');
+          return (
+            <div className="mt-5 grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+              {/* MAIN column */}
+              <div className="lg:col-span-2 space-y-4">
+                {/* State + pulse tiles */}
+                <Card className="p-4">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${t.dot} flex-shrink-0`} />
+                    <span className={`text-[13px] font-semibold ${t.text}`}>{status.label}</span>
+                    <span className="text-[12.5px] text-neutral-500 truncate">· {status.detail}</span>
+                  </div>
+                  {status.nextAction && (
+                    <Link href={status.nextAction.href} className="group mt-2 inline-flex items-center gap-1.5 text-[12.5px] text-neutral-700 hover:text-indigo-600 transition-colors">
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Next</span>
+                      <span className="font-medium truncate max-w-[420px]">{status.nextAction.title}</span>
+                      <ArrowRightIcon className="w-3.5 h-3.5 text-neutral-300 group-hover:text-indigo-500" />
+                    </Link>
+                  )}
+                  <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <StatTile icon={BoltIcon} count={count('todo')} label="Need you" tone="indigo" onClick={() => setTab('work')} />
+                    <StatTile icon={ClockIcon} count={count('waiting')} label="Waiting" tone="amber" onClick={() => setTab('work')} />
+                    <StatTile icon={CheckCircleIcon} count={count('done')} label="Done" tone="emerald" onClick={() => setTab('work')} />
+                    <StatTile icon={ExclamationTriangleIcon} count={project.health?.overdue ?? 0} label="Overdue" tone="rose" />
+                  </div>
+                </Card>
+
+                {/* Needs you */}
+                <Card className="p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-[13px] font-semibold text-neutral-800">Needs you <span className="text-neutral-300 font-normal">{todos.length}</span></h3>
+                    {todos.length > 5 && <button onClick={() => setTab('work')} className="text-[12px] font-medium text-indigo-600 hover:text-indigo-700 transition-colors">View all</button>}
+                  </div>
+                  {todos.length === 0 ? (
+                    <p className="text-[12.5px] text-neutral-400 py-2">Nothing needs you here right now.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {todos.slice(0, 5).map((w) => <WorkCard key={w.id} w={w} onRemove={() => removeItem(w)} />)}
+                    </div>
+                  )}
+                </Card>
+
+                {/* From your team (only when there's team work) */}
+                {teamItems.length > 0 && (
+                  <Card className="p-4">
+                    <h3 className="text-[13px] font-semibold text-neutral-800 mb-3">From your team <span className="text-neutral-300 font-normal">{teamItems.length}</span></h3>
+                    <div className="space-y-1.5">
+                      {teamItems.slice(0, 5).map((w) => <WorkCard key={w.id} w={w} onRemove={() => removeItem(w)} />)}
+                      {teamItems.length > 5 && <p className="text-[11px] text-neutral-400 pl-1">+{teamItems.length - 5} more</p>}
+                    </div>
+                  </Card>
+                )}
+
+                {/* People */}
+                {people.length > 0 && (
+                  <Card className="p-4">
+                    <h3 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-neutral-400 mb-2.5"><UsersIcon className="w-3.5 h-3.5" />People</h3>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {people.map((p, i) => (
+                        <span key={i} className="text-[12px] font-medium text-neutral-600 bg-neutral-50 border border-neutral-200/70 rounded-full px-2.5 py-1">{p}</span>
+                      ))}
+                    </div>
+                  </Card>
                 )}
               </div>
-            );
-          })()}
-          {/* Pulse — the raw counts beneath the state line. A brief, not a board. */}
-          <div className="flex items-center gap-3 flex-wrap text-[12.5px] text-neutral-500">
-            <span>{count('todo')} need you</span>
-            <span className="text-neutral-300">·</span>
-            <span>{count('waiting')} waiting</span>
-            <span className="text-neutral-300">·</span>
-            <span>{count('done')} done</span>
-            {project.health && project.health.overdue > 0 && <><span className="text-neutral-300">·</span><span className="font-medium text-rose-500">{project.health.overdue} overdue</span></>}
-          </div>
-          {people.length > 0 && (
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400"><UsersIcon className="w-3.5 h-3.5" />People</span>
-              {people.map((p, i) => (
-                <span key={i} className="text-[12px] font-medium text-neutral-600 bg-white border border-neutral-200/70 rounded-full px-2.5 py-0.5">{p}</span>
-              ))}
+
+              {/* RIGHT rail — intent (inline editable, instant auto-save) */}
+              <div className="space-y-4">
+                <EditableIntentCard key={`goals-${project.id}`} icon={FlagIcon} title="Goals" hint="What this project is trying to achieve." field="goals" initial={project.goals} projectId={project.id} />
+                <EditableIntentCard key={`rules-${project.id}`} icon={ShieldCheckIcon} title="Rules" hint="How your coworkers should work on it — and what to avoid." field="rules" initial={project.rules} projectId={project.id} />
+              </div>
             </div>
-          )}
-          {/* The brief: what needs you + what your team's on — the actionable heart, not a Kanban. */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-            <MiniList title="Needs you" tint="text-neutral-500" items={list.filter((w) => w.state === 'todo')} onRemove={removeItem} />
-            <MiniList title="From your team" tint="text-indigo-600/80" items={list.filter((w) => w.actor === 'team')} onRemove={removeItem} />
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <IntentCard icon={FlagIcon} title="Goals" hint="What this project is trying to achieve. Add goals via Edit." items={project.goals} />
-            <IntentCard icon={ShieldCheckIcon} title="Rules" hint="How your coworkers should work on it — and what to avoid. Add rules via Edit." items={project.rules} />
-          </div>
-        </div>
+          );
+        })()
       ) : tab === 'timeline' ? (
         <div className="mt-5">
-          <div className="mb-4">
+          <div className="mb-1">
             <h3 className="text-[16px] font-semibold tracking-tight text-neutral-900">Project timeline</h3>
-            <p className="text-[12.5px] text-neutral-400 mt-0.5">The same work, scoped to this initiative and arranged by when it matters.</p>
+            <p className="text-[12.5px] text-neutral-400 mt-0.5">What happened, what&apos;s outstanding, and what&apos;s coming — by when, and by whom.</p>
           </div>
-          <TimelineStations items={list} emptyLine="This project's work will line up here by when it's due." />
+          <ProjectGantt items={list} todayStr={todayStr} name={project.name} />
         </div>
       ) : (
         <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-4">

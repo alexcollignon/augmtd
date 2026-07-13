@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { FolderIcon, PlusIcon, PencilSquareIcon, TrashIcon, XMarkIcon, SparklesIcon, FlagIcon, ShieldCheckIcon, UsersIcon, ArrowPathIcon, EyeSlashIcon, FolderPlusIcon, ChevronRightIcon, ArrowRightIcon, CheckCircleIcon, ArchiveBoxIcon, ArrowUturnLeftIcon } from '@heroicons/react/24/outline';
 import { Button, IconButton, Input, Textarea, Card, EmptyState, SegmentedControl } from '@/components/ui';
 import ProjectDetail from '@/components/projects/project-detail';
+import { RiseIn } from '@/components/home/rise-in';
 import { statusFromHealth, STATUS_TONE } from '@/lib/projects/status';
 import PortfolioGantt from '@/components/projects/portfolio-gantt';
 import { showUndoToast } from '@/lib/activity/undo-toast';
@@ -20,10 +21,15 @@ const STATE_DOT: Record<InitiativeState, { dot: string; text: string }> = {
   awareness:       { dot: 'bg-neutral-300', text: 'text-neutral-400' },
 };
 
-// Session cache — so switching lenses (Home ↔ Projects) doesn't refetch/recompute each time. Projects
-// refresh in the background; suggestions (an AI call) are computed ONCE per session and reused.
+// Session cache (module-level) — switching lenses doesn't refetch. PLUS a localStorage layer so a full
+// PAGE RELOAD is also instant: hydrate last-known projects + suggestions immediately (no skeleton), then
+// refresh in the background. The server response is now cheap (suggestions read the cached spine), so the
+// bg refresh is cheap too.
 let projectsCache: Project[] | null = null;
 let suggestionsCache: Suggestion[] | null = null;
+const LS_PROJ = 'aug-projects-v1', LS_SUGG = 'aug-suggestions-v1';
+function loadLS<T>(k: string): T | null { try { const s = localStorage.getItem(k); return s ? (JSON.parse(s) as T) : null; } catch { return null; } }
+function saveLS(k: string, v: unknown) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* quota/SSR — non-fatal */ } }
 
 // ── Projects — an AI-clustered (soon) or manually-created LENS grouping your work by initiative.
 // S3.1: the list + create/edit (name, description, Goals, Rules) + archive/delete. Goals = what the
@@ -199,7 +205,7 @@ function ProjectCard({ p, onOpen, onEdit, onDelete, onStatus }: { p: Project; on
   const [confirmDel, setConfirmDel] = useState(false);
   const terminal = p.status !== 'active';
   return (
-    <Card interactive className="group p-4 flex flex-col h-full" onClick={onOpen}>
+    <Card interactive className="group p-4 flex flex-col h-full cursor-pointer hover:border-indigo-300" onClick={onOpen}>
       <div className="flex items-start gap-2.5">
         <span className={`flex-shrink-0 inline-flex items-center justify-center w-8 h-8 rounded-lg ${p.status === 'done' ? 'bg-emerald-50 text-emerald-500' : p.status === 'archived' ? 'bg-neutral-100 text-neutral-400' : 'bg-indigo-50 text-indigo-500'}`}>
           <FolderIcon className="w-4 h-4" />
@@ -252,11 +258,14 @@ function ProjectCard({ p, onOpen, onEdit, onDelete, onStatus }: { p: Project; on
   );
 }
 
-export default function ProjectsView() {
+export default function ProjectsView({ onDetailChange }: { onDetailChange?: (open: boolean) => void } = {}) {
   const [projects, setProjects] = useState<Project[] | null>(projectsCache);
   const [modal, setModal] = useState<{ open: boolean; edit: Project | null }>({ open: false, edit: null });
   const [suggestions, setSuggestions] = useState<Suggestion[] | null>(suggestionsCache); // null = still loading
   const [selected, setSelected] = useState<Project | null>(null);
+  // Tell the host (HomeView) when a project deep-dive is open, so it can drop the Home greeting header —
+  // a project detail is a deep-dive (like the item deep-dive), it owns the screen, no day-greeting above it.
+  useEffect(() => { onDetailChange?.(!!selected); return () => onDetailChange?.(false); }, [selected, onDetailChange]);
   const [mode, setMode] = useState<'portfolio' | 'timeline'>('portfolio');
   // The ONE filter: Suggested is just the pre-accepted lifecycle state, alongside Active · Done · Archived —
   // so a long suggestions list never buries the real projects (one section shows at a time).
@@ -269,16 +278,25 @@ export default function ProjectsView() {
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   useEffect(() => {
-    // Projects: show cache instantly, refresh in the background (cheap query).
+    // INSTANT: hydrate from localStorage before any fetch, so a reload shows the last-known data with no
+    // skeleton flash. (Only when the module cache is empty — a lens switch already has it in memory.)
+    if (projectsCache === null) { const c = loadLS<Project[]>(LS_PROJ); if (c) { projectsCache = c; setProjects(c); } }
+    if (suggestionsCache === null) { const c = loadLS<Suggestion[]>(LS_SUGG); if (c) { suggestionsCache = c; setSuggestions(c); } }
+    // Refresh BOTH in the background (cheap now — projects is a query, suggestions reads the cached spine).
+    // Never blanks: the hydrated data stays until the fresh response swaps in.
     fetch('/api/projects').then((r) => r.json()).then((d) => { projectsCache = d.projects ?? []; setProjects(projectsCache); }).catch(() => { if (!projectsCache) setProjects([]); });
-    // Suggestions: an AI call — compute ONCE per session, then reuse from cache (no refetch on lens switch).
-    if (suggestionsCache === null) {
-      fetch('/api/projects/suggestions', { cache: 'no-store' }).then((r) => r.json()).then((d) => { suggestionsCache = d.suggestions ?? []; setSuggestions(suggestionsCache); setSuggestionsUpdatedAt(new Date()); }).catch(() => { suggestionsCache = []; setSuggestions([]); });
-    }
+    fetch('/api/projects/suggestions', { cache: 'no-store' }).then((r) => r.json()).then((d) => { suggestionsCache = d.suggestions ?? []; setSuggestions(suggestionsCache); setSuggestionsUpdatedAt(new Date()); }).catch(() => { if (!suggestionsCache) setSuggestions([]); });
+    // WARM the Timeline: prefetch the (slow) portfolio Gantt now and cache it, so toggling to Timeline is
+    // instant instead of showing a skeleton on first switch. Fire-and-forget; PortfolioGantt reads this key.
+    fetch('/api/projects/gantt').then((r) => r.json()).then((d) => { try { localStorage.setItem('aug-portfolio-gantt-v3', JSON.stringify(d)); } catch { /* non-fatal */ } }).catch(() => {});
     // Deep-link: land on a specific initiative's suggestion (from the In-motion "Open in Projects").
     const target = new URLSearchParams(window.location.search).get('initiative');
     if (target) { setHighlightKey(target); setShowAllSuggestions(true); setStatusView('suggested'); autoPicked.current = true; }
   }, []);
+
+  // Persist to localStorage whenever the data changes → the next reload hydrates instantly.
+  useEffect(() => { if (projects) saveLS(LS_PROJ, projects); }, [projects]);
+  useEffect(() => { if (suggestions) saveLS(LS_SUGG, suggestions); }, [suggestions]);
 
   // Smart default tab: land on Active when there ARE active projects; else on Suggested (a new user sees
   // what AUGMTD found). Runs once, when both loads settle, and never overrides a manual switch.
@@ -438,9 +456,11 @@ export default function ProjectsView() {
                 const shown = showAllSuggestions ? visibleSuggestions : visibleSuggestions.slice(0, CAP);
                 return (
                   <div className="space-y-2">
-                    {shown.map((s) => (
+                    {shown.map((s, i) => (
                       <div key={s.key} ref={(el) => { rowRefs.current[s.key] = el; }}>
-                        <SuggestionRow s={s} highlight={highlightKey === s.key} onCreate={(draft) => acceptSuggestion(s, draft)} onMute={() => mute(s)} />
+                        <RiseIn delay={i * 35}>
+                          <SuggestionRow s={s} highlight={highlightKey === s.key} onCreate={(draft) => acceptSuggestion(s, draft)} onMute={() => mute(s)} />
+                        </RiseIn>
                       </div>
                     ))}
                     {rest.length > 0 && (
@@ -466,8 +486,10 @@ export default function ProjectsView() {
               <p className="text-[13px] text-neutral-400 py-6 text-center">No {view} projects.</p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {projects.filter((p) => p.status === view).map((p) => (
-                  <ProjectCard key={p.id} p={p} onOpen={() => setSelected(p)} onEdit={() => setModal({ open: true, edit: p })} onDelete={() => onDelete(p.id)} onStatus={(s) => setStatus(p.id, s)} />
+                {projects.filter((p) => p.status === view).map((p, i) => (
+                  <RiseIn key={p.id} delay={i * 40}>
+                    <ProjectCard p={p} onOpen={() => setSelected(p)} onEdit={() => setModal({ open: true, edit: p })} onDelete={() => onDelete(p.id)} onStatus={(s) => setStatus(p.id, s)} />
+                  </RiseIn>
                 ))}
               </div>
             )}

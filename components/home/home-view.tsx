@@ -5,15 +5,17 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { showUndoToast } from '@/lib/activity/undo-toast';
+import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { createClient } from '@/lib/supabase/client';
 import {
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon, ClockIcon, UsersIcon, FolderIcon,
   ChevronRightIcon, ArrowRightIcon, BoltIcon, SparklesIcon, EyeIcon, BellAlertIcon,
-  FolderPlusIcon, EyeSlashIcon,
+  FolderPlusIcon, EyeSlashIcon, ArrowUturnLeftIcon,
 } from '@heroicons/react/24/outline';
 import ActivityPanel from '@/components/activity/activity-panel';
-import type { ActiveInitiative, InitiativeState } from '@/lib/projects/active-initiatives';
+import type { ActiveInitiative, InitiativeState, InitiativeAction } from '@/lib/projects/active-initiatives';
 import { ROLE_AVATARS, ROLE_LABELS } from '@/lib/workers/roles';
+import { RiseIn } from '@/components/home/rise-in';
 import ViewSwitcher, { type HomeView as HomeViewLens } from '@/components/home/view-switcher';
 import TimelineView from '@/components/timeline/timeline-view';
 import ProjectsView from '@/components/projects/projects-view';
@@ -57,7 +59,26 @@ const GROUP_STATE_TONE: Record<GroupStateTone, { dot: string; text: string; bg: 
 // it overflows, pausing on hover + still under reduced-motion.
 const STATE_TONE: Record<InitiativeState, GroupStateTone> = { needs_attention: 'rose', active: 'emerald', waiting: 'blue', awareness: 'neutral' };
 
-function InitiativeStrip({ inits, onOpenProjects, onMute, onTrack }: { inits: ActiveInitiative[]; onOpenProjects: (key: string) => void; onMute: (key: string, label: string) => void; onTrack: (init: ActiveInitiative) => Promise<void> }) {
+// Phrase an initiative's top action for the tile's "next" line — by KIND + who + timing, never the raw
+// subject. Deterministic. Returns null when there's nothing to do (an awareness-only initiative).
+function tileNextLine(a: InitiativeAction | undefined): { text: string; Icon: React.ElementType; time: string; overdue: boolean } | null {
+  if (!a) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  const overdue = !!a.dueDate && a.dueDate < today;
+  let time = '';
+  if (overdue) time = 'overdue';
+  else if (a.dueDate) {
+    const days = Math.round((new Date(a.dueDate + 'T00:00:00').getTime() - Date.now()) / 86400000);
+    time = days <= 0 ? 'today' : days <= 7 ? `${days}d` : fmtDue(a.dueDate);
+  }
+  const text = a.kind === 'followup' ? (a.who ? `Waiting on ${a.who}` : 'Waiting on a reply')
+    : a.kind === 'reply' ? (a.who ? `Reply to ${a.who}` : 'Reply needed')
+    : a.title; // action / commitment — the title is already an action phrase ("Send the deck", "Confirm the dates")
+  const Icon = a.kind === 'followup' ? ClockIcon : a.kind === 'reply' ? ArrowUturnLeftIcon : BoltIcon;
+  return { text, Icon, time, overdue };
+}
+
+function InitiativeStrip({ inits, trackedKeys, onOpenProjects, onMute, onTrack }: { inits: ActiveInitiative[]; trackedKeys: Set<string>; onOpenProjects: (key: string) => void; onMute: (key: string, label: string) => void; onTrack: (init: ActiveInitiative) => Promise<void> }) {
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [showQuiet, setShowQuiet] = useState(false);
   const [busy, setBusy] = useState(false); // guards double-clicks on Track (a network create)
@@ -91,7 +112,10 @@ function InitiativeStrip({ inits, onOpenProjects, onMute, onTrack }: { inits: Ac
             const t = GROUP_STATE_TONE[STATE_TONE[i.state]];
             const isOpen = openKey === i.key;
             const count = i.actionCount + i.waitingCount;
-            const next = i.actions[0]?.title;
+            // The "next" line = the most-urgent action (actions[0], pre-sorted by the spine) phrased as an
+            // action — "Reply to <who>" / "Waiting on <who>" / the commitment title — plus its timing
+            // (overdue / Nd / date), NOT the raw email subject. Deterministic from kind/who/dueDate.
+            const nextLine = tileNextLine(i.actions[0]);
             // A rectangular project TILE (distinct from a to-do row on purpose — this is a project glance):
             // name + state·count, and the next move a pill couldn't show.
             return (
@@ -104,7 +128,7 @@ function InitiativeStrip({ inits, onOpenProjects, onMute, onTrack }: { inits: Ac
                 <div className="flex items-center gap-1.5">
                   <span className={`w-2 h-2 rounded-full flex-shrink-0 ${t.dot}`} />
                   <span className={`text-[13px] truncate ${i.state === 'awareness' ? 'font-normal text-neutral-500' : 'font-semibold text-neutral-800'}`}>{i.label}</span>
-                  {i.projectId && (
+                  {(i.projectId || trackedKeys.has(i.key)) && (
                     <span className="ml-auto flex-shrink-0 inline-flex items-center gap-0.5 text-[9px] font-semibold uppercase tracking-wide text-indigo-500 bg-indigo-50 rounded px-1 py-0.5" title="Tracked as a project">
                       <FolderIcon className="w-2.5 h-2.5" />Tracked
                     </span>
@@ -113,8 +137,14 @@ function InitiativeStrip({ inits, onOpenProjects, onMute, onTrack }: { inits: Ac
                 <div className="mt-1 text-[11px] text-neutral-400">
                   <span className={`font-medium ${t.text}`}>{i.stateLabel}</span>{count > 0 && ` · ${count} open`}
                 </div>
-                <div className="mt-0.5 text-[11.5px] text-neutral-500 truncate">
-                  {next ? <>Next: {next}</> : <span className="text-neutral-300">Nothing needed now</span>}
+                <div className="mt-0.5 text-[11.5px]">
+                  {nextLine ? (
+                    <span className="inline-flex items-center gap-1 max-w-full text-neutral-500">
+                      <nextLine.Icon className="w-3 h-3 flex-shrink-0 text-neutral-400" />
+                      <span className="truncate">{nextLine.text}</span>
+                      {nextLine.time && <span className={`flex-shrink-0 ${nextLine.overdue ? 'text-rose-500 font-medium' : 'text-neutral-400'}`}>· {nextLine.time}</span>}
+                    </span>
+                  ) : <span className="text-neutral-300">Nothing needed now</span>}
                 </div>
               </button>
             );
@@ -147,13 +177,15 @@ function InitiativeStrip({ inits, onOpenProjects, onMute, onTrack }: { inits: Ac
                 plus a doorway to Projects. Tracking keeps it in In-motion (it's now a project); muting
                 removes it (optimistic, undoable). */}
             <div className="flex items-center gap-3 mt-3 pt-2.5 border-t border-indigo-100/70">
+              {(() => { const tracked = !!open.projectId || trackedKeys.has(open.key); return (
               <button
-                disabled={busy || !!open.projectId}
+                disabled={busy || tracked}
                 onClick={async () => { setBusy(true); try { await onTrack(open); setOpenKey(null); } finally { setBusy(false); } }}
                 className="inline-flex items-center gap-1 text-[12px] font-semibold text-indigo-600 hover:text-indigo-700 disabled:opacity-40 transition-all duration-150 ease-out"
               >
-                <FolderPlusIcon className="w-3.5 h-3.5" />{open.projectId ? 'Tracked' : busy ? 'Tracking…' : 'Track as project'}
+                <FolderPlusIcon className="w-3.5 h-3.5" />{tracked ? 'Tracked' : busy ? 'Tracking…' : 'Track as project'}
               </button>
+              ); })()}
               <button
                 disabled={busy}
                 onClick={() => { onMute(open.key, open.label); setOpenKey(null); }}
@@ -198,7 +230,7 @@ type ForYourAwareness = { itemId: string; who: string; summary: string }[];
 // NOT a reply-to-a-person (payment failed, security alert, account expiring, storage full, "pay for
 // your booking"). Its OWN home, separate from replies ("What needs you") so notices don't clutter the
 // reply lane. Same row shape as For-your-awareness (sender + grounded one-liner + deep-dive + dismiss).
-type ActionNotices = { itemId: string; who: string; summary: string }[];
+type ActionNotices = { itemId: string; who: string; summary: string; dueDate?: string | null }[];
 type Brief = {
   firstName: string | null;
   briefLine: string | null;
@@ -226,7 +258,6 @@ const SOURCE = {
   email: { icon: EnvelopeIcon, label: 'Email', chip: 'bg-indigo-50 text-indigo-600' },
   meeting: { icon: CalendarDaysIcon, label: 'Meeting', chip: 'bg-violet-50 text-violet-600' },
 } as const;
-const VERB: Record<Priority['posture'], string> = { needs_reply: 'Reply', to_do: 'Do', waiting_on: 'Follow up' };
 
 function greeting() {
   const h = new Date().getHours();
@@ -336,52 +367,6 @@ function TeamFeed({ messages, reviews }: { messages: TeamMsg[]; reviews: TeamRev
   );
 }
 
-// Home's project pulse — a lightweight mental-space cue, not a second Projects view. It answers
-// "which initiatives are moving?" and lets the user jump to the full project lens without pulling
-// project work into the focus stack.
-function ProjectPulse({ onOpen }: { onOpen: () => void }) {
-  const [projects, setProjects] = useState<Array<{ id: string; name: string; itemCount?: number; health?: { status?: string; overdue?: number }; nextItem?: { title: string } | null }> | null>(null);
-  useEffect(() => {
-    let alive = true;
-    fetch('/api/projects').then((r) => (r.ok ? r.json() : Promise.reject())).then((d) => {
-      if (alive) setProjects((d.projects ?? []).filter((p: { status?: string }) => p.status === 'active').slice(0, 3));
-    }).catch(() => { if (alive) setProjects([]); });
-    return () => { alive = false; };
-  }, []);
-  if (!projects?.length) return null;
-  const statusLabel = (status?: string) => status === 'needs_attention' ? 'Needs focus' : status === 'stalled' ? 'Stalled' : status === 'on_track' ? 'On track' : 'Active';
-  const statusClass = (status?: string) => status === 'needs_attention' || status === 'stalled' ? 'text-amber-600 bg-amber-50' : 'text-emerald-600 bg-emerald-50';
-  return (
-    <section className="pt-1">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-1.5">
-          <FolderIcon className="w-3.5 h-3.5 text-indigo-400" />
-          <h2 className="aug-eyebrow">Project pulse</h2>
-        </div>
-        <button onClick={onOpen} className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700 transition-colors">View all <ArrowRightIcon className="inline w-3 h-3 ml-0.5" /></button>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-        {projects.map((p) => (
-          <button key={p.id} onClick={onOpen} className="aug-interactive aug-focus text-left rounded-2xl border border-neutral-200/80 bg-white/90 px-3.5 py-3 hover:border-indigo-200">
-            <p className="text-[13px] font-semibold text-neutral-800 truncate">{p.name}</p>
-            <div className="mt-2 flex items-center justify-between gap-2">
-              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${statusClass(p.health?.status)}`}>{statusLabel(p.health?.status)}</span>
-              <span className="text-[11px] text-neutral-400">{p.itemCount ?? 0} open</span>
-            </div>
-            {p.nextItem?.title && <p className="mt-2 text-[11px] text-neutral-400 truncate">Next: {p.nextItem.title}</p>}
-          </button>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-// Staggered rise-in — keeps the load feeling smooth and consistent with the rest of the app.
-function RiseIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
-  const [shown, setShown] = useState(false);
-  useEffect(() => { const t = setTimeout(() => setShown(true), delay); return () => clearTimeout(t); }, [delay]);
-  return <div className={`transition-all duration-500 ease-out ${shown ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}>{children}</div>;
-}
 
 // ── Honest header counts — a compact, scannable KPI strip under the greeting. It DECOMPOSES the ring's
 // single "need you" number into its parts (to reply / to do / on your plate) AND accounts for the rest of
@@ -531,7 +516,6 @@ function PriorityCard({ p, first, expanded, onToggle, onCleared, onUndoInbox }: 
   const router = useRouter();
   const cfg = SOURCE[p.source];
   const Icon = cfg.icon;
-  const verb = p.source === 'meeting' ? 'Review' : VERB[p.posture];
   const hasItems = !!p.items?.length;
   const { removed, exiting, startExit } = useExit();
   const [acting, setActing] = useState(false);
@@ -557,34 +541,29 @@ function PriorityCard({ p, first, expanded, onToggle, onCleared, onUndoInbox }: 
           <span className="text-[9.5px] font-semibold uppercase tracking-wide text-white">Suggested start</span>
         </div>
       )}
+      {/* SAME row language as DoRow (leading type-icon ring · title · muted context · inline ✓ ✕ →), so a
+          prepared/awareness priority and a reply-you-owe read as ONE consistent list, not two card styles.
+          Row click opens the deep-dive; ✓/✕ triage inline. Meeting action items expand one layer below. */}
       <div className="flex items-start gap-3 p-4">
-        {/* The title/context area opens the deep-dive (row click); the ✓/✕ + Review stay inline for
-            fast triage. A div (not a button) so the nested action buttons remain legal. */}
+        <span className={`flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-lg ${p.source === 'meeting' ? 'bg-violet-50 text-violet-500' : 'bg-indigo-50 text-indigo-500'}`}><Icon className="w-4 h-4" /></span>
         <div role="button" tabIndex={0} onClick={open}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
           className="min-w-0 flex-1 cursor-pointer">
-          <div className="flex items-center gap-2 mb-1.5">
-            <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${cfg.chip}`}>
-              <Icon className="w-3 h-3" />{cfg.label}
+          <div className="flex items-baseline gap-2">
+            <p className={`${first ? 'text-[14.5px]' : 'text-[13.5px]'} font-semibold text-neutral-900 leading-snug min-w-0 truncate`}>{p.title}</p>
+            <span className="flex-shrink-0 ml-auto flex items-center gap-2">
+              {p.overdue && <span className="text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 bg-rose-50 text-rose-600">Overdue</span>}
+              {!p.overdue && <EffortDate effort={p.effort} dueDate={p.dueDate} overdue={p.overdue} />}
+              <InitiativeTag initiative={p.initiative} total={p.initiativeTotal} />
             </span>
-            {p.overdue && <span className="inline-flex items-center rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-600">Overdue</span>}
           </div>
-          <p className="text-[14px] font-semibold text-neutral-900 leading-snug">{p.title}</p>
-          <div className="flex items-center gap-2 mt-0.5">
-            {p.context && <p className="text-[12.5px] text-neutral-500 truncate min-w-0">{p.context}</p>}
-            <EffortDate effort={p.effort} dueDate={p.dueDate} overdue={p.overdue} /><InitiativeTag initiative={p.initiative} total={p.initiativeTotal} />
-          </div>
+          {p.context && <p className={`${first ? 'text-[12.5px]' : 'text-[12px]'} text-neutral-500 mt-0.5 leading-snug line-clamp-1`}>{p.context}</p>}
         </div>
-        <div className="flex-shrink-0 flex items-center gap-1.5">
-          <Link
-            href={priorityHref(p)}
-            className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12.5px] font-medium transition-colors ${first ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-neutral-50 text-neutral-700 hover:bg-indigo-50 hover:text-indigo-700 border border-neutral-200'}`}
-          >
-            {verb}<ArrowRightIcon className="w-3.5 h-3.5" />
-          </Link>
-          <button onClick={() => act('complete')} disabled={acting} title="Mark done" className="w-7 h-7 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors text-[13px]">✓</button>
-          <button onClick={() => act('dismiss')} disabled={acting} title="Dismiss" className="w-7 h-7 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 transition-colors text-[13px]">✕</button>
-        </div>
+        <span className="flex-shrink-0 flex items-center gap-2.5 mt-0.5">
+          <button onClick={() => act('complete')} disabled={acting} title="Mark done" className="text-neutral-300 hover:text-emerald-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✓</button>
+          <button onClick={() => act('dismiss')} disabled={acting} title="Dismiss" className="text-neutral-300 hover:text-rose-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✕</button>
+          <ArrowRightIcon className="w-3.5 h-3.5 text-neutral-200 group-hover:text-indigo-400 transition-colors" />
+        </span>
       </div>
 
       {/* Layered: meeting action items live one layer down — collapsed by default */}
@@ -1259,9 +1238,11 @@ export function HomeView() {
   // without disturbing the digest's own refill logic. Keyed by the row's own id → idempotent counting.
   const [clearedIds, setClearedIds] = useState<Set<string>>(new Set());
   const [mutedKeys, setMutedKeys] = useState<Set<string>>(new Set()); // initiatives muted this session (optimistic hide; reset on settled refetch — a revived one re-shows)
+  const [trackedKeys, setTrackedKeys] = useState<Set<string>>(new Set()); // initiatives just-tracked this session (optimistic "Tracked"; reset on settled refetch — the real project_id takes over)
   const [sessionCleared, setSessionCleared] = useState(0); // this session's Done/Dismiss/Send → ring `cleared`
   const [activityOpen, setActivityOpen] = useState(false); // right-side Activity slide-over
   const [view, setViewState] = useState<HomeViewLens>('dashboard'); // Home lens: dashboard · timeline · projects
+  const [projectDetailOpen, setProjectDetailOpen] = useState(false); // a project deep-dive is open → hide the Home greeting header
   // Reflect the lens in the URL (?view=…) WITHOUT a reload (replaceState, not a soft nav) — deep-linkable,
   // survives refresh, and the switch feels instant (never "navigating to another screen").
   useEffect(() => {
@@ -1274,6 +1255,13 @@ export function HomeView() {
     if (v === 'dashboard') url.searchParams.delete('view'); else url.searchParams.set('view', v);
     window.history.replaceState({}, '', url);
   }, []);
+  // Clicking "Home" in the left nav while already on /home (viewing Timeline/Projects) fires this event
+  // (a plain <Link> can't reset the lens because the switcher tracks it via replaceState). Reset to Dashboard.
+  useEffect(() => {
+    const reset = () => setView('dashboard');
+    window.addEventListener('augmtd:home-reset', reset);
+    return () => window.removeEventListener('augmtd:home-reset', reset);
+  }, [setView]);
   // Sync-status indicator state (3 bits): `syncing` = a background load(true) is in flight; `lastUpdatedAt`
   // = when the last load succeeded (drives "Updated Nm ago"); `realtimeConnected` = the postgres_changes
   // channel is SUBSCRIBED (emerald live dot) vs. poll-only fallback (muted dot).
@@ -1365,6 +1353,7 @@ export function HomeView() {
         setDismissed(new Set());
         setClearedIds(new Set());
         setMutedKeys(new Set()); // server is authoritative (muted = suppressed; revived = re-included)
+        setTrackedKeys(new Set()); // server is authoritative (the refetched initiative now carries project_id)
       }
       // On a background refresh the server now counts this session's actions, so drop the transient
       // client ring bump to avoid double-counting.
@@ -1377,7 +1366,18 @@ export function HomeView() {
 
   useEffect(() => {
     aliveRef.current = true;
-    load();
+    // INSTANT: hydrate the last-known brief + team from localStorage (no skeleton flash on reload), then
+    // refresh in the BACKGROUND. First-ever load (no cache) falls back to the normal skeleton load.
+    const cachedBrief = loadLS<Brief>('aug-home-brief-v1');
+    if (cachedBrief) {
+      setBrief(cachedBrief);
+      const cachedTeam = loadLS<{ messages: TeamMsg[]; needsReview: TeamReview[] }>('aug-home-team-v1');
+      if (cachedTeam) setTeam(cachedTeam);
+      setLoading(false);
+      load(true);
+    } else {
+      load();
+    }
     // Keep the Home ALIVE: background-refetch when the tab regains focus/visibility, and on a gentle
     // interval while visible — so new mail / items / the ring update without a manual reload.
     const onVisible = () => { if (document.visibilityState === 'visible') load(true); };
@@ -1386,6 +1386,10 @@ export function HomeView() {
     const id = window.setInterval(() => { if (document.visibilityState === 'visible') load(true); }, 90_000);
     return () => { aliveRef.current = false; document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onVisible); window.clearInterval(id); };
   }, [load]);
+
+  // Persist brief + team to localStorage so the next reload hydrates instantly (see the mount effect above).
+  useEffect(() => { if (brief) saveLS('aug-home-brief-v1', brief); }, [brief]);
+  useEffect(() => { if (team) saveLS('aug-home-team-v1', team); }, [team]);
 
   // ── REALTIME liveness — subscribe to postgres_changes on the user's own inbox_items + commitments
   // (INSERT + UPDATE) so the Home reacts the instant a row is synced, instead of waiting up to 90s for
@@ -1532,6 +1536,9 @@ export function HomeView() {
   // project) — no optimistic removal; a background refresh reflects its projectId.
   const trackInitiative = async (init: ActiveInitiative) => {
     markActed();
+    // OPTIMISTIC: mark it tracked instantly (the tile flips to "Tracked" + the button disables) so it feels
+    // immediate — the background refetch below then confirms with the real project_id. Roll back on error.
+    setTrackedKeys((prev) => new Set(prev).add(init.key));
     try {
       const res = await fetch('/api/projects/accept-suggestion', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1540,7 +1547,10 @@ export function HomeView() {
       if (!res.ok) throw new Error();
       toast.success(`Tracking "${init.label}" as a project`);
       load(true);
-    } catch { toast.error('Could not create the project'); }
+    } catch {
+      setTrackedKeys((prev) => { const n = new Set(prev); n.delete(init.key); return n; });
+      toast.error('Could not create the project');
+    }
   };
   // Deep-link the chip's "Open in Projects" to land on THIS initiative's suggestion (?initiative=<key>).
   const openProjectsAt = (key: string) => {
@@ -1804,7 +1814,10 @@ export function HomeView() {
     <div className="relative flex-1 min-w-0 h-full flex overflow-hidden bg-[#fbfbfd]">
       <div className="flex-1 min-w-0 overflow-y-auto flex flex-col">
       <div className="w-full max-w-[1120px] mx-auto px-8 md:px-10 py-8 xl:py-10 flex flex-col flex-1">
-        {/* Header + narration + live status chips */}
+        {/* Header + narration + live status chips. HIDDEN when a project deep-dive is open — a project
+            detail owns the screen (its own back-link + title header), like the item deep-dive, so the day
+            greeting shouldn't sit above it. */}
+        {!projectDetailOpen && (
         <RiseIn>
           {/* Living orb — abstract morphing glow in the brand spectrum, signalling the brief is
               continuously alive. Sits left so the greeting + narrative use the full width. */}
@@ -1867,12 +1880,16 @@ export function HomeView() {
             </div>
           </div>
         </RiseIn>
+        )}
 
-        {/* TIMELINE lens — the unified work-item spine laid out by when (the floating switcher toggles). */}
-        {view === 'timeline' && <TimelineView />}
+        {/* TIMELINE lens — the unified work-item spine laid out by when (the floating switcher toggles). The
+            keyed RiseIn re-triggers the shared rise-in on each switch, so a lens change feels as smooth as
+            the dashboard (never an abrupt swap). */}
+        {view === 'timeline' && <RiseIn key="lens-timeline"><TimelineView /></RiseIn>}
 
-        {/* PROJECTS lens — initiatives grouping your work (goals + rules your coworkers respect). */}
-        {view === 'projects' && <ProjectsView />}
+        {/* PROJECTS lens — initiatives grouping your work (goals + rules your coworkers respect).
+            onDetailChange lets a project deep-dive hide the Home greeting above (deep-dive framing). */}
+        {view === 'projects' && <RiseIn key="lens-projects"><ProjectsView onDetailChange={setProjectDetailOpen} /></RiseIn>}
 
         {view === 'dashboard' && (<>
         {nothing && (
@@ -1900,7 +1917,7 @@ export function HomeView() {
                 actions stay in the lanes below; nothing is duplicated. */}
             {activeInitiatives.length > 0 && (
               <RiseIn>
-                <InitiativeStrip inits={activeInitiatives} onOpenProjects={openProjectsAt} onMute={muteInitiative} onTrack={trackInitiative} />
+                <InitiativeStrip inits={activeInitiatives} trackedKeys={trackedKeys} onOpenProjects={openProjectsAt} onMute={muteInitiative} onTrack={trackInitiative} />
               </RiseIn>
             )}
 
@@ -1919,6 +1936,7 @@ export function HomeView() {
               const noticeItems: DoItem[] = (b?.actionNotices ?? []).map((a) => ({
                 source: 'notice', key: `n-${a.itemId}`, entityId: a.itemId, href: `/item/${a.itemId}?kind=email`,
                 primary: a.who || null, ask: a.summary, second: 'Action needed',
+                dueDate: a.dueDate ?? null, overdue: !!a.dueDate && a.dueDate < new Date().toISOString().slice(0, 10),
               }));
               const commitItems: DoItem[] = looseCommitments.map((c) => ({
                 source: 'commitment', key: `c-${c.id}`, entityId: c.id, href: `/item/${c.id}?kind=commitment`,
@@ -1926,7 +1944,22 @@ export function HomeView() {
                 second: c.counterparty ? (/^from /i.test(c.counterparty) ? c.counterparty : `You owe ${c.counterparty}`) : null,
                 overdue: c.overdue, dueToday: c.dueToday, dueDate: c.dueDate ?? null, initiative: c.initiative ?? null, initiativeTotal: c.initiativeTotal ?? null,
               }));
-              const doItems = [...replyItems, ...noticeItems, ...commitItems];
+              // Order by URGENCY, not by type — otherwise dated actions/commitments get buried under all the
+              // replies and fall into the "N more" fold (a real "important item missing" bug). A STABLE sort
+              // by rank: overdue → due today → has a due date → undated; within a rank the source order holds
+              // (replies keep the synthesis order, then notices, then commitments). So a "confirm the dates by
+              // the 23rd" action surfaces above an undated reply.
+              const todayISO = new Date().toISOString().slice(0, 10);
+              const urgencyRank = (it: DoItem): number => {
+                if (it.overdue || (it.dueDate && it.dueDate < todayISO)) return 0;
+                if (it.dueToday || it.dueDate === todayISO) return 1;
+                if (it.dueDate) return 2;
+                return 3;
+              };
+              const doItems = [...replyItems, ...noticeItems, ...commitItems]
+                .map((it, i) => ({ it, i }))
+                .sort((a, b) => urgencyRank(a.it) - urgencyRank(b.it) || a.i - b.i)
+                .map((x) => x.it);
               // One node list (DoRows + the richer priority cards), capped with the shared Collapse.
               const nodes = [
                 ...doItems.map((it, i) => ({ key: it.key, node: (
@@ -1967,9 +2000,8 @@ export function HomeView() {
               );
             })()}
 
-            <RiseIn delay={120}>
-              <ProjectPulse onOpen={() => setView('projects')} />
-            </RiseIn>
+            {/* Project Pulse removed — redundant with the "In motion" strip at the top of the Home (both
+                answered "which initiatives are moving?") and the full Projects lens. One project cue, not two. */}
 
             {/* ── ZONE 3 · AMBIENT BAR — a sticky calm footer of count chips, pinned to the bottom of the
                 column so it's always reachable; the chosen section expands UPWARD. Calm at rest, one tap away. */}

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { generateItemPlan, classifyStep, detectAttachmentRequest, isReplyLikeStep, type ItemPlanKind, type ItemPlanTask } from '@/lib/home/item-plan';
+import { generateItemPlan, classifyStep, detectAttachmentRequest, isReplyLikeStep, stripReplyStepsIfReplied, type ItemPlanKind, type ItemPlanTask } from '@/lib/home/item-plan';
 import { PLAN_VERSION } from '@/lib/home/capability-map';
 import { buildItemContext } from '@/lib/home/item-context';
 import { getUnderstanding, type ItemRelevance } from '@/lib/inbox/item-understanding';
+import { computeThreadReplyState } from '@/lib/inbox/thread-resolution';
 
 export const maxDuration = 30;
 
@@ -46,21 +47,37 @@ async function buildContext(
 // understanding` — the SINGLE signal that keeps the generated plan coherent with the deep-dive's
 // primary surface (awareness → no phantom reply step). Only the inbox-item kinds carry it; a
 // meeting/commitment plan reasons freely (no reply-gate). Non-fatal: missing → null (today's behavior).
-async function getItemRelevance(
+// Plus: whether the user has ALREADY replied on this thread (their message is the latest). Structural
+// (direction + time only). Drives the plan's already-replied gate so a "draft the reply" step can't
+// survive the moment the user answers — even on a cached plan (stripped on serve). Only inbox kinds carry
+// a thread; a meeting/commitment plan has no reply-gate. Non-fatal: any failure → {relevance:null, false}.
+async function getItemReplyContext(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
   kind: Kind,
   entityId: string,
-): Promise<ItemRelevance | null> {
-  if (kind !== 'email' && kind !== 'awareness' && kind !== 'followup') return null;
+): Promise<{ relevance: ItemRelevance | null; alreadyReplied: boolean }> {
+  if (kind !== 'email' && kind !== 'awareness' && kind !== 'followup') return { relevance: null, alreadyReplied: false };
   try {
     const { data: item } = await supabase
       .from('inbox_items')
-      .select('source_data')
+      .select('source_data, created_at')
       .eq('id', entityId).eq('user_id', userId).maybeSingle();
-    return getUnderstanding(item)?.relevance ?? null;
+    const relevance = getUnderstanding(item)?.relevance ?? null;
+    const threadId = (item?.source_data as { thread_id?: string } | undefined)?.thread_id;
+    let alreadyReplied = false;
+    if (threadId) {
+      const { data: emails } = await supabase
+        .from('emails').select('is_from_user, received_at')
+        .eq('user_id', userId).eq('thread_id', threadId);
+      // alreadyReplied = the user's message is the LATEST on the thread AND came after the item appeared.
+      const since = item?.created_at ? new Date(item.created_at as string) : null;
+      const st = computeThreadReplyState((emails ?? []) as { is_from_user: boolean; received_at: string | null }[], since);
+      alreadyReplied = st.lastMessageFromUser && st.userReplied;
+    }
+    return { relevance, alreadyReplied };
   } catch {
-    return null;
+    return { relevance: null, alreadyReplied: false };
   }
 }
 
@@ -99,13 +116,19 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
     const existingVersion = existing ? ((existing as { version?: number }).version ?? 0) : null;
     const isStale = existing != null && existingVersion !== PLAN_VERSION;
+
+    // Reply context (relevance + whether the user has already answered the thread). Computed up front so
+    // it applies to BOTH a cached plan and a freshly generated one — a stale "draft the reply" step is
+    // stripped the moment the user has replied, without waiting for a regen.
+    const { relevance, alreadyReplied } = await getItemReplyContext(supabase, user.id, kind, entityId);
+
     if (existing && Array.isArray(existing.tasks) && existing.tasks.length && !isStale) {
-      return NextResponse.json({ tasks: existing.tasks as ItemPlanTask[] });
+      const cached = alreadyReplied ? stripReplyStepsIfReplied(existing.tasks as ItemPlanTask[]) : (existing.tasks as ItemPlanTask[]);
+      return NextResponse.json({ tasks: cached });
     }
 
     const context = (await buildContext(supabase, user.id, kind, entityId)) || '';
-    const relevance = await getItemRelevance(supabase, user.id, kind, entityId);
-    const plan = await generateItemPlan(supabase, user.id, { kind, entityId, context, relevance });
+    const plan = await generateItemPlan(supabase, user.id, { kind, entityId, context, relevance, alreadyReplied });
     // task-workflows S3: mark any "provide a document" [You] step as an attachment request up front.
     plan.tasks = plan.tasks.map(withAttachmentRequest);
 

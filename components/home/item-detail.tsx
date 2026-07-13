@@ -28,6 +28,7 @@ import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-me
 import ReplyEditor from '@/components/inbox/reply-editor';
 import KbFilePicker from '@/components/inbox/kb-file-picker';
 import { proposeOwner, coarseCapabilityKind, type ProposedOwner } from '@/lib/home/capability-map';
+import { loadLS, saveLS } from '@/lib/utils/local-cache';
 
 // ── Shared visual language across ALL deep-dive variants (coherence pass #3). One header, one
 // section-label token, one card token — so email / meeting / commitment / follow-up read identically.
@@ -1386,8 +1387,11 @@ function useItemPlan(
   planKind: 'email' | 'meeting' | 'commitment' | 'awareness' | 'followup',
   entityId: string,
 ): ItemPlan {
-  const [tasks, setTasks] = useState<PlanTask[] | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Instant-load: hydrate the plan (drives the two-column panel) from localStorage so the panel appears
+  // instantly on re-open, then refresh in the background. A cached plan → skip the loading skeleton.
+  const planLSKey = `aug-item-plan-${planKind}-${entityId}`;
+  const [tasks, setTasks] = useState<PlanTask[] | null>(() => loadLS<PlanTask[]>(planLSKey));
+  const [loading, setLoading] = useState(() => loadLS<PlanTask[]>(planLSKey) == null);
   const [failed, setFailed] = useState(false);
   const [pending, setPending] = useState<Set<string>>(new Set());
   const [classifyingId, setClassifyingId] = useState<string | null>(null);
@@ -1406,7 +1410,8 @@ function useItemPlan(
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
+    // Only show the skeleton when there's nothing hydrated from cache — otherwise refresh silently.
+    if (tasksRef.current == null) setLoading(true);
     setFailed(false);
     fetch('/api/items/plan', {
       method: 'POST',
@@ -1416,12 +1421,18 @@ function useItemPlan(
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((d: { tasks?: PlanTask[] }) => {
         if (!alive) return;
-        setTasks(Array.isArray(d.tasks) ? d.tasks : []);
+        const next = Array.isArray(d.tasks) ? d.tasks : [];
+        setTasks(next);
+        saveLS(planLSKey, next);
       })
-      .catch(() => { if (alive) setFailed(true); })
+      .catch(() => { if (alive && tasksRef.current == null) setFailed(true); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [planKind, entityId]);
+  }, [planKind, entityId, planLSKey]);
+
+  // Persist every plan mutation (toggle done/dismiss, add/edit, reorder, reassign) so a re-open restores
+  // the latest state instantly — the same snapshot the background refresh will reconcile against.
+  useEffect(() => { if (tasks) saveLS(planLSKey, tasks); }, [tasks, planLSKey]);
 
   const toggle = (task: PlanTask) => {
     if (task.actor !== 'you' || pending.has(task.id)) return;
@@ -3311,7 +3322,9 @@ function EmailActionPalette({
 
 function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
   const router = useRouter();
-  const [thread, setThread] = useState<ThreadData | null>(null);
+  // Instant-load: hydrate the thread from the last-known localStorage snapshot (no skeleton flash on a
+  // re-open), then refresh in the background below. Keyed per item id so each deep-dive restores its own.
+  const [thread, setThread] = useState<ThreadData | null>(() => loadLS<ThreadData>(`aug-item-thread-${id}`));
   const [threadErr, setThreadErr] = useState(false);
 
   const [draft, setDraft] = useState<string | null>(null);   // the prepared plain-text draft (seed + Copy)
@@ -3356,6 +3369,7 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
       .then((d: ThreadData) => {
         if (!alive) return;
         setThread(d);
+        saveLS(`aug-item-thread-${id}`, d);
         // Seed the primary surface from the understood relevance (only until the user touches the
         // composer, so a late thread load never yanks the box shut after they opened it).
         const rel = d.relevance ?? null;
@@ -3740,7 +3754,8 @@ function itemText(x: unknown): string {
 }
 
 function MeetingDetail({ id }: { id: string }) {
-  const [data, setData] = useState<MeetingFull | null>(null);
+  // Instant-load: hydrate the meeting from localStorage (no skeleton flash on re-open), then refresh below.
+  const [data, setData] = useState<MeetingFull | null>(() => loadLS<MeetingFull>(`aug-item-meeting-${id}`));
   const [err, setErr] = useState(false);
   const [composing, setComposing] = useState(false); // the follow-up compose panel (Draft email)
   // Per-item cleared state (Done/Dismiss) → the row fades then hides. Keyed by inbox item id.
@@ -3755,7 +3770,7 @@ function MeetingDetail({ id }: { id: string }) {
     let alive = true;
     fetch(`/api/meetings/${id}/full`)
       .then(r => (r.ok ? r.json() : Promise.reject()))
-      .then((d: MeetingFull) => { if (alive) setData(d); })
+      .then((d: MeetingFull) => { if (alive) { setData(d); saveLS(`aug-item-meeting-${id}`, d); } })
       .catch(() => { if (alive) setErr(true); });
     return () => { alive = false; };
   }, [id]);
@@ -3973,7 +3988,8 @@ type CommitmentData = {
 
 function CommitmentDetail({ id }: { id: string }) {
   const router = useRouter();
-  const [data, setData] = useState<CommitmentData | null>(null);
+  // Instant-load: hydrate the commitment from localStorage (no skeleton flash on re-open), then refresh below.
+  const [data, setData] = useState<CommitmentData | null>(() => loadLS<CommitmentData>(`aug-item-commitment-${id}`));
   const [err, setErr] = useState(false);
   const [acting, setActing] = useState(false);
   const [done, setDone] = useState<'done' | 'dismissed' | null>(null);
@@ -3988,7 +4004,7 @@ function CommitmentDetail({ id }: { id: string }) {
     let alive = true;
     fetch(`/api/commitments/${id}`)
       .then(r => (r.ok ? r.json() : Promise.reject()))
-      .then((d: CommitmentData) => { if (alive) setData(d); })
+      .then((d: CommitmentData) => { if (alive) { setData(d); saveLS(`aug-item-commitment-${id}`, d); } })
       .catch(() => { if (alive) setErr(true); });
     return () => { alive = false; };
   }, [id]);
@@ -4146,7 +4162,9 @@ function CommitmentDetail({ id }: { id: string }) {
 
 function FollowUpDetail({ id }: { id: string }) {
   const router = useRouter();
-  const [thread, setThread] = useState<ThreadData | null>(null);
+  // Instant-load: hydrate the follow-up thread from localStorage (no skeleton flash on re-open), then
+  // refresh in the background. Distinct key from the email deep-dive (different endpoint / same id space).
+  const [thread, setThread] = useState<ThreadData | null>(() => loadLS<ThreadData>(`aug-item-followup-${id}`));
   const [threadErr, setThreadErr] = useState(false);
 
   const [draft, setDraft] = useState<string | null>(null);   // the plain-text nudge draft (seed + Copy)
@@ -4167,7 +4185,7 @@ function FollowUpDetail({ id }: { id: string }) {
     let alive = true;
     fetch(`/api/commitments/${id}/thread`)
       .then(r => (r.ok ? r.json() : Promise.reject()))
-      .then((d: ThreadData) => { if (alive) setThread(d); })
+      .then((d: ThreadData) => { if (alive) { setThread(d); saveLS(`aug-item-followup-${id}`, d); } })
       .catch(() => { if (alive) setThreadErr(true); });
 
     // Draft a nudge (plain text) — same endpoint the Home "Draft nudge" uses.

@@ -8,6 +8,7 @@ import {
 } from '@heroicons/react/24/outline';
 import type { WorkItem, WorkItemKind } from '@/lib/work-items/model';
 import { BUCKET_ORDER, BUCKET_LABELS, type TimeBucket } from '@/lib/work-items/timeframe';
+import { loadLS, saveLS } from '@/lib/utils/local-cache';
 
 // ── The Home TIMELINE — a simple, intuitive "what's on your plate, by when". NOT a duration-Gantt:
 // AUGMTD items are point obligations, most with no date, so we lay time out left→right as STATIONS
@@ -125,10 +126,14 @@ export default function TimelineView() {
 
   useEffect(() => {
     let alive = true;
+    // INSTANT: hydrate the last-known timeline from localStorage (no skeleton on reload), then refresh in
+    // the background. The timeline spine (buildWorkItems) is expensive, so this matters most here.
+    const cached = loadLS<{ items: WorkItem[]; projectsById: ProjectMap }>('aug-timeline-v1');
+    if (cached?.items) { setItems(cached.items); setProjectMap(cached.projectsById ?? {}); }
     fetch('/api/home/timeline')
       .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((d) => { if (alive) { setItems(d.items ?? []); setProjectMap(d.projectsById ?? {}); } })
-      .catch(() => { if (alive) setErr(true); });
+      .then((d) => { if (alive) { setItems(d.items ?? []); setProjectMap(d.projectsById ?? {}); saveLS('aug-timeline-v1', { items: d.items ?? [], projectsById: d.projectsById ?? {} }); } })
+      .catch(() => { if (alive && !cached?.items) setErr(true); });
     return () => { alive = false; };
   }, []);
 
