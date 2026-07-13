@@ -258,7 +258,10 @@ export default function ProjectsView() {
   const [suggestions, setSuggestions] = useState<Suggestion[] | null>(suggestionsCache); // null = still loading
   const [selected, setSelected] = useState<Project | null>(null);
   const [mode, setMode] = useState<'portfolio' | 'timeline'>('portfolio');
-  const [statusView, setStatusView] = useState<ProjectStatus>('active'); // portfolio filter: Active · Done · Archived
+  // The ONE filter: Suggested is just the pre-accepted lifecycle state, alongside Active · Done · Archived —
+  // so a long suggestions list never buries the real projects (one section shows at a time).
+  const [statusView, setStatusView] = useState<ProjectStatus | 'suggested'>('active');
+  const autoPicked = useRef(false); // only auto-pick the initial tab once (never override a user choice)
   const [suggestionsUpdatedAt, setSuggestionsUpdatedAt] = useState<Date | null>(null);
   const [refreshingSuggestions, setRefreshingSuggestions] = useState(false);
   const [showAllSuggestions, setShowAllSuggestions] = useState(false);
@@ -274,8 +277,17 @@ export default function ProjectsView() {
     }
     // Deep-link: land on a specific initiative's suggestion (from the In-motion "Open in Projects").
     const target = new URLSearchParams(window.location.search).get('initiative');
-    if (target) { setHighlightKey(target); setShowAllSuggestions(true); }
+    if (target) { setHighlightKey(target); setShowAllSuggestions(true); setStatusView('suggested'); autoPicked.current = true; }
   }, []);
+
+  // Smart default tab: land on Active when there ARE active projects; else on Suggested (a new user sees
+  // what AUGMTD found). Runs once, when both loads settle, and never overrides a manual switch.
+  useEffect(() => {
+    if (autoPicked.current || projects === null || suggestions === null) return;
+    autoPicked.current = true;
+    const activeCount = projects.filter((p) => p.status === 'active').length;
+    if (activeCount === 0 && (suggestions ?? []).length > 0) setStatusView('suggested');
+  }, [projects, suggestions]);
 
   // Once the highlighted suggestion is in the DOM, scroll it into view + let the ring fade after a moment.
   useEffect(() => {
@@ -383,86 +395,85 @@ export default function ProjectsView() {
         <PortfolioGantt onOpenProject={(id) => { const p = (projects ?? []).find((x) => x.id === id); if (p) setSelected(p); }} />
       )}
 
-      {mode === 'portfolio' && (<>
-      {/* Suggested clusters — AUGMTD groups your work automatically; you confirm. */}
-      {(suggestions === null || visibleSuggestions.length > 0) && (
-        <div className="mb-7">
-          <div className="flex items-center gap-1.5 mb-3">
-            <SparklesIcon className={`w-3.5 h-3.5 text-indigo-500 ${suggestions === null ? 'animate-pulse' : ''}`} />
-            <h3 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-indigo-600/80">Possible projects</h3>
-            {suggestions === null ? (
-              <span className="text-[11px] text-neutral-400 animate-pulse">re-reading ungrouped work…</span>
-            ) : (
-              <span className="ml-1 flex items-center gap-2">
-                {suggestionsUpdatedAt && <span className="text-[10.5px] font-normal text-neutral-300">updated just now</span>}
-                <button onClick={refreshSuggestions} title="Re-read ungrouped work" className={`text-neutral-300 hover:text-indigo-600 transition-colors ${refreshingSuggestions ? 'animate-spin text-indigo-400' : ''}`}><ArrowPathIcon className="w-3.5 h-3.5" /></button>
-              </span>
-            )}
-          </div>
-          {suggestions === null ? (
-            <div className="space-y-2">{[0, 1, 2].map((i) => <div key={i} className="h-[52px] rounded-xl border border-neutral-200/70 bg-neutral-50/60 animate-pulse" />)}</div>
-          ) : (() => {
-            const CAP = 6;
-            const lead = visibleSuggestions.slice(0, CAP);
-            const rest = visibleSuggestions.slice(CAP);
-            const shown = showAllSuggestions ? visibleSuggestions : lead;
-            return (
-              <div className="space-y-2">
-                {shown.map((s) => (
-                  <div key={s.key} ref={(el) => { rowRefs.current[s.key] = el; }}>
-                    <SuggestionRow s={s} highlight={highlightKey === s.key} onCreate={(draft) => acceptSuggestion(s, draft)} onMute={() => mute(s)} />
-                  </div>
-                ))}
-                {rest.length > 0 && (
-                  <button onClick={() => setShowAllSuggestions((v) => !v)} className="text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700 transition-all duration-150 ease-out pt-0.5">
-                    {showAllSuggestions ? 'Show less' : `Show ${rest.length} more`}
-                  </button>
-                )}
-              </div>
-            );
-          })()}
-        </div>
-      )}
-
-      {/* Portfolio status filter — Active is the working set; Done + Archived keep the record out of the way.
-          Only the buckets that have projects show a tab (no empty "Archived" tab when there's nothing there). */}
-      {projects !== null && projects.length > 0 && (() => {
-        const counts = { active: 0, done: 0, archived: 0 } as Record<ProjectStatus, number>;
-        for (const p of projects) counts[p.status]++;
-        const tabs: ProjectStatus[] = (['active', 'done', 'archived'] as ProjectStatus[]).filter((s) => counts[s] > 0 || s === 'active');
+      {mode === 'portfolio' && (() => {
+        // ONE filter bar: Suggested + the lifecycle states. Only tabs with content show (Active always).
+        const activeC = (projects ?? []).filter((p) => p.status === 'active').length;
+        const doneC = (projects ?? []).filter((p) => p.status === 'done').length;
+        const archC = (projects ?? []).filter((p) => p.status === 'archived').length;
+        const suggC = visibleSuggestions.length;
+        const suggLoading = suggestions === null;
+        type Tab = { key: ProjectStatus | 'suggested'; label: string; count: number | null; suggested?: boolean };
+        const tabs: Tab[] = [
+          ...(suggC > 0 || suggLoading ? [{ key: 'suggested' as const, label: 'Suggested', count: suggLoading ? null : suggC, suggested: true }] : []),
+          { key: 'active' as const, label: 'Active', count: activeC },
+          ...(doneC > 0 ? [{ key: 'done' as const, label: 'Done', count: doneC }] : []),
+          ...(archC > 0 ? [{ key: 'archived' as const, label: 'Archived', count: archC }] : []),
+        ];
+        // Fall back to Active if the current tab has no home (e.g. accepted the last suggestion).
+        const view = tabs.some((t) => t.key === statusView) ? statusView : 'active';
         return (
-          <div className="flex items-center gap-1 mb-3">
-            {tabs.map((s) => (
-              <button key={s} onClick={() => setStatusView(s)} className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[12px] font-medium transition-all duration-150 ease-out ${statusView === s ? 'bg-indigo-50 text-indigo-700' : 'text-neutral-400 hover:text-neutral-700 hover:bg-neutral-50'}`}>
-                {s === 'active' ? 'Active' : s === 'done' ? 'Done' : 'Archived'}
-                <span className="tabular-nums text-[11px] opacity-70">{counts[s]}</span>
-              </button>
-            ))}
-          </div>
+          <>
+            <div className="flex items-center gap-1 mb-4">
+              {tabs.map((t) => (
+                <button key={t.key} onClick={() => setStatusView(t.key)} className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[12px] font-medium transition-all duration-150 ease-out ${view === t.key ? (t.suggested ? 'bg-indigo-50 text-indigo-700' : 'bg-indigo-50 text-indigo-700') : 'text-neutral-400 hover:text-neutral-700 hover:bg-neutral-50'}`}>
+                  {t.suggested && <SparklesIcon className={`w-3.5 h-3.5 ${suggLoading ? 'animate-pulse' : ''}`} />}
+                  {t.label}
+                  {t.count != null && <span className="tabular-nums text-[11px] opacity-70">{t.count}</span>}
+                </button>
+              ))}
+              {view === 'suggested' && !suggLoading && (
+                <button onClick={refreshSuggestions} title="Re-read ungrouped work" className={`ml-1 text-neutral-300 hover:text-indigo-600 transition-colors ${refreshingSuggestions ? 'animate-spin text-indigo-400' : ''}`}><ArrowPathIcon className="w-3.5 h-3.5" /></button>
+              )}
+            </div>
+
+            {/* SUGGESTED — the AI-clustered rows (fold past 6). */}
+            {view === 'suggested' ? (
+              suggLoading ? (
+                <div className="space-y-2">{[0, 1, 2].map((i) => <div key={i} className="h-[52px] rounded-xl border border-neutral-200/70 bg-neutral-50/60 animate-pulse" />)}</div>
+              ) : visibleSuggestions.length === 0 ? (
+                <p className="text-[13px] text-neutral-400 py-6 text-center">No suggestions right now — you&apos;ve grouped or dismissed them all.</p>
+              ) : (() => {
+                const CAP = 6;
+                const rest = visibleSuggestions.slice(CAP);
+                const shown = showAllSuggestions ? visibleSuggestions : visibleSuggestions.slice(0, CAP);
+                return (
+                  <div className="space-y-2">
+                    {shown.map((s) => (
+                      <div key={s.key} ref={(el) => { rowRefs.current[s.key] = el; }}>
+                        <SuggestionRow s={s} highlight={highlightKey === s.key} onCreate={(draft) => acceptSuggestion(s, draft)} onMute={() => mute(s)} />
+                      </div>
+                    ))}
+                    {rest.length > 0 && (
+                      <button onClick={() => setShowAllSuggestions((v) => !v)} className="text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700 transition-all duration-150 ease-out pt-0.5">
+                        {showAllSuggestions ? 'Show less' : `Show ${rest.length} more`}
+                      </button>
+                    )}
+                  </div>
+                );
+              })()
+            ) : projects === null ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {[0, 1, 2].map((i) => <div key={i} className="h-[104px] rounded-xl bg-gradient-to-br from-neutral-100 to-neutral-50 animate-pulse" />)}
+              </div>
+            ) : activeC + doneC + archC === 0 ? (
+              <EmptyState
+                icon={FolderIcon}
+                title="No projects yet"
+                description={suggC > 0 ? `AUGMTD found ${suggC} possible project${suggC === 1 ? '' : 's'} from your activity — open Suggested to create one, or start your own.` : 'Create a project to group related emails, commitments, and your team’s work.'}
+                action={<Button size="sm" onClick={() => setModal({ open: true, edit: null })}><PlusIcon className="w-4 h-4" />New project</Button>}
+              />
+            ) : projects.filter((p) => p.status === view).length === 0 ? (
+              <p className="text-[13px] text-neutral-400 py-6 text-center">No {view} projects.</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {projects.filter((p) => p.status === view).map((p) => (
+                  <ProjectCard key={p.id} p={p} onOpen={() => setSelected(p)} onEdit={() => setModal({ open: true, edit: p })} onDelete={() => onDelete(p.id)} onStatus={(s) => setStatus(p.id, s)} />
+                ))}
+              </div>
+            )}
+          </>
         );
       })()}
-
-      {projects === null ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {[0, 1, 2].map((i) => <div key={i} className="h-[104px] rounded-xl bg-gradient-to-br from-neutral-100 to-neutral-50 animate-pulse" />)}
-        </div>
-      ) : projects.length === 0 ? (
-        <EmptyState
-          icon={FolderIcon}
-          title="No projects yet"
-          description="Create a project to group related emails, commitments, and your team's work — or let AUGMTD suggest them from your activity."
-          action={<Button size="sm" onClick={() => setModal({ open: true, edit: null })}><PlusIcon className="w-4 h-4" />New project</Button>}
-        />
-      ) : projects.filter((p) => p.status === statusView).length === 0 ? (
-        <p className="text-[13px] text-neutral-400 py-6 text-center">No {statusView} projects.</p>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {projects.filter((p) => p.status === statusView).map((p) => (
-            <ProjectCard key={p.id} p={p} onOpen={() => setSelected(p)} onEdit={() => setModal({ open: true, edit: p })} onDelete={() => onDelete(p.id)} onStatus={(s) => setStatus(p.id, s)} />
-          ))}
-        </div>
-      )}
-      </>)}
 
       {modal.open && <ProjectModal initial={modal.edit} onClose={() => setModal({ open: false, edit: null })} onSaved={onSaved} />}
     </div>

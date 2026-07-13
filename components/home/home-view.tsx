@@ -84,29 +84,43 @@ function InitiativeStrip({ inits, onOpenProjects, onMute, onTrack }: { inits: Ac
   const chips = marquee ? [...shown, ...shown] : shown;
   return (
     <section>
-      <Label count={inits.length} icon={FolderIcon}>In motion</Label>
-      <div className="relative -mx-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div ref={trackRef} className={`flex items-center gap-2 px-1 ${marquee ? `w-max animate-[augMarquee_50s_linear_infinite] hover:[animation-play-state:paused] motion-reduce:animate-none motion-reduce:w-full ${openKey ? '[animation-play-state:paused]' : ''}` : ''}`}>
+      <Label count={inits.length} icon={FolderIcon}>Your projects</Label>
+      <div className="relative -mx-1 overflow-x-auto py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div ref={trackRef} className={`flex items-stretch gap-2 px-1 ${marquee ? `w-max animate-[augMarquee_50s_linear_infinite] hover:[animation-play-state:paused] motion-reduce:animate-none motion-reduce:w-full ${openKey ? '[animation-play-state:paused]' : ''}` : ''}`}>
           {chips.map((i, idx) => {
             const t = GROUP_STATE_TONE[STATE_TONE[i.state]];
             const isOpen = openKey === i.key;
             const count = i.actionCount + i.waitingCount;
+            const next = i.actions[0]?.title;
+            // A rectangular project TILE (distinct from a to-do row on purpose — this is a project glance):
+            // name + state·count, and the next move a pill couldn't show.
             return (
               <button
                 key={`${i.key}-${idx}`}
                 onClick={() => setOpenKey(isOpen ? null : i.key)}
                 title={`${i.label} · ${i.stateLabel}`}
-                className={`flex-shrink-0 inline-flex items-center gap-2 rounded-full h-9 pl-2.5 pr-3 border transition-all duration-150 ease-out ${isOpen ? 'border-indigo-300 bg-indigo-50' : i.state === 'awareness' ? 'border-neutral-200/70 bg-white/60 hover:bg-neutral-50' : 'border-neutral-200/80 bg-white hover:border-indigo-200 hover:bg-indigo-50/50'}`}
+                className={`flex-shrink-0 w-[212px] text-left rounded-xl border px-3 py-2.5 transition-colors duration-150 ease-out ${isOpen ? 'border-indigo-300 bg-indigo-50/50' : i.state === 'awareness' ? 'border-neutral-200/70 bg-white/60 hover:bg-neutral-50' : 'border-neutral-200/80 bg-white hover:border-indigo-300 hover:bg-indigo-50/30'}`}
               >
-                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${t.dot}`} />
-                <span className={`text-[13px] max-w-[170px] truncate ${i.state === 'awareness' ? 'font-normal text-neutral-500' : 'font-medium text-neutral-800'}`}>{i.label}</span>
-                {i.projectId && <FolderIcon className="w-3 h-3 flex-shrink-0 text-indigo-400" aria-label="Tracked as a project" />}
-                {count > 0 && <span className="text-[11px] text-neutral-400 tabular-nums">{count}</span>}
+                <div className="flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${t.dot}`} />
+                  <span className={`text-[13px] truncate ${i.state === 'awareness' ? 'font-normal text-neutral-500' : 'font-semibold text-neutral-800'}`}>{i.label}</span>
+                  {i.projectId && (
+                    <span className="ml-auto flex-shrink-0 inline-flex items-center gap-0.5 text-[9px] font-semibold uppercase tracking-wide text-indigo-500 bg-indigo-50 rounded px-1 py-0.5" title="Tracked as a project">
+                      <FolderIcon className="w-2.5 h-2.5" />Tracked
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 text-[11px] text-neutral-400">
+                  <span className={`font-medium ${t.text}`}>{i.stateLabel}</span>{count > 0 && ` · ${count} open`}
+                </div>
+                <div className="mt-0.5 text-[11.5px] text-neutral-500 truncate">
+                  {next ? <>Next: {next}</> : <span className="text-neutral-300">Nothing needed now</span>}
+                </div>
               </button>
             );
           })}
           {quiet.length > 0 && (
-            <button onClick={() => setShowQuiet((v) => !v)} className="flex-shrink-0 inline-flex items-center h-9 px-3 text-[12.5px] font-medium text-neutral-400 hover:text-indigo-600 transition-all duration-150 ease-out">
+            <button onClick={() => setShowQuiet((v) => !v)} className="flex-shrink-0 self-center inline-flex items-center h-9 px-3 text-[12.5px] font-medium text-neutral-400 hover:text-indigo-600 transition-all duration-150 ease-out">
               {showQuiet ? 'Show less' : `+${quiet.length} quiet`}
             </button>
           )}
@@ -432,7 +446,9 @@ function DayClearedRing({ cleared, needYou }: { cleared: number; needYou: number
       </div>
       <div className="hidden sm:flex flex-col leading-tight pr-0.5">
         <span className="text-[10px] font-semibold uppercase tracking-[0.09em] text-neutral-400">Today</span>
-        <span className={`text-[12.5px] font-medium mt-0.5 ${allClear ? 'text-emerald-600' : 'text-neutral-700'}`}>{allClear ? 'All clear' : 'open for you'}</span>
+        {/* Legend that explains BOTH the ring (progress) and the centre number (what's left): "N of M done".
+            The centre shows what still needs you; this line shows how much of the day you've cleared. */}
+        <span className={`text-[12.5px] font-medium mt-0.5 ${allClear ? 'text-emerald-600' : 'text-neutral-700'}`}>{allClear ? 'All clear' : `${cleared} of ${total} done`}</span>
       </div>
     </div>
   );
@@ -634,7 +650,7 @@ function ExpandableRows<T>({ items, limit = 4, render }: { items: T[]; limit?: n
       ))}
       {more > 0 && (
         <div className="col-span-full pt-1">
-          <button onClick={() => setShowAll((v) => !v)} className="text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700 transition-all duration-150 ease-out">{showAll ? 'Show less' : `Show ${more} more`}</button>
+          <button onClick={() => setShowAll((v) => !v)} className="inline-flex items-center gap-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700 transition-colors duration-150 ease-out">{showAll ? 'See less' : `${more} more`}<ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${showAll ? '-rotate-90' : 'rotate-90'}`} /></button>
         </div>
       )}
     </>
@@ -1029,6 +1045,86 @@ function ActionNoticeRow({ a, onDismiss, onUndoInbox }: { a: { itemId: string; w
   );
 }
 
+// ── Unified "Do" row — the ONE component for everything you owe (an email reply, an action notice, or a
+// commitment). A leading TYPE ICON carries what used to be a whole separate section, so replies /
+// notices / commitments read as one consistent list instead of a list + a card + a grid. Reply and notice
+// sources act via the inbox endpoints (complete/dismiss); a commitment via useCommitmentAct.
+type DoSource = 'reply' | 'notice' | 'commitment';
+type DoItem = {
+  source: DoSource; key: string; entityId: string; href: string;
+  primary?: string | null;   // sender / null (a commitment carries its who in `second`)
+  ask: string;               // the actionable line (synthesized ask / summary / description)
+  second?: string | null;    // subject / "You owe X · ↳ initiative" / "Action needed"
+  when?: string | null; effort?: 'quick' | 'medium' | 'deep' | null; dueDate?: string | null;
+  overdue?: boolean; dueToday?: boolean; initiative?: string | null; initiativeTotal?: number | null;
+};
+const DO_META: Record<DoSource, { Icon: React.ElementType; ring: string; text: string }> = {
+  reply:      { Icon: EnvelopeIcon,    ring: 'bg-indigo-50',   text: 'text-indigo-500' },
+  notice:     { Icon: BellAlertIcon,   ring: 'bg-amber-50',    text: 'text-amber-600' },
+  commitment: { Icon: CheckCircleIcon, ring: 'bg-neutral-100', text: 'text-neutral-500' },
+};
+function DoRow({ item, emphasis = false, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment }: {
+  item: DoItem; emphasis?: boolean;
+  onDismissInbox?: (id: string) => void; onClearedCommitment?: (id: string) => void;
+  onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void;
+  onUndoCommitment?: (message: string, id: string) => void;
+}) {
+  const router = useRouter();
+  const isCommit = item.source === 'commitment';
+  const inbox = useExit();
+  const commit = useCommitmentAct(isCommit ? item.entityId : undefined, onClearedCommitment, onUndoCommitment);
+  const [acting, setActing] = useState(false);
+  useEffect(() => { if (inbox.removed) onDismissInbox?.(item.entityId); }, [inbox.removed]); // eslint-disable-line react-hooks/exhaustive-deps
+  const removed = isCommit ? commit.removed : inbox.removed;
+  const exiting = isCommit ? commit.exiting : inbox.exiting;
+
+  const actInbox = async (kind: 'complete' | 'dismiss', e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (acting || !item.entityId) return;
+    setActing(true); inbox.startExit();
+    onUndoInbox?.(kind === 'complete' ? 'Marked done' : 'Dismissed', item.entityId, [item.entityId]);
+    try { await fetch(`/api/inbox/${item.entityId}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) }); } finally { setActing(false); }
+  };
+  const done = (e?: React.MouseEvent) => { e?.stopPropagation(); if (isCommit) commit.act('done'); else actInbox('complete', e); };
+  const drop = (e?: React.MouseEvent) => { e?.stopPropagation(); if (isCommit) commit.act('dismissed'); else actInbox('dismiss', e); };
+  const open = () => router.push(item.href);
+
+  if (removed) return null;
+  const { Icon, ring, text } = DO_META[item.source];
+  const iconTone = isCommit && item.overdue ? 'text-rose-500' : text;
+  const badge = item.overdue ? 'Overdue' : item.dueToday ? 'Today' : (isCommit && item.dueDate) ? fmtDue(item.dueDate) : null;
+  const busy = acting || commit.acting;
+  return (
+    <div className={`group rounded-xl border bg-white transition-all duration-300 ease-out hover:shadow-[0_4px_20px_-4px_rgba(0,0,0,0.08)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/70 hover:border-neutral-300'}`}>
+      <div role="button" tabIndex={0} onClick={open}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
+        className="w-full flex items-start gap-3 p-4 text-left cursor-pointer">
+        <span className={`flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-lg ${ring} ${iconTone}`}><Icon className="w-4 h-4" /></span>
+        <div className="min-w-0 flex-1">
+          {emphasis && <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-500 mb-1"><SparklesIcon className="w-3 h-3" />Start here</p>}
+          <div className="flex items-baseline gap-2">
+            <p className={`${emphasis ? 'text-[14.5px]' : 'text-[13.5px]'} font-semibold text-neutral-900 leading-snug min-w-0 truncate`}>
+              {item.primary && <>{item.primary}<span className="font-normal text-neutral-400"> · </span></>}<span className="font-semibold text-neutral-800">{item.ask}</span>
+            </p>
+            <span className="flex-shrink-0 ml-auto flex items-center gap-2">
+              {badge && <span className={`text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 ${item.overdue ? 'bg-rose-50 text-rose-600' : item.dueToday ? 'bg-amber-50 text-amber-600' : 'bg-neutral-100 text-neutral-500'}`}>{badge}</span>}
+              {!badge && <EffortDate effort={item.effort} dueDate={item.dueDate} overdue={!!item.dueDate && item.dueDate < new Date().toISOString().slice(0, 10)} />}
+              <InitiativeTag initiative={item.initiative} total={item.initiativeTotal} />
+              {item.when && <span className="text-[11px] text-neutral-300 tabular-nums">{item.when}</span>}
+            </span>
+          </div>
+          {item.second && <p className={`${emphasis ? 'text-[12.5px]' : 'text-[12px]'} text-neutral-500 mt-0.5 leading-snug line-clamp-1`}>{item.second}</p>}
+        </div>
+        <span className="flex-shrink-0 flex items-center gap-2.5 mt-0.5">
+          <button onClick={done} disabled={busy} title="Mark done" className="text-neutral-300 hover:text-emerald-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✓</button>
+          <button onClick={drop} disabled={busy} title="Dismiss — won't show again" className="text-neutral-300 hover:text-rose-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✕</button>
+          <ArrowRightIcon className="w-3.5 h-3.5 text-neutral-200 group-hover:text-indigo-400 transition-colors" />
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // Smooth height collapse — the shared `grid-rows-[0fr]→[1fr]` + opacity pattern, so every expand/collapse
 // in the Home grows and shrinks smoothly (one motion language). Content stays mounted; only its height +
 // opacity animate. Honors reduced-motion via the transition (no transform, so it degrades to instant).
@@ -1053,32 +1149,34 @@ function AmbientBar({ sections }: { sections: AmbientSection[] }) {
   if (!shown.length) return null;
   const active = shown.find((s) => s.key === open);
   return (
-    <div className="sticky bottom-0 z-20 -mx-8 md:-mx-10 px-8 md:px-10 pt-3 pb-4 border-t border-neutral-200/70 bg-[#fbfbfd]/85 backdrop-blur-md">
+    <div className="mt-auto sticky bottom-0 z-20 -mx-8 md:-mx-10 -mb-8 xl:-mb-10 px-8 md:px-10 pt-3 pb-4 border-t border-neutral-200/70 bg-[#fbfbfd]/85 backdrop-blur-md">
       {active && (
         <RiseIn key={active.key}>
           <div className="mb-3 max-h-[46vh] overflow-y-auto [scrollbar-width:thin]">{active.node}</div>
         </RiseIn>
       )}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="inline-flex items-center gap-1.5 mr-1">
-          <EyeIcon className="w-3.5 h-3.5 text-neutral-400" />
-          <span className="aug-eyebrow">Around you</span>
+      {/* ONE dense line — a status-bar strip (Bloomberg-terminal density, our tokens): a small lead label,
+          then hairline-separated `count label` segments, no wrap (horizontal scroll if truly needed). Click
+          a segment → it expands UPWARD (chevron flips). */}
+      <div className="flex items-center justify-center whitespace-nowrap">
+        <span className="flex items-center gap-1.5 flex-shrink-0 pr-4 text-neutral-400">
+          <EyeIcon className="w-3.5 h-3.5" /><span className="aug-eyebrow">Also happening</span>
         </span>
-        {shown.map((s) => {
-          const isOpen = open === s.key;
-          return (
-            <button
-              key={s.key}
-              onClick={() => setOpen(isOpen ? null : s.key)}
-              className={`inline-flex items-center gap-1.5 rounded-full h-8 px-3 text-[12.5px] transition-all duration-150 ease-out ${isOpen ? 'bg-indigo-50 text-indigo-700' : 'bg-neutral-50 text-neutral-500 hover:bg-neutral-100'}`}
-            >
-              {s.count != null && <span className="tabular-nums font-semibold">{s.count}</span>}
-              <span className="font-medium">{s.label}</span>
-              {/* chevron points UP when open — the panel grows upward out of the footer */}
-              <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ease-out ${isOpen ? '-rotate-90 text-indigo-400' : 'text-neutral-300'}`} />
-            </button>
-          );
-        })}
+        <div className="flex items-center divide-x divide-neutral-200/70">
+          {shown.map((s) => {
+            const isOpen = open === s.key;
+            return (
+              <button
+                key={s.key}
+                onClick={() => setOpen(isOpen ? null : s.key)}
+                className={`inline-flex items-center gap-1.5 px-4 h-6 text-[12.5px] transition-colors duration-150 ease-out ${isOpen ? 'text-indigo-700' : 'text-neutral-500 hover:text-neutral-900'}`}
+              >
+                {s.count != null && <span className={`tabular-nums font-semibold ${isOpen ? 'text-indigo-700' : 'text-neutral-700'}`}>{s.count}</span>}
+                <span className="font-medium">{s.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -1603,7 +1701,7 @@ export function HomeView() {
 
   // "For your awareness" — REAL correspondence you're only informed on (understanding=awareness), a
   // human-readable list of bystander threads. A SEPARATE home from "Newsletters & promotions" below.
-  if (hasFollowups) rail('followups', 'Ball in your court', followupsLive, (
+  if (hasFollowups) rail('followups', 'To follow up', followupsLive, (
       followupsLive === 0 ? (
         <SectionCleared line="All caught up here — nothing waiting on you." />
       ) : (
@@ -1642,7 +1740,7 @@ export function HomeView() {
   // "For your awareness" — REAL correspondence you're only looped in on. The LEAST-actionable tier, so it
   // sits low and is COLLAPSED by default (a thin digest button that expands) — it no longer dominates the
   // rail with a tall avatar list. A cleared section still shows its calm empty state expanded.
-  if (hasAwareness) rail('awareness', 'For your awareness', awarenessLive, (
+  if (hasAwareness) rail('awareness', 'Just so you know', awarenessLive, (
     awarenessLive === 0 ? (
       <SectionCleared line="All noted — nothing else for your awareness." />
     ) : (
@@ -1704,8 +1802,8 @@ export function HomeView() {
     // column. Opening the panel grows its width → the `flex-1` main genuinely shrinks/reflows left
     // (NOT an overlay). `h-full` fills the `(main)` layout's `flex h-screen` container.
     <div className="relative flex-1 min-w-0 h-full flex overflow-hidden bg-[#fbfbfd]">
-      <div className="flex-1 min-w-0 overflow-y-auto">
-      <div className="w-full max-w-[1120px] mx-auto px-8 md:px-10 py-8 xl:py-10">
+      <div className="flex-1 min-w-0 overflow-y-auto flex flex-col">
+      <div className="w-full max-w-[1120px] mx-auto px-8 md:px-10 py-8 xl:py-10 flex flex-col flex-1">
         {/* Header + narration + live status chips */}
         <RiseIn>
           {/* Living orb — abstract morphing glow in the brand spectrum, signalling the brief is
@@ -1747,9 +1845,8 @@ export function HomeView() {
               {(b?.tldr?.teaser || b?.briefLine) && (
                 <p className="mt-2 text-[14.5px] text-neutral-500 leading-relaxed max-w-[760px]">{b?.tldr?.teaser || b?.briefLine}</p>
               )}
-              {/* Honest KPI strip — the ring's needYou broken into parts, plus an unhidden account of the
-                  tracked/filtered remainder. Dashboard lens only (Timeline/Projects own their own headers). */}
-              {view === 'dashboard' && <HeaderCounts segments={headerCounts} />}
+              {/* KPI strip removed (July 13) — it duplicated the per-section counts + a vanity "N filtered".
+                  Counts now live only on the section headers + the day-cleared ring. */}
             </div>
             {/* Top-right of the header, opposite the greeting: ONE tidy cluster — the "day cleared"
                 progress ring (how much of what needs you is handled today — live) + a quiet, matching
@@ -1793,10 +1890,10 @@ export function HomeView() {
         {!nothing && (
           // SINGLE column (Zone-3 redesign): action content flows top→bottom; the ambient count-bar is a
           // sticky footer pinned to the bottom. The old two-zone sidebar is gone — it collapsed into AmbientBar.
-          <div className="mt-9 w-full">
+          <div className="mt-9 w-full flex-1 flex flex-col">
 
             {/* ── ACTION content ─────────────────────────────────────────────────────────────── */}
-            <div className="min-w-0 space-y-10">
+            <div className="min-w-0 gap-10 flex-1 flex flex-col">
 
             {/* 0 · IN MOTION — the multi-action project groups (a contact's reply + its commitments, etc.)
                 collapsed into cards, so related work reads as ONE initiative with a clear next move. Loose
@@ -1807,50 +1904,60 @@ export function HomeView() {
               </RiseIn>
             )}
 
-            {/* 1 · WHAT NEEDS YOU (Zone 1 = NOW) — ONE prioritized glance list of your loose actions. The
-                top row is softly SUGGESTED (a ★ accent) — a place to begin, not a command; you act on any
-                row. Capped to a handful with "N more" so it's a queue you can see, never a wall. */}
-            {hasBody && (() => {
-              const NOW_CAP = 5;
-              // Always render the cap; extras live in a smooth <Collapse> so the queue grows/shrinks in one
-              // motion. Split replies then cards by the same NOW_CAP budget.
-              const capReplies = bodyReplies.slice(0, NOW_CAP);
-              const extraReplies = bodyReplies.slice(NOW_CAP);
-              const cardRoom = Math.max(0, NOW_CAP - capReplies.length);
-              const capCards = bodyCards.slice(0, cardRoom);
-              const extraCards = bodyCards.slice(cardRoom);
-              const hiddenCount = extraReplies.length + extraCards.length;
+            {/* 1 · WHAT NEEDS YOU — ONE prioritized list of everything you owe: email replies, action
+                notices, and commitments, all rendered by the same DoRow (a leading TYPE ICON tells them
+                apart — ✉ reply · ⚠ notice · ✓ commitment) instead of three differently-styled sections.
+                The top row is softly SUGGESTED ("Start here"). Priority cards ride along. Capped with the
+                shared Collapse expander. */}
+            {(hasBody || hadActionNotices || (b?.commitments?.length ?? 0) > 0) && (() => {
+              const enc = (s?: string) => (s ? `?angle=${encodeURIComponent(s)}` : '');
+              const replyItems: DoItem[] = bodyReplies.map((m) => ({
+                source: 'reply', key: `r-${m.itemId}`, entityId: m.itemId, href: `/item/${m.itemId}${enc(m.angle)}`,
+                primary: m.who, ask: m.ask || m.snippet || m.subject || 'Reply', second: m.subject ?? null,
+                when: fmtWhen(m.receivedAt), effort: m.effort ?? null, dueDate: m.dueDate ?? null, initiative: m.initiative ?? null, initiativeTotal: m.initiativeTotal ?? null,
+              }));
+              const noticeItems: DoItem[] = (b?.actionNotices ?? []).map((a) => ({
+                source: 'notice', key: `n-${a.itemId}`, entityId: a.itemId, href: `/item/${a.itemId}?kind=email`,
+                primary: a.who || null, ask: a.summary, second: 'Action needed',
+              }));
+              const commitItems: DoItem[] = looseCommitments.map((c) => ({
+                source: 'commitment', key: `c-${c.id}`, entityId: c.id, href: `/item/${c.id}?kind=commitment`,
+                primary: null, ask: c.description,
+                second: c.counterparty ? (/^from /i.test(c.counterparty) ? c.counterparty : `You owe ${c.counterparty}`) : null,
+                overdue: c.overdue, dueToday: c.dueToday, dueDate: c.dueDate ?? null, initiative: c.initiative ?? null, initiativeTotal: c.initiativeTotal ?? null,
+              }));
+              const doItems = [...replyItems, ...noticeItems, ...commitItems];
+              // One node list (DoRows + the richer priority cards), capped with the shared Collapse.
+              const nodes = [
+                ...doItems.map((it, i) => ({ key: it.key, node: (
+                  <DoRow item={it} emphasis={i === 0} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />
+                ) })),
+                ...bodyCards.map((p) => ({ key: p.id, node: (
+                  <PriorityCard p={p} first={false} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} onCleared={onCleared} onUndoInbox={toastInbox} />
+                ) })),
+              ];
+              const liveCount = doItems.length + liveBodyCards.length;
+              const NOW_CAP = 6;
+              const cap = nodes.slice(0, NOW_CAP);
+              const extra = nodes.slice(NOW_CAP);
               return (
               <RiseIn delay={60}>
                 <section>
-                  <Label count={bodyLiveCount} icon={BoltIcon}>What needs you</Label>
-                  {bodyLiveCount === 0 ? (
-                    <SectionCleared line="All replies handled — nothing else needs you." />
+                  <Label count={liveCount} icon={BoltIcon}>What needs you</Label>
+                  {liveCount === 0 ? (
+                    <SectionCleared line="All handled — nothing else needs you." />
                   ) : (
                     <div className="space-y-2.5">
-                      {capReplies.length > 0 && (
-                        <DigestList items={capReplies} onDismiss={onDismiss} emphasizeFirst onUndoInbox={toastInbox} />
-                      )}
-                      {capCards.map((p, i) => (
-                        <RiseIn key={p.id} delay={i * 45}>
-                          <PriorityCard p={p} first={false} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} onCleared={onCleared} onUndoInbox={toastInbox} />
-                        </RiseIn>
-                      ))}
-                      {hiddenCount > 0 && (
+                      {cap.map(({ key, node }, i) => <RiseIn key={key} delay={i * 40}>{node}</RiseIn>)}
+                      {extra.length > 0 && (
                         <Collapse open={nowExpanded}>
-                          <div className="space-y-2.5 pt-2.5">
-                            {extraReplies.length > 0 && (
-                              <DigestList items={extraReplies} onDismiss={onDismiss} onUndoInbox={toastInbox} />
-                            )}
-                            {extraCards.map((p) => (
-                              <PriorityCard key={p.id} p={p} first={false} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} onCleared={onCleared} onUndoInbox={toastInbox} />
-                            ))}
-                          </div>
+                          <div className="space-y-2.5 pt-2.5">{extra.map(({ key, node }) => <div key={key}>{node}</div>)}</div>
                         </Collapse>
                       )}
-                      {hiddenCount > 0 && (
-                        <button onClick={() => setNowExpanded((v) => !v)} className="text-[12px] font-medium text-indigo-500 hover:text-indigo-700 transition-all duration-150 ease-out pt-0.5">
-                          {nowExpanded ? 'See less ⌃' : `${hiddenCount} more ⌄`}
+                      {extra.length > 0 && (
+                        <button onClick={() => setNowExpanded((v) => !v)} className="inline-flex items-center gap-1 text-[12px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors duration-150 ease-out pt-0.5">
+                          {nowExpanded ? 'See less' : `${extra.length} more`}
+                          <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${nowExpanded ? '-rotate-90' : 'rotate-90'}`} />
                         </button>
                       )}
                     </div>
@@ -1859,59 +1966,6 @@ export function HomeView() {
               </RiseIn>
               );
             })()}
-
-            {/* 2b · WORTH ACTING ON — action-NOTICES (understanding.relevance='action'): actionable
-                but NOT a reply-to-a-person (payment failed, security alert, account expiring, "pay for
-                your booking"). Its OWN main-column lane, distinct from "What needs you" (replies only),
-                so notices never clutter the reply lane. Live count + the shared "you cleared this"
-                empty state, same dismiss/undo affordances as the awareness rows. */}
-            {hadActionNotices && (
-              <RiseIn delay={75}>
-                <section>
-                  <Label count={actionNoticesLive} icon={BellAlertIcon}>Worth acting on</Label>
-                  {actionNoticesLive === 0 ? (
-                    <SectionCleared line="All handled — nothing else to act on." />
-                  ) : (
-                    <ActionNoticesCard items={b!.actionNotices!} onDismiss={onCleared} onUndoInbox={toastInbox} />
-                  )}
-                </section>
-              </RiseIn>
-            )}
-
-            {/* 3 · ON YOUR PLATE — commitments you owe. The last ACTION lane, so it stays in the
-                main reading column (not the ambient rail). Live count = server commitments minus this
-                session's clears; when it hits 0 (all cleared this session) the empty state shows. */}
-            {b && looseCommitments.length > 0 && (
-              <RiseIn delay={90}>
-                <section>
-                  <Label count={plateLive}>Your next moves</Label>
-                  {plateLive === 0 ? (
-                    <SectionCleared line="Nothing on your plate — you cleared it all." />
-                  ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5">
-                    <ExpandableRows items={looseCommitments} render={(c) => (
-                      <CommitmentSideRow key={c.id} id={c.id} href={`/item/${c.id}?kind=commitment`} icon={CheckCircleIcon} iconClass={c.overdue ? 'text-red-400' : 'text-neutral-300'} onCleared={onCleared} onUndoCommitment={toastCommitment}>
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="text-[13px] text-neutral-800 leading-snug">{c.description}</span>
-                          {(c.overdue || c.dueToday || c.dueDate) && (
-                            <span className={`flex-shrink-0 text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 ${c.overdue ? 'bg-red-50 text-red-600' : c.dueToday ? 'bg-amber-50 text-amber-600' : 'bg-neutral-100 text-neutral-500'}`}>
-                              {c.overdue ? 'Overdue' : c.dueToday ? 'Today' : fmtDue(c.dueDate)}
-                            </span>
-                          )}
-                        </div>
-                        {/* Counterparty OR a source-derived label ("from <meeting>"); we prefix "You owe"
-                            only for a real person, and show a source label verbatim (already reads "from …"). */}
-                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                          {c.counterparty && <span className="text-[11.5px] text-neutral-400">{/^from /i.test(c.counterparty) ? c.counterparty : `You owe ${c.counterparty}`}</span>}
-                          <InitiativeTag initiative={c.initiative} total={c.initiativeTotal} />
-                        </div>
-                      </CommitmentSideRow>
-                    )} />
-                  </div>
-                  )}
-                </section>
-              </RiseIn>
-            )}
 
             <RiseIn delay={120}>
               <ProjectPulse onOpen={() => setView('projects')} />
