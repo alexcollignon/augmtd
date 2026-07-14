@@ -1912,14 +1912,9 @@ export function HomeView() {
             {/* ── ACTION content ─────────────────────────────────────────────────────────────── */}
             <div className="min-w-0 gap-10 flex-1 flex flex-col">
 
-            {/* 0 · IN MOTION — the multi-action project groups (a contact's reply + its commitments, etc.)
-                collapsed into cards, so related work reads as ONE initiative with a clear next move. Loose
-                actions stay in the lanes below; nothing is duplicated. */}
-            {activeInitiatives.length > 0 && (
-              <RiseIn>
-                <InitiativeStrip inits={activeInitiatives} trackedKeys={trackedKeys} onOpenProjects={openProjectsAt} onMute={muteInitiative} onTrack={trackInitiative} />
-              </RiseIn>
-            )}
+            {/* IN MOTION / "Your projects" strip REMOVED from the Home (July 14) — projects now live only on
+                the Projects page. The Home is purely "what needs you, right now". `activeInitiatives` is
+                still computed + cached (Projects reads it), just no longer rendered here. */}
 
             {/* 1 · WHAT NEEDS YOU — ONE prioritized list of everything you owe: email replies, action
                 notices, and commitments, all rendered by the same DoRow (a leading TYPE ICON tells them
