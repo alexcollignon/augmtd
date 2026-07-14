@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useLayoutEffect, type DragEvent } from 'react';
 import { toast } from 'sonner';
-import { PlusIcon, XMarkIcon, CheckCircleIcon, ExclamationTriangleIcon, Bars2Icon, PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, XMarkIcon, CheckCircleIcon, ExclamationTriangleIcon, LightBulbIcon, Bars2Icon, PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { Button, IconButton, Card, Input, Textarea, SegmentedControl, Badge } from '@/components/ui';
 import type { Period } from '@/lib/company/ai-operations-metrics';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
@@ -62,8 +62,9 @@ function useFlip<T extends string>(orderKey: T[]) {
 
 interface Observation {
   goalId: string;
-  tone: 'aligned' | 'drift';
+  tone: 'aligned' | 'drift' | 'opportunity';
   text: string;
+  suggestion: string;
 }
 
 // Module-level cache — survives a Strategy tab unmount/remount (e.g. switching to AI
@@ -197,12 +198,16 @@ function GoalCard({ goal, onEdited, onArchived, drag }: { goal: Goal; onEdited: 
 
 export default function CompanyStrategySection() {
   const [period, setPeriod] = useState<Period>('month');
-  // Instant across reloads: the module cache survives tab-switches; localStorage survives a full reload.
-  // Hydrate goals from localStorage when the module cache is cold so the tab never flashes a skeleton.
-  const [goals, setGoalsState] = useState<Goal[]>(() => goalsCache ?? loadLS<Goal[]>('aug-strategy-goals-v1') ?? []);
-  const [observations, setObservations] = useState<Observation[]>(() => alignmentCache.month ?? []);
-  const [loadingGoals, setLoadingGoals] = useState(() => goalsCache === null && !loadLS<Goal[]>('aug-strategy-goals-v1'));
-  const [loadingAlignment, setLoadingAlignment] = useState(() => !('month' in alignmentCache));
+  // Always start "cold" (empty + loading) so the server-rendered HTML and the client's first
+  // hydration pass match exactly — module cache / localStorage only exist in the browser, so
+  // reading them here (in the render body) would diverge from the server's render and throw a
+  // hydration mismatch. The actual instant-hydrate-from-cache happens in a useLayoutEffect
+  // below (runs client-only, right after mount, before paint — no visible flash, but doesn't
+  // touch what gets sent/reconciled during hydration itself).
+  const [goals, setGoalsState] = useState<Goal[]>([]);
+  const [observations, setObservations] = useState<Observation[]>([]);
+  const [loadingGoals, setLoadingGoals] = useState(true);
+  const [loadingAlignment, setLoadingAlignment] = useState(true);
   const [showAddGoal, setShowAddGoal] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDescription, setNewDescription] = useState('');
@@ -254,8 +259,22 @@ export default function CompanyStrategySection() {
     }
   }, []);
 
-  useEffect(() => { if (goalsCache === null) fetchGoals(); }, [fetchGoals]);
-  useEffect(() => { fetchAlignment(period); }, [period, fetchAlignment]);
+  // useLayoutEffect (not useEffect): client-only, runs before paint, so a cache/localStorage
+  // hit hydrates without any visible skeleton flash — but critically it runs AFTER hydration
+  // has already reconciled against the cold server-rendered HTML, so it can never cause a
+  // mismatch (only a normal post-mount state update, same as any other effect).
+  useLayoutEffect(() => {
+    const cached = goalsCache ?? loadLS<Goal[]>('aug-strategy-goals-v1');
+    if (cached) {
+      setGoalsState(cached);
+      goalsCache = cached;
+      setLoadingGoals(false);
+    } else {
+      fetchGoals();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useLayoutEffect(() => { fetchAlignment(period); }, [period, fetchAlignment]);
 
   // A goal mutation invalidates alignment for EVERY period (not just the current one) —
   // the content the AI judges against changed, so all cached periods are now stale.
@@ -408,33 +427,42 @@ export default function CompanyStrategySection() {
         </div>
 
         <div>
-          <h4 className="text-[13px] font-semibold text-neutral-900 mb-1">Alignment</h4>
-          <p className="text-[12px] text-neutral-400 mb-3">Where AI usage reinforces or drifts from your goals this period.</p>
+          <h4 className="text-[13px] font-semibold text-neutral-900 mb-1">Recommendations</h4>
+          <p className="text-[12px] text-neutral-400 mb-3">Concrete ways to put AI to work toward your goals, grounded in this period's real usage.</p>
           {goals.length === 0 ? (
-            <p className="text-[13px] text-neutral-300 italic">Add a goal above to see alignment observations.</p>
+            <p className="text-[13px] text-neutral-300 italic">Add a goal above to see recommendations.</p>
           ) : loadingAlignment ? (
             <div className="space-y-2">
               {[1, 2].map(i => <div key={i} className="h-14 rounded-xl bg-neutral-100 animate-pulse" />)}
             </div>
           ) : observations.length === 0 ? (
-            <p className="text-[13px] text-neutral-300 italic">No clear alignment signal yet this period.</p>
+            <p className="text-[13px] text-neutral-300 italic">No recommendations yet this period.</p>
           ) : (
             <div className="space-y-2">
               {observations.map((obs, i) => {
                 const goal = goalById.get(obs.goalId);
-                const aligned = obs.tone === 'aligned';
+                const toneIcon = obs.tone === 'aligned'
+                  ? <CheckCircleIcon className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" />
+                  : obs.tone === 'drift'
+                    ? <ExclamationTriangleIcon className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                    : <LightBulbIcon className="w-4 h-4 text-indigo-500 flex-shrink-0 mt-0.5" />;
+                // Labels describe the SUGGESTION, not a verdict on current state — "Aligned"/
+                // "Drift" read like a compliance classification, which fought the actionable
+                // framing above it (the card's headline is a suggestion, not a judgment).
+                const toneBadge = obs.tone === 'aligned'
+                  ? { tone: 'emerald' as const, label: 'Double down' }
+                  : obs.tone === 'drift'
+                    ? { tone: 'amber' as const, label: 'Course correct' }
+                    : { tone: 'indigo' as const, label: 'New idea' };
                 return (
                   <Card key={i} className="p-3 flex items-start gap-3">
-                    {aligned ? (
-                      <CheckCircleIcon className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" />
-                    ) : (
-                      <ExclamationTriangleIcon className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                    )}
+                    {toneIcon}
                     <div className="min-w-0 flex-1">
                       {goal && <div className="text-[11px] text-neutral-400 mb-0.5">{goal.title}</div>}
-                      <p className="text-[13px] text-neutral-700">{obs.text}</p>
+                      <p className="text-[13px] text-neutral-800 font-medium">{obs.suggestion}</p>
+                      {obs.text && <p className="text-[12px] text-neutral-400 mt-1">{obs.text}</p>}
                     </div>
-                    <Badge tone={aligned ? 'emerald' : 'amber'} className="flex-shrink-0">{aligned ? 'Aligned' : 'Drift'}</Badge>
+                    <Badge tone={toneBadge.tone} className="flex-shrink-0">{toneBadge.label}</Badge>
                     <button onClick={() => dismissObservation(i)} className="text-neutral-300 hover:text-neutral-600 flex-shrink-0" title="Dismiss">
                       <XMarkIcon className="w-4 h-4" />
                     </button>

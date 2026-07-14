@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import { ItemDetail, type ItemKind } from './item-detail';
 
@@ -15,6 +15,7 @@ import { ItemDetail, type ItemKind } from './item-detail';
 // the full page instead. Close via ← Back / Esc → router.back() (pops the intercept, back to Home).
 export function ItemDetailModal({ id }: { id: string }) {
   const router = useRouter();
+  const pathname = usePathname();
   // The suggested angle is only known on the Home (it's brief-generated, not stored) — the row
   // passes it through as a query param so the deep-dive shows it. A direct page visit omits it.
   const params = useSearchParams();
@@ -48,6 +49,13 @@ export function ItemDetailModal({ id }: { id: string }) {
   }, [closing]);
 
   const shown = entered && !closing;
+
+  // Next's @modal parallel slot doesn't reliably reset to default.tsx when you soft-navigate to a SIBLING
+  // route (e.g. clicking Workers/Inbox in the left nav while this deep-dive is open) — the slot keeps this
+  // stale modal mounted, covering the destination page. Guard: once the URL is no longer an /item/… path,
+  // this modal is stale → render nothing so the page you navigated to shows through. (usePathname re-runs
+  // on navigation, so this fires the moment the route changes.)
+  if (!pathname.startsWith('/item/')) return null;
 
   return (
     // Anchored right of the app nav sidebar (w-14) — covers the Home content, sidebar stays.

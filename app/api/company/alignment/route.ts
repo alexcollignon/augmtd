@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getMyWorkspace } from '@/lib/workspace/features';
 import { getAIOperationsSummary, type Period } from '@/lib/company/ai-operations-metrics';
-import { synthesizeAlignment, type CompanyGoal, type AlignmentObservation } from '@/lib/company/synthesize-alignment';
+import { synthesizeAlignment, ALIGNMENT_PROMPT_VERSION, type CompanyGoal, type AlignmentObservation } from '@/lib/company/synthesize-alignment';
 
 // Cache lives in companies.settings.alignment_cache (same free-form jsonb column already
 // used for blended_hourly_rate_eur) — no new table needed, only the goals themselves have
@@ -29,7 +29,7 @@ interface AlignmentCache {
 function buildSig(period: string, goals: GoalRow[], summary: { agentRuns: number; groundedRuns: number; insightRuns: number }): string {
   const goalsSig = goals.map(g => `${g.id}:${g.updated_at}`).join(',');
   const activitySig = `${summary.agentRuns}:${summary.groundedRuns}:${summary.insightRuns}`;
-  return `${period}|${goalsSig}|${activitySig}`;
+  return `v${ALIGNMENT_PROMPT_VERSION}|${period}|${goalsSig}|${activitySig}`;
 }
 
 async function getAdminClient() {

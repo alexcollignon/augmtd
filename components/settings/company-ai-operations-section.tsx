@@ -29,6 +29,10 @@ const PERIOD_ITEMS: { value: Period; label: string }[] = [
   { value: 'quarter', label: 'Quarter' },
 ];
 
+// Both cost breakdowns are already sorted highest-first — collapsing to the top N by
+// default keeps the (hidden-behind-a-toggle) breakdown glanceable instead of a long list.
+const BREAKDOWN_COLLAPSE_LIMIT = 5;
+
 // Display-only currency toggle — all figures are stored and computed in EUR (the
 // blended hourly rate, cost_eur column, etc.); this only affects what's rendered.
 // Fixed approximate rate, not live FX — fine for an at-a-glance toggle, not accounting.
@@ -323,6 +327,8 @@ export default function CompanyAIOperationsSection() {
   const [expandedRoles, setExpandedRoles] = useState<Set<string>>(new Set());
   const [showCostBreakdown, setShowCostBreakdown] = useState(false);
   const [anonymizeUsers, setAnonymizeUsers] = useState(false);
+  const [showAllSources, setShowAllSources] = useState(false);
+  const [showAllUsers, setShowAllUsers] = useState(false);
   const [currency, setCurrency] = useState<Currency>('EUR');
 
   useEffect(() => {
@@ -502,7 +508,7 @@ export default function CompanyAIOperationsSection() {
                       <h4 className="text-[13px] font-semibold text-neutral-900 mb-1">AI cost by source</h4>
                       <p className="text-[12px] text-neutral-400 mb-3">Where the AI spend is concentrating this period — tokens shown as in (context sent) · out (response generated).</p>
                       <Card className="p-3 space-y-2">
-                        {summary.costBySource.map(s => {
+                        {(showAllSources ? summary.costBySource : summary.costBySource.slice(0, BREAKDOWN_COLLAPSE_LIMIT)).map(s => {
                           const share = summary.tokenCostEur > 0 ? (s.costEur / summary.tokenCostEur) * 100 : 0;
                           return (
                             <div key={s.source} className="flex items-center gap-3 text-[12.5px]">
@@ -515,6 +521,15 @@ export default function CompanyAIOperationsSection() {
                             </div>
                           );
                         })}
+                        {summary.costBySource.length > BREAKDOWN_COLLAPSE_LIMIT && (
+                          <button
+                            type="button"
+                            onClick={() => setShowAllSources(v => !v)}
+                            className="text-[11.5px] font-medium text-neutral-400 hover:text-neutral-600 transition-colors pt-1"
+                          >
+                            {showAllSources ? 'Show less' : `Show ${summary.costBySource.length - BREAKDOWN_COLLAPSE_LIMIT} more`}
+                          </button>
+                        )}
                       </Card>
                     </div>
                   )}
@@ -537,7 +552,7 @@ export default function CompanyAIOperationsSection() {
                           : 'Which team members are actually driving the spend.'}
                       </p>
                       <Card className="p-3 space-y-2">
-                        {summary.costByUser.map(u => {
+                        {(showAllUsers ? summary.costByUser : summary.costByUser.slice(0, BREAKDOWN_COLLAPSE_LIMIT)).map(u => {
                           const share = summary.tokenCostEur > 0 ? (u.costEur / summary.tokenCostEur) * 100 : 0;
                           return (
                             <div key={u.slot} className="flex items-center gap-3 text-[12.5px]">
@@ -553,6 +568,15 @@ export default function CompanyAIOperationsSection() {
                             </div>
                           );
                         })}
+                        {summary.costByUser.length > BREAKDOWN_COLLAPSE_LIMIT && (
+                          <button
+                            type="button"
+                            onClick={() => setShowAllUsers(v => !v)}
+                            className="text-[11.5px] font-medium text-neutral-400 hover:text-neutral-600 transition-colors pt-1"
+                          >
+                            {showAllUsers ? 'Show less' : `Show ${summary.costByUser.length - BREAKDOWN_COLLAPSE_LIMIT} more`}
+                          </button>
+                        )}
                       </Card>
                     </div>
                   )}

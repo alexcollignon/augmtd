@@ -361,6 +361,17 @@ forget, never blocks the AI call it's observing.
   page. **Slot assignment now covers users with zero workflow runs but real chat/other cost too** (a
   chat-only user used to fall through to slot 0 and collide with everyone else in that bucket — fixed by
   unioning the run-ranked user list with cost-only users, ranked by cost, appended after).
+- **Perf fix (July 14) — the page loaded slowly**: `getUserNames()` was called AFTER the main
+  `Promise.all` resolved, keyed off `usage.byUserId.keys()` (only known once `usage` itself had already
+  finished) — a fully serial extra round-trip (including a possible `auth.admin.listUsers()` call) tacked
+  onto the end of every load. Fixed by resolving names from `memberIds` (known immediately, before any
+  querying starts) so `getUserNames()` joins the SAME `Promise.all` as everything else instead of
+  following it. **Lesson: a call that "just" logically depends on another result belongs in the same
+  parallel batch if its actual inputs are already known — don't let a false dependency force serialization.**
+- **Collapse-to-5 (July 14)**: both `costBySource` and `costByUser` (already sorted highest-cost-first)
+  render only the top `BREAKDOWN_COLLAPSE_LIMIT` (5) by default with a "Show N more" / "Show less" toggle
+  — kept the (already-hidden-behind-an-eye-icon) breakdown from turning into a long list once real data
+  populated it.
 
 - **`lib/company/ai-operations-metrics.ts`** — `getAIOperationsSummary(admin, companyId, period, hourlyRateEur)` aggregates across every active `company_members` row (never a single user) via the existing "member ids → `.in()` with the service-role client" idiom. Computes: agent runs, active coworkers, adoption (distinct users), per-coworker breakdown (runs, chat messages, emails sent, top tasks, top tools, anonymized per-user usage distribution), and an **hours-saved estimate**.
 - **Hours-saved methodology (honest, not measured)**: `MINUTES_SAVED_PER_RUN` (15 min) × completed `workflow_runs`, but **only for "grounded" runs** — a task whose `workflows.steps` includes at least one `tool`/`agent` step (looked something up or took an action). A task built entirely of `ai`-only steps (pure generation — coaching, brainstorming) is excluded from the hours/€ estimate and labeled "insight only" instead, since there's no manual-labor baseline it replaced. **Known limitation** (surfaced July 8, confirmed against a real workflow): this still misclassifies a task that fetches real context (calendar/inbox/KB) purely to *personalize generated advice* — e.g. "Daily Tim Ferriss Coaching" fetches `get_meeting_context`/`get_emails`/`read_kb_file` before generating a coaching message, so it still counts as "grounded" even though the output is advice, not a replaced chore. Structurally identical to a legitimate briefing task (fetch → summarize) — no tool-based rule (even a refined action-vs-informational split) can separate them; the real signal is the final AI step's *prompt intent* (report facts vs. generate advice), which is semantic, not structural. Fixing this properly would need an automatic per-workflow classification (cheap one-time LLM call, cached + invalidated on step change — same pattern as `item_plans.version`), not manual tagging in the builder (explicitly rejected — should be inferred from the run, not tagged at creation). **Deferred, not fixed** — current heuristic is left as a documented approximation.
@@ -370,14 +381,41 @@ forget, never blocks the AI call it's observing.
 - **`lib/tools/tool-labels.ts`** — `humanizeToolName()`, a display-only tool-name humanizer for after-the-fact summaries (distinct from the "in-progress" chip phrasing in `chat/route.ts`/`agentos-bridge.ts`).
 - **Chat usage counts too**: a coworker's "messages" count and "top tools used" come from `work_threads`/`work_messages.metadata.tool_calls` — chat activity, not just scheduled `workflow_runs`. This surfaced real usage that was previously invisible (e.g. a coworker with 0 scheduled runs but several chat messages).
 
-### Company Admin — Strategy tab (goals + alignment drift detection, July 8)
+### Company Admin — Strategy tab (goals + AI-generated recommendations, July 8–14)
 
 `Settings → Company → Strategy` (`components/settings/company-strategy-section.tsx`). Two sections: **Intent**
-(admin-set North Star + goals) and **Alignment** (AI-judged drift/reinforcement against real usage). The
-hard invariant, enforced by design not just convention: **goals never reach any employee-facing coworker
+(admin-set North Star + goals) and **Recommendations** (was "Alignment" — see below) grounded in real usage.
+The hard invariant, enforced by design not just convention: **goals never reach any employee-facing coworker
 context** — no `buildWorkerRunContext`, no `dependencies.user_context`, no Studio workflow step ever reads
 `company_goals`. Only admin-facing Strategy code touches this table. Employees keep full agency over their
 own AI coworkers; Strategy is a read-only admin lens on top, not a steering layer.
+
+- **"Alignment" reframed as "Recommendations" (July 14)** — user feedback: a bare aligned/drift verdict
+  "is not super relevant" on its own. `lib/company/synthesize-alignment.ts`'s prompt now produces 1–3
+  DISTINCT, concrete, day-to-day-implementable suggestions per goal (`MAX_SUGGESTIONS_PER_GOAL = 3`,
+  enforced both in the prompt and defensively client-side after parsing) — the suggestion is the headline;
+  `tone` (`aligned`/`drift`/`opportunity`) is kept only as a lightweight secondary badge, relabeled
+  **"Double down"/"Course correct"/"New idea"** (the old "Aligned"/"Drift" language read like a verdict on
+  *current state*, fighting the new suggestion-first framing).
+- **Suggestions are organizational, not "admin personally operates the coworker" (July 14)** — first version
+  of the new prompt produced suggestions like "have Clara draft X," which reads as if the admin directly
+  controls Clara. Each coworker role is actually a SEPARATE per-user instance (Clara/Max/etc. each belong to
+  whichever team member uses them) — the admin's real lever is organizational: rolling out a standard
+  workflow, following up on an adoption gap, setting a team-wide expectation. Fixed by explicitly telling the
+  model this in the prompt AND feeding it real adoption numbers (`row.distinctUsers` of `summary.memberCount`
+  per coworker, company-wide `adoptionUsers`/`memberCount`) so suggestions can ground in "only 2 of 5 members
+  use Max" rather than assuming the admin is a hands-on operator. **Lesson: an AI-generated recommendation
+  aimed at an admin/exec should be checked for who it assumes is taking the action — a plausible-sounding
+  suggestion can still assume the wrong actor.**
+- **Cache-busting now versioned (July 14, real bug)** — after shipping the prompt rewrite above, the UI kept
+  showing old-shape output with no `suggestion` field at all. Root cause: the alignment cache's `sig`
+  (`app/api/company/alignment/route.ts` `buildSig`) was keyed only to goals/activity, never to the PROMPT
+  CODE itself — editing the prompt has zero effect on an already-fresh (within 12h) cache entry until a goal
+  is touched or the TTL expires, since nothing about the stored cache key changed. Fixed by adding
+  `ALIGNMENT_PROMPT_VERSION` (bump whenever the prompt/output shape changes) into the sig, mirroring
+  `item_plans.version`'s pattern in the Identified-tasks engine. **Lesson: any prompt-driven cache needs the
+  prompt's own version threaded into its invalidation key — the inputs changing isn't the only thing that
+  should be able to invalidate a cached AI output.**
 
 - **`company_goals`** (migrations `20260708c` + `20260708e`, apply manually): `kind` (`'north_star'|'goal'`),
   `title`, `description`, `status`, `sort_order`. RLS via the existing `is_company_admin(company_id)` helper.
@@ -407,6 +445,20 @@ own AI coworkers; Strategy is a read-only admin lens on top, not a steering laye
   `invalidateAlignmentCache()` (clears every cached period, since the goals the AI judges against changed
   globally, not just the current period) then force-refetches the current period. A plain non-promoting
   reorder or a period switch with no mutation reads straight from cache — zero network call.
+- **Hydration mismatch fixed (July 14)** — the instant-load rollout (`lib/utils/local-cache.ts`
+  `loadLS`/`saveLS`, applied across the app) added a `localStorage` read on top of the module cache above,
+  both read directly inside `useState` INITIALIZERS (`useState(() => goalsCache ?? loadLS(...) ?? [])`).
+  Initializers run during SSR too, where `window`/localStorage don't exist and the module cache is always
+  empty — so any browser that already had cached data from a prior visit rendered a DIFFERENT first-paint
+  tree (populated, draggable goal cards) than the server did (empty loading skeleton), throwing a React
+  hydration-mismatch error. Fixed by making all four `useState`s start "cold" (matching the server exactly)
+  and moving the cache/localStorage read into a `useLayoutEffect` (client-only, runs before paint — no
+  visible flash, but critically runs AFTER hydration has already reconciled, so it's just a normal
+  post-mount update, never part of the initial render). **Lesson: an instant-load-from-cache pattern is only
+  safe in a `useState` initializer for a route that's NEVER server-rendered — for an SSR'd page (any
+  `'use client'` component under a server-rendered route, which is most of this app), the cache read must
+  live in an effect, not the render body, or server/client first-paint will diverge whenever the cache is
+  warm.**
 - **UI polish, reusing established patterns rather than inventing new ones**: cards use `h-full` so every
   card in a grid row stretches to the same height regardless of content length (a card with no description
   no longer looks shorter than its row-mate); the drag handle is `Bars2Icon` (matching the inbox's existing
