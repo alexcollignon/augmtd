@@ -15,6 +15,7 @@ import { resolveOutboundAwaiting } from '@/lib/outbound/resolve';
 import { getActiveInitiatives, type ActiveInitiative } from '@/lib/projects/active-initiatives';
 import { reconcileRepliedItems } from '@/lib/inbox/reconcile-replied';
 import { computeBundles } from '@/lib/home/bundle-brief';
+import { nameBundles, type BundleName, type BundleNameInput } from '@/lib/home/name-bundles';
 
 export const maxDuration = 30;
 
@@ -738,7 +739,7 @@ export async function GET() {
   type MustRespond = { teaser: string; items: Reply[] };
   type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
   type CommitmentPlacement = 'on_your_plate' | 'ball_in_court' | 'informational';
-  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; keepAnEyeOn?: KeepAnEyeOn | null; droppedItemIds?: string[]; commitmentPlacements?: Record<string, CommitmentPlacement>; activeInitiatives?: ActiveInitiative[]; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
+  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; keepAnEyeOn?: KeepAnEyeOn | null; droppedItemIds?: string[]; commitmentPlacements?: Record<string, CommitmentPlacement>; activeInitiatives?: ActiveInitiative[]; bundleNames?: { sig: string; names: Record<string, BundleName> }; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
   let tldr: Tldr | null = cached?.tldr ?? null;
   let followups: Followups | null = cached?.followups ?? null;
   let fyiDigest: FyiDigest | null = cached?.fyiDigest ?? null;
@@ -1102,7 +1103,7 @@ export async function GET() {
     const { data: mt } = await supabase.from('meeting_transcripts').select('id, title').in('id', meetingIds);
     for (const m of (mt ?? []) as Array<{ id: string; title: string | null }>) if (m.title) meetingTitle.set(m.id, m.title);
   }
-  const bundles = computeBundles([
+  const bundleAtoms = [
     ...((mustRespondOut?.items ?? []) as Array<{ itemId: string; initiative?: string | null; subject?: string }>).map((m) => {
       const raw = itemById.get(m.itemId);
       return { id: m.itemId, initiative: m.initiative ?? null, threadId: (raw?.source_data?.thread_id as string) ?? null, subject: (raw?.work_title as string) ?? m.subject ?? null };
@@ -1116,7 +1117,50 @@ export async function GET() {
       const mId = raw?.source === 'meeting' ? ((raw?.source_id as string) ?? null) : null;
       return { id: c.id, initiative: c.initiative ?? null, meetingId: mId, meetingLabel: mId ? (meetingTitle.get(mId) ?? 'Meeting follow-ups') : null, threadId: (raw?.thread_id as string) ?? null, subject: c.description ?? null };
     }),
-  ]);
+  ];
+  const bundles = computeBundles(bundleAtoms);
 
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress, activeInitiatives, bundles });
+  // REASONED NAMING (conservative, cached) — turn each bundle into a short human name + grounded "why".
+  // The deterministic `label` above is the fallback; a cached AI pass (keyed by the bundle-set signature)
+  // upgrades it. On a signature MISS we serve the fallback now and refresh the cache in the background, so
+  // the response never waits on the AI. Names/whys ride back as `bundleNames` (key → {name, why?}).
+  const bundleKeys = [...new Set(Object.values(bundles).map((b) => b.key))].sort();
+  const bundleSig = bundleKeys.join('|');
+  const cachedBundleNames = cached?.bundleNames?.sig === bundleSig ? (cached.bundleNames.names ?? {}) : {};
+  const bundleNames: Record<string, BundleName> = {};
+  for (const key of bundleKeys) {
+    const label = Object.values(bundles).find((b) => b.key === key)?.label ?? key;
+    const named = cachedBundleNames[key];
+    bundleNames[key] = named ?? { name: label };
+  }
+  // Refresh names in the background when the bundle set changed (and there are real bundles to name).
+  if (bundleKeys.length && cached?.bundleNames?.sig !== bundleSig) {
+    // Build per-bundle inputs (kind + fallback label + member gists) for the naming pass.
+    const gistsByKey = new Map<string, string[]>();
+    for (const a of bundleAtoms) {
+      const ref = bundles[a.id];
+      if (!ref) continue;
+      const arr = gistsByKey.get(ref.key) ?? [];
+      if (a.subject) arr.push(a.subject);
+      gistsByKey.set(ref.key, arr);
+    }
+    const nameInputs: BundleNameInput[] = bundleKeys.map((key) => ({
+      key,
+      kind: key.startsWith('i:') ? 'initiative' : key.startsWith('m:') ? 'meeting' : 'thread',
+      label: bundleNames[key].name,
+      members: gistsByKey.get(key) ?? [],
+    }));
+    after(async () => {
+      try {
+        const names = await nameBundles(user.id, supabase, nameInputs);
+        if (!Object.keys(names).length) return;
+        // Read-merge-write so we upgrade only `bundleNames` and preserve the rest of home_brief.
+        const { data } = await supabase.from('profiles').select('home_brief').eq('id', user.id).single();
+        const hb = ((data?.home_brief as Record<string, unknown>) ?? {});
+        await supabase.from('profiles').update({ home_brief: { ...hb, bundleNames: { sig: bundleSig, names } } }).eq('id', user.id).then(() => {}, () => {});
+      } catch { /* non-fatal — deterministic labels stay */ }
+    });
+  }
+
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress, activeInitiatives, bundles, bundleNames });
 }
