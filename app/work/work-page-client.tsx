@@ -17,6 +17,7 @@ import { ChatEmptyState } from '@/components/work/chat-empty-state';
 import { ChatInputBar, SourceId, AttachmentChip, MentionChip, MENTION_ICONS, MENTION_COLORS } from '@/components/work/chat-input-bar';
 import { ChatMessageBubble, StreamingMessage, ChatMessage, ToolStatus } from '@/components/work/chat-message';
 import { computeVersionedArtifacts } from '@/lib/artifacts/version-utils';
+import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { ClarificationData } from '@/components/work/clarification-widget';
 import { DocumentArtifact, ExecutionPlan } from '@/lib/types/inbox';
 import { AgentsSidebarSection, SidebarAgent } from '@/components/agents/agents-sidebar-section';
@@ -716,11 +717,13 @@ function ActiveChatView({
 
   const hasArtifacts = (thread.artifacts?.length ?? 0) > 0;
 
-  // Load messages when thread changes
+  // Load messages when thread changes. Instant-load: hydrate this thread's messages from localStorage so
+  // re-entering a thread shows them immediately (no clear-then-fetch flash), then refresh in the background.
   useEffect(() => {
     hasSentPending.current = false;
-    setMessages([]);
-    setIsLoading(true);
+    const cachedMsgs = loadLS<ChatMessage[]>(`aug-thread-msgs-${thread.id}`);
+    setMessages(cachedMsgs ?? []);
+    setIsLoading(!cachedMsgs);
     setIsStreaming(false);
     setStreamingText('');
     setStreamingTools([]);
@@ -745,6 +748,7 @@ function ActiveChatView({
           );
         }
         setMessages(msgs);
+        saveLS(`aug-thread-msgs-${thread.id}`, msgs); // cache for instant re-entry
         setIsLoading(false);
       })
       .catch((err) => { if (err.name !== 'AbortError') setIsLoading(false); });

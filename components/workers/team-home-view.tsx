@@ -6,6 +6,7 @@ import {
   CheckCircleIcon, XCircleIcon, ClockIcon, ArrowRightIcon, ChatBubbleLeftRightIcon,
 } from '@heroicons/react/24/outline';
 import { ROLE_AVATARS, ROLE_LABELS } from '@/lib/workers/roles';
+import { loadLS, saveLS } from '@/lib/utils/local-cache';
 
 interface WorkerLite { id: string; name: string; worker_role: string | null }
 interface Review { artifactId: string; title: string; type: string; workerId: string | null; workerName: string | null; threadId: string; createdAt: string }
@@ -55,9 +56,12 @@ function Avatar({ role, name, size = 'md' }: { role: string | null; name: string
 }
 
 export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProps) {
-  const [data, setData] = useState<HomeData | null>(null);
-  const [briefing, setBriefing] = useState('');
-  const [briefingDone, setBriefingDone] = useState(false);
+  // Instant-load: hydrate the review desk + the last briefing from localStorage so a revisit renders
+  // immediately (no skeleton / blank briefing), then refresh in the background below.
+  const [data, setData] = useState<HomeData | null>(() => loadLS<HomeData>('aug-workers-home-v1'));
+  const cachedBriefingRef = useRef<string>(loadLS<string>('aug-workers-briefing-v1') ?? '');
+  const [briefing, setBriefing] = useState(cachedBriefingRef.current);
+  const [briefingDone, setBriefingDone] = useState(!!cachedBriefingRef.current);
   const mountedRef = useRef(true);
   const fetchedRef = useRef(false);
 
@@ -75,6 +79,7 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
       .then(async (d: HomeData | null) => {
         if (!mountedRef.current || !d) { setBriefingDone(true); return; }
         setData(d);
+        saveLS('aug-workers-home-v1', d); // cache the review desk for instant hydration next visit
         // Mark report-back messages seen in the DB — the unseen dots stay for this
         // render (we keep the fetched state) and clear on the next visit.
         if (d.messages?.length) fetch('/api/notifications/workflows/read', { method: 'POST' }).catch(() => {});
@@ -86,9 +91,13 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
         });
         if (!res.ok || !res.body) { setBriefingDone(true); return; }
 
+        // If we already showed a CACHED briefing, refresh it SILENTLY (accumulate, swap in at the end) so
+        // the cached text doesn't clear + re-type. On a first-ever visit (no cache) stream progressively.
+        const hadCache = !!cachedBriefingRef.current;
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buf = '';
+        let full = '';
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -99,11 +108,12 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
             if (!line.startsWith('data: ')) continue;
             try {
               const ev = JSON.parse(line.slice(6));
-              if (ev.type === 'text_delta' && mountedRef.current) setBriefing(p => p + ev.text);
+              if (ev.type === 'text_delta') { full += ev.text; if (!hadCache && mountedRef.current) setBriefing(full); }
               else if (ev.type === 'done' && mountedRef.current) setBriefingDone(true);
             } catch { /* skip */ }
           }
         }
+        if (mountedRef.current && full) { setBriefing(full); setBriefingDone(true); saveLS('aug-workers-briefing-v1', full); }
       })
       .catch(() => { if (mountedRef.current) setBriefingDone(true); });
   }, []);

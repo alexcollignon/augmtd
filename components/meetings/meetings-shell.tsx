@@ -17,6 +17,7 @@ import {
 } from '@/context/meetings-data-context';
 import type { MeetingChatContext } from '@/components/meetings/meeting-chat-sidebar';
 import CaptureModal from '@/components/meetings/capture-modal';
+import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import NewMeetingModal from '@/components/meetings/new-meeting-modal';
 import MeetingsLeftPanel from '@/components/meetings/meetings-left-panel';
 import FolderDetailView from '@/components/meetings/folder-detail-view';
@@ -52,9 +53,12 @@ export default function MeetingsShell({
   const pathname = usePathname();
 
   // ── Data state ──────────────────────────────────────────────────────────
-  const [upcoming, setUpcoming] = useState<CalendarEvent[]>(initialUpcoming ?? []);
-  const [transcripts, setTranscripts] = useState<Transcript[]>(initialTranscripts ?? []);
-  const [loading, setLoading] = useState(!initialUpcoming);
+  // Instant-load: hydrate the meetings list from localStorage (fallback behind SSR initials) so a revisit
+  // shows the transcripts immediately, then fetchAll refreshes. Loading only when there's genuinely nothing.
+  const [cachedInit] = useState(() => loadLS<{ upcoming: CalendarEvent[]; transcripts: Transcript[] }>('aug-meetings-v1'));
+  const [upcoming, setUpcoming] = useState<CalendarEvent[]>(initialUpcoming ?? cachedInit?.upcoming ?? []);
+  const [transcripts, setTranscripts] = useState<Transcript[]>(initialTranscripts ?? cachedInit?.transcripts ?? []);
+  const [loading, setLoading] = useState(!initialUpcoming && !cachedInit);
   const [folders, setFolders] = useState<DriveFolder[]>(initialFolders ?? []);
   const [seenIds, setSeenIds] = useState<Set<string>>(() => new Set());
 
@@ -99,6 +103,7 @@ export default function MeetingsShell({
 
       const mapped = mapTranscripts(transcriptsData.transcripts ?? []);
       setTranscripts(mapped);
+      saveLS('aug-meetings-v1', { upcoming: events, transcripts: mapped }); // cache for instant re-entry
     } catch {
       // Swallow — polling will retry
     }
@@ -109,7 +114,8 @@ export default function MeetingsShell({
   }, []);
 
   useEffect(() => {
-    setLoading(true);
+    // Don't force a skeleton when we already have SSR/cached data — just refresh silently in the
+    // background. `loading` was initialised true only when there was genuinely nothing to show.
     fetchAll().finally(() => setLoading(false));
   }, [fetchAll]);
 
