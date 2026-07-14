@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { FolderIcon, PlusIcon, PencilSquareIcon, TrashIcon, XMarkIcon, SparklesIcon, FlagIcon, ShieldCheckIcon, UsersIcon, ArrowPathIcon, EyeSlashIcon, FolderPlusIcon, ChevronRightIcon, ArrowRightIcon, CheckCircleIcon, ArchiveBoxIcon, ArrowUturnLeftIcon } from '@heroicons/react/24/outline';
 import { Button, IconButton, Input, Textarea, Card, EmptyState, SegmentedControl } from '@/components/ui';
@@ -173,14 +174,18 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
     } catch (e) { toast.error((e as Error).message); } finally { setSaving(false); }
   };
 
-  return (
+  // Portal to <body>: a transformed ancestor in the Home (RiseIn / deck animations) turns `position: fixed`
+  // into being relative to THAT box, so the dim would only cover the Projects area and leave the header
+  // bright. Rendering at the document root makes the overlay truly full-screen.
+  if (typeof document === 'undefined') return null;
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-neutral-900/30 backdrop-blur-sm p-4 overflow-y-auto" onClick={onClose}>
-      <div className="mt-[6vh] w-full max-w-[540px] rounded-2xl bg-white border border-neutral-200 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-100">
+      <div className="my-[4vh] w-full max-w-[540px] max-h-[88vh] flex flex-col rounded-2xl bg-white border border-neutral-200 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex-shrink-0 flex items-center justify-between px-5 py-4 border-b border-neutral-100">
           <h2 className="text-[15px] font-semibold text-neutral-900">{editing ? 'Edit project' : 'New project'}</h2>
           <IconButton onClick={onClose} aria-label="Close"><XMarkIcon className="w-4 h-4" /></IconButton>
         </div>
-        <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
+        <div className="flex-1 min-h-0 px-5 py-4 space-y-4 overflow-y-auto">
           <div>
             <label className="text-[12px] font-semibold text-neutral-600 mb-1 block">Name</label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Acme renewal" autoFocus />
@@ -192,12 +197,13 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
           <ChipListEditor label="Goals" hint="What the project is trying to achieve." icon={FlagIcon} items={goals} onChange={setGoals} placeholder="Add a goal…" />
           <ChipListEditor label="Rules" hint="How your coworkers should work on it — and what to avoid." icon={ShieldCheckIcon} items={rules} onChange={setRules} placeholder="Add a rule…" />
         </div>
-        <div className="flex items-center justify-end gap-2 px-5 py-3.5 border-t border-neutral-100">
+        <div className="flex-shrink-0 flex items-center justify-end gap-2 px-5 py-3.5 border-t border-neutral-100">
           <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
           <Button size="sm" onClick={save} disabled={!name.trim() || saving}>{saving ? 'Saving…' : editing ? 'Save' : 'Create project'}</Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

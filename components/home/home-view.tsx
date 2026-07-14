@@ -249,6 +249,8 @@ type Brief = {
   schedule: { id: string; time: string; title: string; attendees: number; prep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null }[];
   handled?: { triaged: number; filtered: number; summarised: number; tracked: number; resolved: number };
   activeInitiatives?: ActiveInitiative[];
+  bundles?: Record<string, { key: string; label: string }>; // server-side "what needs you" bundling (atomId → bundle)
+  bundleNames?: Record<string, { name: string; why?: string }>; // reasoned name + grounded "why" per bundle key
 };
 type TeamMsg = { workerId?: string; workerName?: string; workerRole?: string | null; text?: string };
 type TeamReview = { artifactId?: string; threadId?: string; title?: string; workerName?: string; workerId?: string; workerRole?: string | null };
@@ -1115,6 +1117,171 @@ function Collapse({ open, children }: { open: boolean; children: React.ReactNode
   );
 }
 
+// ── Home simplification L1 — BUNDLING. Group the flat "what needs you" atoms by their INITIATIVE so
+// related work reads as ONE human-sized unit (the 3 internship applicants, a meeting's follow-ups) instead
+// of N chore-cards. PRESENTATION grouping only — nothing is reclassified or hidden; a bundle EXPANDS to its
+// atoms. Order-preserving: a bundle takes the position of its most-urgent member; only ≥2 same-initiative
+// items bundle — a lone item (or one with no initiative) stays a plain DoRow.
+type DoNode = { kind: 'bundle'; key: string; title: string; why?: string; items: DoItem[] } | { kind: 'single'; key: string; item: DoItem };
+type BundleRef = { key: string; label: string };
+type BundleName = { name: string; why?: string };
+// Group by the SERVER's bundle decision (brief.bundles: atomId → {key,label}). The server decides which
+// atoms bundle (deterministically, by reasoned initiative/meeting/thread); the client re-counts only the
+// atoms PRESENT after this session's dismissals, so a bundle that drops to a single live item renders as a
+// plain row. The reasoned NAME + grounded "why" ride in `namesMap` (key → {name, why?}); we fall back to
+// the deterministic label until the background naming pass fills the cache.
+function bundleDoItems(items: DoItem[], bundleMap: Record<string, BundleRef>, namesMap: Record<string, BundleName>): DoNode[] {
+  const present = new Map<string, number>();
+  for (const it of items) { const b = bundleMap[it.entityId]; if (b) present.set(b.key, (present.get(b.key) ?? 0) + 1); }
+  const out: DoNode[] = [];
+  const emitted = new Set<string>();
+  for (const it of items) {
+    const b = bundleMap[it.entityId];
+    if (b && (present.get(b.key) ?? 0) >= 2) {
+      if (emitted.has(b.key)) continue; // bundle already emitted at its most-urgent member's position
+      emitted.add(b.key);
+      const named = namesMap[b.key];
+      out.push({ kind: 'bundle', key: `b-${b.key}`, title: named?.name || b.label, why: named?.why, items: items.filter((x) => bundleMap[x.entityId]?.key === b.key) });
+    } else {
+      out.push({ kind: 'single', key: it.key, item: it });
+    }
+  }
+  return out;
+}
+
+// A bundle card — the initiative + count + a one-line lead (the most-urgent atom's gist), expanding to the
+// individual DoRows. The lead lets you act on the whole unit at a glance; nothing is buried (count + expand).
+function BundleGroup({ title, why, items, emphasis = false, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment }: {
+  title: string; why?: string; items: DoItem[]; emphasis?: boolean;
+  onDismissInbox?: (id: string) => void; onClearedCommitment?: (id: string) => void;
+  onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void;
+  onUndoCommitment?: (message: string, id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const lead = items[0];
+  const overdue = items.some((i) => i.overdue || (!!i.dueDate && i.dueDate < todayISO));
+  // The grounded "why it matters" (when present) is the most useful lead — show it; otherwise the
+  // most-urgent atom's gist so the card still says what's inside.
+  return (
+    <div className={`rounded-xl border bg-white transition-all duration-300 ease-out ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/70'}`}>
+      <button onClick={() => setOpen((v) => !v)} className="w-full flex items-start gap-3 p-4 text-left">
+        <span className="flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-50 text-indigo-500"><FolderIcon className="w-4 h-4" /></span>
+        <div className="min-w-0 flex-1">
+          {emphasis && <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-500 mb-1"><SparklesIcon className="w-3 h-3" />Start here</p>}
+          <div className="flex items-baseline gap-2">
+            <p className="text-[13.5px] font-semibold text-neutral-900 truncate min-w-0">{title}<span className="font-normal text-neutral-400"> · {items.length}</span></p>
+            {overdue && <span className="flex-shrink-0 ml-auto text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 bg-rose-50 text-rose-600">Overdue</span>}
+          </div>
+          <p className="text-[12px] text-neutral-500 mt-0.5 leading-snug line-clamp-1">
+            {why
+              ? why
+              : <>{lead.primary ? <>{lead.primary}<span className="text-neutral-400"> · </span></> : null}{lead.ask}</>}
+            {items.length > 1 ? <span className="text-neutral-400"> · +{items.length - 1} more</span> : null}
+          </p>
+        </div>
+        <ChevronRightIcon className={`w-4 h-4 flex-shrink-0 text-neutral-300 mt-0.5 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
+      </button>
+      <Collapse open={open}>
+        <div className="border-t border-neutral-100 px-2 py-2 space-y-2">
+          {items.map((it) => <DoRow key={it.key} item={it} onDismissInbox={onDismissInbox} onClearedCommitment={onClearedCommitment} onUndoInbox={onUndoInbox} onUndoCommitment={onUndoCommitment} />)}
+        </div>
+      </Collapse>
+    </div>
+  );
+}
+
+// ── The FOCUS+PEEK DECK for "What needs you". One hero card (the full DoRow / BundleGroup / PriorityCard)
+// leads; the next few are compact PEEK rows you can glance and promote. Tapping a peek makes it the hero;
+// clearing the hero drops it and the next one rises — "you work the top, the rest keep coming." Nothing is
+// hidden: every peek stays reachable and "N more" reveals the tail. The heavy actions (open, draft, dismiss)
+// all live on the hero card; a peek is a one-line preview + a promote tap.
+type DeckEntry =
+  | { key: string; kind: 'bundle'; title: string; why?: string; items: DoItem[] }
+  | { key: string; kind: 'single'; item: DoItem }
+  | { key: string; kind: 'priority'; p: Priority };
+type PeekDesc = { Icon: React.ElementType; ring: string; text: string; title: string; hint?: string | null; count?: number; overdue?: boolean; dueToday?: boolean };
+const POSTURE_META: Record<Priority['posture'], { Icon: React.ElementType; ring: string; text: string }> = {
+  needs_reply: { Icon: EnvelopeIcon, ring: 'bg-indigo-50', text: 'text-indigo-500' },
+  to_do:       { Icon: BellAlertIcon, ring: 'bg-amber-50', text: 'text-amber-600' },
+  waiting_on:  { Icon: CheckCircleIcon, ring: 'bg-neutral-100', text: 'text-neutral-500' },
+};
+function peekOf(e: DeckEntry): PeekDesc {
+  if (e.kind === 'bundle') {
+    const overdue = e.items.some((i) => i.overdue);
+    return { Icon: FolderIcon, ring: 'bg-indigo-50', text: 'text-indigo-500', title: e.title, hint: e.why || e.items[0]?.ask, count: e.items.length, overdue };
+  }
+  if (e.kind === 'single') {
+    const m = DO_META[e.item.source];
+    const title = e.item.primary ? `${e.item.primary} · ${e.item.ask}` : e.item.ask;
+    return { Icon: m.Icon, ring: m.ring, text: m.text, title, hint: e.item.second, overdue: e.item.overdue, dueToday: e.item.dueToday };
+  }
+  const m = POSTURE_META[e.p.posture] ?? POSTURE_META.to_do;
+  return { Icon: m.Icon, ring: m.ring, text: m.text, title: e.p.title, hint: e.p.context, overdue: e.p.overdue };
+}
+function PeekRow({ e, onPromote }: { e: DeckEntry; onPromote: () => void }) {
+  const d = peekOf(e);
+  return (
+    <button onClick={onPromote} className="group w-full flex items-center gap-2.5 rounded-lg border border-neutral-200/60 bg-white/60 px-3 py-2 text-left transition-all duration-200 ease-out hover:bg-white hover:border-neutral-300">
+      <span className={`flex-shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-md ${d.ring} ${d.overdue ? 'text-rose-500' : d.text}`}><d.Icon className="w-3.5 h-3.5" /></span>
+      <span className="min-w-0 flex-1 flex items-baseline gap-1.5">
+        <span className="text-[12.5px] font-medium text-neutral-700 truncate">{d.title}{typeof d.count === 'number' && <span className="font-normal text-neutral-400"> · {d.count}</span>}</span>
+        {d.hint && <span className="hidden sm:inline text-[11.5px] text-neutral-400 truncate min-w-0">— {d.hint}</span>}
+      </span>
+      {d.overdue && <span className="flex-shrink-0 text-[9.5px] font-semibold uppercase tracking-wide rounded px-1 py-0.5 bg-rose-50 text-rose-600">Overdue</span>}
+      {!d.overdue && d.dueToday && <span className="flex-shrink-0 text-[9.5px] font-semibold uppercase tracking-wide rounded px-1 py-0.5 bg-amber-50 text-amber-600">Today</span>}
+      <ChevronRightIcon className="flex-shrink-0 w-3.5 h-3.5 text-neutral-300 group-hover:text-indigo-400 transition-colors" />
+    </button>
+  );
+}
+
+// ── Prioritization LENS for the deck — plain-language moods, not framework jargon. The frameworks live in
+// the backend signals (urgency, importance, effort); the user just picks how the deck is ordered.
+//   • Urgent      → soonest deadline / overdue first (time pressure)
+//   • Important   → biggest contexts first — tied to a project/deal, then larger bundles (leverage)
+//   • Quick wins  → lowest-effort, single-action items first (momentum)
+// A smart default (Urgent) means most people never touch it. Sort is presentation-only — nothing added or
+// hidden, the same entries reorder.
+type DoSort = 'urgent' | 'important' | 'quick';
+function entryMetrics(e: DeckEntry, today: string) {
+  if (e.kind === 'bundle') {
+    const its = e.items;
+    return { urg: its.some((i) => i.overdue) ? 0 : its.some((i) => i.dueToday) ? 1 : its.some((i) => i.dueDate) ? 2 : 3, effort: 3, hasInit: true, size: its.length };
+  }
+  if (e.kind === 'single') {
+    const it = e.item;
+    return { urg: it.overdue ? 0 : it.dueToday ? 1 : it.dueDate ? 2 : 3, effort: it.effort === 'quick' ? 0 : it.effort === 'deep' ? 2 : 1, hasInit: !!it.initiative, size: 1 };
+  }
+  const p = e.p;
+  const dueToday = !!(p.dueDate && p.dueDate === today);
+  return { urg: p.overdue ? 0 : dueToday ? 1 : p.dueDate ? 2 : 3, effort: p.effort === 'quick' ? 0 : p.effort === 'deep' ? 2 : 1, hasInit: !!p.initiative, size: p.items?.length ?? 1 };
+}
+function sortEntries(entries: DeckEntry[], mode: DoSort): DeckEntry[] {
+  const today = new Date().toISOString().slice(0, 10);
+  return entries
+    .map((e, i) => ({ e, i, m: entryMetrics(e, today) }))
+    .sort((A, B) => {
+      const a = A.m, b = B.m;
+      const d = mode === 'urgent'
+        ? a.urg - b.urg
+        : mode === 'important'
+          ? ((b.hasInit ? 1 : 0) - (a.hasInit ? 1 : 0)) || (b.size - a.size) || (a.urg - b.urg)
+          : (a.effort - b.effort) || (a.size - b.size) || (a.urg - b.urg);
+      return d || (A.i - B.i); // stable: preserve the base order on ties
+    })
+    .map((x) => x.e);
+}
+function DoSortToggle({ value, onChange }: { value: DoSort; onChange: (v: DoSort) => void }) {
+  const opts: { k: DoSort; label: string }[] = [{ k: 'urgent', label: 'Urgent' }, { k: 'important', label: 'Important' }, { k: 'quick', label: 'Quick wins' }];
+  return (
+    <div className="inline-flex items-center gap-0.5 rounded-lg bg-neutral-100/70 p-0.5">
+      {opts.map((o) => (
+        <button key={o.k} onClick={() => onChange(o.k)} className={`text-[11px] font-medium px-2 py-1 rounded-md transition-all duration-150 ease-out ${value === o.k ? 'bg-white text-indigo-600 shadow-sm' : 'text-neutral-400 hover:text-neutral-600'}`}>{o.label}</button>
+      ))}
+    </div>
+  );
+}
+
 // Zone 3 — the AMBIENT BAR, a sticky calm FOOTER. The whole "day at a glance" rail (waiting · to-watch ·
 // awareness · team · newsletters · handled) collapsed into ONE slim row of count chips. It PINS to the
 // bottom of the scroll column so it's always reachable (fixing "Around you gets buried at the foot"), and
@@ -1232,6 +1399,10 @@ export function HomeView() {
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [nowExpanded, setNowExpanded] = useState(false); // Zone 1 — reveal the full prioritized list past the cap
+  const [focusKey, setFocusKey] = useState<string | null>(null); // deck — which entry is the hero (null = the top one)
+  const [doSort, setDoSort] = useState<DoSort>('urgent'); // how "what needs you" is prioritized (plain-language lens)
+  useEffect(() => { try { const s = localStorage.getItem('aug-do-sort'); if (s === 'urgent' || s === 'important' || s === 'quick') setDoSort(s); } catch { /* ignore */ } }, []);
+  const chooseSort = (v: DoSort) => { setDoSort(v); setFocusKey(null); try { localStorage.setItem('aug-do-sort', v); } catch { /* ignore */ } };
   const [dismissed, setDismissed] = useState<Set<string>>(new Set()); // itemIds acted this session → live count + list refill
   // Ids of priority CARDS + commitments cleared this session (Done/Dismiss). Separate from `dismissed`
   // (which is keyed on must-respond reply itemIds) so we can decrement `needYou` for cards/commitments
@@ -1830,6 +2001,7 @@ export function HomeView() {
             @keyframes augBreathe{0%,100%{opacity:.85;transform:scale(1)}50%{opacity:.45;transform:scale(1.12)}}
             @keyframes augMarquee{to{transform:translateX(-50%)}}
             @keyframes fadeIn{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}
+            @keyframes augDeckIn{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:translateX(0)}}
           `}</style>
           <div className="flex items-start gap-5">
             <div className="relative flex-shrink-0 w-[72px] h-[72px] mt-1" aria-hidden="true">
@@ -1912,14 +2084,9 @@ export function HomeView() {
             {/* ── ACTION content ─────────────────────────────────────────────────────────────── */}
             <div className="min-w-0 gap-10 flex-1 flex flex-col">
 
-            {/* 0 · IN MOTION — the multi-action project groups (a contact's reply + its commitments, etc.)
-                collapsed into cards, so related work reads as ONE initiative with a clear next move. Loose
-                actions stay in the lanes below; nothing is duplicated. */}
-            {activeInitiatives.length > 0 && (
-              <RiseIn>
-                <InitiativeStrip inits={activeInitiatives} trackedKeys={trackedKeys} onOpenProjects={openProjectsAt} onMute={muteInitiative} onTrack={trackInitiative} />
-              </RiseIn>
-            )}
+            {/* IN MOTION / "Your projects" strip REMOVED from the Home (July 14) — projects now live only on
+                the Projects page. The Home is purely "what needs you, right now". `activeInitiatives` is
+                still computed + cached (Projects reads it), just no longer rendered here. */}
 
             {/* 1 · WHAT NEEDS YOU — ONE prioritized list of everything you owe: email replies, action
                 notices, and commitments, all rendered by the same DoRow (a leading TYPE ICON tells them
@@ -1960,36 +2127,60 @@ export function HomeView() {
                 .map((it, i) => ({ it, i }))
                 .sort((a, b) => urgencyRank(a.it) - urgencyRank(b.it) || a.i - b.i)
                 .map((x) => x.it);
-              // One node list (DoRows + the richer priority cards), capped with the shared Collapse.
-              const nodes = [
-                ...doItems.map((it, i) => ({ key: it.key, node: (
-                  <DoRow item={it} emphasis={i === 0} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />
-                ) })),
-                ...bodyCards.map((p) => ({ key: p.id, node: (
-                  <PriorityCard p={p} first={false} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} onCleared={onCleared} onUndoInbox={toastInbox} />
-                ) })),
+              // L1 BUNDLING — group the atoms by the SERVER's bundle decision into human-sized units, then
+              // map each bundle-or-single to a node (a bundle collapses N atoms into ONE row; rest stay plain).
+              const doNodes = bundleDoItems(doItems, b?.bundles ?? {}, b?.bundleNames ?? {});
+              // The DECK entries — one ordered list of heroes-or-peeks (bundles, single rows, priority cards).
+              const entries: DeckEntry[] = [
+                ...doNodes.map((n): DeckEntry => n.kind === 'bundle'
+                  ? { key: n.key, kind: 'bundle', title: n.title, why: n.why, items: n.items }
+                  : { key: n.key, kind: 'single', item: n.item }),
+                ...bodyCards.map((p): DeckEntry => ({ key: p.id, kind: 'priority', p })),
               ];
               const liveCount = doItems.length + liveBodyCards.length;
-              const NOW_CAP = 6;
-              const cap = nodes.slice(0, NOW_CAP);
-              const extra = nodes.slice(NOW_CAP);
+              // Render one entry as its FULL hero card (the existing renderers keep every inline action).
+              const renderFull = (e: DeckEntry, emphasis: boolean) =>
+                e.kind === 'bundle'
+                  ? <BundleGroup title={e.title} why={e.why} items={e.items} emphasis={emphasis} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />
+                  : e.kind === 'single'
+                    ? <DoRow item={e.item} emphasis={emphasis} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />
+                    : <PriorityCard p={e.p} first={emphasis} expanded={expanded === e.p.id} onToggle={() => setExpanded(expanded === e.p.id ? null : e.p.id)} onCleared={onCleared} onUndoInbox={toastInbox} />;
+              // Order by the chosen lens (urgent / important / quick wins) — presentation-only reorder.
+              const ordered = sortEntries(entries, doSort);
+              // FOCUS + PEEK DECK — one hero (the top, or a peek you promoted); the REST always stay visible as
+              // peeks so nothing disappears. Clearing the hero drops it and the next slides into focus.
+              const hero = ordered.find((e) => e.key === focusKey) ?? ordered[0];
+              const peeks = ordered.filter((e) => e.key !== hero?.key);
+              const PEEK_VISIBLE = 3;
+              const peekTop = peeks.slice(0, PEEK_VISIBLE);
+              const peekRest = peeks.slice(PEEK_VISIBLE);
               return (
               <RiseIn delay={60}>
                 <section>
-                  <Label count={liveCount} icon={BoltIcon}>What needs you</Label>
-                  {liveCount === 0 ? (
+                  <div className="flex items-center justify-between gap-3">
+                    <Label count={liveCount} icon={BoltIcon}>What needs you</Label>
+                    {liveCount > 1 && <div className="mb-3"><DoSortToggle value={doSort} onChange={chooseSort} /></div>}
+                  </div>
+                  {liveCount === 0 || !hero ? (
                     <SectionCleared line="All handled — nothing else needs you." />
                   ) : (
                     <div className="space-y-2.5">
-                      {cap.map(({ key, node }, i) => <RiseIn key={key} delay={i * 40}>{node}</RiseIn>)}
-                      {extra.length > 0 && (
+                      {/* HERO — the one to work now; slides into focus when it changes */}
+                      <div key={hero.key} style={{ animation: 'augDeckIn 0.28s ease-out' }}>{renderFull(hero, true)}</div>
+                      {/* PEEK — the rest stay visible; tap one to bring it into focus */}
+                      {peekTop.length > 0 && (
+                        <div className="space-y-1.5 pt-0.5">
+                          {peekTop.map((e) => <PeekRow key={e.key} e={e} onPromote={() => setFocusKey(e.key)} />)}
+                        </div>
+                      )}
+                      {peekRest.length > 0 && (
                         <Collapse open={nowExpanded}>
-                          <div className="space-y-2.5 pt-2.5">{extra.map(({ key, node }) => <div key={key}>{node}</div>)}</div>
+                          <div className="space-y-1.5 pt-1.5">{peekRest.map((e) => <PeekRow key={e.key} e={e} onPromote={() => setFocusKey(e.key)} />)}</div>
                         </Collapse>
                       )}
-                      {extra.length > 0 && (
+                      {peekRest.length > 0 && (
                         <button onClick={() => setNowExpanded((v) => !v)} className="inline-flex items-center gap-1 text-[12px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors duration-150 ease-out pt-0.5">
-                          {nowExpanded ? 'See less' : `${extra.length} more`}
+                          {nowExpanded ? 'See less' : `${peekRest.length} more`}
                           <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${nowExpanded ? '-rotate-90' : 'rotate-90'}`} />
                         </button>
                       )}

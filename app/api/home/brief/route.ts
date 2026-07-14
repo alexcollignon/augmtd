@@ -14,6 +14,8 @@ import { normalizeInitiative } from '@/lib/inbox/item-understanding';
 import { resolveOutboundAwaiting } from '@/lib/outbound/resolve';
 import { getActiveInitiatives, type ActiveInitiative } from '@/lib/projects/active-initiatives';
 import { reconcileRepliedItems } from '@/lib/inbox/reconcile-replied';
+import { computeBundles } from '@/lib/home/bundle-brief';
+import { nameBundles, type BundleName, type BundleNameInput } from '@/lib/home/name-bundles';
 
 export const maxDuration = 30;
 
@@ -344,7 +346,7 @@ export async function GET() {
   // items the unified understanding reasoned `relevance === 'action'`. They get their OWN Home section,
   // distinct from replies (What needs you), so automated/notice actions don't clutter the reply lane.
   // Grounded one-liner (the real subject), deep-dive on click, quiet dismiss — same affordances as FYA.
-  type ActionNotice = { itemId: string; who: string; summary: string; dueDate: string | null };
+  type ActionNotice = { itemId: string; who: string; summary: string; dueDate: string | null; initiative: string | null };
   const actionNoticesRaw: ActionNotice[] = [];
   const actionNoticeIds = new Set<string>();
   const emailSeeds: EmailSeed[] = [];
@@ -397,7 +399,7 @@ export async function GET() {
       const who = fromName || (sd.from as string) || 'Notice';
       const snippet = ((sd.body as string) || '').replace(/\s+/g, ' ').trim();
       const summary = (subj || '').trim() || (snippet ? snippet.slice(0, 90) : 'Action needed');
-      actionNoticesRaw.push({ itemId: it.id, who, summary: summary.length > 120 ? summary.slice(0, 117) + '…' : summary, dueDate: (u.deadline as string) ?? null });
+      actionNoticesRaw.push({ itemId: it.id, who, summary: summary.length > 120 ? summary.slice(0, 117) + '…' : summary, dueDate: (u.deadline as string) ?? null, initiative: clusterTag(u.initiative as string | null)?.initiative ?? (u.initiative as string | null) ?? null });
       actionNoticeIds.add(it.id);
       const threadMsgsA = tid ? threadMsgsById.get(tid) : undefined;
       const replyStateA = threadMsgsA && threadMsgsA.length
@@ -737,7 +739,7 @@ export async function GET() {
   type MustRespond = { teaser: string; items: Reply[] };
   type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
   type CommitmentPlacement = 'on_your_plate' | 'ball_in_court' | 'informational';
-  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; keepAnEyeOn?: KeepAnEyeOn | null; droppedItemIds?: string[]; commitmentPlacements?: Record<string, CommitmentPlacement>; activeInitiatives?: ActiveInitiative[]; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
+  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; keepAnEyeOn?: KeepAnEyeOn | null; droppedItemIds?: string[]; commitmentPlacements?: Record<string, CommitmentPlacement>; activeInitiatives?: ActiveInitiative[]; bundleNames?: { sig: string; names: Record<string, BundleName> }; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
   let tldr: Tldr | null = cached?.tldr ?? null;
   let followups: Followups | null = cached?.followups ?? null;
   let fyiDigest: FyiDigest | null = cached?.fyiDigest ?? null;
@@ -1089,5 +1091,76 @@ export async function GET() {
   const needYou = needYouReplies + needYouCards + commitments.length + actionNotices.length;
   const dayProgress = { cleared: clearedToday, needYou };
 
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress, activeInitiatives });
+  // L1 BUNDLING (server-side, deterministic) — group the "what needs you" atoms (replies + action notices +
+  // commitments) into ≥2 bundles by INITIATIVE (primary) → MEETING → THREAD. The client renders by the key
+  // we hand it. Recomputed each request (cheap, no AI); atoms not in the map are singles.
+  const itemById = new Map(items.map((it) => [it.id as string, it]));
+  const commitById = new Map(commits.map((c) => [c.id as string, c]));
+  // Fetch titles for the meetings that our commitments came from, so a meeting bundle reads with its name.
+  const meetingIds = [...new Set(commits.filter((c) => c.source === 'meeting' && c.source_id).map((c) => c.source_id as string))];
+  const meetingTitle = new Map<string, string>();
+  if (meetingIds.length) {
+    const { data: mt } = await supabase.from('meeting_transcripts').select('id, title').in('id', meetingIds);
+    for (const m of (mt ?? []) as Array<{ id: string; title: string | null }>) if (m.title) meetingTitle.set(m.id, m.title);
+  }
+  const bundleAtoms = [
+    ...((mustRespondOut?.items ?? []) as Array<{ itemId: string; initiative?: string | null; subject?: string }>).map((m) => {
+      const raw = itemById.get(m.itemId);
+      return { id: m.itemId, initiative: m.initiative ?? null, threadId: (raw?.source_data?.thread_id as string) ?? null, subject: (raw?.work_title as string) ?? m.subject ?? null };
+    }),
+    ...actionNotices.map((n) => {
+      const raw = itemById.get(n.itemId);
+      return { id: n.itemId, initiative: n.initiative ?? null, threadId: (raw?.source_data?.thread_id as string) ?? null, subject: (raw?.work_title as string) ?? n.summary ?? null };
+    }),
+    ...(commitments as Array<{ id: string; initiative?: string | null; description?: string }>).map((c) => {
+      const raw = commitById.get(c.id);
+      const mId = raw?.source === 'meeting' ? ((raw?.source_id as string) ?? null) : null;
+      return { id: c.id, initiative: c.initiative ?? null, meetingId: mId, meetingLabel: mId ? (meetingTitle.get(mId) ?? 'Meeting follow-ups') : null, threadId: (raw?.thread_id as string) ?? null, subject: c.description ?? null };
+    }),
+  ];
+  const bundles = computeBundles(bundleAtoms);
+
+  // REASONED NAMING (conservative, cached) — turn each bundle into a short human name + grounded "why".
+  // The deterministic `label` above is the fallback; a cached AI pass (keyed by the bundle-set signature)
+  // upgrades it. On a signature MISS we serve the fallback now and refresh the cache in the background, so
+  // the response never waits on the AI. Names/whys ride back as `bundleNames` (key → {name, why?}).
+  const bundleKeys = [...new Set(Object.values(bundles).map((b) => b.key))].sort();
+  const bundleSig = bundleKeys.join('|');
+  const cachedBundleNames = cached?.bundleNames?.sig === bundleSig ? (cached.bundleNames.names ?? {}) : {};
+  const bundleNames: Record<string, BundleName> = {};
+  for (const key of bundleKeys) {
+    const label = Object.values(bundles).find((b) => b.key === key)?.label ?? key;
+    const named = cachedBundleNames[key];
+    bundleNames[key] = named ?? { name: label };
+  }
+  // Refresh names in the background when the bundle set changed (and there are real bundles to name).
+  if (bundleKeys.length && cached?.bundleNames?.sig !== bundleSig) {
+    // Build per-bundle inputs (kind + fallback label + member gists) for the naming pass.
+    const gistsByKey = new Map<string, string[]>();
+    for (const a of bundleAtoms) {
+      const ref = bundles[a.id];
+      if (!ref) continue;
+      const arr = gistsByKey.get(ref.key) ?? [];
+      if (a.subject) arr.push(a.subject);
+      gistsByKey.set(ref.key, arr);
+    }
+    const nameInputs: BundleNameInput[] = bundleKeys.map((key) => ({
+      key,
+      kind: key.startsWith('i:') ? 'initiative' : key.startsWith('m:') ? 'meeting' : 'thread',
+      label: bundleNames[key].name,
+      members: gistsByKey.get(key) ?? [],
+    }));
+    after(async () => {
+      try {
+        const names = await nameBundles(user.id, supabase, nameInputs);
+        if (!Object.keys(names).length) return;
+        // Read-merge-write so we upgrade only `bundleNames` and preserve the rest of home_brief.
+        const { data } = await supabase.from('profiles').select('home_brief').eq('id', user.id).single();
+        const hb = ((data?.home_brief as Record<string, unknown>) ?? {});
+        await supabase.from('profiles').update({ home_brief: { ...hb, bundleNames: { sig: bundleSig, names } } }).eq('id', user.id).then(() => {}, () => {});
+      } catch { /* non-fatal — deterministic labels stay */ }
+    });
+  }
+
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress, activeInitiatives, bundles, bundleNames });
 }
