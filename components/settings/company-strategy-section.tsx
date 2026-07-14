@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { PlusIcon, XMarkIcon, CheckCircleIcon, ExclamationTriangleIcon, Bars2Icon, PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { Button, IconButton, Card, Input, Textarea, SegmentedControl, Badge } from '@/components/ui';
 import type { Period } from '@/lib/company/ai-operations-metrics';
+import { loadLS, saveLS } from '@/lib/utils/local-cache';
 
 const PERIOD_ITEMS: { value: Period; label: string }[] = [
   { value: 'week', label: 'Week' },
@@ -196,9 +197,11 @@ function GoalCard({ goal, onEdited, onArchived, drag }: { goal: Goal; onEdited: 
 
 export default function CompanyStrategySection() {
   const [period, setPeriod] = useState<Period>('month');
-  const [goals, setGoalsState] = useState<Goal[]>(() => goalsCache ?? []);
+  // Instant across reloads: the module cache survives tab-switches; localStorage survives a full reload.
+  // Hydrate goals from localStorage when the module cache is cold so the tab never flashes a skeleton.
+  const [goals, setGoalsState] = useState<Goal[]>(() => goalsCache ?? loadLS<Goal[]>('aug-strategy-goals-v1') ?? []);
   const [observations, setObservations] = useState<Observation[]>(() => alignmentCache.month ?? []);
-  const [loadingGoals, setLoadingGoals] = useState(() => goalsCache === null);
+  const [loadingGoals, setLoadingGoals] = useState(() => goalsCache === null && !loadLS<Goal[]>('aug-strategy-goals-v1'));
   const [loadingAlignment, setLoadingAlignment] = useState(() => !('month' in alignmentCache));
   const [showAddGoal, setShowAddGoal] = useState(false);
   const [newTitle, setNewTitle] = useState('');
@@ -213,6 +216,7 @@ export default function CompanyStrategySection() {
     setGoalsState(prev => {
       const next = typeof updater === 'function' ? (updater as (p: Goal[]) => Goal[])(prev) : updater;
       goalsCache = next;
+      saveLS('aug-strategy-goals-v1', next); // persist across full reloads (module cache only survives remounts)
       return next;
     });
   }, []);

@@ -205,6 +205,16 @@ See memory `project_home_timeline_gantt.md`. A big Home/Projects polish + trust 
 - **Instant-load EVERYWHERE** — `lib/utils/local-cache.ts` `loadLS`/`saveLS` (versioned keys): Home (brief+team), Timeline, Projects, the item deep-dive (email/followup/meeting/commitment threads + the plan panel), the project detail, the portfolio Gantt (+ a prefetch on Projects mount). Hydrate last-known (no skeleton) → background refresh → persist.
 - **Home misc** — Home nav → Dashboard reset (`sidebar-nav` dispatches `augmtd:home-reset`; a plain `<Link>` can't because the lens is tracked via `replaceState`). "What needs you" two card types unified (`PriorityCard` restyled to the exact `DoRow` row language, behavior kept). Shared `RiseIn` extracted to `components/home/rise-in.tsx` (lens switches + Projects cards stagger). **ProjectPulse removed** (redundant with the In-motion strip).
 
+### Instant-load across the platform (July 14, on `dev`)
+
+Rolled Home's `lib/utils/local-cache.ts` `loadLS`/`saveLS` (hydrate last-known → background refresh → persist; gate the skeleton on `loading && !cached`) across every heavy screen. Functionality-preserving. See memory `project_instant_load_rollout.md`.
+- **Inbox** — the win was STRUCTURAL, not just localStorage: `app/(main)/inbox/page.tsx` no longer BLOCKS SSR on the slow Gmail/Outlook folder APIs; folders load client-side (the pre-existing `fetchFolders` fallback + default-connection effect) and hydrate from `aug-inbox-folders-v1`. Inbox items still ship from SSR. **Rule: for an SSR page, move slow external calls OFF the blocking path (when a client fallback exists) — that's what makes first paint instant.** ⚠️ Moving folders off SSR nulled `selectedConnectionId` at mount, which broke the default-open (it matched connection-less commitments that "belong to any account" and couldn't be replaced) — fixed in `latestItemForConnection`: WAIT until the account resolves (return null while folders load), then PREFER a real email (`connection_id === effectiveConn`) over connection-less items, so the default view always aligns to the selected inbox. **Lesson: moving data SSR→client can null values other logic assumed at mount — audit the consumers.**
+- **Workers** (`team-home-view.tsx`) — review desk (`aug-workers-home-v1`) + AI briefing (`aug-workers-briefing-v1`); the briefing refreshes SILENTLY when cached (accumulate the stream, swap in at `done`), streams progressively only on a first visit.
+- **Chat `/work`** — per-thread messages cached (`aug-thread-msgs-<id>`) → instant thread re-entry.
+- **Meetings** (`meetings-shell.tsx`) — transcripts hydrate (`aug-meetings-v1`); removed the mount `setLoading(true)` skeleton flash.
+- **Drive** (`drive-client.tsx`) — file lists + folders (`aug-drive-augmtd-v1`/`-kb-v1`/`-folders-v1`).
+- **Settings** — AI Operations caches the summary per period (`aug-aiops-<period>`); Strategy added localStorage (`aug-strategy-goals-v1`) on top of its module cache so goals survive a full reload.
+
 ### Studio workflows
 
 Defined in `lib/workflows/types.ts`. A workflow is a linear pipeline of steps:

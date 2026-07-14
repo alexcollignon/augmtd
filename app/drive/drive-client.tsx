@@ -20,6 +20,7 @@ import {
   CalendarIcon,
 } from '@heroicons/react/24/outline';
 import type { DriveAugmtdFile, DriveFolder } from '@/lib/types/drive';
+import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { Button, IconButton, Badge, Input, Select, EmptyState } from '@/components/ui';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -1579,9 +1580,11 @@ export default function DriveClient({ initialSources, connections }: DriveClient
   const [sidebarView, setSidebarView] = useState<SidebarView>({ kind: 'all' });
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
   const [sources, setSources] = useState<KnowledgeSource[]>(initialSources);
-  const [folders, setFolders] = useState<DriveFolder[]>([]);
-  const [augmtdFiles, setAugmtdFiles] = useState<DriveAugmtdFile[]>([]);
-  const [kbFiles, setKbFiles] = useState<KnowledgeFile[]>([]);
+  // Instant-load: hydrate the file lists + folders from localStorage so the drive renders immediately on
+  // a revisit (no empty flash), then the fetches below refresh + re-cache.
+  const [folders, setFolders] = useState<DriveFolder[]>(() => loadLS<DriveFolder[]>('aug-drive-folders-v1') ?? []);
+  const [augmtdFiles, setAugmtdFiles] = useState<DriveAugmtdFile[]>(() => loadLS<DriveAugmtdFile[]>('aug-drive-augmtd-v1') ?? []);
+  const [kbFiles, setKbFiles] = useState<KnowledgeFile[]>(() => loadLS<KnowledgeFile[]>('aug-drive-kb-v1') ?? []);
   const [showUpload, setShowUpload] = useState(false);
   const [showAddFromDrive, setShowAddFromDrive] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -1589,16 +1592,16 @@ export default function DriveClient({ initialSources, connections }: DriveClient
   const [newFolderName, setNewFolderName] = useState('');
 
   useEffect(() => {
-    fetch('/api/drive/folders').then((r) => r.ok ? r.json() : []).then((data) => setFolders(Array.isArray(data) ? data : []));
+    fetch('/api/drive/folders').then((r) => r.ok ? r.json() : []).then((data) => { const f = Array.isArray(data) ? data : []; setFolders(f); saveLS('aug-drive-folders-v1', f); });
   }, []);
 
   const refreshAugmtdFiles = () => {
-    fetch('/api/drive/augmtd-files').then((r) => r.ok ? r.json() : []).then((data) => setAugmtdFiles(Array.isArray(data) ? data : []));
+    fetch('/api/drive/augmtd-files').then((r) => r.ok ? r.json() : []).then((data) => { const f = Array.isArray(data) ? data : []; setAugmtdFiles(f); saveLS('aug-drive-augmtd-v1', f); });
   };
 
   useEffect(() => {
     refreshAugmtdFiles();
-    fetch('/api/drive/kb-files').then((r) => r.ok ? r.json() : []).then((data) => setKbFiles(Array.isArray(data) ? data : []));
+    fetch('/api/drive/kb-files').then((r) => r.ok ? r.json() : []).then((data) => { const f = Array.isArray(data) ? data : []; setKbFiles(f); saveLS('aug-drive-kb-v1', f); });
   }, []);
 
   useEffect(() => {

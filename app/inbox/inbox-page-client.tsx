@@ -20,6 +20,7 @@ import type { CalendarEvent } from '@/lib/types/meetings';
 import type { InboxItem } from '@/lib/types/inbox';
 import { setInboxRules } from '@/lib/inbox/classify-item';
 import { Button, EmptyState } from '@/components/ui';
+import { loadLS, saveLS } from '@/lib/utils/local-cache';
 
 
 type Density = 'normal' | 'compact';
@@ -199,7 +200,10 @@ export function InboxPageClient({
     return localStorage.getItem('inbox_folder_sidebar_collapsed') === 'true';
   });
   const [foldersLoading, setFoldersLoading] = useState(false);
-  const [folderSections, setFolderSections] = useState<ConnectionFolders[] | null>(initialFolderSections ?? null);
+  // Instant-load: folders now fetch client-side (SSR no longer blocks on the folder APIs). Hydrate the
+  // last-known folder tree from localStorage so a revisit shows it immediately (no flash), then
+  // `fetchFolders` refreshes in the background. The default-connection effect picks the first connection.
+  const [folderSections, setFolderSections] = useState<ConnectionFolders[] | null>(initialFolderSections ?? loadLS<ConnectionFolders[]>('aug-inbox-folders-v1') ?? null);
   const [selectedFolder, setSelectedFolder] = useState<SelectedFolder | null>(null);
   const [folderEmails, setFolderEmails] = useState<FolderEmailSummary[]>([]);
   const [folderEmailsLoading, setFolderEmailsLoading] = useState(false);
@@ -308,11 +312,18 @@ export function InboxPageClient({
     return cid === connId;
   }, []);
 
-  // Most recently created item that belongs to the given connection (falls back to the first
-  // folder section's connection when none is selected yet, e.g. on the very first mount).
+  // Most recently created item to open by default for the given connection. Falls back to the first
+  // folder section's connection when none is selected yet (default account).
   const latestItemForConnection = useCallback((connId: string | null): InboxItem | null => {
     const effectiveConn = connId ?? folderSections?.[0]?.connectionId ?? null;
-    const candidates = inboxItems.filter(i => itemBelongsToConnection(i, effectiveConn));
+    // The account isn't resolved yet (folders still loading on first mount) — don't guess, or the
+    // default-open lands on a connection-less item (a commitment/meeting) that then "belongs to any
+    // account" and can never be replaced. Wait for the connection; the folder-load effect re-runs this.
+    if (effectiveConn === null) return null;
+    // Prefer an ACTUAL EMAIL from this account (strict connection_id match) so the default view is always
+    // aligned to the selected inbox; only fall back to connection-less items if the account has no emails.
+    const strict = inboxItems.filter(i => (i as any).connection_id === effectiveConn);
+    const candidates = strict.length ? strict : inboxItems.filter(i => itemBelongsToConnection(i, effectiveConn));
     if (candidates.length === 0) return null;
     return candidates.reduce((a, b) =>
       new Date((b as any).created_at) > new Date((a as any).created_at) ? b : a
@@ -406,6 +417,7 @@ export function InboxPageClient({
         folders: c.folders ?? [],
       }));
       setFolderSections(enriched);
+      saveLS('aug-inbox-folders-v1', enriched); // cache for instant hydration on the next visit
     } catch { /* non-fatal */ } finally {
       setFoldersLoading(false);
     }
@@ -1156,7 +1168,7 @@ export function InboxPageClient({
                 selectedFolder={selectedFolder}
                 onSelectFolder={handleSelectFolder}
                 onCreateFolder={handleCreateFolder}
-                loading={foldersLoading}
+                loading={foldersLoading && !folderSections?.length}
                 collapsed={folderSidebarCollapsed}
                 onToggleCollapsed={() => {
                   const next = !folderSidebarCollapsed;

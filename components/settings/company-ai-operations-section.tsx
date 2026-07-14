@@ -11,6 +11,7 @@ import { Card, SegmentedControl } from '@/components/ui';
 import { AgentIcon } from '@/components/agents/agent-icons';
 import { ROLE_AVATARS, ROLE_LABELS } from '@/lib/workers/roles';
 import { humanizeToolName } from '@/lib/tools/tool-labels';
+import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { MINUTES_SAVED_PER_RUN, MIN_HOURLY_RATE_EUR, MAX_HOURLY_RATE_EUR, type AgentWorkRow, type AIOperationsSummary, type Period } from '@/lib/company/ai-operations-metrics';
 
 // One color per anonymous user "slot" (0, 1, 2…) — same slot = same real
@@ -314,8 +315,10 @@ function AgentWorkCard({ row, isOpen, onToggle, currency }: { row: AgentWorkRow;
 
 export default function CompanyAIOperationsSection() {
   const [period, setPeriod] = useState<Period>('month');
-  const [summary, setSummary] = useState<AIOperationsSummary | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Instant-load: hydrate the last summary for the default period from localStorage so the dashboard
+  // renders immediately (no skeleton), then refresh in the background. Cached per period below.
+  const [summary, setSummary] = useState<AIOperationsSummary | null>(() => loadLS<AIOperationsSummary>('aug-aiops-month'));
+  const [loading, setLoading] = useState(() => !loadLS<AIOperationsSummary>('aug-aiops-month'));
   const [error, setError] = useState(false);
   const [expandedRoles, setExpandedRoles] = useState<Set<string>>(new Set());
   const [showCostBreakdown, setShowCostBreakdown] = useState(false);
@@ -367,6 +370,7 @@ export default function CompanyAIOperationsSection() {
       if (!res.ok) throw new Error();
       const data = await res.json();
       setSummary(data.summary);
+      saveLS(`aug-aiops-${p}`, data.summary); // cache per period for instant hydration
     } catch {
       if (!background) setError(true);
     } finally {
@@ -374,7 +378,12 @@ export default function CompanyAIOperationsSection() {
     }
   }, []);
 
-  useEffect(() => { fetchSummary(period); }, [period, fetchSummary]);
+  // On period change: show the cached summary instantly + refresh silently; only skeleton when uncached.
+  useEffect(() => {
+    const cached = loadLS<AIOperationsSummary>(`aug-aiops-${period}`);
+    if (cached) { setSummary(cached); setLoading(false); fetchSummary(period, true); }
+    else fetchSummary(period);
+  }, [period, fetchSummary]);
 
   // Keep this live while the tab is open: refetch on regaining focus/visibility, plus a gentle
   // 2-minute poll — the underlying query is a cheap aggregation (no LLM call), so this is safe
