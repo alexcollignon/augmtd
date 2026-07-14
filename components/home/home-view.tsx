@@ -249,6 +249,7 @@ type Brief = {
   schedule: { id: string; time: string; title: string; attendees: number; prep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null }[];
   handled?: { triaged: number; filtered: number; summarised: number; tracked: number; resolved: number };
   activeInitiatives?: ActiveInitiative[];
+  bundles?: Record<string, { key: string; label: string }>; // server-side "what needs you" bundling (atomId → bundle)
 };
 type TeamMsg = { workerId?: string; workerName?: string; workerRole?: string | null; text?: string };
 type TeamReview = { artifactId?: string; threadId?: string; title?: string; workerName?: string; workerId?: string; workerRole?: string | null };
@@ -1115,6 +1116,71 @@ function Collapse({ open, children }: { open: boolean; children: React.ReactNode
   );
 }
 
+// ── Home simplification L1 — BUNDLING. Group the flat "what needs you" atoms by their INITIATIVE so
+// related work reads as ONE human-sized unit (the 3 internship applicants, a meeting's follow-ups) instead
+// of N chore-cards. PRESENTATION grouping only — nothing is reclassified or hidden; a bundle EXPANDS to its
+// atoms. Order-preserving: a bundle takes the position of its most-urgent member; only ≥2 same-initiative
+// items bundle — a lone item (or one with no initiative) stays a plain DoRow.
+type DoNode = { kind: 'bundle'; key: string; initiative: string; items: DoItem[] } | { kind: 'single'; key: string; item: DoItem };
+type BundleRef = { key: string; label: string };
+// Group by the SERVER's bundle decision (brief.bundles: atomId → {key,label}). The server decides which
+// atoms bundle (deterministically, by reasoned initiative); the client re-counts only the atoms PRESENT
+// after this session's dismissals, so a bundle that drops to a single live item renders as a plain row.
+function bundleDoItems(items: DoItem[], bundleMap: Record<string, BundleRef>): DoNode[] {
+  const present = new Map<string, number>();
+  for (const it of items) { const b = bundleMap[it.entityId]; if (b) present.set(b.key, (present.get(b.key) ?? 0) + 1); }
+  const out: DoNode[] = [];
+  const emitted = new Set<string>();
+  for (const it of items) {
+    const b = bundleMap[it.entityId];
+    if (b && (present.get(b.key) ?? 0) >= 2) {
+      if (emitted.has(b.key)) continue; // bundle already emitted at its most-urgent member's position
+      emitted.add(b.key);
+      out.push({ kind: 'bundle', key: `b-${b.key}`, initiative: b.label, items: items.filter((x) => bundleMap[x.entityId]?.key === b.key) });
+    } else {
+      out.push({ kind: 'single', key: it.key, item: it });
+    }
+  }
+  return out;
+}
+
+// A bundle card — the initiative + count + a one-line lead (the most-urgent atom's gist), expanding to the
+// individual DoRows. The lead lets you act on the whole unit at a glance; nothing is buried (count + expand).
+function BundleGroup({ initiative, items, emphasis = false, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment }: {
+  initiative: string; items: DoItem[]; emphasis?: boolean;
+  onDismissInbox?: (id: string) => void; onClearedCommitment?: (id: string) => void;
+  onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void;
+  onUndoCommitment?: (message: string, id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const lead = items[0];
+  const overdue = items.some((i) => i.overdue || (!!i.dueDate && i.dueDate < todayISO));
+  return (
+    <div className={`rounded-xl border bg-white transition-all duration-300 ease-out ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/70'}`}>
+      <button onClick={() => setOpen((v) => !v)} className="w-full flex items-start gap-3 p-4 text-left">
+        <span className="flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-50 text-indigo-500"><FolderIcon className="w-4 h-4" /></span>
+        <div className="min-w-0 flex-1">
+          {emphasis && <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-500 mb-1"><SparklesIcon className="w-3 h-3" />Start here</p>}
+          <div className="flex items-baseline gap-2">
+            <p className="text-[13.5px] font-semibold text-neutral-900 truncate min-w-0">{initiative}<span className="font-normal text-neutral-400"> · {items.length}</span></p>
+            {overdue && <span className="flex-shrink-0 ml-auto text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 bg-rose-50 text-rose-600">Overdue</span>}
+          </div>
+          <p className="text-[12px] text-neutral-500 mt-0.5 leading-snug line-clamp-1">
+            {lead.primary ? <>{lead.primary}<span className="text-neutral-400"> · </span></> : null}{lead.ask}{items.length > 1 ? <span className="text-neutral-400"> · +{items.length - 1} more</span> : null}
+          </p>
+        </div>
+        <ChevronRightIcon className={`w-4 h-4 flex-shrink-0 text-neutral-300 mt-0.5 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
+      </button>
+      <Collapse open={open}>
+        <div className="border-t border-neutral-100 px-2 py-2 space-y-2">
+          {items.map((it) => <DoRow key={it.key} item={it} onDismissInbox={onDismissInbox} onClearedCommitment={onClearedCommitment} onUndoInbox={onUndoInbox} onUndoCommitment={onUndoCommitment} />)}
+        </div>
+      </Collapse>
+    </div>
+  );
+}
+
 // Zone 3 — the AMBIENT BAR, a sticky calm FOOTER. The whole "day at a glance" rail (waiting · to-watch ·
 // awareness · team · newsletters · handled) collapsed into ONE slim row of count chips. It PINS to the
 // bottom of the scroll column so it's always reachable (fixing "Around you gets buried at the foot"), and
@@ -1955,10 +2021,14 @@ export function HomeView() {
                 .map((it, i) => ({ it, i }))
                 .sort((a, b) => urgencyRank(a.it) - urgencyRank(b.it) || a.i - b.i)
                 .map((x) => x.it);
-              // One node list (DoRows + the richer priority cards), capped with the shared Collapse.
+              // L1 BUNDLING — group the atoms by the SERVER's bundle decision into human-sized units, then
+              // map each bundle-or-single to a node (a bundle collapses N atoms into ONE row; rest stay plain).
+              const doNodes = bundleDoItems(doItems, b?.bundles ?? {});
               const nodes = [
-                ...doItems.map((it, i) => ({ key: it.key, node: (
-                  <DoRow item={it} emphasis={i === 0} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />
+                ...doNodes.map((n, i) => ({ key: n.key, node: (
+                  n.kind === 'bundle'
+                    ? <BundleGroup initiative={n.initiative} items={n.items} emphasis={i === 0} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />
+                    : <DoRow item={n.item} emphasis={i === 0} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />
                 ) })),
                 ...bodyCards.map((p) => ({ key: p.id, node: (
                   <PriorityCard p={p} first={false} expanded={expanded === p.id} onToggle={() => setExpanded(expanded === p.id ? null : p.id)} onCleared={onCleared} onUndoInbox={toastInbox} />

@@ -14,6 +14,7 @@ import { normalizeInitiative } from '@/lib/inbox/item-understanding';
 import { resolveOutboundAwaiting } from '@/lib/outbound/resolve';
 import { getActiveInitiatives, type ActiveInitiative } from '@/lib/projects/active-initiatives';
 import { reconcileRepliedItems } from '@/lib/inbox/reconcile-replied';
+import { computeBundles } from '@/lib/home/bundle-brief';
 
 export const maxDuration = 30;
 
@@ -344,7 +345,7 @@ export async function GET() {
   // items the unified understanding reasoned `relevance === 'action'`. They get their OWN Home section,
   // distinct from replies (What needs you), so automated/notice actions don't clutter the reply lane.
   // Grounded one-liner (the real subject), deep-dive on click, quiet dismiss — same affordances as FYA.
-  type ActionNotice = { itemId: string; who: string; summary: string; dueDate: string | null };
+  type ActionNotice = { itemId: string; who: string; summary: string; dueDate: string | null; initiative: string | null };
   const actionNoticesRaw: ActionNotice[] = [];
   const actionNoticeIds = new Set<string>();
   const emailSeeds: EmailSeed[] = [];
@@ -397,7 +398,7 @@ export async function GET() {
       const who = fromName || (sd.from as string) || 'Notice';
       const snippet = ((sd.body as string) || '').replace(/\s+/g, ' ').trim();
       const summary = (subj || '').trim() || (snippet ? snippet.slice(0, 90) : 'Action needed');
-      actionNoticesRaw.push({ itemId: it.id, who, summary: summary.length > 120 ? summary.slice(0, 117) + '…' : summary, dueDate: (u.deadline as string) ?? null });
+      actionNoticesRaw.push({ itemId: it.id, who, summary: summary.length > 120 ? summary.slice(0, 117) + '…' : summary, dueDate: (u.deadline as string) ?? null, initiative: clusterTag(u.initiative as string | null)?.initiative ?? (u.initiative as string | null) ?? null });
       actionNoticeIds.add(it.id);
       const threadMsgsA = tid ? threadMsgsById.get(tid) : undefined;
       const replyStateA = threadMsgsA && threadMsgsA.length
@@ -1089,5 +1090,33 @@ export async function GET() {
   const needYou = needYouReplies + needYouCards + commitments.length + actionNotices.length;
   const dayProgress = { cleared: clearedToday, needYou };
 
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress, activeInitiatives });
+  // L1 BUNDLING (server-side, deterministic) — group the "what needs you" atoms (replies + action notices +
+  // commitments) into ≥2 bundles by INITIATIVE (primary) → MEETING → THREAD. The client renders by the key
+  // we hand it. Recomputed each request (cheap, no AI); atoms not in the map are singles.
+  const itemById = new Map(items.map((it) => [it.id as string, it]));
+  const commitById = new Map(commits.map((c) => [c.id as string, c]));
+  // Fetch titles for the meetings that our commitments came from, so a meeting bundle reads with its name.
+  const meetingIds = [...new Set(commits.filter((c) => c.source === 'meeting' && c.source_id).map((c) => c.source_id as string))];
+  const meetingTitle = new Map<string, string>();
+  if (meetingIds.length) {
+    const { data: mt } = await supabase.from('meeting_transcripts').select('id, title').in('id', meetingIds);
+    for (const m of (mt ?? []) as Array<{ id: string; title: string | null }>) if (m.title) meetingTitle.set(m.id, m.title);
+  }
+  const bundles = computeBundles([
+    ...((mustRespondOut?.items ?? []) as Array<{ itemId: string; initiative?: string | null; subject?: string }>).map((m) => {
+      const raw = itemById.get(m.itemId);
+      return { id: m.itemId, initiative: m.initiative ?? null, threadId: (raw?.source_data?.thread_id as string) ?? null, subject: (raw?.work_title as string) ?? m.subject ?? null };
+    }),
+    ...actionNotices.map((n) => {
+      const raw = itemById.get(n.itemId);
+      return { id: n.itemId, initiative: n.initiative ?? null, threadId: (raw?.source_data?.thread_id as string) ?? null, subject: (raw?.work_title as string) ?? n.summary ?? null };
+    }),
+    ...(commitments as Array<{ id: string; initiative?: string | null; description?: string }>).map((c) => {
+      const raw = commitById.get(c.id);
+      const mId = raw?.source === 'meeting' ? ((raw?.source_id as string) ?? null) : null;
+      return { id: c.id, initiative: c.initiative ?? null, meetingId: mId, meetingLabel: mId ? (meetingTitle.get(mId) ?? 'Meeting follow-ups') : null, threadId: (raw?.thread_id as string) ?? null, subject: c.description ?? null };
+    }),
+  ]);
+
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress, activeInitiatives, bundles });
 }
