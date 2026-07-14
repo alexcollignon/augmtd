@@ -443,7 +443,7 @@ export async function getAIOperationsSummary(
   const agentIds = workerAgents.map(a => a.id);
   const workflowMeta = await getAgentWorkflows(admin, agentIds);
 
-  const [current, previous, emailsByAgent, messageStats, usage, usagePrev, signalEmails, signalMeetings, signalDocuments] = await Promise.all([
+  const [current, previous, emailsByAgent, messageStats, usage, usagePrev, signalEmails, signalMeetings, signalDocuments, userNames] = await Promise.all([
     countRuns(admin, workflowMeta, start, end),
     countRuns(admin, workflowMeta, prevStart, prevEnd),
     countEmailsSent(admin, agentIds, start, end),
@@ -453,6 +453,10 @@ export async function getAIOperationsSummary(
     countSignal(admin, 'emails', 'received_at', memberIds, start, end),
     countSignal(admin, 'meeting_transcripts', 'created_at', memberIds, start, end),
     countSignal(admin, 'knowledge_files', 'indexed_at', memberIds, start, end),
+    // Resolved from memberIds (known up front) rather than usage.byUserId.keys() (only known
+    // after `usage` resolves) so this runs concurrently with everything else instead of adding
+    // a serial round-trip at the end — was the main contributor to slow loads.
+    getUserNames(admin, memberIds),
   ]);
 
   // workflow id -> worker_role, so per-role top tasks can be aggregated across
@@ -583,8 +587,6 @@ export async function getAIOperationsSummary(
 
   const hoursSaved = Math.round((totalGroundedRuns * MINUTES_SAVED_PER_RUN) / 60 * 10) / 10;
   const hoursSavedPrev = Math.round((totalGroundedRunsPrev * MINUTES_SAVED_PER_RUN) / 60 * 10) / 10;
-
-  const userNames = await getUserNames(admin, Array.from(usage.byUserId.keys()));
 
   return {
     memberCount: memberIds.length,
