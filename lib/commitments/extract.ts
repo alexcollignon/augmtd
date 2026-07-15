@@ -205,6 +205,11 @@ export async function extractEmailCommitments(opts: {
   if (!isFromUser && BULK_HINT.test(text)) return 0;
 
   const who = userName || 'the user';
+  // Context-grounded initiative: the labels this counterparty/thread already carries, so a commitment
+  // reuses the existing deal label instead of inventing a synonym (converges with the email understanding).
+  const { getInitiativeCandidates, initiativeGroundingClause } = await import('@/lib/inbox/initiative-candidates');
+  const initCand = await getInitiativeCandidates(client, userId, { threadId, personNames: [counterparty], personEmails: [counterparty] }).catch(() => ({ canonical: null, candidates: [] as string[] }));
+  const initiativeGrounding = initiativeGroundingClause(initCand.canonical, initCand.candidates);
   const perspective = isFromUser
     ? `This email was SENT BY ${who}. Things ${who} promises to do = direction "you_owe". Things ${who} asks or requests the other party to do (and is now waiting on) = direction "awaiting". CRITICAL: because ${who} is the SENDER, an imperative or request aimed at the other party ("process the refund", "please send X", "can you review Y") is something the OTHER party owes — direction "awaiting" — NOT something ${who} owes. Only a first-person promise by ${who} ("I'll…", "I will…", "let me…", "we'll…") is "you_owe".`
     : `This email was RECEIVED BY ${who} from ${counterparty || 'someone'}. Things the other party asks ${who} to do = direction "you_owe". Things the other party promises to do for ${who} = direction "awaiting".`;
@@ -225,7 +230,7 @@ due_date: set it ONLY when THIS email explicitly states a deadline — an absolu
 counterparty: the specific real person this obligation is with (who owes it, or is owed it), drawn from this email's actual participants — the sender or a named recipient. Use null only when genuinely unidentifiable; never invent a name.
 
 initiative: the specific deal, client, project, internal initiative, or goal this commitment belongs to — including a hiring effort, product launch, migration, or other bounded internal effort. Use a short proper-noun label derived from THIS email's own content, or null for a one-off or an ongoing category such as invoices, receipts, or newsletters. Two DIFFERENT clients/companies/initiatives ALWAYS get DIFFERENT labels; the SAME ongoing effort gets a CONSISTENT label. Never invent a label.
-${instructions?.trim() ? `\nThe user added this guidance — follow it: ${instructions.trim()}\n` : ''}
+${initiativeGrounding}${instructions?.trim() ? `\nThe user added this guidance — follow it: ${instructions.trim()}\n` : ''}
 Subject: ${subject || '(none)'}
 Body:
 """

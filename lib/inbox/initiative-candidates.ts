@@ -1,0 +1,98 @@
+// ── Context-grounded initiative labeling (the "reason once, but SEE the world" fix).
+// The email `understanding` pass and the commitment extractor each labeled an item's initiative from ONE
+// item's text, in isolation — so the same deal got two labels (a client's calendar thread → "Jean-Marie
+// pilot", their pricing thread → "Soboplac AI Agent System"), and deterministic grouping (distinct labels
+// never merge) can't reconcile them. This provider hands the labeler the initiatives THIS sender / thread
+// is ALREADY associated with, so the model can REUSE an existing label instead of minting a synonym. The
+// decision stays reasoned (reuse-or-mint is the model's call), it just isn't blind anymore.
+//
+// Over-merge guard (the Galp lesson): we ground on the item's OWN correspondents (their own history), and
+// the model can still say "genuinely different deal" — we never force a merge. Bounded to the top few
+// candidates so a chatty sender can't flood the prompt.
+
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+// Per-process memo of the user's labeled corpus — a sync batch processes many items in one invocation, so
+// this turns N per-item fetches into one. Short TTL; serverless tears the process down anyway.
+const memo = new Map<string, { at: number; items: { init: string; from: string | null; fromName: string | null; thread: string | null }[]; commits: { init: string; cp: string | null }[] }>();
+const TTL_MS = 60_000;
+
+const emailOf = (s?: string | null): string | null =>
+  (String(s || '').toLowerCase().match(/[^\s<>"]+@[^\s<>"]+/)?.[0]) || null;
+const nameKey = (s?: string | null): string => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+async function loadLabeled(supabase: SupabaseClient, userId: string) {
+  const cached = memo.get(userId);
+  if (cached && Date.now() - cached.at < TTL_MS) return cached;
+  const [inboxRes, commitRes] = await Promise.all([
+    supabase.from('inbox_items').select('source_data').eq('user_id', userId).eq('source', 'email')
+      .not('source_data->understanding->>initiative', 'is', null).limit(600),
+    supabase.from('commitments').select('initiative, counterparty').eq('user_id', userId)
+      .not('initiative', 'is', null).limit(400),
+  ]);
+  const items = ((inboxRes.data ?? []) as Array<{ source_data: Record<string, unknown> }>).map((r) => {
+    const sd = (r.source_data ?? {}) as Record<string, unknown>;
+    const u = sd.understanding as { initiative?: string } | undefined;
+    return { init: String(u?.initiative || '').trim(), from: (sd.from_address as string) || (sd.from as string) || null, fromName: (sd.from_name as string) || null, thread: (sd.thread_id as string) || null };
+  }).filter((x) => x.init);
+  const commits = ((commitRes.data ?? []) as Array<{ initiative: string | null; counterparty: string | null }>)
+    .map((r) => ({ init: String(r.initiative || '').trim(), cp: r.counterparty || null })).filter((x) => x.init);
+  const rec = { at: Date.now(), items, commits };
+  memo.set(userId, rec);
+  return rec;
+}
+
+/**
+ * The initiative labels this thread / sender / counterparty is already associated with — the candidate set
+ * the labeler grounds on. `threadLabel` (same thread) is the strongest signal; `candidates` are frequency-
+ * ranked labels from the person's own history. Empty when the person/thread is new. Never throws.
+ */
+export async function getInitiativeCandidates(
+  supabase: SupabaseClient,
+  userId: string,
+  opts: { threadId?: string | null; personEmails?: (string | null)[]; personNames?: (string | null)[] },
+): Promise<{ canonical: string | null; candidates: string[] }> {
+  try {
+    const { items, commits } = await loadLabeled(supabase, userId);
+    const emails = new Set((opts.personEmails ?? []).map(emailOf).filter(Boolean) as string[]);
+    const nameTokenSets = (opts.personNames ?? []).map(nameKey).filter((n) => n.length > 2).map((n) => new Set(n.split(' ').filter((t) => t.length > 2)));
+    // Link a person across email + name forms: a commitment's counterparty "Jean-Marie" and an email's
+    // sender "Jean-Marie LAMBERT" are the same person, so both draw from ONE candidate pool → ONE canonical.
+    const nameMatches = (raw?: string | null): boolean => {
+      const t = new Set(nameKey(raw).split(' ').filter((x) => x.length > 2));
+      if (!t.size) return false;
+      return nameTokenSets.some((q) => { const [s, l] = q.size <= t.size ? [q, t] : [t, q]; return s.size > 0 && [...s].every((x) => l.has(x)); });
+    };
+    let threadLabel: string | null = null;
+    if (opts.threadId) { const t = items.find((i) => i.thread === opts.threadId); if (t) threadLabel = t.init; }
+    const freq = new Map<string, number>();
+    const bump = (init: string) => { if (init) freq.set(init, (freq.get(init) ?? 0) + 1); };
+    for (const i of items) { const e = emailOf(i.from); if ((e && emails.has(e)) || nameMatches(i.fromName)) bump(i.init); }
+    for (const c of commits) { const e = emailOf(c.cp); if ((e && emails.has(e)) || nameMatches(c.cp)) bump(c.init); }
+    // Canonical = the sender's ESTABLISHED label: the thread's own label if any (a thread is one
+    // initiative), else the most frequent — tie broken by the longer/more-descriptive label. This is the
+    // one the labeler consolidates on so a deal stops fragmenting; the model may still split a genuinely
+    // separate deal. candidates = the other variants (so the prompt can say "don't reuse those").
+    const ranked = [...freq.entries()].sort((a, b) => b[1] - a[1] || b[0].length - a[0].length).map(([k]) => k);
+    const canonical = threadLabel || ranked[0] || null;
+    const candidates = ranked.filter((c) => c !== canonical).slice(0, 5);
+    return { canonical, candidates };
+  } catch {
+    return { canonical: null, candidates: [] };
+  }
+}
+
+/** Render the grounding clause. Leads with the sender's CANONICAL initiative and tells the labeler to
+ * consolidate on it (converge a fragmented deal) while still allowing a genuinely separate deal to split.
+ * Empty when there's no established label (new person/thread → label fresh, today's behavior). */
+export function initiativeGroundingClause(canonical: string | null, otherVariants: string[]): string {
+  if (!canonical) return '';
+  const others = otherVariants.filter((c) => c && c !== canonical);
+  return (
+    `\n- INITIATIVE GROUNDING (converge, don't fragment): this sender's ESTABLISHED initiative label is ` +
+    `"${canonical}". Use "${canonical}" — its EXACT text — for anything about this ongoing relationship/effort, ` +
+    `EVEN IF this particular message emphasises a different facet of it (a meeting, a price, a document, a ` +
+    `sub-topic). ${others.length ? `Older variant labels seen for the SAME relationship: ${others.map((c) => `"${c}"`).join(', ')} — do NOT reuse those; consolidate on "${canonical}". ` : ''}` +
+    `Use a DIFFERENT label ONLY if this item is about a genuinely SEPARATE, unrelated deal or effort with this sender.\n`
+  );
+}
