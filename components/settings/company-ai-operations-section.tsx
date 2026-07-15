@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
 import {
   ClockIcon, BoltIcon, UserGroupIcon, ChartBarIcon, InformationCircleIcon,
@@ -319,11 +319,16 @@ function AgentWorkCard({ row, isOpen, onToggle, currency }: { row: AgentWorkRow;
 
 export default function CompanyAIOperationsSection() {
   const [period, setPeriod] = useState<Period>('month');
-  // Instant-load: hydrate the last summary for the default period from localStorage so the dashboard
-  // renders immediately (no skeleton), then refresh in the background. Cached per period below.
-  const [summary, setSummary] = useState<AIOperationsSummary | null>(() => loadLS<AIOperationsSummary>('aug-aiops-month'));
-  const [loading, setLoading] = useState(() => !loadLS<AIOperationsSummary>('aug-aiops-month'));
+  // Instant-load: start COLD (matches the server render) then hydrate the last summary for the default
+  // period from localStorage in a layout effect — reading the cache in the useState initializer populates on
+  // the client but not the server → hydration mismatch. The period effect below refreshes + handles changes.
+  const [summary, setSummary] = useState<AIOperationsSummary | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  useLayoutEffect(() => {
+    const c = loadLS<AIOperationsSummary>('aug-aiops-month');
+    if (c) { setSummary(c); setLoading(false); }
+  }, []);
   const [expandedRoles, setExpandedRoles] = useState<Set<string>>(new Set());
   const [showCostBreakdown, setShowCostBreakdown] = useState(false);
   const [anonymizeUsers, setAnonymizeUsers] = useState(false);

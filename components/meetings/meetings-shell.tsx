@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ChatBubbleLeftIcon,
   CalendarDaysIcon,
@@ -53,12 +53,17 @@ export default function MeetingsShell({
   const pathname = usePathname();
 
   // ── Data state ──────────────────────────────────────────────────────────
-  // Instant-load: hydrate the meetings list from localStorage (fallback behind SSR initials) so a revisit
-  // shows the transcripts immediately, then fetchAll refreshes. Loading only when there's genuinely nothing.
-  const [cachedInit] = useState(() => loadLS<{ upcoming: CalendarEvent[]; transcripts: Transcript[] }>('aug-meetings-v1'));
-  const [upcoming, setUpcoming] = useState<CalendarEvent[]>(initialUpcoming ?? cachedInit?.upcoming ?? []);
-  const [transcripts, setTranscripts] = useState<Transcript[]>(initialTranscripts ?? cachedInit?.transcripts ?? []);
-  const [loading, setLoading] = useState(!initialUpcoming && !cachedInit);
+  // Instant-load: start from the SSR initials (or empty) — the SAME value on server + client, so no
+  // hydration mismatch — then hydrate the localStorage fallback in a layout effect below (reading the cache
+  // in the initializer would populate on the client but not the server). fetchAll refreshes after.
+  const [upcoming, setUpcoming] = useState<CalendarEvent[]>(initialUpcoming ?? []);
+  const [transcripts, setTranscripts] = useState<Transcript[]>(initialTranscripts ?? []);
+  const [loading, setLoading] = useState(!initialUpcoming);
+  useLayoutEffect(() => {
+    if (initialUpcoming) return; // SSR already provided the data
+    const c = loadLS<{ upcoming: CalendarEvent[]; transcripts: Transcript[] }>('aug-meetings-v1');
+    if (c) { setUpcoming(c.upcoming ?? []); setTranscripts(c.transcripts ?? []); setLoading(false); }
+  }, [initialUpcoming]);
   const [folders, setFolders] = useState<DriveFolder[]>(initialFolders ?? []);
   const [seenIds, setSeenIds] = useState<Set<string>>(() => new Set());
 
