@@ -56,14 +56,18 @@ async function getItemReplyContext(
   userId: string,
   kind: Kind,
   entityId: string,
-): Promise<{ relevance: ItemRelevance | null; alreadyReplied: boolean }> {
-  if (kind !== 'email' && kind !== 'awareness' && kind !== 'followup') return { relevance: null, alreadyReplied: false };
+): Promise<{ relevance: ItemRelevance | null; alreadyReplied: boolean; activityAt: string | null }> {
+  if (kind !== 'email' && kind !== 'awareness' && kind !== 'followup') return { relevance: null, alreadyReplied: false, activityAt: null };
   try {
     const { data: item } = await supabase
       .from('inbox_items')
-      .select('source_data, created_at')
+      .select('source_data, created_at, last_activity_at, updated_at')
       .eq('id', entityId).eq('user_id', userId).maybeSingle();
     const relevance = getUnderstanding(item)?.relevance ?? null;
+    // Thread freshness: the newest of last_activity_at / updated_at. A cached plan generated BEFORE this
+    // is stale — the thread has moved on (a new inbound message with a different ask), so the plan must
+    // regenerate against the item's current body, not the message that first created it.
+    const activityAt = (item?.last_activity_at as string | null) || (item?.updated_at as string | null) || null;
     const threadId = (item?.source_data as { thread_id?: string } | undefined)?.thread_id;
     let alreadyReplied = false;
     if (threadId) {
@@ -75,9 +79,9 @@ async function getItemReplyContext(
       const st = computeThreadReplyState((emails ?? []) as { is_from_user: boolean; received_at: string | null }[], since);
       alreadyReplied = st.lastMessageFromUser && st.userReplied;
     }
-    return { relevance, alreadyReplied };
+    return { relevance, alreadyReplied, activityAt };
   } catch {
-    return { relevance: null, alreadyReplied: false };
+    return { relevance: null, alreadyReplied: false, activityAt: null };
   }
 }
 
@@ -111,16 +115,23 @@ export async function POST(request: NextRequest) {
     // matches when PLAN_VERSION is 0 (no forced churn pre-migration).
     const { data: existing } = await supabase
       .from('item_plans')
-      .select('tasks, version')
+      .select('tasks, version, updated_at')
       .eq('user_id', user.id).eq('kind', kind).eq('entity_id', entityId)
       .maybeSingle();
     const existingVersion = existing ? ((existing as { version?: number }).version ?? 0) : null;
-    const isStale = existing != null && existingVersion !== PLAN_VERSION;
+    const isStaleVersion = existing != null && existingVersion !== PLAN_VERSION;
 
     // Reply context (relevance + whether the user has already answered the thread). Computed up front so
     // it applies to BOTH a cached plan and a freshly generated one — a stale "draft the reply" step is
     // stripped the moment the user has replied, without waiting for a regen.
-    const { relevance, alreadyReplied } = await getItemReplyContext(supabase, user.id, kind, entityId);
+    const { relevance, alreadyReplied, activityAt } = await getItemReplyContext(supabase, user.id, kind, entityId);
+
+    // Stale if the map/classifier changed (version) OR the thread has newer activity than the cached plan
+    // (a new message with a different ask — the "scheduling plan on a now-pricing thread" bug). Freshness
+    // applies only to thread-backed kinds (activityAt is null otherwise → version-only, unchanged).
+    const planUpdatedAt = existing ? ((existing as { updated_at?: string }).updated_at ?? null) : null;
+    const isStaleActivity = !!(activityAt && planUpdatedAt && activityAt > planUpdatedAt);
+    const isStale = isStaleVersion || isStaleActivity;
 
     if (existing && Array.isArray(existing.tasks) && existing.tasks.length && !isStale) {
       const cached = alreadyReplied ? stripReplyStepsIfReplied(existing.tasks as ItemPlanTask[]) : (existing.tasks as ItemPlanTask[]);
