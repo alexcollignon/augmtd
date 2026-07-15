@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import FolderPicker from '@/components/knowledge/folder-picker';
 import GoogleDrivePicker from '@/components/knowledge/google-drive-picker';
@@ -1580,11 +1580,17 @@ export default function DriveClient({ initialSources, connections }: DriveClient
   const [sidebarView, setSidebarView] = useState<SidebarView>({ kind: 'all' });
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
   const [sources, setSources] = useState<KnowledgeSource[]>(initialSources);
-  // Instant-load: hydrate the file lists + folders from localStorage so the drive renders immediately on
-  // a revisit (no empty flash), then the fetches below refresh + re-cache.
-  const [folders, setFolders] = useState<DriveFolder[]>(() => loadLS<DriveFolder[]>('aug-drive-folders-v1') ?? []);
-  const [augmtdFiles, setAugmtdFiles] = useState<DriveAugmtdFile[]>(() => loadLS<DriveAugmtdFile[]>('aug-drive-augmtd-v1') ?? []);
-  const [kbFiles, setKbFiles] = useState<KnowledgeFile[]>(() => loadLS<KnowledgeFile[]>('aug-drive-kb-v1') ?? []);
+  // Instant-load: start COLD (matches the server render) then hydrate the file lists + folders from
+  // localStorage in a layout effect — reading the cache in the useState initializer populates on the client
+  // but not the server → hydration mismatch. The fetches below refresh + re-cache.
+  const [folders, setFolders] = useState<DriveFolder[]>([]);
+  const [augmtdFiles, setAugmtdFiles] = useState<DriveAugmtdFile[]>([]);
+  const [kbFiles, setKbFiles] = useState<KnowledgeFile[]>([]);
+  useLayoutEffect(() => {
+    const f = loadLS<DriveFolder[]>('aug-drive-folders-v1'); if (f) setFolders(f);
+    const a = loadLS<DriveAugmtdFile[]>('aug-drive-augmtd-v1'); if (a) setAugmtdFiles(a);
+    const k = loadLS<KnowledgeFile[]>('aug-drive-kb-v1'); if (k) setKbFiles(k);
+  }, []);
   const [showUpload, setShowUpload] = useState(false);
   const [showAddFromDrive, setShowAddFromDrive] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   DocumentTextIcon, TableCellsIcon, PresentationChartBarIcon, EnvelopeIcon,
   CheckCircleIcon, XCircleIcon, ClockIcon, ArrowRightIcon, ChatBubbleLeftRightIcon,
@@ -58,12 +58,23 @@ function Avatar({ role, name, size = 'md' }: { role: string | null; name: string
 export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProps) {
   // Instant-load: hydrate the review desk + the last briefing from localStorage so a revisit renders
   // immediately (no skeleton / blank briefing), then refresh in the background below.
-  const [data, setData] = useState<HomeData | null>(() => loadLS<HomeData>('aug-workers-home-v1'));
-  const cachedBriefingRef = useRef<string>(loadLS<string>('aug-workers-briefing-v1') ?? '');
-  const [briefing, setBriefing] = useState(cachedBriefingRef.current);
-  const [briefingDone, setBriefingDone] = useState(!!cachedBriefingRef.current);
+  // Start COLD (matching the server render), then hydrate from localStorage in a layout effect. Reading the
+  // cache in the useState initializer would populate on the client but not the server → hydration mismatch.
+  const [data, setData] = useState<HomeData | null>(null);
+  const cachedBriefingRef = useRef<string>('');
+  const [briefing, setBriefing] = useState('');
+  const [briefingDone, setBriefingDone] = useState(false);
   const mountedRef = useRef(true);
   const fetchedRef = useRef(false);
+
+  // Hydrate the cached review desk + last briefing after mount (client-only; runs before the fetch effect).
+  useLayoutEffect(() => {
+    const cd = loadLS<HomeData>('aug-workers-home-v1');
+    if (cd) setData(cd);
+    const cb = loadLS<string>('aug-workers-briefing-v1') ?? '';
+    cachedBriefingRef.current = cb;
+    if (cb) { setBriefing(cb); setBriefingDone(true); }
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
