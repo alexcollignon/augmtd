@@ -47,8 +47,8 @@ export async function reconcileProjectMembership(
       .eq('user_id', userId).in('status', ['open', 'pending']).is('project_id', null).not('initiative', 'is', null).limit(500),
   ]);
 
-  const attach = new Map<string, { inbox: string[]; commit: string[]; cal: string[] }>();
-  const bucket = (pid: string) => attach.get(pid) ?? attach.set(pid, { inbox: [], commit: [], cal: [] }).get(pid)!;
+  const attach = new Map<string, { inbox: string[]; commit: string[]; cal: string[]; mtg: string[] }>();
+  const bucket = (pid: string) => attach.get(pid) ?? attach.set(pid, { inbox: [], commit: [], cal: [], mtg: [] }).get(pid)!;
 
   for (const it of (inbox ?? []) as Array<{ id: string; source_data: Record<string, unknown> }>) {
     const init = coerceUnderstanding((it.source_data ?? {}).understanding)?.initiative;
@@ -93,13 +93,34 @@ export async function reconcileProjectMembership(
     console.warn('[associate] calendar adoption skipped (pre-migration or error):', (e as Error).message);
   }
 
+  // Meetings (July 2026) — a named project also adopts its MEETINGS by the grounded `initiative` on the
+  // transcript (stamped at insight time from the attendees), so the deal's notes become first-class project
+  // context. Same initiative-match as everything else. Guarded → no-op pre-migration (column absent).
+  try {
+    const { data: mtgs } = await supabase.from('meeting_transcripts')
+      .select('id, initiative').eq('user_id', userId).is('project_id', null).not('initiative', 'is', null).limit(500);
+    for (const m of (mtgs ?? []) as Array<{ id: string; initiative: string | null }>) {
+      const ik = normalizeInitiative(m.initiative);
+      const proj = keyed.find((p) => initiativeKeyMatch(p.key, ik, strict));
+      if (proj) bucket(proj.id).mtg.push(m.id);
+    }
+  } catch (e) {
+    console.warn('[associate] meeting adoption skipped (pre-migration or error):', (e as Error).message);
+  }
+
   const counts: Record<string, number> = {};
   for (const [pid, ids] of attach) {
     try {
       if (ids.inbox.length) await supabase.from('inbox_items').update({ project_id: pid }).in('id', ids.inbox).eq('user_id', userId);
       if (ids.commit.length) await supabase.from('commitments').update({ project_id: pid }).in('id', ids.commit).eq('user_id', userId);
       if (ids.cal.length) await supabase.from('calendar_events').update({ project_id: pid }).in('id', ids.cal).eq('user_id', userId);
-      counts[pid] = ids.inbox.length + ids.commit.length + ids.cal.length;
+      if (ids.mtg.length) {
+        await supabase.from('meeting_transcripts').update({ project_id: pid }).in('id', ids.mtg).eq('user_id', userId);
+        // Propagate to the indexed transcript's knowledge_file so project-scoped KB retrieval (a coworker /
+        // AI working this project) surfaces the meeting notes as context. Link = provider_file_id transcript::<id>.
+        await supabase.from('knowledge_files').update({ project_id: pid }).eq('user_id', userId).in('provider_file_id', ids.mtg.map((id) => `transcript::${id}`)).then(() => {}, () => {});
+      }
+      counts[pid] = ids.inbox.length + ids.commit.length + ids.cal.length + ids.mtg.length;
     } catch (e) { console.error('[associate] attach failed for', pid, (e as Error).message); }
   }
   return counts;

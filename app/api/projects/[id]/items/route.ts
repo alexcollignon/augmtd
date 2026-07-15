@@ -16,7 +16,18 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     const todayStr = new Date().toISOString().slice(0, 10);
     const all = await buildWorkItems(supabase, user.id, { todayStr, includeDoneWithinDays: 30, includeOutbound: true });
     const items = all.filter((w) => w.projectId === id);
-    return NextResponse.json({ items });
+
+    // The project's MEETINGS — first-class context (the deal's notes), not tasks. Tagged by the grounded
+    // initiative + adopted by the magnet (meeting_transcripts.project_id). Read-only; empty pre-migration.
+    let meetings: Array<{ id: string; title: string; date: string | null }> = [];
+    try {
+      const { data: mtgs } = await supabase.from('meeting_transcripts')
+        .select('id, title, created_at').eq('user_id', user.id).eq('project_id', id)
+        .order('created_at', { ascending: false }).limit(50);
+      meetings = (mtgs ?? []).map((m: { id: string; title: string | null; created_at: string | null }) => ({ id: m.id, title: m.title || 'Untitled meeting', date: m.created_at }));
+    } catch { /* pre-migration → no project_id column on meeting_transcripts */ }
+
+    return NextResponse.json({ items, meetings });
   } catch (e) {
     console.error('[projects/items] error:', e);
     return NextResponse.json({ items: [] });

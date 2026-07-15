@@ -128,12 +128,13 @@ export default function ProjectDetail({ project, onBack, onEdit, onStatus, onUng
   // Instant-load: hydrate this project's items from localStorage (no skeleton flash on re-open), then
   // refresh in the background — same pattern as the Home / Timeline / item deep-dive.
   const [items, setItems] = useState<WorkItem[] | null>(() => loadLS<WorkItem[]>(`aug-project-items-${project.id}`));
+  const [meetings, setMeetings] = useState<Array<{ id: string; title: string; date: string | null }>>(() => loadLS<Array<{ id: string; title: string; date: string | null }>>(`aug-project-meetings-${project.id}`) ?? []);
   const [tab, setTab] = useState<'overview' | 'timeline' | 'work'>('overview');
   const [ungroupConfirm, setUngroupConfirm] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    fetch(`/api/projects/${project.id}/items`).then((r) => r.json()).then((d) => { if (alive) { setItems(d.items ?? []); saveLS(`aug-project-items-${project.id}`, d.items ?? []); } }).catch(() => { if (alive && !items) setItems([]); });
+    fetch(`/api/projects/${project.id}/items`).then((r) => r.json()).then((d) => { if (alive) { setItems(d.items ?? []); saveLS(`aug-project-items-${project.id}`, d.items ?? []); setMeetings(d.meetings ?? []); saveLS(`aug-project-meetings-${project.id}`, d.meetings ?? []); } }).catch(() => { if (alive && !items) setItems([]); });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
@@ -258,6 +259,23 @@ export default function ProjectDetail({ project, onBack, onEdit, onStatus, onUng
                     <div className="space-y-1.5">
                       {teamItems.slice(0, 5).map((w) => <WorkCard key={w.id} w={w} onRemove={() => removeItem(w)} />)}
                       {teamItems.length > 5 && <p className="text-[11px] text-neutral-400 pl-1">+{teamItems.length - 5} more</p>}
+                    </div>
+                  </Card>
+                )}
+
+                {/* Meetings — the deal's notes as first-class project context (opens the meeting deep-dive) */}
+                {meetings.length > 0 && (
+                  <Card className="p-4">
+                    <h3 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-neutral-400 mb-2.5"><ClockIcon className="w-3.5 h-3.5" />Meetings <span className="text-neutral-300 font-normal normal-case tracking-normal">{meetings.length}</span></h3>
+                    <div className="space-y-1">
+                      {meetings.slice(0, 6).map((m) => (
+                        <Link key={m.id} href={`/item/${m.id}?kind=meeting`} className="group flex items-center gap-2.5 rounded-lg px-2 py-1.5 -mx-2 hover:bg-neutral-50 transition-colors">
+                          <span className="min-w-0 flex-1 text-[13px] text-neutral-700 truncate group-hover:text-indigo-600">{m.title}</span>
+                          {m.date && <span className="flex-shrink-0 text-[11px] text-neutral-400 tabular-nums">{new Date(m.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>}
+                          <ArrowRightIcon className="flex-shrink-0 w-3.5 h-3.5 text-neutral-200 group-hover:text-indigo-400 transition-colors" />
+                        </Link>
+                      ))}
+                      {meetings.length > 6 && <p className="text-[11px] text-neutral-400 pl-0.5 pt-0.5">+{meetings.length - 6} more</p>}
                     </div>
                   </Card>
                 )}
