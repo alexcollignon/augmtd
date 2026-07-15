@@ -1524,8 +1524,20 @@ export function HomeView() {
       // in-flight write can't be briefly un-hidden by a racing refetch.
       const settled = Date.now() - lastActionRef.current > 4000;
       if (settled) {
-        setDismissed(new Set());
-        setClearedIds(new Set());
+        // RECONCILE (not wholesale reset): keep hiding a cleared id ONLY while the fresh brief STILL returns
+        // it — i.e. the server (its cached brief / a not-live-filtered field) hasn't caught up to the clear
+        // yet; wholesale-resetting here flashed those items back. Drop ids the server has already excluded
+        // (harmless — they're gone from the data anyway). A RESTORED item reappears because `onRestored`
+        // removes its id from these sets (so it's no longer hidden) and the server now returns it.
+        const freshIds = new Set<string>();
+        for (const m of b?.mustRespond?.items ?? []) if (m.itemId) freshIds.add(m.itemId);
+        for (const a of b?.actionNotices ?? []) if (a.itemId) freshIds.add(a.itemId);
+        for (const c of b?.commitments ?? []) if (c.id) freshIds.add(c.id);
+        for (const p of b?.priorities ?? []) if (p.id) freshIds.add(p.id);
+        for (const w of b?.waitingOn ?? []) if (w.id) freshIds.add(w.id);
+        for (const k of b?.keepAnEyeOn?.items ?? []) if (k.itemId) freshIds.add(k.itemId);
+        setDismissed((prev) => new Set([...prev].filter((id) => freshIds.has(id))));
+        setClearedIds((prev) => new Set([...prev].filter((id) => freshIds.has(id))));
         setMutedKeys(new Set()); // server is authoritative (muted = suppressed; revived = re-included)
         setTrackedKeys(new Set()); // server is authoritative (the refetched initiative now carries project_id)
       }
