@@ -1085,7 +1085,9 @@ function DoRow({ item, emphasis = false, onDismissInbox, onClearedCommitment, on
           {emphasis && <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-500 mb-1"><SparklesIcon className="w-3 h-3" />Start here</p>}
           <div className="flex items-baseline gap-2">
             <p className={`${emphasis ? 'text-[14.5px]' : 'text-[13.5px]'} font-semibold text-neutral-900 leading-snug min-w-0 truncate`}>
-              {item.primary && <>{item.primary}<span className="font-normal text-neutral-400"> · </span></>}<span className="font-semibold text-neutral-800">{item.ask}</span>
+              {item.primary && <span className="text-neutral-800">{item.primary}</span>}
+              {item.primary && item.ask && <span className="font-normal text-neutral-400"> · </span>}
+              {item.ask && <span className="font-semibold text-neutral-800">{item.ask}</span>}
             </p>
             <span className="flex-shrink-0 ml-auto flex items-center gap-2">
               {badge && <span className={`text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 ${item.overdue ? 'bg-rose-50 text-rose-600' : item.dueToday ? 'bg-amber-50 text-amber-600' : 'bg-neutral-100 text-neutral-500'}`}>{badge}</span>}
@@ -1213,7 +1215,8 @@ function peekOf(e: DeckEntry): PeekDesc {
   }
   if (e.kind === 'single') {
     const m = DO_META[e.item.source];
-    const title = e.item.primary ? `${e.item.primary} · ${e.item.ask}` : e.item.ask;
+    // With an AI ask: "sender · ask"; without one: just the sender (subject rides in the hint).
+    const title = e.item.ask ? (e.item.primary ? `${e.item.primary} · ${e.item.ask}` : e.item.ask) : (e.item.primary || e.item.second || '');
     return { Icon: m.Icon, ring: m.ring, text: m.text, title, hint: e.item.second, overdue: e.item.overdue, dueToday: e.item.dueToday };
   }
   const m = POSTURE_META[e.p.posture] ?? POSTURE_META.to_do;
@@ -1767,7 +1770,9 @@ export function HomeView() {
   const activeInitiatives = (b?.activeInitiatives ?? []).filter((i) => !mutedKeys.has(i.key)); // hide session-muted (optimistic; server suppresses them on next load)
   const looseReplies = digestReplies;
   const looseCards = cards;
-  const looseCommitments = (b?.commitments ?? []);
+  // Filter cleared ids (done/dismiss) so a commitment drops from the deck the moment it's acted — otherwise
+  // a bundle it belongs to never shrinks/disappears (the row self-removes but the bundle count/array don't).
+  const looseCommitments = (b?.commitments ?? []).filter((c) => !clearedIds.has(c.id));
   const looseWaiting = (b?.waitingOn ?? []);
   // Zone 1 (NOW) — the loose actions render as ONE prioritized glance list (replies + cards), the top row
   // softly SUGGESTED (a ★ accent), never a lone hero card that hides the rest. You see your queue and pick;
@@ -2097,10 +2102,13 @@ export function HomeView() {
               const enc = (s?: string) => (s ? `?angle=${encodeURIComponent(s)}` : '');
               const replyItems: DoItem[] = bodyReplies.map((m) => ({
                 source: 'reply', key: `r-${m.itemId}`, entityId: m.itemId, href: `/item/${m.itemId}${enc(m.angle)}`,
-                primary: m.who, ask: m.ask || m.snippet || m.subject || 'Reply', second: m.subject ?? null,
+                // Only show a "what to do" line when the synthesis actually produced a DISTINCT one —
+                // blank when absent OR equal to the subject (which already shows below), so the subject can
+                // never render twice. Never echo the subject/snippet as a fake ask.
+                primary: m.who, ask: (m.ask && m.ask.trim() && m.ask.trim() !== (m.subject ?? '').trim()) ? m.ask : '', second: m.subject ?? null,
                 when: fmtWhen(m.receivedAt), effort: m.effort ?? null, dueDate: m.dueDate ?? null, initiative: m.initiative ?? null, initiativeTotal: m.initiativeTotal ?? null,
               }));
-              const noticeItems: DoItem[] = (b?.actionNotices ?? []).map((a) => ({
+              const noticeItems: DoItem[] = (b?.actionNotices ?? []).filter((a) => !clearedIds.has(a.itemId) && !dismissed.has(a.itemId)).map((a) => ({
                 source: 'notice', key: `n-${a.itemId}`, entityId: a.itemId, href: `/item/${a.itemId}?kind=email`,
                 primary: a.who || null, ask: a.summary, second: 'Action needed',
                 dueDate: a.dueDate ?? null, overdue: !!a.dueDate && a.dueDate < new Date().toISOString().slice(0, 10),

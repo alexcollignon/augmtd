@@ -348,16 +348,41 @@ If a section has no items, return it with an empty items/groups array (or null f
       });
     }
     const modelItems = Array.isArray(parsed.mustRespond?.items) ? parsed.mustRespond!.items! : [];
+    // Map each model ask/angle back to a candidate WITHOUT guessing by output position. Most items carry
+    // their [Rn] index (reliable → map by it). For any the model leaves untagged, match by the sender
+    // IDENTITY it names in `who` (agnostic name-token overlap), consuming each untagged item once.
+    // Position fallback was REMOVED: the model neither preserves input order nor keeps dropped items, so
+    // the Nth output ≠ the Nth candidate — that misattached one item's ask to another (e.g. a "Loom video"
+    // ask landing on an unrelated lease-contract email). No confident match → no enrichment; the row still
+    // renders with its deterministic who/subject/snippet, never a borrowed ask.
     const enrichR = new Map<number, { who?: string; ask?: string; angle?: string }>();
-    modelItems.forEach((x) => { if (typeof x.r === 'number') enrichR.set(x.r, x); });
+    const loose: { who?: string; ask?: string; angle?: string }[] = [];
+    modelItems.forEach((x) => { if (typeof x.r === 'number') enrichR.set(x.r, x); else loose.push(x); });
+    const usedLoose = new Set<number>();
+    const normName = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const nameTokens = (s?: string) => new Set(normName(s).split(' ').filter((t) => t.length > 2));
+    const matchLooseTo = (from: string) => {
+      const cn = normName(from); if (!cn) return undefined;
+      const ct = nameTokens(from);
+      let best = -1, bestScore = 0;
+      loose.forEach((x, k) => {
+        if (usedLoose.has(k)) return;
+        const wn = normName(x.who); if (!wn) return;
+        let score = 0;
+        if (cn.includes(wn) || wn.includes(cn)) score = 1;
+        else { const wt = nameTokens(x.who); const overlap = [...wt].filter((t) => ct.has(t)).length; if (overlap) score = overlap / Math.min(ct.size || 1, wt.size || 1); }
+        if (score > bestScore) { bestScore = score; best = k; }
+      });
+      if (best >= 0 && bestScore >= 0.5) { usedLoose.add(best); return loose[best]; }
+      return undefined;
+    };
     const mustItems: Reply[] = input.mustRespond
       .map((cand, i) => ({ cand, i }))
       .filter(({ i }) => !droppedR.has(i))
-      .map(({ cand, i }, j) => {
-        // Enrich (who/ask/angle CONTEXT) by the [Rn] index when the model echoed it; else fall back to
-        // POSITION — the model returns the kept items in order but often omits the numeric index, and
-        // without this fallback the ask/angle context is silently lost (bare names only).
-        const x = enrichR.get(i) ?? modelItems[j];
+      .map(({ cand, i }) => {
+        // [Rn] index when the model echoed it (reliable); else an identity match on the sender; else
+        // no enrichment (never a positionally-borrowed ask from a different item).
+        const x = enrichR.get(i) ?? matchLooseTo(cand.from);
         // Carry the REAL email through to the client (avatar/subject/snippet/date live richness) —
         // these come straight from the deterministic candidate, not the model, so they can't drift.
         return {
