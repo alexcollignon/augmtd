@@ -27,7 +27,17 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       meetings = (mtgs ?? []).map((m: { id: string; title: string | null; created_at: string | null }) => ({ id: m.id, title: m.title || 'Untitled meeting', date: m.created_at }));
     } catch { /* pre-migration → no project_id column on meeting_transcripts */ }
 
-    return NextResponse.json({ items, meetings });
+    // Loose meetings (no project) — the pool the user can manually ADD to this project (the tail the strict
+    // auto-assign deliberately left alone). Read-only; empty pre-migration.
+    let looseMeetings: Array<{ id: string; title: string; date: string | null }> = [];
+    try {
+      const { data: loose } = await supabase.from('meeting_transcripts')
+        .select('id, title, created_at').eq('user_id', user.id).is('project_id', null)
+        .order('created_at', { ascending: false }).limit(50);
+      looseMeetings = (loose ?? []).map((m: { id: string; title: string | null; created_at: string | null }) => ({ id: m.id, title: m.title || 'Untitled meeting', date: m.created_at }));
+    } catch { /* pre-migration */ }
+
+    return NextResponse.json({ items, meetings, looseMeetings });
   } catch (e) {
     console.error('[projects/items] error:', e);
     return NextResponse.json({ items: [] });

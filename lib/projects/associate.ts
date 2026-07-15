@@ -40,11 +40,13 @@ export async function reconcileProjectMembership(
   const keyed = projects.map((p) => ({ id: p.id, key: normalizeInitiative(p.name) })).filter((p) => p.key && p.key.length >= 3);
   if (!keyed.length) return {};
 
+  // Only LOOSE, UNLOCKED atoms are eligible for auto-attach: project_id null (not already placed) AND NOT
+  // project_locked (the user hasn't manually decided this one). project_locked lets a manual detach STICK.
   const [{ data: inbox }, { data: commits }] = await Promise.all([
     supabase.from('inbox_items').select('id, source_data')
-      .eq('user_id', userId).eq('source', 'email').eq('status', 'pending').is('project_id', null).limit(2000),
+      .eq('user_id', userId).eq('source', 'email').eq('status', 'pending').is('project_id', null).eq('project_locked', false).limit(2000),
     supabase.from('commitments').select('id, initiative')
-      .eq('user_id', userId).in('status', ['open', 'pending']).is('project_id', null).not('initiative', 'is', null).limit(500),
+      .eq('user_id', userId).in('status', ['open', 'pending']).is('project_id', null).eq('project_locked', false).not('initiative', 'is', null).limit(500),
   ]);
 
   const attach = new Map<string, { inbox: string[]; commit: string[]; cal: string[]; mtg: string[] }>();
@@ -80,7 +82,7 @@ export async function reconcileProjectMembership(
     const userAddresses = [...addrSet];
     const { data: events, error: evErr } = await supabase.from('calendar_events')
       .select('id, title, attendees, status, is_all_day, recurring_event_id, start_time')
-      .eq('user_id', userId).is('project_id', null).limit(400);
+      .eq('user_id', userId).is('project_id', null).eq('project_locked', false).limit(400);
     if (evErr) throw evErr;
     for (const e of (events ?? []) as Array<Record<string, unknown>>) {
       const u = computeEventUnderstanding(e, userAddresses, initMap);
@@ -98,7 +100,7 @@ export async function reconcileProjectMembership(
   // context. Same initiative-match as everything else. Guarded → no-op pre-migration (column absent).
   try {
     const { data: mtgs } = await supabase.from('meeting_transcripts')
-      .select('id, initiative').eq('user_id', userId).is('project_id', null).not('initiative', 'is', null).limit(500);
+      .select('id, initiative').eq('user_id', userId).is('project_id', null).eq('project_locked', false).not('initiative', 'is', null).limit(500);
     for (const m of (mtgs ?? []) as Array<{ id: string; initiative: string | null }>) {
       const ik = normalizeInitiative(m.initiative);
       const proj = keyed.find((p) => initiativeKeyMatch(p.key, ik, strict));

@@ -129,12 +129,14 @@ export default function ProjectDetail({ project, onBack, onEdit, onStatus, onUng
   // refresh in the background — same pattern as the Home / Timeline / item deep-dive.
   const [items, setItems] = useState<WorkItem[] | null>(() => loadLS<WorkItem[]>(`aug-project-items-${project.id}`));
   const [meetings, setMeetings] = useState<Array<{ id: string; title: string; date: string | null }>>(() => loadLS<Array<{ id: string; title: string; date: string | null }>>(`aug-project-meetings-${project.id}`) ?? []);
+  const [looseMeetings, setLooseMeetings] = useState<Array<{ id: string; title: string; date: string | null }>>([]);
+  const [addingMeeting, setAddingMeeting] = useState(false);
   const [tab, setTab] = useState<'overview' | 'timeline' | 'work'>('overview');
   const [ungroupConfirm, setUngroupConfirm] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    fetch(`/api/projects/${project.id}/items`).then((r) => r.json()).then((d) => { if (alive) { setItems(d.items ?? []); saveLS(`aug-project-items-${project.id}`, d.items ?? []); setMeetings(d.meetings ?? []); saveLS(`aug-project-meetings-${project.id}`, d.meetings ?? []); } }).catch(() => { if (alive && !items) setItems([]); });
+    fetch(`/api/projects/${project.id}/items`).then((r) => r.json()).then((d) => { if (alive) { setItems(d.items ?? []); saveLS(`aug-project-items-${project.id}`, d.items ?? []); setMeetings(d.meetings ?? []); saveLS(`aug-project-meetings-${project.id}`, d.meetings ?? []); setLooseMeetings(d.looseMeetings ?? []); } }).catch(() => { if (alive && !items) setItems([]); });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
@@ -151,6 +153,22 @@ export default function ProjectDetail({ project, onBack, onEdit, onStatus, onUng
       await fetch('/api/items/project', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, id: w.entityId, projectId: null }) });
       toast.success('Removed from project');
     } catch { toast.error('Could not remove'); }
+  };
+  // Manually ATTACH a loose meeting to this project (the tail the strict auto-assign left alone) or DETACH
+  // one (a wrong grounded label). Both set project_locked server-side so the magnet won't undo the decision.
+  const attachMeeting = async (m: { id: string; title: string; date: string | null }) => {
+    setLooseMeetings((prev) => prev.filter((x) => x.id !== m.id));
+    setMeetings((prev) => [m, ...prev]);
+    setAddingMeeting(false);
+    try { await fetch('/api/items/project', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'meeting', id: m.id, projectId: project.id }) }); toast.success('Meeting added'); }
+    catch { toast.error('Could not add'); }
+  };
+  const detachMeeting = async (id: string) => {
+    const m = meetings.find((x) => x.id === id);
+    setMeetings((prev) => prev.filter((x) => x.id !== id));
+    if (m) setLooseMeetings((prev) => [m, ...prev]);
+    try { await fetch('/api/items/project', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'meeting', id, projectId: null }) }); toast.success('Removed from project'); }
+    catch { toast.error('Could not remove'); }
   };
   // People involved — unique counterparties/senders across the project's work (clean name, no email).
   const people = [...new Set(list.map((w) => w.who).filter(Boolean).map((w) => String(w).replace(/<[^>]*>/g, '').replace(/\([^)]*\)/g, '').trim()))].slice(0, 8);
@@ -263,19 +281,41 @@ export default function ProjectDetail({ project, onBack, onEdit, onStatus, onUng
                   </Card>
                 )}
 
-                {/* Meetings — the deal's notes as first-class project context (opens the meeting deep-dive) */}
-                {meetings.length > 0 && (
+                {/* Meetings — the deal's notes as first-class project context (opens the meeting deep-dive).
+                    Auto-attached by the magnet; the user can DETACH (✕) a wrong one or ADD a loose one — both
+                    stick (server sets project_locked). Shown whenever there are meetings OR loose ones to add. */}
+                {(meetings.length > 0 || looseMeetings.length > 0) && (
                   <Card className="p-4">
-                    <h3 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-neutral-400 mb-2.5"><ClockIcon className="w-3.5 h-3.5" />Meetings <span className="text-neutral-300 font-normal normal-case tracking-normal">{meetings.length}</span></h3>
+                    <div className="flex items-center justify-between mb-2.5">
+                      <h3 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-neutral-400"><ClockIcon className="w-3.5 h-3.5" />Meetings <span className="text-neutral-300 font-normal normal-case tracking-normal">{meetings.length}</span></h3>
+                      {looseMeetings.length > 0 && (
+                        <button onClick={() => setAddingMeeting((v) => !v)} className="text-[11px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors">{addingMeeting ? 'Cancel' : '+ Add'}</button>
+                      )}
+                    </div>
+                    {/* Add picker — the loose-meeting pool (the tail auto-assign left alone) */}
+                    {addingMeeting && (
+                      <div className="mb-2 rounded-lg border border-neutral-200/70 bg-neutral-50/60 p-1.5 max-h-56 overflow-y-auto space-y-0.5">
+                        {looseMeetings.map((m) => (
+                          <button key={m.id} onClick={() => attachMeeting(m)} className="w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-white transition-colors">
+                            <span className="min-w-0 flex-1 text-[12.5px] text-neutral-600 truncate">{m.title}</span>
+                            {m.date && <span className="flex-shrink-0 text-[10.5px] text-neutral-400 tabular-nums">{new Date(m.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>}
+                            <span className="flex-shrink-0 text-[11px] font-medium text-indigo-500">Add</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <div className="space-y-1">
                       {meetings.slice(0, 6).map((m) => (
-                        <Link key={m.id} href={`/item/${m.id}?kind=meeting`} className="group flex items-center gap-2.5 rounded-lg px-2 py-1.5 -mx-2 hover:bg-neutral-50 transition-colors">
-                          <span className="min-w-0 flex-1 text-[13px] text-neutral-700 truncate group-hover:text-indigo-600">{m.title}</span>
-                          {m.date && <span className="flex-shrink-0 text-[11px] text-neutral-400 tabular-nums">{new Date(m.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>}
-                          <ArrowRightIcon className="flex-shrink-0 w-3.5 h-3.5 text-neutral-200 group-hover:text-indigo-400 transition-colors" />
-                        </Link>
+                        <div key={m.id} className="group flex items-center gap-2.5 rounded-lg px-2 py-1.5 -mx-2 hover:bg-neutral-50 transition-colors">
+                          <Link href={`/item/${m.id}?kind=meeting`} className="min-w-0 flex-1 flex items-center gap-2.5">
+                            <span className="min-w-0 flex-1 text-[13px] text-neutral-700 truncate group-hover:text-indigo-600">{m.title}</span>
+                            {m.date && <span className="flex-shrink-0 text-[11px] text-neutral-400 tabular-nums">{new Date(m.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>}
+                          </Link>
+                          <button onClick={() => detachMeeting(m.id)} title="Remove from project" className="flex-shrink-0 text-neutral-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"><XMarkIcon className="w-3.5 h-3.5" /></button>
+                        </div>
                       ))}
                       {meetings.length > 6 && <p className="text-[11px] text-neutral-400 pl-0.5 pt-0.5">+{meetings.length - 6} more</p>}
+                      {meetings.length === 0 && <p className="text-[12px] text-neutral-400 pl-0.5">No meetings yet — add one from the pool.</p>}
                     </div>
                   </Card>
                 )}
