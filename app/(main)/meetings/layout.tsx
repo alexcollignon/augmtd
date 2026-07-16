@@ -1,8 +1,10 @@
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createAdmin } from '@supabase/supabase-js';
 import { redirect } from 'next/navigation';
 import { guardFeaturePage } from '@/lib/workspace/guards';
 import MeetingsShell from '@/components/meetings/meetings-shell';
 import type { Transcript } from '@/context/meetings-data-context';
+import { listTranscriptRows } from '@/lib/meetings/list-transcripts';
 
 export default async function MeetingsLayout({
   children,
@@ -19,7 +21,10 @@ export default async function MeetingsLayout({
   const past24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
   const next14d = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [eventsResult, transcriptsResult, foldersResult] = await Promise.all([
+  // SSR the SAME set the client refreshes with (own + shared-with-me, via the shared fetcher) so the list
+  // doesn't grow after first paint. Needs a service-role client for the cross-user shared rows.
+  const adminClient = createAdmin(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+  const [eventsResult, transcriptRows, foldersResult] = await Promise.all([
     supabase
       .from('calendar_events')
       .select('*')
@@ -28,12 +33,7 @@ export default async function MeetingsLayout({
       .gte('end_time', past24h)
       .lte('start_time', next14d)
       .order('start_time', { ascending: true }),
-    supabase
-      .from('meeting_transcripts')
-      .select('id, title, start_time, end_time, duration_minutes, work_items_generated, processed, source, summary, calendar_event_id, bot_state, updated_at, folder_id, recording_storage_path, notes_structured, attendees')
-      .eq('user_id', user.id)
-      .order('start_time', { ascending: false })
-      .limit(50),
+    listTranscriptRows(supabase, adminClient, user.id).catch(() => [] as Array<Record<string, unknown>>),
     supabase
       .from('meeting_folders')
       .select('*')
@@ -42,7 +42,7 @@ export default async function MeetingsLayout({
   ]);
 
   const events = eventsResult.data ?? [];
-  const rawTranscripts = transcriptsResult.data ?? [];
+  const rawTranscripts = transcriptRows as Array<Record<string, any>>;
   const folders = foldersResult.data ?? [];
 
   // Batch relationship enrichment
@@ -95,8 +95,11 @@ export default async function MeetingsLayout({
     processedAt: t.updated_at ?? null,
     folderId: t.folder_id ?? null,
     hasRecording: !!t.recording_storage_path,
-    hasDocument: !!(t.notes_structured as any)?.document,
+    hasDocument: !!t.has_document,
     attendees: (t.attendees as any[]) ?? [],
+    sharingMode: t.sharing_mode ?? null,
+    isSharedWithMe: t.is_shared_with_me ?? false,
+    sharedByName: t.shared_by_name ?? null,
   }));
 
   return (
