@@ -28,6 +28,7 @@ import { formatMeetingTime, calculateDuration } from '@/lib/types/meetings';
 import LinkedWorkPanel from '@/components/meetings/linked-work-panel';
 import ProcessingPipeline from '@/components/meetings/processing-pipeline';
 import MeetingDocument from '@/components/meetings/meeting-document';
+import MeetingProjectControl from '@/components/meetings/meeting-project-control';
 
 interface TranscriptSegment {
   speaker: string;
@@ -916,6 +917,8 @@ const handleRetry = async () => {
                 <ClockIcon className="w-3.5 h-3.5" />
                 {primary} · {duration}min
               </span>
+              {/* Project membership — which deal this meeting belongs to (add / remove); owner only. */}
+              {transcript && isOwner && <MeetingProjectControl transcriptId={transcript.id} />}
               {event!.meeting_link && (
                 <>
                   <a href={event!.meeting_link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-blue-600 hover:underline">

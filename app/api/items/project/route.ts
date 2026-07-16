@@ -7,6 +7,26 @@ import { createClient } from '@/lib/supabase/server';
 // detach STICKS instead of the magnet bouncing it right back on the next auto-run).
 // Body: { kind: 'inbox' | 'commitment' | 'meeting', id, projectId: string | null }
 const TABLE: Record<string, string> = { inbox: 'inbox_items', commitment: 'commitments', meeting: 'meeting_transcripts' };
+
+// GET /api/items/project?kind=meeting&id=X → { projectId } — the atom's current project (so a control can
+// be self-contained: pass just the id, resolve its own membership).
+export async function GET(request: NextRequest) {
+  try {
+    const supabase = await createClient();
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const { searchParams } = new URL(request.url);
+    const kind = searchParams.get('kind') || '';
+    const id = searchParams.get('id') || '';
+    const table = TABLE[kind];
+    if (!id || !table) return NextResponse.json({ error: 'kind and id required' }, { status: 400 });
+    const { data } = await supabase.from(table).select('project_id').eq('id', id).eq('user_id', user.id).maybeSingle();
+    return NextResponse.json({ projectId: (data as { project_id?: string | null } | null)?.project_id ?? null });
+  } catch {
+    return NextResponse.json({ projectId: null });
+  }
+}
+
 export async function PATCH(request: NextRequest) {
   try {
     const supabase = await createClient();

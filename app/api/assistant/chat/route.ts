@@ -297,6 +297,25 @@ export async function POST(request: NextRequest) {
       if (meetingContext.suggestedNextStep) {
         lines.push(`Suggested next step: ${meetingContext.suggestedNextStep}`);
       }
+      // Project context — the deal/initiative this meeting belongs to (goals + rules coworkers respect), so
+      // the chat reasons WITH the project, plus awareness that the user can add/remove the meeting from a
+      // project (the meeting's project control). Fetched server-side from the transcript's project_id.
+      if (meetingContext.transcriptId) {
+        try {
+          const { data: mt } = await supabase.from('meeting_transcripts').select('project_id').eq('id', meetingContext.transcriptId).eq('user_id', user.id).maybeSingle();
+          if (mt?.project_id) {
+            const { data: proj } = await supabase.from('projects').select('name, description, goals, rules').eq('id', mt.project_id).maybeSingle();
+            if (proj) {
+              lines.push(`Project: this meeting belongs to the project "${proj.name}"${proj.description ? ` — ${proj.description}` : ''}. Reason and act with this deal's context in mind.`);
+              if (Array.isArray(proj.goals) && proj.goals.length) lines.push(`Project goals:\n${(proj.goals as string[]).map((g) => `- ${g}`).join('\n')}`);
+              if (Array.isArray(proj.rules) && proj.rules.length) lines.push(`Project rules (how work on it should be done):\n${(proj.rules as string[]).map((r) => `- ${r}`).join('\n')}`);
+            }
+          } else {
+            lines.push(`Project: this meeting is not yet assigned to a project.`);
+          }
+          lines.push(`Project membership is under the user's control: they can ADD this meeting to a project or REMOVE it from the meeting's project control. If it clearly belongs to a deal, you may suggest adding it, and use the project's goals & rules to guide anything you draft or do.`);
+        } catch { /* non-fatal — project context is best-effort */ }
+      }
       focusedMeetingBlock = lines.join('\n');
     }
 

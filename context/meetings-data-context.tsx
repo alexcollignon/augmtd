@@ -18,6 +18,7 @@ export interface Transcript {
   summary?: string | null;
   processedAt?: string | null;
   folderId?: string | null;
+  projectId?: string | null;   // the deal/initiative this meeting belongs to (auto or manual)
   hasRecording: boolean;
   hasDocument?: boolean;
   attendees?: Array<{ email: string; name?: string }>;
@@ -82,6 +83,7 @@ export function mapTranscripts(raw: any[]): Transcript[] {
     summary: t.summary,
     processedAt: t.updated_at ?? null,
     folderId: t.folder_id ?? null,
+    projectId: t.project_id ?? null,
     hasRecording: !!t.recording_storage_path,
     hasDocument: !!t.has_document,
     attendees: (t.attendees as any[]) ?? [],

@@ -94,6 +94,7 @@ export default async function MeetingsLayout({
     summary: t.summary,
     processedAt: t.updated_at ?? null,
     folderId: t.folder_id ?? null,
+    projectId: t.project_id ?? null,
     hasRecording: !!t.recording_storage_path,
     hasDocument: !!t.has_document,
     attendees: (t.attendees as any[]) ?? [],
