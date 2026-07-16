@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { buildWorkItems } from '@/lib/work-items/model';
+import { suggestProjectMembership } from '@/lib/projects/suggest-membership';
 
 export const maxDuration = 20;
 
@@ -37,7 +38,15 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       looseMeetings = (loose ?? []).map((m: { id: string; title: string | null; created_at: string | null }) => ({ id: m.id, title: m.title || 'Untitled meeting', date: m.created_at }));
     } catch { /* pre-migration */ }
 
-    return NextResponse.json({ items, meetings, looseMeetings });
+    // The SUGGESTED tier — plausible-but-not-auto-confident atoms (generous initiative match + meeting
+    // person-bridge) the user can one-click Add. Read-only. Scoped to THIS project.
+    let suggestions: Awaited<ReturnType<typeof suggestProjectMembership>>[string] = [];
+    try {
+      const { data: proj } = await supabase.from('projects').select('name').eq('id', id).eq('user_id', user.id).maybeSingle();
+      if (proj?.name) { const map = await suggestProjectMembership(supabase, user.id, [{ id, name: proj.name }]); suggestions = map[id] ?? []; }
+    } catch { /* non-fatal */ }
+
+    return NextResponse.json({ items, meetings, looseMeetings, suggestions });
   } catch (e) {
     console.error('[projects/items] error:', e);
     return NextResponse.json({ items: [] });

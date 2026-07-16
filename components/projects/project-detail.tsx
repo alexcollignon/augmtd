@@ -130,13 +130,14 @@ export default function ProjectDetail({ project, onBack, onEdit, onStatus, onUng
   const [items, setItems] = useState<WorkItem[] | null>(() => loadLS<WorkItem[]>(`aug-project-items-${project.id}`));
   const [meetings, setMeetings] = useState<Array<{ id: string; title: string; date: string | null }>>(() => loadLS<Array<{ id: string; title: string; date: string | null }>>(`aug-project-meetings-${project.id}`) ?? []);
   const [looseMeetings, setLooseMeetings] = useState<Array<{ id: string; title: string; date: string | null }>>([]);
+  const [suggestions, setSuggestions] = useState<Array<{ kind: 'inbox' | 'commitment' | 'meeting'; id: string; title: string; reason: string }>>([]);
   const [addingMeeting, setAddingMeeting] = useState(false);
   const [tab, setTab] = useState<'overview' | 'timeline' | 'work'>('overview');
   const [ungroupConfirm, setUngroupConfirm] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    fetch(`/api/projects/${project.id}/items`).then((r) => r.json()).then((d) => { if (alive) { setItems(d.items ?? []); saveLS(`aug-project-items-${project.id}`, d.items ?? []); setMeetings(d.meetings ?? []); saveLS(`aug-project-meetings-${project.id}`, d.meetings ?? []); setLooseMeetings(d.looseMeetings ?? []); } }).catch(() => { if (alive && !items) setItems([]); });
+    fetch(`/api/projects/${project.id}/items`).then((r) => r.json()).then((d) => { if (alive) { setItems(d.items ?? []); saveLS(`aug-project-items-${project.id}`, d.items ?? []); setMeetings(d.meetings ?? []); saveLS(`aug-project-meetings-${project.id}`, d.meetings ?? []); setLooseMeetings(d.looseMeetings ?? []); setSuggestions(d.suggestions ?? []); } }).catch(() => { if (alive && !items) setItems([]); });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
@@ -170,6 +171,15 @@ export default function ProjectDetail({ project, onBack, onEdit, onStatus, onUng
     try { await fetch('/api/items/project', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'meeting', id, projectId: null }) }); toast.success('Removed from project'); }
     catch { toast.error('Could not remove'); }
   };
+  // Accept a SUGGESTED atom → a sticky manual attach (server locks it). Dismiss = session-hide (it may
+  // resurface next visit; a per-(atom,project) persistent dismiss is a later refinement).
+  const acceptSuggestion = async (s: { kind: 'inbox' | 'commitment' | 'meeting'; id: string; title: string }) => {
+    setSuggestions((prev) => prev.filter((x) => !(x.kind === s.kind && x.id === s.id)));
+    if (s.kind === 'meeting') setMeetings((prev) => [{ id: s.id, title: s.title, date: null }, ...prev]);
+    try { await fetch('/api/items/project', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: s.kind, id: s.id, projectId: project.id }) }); toast.success('Added to project'); }
+    catch { toast.error('Could not add'); }
+  };
+  const dismissSuggestion = (kind: string, id: string) => setSuggestions((prev) => prev.filter((x) => !(x.kind === kind && x.id === id)));
   // People involved — unique counterparties/senders across the project's work (clean name, no email).
   const people = [...new Set(list.map((w) => w.who).filter(Boolean).map((w) => String(w).replace(/<[^>]*>/g, '').replace(/\([^)]*\)/g, '').trim()))].slice(0, 8);
 
@@ -277,6 +287,27 @@ export default function ProjectDetail({ project, onBack, onEdit, onStatus, onUng
                     <div className="space-y-1.5">
                       {teamItems.slice(0, 5).map((w) => <WorkCard key={w.id} w={w} onRemove={() => removeItem(w)} />)}
                       {teamItems.length > 5 && <p className="text-[11px] text-neutral-400 pl-1">+{teamItems.length - 5} more</p>}
+                    </div>
+                  </Card>
+                )}
+
+                {/* Suggested — the MIDDLE tier: plausible-but-not-auto-confident atoms (generous match +
+                    meeting person-bridge). One-click Add (sticky) or ✕ dismiss (session). */}
+                {suggestions.length > 0 && (
+                  <Card className="p-4 border-indigo-200/70 bg-indigo-50/30">
+                    <h3 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-indigo-500 mb-2.5"><SparklesIcon className="w-3.5 h-3.5" />Suggested for this project <span className="text-indigo-300 font-normal normal-case tracking-normal">{suggestions.length}</span></h3>
+                    <div className="space-y-1.5">
+                      {suggestions.map((s) => (
+                        <div key={`${s.kind}-${s.id}`} className="flex items-center gap-2.5">
+                          <span className={`flex-shrink-0 w-6 h-6 rounded-md inline-flex items-center justify-center ${s.kind === 'meeting' ? 'bg-indigo-100 text-indigo-500' : s.kind === 'commitment' ? 'bg-neutral-100 text-neutral-500' : 'bg-amber-50 text-amber-600'}`}>{s.kind === 'meeting' ? <ClockIcon className="w-3.5 h-3.5" /> : s.kind === 'commitment' ? <CheckCircleIcon className="w-3.5 h-3.5" /> : <BoltIcon className="w-3.5 h-3.5" />}</span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[13px] text-neutral-700 truncate">{s.title}</p>
+                            <p className="text-[11px] text-neutral-400 truncate">{s.reason}</p>
+                          </div>
+                          <button onClick={() => acceptSuggestion(s)} className="flex-shrink-0 text-[11px] font-semibold text-indigo-600 hover:text-indigo-700 px-2 py-1 rounded-md hover:bg-white transition-colors">Add</button>
+                          <button onClick={() => dismissSuggestion(s.kind, s.id)} title="Dismiss" className="flex-shrink-0 text-neutral-300 hover:text-neutral-500 transition-colors"><XMarkIcon className="w-3.5 h-3.5" /></button>
+                        </div>
+                      ))}
                     </div>
                   </Card>
                 )}
