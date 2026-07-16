@@ -30,6 +30,7 @@ interface Transcript {
   summary?: string | null;
   processedAt?: string | null;
   folderId?: string | null;
+  projectId?: string | null;
   hasRecording: boolean;
   hasDocument?: boolean;
   attendees?: Array<{ email: string; name?: string }>;
@@ -49,6 +50,8 @@ interface MeetingsHomeProps {
   folders?: DriveFolder[];
   onMoveToFolder?: (transcriptId: string, folderId: string | null) => Promise<void>;
   onRenameTranscript?: (id: string, title: string) => Promise<void>;
+  projects?: Array<{ id: string; name: string }>;
+  onMoveToProject?: (transcriptId: string, projectId: string | null) => Promise<void>;
 }
 
 
@@ -163,7 +166,10 @@ export default function MeetingsHome({
   folders = [],
   onMoveToFolder,
   onRenameTranscript,
+  projects = [],
+  onMoveToProject,
 }: MeetingsHomeProps) {
+  const projectName = (id?: string | null) => (id ? projects.find((p) => p.id === id)?.name ?? null : null);
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [captureFilter, setCaptureFilter] = useState<CaptureFilter>('all');
@@ -651,6 +657,11 @@ export default function MeetingsHome({
                             </Badge>
                           )}
                           {folders.length > 0 && <FolderChip folderId={t.folderId} folders={folders} />}
+                          {projectName(t.projectId) && (
+                            <span className="flex-shrink-0 inline-flex items-center gap-1 rounded-full bg-indigo-50 border border-indigo-200/70 px-1.5 py-0.5 text-[10.5px] font-medium text-indigo-700 max-w-[130px]">
+                              <FolderIcon className="w-3 h-3 flex-shrink-0 text-indigo-500" /><span className="truncate">{projectName(t.projectId)}</span>
+                            </span>
+                          )}
                           {(t.attendees?.length ?? 0) > 0 && (
                             <AttendeeAvatars attendees={t.attendees!} />
                           )}
@@ -685,10 +696,37 @@ export default function MeetingsHome({
         <div
           ref={menuRef}
           style={{ top: menuPos.top, left: Math.max(8, menuPos.left), width: 176 }}
-          className="fixed z-[200] bg-white border border-neutral-200 rounded-xl shadow-lg overflow-hidden py-1"
+          className="fixed z-[200] bg-white border border-neutral-200 rounded-xl shadow-lg overflow-y-auto max-h-[70vh] py-1"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Move to folder section */}
+          {/* Add to project — the unified organizer (same projects as Home). Sticky (project_locked). */}
+          {onMoveToProject && projects.length > 0 && (
+            <>
+              <div className="px-3 py-1.5">
+                <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">Add to project</p>
+              </div>
+              {projects.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => { onMoveToProject(menuOpenId, p.id); setMenuOpenId(null); }}
+                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-indigo-50 transition-colors ${menuTranscript.projectId === p.id ? 'text-indigo-600 font-medium' : 'text-neutral-700'}`}
+                >
+                  <FolderIcon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-400" />
+                  <span className="truncate">{p.name}</span>
+                  {menuTranscript.projectId === p.id && <CheckIcon className="w-3 h-3 ml-auto flex-shrink-0" />}
+                </button>
+              ))}
+              {menuTranscript.projectId && (
+                <button onClick={() => { onMoveToProject(menuOpenId, null); setMenuOpenId(null); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] text-neutral-500 hover:bg-neutral-50 transition-colors">
+                  <XMarkIcon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-400" />
+                  Remove from project
+                </button>
+              )}
+              <div className="border-t border-neutral-100 my-1" />
+            </>
+          )}
+
+          {/* Move to folder section (legacy — folders are being unified into projects; removed in cleanup) */}
           {onMoveToFolder && userFolders.length > 0 && (
             <>
               <div className="px-3 py-1.5">

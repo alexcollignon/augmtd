@@ -65,6 +65,7 @@ export default function MeetingsShell({
     if (c) { setUpcoming(c.upcoming ?? []); setTranscripts(c.transcripts ?? []); setLoading(false); }
   }, [initialUpcoming]);
   const [folders, setFolders] = useState<DriveFolder[]>(initialFolders ?? []);
+  const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
   const [seenIds, setSeenIds] = useState<Set<string>>(() => new Set());
 
   // ── UI state ─────────────────────────────────────────────────────────────
@@ -136,6 +137,17 @@ export default function MeetingsShell({
       .then((r) => r.json())
       .then((data) => setFolders(Array.isArray(data) ? data : (data.folders ?? [])));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Projects (unification) — the same projects as Home; a meeting shows its project + can be filed into one.
+  useEffect(() => {
+    fetch('/api/projects').then((r) => r.json()).then((d) => setProjects((d.projects ?? []).map((p: { id: string; name: string }) => ({ id: p.id, name: p.name })))).catch(() => {});
+  }, []);
+  // File a meeting into a project (or clear) — sticky (server sets project_locked). Optimistic.
+  const moveToProject = async (transcriptId: string, projectId: string | null) => {
+    setTranscripts((prev) => prev.map((t) => t.id === transcriptId ? { ...t, projectId } : t));
+    try { await fetch('/api/items/project', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'meeting', id: transcriptId, projectId }) }); }
+    catch { /* non-fatal; next fetchAll reconciles */ }
+  };
 
   // Adaptive polling
   useEffect(() => {
@@ -268,6 +280,8 @@ export default function MeetingsShell({
     transcripts,
     upcoming,
     folders,
+    projects,
+    moveToProject,
     loading,
     userEmail,
     isNew,

@@ -33,8 +33,9 @@ async function migrateUser(uid: string) {
         if (error || !proj) { console.log(`   ! failed to create project for folder "${f.name}": ${error?.message}`); continue; }
         pid = proj.id;
       } else { pid = `NEW(${f.name})`; }
-      byKey.set(k, pid); created++;
+      byKey.set(k, pid as string); created++;
     }
+    if (!pid) continue;
     folderToProject.set(f.id, pid);
     console.log(`   folder "${f.name}" -> ${reused && byKey.get(k) === pid ? 'reuse' : 'project'} ${String(pid).slice(0, 8)}`);
   }

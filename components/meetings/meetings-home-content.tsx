@@ -15,6 +15,8 @@ export default function MeetingsHomeContent() {
     handleRetryFailed,
     handleMoveToFolder,
     handleRenameTranscript,
+    projects,
+    moveToProject,
     isNew,
   } = useMeetingsData();
 
@@ -30,6 +32,8 @@ export default function MeetingsHomeContent() {
       folders={folders}
       onMoveToFolder={handleMoveToFolder}
       onRenameTranscript={handleRenameTranscript}
+      projects={projects}
+      onMoveToProject={moveToProject}
     />
   );
 }

@@ -32,6 +32,8 @@ export interface MeetingsDataContextType {
   transcripts: Transcript[];
   upcoming: CalendarEvent[];
   folders: DriveFolder[];
+  projects: Array<{ id: string; name: string }>;   // unification — the same projects as Home
+  moveToProject: (transcriptId: string, projectId: string | null) => Promise<void>;
   loading: boolean;
   userEmail: string;
 
