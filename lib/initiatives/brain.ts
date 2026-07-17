@@ -60,6 +60,17 @@ async function corporateDomains(supabase: SupabaseClient, userId: string): Promi
 
 const daysBetween = (a: string, b: number) => Math.floor((b - new Date(a).getTime()) / 86400000);
 
+// The user's own name (cached) — so the synthesis refers to them as "you", never third-person by name.
+const nameMemo = new Map<string, { at: number; name: string | null }>();
+async function getUserName(supabase: SupabaseClient, userId: string): Promise<string | null> {
+  const c = nameMemo.get(userId);
+  if (c && Date.now() - c.at < 5 * 60 * 1000) return c.name;
+  let name: string | null = null;
+  try { const { data } = await supabase.from('profiles').select('full_name').eq('id', userId).maybeSingle(); name = (data as { full_name?: string } | null)?.full_name?.trim() || null; } catch { /* non-fatal */ }
+  nameMemo.set(userId, { at: Date.now(), name });
+  return name;
+}
+
 // The shared corpus — the user's initiative-bearing atoms fetched ONCE. A batch refresh fetches this once and
 // assembles N initiatives from memory (vs N × the bulk fetch), so refreshing all active initiatives on a Home
 // load is cheap. `sentByThread` indexes the user's sent mail so email_out events resolve without a per-item query.
@@ -186,9 +197,11 @@ async function synthesize(supabase: SupabaseClient, userId: string, label: strin
   // are REASONING models (gpt-oss-120b / Kimi) that burn max_tokens in the reasoning channel on this rich
   // prompt → empty content → null (the documented item-plan / brief trap).
   const { client, model } = await getAIClient(userId, 'classification', supabase);
+  const userName = await getUserName(supabase, userId);
   const recent = ledger.slice(0, 24).map((e) => `${(e.at || '').slice(0, 10)} · ${e.kind} · ${e.actor}${e.counterparty && e.counterparty !== e.actor ? `→${e.counterparty}` : ''}: ${e.summary}`).join('\n');
   const content =
     `You maintain the live STATE of an initiative for the user (its owner) and pick the single NEXT MOVE. An initiative is any bounded body of work — a client engagement, a hiring round, a launch, a migration, an internal program, a personal project. Do NOT assume a sales pipeline or fixed stages.\n\n` +
+    (userName ? `The user (owner) is ${userName} — always refer to them as "you", NEVER by name; if the ledger names ${userName}, that is YOU.\n\n` : '') +
     `Initiative: ${label}\nExternal people: ${people.external.join(', ') || '(none)'}\nInternal team: ${people.internal.join(', ') || '(none)'}\n` +
     `Days since last real touch: ${quietDays ?? 'unknown'}\n\n` +
     `Event ledger (most recent first — this is ALL you know; do not invent beyond it):\n${recent || '(empty)'}\n\n` +

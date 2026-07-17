@@ -17,6 +17,7 @@ import type { ActiveInitiative, InitiativeState, InitiativeAction } from '@/lib/
 import { onProjectsUpdated } from '@/lib/projects/broadcast';
 import { ROLE_AVATARS, ROLE_LABELS } from '@/lib/workers/roles';
 import { RiseIn } from '@/components/home/rise-in';
+import WhatsHappening from '@/components/home/whats-happening';
 import ViewSwitcher, { type HomeView as HomeViewLens } from '@/components/home/view-switcher';
 import TimelineView from '@/components/timeline/timeline-view';
 import ProjectsView from '@/components/projects/projects-view';
@@ -2216,8 +2217,10 @@ export function HomeView() {
               );
             })()}
 
-            {/* Project Pulse removed — redundant with the "In motion" strip at the top of the Home (both
-                answered "which initiatives are moving?") and the full Projects lens. One project cue, not two. */}
+            {/* ── ACROSS YOUR WORK — the Initiative Brain rollup: each active initiative's where-it-stands +
+                the one next move. The ambient "what's happening" half, beneath the immediate "what needs you"
+                deck (initiatives primary; loose items live in the deck above). Renders nothing until states populate. */}
+            <RiseIn><WhatsHappening /></RiseIn>
 
             {/* ── ZONE 3 · AMBIENT BAR — a sticky calm footer of count chips, pinned to the bottom of the
                 column so it's always reachable; the chosen section expands UPWARD. Calm at rest, one tap away. */}
