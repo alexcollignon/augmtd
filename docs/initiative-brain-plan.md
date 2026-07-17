@@ -175,3 +175,12 @@ delegation reuses the existing prepare-and-report guardrail.
    background-refreshed like `home_brief`, so it always reflects the latest "what happened / who did what".
 6. **Commitments are a data point** (new) — the initiative is the structure; commitments feed `whoOwes` as one
    derived signal, not a parallel first-class surface. Same for tasks/next-moves — all derived from the ledger.
+
+## Backlog — human MERGE of projects (deferred, keep in mind)
+Because labeling is now CONTENT-FIRST (a person's distinct areas are kept apart to avoid over-merge), the
+system will sometimes create two projects the USER considers one. The complement is a human **merge** — the
+safety valve, and it TEACHES: pick two projects → choose the surviving label → remap the loser's atoms
+(inbox/commitments/meetings/calendar `project_id`) → record the absorbed label as an **alias** so future
+labeling + clustering consolidate automatically. Fits the model (conservative auto; a human decision outranks
+the machine and sticks — `project_locked`-style). Safer than any blind auto-merge (the Galp lesson). Not built
+yet; noted so it isn't lost.

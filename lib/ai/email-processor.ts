@@ -945,6 +945,10 @@ export async function computeUnderstanding(email: EmailData, supabase: SupabaseC
   // someone cc'd (the Soboplac case: Jean-Marie cc'd carries "Soboplac AI Agent System"). Non-fatal.
   const { initiativeGroundingClause } = await import('@/lib/inbox/initiative-candidates');
   const { buildEntityContext, renderEntityContextForPrompt } = await import('@/lib/context/entity-context');
+  const { getTeamRoster, renderTeamContext } = await import('@/lib/context/team-context');
+  // ORG / TEAM — the user's professional surroundings: who their own colleagues are, so internal coordination
+  // reads differently from client/partner work and a teammate is never taken for a deal counterparty.
+  const teamContext = renderTeamContext(await getTeamRoster(supabase, email.user_id!).catch(() => ({ names: [], emails: [] })));
   const mineSet = new Set(mine.map((m) => m.toLowerCase()));
   const participants = [email.from_address, ...(email.to_addresses ?? []), ...(email.cc_addresses ?? [])]
     .filter((e) => e && !mineSet.has(String(e).toLowerCase()));
@@ -959,6 +963,7 @@ export async function computeUnderstanding(email: EmailData, supabase: SupabaseC
   const relationshipContext = entityCtx ? renderEntityContextForPrompt(entityCtx) : '';
   const content =
     (relationshipContext ? `${relationshipContext}\n\n` : '') +
+    teamContext +
     `You judge an email from the seat of the user, whose own address(es) are: ${mine.join(', ') || '(unknown)'}${email.user_name ? ` (name: ${email.user_name})` : ''}.\n` +
     `This email — To: ${(email.to_addresses ?? []).join(', ') || '(none)'} ; Cc: ${(email.cc_addresses ?? []).join(', ') || '(none)'}\n` +
     `From: ${email.from_name} <${email.from_address}>\nSubject: ${email.subject}\nBody:\n${truncateText(email.body, 2000)}\n\n` +
