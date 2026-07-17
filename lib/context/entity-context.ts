@@ -41,69 +41,77 @@ export type BuildOpts = {
 
 // Assemble the dossier for ONE set of participants. Bounded queries + alias-aware JS filtering; safe/non-fatal
 // (any lookup that fails just yields an empty slice). For a whole sync batch, prefer buildEntityContextMap.
-export async function buildEntityContext(supabase: SupabaseClient, userId: string, opts: BuildOpts): Promise<EntityContext> {
+// The shared corpus — the user's commitments / meetings / calendar / inbox / relationships, fetched ONCE and
+// assembled-from many times. This is what makes the per-BATCH map cheap: one set of table reads, N cheap
+// in-memory assemblies (vs N × 5 table reads). `scopeEmails` bounds only the relationship_graph read.
+type ContextCorpus = {
+  rel: Array<Record<string, unknown>>;
+  commits: Array<Record<string, unknown>>;
+  past: Array<Record<string, unknown>>;
+  future: Array<Record<string, unknown>>;
+  inbox: Array<Record<string, unknown>>;
+};
+
+async function fetchContextCorpus(supabase: SupabaseClient, userId: string, scopeEmails: string[]): Promise<ContextCorpus> {
+  const nowISO = new Date().toISOString();
+  const [relRes, commitsRes, pastRes, futureRes, threadsRes] = await Promise.all([
+    scopeEmails.length
+      ? supabase.from('relationship_graph').select('contact_email, contact_name, interaction_frequency').eq('user_id', userId).in('contact_email', scopeEmails)
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+    supabase.from('commitments').select('id, description, counterparty, direction, due_date, initiative').eq('user_id', userId).in('status', ['open', 'pending']).limit(400),
+    supabase.from('meeting_transcripts').select('id, title, start_time, attendees, initiative').eq('user_id', userId).lte('start_time', nowISO).order('start_time', { ascending: false }).limit(150),
+    supabase.from('calendar_events').select('id, title, start_time, attendees').eq('user_id', userId).eq('status', 'confirmed').gte('start_time', nowISO).order('start_time', { ascending: true }).limit(150),
+    supabase.from('inbox_items').select('id, work_title, source_data, created_at').eq('user_id', userId).order('created_at', { ascending: false }).limit(250),
+  ]);
+  return {
+    rel: (relRes as { data?: Array<Record<string, unknown>> }).data ?? [],
+    commits: (commitsRes as { data?: Array<Record<string, unknown>> }).data ?? [],
+    past: (pastRes as { data?: Array<Record<string, unknown>> }).data ?? [],
+    future: (futureRes as { data?: Array<Record<string, unknown>> }).data ?? [],
+    inbox: (threadsRes as { data?: Array<Record<string, unknown>> }).data ?? [],
+  };
+}
+
+// Assemble ONE dossier from a pre-fetched corpus. getInitiativeCandidates is memoized per-process, so calling
+// it per-set inside a batch is cheap (one labeled-corpus load, shared).
+async function assembleFromCorpus(corpus: ContextCorpus, supabase: SupabaseClient, userId: string, opts: BuildOpts): Promise<EntityContext> {
   const emails = [...new Set(opts.emails.map(emailOf).filter(Boolean) as string[])];
   const names = [...new Set((opts.names ?? []).map((n) => (n || '').trim()).filter(Boolean))];
-  const nowISO = new Date().toISOString();
   const L = { commitments: opts.limits?.commitments ?? 6, meetings: opts.limits?.meetings ?? 5, threads: opts.limits?.threads ?? 6 };
 
-  // A person matcher: is `candidate` (a counterparty / attendee / sender string) one of our participants?
   const isPerson = (candidate: string | null | undefined): boolean => {
     const c = (candidate || '').trim();
     if (!c) return false;
     return emails.some((e) => sameAttendee(c, e)) || names.some((n) => sameAttendee(c, n));
   };
 
-  const [initRes, relRes, commitsRes, pastRes, futureRes, threadsRes] = await Promise.all([
-    // Grounded initiative (the established canonical for this person + its variants).
-    getInitiativeCandidates(supabase, userId, { threadId: opts.threadId ?? null, personEmails: emails, personNames: names }).catch(() => ({ canonical: null, candidates: [] as string[] })),
-    // Relationship strength.
-    emails.length
-      ? supabase.from('relationship_graph').select('contact_email, contact_name, interaction_frequency').eq('user_id', userId).in('contact_email', emails).limit(1)
-      : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
-    // Open commitments — matched by counterparty (alias-aware) OR the deal initiative, in JS.
-    supabase.from('commitments').select('id, description, counterparty, direction, due_date, initiative').eq('user_id', userId).in('status', ['open', 'pending']).limit(400),
-    // Past meetings (recorded) with these people OR on this deal.
-    supabase.from('meeting_transcripts').select('id, title, start_time, attendees, initiative').eq('user_id', userId).lte('start_time', nowISO).order('start_time', { ascending: false }).limit(150),
-    // Upcoming calendar meetings with these people.
-    supabase.from('calendar_events').select('id, title, start_time, attendees').eq('user_id', userId).eq('status', 'confirmed').gte('start_time', nowISO).order('start_time', { ascending: true }).limit(150),
-    // Other recent correspondence with them (their inbox items).
-    supabase.from('inbox_items').select('id, work_title, source_data, created_at').eq('user_id', userId).order('created_at', { ascending: false }).limit(250),
-  ]);
+  const initRes = await getInitiativeCandidates(supabase, userId, { threadId: opts.threadId ?? null, personEmails: emails, personNames: names }).catch(() => ({ canonical: null, candidates: [] as string[] }));
+  const initiative = { label: initRes.canonical, variants: initRes.candidates ?? [] };
 
-  const initiative = { label: (initRes as { canonical: string | null }).canonical, variants: (initRes as { candidates: string[] }).candidates ?? [] };
-
-  const rel0 = ((relRes as { data?: Array<Record<string, unknown>> }).data ?? [])[0];
+  const rel0 = corpus.rel.find((r) => emails.includes(emailOf(r.contact_email as string) || ''));
   const relationship = rel0 ? { name: (rel0.contact_name as string) ?? null, frequency: (rel0.interaction_frequency as string) ?? null } : null;
 
-  // Two-hop deal awareness: a deal spans PEOPLE (Léa emails, Jean-Marie is cc'd + carries the label). Once
-  // the initiative is resolved, also pull the DEAL's items by initiative — not just this exact person's — so
-  // the meeting Jean-Marie attended and the commitment owed to him surface for Léa's email too. Union +
-  // dedupe. Matches the canonical label OR a known variant (grounded, not a keyword).
+  // Two-hop deal awareness: once the initiative resolves, pull the DEAL's items by initiative too (not just
+  // this exact person's) — matches canonical OR a known variant (grounded, not a keyword).
   const dealLabels = new Set([initiative.label, ...initiative.variants].filter(Boolean).map((s) => String(s).toLowerCase()));
   const onDeal = (label: unknown): boolean => !!label && dealLabels.has(String(label).toLowerCase());
 
-  const commitRows = (commitsRes as { data?: Array<Record<string, unknown>> }).data ?? [];
   const commitById = new Map<string, Record<string, unknown>>();
-  for (const c of commitRows) if (isPerson(c.counterparty as string) || onDeal(c.initiative)) commitById.set(String(c.id), c);
-  const openCommitments = [...commitById.values()]
-    .slice(0, L.commitments)
+  for (const c of corpus.commits) if (isPerson(c.counterparty as string) || onDeal(c.initiative)) commitById.set(String(c.id), c);
+  const openCommitments = [...commitById.values()].slice(0, L.commitments)
     .map((c) => ({ id: String(c.id), description: String(c.description || 'Commitment'), direction: String(c.direction || 'you_owe'), dueDate: (c.due_date as string) ?? null }));
 
-  const matchDealOrAttendee = (rows: Array<Record<string, unknown>>) =>
-    rows.filter((r) => onDeal(r.initiative) || ((r.attendees as Attendee[]) ?? []).some((a) => isPerson(attendeeStr(a))));
-
-  const recentMeetings = matchDealOrAttendee((pastRes as { data?: Array<Record<string, unknown>> }).data ?? [])
+  const recentMeetings = corpus.past
+    .filter((r) => onDeal(r.initiative) || ((r.attendees as Attendee[]) ?? []).some((a) => isPerson(attendeeStr(a))))
     .slice(0, L.meetings)
     .map((m) => ({ id: String(m.id), title: String(m.title || 'Meeting'), date: (m.start_time as string) ?? null }));
 
-  // Upcoming (calendar) has no initiative column → match by attendee only.
-  const upcomingMeetings = ((futureRes as { data?: Array<Record<string, unknown>> }).data ?? [])
+  const upcomingMeetings = corpus.future
     .filter((r) => ((r.attendees as Attendee[]) ?? []).some((a) => isPerson(attendeeStr(a))))
     .slice(0, L.meetings)
     .map((m) => ({ id: String(m.id), title: String(m.title || 'Meeting'), startTime: (m.start_time as string) ?? null }));
 
-  const recentThreads = ((threadsRes as { data?: Array<Record<string, unknown>> }).data ?? [])
+  const recentThreads = corpus.inbox
     .filter((it) => {
       if (opts.excludeItemId && String(it.id) === opts.excludeItemId) return false;
       const sd = (it.source_data ?? {}) as Record<string, unknown>;
@@ -115,10 +123,28 @@ export async function buildEntityContext(supabase: SupabaseClient, userId: strin
       return { itemId: String(it.id), subject: String(it.work_title || sd.subject || '(no subject)'), lastAt: (sd.received_at as string) ?? (it.created_at as string) ?? null };
     });
 
-  return {
-    people: emails.map((e, i) => ({ email: e, name: names[i] ?? null })),
-    initiative, relationship, openCommitments, recentMeetings, upcomingMeetings, recentThreads,
-  };
+  return { people: emails.map((e, i) => ({ email: e, name: names[i] ?? null })), initiative, relationship, openCommitments, recentMeetings, upcomingMeetings, recentThreads };
+}
+
+export async function buildEntityContext(supabase: SupabaseClient, userId: string, opts: BuildOpts): Promise<EntityContext> {
+  const emails = [...new Set(opts.emails.map(emailOf).filter(Boolean) as string[])];
+  const corpus = await fetchContextCorpus(supabase, userId, emails);
+  return assembleFromCorpus(corpus, supabase, userId, opts);
+}
+
+// BATCHED: one corpus fetch, N cheap assemblies. Keyed by the caller's `key`. This is what the sync pipeline
+// uses to enrich every envelope in a batch without N×5 table reads.
+export async function buildEntityContextMap(
+  supabase: SupabaseClient,
+  userId: string,
+  sets: Array<{ key: string } & BuildOpts>,
+): Promise<Map<string, EntityContext>> {
+  const out = new Map<string, EntityContext>();
+  if (!sets.length) return out;
+  const scopeEmails = [...new Set(sets.flatMap((s) => s.emails.map(emailOf).filter(Boolean) as string[]))];
+  const corpus = await fetchContextCorpus(supabase, userId, scopeEmails);
+  await Promise.all(sets.map(async (s) => { out.set(s.key, await assembleFromCorpus(corpus, supabase, userId, s)); }));
+  return out;
 }
 
 // A COMPACT prompt block — the model reasons over this. Kept terse (token-bounded) since it rides every
@@ -133,4 +159,22 @@ export function renderEntityContextForPrompt(ctx: EntityContext): string {
   if (ctx.recentThreads.length) lines.push(`Other recent threads with them: ${ctx.recentThreads.map((t) => t.subject).join('; ')}`);
   if (!lines.length) return '';
   return `[RELATIONSHIP CONTEXT — what you already know about this sender/thread; reason WITH it]\n${lines.join('\n')}`;
+}
+
+// A COMPACT one-line signal for the classifier/rule GATES (batchClassifyEmails, batchMatchRules) — they run
+// on many envelopes at once, so this is deliberately terse (~15–30 tok).
+//
+// CONSERVATIVE by design: a false "known relationship" on a newsletter is worse than a miss — it could
+// rescue genuine noise. So the gate signal fires ONLY on a GROUNDED active deal (an initiative resolved to
+// this thread's participants) — the strong, entity-resolved signal. Open commitments / meetings only ENRICH
+// it; they never fire it alone (a loose name-token commitment match, or ≥2 newsletters from one sender, would
+// otherwise produce a false positive). The RICHER matching still lives in renderEntityContextForPrompt for
+// Phase 2 / the human rail, where a stray fact is low-stakes and the model reasons over it.
+export function renderRelationshipSignal(ctx: EntityContext): string | null {
+  if (!ctx.initiative.label) return null;
+  const parts: string[] = [`active deal "${ctx.initiative.label}"`];
+  if (ctx.openCommitments.length) parts.push(`${ctx.openCommitments.length} open commitment${ctx.openCommitments.length > 1 ? 's' : ''}`);
+  if (ctx.recentMeetings.length) parts.push('met recently');
+  else if (ctx.upcomingMeetings.length) parts.push('meeting upcoming');
+  return `known relationship — ${parts.join(', ')}`;
 }

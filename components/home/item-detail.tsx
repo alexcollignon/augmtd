@@ -29,6 +29,7 @@ import KbFilePicker from '@/components/inbox/kb-file-picker';
 import { proposeOwner, coarseCapabilityKind, type ProposedOwner } from '@/lib/home/capability-map';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import AddToProjectControl from '@/components/projects/add-to-project-control';
+import RelationshipContext from '@/components/home/relationship-context';
 
 // ── Shared visual language across ALL deep-dive variants (coherence pass #3). One header, one
 // section-label token, one card token — so email / meeting / commitment / follow-up read identically.
@@ -3570,6 +3571,8 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
 
       {/* 2 — Scrolling thread + angle (the only scroll area; composer stays docked below) */}
       <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
+        {/* Read it like a human: the relationship neighborhood (deal, open commitments, meetings, threads). */}
+        <RelationshipContext kind="email" id={id} />
         {/* The whole thread, rendered by the SHARED inbox component (avatars + collapse + fold) */}
         <div>
           {hasThread && (
@@ -4278,6 +4281,7 @@ function FollowUpDetail({ id }: { id: string }) {
 
       {/* Scrolling thread */}
       <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
+        <RelationshipContext kind="followup" id={id} />
         <div>
           {hasMessages && (
             <h2 className={SECTION_LABEL}>Conversation</h2>

@@ -18,6 +18,10 @@ export interface EmailEnvelope {
   snippet: string;
   /** First 500 chars of parsed email body — richer signal than snippet for borderline cases */
   body_preview?: string;
+  /** A compact relationship signal ("known relationship — active deal X, 3 open commitments, met recently")
+   *  assembled from the user's own data BEFORE this gate runs. When present, the sender is a known
+   *  relationship / live deal — reason WITH it (a live-deal contact is never noise). See entity-context. */
+  relationship?: string;
 }
 
 const SYSTEM_PROMPT = `You are an email triage classifier. Given a batch of email envelopes, classify each into exactly one category.
@@ -61,6 +65,8 @@ CATEGORIES:
 
 IMPORTANT BIAS: When unsure between "fyi_only" and "process" for a message from a REAL HUMAN (not an automated/no-reply/bulk sender), choose "process". Reserve "fyi_only" for genuinely passive updates and acknowledgements. Automated/bulk senders never become "process" on this basis — they stay "noise" or "fyi_only".
 
+RELATIONSHIP CONTEXT: some envelopes include a "relationship" note (e.g. "known relationship — active deal 'Acme Rollout', 3 open commitments, met recently"). This is what we ALREADY know about the sender/thread from the user's own data. Treat it as strong evidence the email is REAL CORRESPONDENCE the user cares about: an envelope with a "relationship" note must NOT be "noise", and when it names an active deal or open commitments, lean toward "process" (it's part of live work), reserving "fyi_only" only for a genuinely passive heads-up on that deal. Absence of the note is neutral (a brand-new contact can still be "process" on its own merits).
+
 EXAMPLES:
 - From: noreply@uber.com, Subject: "Your Thursday trip receipt" → noise
 - From: info@zaask.pt, Subject: "✅ Os seus orçamentos estão a caminho!" → noise
@@ -96,6 +102,7 @@ async function classifyBatch(
       // Include body_preview only when present — omitting saves tokens for envelope-only callers
       const preview = e.body_preview?.trim();
       if (preview) entry.body_preview = preview.slice(0, 500);
+      if (e.relationship) entry.relationship = e.relationship;
       return entry;
     }),
   );

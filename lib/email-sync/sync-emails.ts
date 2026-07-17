@@ -526,6 +526,45 @@ export async function syncEmailsForConnection(
       body_preview: p.body?.slice(0, 500) || '',
     }));
 
+    // ENTITY CONTEXT (Slice 1b) — assemble the relationship neighborhood for the WHOLE batch ONCE, then
+    // attach a compact signal to each envelope so the routing gate (batchClassifyEmails) AND the rules
+    // (batchMatchRules) reason WITH the relationship: a live-deal contact is never routed to noise/fyi, by
+    // construction (the label is decided HERE, before Phase 2). Over all participants (from+to+cc, minus the
+    // user's own addresses) since a deal's label often lives with a cc'd colleague. Non-fatal.
+    try {
+      const emailOfLocal = (s: string) => String(s || '').toLowerCase().match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || null;
+      // The user's OWN addresses — login/profile email + EVERY connected mailbox. MUST be complete: an
+      // unexcluded own address becomes a "participant" and matches the user's entire commitment/meeting
+      // history → a FALSE relationship signal on unrelated mail (e.g. newsletters where the user is a To).
+      const ownAddr = new Set<string>();
+      const ce = emailOfLocal(connection.metadata?.email || connection.provider_account_id || '');
+      if (ce) ownAddr.add(ce);
+      try {
+        const [{ data: _conns }, { data: _prof }] = await Promise.all([
+          adminSupabase.from('connections').select('metadata, provider_account_id').eq('user_id', connection.user_id),
+          adminSupabase.from('profiles').select('email').eq('id', connection.user_id).maybeSingle(),
+        ]);
+        for (const c of (_conns ?? []) as Array<{ metadata: { email?: string } | null; provider_account_id?: string | null }>) {
+          const e = emailOfLocal(c.metadata?.email || c.provider_account_id || ''); if (e) ownAddr.add(e);
+        }
+        const pe = emailOfLocal((_prof as { email?: string } | null)?.email || ''); if (pe) ownAddr.add(pe);
+      } catch { /* connection email alone is the primary signal */ }
+      const { buildEntityContextMap, renderRelationshipSignal } = await import('@/lib/context/entity-context');
+      const sets = parsedMessages.map((p, i) => ({
+        key: String(i),
+        emails: [p.from_address, ...(((p as any).to_addresses as string[]) ?? []), ...(((p as any).cc_addresses as string[]) ?? [])]
+          .map(emailOfLocal).filter((e): e is string => !!e && !ownAddr.has(e)),
+        names: [(p as any).from_name as string | undefined],
+        threadId: ((p as any).thread_id as string | undefined) ?? null,
+      }));
+      const ctxMap = await buildEntityContextMap(adminSupabase, connection.user_id, sets);
+      for (let i = 0; i < envelopes.length; i++) {
+        const ctx = ctxMap.get(String(i));
+        const sig = ctx ? renderRelationshipSignal(ctx) : null;
+        if (sig) envelopes[i].relationship = sig;
+      }
+    } catch { /* non-fatal — the gates fall back to text-only classification */ }
+
     const classMap = await batchClassifyEmails(envelopes, connection.user_id, adminSupabase);
 
     // AI-match rules drive the type via ONE batched call (they're shown as AI rules, so they run
