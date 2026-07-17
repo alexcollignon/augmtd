@@ -33,11 +33,15 @@ export type NextMove = {
   entityRef: string | null;                // the atom to act on (inbox:<id> / commit:<id>)
   reason: string;
 };
-export type InitiativeBrain = {
+// The cheap assembly (no AI) — ledger + people + sig.
+export type LedgerAssembly = {
   key: string; label: string;
   people: { external: string[]; internal: string[] };
   ledger: LedgerEvent[];
   quietDays: number | null;
+  sig: string;                 // atom signature (event count + freshest timestamp) — change-detection for S3
+};
+export type InitiativeBrain = LedgerAssembly & {
   state: InitiativeState | null;
   nextMove: NextMove | null;
 };
@@ -56,37 +60,54 @@ async function corporateDomains(supabase: SupabaseClient, userId: string): Promi
 
 const daysBetween = (a: string, b: number) => Math.floor((b - new Date(a).getTime()) / 86400000);
 
-// Build the read-only brain for one initiative (by its normalized key).
-export async function buildInitiativeBrain(supabase: SupabaseClient, userId: string, initiativeKey: string): Promise<InitiativeBrain | null> {
+// The shared corpus — the user's initiative-bearing atoms fetched ONCE. A batch refresh fetches this once and
+// assembles N initiatives from memory (vs N × the bulk fetch), so refreshing all active initiatives on a Home
+// load is cheap. `sentByThread` indexes the user's sent mail so email_out events resolve without a per-item query.
+export type BrainCorpus = {
+  inbox: Array<Record<string, unknown>>;
+  meetings: Array<Record<string, unknown>>;
+  commits: Array<Record<string, unknown>>;
+  sentByThread: Map<string, Array<Record<string, unknown>>>;
+  corp: Set<string>;
+};
+
+export async function fetchBrainCorpus(supabase: SupabaseClient, userId: string): Promise<BrainCorpus> {
+  const [{ data: inbox }, { data: mtgs }, { data: commits }, { data: sent }, corp] = await Promise.all([
+    supabase.from('inbox_items').select('id, work_title, source_data, created_at').eq('user_id', userId).eq('source', 'email').not('source_data->understanding', 'is', null).order('created_at', { ascending: false }).limit(1000),
+    supabase.from('meeting_transcripts').select('id, title, start_time, attendees, initiative').eq('user_id', userId).not('initiative', 'is', null).order('start_time', { ascending: false }).limit(400),
+    supabase.from('commitments').select('id, description, counterparty, direction, due_date, initiative, created_at, status').eq('user_id', userId).not('initiative', 'is', null).limit(600),
+    supabase.from('emails').select('id, subject, received_at, to_addresses, is_from_user, thread_id').eq('user_id', userId).eq('is_from_user', true).order('received_at', { ascending: false }).limit(1000),
+    corporateDomains(supabase, userId),
+  ]);
+  const sentByThread = new Map<string, Array<Record<string, unknown>>>();
+  for (const s of (sent ?? []) as Array<Record<string, unknown>>) { const t = s.thread_id as string; if (!t) continue; const arr = sentByThread.get(t) ?? []; arr.push(s); sentByThread.set(t, arr); }
+  return { inbox: (inbox ?? []) as Array<Record<string, unknown>>, meetings: (mtgs ?? []) as Array<Record<string, unknown>>, commits: (commits ?? []) as Array<Record<string, unknown>>, sentByThread, corp };
+}
+
+// Assemble the initiative's ledger + people + sig — the CHEAP part (no AI). Pass a shared `corpus` for a batch
+// (no per-initiative fetch); omit it for a one-off (fetches its own corpus). The store sig-checks this before
+// spending an AI call on the synthesis.
+export async function assembleInitiativeLedger(supabase: SupabaseClient, userId: string, initiativeKey: string, corpus?: BrainCorpus): Promise<LedgerAssembly | null> {
   const key = normalizeInitiative(initiativeKey)?.replace(/\s+/g, '') || initiativeKey.toLowerCase().replace(/\s+/g, '');
   const matches = (label: unknown): boolean => {
     const k = normalizeInitiative(label as string)?.replace(/\s+/g, '') || '';
     return !!k && k === key;
   };
-
-  const [{ data: inbox }, { data: mtgs }, { data: commits }, corp] = await Promise.all([
-    supabase.from('inbox_items').select('id, work_title, source_data, created_at').eq('user_id', userId).eq('source', 'email').not('source_data->understanding', 'is', null).order('created_at', { ascending: false }).limit(800),
-    supabase.from('meeting_transcripts').select('id, title, start_time, attendees, initiative').eq('user_id', userId).not('initiative', 'is', null).order('start_time', { ascending: false }).limit(300),
-    supabase.from('commitments').select('id, description, counterparty, direction, due_date, initiative, created_at, status').eq('user_id', userId).not('initiative', 'is', null).limit(400),
-    corporateDomains(supabase, userId),
-  ]);
+  const c = corpus ?? await fetchBrainCorpus(supabase, userId);
+  const corp = c.corp;
 
   // Filter atoms to this initiative.
-  const items = (inbox ?? []).filter((it) => matches(coerceUnderstanding((it.source_data as Record<string, unknown>)?.understanding)?.initiative));
-  const meetings = (mtgs ?? []).filter((m) => matches((m as { initiative?: string }).initiative));
-  const commitments = (commits ?? []).filter((c) => matches((c as { initiative?: string }).initiative));
+  const items = c.inbox.filter((it) => matches(coerceUnderstanding((it.source_data as Record<string, unknown>)?.understanding)?.initiative));
+  const meetings = c.meetings.filter((m) => matches((m as { initiative?: string }).initiative));
+  const commitments = c.commits.filter((c) => matches((c as { initiative?: string }).initiative));
   if (!items.length && !meetings.length && !commitments.length) return null;
 
   const label = (coerceUnderstanding((items[0]?.source_data as Record<string, unknown>)?.understanding)?.initiative as string)
     || (meetings[0] as { initiative?: string })?.initiative || (commitments[0] as { initiative?: string })?.initiative || initiativeKey;
 
-  // Sent mail on these threads (email_out — "you sent"): the initiative's threads → is_from_user emails.
+  // Sent mail on these threads (email_out — "you sent"): from the shared index, no query.
   const threadIds = [...new Set(items.map((it) => (it.source_data as Record<string, unknown>)?.thread_id as string).filter(Boolean))];
-  let sent: Array<Record<string, unknown>> = [];
-  if (threadIds.length) {
-    const { data } = await supabase.from('emails').select('id, subject, received_at, to_addresses, is_from_user, thread_id').eq('user_id', userId).eq('is_from_user', true).in('thread_id', threadIds.slice(0, 100)).order('received_at', { ascending: false }).limit(200);
-    sent = data ?? [];
-  }
+  const sent: Array<Record<string, unknown>> = threadIds.flatMap((t) => c.sentByThread.get(t) ?? []);
 
   // ── People graph (who's who) ──
   const external = new Set<string>(), internal = new Set<string>();
@@ -121,25 +142,32 @@ export async function buildInitiativeBrain(supabase: SupabaseClient, userId: str
   const touches = ledger.filter((e) => e.kind !== 'commitment' && e.at).map((e) => e.at);
   const quietDays = touches.length ? Math.max(0, daysBetween(touches.sort().slice(-1)[0], now)) : null;
 
-  const synth = await synthesize(supabase, userId, label, ledger, { external: [...external], internal: [...internal] }, quietDays).catch(() => null);
-  const state = synth?.state ?? null;
+  const sig = `${ledger.length}:${ledger[0]?.at ?? ''}`;
+  return { key, label, people: { external: [...external].slice(0, 12), internal: [...internal].slice(0, 12) }, ledger: ledger.slice(0, 40), quietDays, sig };
+}
 
-  // Resolve the next move's owner + gate + target atom DETERMINISTICALLY from the reasoned kind.
+// The SYNTHESIS (the AI cost) — separated so the store can sig-check the cheap assembly first and skip this
+// when nothing moved. Returns the state + the resolved next move.
+export async function synthesizeBrain(supabase: SupabaseClient, userId: string, a: LedgerAssembly): Promise<{ state: InitiativeState | null; nextMove: NextMove | null }> {
+  const synth = await synthesize(supabase, userId, a.label, a.ledger, a.people, a.quietDays).catch(() => null);
+  const state = synth?.state ?? null;
   let nextMove: NextMove | null = null;
   const nm = synth?.nextMove;
   if (nm && nm.kind !== 'none' && nm.title) {
-    const latestInbound = ledger.find((e) => e.kind === 'email_in')?.ref ?? null;
-    const youOweCommit = ledger.find((e) => e.kind === 'commitment' && e.actor === 'you')?.ref ?? null;
+    const latestInbound = a.ledger.find((e) => e.kind === 'email_in')?.ref ?? null;
+    const youOweCommit = a.ledger.find((e) => e.kind === 'commitment' && e.actor === 'you')?.ref ?? null;
     const entityRef = nm.kind === 'send' ? (youOweCommit ?? latestInbound) : latestInbound;
-    nextMove = {
-      kind: nm.kind, title: String(nm.title).slice(0, 120),
-      owner: 'system',                 // AUGMTD prepares the comm; the user approves + sends
-      irreversible: true,              // reply/send/followup all culminate in a send → approval gate
-      entityRef, reason: String(nm.reason || '').slice(0, 140),
-    };
+    nextMove = { kind: nm.kind, title: String(nm.title).slice(0, 120), owner: 'system', irreversible: true, entityRef, reason: String(nm.reason || '').slice(0, 140) };
   }
+  return { state, nextMove };
+}
 
-  return { key, label, people: { external: [...external].slice(0, 12), internal: [...internal].slice(0, 12) }, ledger: ledger.slice(0, 40), quietDays, state, nextMove };
+// Full read-only brain = assemble (cheap) + synthesize (AI).
+export async function buildInitiativeBrain(supabase: SupabaseClient, userId: string, initiativeKey: string): Promise<InitiativeBrain | null> {
+  const a = await assembleInitiativeLedger(supabase, userId, initiativeKey);
+  if (!a) return null;
+  const { state, nextMove } = await synthesizeBrain(supabase, userId, a);
+  return { ...a, state, nextMove };
 }
 
 // ONE grounded synthesis over the ledger → where it stands. Reasoned in the initiative's own terms; never a

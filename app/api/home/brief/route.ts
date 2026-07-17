@@ -851,6 +851,14 @@ export async function GET() {
             keepAnEyeOn: keepAnEyeOnRaw,
           }, { userId: user.id, supabase }),
         ]);
+        // Initiative Brain (S3) — LIVE refresh: recompute the durable per-initiative state for the active
+        // initiatives whenever the Home recomputes (the activity signal). sig-gated, so unchanged ones cost
+        // nothing (no AI). Fire-and-forget; degrades to no-op pre-migration. This keeps "where each stands"
+        // current as mail/meetings land. (Ingestion-time hooks for instant updates are a later increment.)
+        try {
+          const { refreshInitiativeStates } = await import('@/lib/initiatives/state-store');
+          await refreshInitiativeStates(supabase, user.id, freshInitiatives.map((i) => i.key));
+        } catch { /* non-fatal — table may not exist yet */ }
         // Start from the basic brief we just persisted; upgrade each section the synthesis produced
         // (nulls only overwrite when we got something, same rule as before). This is the ENRICHED blob.
         let enrTldr = tldr, enrFollowups = followups, enrFyiDigest = fyiDigest;
