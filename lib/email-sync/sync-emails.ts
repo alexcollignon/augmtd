@@ -1906,6 +1906,21 @@ export async function syncEmailsForConnection(
       })
       .eq('id', connection.id);
 
+    // LIVE Initiative Brain (S5) — an email arriving/sent is an event on its initiative, so refresh the
+    // state for the initiatives this sync TOUCHED (items written in this window), in the background. Bounded
+    // (only the moved initiatives), sig-gated (unchanged cost nothing), non-fatal. The Home-load hook is the
+    // backstop. This is what makes "where it stands" update within seconds of new mail.
+    try {
+      const { data: touched } = await adminSupabase.from('inbox_items')
+        .select('source_data').eq('user_id', connection.user_id).eq('source', 'email')
+        .gte('updated_at', syncStartedAt).not('source_data->understanding->>initiative', 'is', null).limit(200);
+      const labels = [...new Set((touched ?? []).map((it) => ((it.source_data as { understanding?: { initiative?: string } } | null)?.understanding?.initiative) || '').filter(Boolean))];
+      if (labels.length) {
+        const { refreshInitiativeStates } = await import('@/lib/initiatives/state-store');
+        await refreshInitiativeStates(adminSupabase, connection.user_id, labels);
+      }
+    } catch { /* non-fatal — Home-load hook backstops */ }
+
   } catch (error) {
     console.error(`Error syncing connection ${connection.id}:`, error);
     result.errors.push(`Connection sync error: ${error instanceof Error ? error.message : 'Unknown'}`);

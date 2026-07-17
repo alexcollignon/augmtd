@@ -164,6 +164,10 @@ export async function POST(
     after(async () => {
       const { reconcileItemLabel } = await import('@/lib/inbox/reconcile-item-label');
       await reconcileItemLabel({ userId: user.id, itemId: id, item, targetLabel: 'done', client: supabase });
+      // LIVE Initiative Brain (S5) — you just sent on this thread → refresh its initiative's state (whoOwes
+      // flips, momentum moves). Background, sig-gated, non-fatal.
+      const init = (sourceData as { understanding?: { initiative?: string } } | null)?.understanding?.initiative;
+      if (init) { try { const { refreshInitiativeStates } = await import('@/lib/initiatives/state-store'); await refreshInitiativeStates(supabase, user.id, [init]); } catch { /* non-fatal */ } }
     });
 
     // Chain handoff: a promise inside the reply ("I'll send X Friday") becomes a follow-up

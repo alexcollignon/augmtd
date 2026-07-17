@@ -387,6 +387,13 @@ export async function storeTranscriptAndGenerateWork(
     console.error('[MeetingBot] Failed to mark transcript processed:', finalUpdateError);
   }
 
+  // LIVE Initiative Brain (S5) — a meeting just happened on this initiative → refresh its state so "where it
+  // stands" reflects it within seconds. Background, sig-gated, non-fatal.
+  if (meetingInitiative) {
+    try { const { refreshInitiativeStates } = await import('@/lib/initiatives/state-store'); await refreshInitiativeStates(supabase, userId, [meetingInitiative]); }
+    catch { /* non-fatal — Home-load hook backstops */ }
+  }
+
   // Fire-and-forget: index transcript text into KB so it's searchable in Drive
   if (transcriptText.trim()) {
     const { createClient: createAdminClient } = await import('@supabase/supabase-js');
