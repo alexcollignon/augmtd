@@ -9,11 +9,9 @@ export default function MeetingsHomeContent() {
   const {
     upcoming,
     transcripts,
-    folders,
     filterPersonEmail,
     handleDeleteTranscript,
     handleRetryFailed,
-    handleMoveToFolder,
     handleRenameTranscript,
     projects,
     moveToProject,
@@ -29,8 +27,6 @@ export default function MeetingsHomeContent() {
       onDeleteTranscript={handleDeleteTranscript}
       onRetryFailed={handleRetryFailed}
       isNew={isNew}
-      folders={folders}
-      onMoveToFolder={handleMoveToFolder}
       onRenameTranscript={handleRenameTranscript}
       projects={projects}
       onMoveToProject={moveToProject}

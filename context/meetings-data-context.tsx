@@ -2,7 +2,6 @@
 
 import { createContext, useContext } from 'react';
 import type { CalendarEvent } from '@/lib/types/meetings';
-import type { DriveFolder } from '@/lib/types/drive';
 import type { MeetingChatContext } from '@/components/meetings/meeting-chat-sidebar';
 
 export interface Transcript {
@@ -31,8 +30,7 @@ export interface MeetingsDataContextType {
   // Data
   transcripts: Transcript[];
   upcoming: CalendarEvent[];
-  folders: DriveFolder[];
-  projects: Array<{ id: string; name: string }>;   // unification — the same projects as Home
+  projects: Array<{ id: string; name: string }>;   // unification — the same projects as Home (replaced folders)
   moveToProject: (transcriptId: string, projectId: string | null) => Promise<void>;
   loading: boolean;
   userEmail: string;
@@ -44,11 +42,7 @@ export interface MeetingsDataContextType {
   fetchAll: () => Promise<void>;
   handleDeleteTranscript: (id: string) => Promise<void>;
   handleRetryFailed: (id: string) => Promise<void>;
-  handleMoveToFolder: (transcriptId: string, folderId: string | null) => Promise<void>;
   handleRenameTranscript: (id: string, title: string) => Promise<void>;
-  handleCreateFolder: (name: string) => Promise<void>;
-  handleRenameFolder: (id: string, name: string) => Promise<void>;
-  handleDeleteFolder: (id: string) => Promise<void>;
 
   // UI state shared between shell and subpages
   activeMeetingContext: MeetingChatContext | null;

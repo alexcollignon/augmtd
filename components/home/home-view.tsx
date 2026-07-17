@@ -14,6 +14,7 @@ import {
 } from '@heroicons/react/24/outline';
 import ActivityPanel from '@/components/activity/activity-panel';
 import type { ActiveInitiative, InitiativeState, InitiativeAction } from '@/lib/projects/active-initiatives';
+import { onProjectsUpdated } from '@/lib/projects/broadcast';
 import { ROLE_AVATARS, ROLE_LABELS } from '@/lib/workers/roles';
 import { RiseIn } from '@/components/home/rise-in';
 import ViewSwitcher, { type HomeView as HomeViewLens } from '@/components/home/view-switcher';
@@ -1044,8 +1045,8 @@ const DO_META: Record<DoSource, { Icon: React.ElementType; ring: string; text: s
   notice:     { Icon: BellAlertIcon,   ring: 'bg-amber-50',    text: 'text-amber-600' },
   commitment: { Icon: CheckCircleIcon, ring: 'bg-neutral-100', text: 'text-neutral-500' },
 };
-function DoRow({ item, emphasis = false, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment }: {
-  item: DoItem; emphasis?: boolean;
+function DoRow({ item, emphasis = false, hideInitiative = false, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment }: {
+  item: DoItem; emphasis?: boolean; hideInitiative?: boolean;
   onDismissInbox?: (id: string) => void; onClearedCommitment?: (id: string) => void;
   onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void;
   onUndoCommitment?: (message: string, id: string) => void;
@@ -1092,7 +1093,8 @@ function DoRow({ item, emphasis = false, onDismissInbox, onClearedCommitment, on
             <span className="flex-shrink-0 ml-auto flex items-center gap-2">
               {badge && <span className={`text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 ${item.overdue ? 'bg-rose-50 text-rose-600' : item.dueToday ? 'bg-amber-50 text-amber-600' : 'bg-neutral-100 text-neutral-500'}`}>{badge}</span>}
               {!badge && <EffortDate effort={item.effort} dueDate={item.dueDate} overdue={!!item.dueDate && item.dueDate < new Date().toISOString().slice(0, 10)} />}
-              <InitiativeTag initiative={item.initiative} total={item.initiativeTotal} />
+              {/* Inside a bundle already named by this initiative, the per-row tag is redundant — hide it. */}
+              {!hideInitiative && <InitiativeTag initiative={item.initiative} total={item.initiativeTotal} />}
               {item.when && <span className="text-[11px] text-neutral-300 tabular-nums">{item.when}</span>}
             </span>
           </div>
@@ -1186,7 +1188,7 @@ function BundleGroup({ title, why, items, emphasis = false, onDismissInbox, onCl
       </button>
       <Collapse open={open}>
         <div className="border-t border-neutral-100 px-2 py-2 space-y-2">
-          {items.map((it) => <DoRow key={it.key} item={it} onDismissInbox={onDismissInbox} onClearedCommitment={onClearedCommitment} onUndoInbox={onUndoInbox} onUndoCommitment={onUndoCommitment} />)}
+          {items.map((it) => <DoRow key={it.key} item={it} hideInitiative onDismissInbox={onDismissInbox} onClearedCommitment={onClearedCommitment} onUndoInbox={onUndoInbox} onUndoCommitment={onUndoCommitment} />)}
         </div>
       </Collapse>
     </div>
@@ -1570,7 +1572,10 @@ export function HomeView() {
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onVisible);
     const id = window.setInterval(() => { if (document.visibilityState === 'visible') load(true); }, 90_000);
-    return () => { aliveRef.current = false; document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onVisible); window.clearInterval(id); };
+    // Instant sync when a project is created/attached/tracked anywhere (meetings sidebar, an item deep-dive,
+    // another tab) — In-motion + the Projects lens reflect it without a manual reload.
+    const offProjects = onProjectsUpdated(() => load(true));
+    return () => { aliveRef.current = false; document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onVisible); window.clearInterval(id); offProjects(); };
   }, [load]);
 
   // Persist brief + team to localStorage so the next reload hydrates instantly (see the mount effect above).

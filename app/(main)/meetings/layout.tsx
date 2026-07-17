@@ -24,7 +24,7 @@ export default async function MeetingsLayout({
   // SSR the SAME set the client refreshes with (own + shared-with-me, via the shared fetcher) so the list
   // doesn't grow after first paint. Needs a service-role client for the cross-user shared rows.
   const adminClient = createAdmin(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-  const [eventsResult, transcriptRows, foldersResult] = await Promise.all([
+  const [eventsResult, transcriptRows] = await Promise.all([
     supabase
       .from('calendar_events')
       .select('*')
@@ -34,16 +34,10 @@ export default async function MeetingsLayout({
       .lte('start_time', next14d)
       .order('start_time', { ascending: true }),
     listTranscriptRows(supabase, adminClient, user.id).catch(() => [] as Array<Record<string, unknown>>),
-    supabase
-      .from('meeting_folders')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false }),
   ]);
 
   const events = eventsResult.data ?? [];
   const rawTranscripts = transcriptRows as Array<Record<string, any>>;
-  const folders = foldersResult.data ?? [];
 
   // Batch relationship enrichment
   const allEmails = [
@@ -109,7 +103,6 @@ export default async function MeetingsLayout({
         userEmail={user.email ?? ''}
         initialUpcoming={initialUpcoming}
         initialTranscripts={initialTranscripts}
-        initialFolders={folders}
       >
         {children}
       </MeetingsShell>

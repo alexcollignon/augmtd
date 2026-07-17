@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { FolderIcon, XMarkIcon, PlusIcon } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
+import { broadcastProjectsUpdated } from '@/lib/projects/broadcast';
 
 // The meeting's PROJECT control — surface + manage which deal a meeting belongs to, right where you read it
 // (not only from the project detail). A chip when assigned (✕ to detach), or "Add to project" → a picker.
@@ -12,6 +13,7 @@ type Project = { id: string; name: string };
 export default function MeetingProjectControl({ transcriptId, projectId }: { transcriptId: string; projectId?: string | null }) {
   const [pid, setPid] = useState<string | null>(projectId ?? null);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -19,7 +21,7 @@ export default function MeetingProjectControl({ transcriptId, projectId }: { tra
   useEffect(() => { if (projectId !== undefined) setPid(projectId); }, [projectId]);
   useEffect(() => {
     // Lazy-load the project list (names for the chip + the picker) once.
-    fetch('/api/projects').then((r) => r.json()).then((d) => setProjects((d.projects ?? []).map((p: { id: string; name: string }) => ({ id: p.id, name: p.name })))).catch(() => {});
+    fetch('/api/projects?basic=1').then((r) => r.json()).then((d) => setProjects((d.projects ?? []).map((p: { id: string; name: string }) => ({ id: p.id, name: p.name })))).catch(() => {}).finally(() => setLoaded(true));
     // Resolve current membership when not provided by the host (keeps the control self-contained).
     if (projectId === undefined) fetch(`/api/items/project?kind=meeting&id=${transcriptId}`).then((r) => r.json()).then((d) => setPid(d.projectId ?? null)).catch(() => {});
   }, [transcriptId, projectId]);
@@ -36,6 +38,7 @@ export default function MeetingProjectControl({ transcriptId, projectId }: { tra
     try {
       const res = await fetch('/api/items/project', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'meeting', id: transcriptId, projectId }) });
       if (!res.ok) throw new Error();
+      broadcastProjectsUpdated({ reason: 'meeting-attach' });
       toast.success(projectId ? 'Added to project' : 'Removed from project');
     } catch { setPid(prev); toast.error('Could not update'); } finally { setBusy(false); }
   };
@@ -55,7 +58,8 @@ export default function MeetingProjectControl({ transcriptId, projectId }: { tra
       )}
       {open && (
         <div className="absolute top-full left-0 mt-1 z-30 w-56 max-h-64 overflow-y-auto rounded-xl border border-neutral-200 bg-white shadow-lg p-1">
-          {projects.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">No projects yet.</p>}
+          {!loaded && <p className="px-2 py-1.5 text-[12px] text-neutral-400">Loading…</p>}
+          {loaded && projects.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">No projects yet.</p>}
           {projects.map((p) => (
             <button key={p.id} onClick={() => set(p.id)} className={`w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-indigo-50 ${p.id === pid ? 'text-indigo-600 font-medium' : 'text-neutral-700'}`}>
               <FolderIcon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-400" /><span className="min-w-0 flex-1 truncate">{p.name}</span>

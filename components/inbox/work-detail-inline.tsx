@@ -20,6 +20,7 @@ import {
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 import type { ConnectionFolders } from '@/components/inbox/folder-rail';
+import AddToProjectControl from '@/components/projects/add-to-project-control';
 
 import RsvpButtons from './rsvp-buttons';
 import KbFilePicker from './kb-file-picker';
@@ -646,9 +647,19 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     <div className="flex flex-col h-full bg-neutral-100">
       {/* Header */}
       <div className="flex-shrink-0 px-6 py-4 border-b border-neutral-200 bg-white">
-        <h2 className="text-[17px] font-semibold text-neutral-900 leading-tight">
-          {item.work_title || sourceData?.subject || 'Work Item'}
-        </h2>
+        <div className="flex items-start gap-3">
+          <h2 className="text-[17px] font-semibold text-neutral-900 leading-tight min-w-0 flex-1">
+            {item.work_title || sourceData?.subject || 'Work Item'}
+          </h2>
+          {/* File this email into a project (sticky) — with the AI's initiative as the pre-suggestion. */}
+          <AddToProjectControl
+            kind="inbox"
+            id={item.id}
+            projectId={(item as { project_id?: string | null }).project_id ?? null}
+            suggestName={(sourceData?.understanding as { initiative?: string | null } | undefined)?.initiative ?? null}
+            compact
+          />
+        </div>
         {(sourceData?.from_name || sourceData?.from) && (
           <p className="text-[13px] text-neutral-500 mt-1">
             From {sourceData.from_name || sourceData.from}

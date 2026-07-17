@@ -12,12 +12,15 @@ import { reconcileProjectMembership } from '@/lib/projects/associate';
 const cleanList = (v: unknown): string[] =>
   (Array.isArray(v) ? v : []).map((s) => String(s).trim()).filter(Boolean).slice(0, 20);
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+    // ?basic=1 — a FAST list (id/name/status only), skipping the magnet + full spine build + health. Used by
+    // pickers/chips (the meetings project control, row menu) that only need names; the enriched path is heavy.
+    const basic = new URL(request.url).searchParams.get('basic') === '1';
     const { data: projects } = await supabase
       .from('projects')
       .select('id, name, description, status, goals, rules, color, auto, sort_order, created_at, updated_at')
@@ -25,6 +28,8 @@ export async function GET() {
       .order('status', { ascending: true })
       .order('sort_order', { ascending: true })
       .order('created_at', { ascending: false });
+    // basic mode: return the projects straight from the DB (id/name/etc) without the magnet/spine/health.
+    if (basic) return NextResponse.json({ projects: (projects ?? []).filter((p) => p.status === 'active') });
 
     // MAGNET: before computing health, pull any unclustered items whose initiative matches an active
     // project's name (so a new email about "Acme" flows into the Acme project automatically). Idempotent.

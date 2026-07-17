@@ -7,8 +7,11 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getActiveInitiatives, type InitiativeState, type ActiveInitiative } from './active-initiatives';
+import { normalizeInitiative } from '@/lib/inbox/item-understanding';
 
-export type SuggestionItemRef = { table: 'inbox_items' | 'commitments' | 'calendar_events'; id: string; title: string; who: string | null };
+const projectKey = (name: string): string => (normalizeInitiative(name)?.replace(/\s+/g, '') || name.toLowerCase().replace(/\s+/g, ''));
+
+export type SuggestionItemRef = { table: 'inbox_items' | 'commitments' | 'calendar_events' | 'meeting_transcripts'; id: string; title: string; who: string | null };
 // `outreach` = cold outbound recipients you're awaiting a reply from (no DB row to attach — the project,
 // once created with this name, adopts them live via the spine's initiative match). Counts toward the
 // ≥2 threshold so a pure-outreach campaign (e.g. a hiring round) surfaces as a suggestion on its own.
@@ -36,7 +39,14 @@ export async function suggestProjects(supabase: SupabaseClient, userId: string, 
   }
   if (!inits) inits = await getActiveInitiatives(supabase, userId, todayStr);
 
-  const chosen = inits.filter((i) => !i.projectId).slice(0, 40);
+  // Cross-check against the LIVE projects list — the spine may be served from a stale cache
+  // (home_brief.activeInitiatives) where a just-tracked initiative still reads projectId=null, so an
+  // already-tracked project would otherwise linger as a suggestion (the "duplicated as project AND suggested"
+  // bug). Excluding by matching project-name key is cheap and self-correcting regardless of cache freshness.
+  const { data: projRows } = await supabase.from('projects').select('name').eq('user_id', userId).eq('status', 'active');
+  const trackedKeys = new Set((projRows ?? []).map((p) => projectKey(p.name as string)));
+
+  const chosen = inits.filter((i) => !i.projectId && !trackedKeys.has(i.key)).slice(0, 40);
   return chosen.map((i) => ({
     key: i.key,
     name: i.label.slice(0, 80),

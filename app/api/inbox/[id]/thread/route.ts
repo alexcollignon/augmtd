@@ -116,6 +116,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     relevance,
     projectId: item.project_id ?? null,
     projectName,
+    // The AI best-guess initiative label (for the Add-to-project pre-suggestion when unassigned).
+    initiative: getUnderstanding(item)?.initiative ?? null,
     fromName: newest?.fromName ?? sd.from_name ?? null,
     fromAddress: newest?.from ?? sd.from ?? null,
     receivedAt: newest?.receivedAt ?? sd.received_at ?? item.created_at ?? null,

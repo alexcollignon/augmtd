@@ -36,17 +36,19 @@ export async function listTranscriptRows(
   if (companyIds.length) {
     const [{ data: liveShared }, { data: specificShared }] = await Promise.all([
       adminClient.from('meeting_transcripts')
-        .select(`${TRANSCRIPT_FIELDS}, profiles!meeting_transcripts_user_id_fkey(full_name), shared_note_receipts!left(folder_id, user_id)`)
+        .select(`${TRANSCRIPT_FIELDS}, profiles!meeting_transcripts_user_id_fkey(full_name), shared_note_receipts!left(folder_id, project_id, user_id)`)
         .eq('sharing_mode', 'live').in('company_id', companyIds).neq('user_id', userId)
         .order('start_time', { ascending: false }).limit(SHARED_CAP),
       adminClient.from('meeting_transcripts')
-        .select(`${TRANSCRIPT_FIELDS}, profiles!meeting_transcripts_user_id_fkey(full_name), shared_note_receipts!inner(folder_id, user_id)`)
+        .select(`${TRANSCRIPT_FIELDS}, profiles!meeting_transcripts_user_id_fkey(full_name), shared_note_receipts!inner(folder_id, project_id, user_id)`)
         .eq('sharing_mode', 'specific').in('company_id', companyIds).neq('user_id', userId)
         .eq('shared_note_receipts.user_id', userId).order('start_time', { ascending: false }).limit(SHARED_CAP),
     ]);
     const toMapped = (rows: Array<Record<string, unknown>>) => (rows ?? []).map((t) => {
-      const myReceipt = ((t.shared_note_receipts as Array<{ folder_id: string | null; user_id: string }>) ?? []).find((r) => r.user_id === userId);
-      return { ...t, folder_id: myReceipt?.folder_id ?? null, is_shared_with_me: true, shared_by_name: (t.profiles as { full_name?: string } | null)?.full_name ?? null, profiles: undefined, shared_note_receipts: undefined } as unknown as TranscriptRow;
+      const myReceipt = ((t.shared_note_receipts as Array<{ folder_id: string | null; project_id: string | null; user_id: string }>) ?? []).find((r) => r.user_id === userId);
+      // A shared note's project membership is the RECIPIENT's OWN filing (receipt.project_id), never the
+      // owner's transcript.project_id — so my organising is mine and doesn't leak the owner's.
+      return { ...t, folder_id: myReceipt?.folder_id ?? null, project_id: myReceipt?.project_id ?? null, is_shared_with_me: true, shared_by_name: (t.profiles as { full_name?: string } | null)?.full_name ?? null, profiles: undefined, shared_note_receipts: undefined } as unknown as TranscriptRow;
     });
     sharedMapped = [...toMapped(liveShared ?? []), ...toMapped(specificShared ?? [])];
   }

@@ -7,7 +7,6 @@ import {
   PlusIcon,
 } from '@heroicons/react/24/outline';
 import { usePathname, useRouter } from 'next/navigation';
-import type { DriveFolder } from '@/lib/types/drive';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import { useRecordingContext } from '@/context/recording-context';
 import {
@@ -18,9 +17,10 @@ import {
 import type { MeetingChatContext } from '@/components/meetings/meeting-chat-sidebar';
 import CaptureModal from '@/components/meetings/capture-modal';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { broadcastProjectsUpdated, onProjectsUpdated } from '@/lib/projects/broadcast';
 import NewMeetingModal from '@/components/meetings/new-meeting-modal';
 import MeetingsLeftPanel from '@/components/meetings/meetings-left-panel';
-import FolderDetailView from '@/components/meetings/folder-detail-view';
+import ProjectMeetingsView from '@/components/meetings/project-meetings-view';
 import CalendarSidebar from '@/components/meetings/calendar-sidebar';
 import MeetingChatSidebar from '@/components/meetings/meeting-chat-sidebar';
 import ChatSidebar from '@/components/shared/chat-sidebar';
@@ -38,7 +38,6 @@ interface MeetingsShellProps {
   userEmail: string;
   initialUpcoming?: CalendarEvent[];
   initialTranscripts?: Transcript[];
-  initialFolders?: DriveFolder[];
   children: React.ReactNode;
 }
 
@@ -46,7 +45,6 @@ export default function MeetingsShell({
   userEmail,
   initialUpcoming,
   initialTranscripts,
-  initialFolders,
   children,
 }: MeetingsShellProps) {
   const router = useRouter();
@@ -64,8 +62,12 @@ export default function MeetingsShell({
     const c = loadLS<{ upcoming: CalendarEvent[]; transcripts: Transcript[] }>('aug-meetings-v1');
     if (c) { setUpcoming(c.upcoming ?? []); setTranscripts(c.transcripts ?? []); setLoading(false); }
   }, [initialUpcoming]);
-  const [folders, setFolders] = useState<DriveFolder[]>(initialFolders ?? []);
   const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
+  // Suggested initiatives that HAVE meetings — surfaced in the sidebar so a labeled-but-untracked meeting
+  // (e.g. a recorded call the initiative machine tagged) is visible + one-click trackable, mirroring Home.
+  type MeetingSuggestion = { key: string; name: string; meetingIds: string[]; items: Array<{ table: string; id: string }> };
+  const [suggestions, setSuggestions] = useState<MeetingSuggestion[]>([]);
+  const [trackingKey, setTrackingKey] = useState<string | null>(null);
   const [seenIds, setSeenIds] = useState<Set<string>>(() => new Set());
 
   // ── UI state ─────────────────────────────────────────────────────────────
@@ -75,7 +77,8 @@ export default function MeetingsShell({
   const [filterPersonEmail, setFilterPersonEmail] = useState<string | null>(null);
   const [showCapture, setShowCapture] = useState(false);
   const [showNewMeeting, setShowNewMeeting] = useState(false);
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [selectedSuggestionKey, setSelectedSuggestionKey] = useState<string | null>(null);
 
 
   // Polling refs
@@ -131,21 +134,28 @@ export default function MeetingsShell({
     return () => ch.close();
   }, [fetchAll]);
 
-  useEffect(() => {
-    if (initialFolders) return;
-    fetch('/api/meetings/folders')
-      .then((r) => r.json())
-      .then((data) => setFolders(Array.isArray(data) ? data : (data.folders ?? [])));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
   // Projects (unification) — the same projects as Home; a meeting shows its project + can be filed into one.
-  useEffect(() => {
-    fetch('/api/projects').then((r) => r.json()).then((d) => setProjects((d.projects ?? []).map((p: { id: string; name: string }) => ({ id: p.id, name: p.name })))).catch(() => {});
+  // Projects fully replace the old meeting folders as the one organizer.
+  const loadProjects = useCallback(() => {
+    fetch('/api/projects?basic=1').then((r) => r.json()).then((d) => setProjects((d.projects ?? []).map((p: { id: string; name: string }) => ({ id: p.id, name: p.name })))).catch(() => {});
   }, []);
+  const loadSuggestions = useCallback(() => {
+    fetch('/api/projects/suggestions').then((r) => r.json()).then((d) => {
+      const mapped: MeetingSuggestion[] = (d.suggestions ?? []).map((s: { key: string; name: string; items?: Array<{ table: string; id: string }> }) => {
+        const items = s.items ?? [];
+        return { key: s.key, name: s.name, items, meetingIds: items.filter((i) => i.table === 'meeting_transcripts').map((i) => i.id) };
+      }).filter((s: MeetingSuggestion) => s.meetingIds.length > 0); // meetings surface only shows suggestions with meetings
+      setSuggestions(mapped);
+    }).catch(() => {});
+  }, []);
+  useEffect(() => { loadProjects(); loadSuggestions(); }, [loadProjects, loadSuggestions]);
+  // Instant cross-surface sync: if a project is created/attached/tracked ANYWHERE (Home, another tab, an
+  // item deep-dive), refresh the sidebar's projects + suggestions + transcript memberships without a reload.
+  useEffect(() => onProjectsUpdated(() => { loadProjects(); loadSuggestions(); fetchAll(); }), [loadProjects, loadSuggestions, fetchAll]);
   // File a meeting into a project (or clear) — sticky (server sets project_locked). Optimistic.
   const moveToProject = async (transcriptId: string, projectId: string | null) => {
     setTranscripts((prev) => prev.map((t) => t.id === transcriptId ? { ...t, projectId } : t));
-    try { await fetch('/api/items/project', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'meeting', id: transcriptId, projectId }) }); }
+    try { await fetch('/api/items/project', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'meeting', id: transcriptId, projectId }) }); broadcastProjectsUpdated({ reason: 'meeting-move' }); }
     catch { /* non-fatal; next fetchAll reconciles */ }
   };
 
@@ -176,48 +186,42 @@ export default function MeetingsShell({
 
 
   // ── Handlers ─────────────────────────────────────────────────────────────
-  const handleCreateFolder = async (name: string) => {
-    const res = await fetch('/api/meetings/folders', {
+  // Create a project inline from the meetings sidebar (same projects as Home). Optimistic + reconcile.
+  const handleCreateProject = async (name: string) => {
+    const res = await fetch('/api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
     });
     if (res.ok) {
-      const folder: DriveFolder = await res.json();
-      setFolders((prev) => [...prev, folder]);
+      const data = await res.json();
+      const p = data.project ?? data;
+      if (p?.id) setProjects((prev) => [...prev, { id: p.id, name: p.name }]);
+      loadProjects();
+      broadcastProjectsUpdated({ reason: 'create' }); // Home + other surfaces pick up the new project instantly
     }
   };
 
-  const handleRenameFolder = async (id: string, name: string) => {
-    const res = await fetch(`/api/meetings/folders/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
-    });
-    if (res.ok) {
-      const updated: DriveFolder = await res.json();
-      setFolders((prev) => prev.map((f) => (f.id === id ? updated : f)));
-    }
-  };
-
-  const handleDeleteFolder = async (id: string) => {
-    const res = await fetch(`/api/meetings/folders/${id}`, { method: 'DELETE' });
-    if (res.ok) {
-      setFolders((prev) => prev.filter((f) => f.id !== id));
-      if (selectedFolderId === id) setSelectedFolderId(null);
-    }
-  };
-
-  const handleMoveToFolder = async (transcriptId: string, folderId: string | null) => {
-    setTranscripts((prev) => prev.map((t) => t.id === transcriptId ? { ...t, folderId } : t));
+  // Track a suggested initiative as a real project (accept-suggestion) — the magnet then adopts its meetings.
+  const handleTrackSuggestion = async (s: MeetingSuggestion) => {
+    setTrackingKey(s.key);
     try {
-      await fetch(`/api/meetings/recording/${transcriptId}/folder`, {
-        method: 'PATCH',
+      const res = await fetch('/api/projects/accept-suggestion', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderId }),
+        body: JSON.stringify({ name: s.name, items: s.items }),
       });
-    } catch {
-      fetchAll();
+      if (res.ok) {
+        const { project } = await res.json();
+        setSelectedSuggestionKey(null);
+        setSuggestions((prev) => prev.filter((x) => x.key !== s.key));
+        if (project?.id) { setProjects((prev) => [...prev, { id: project.id, name: project.name }]); setSelectedProjectId(project.id); }
+        loadProjects();
+        fetchAll(); // pull the newly-attached project_id onto the transcripts
+        broadcastProjectsUpdated({ reason: 'track' });
+      }
+    } finally {
+      setTrackingKey(null);
     }
   };
 
@@ -265,9 +269,9 @@ export default function MeetingsShell({
 
   // Derive nav state from URL
   const isHome = pathname === '/meetings';
-  const isOnFolder = !!selectedFolderId;
-
-  const selectedFolder = selectedFolderId ? folders.find((f) => f.id === selectedFolderId) : null;
+  const selectedProject = selectedProjectId ? projects.find((p) => p.id === selectedProjectId) ?? null : null;
+  const selectedSuggestion = selectedSuggestionKey ? suggestions.find((s) => s.key === selectedSuggestionKey) ?? null : null;
+  const isOnProject = !!selectedProject || !!selectedSuggestion;
 
   // Selected meeting id from URL for left panel highlighting
   const urlMeetingId = (() => {
@@ -279,7 +283,6 @@ export default function MeetingsShell({
   const contextValue = {
     transcripts,
     upcoming,
-    folders,
     projects,
     moveToProject,
     loading,
@@ -288,11 +291,7 @@ export default function MeetingsShell({
     fetchAll,
     handleDeleteTranscript,
     handleRetryFailed,
-    handleMoveToFolder,
     handleRenameTranscript,
-    handleCreateFolder,
-    handleRenameFolder,
-    handleDeleteFolder,
     activeMeetingContext,
     setActiveMeetingContext,
     filterPersonEmail,
@@ -320,18 +319,33 @@ export default function MeetingsShell({
         {/* ── Left panel ── */}
         <MeetingsLeftPanel
           transcripts={transcripts}
-          folders={folders}
-          selectedFolderId={selectedFolderId}
-          onSelectFolder={(id) => {
-            setSelectedFolderId(id);
+          projects={projects}
+          selectedProjectId={selectedProjectId}
+          onSelectProject={(id) => {
+            setSelectedProjectId(id);
+            setSelectedSuggestionKey(null);
             setFilterPersonEmail(null);
             if (id) router.push('/meetings');
           }}
-          onCreateFolder={handleCreateFolder}
-          onMoveToFolder={handleMoveToFolder}
+          onCreateProject={handleCreateProject}
+          onMoveToProject={moveToProject}
+          suggestions={suggestions.map((s) => ({ key: s.key, name: s.name, meetingCount: s.meetingIds.length }))}
+          selectedSuggestionKey={selectedSuggestionKey}
+          onSelectSuggestion={(key) => {
+            setSelectedSuggestionKey(key);
+            setSelectedProjectId(null);
+            setFilterPersonEmail(null);
+            if (key) router.push('/meetings');
+          }}
+          onTrackSuggestion={(key) => {
+            const s = suggestions.find((x) => x.key === key);
+            if (s) handleTrackSuggestion(s);
+          }}
+          trackingKey={trackingKey}
           selectedMeetingId={urlMeetingId}
           onSelectMeeting={(id) => {
-            setSelectedFolderId(null);
+            setSelectedProjectId(null);
+            setSelectedSuggestionKey(null);
             setActiveMeetingContext(null);
             setChatAutoMessage(undefined);
             if (id) router.push(`/meetings/${id}`);
@@ -340,21 +354,24 @@ export default function MeetingsShell({
           filterPersonEmail={filterPersonEmail}
           onFilterPerson={(email) => {
             setFilterPersonEmail(email);
-            setSelectedFolderId(null);
+            setSelectedProjectId(null);
+            setSelectedSuggestionKey(null);
             router.push('/meetings');
           }}
           onNewNote={() => {
-            setSelectedFolderId(null);
+            setSelectedProjectId(null);
+            setSelectedSuggestionKey(null);
             router.push('/meetings/new');
           }}
           onNavigateHome={() => {
-            setSelectedFolderId(null);
+            setSelectedProjectId(null);
+            setSelectedSuggestionKey(null);
             setFilterPersonEmail(null);
             setActiveMeetingContext(null);
             if (rightPanel === 'chat') setRightPanel(null);
             router.push('/meetings');
           }}
-          isHome={isHome && !isOnFolder}
+          isHome={isHome && !isOnProject}
           recordingState={
             recording.state === 'recording' || recording.state === 'uploading' || recording.state === 'processing'
               ? recording.state
@@ -376,7 +393,7 @@ export default function MeetingsShell({
             <div className="flex-shrink-0 h-10 flex items-center justify-between px-4 border-b border-neutral-100">
               <div className="flex items-center gap-2">
                 <h2 className="text-[13px] font-semibold text-neutral-700">
-                  {selectedFolder ? selectedFolder.name : 'Meetings'}
+                  {selectedProject ? selectedProject.name : selectedSuggestion ? selectedSuggestion.name : 'Meetings'}
                 </h2>
               </div>
               <button
@@ -388,15 +405,24 @@ export default function MeetingsShell({
               </button>
             </div>
 
-            {/* Body — folder view takes priority over URL-routed children */}
+            {/* Body — a selected project OR suggested initiative's meetings take priority over URL children */}
             <div className="flex-1 overflow-y-auto">
-              {selectedFolder ? (
-                <FolderDetailView
-                  folder={selectedFolder}
+              {selectedProject ? (
+                <ProjectMeetingsView
+                  project={selectedProject}
                   transcripts={transcripts}
-                  folders={folders}
-                  onRename={handleRenameFolder}
-                  onDelete={handleDeleteFolder}
+                  isNew={isNew}
+                />
+              ) : selectedSuggestion ? (
+                <ProjectMeetingsView
+                  suggestion={{
+                    key: selectedSuggestion.key,
+                    name: selectedSuggestion.name,
+                    meetingIds: selectedSuggestion.meetingIds,
+                    onTrack: () => handleTrackSuggestion(selectedSuggestion),
+                    tracking: trackingKey === selectedSuggestion.key,
+                  }}
+                  transcripts={transcripts}
                   isNew={isNew}
                 />
               ) : (

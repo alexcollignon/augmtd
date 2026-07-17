@@ -917,8 +917,9 @@ const handleRetry = async () => {
                 <ClockIcon className="w-3.5 h-3.5" />
                 {primary} · {duration}min
               </span>
-              {/* Project membership — which deal this meeting belongs to (add / remove); owner only. */}
-              {transcript && isOwner && <MeetingProjectControl transcriptId={transcript.id} />}
+              {/* Project membership — which deal this meeting belongs to (add / remove). Works for the owner
+                  (files the transcript) AND a recipient of a shared note (files their OWN receipt). */}
+              {transcript && <MeetingProjectControl transcriptId={transcript.id} />}
               {event!.meeting_link && (
                 <>
                   <a href={event!.meeting_link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-blue-600 hover:underline">

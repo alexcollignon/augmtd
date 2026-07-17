@@ -22,13 +22,13 @@ import {
   ArrowUturnLeftIcon,
   EllipsisHorizontalIcon,
   Bars2Icon,
-  FolderIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
 import KbFilePicker from '@/components/inbox/kb-file-picker';
 import { proposeOwner, coarseCapabilityKind, type ProposedOwner } from '@/lib/home/capability-map';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import AddToProjectControl from '@/components/projects/add-to-project-control';
 
 // ── Shared visual language across ALL deep-dive variants (coherence pass #3). One header, one
 // section-label token, one card token — so email / meeting / commitment / follow-up read identically.
@@ -47,12 +47,14 @@ function DetailHeader({
   status,
   title,
   meta,
+  action,
   titleClass = 'text-[20px] leading-tight',
 }: {
   chip: React.ReactNode;
   status?: React.ReactNode;
   title: string;
   meta?: React.ReactNode;
+  action?: React.ReactNode;   // right-aligned control (e.g. Add to project)
   titleClass?: string;
 }) {
   return (
@@ -60,6 +62,7 @@ function DetailHeader({
       <div className="flex items-center gap-1.5 mb-2">
         {chip}
         {status}
+        {action && <span className="ml-auto flex-shrink-0">{action}</span>}
       </div>
       <h1 className={`${titleClass} font-semibold text-neutral-900`}>{title}</h1>
       {meta && <div className="flex items-center gap-2 mt-1.5 text-[13px] text-neutral-500">{meta}</div>}
@@ -3219,6 +3222,7 @@ type ThreadData = {
   counterparty?: string | null;
   projectId?: string | null;
   projectName?: string | null;
+  initiative?: string | null;   // the AI best-guess project label (for the Add-to-project pre-suggestion)
 };
 
 // The header badge for the email deep-dive, from the item's REAL classification — never a hardcoded
@@ -3552,15 +3556,11 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           classification (a `noted`/FYI newsletter reads "For awareness", not "Reply needed"). */}
       <DetailHeader
         chip={<KindChip tone="indigo" icon={EnvelopeIcon} label={EMAIL_BADGE[thread?.type ?? 'needs_reply'].label} />}
+        action={<AddToProjectControl kind="inbox" id={id} projectId={thread?.projectId ?? null} projectName={thread?.projectName ?? null} suggestName={thread?.initiative ?? null} compact />}
         title={subject}
         meta={
           <>
             {senderLine && <span className="min-w-0 truncate">From: {senderLine}</span>}
-            {thread?.projectId && thread.projectName && (
-              <a href="/home?view=projects" className="inline-flex min-w-0 max-w-[220px] items-center gap-1 rounded-full border border-indigo-100 bg-indigo-50/70 px-2 py-0.5 text-[11px] font-medium text-indigo-600 hover:bg-indigo-100">
-                <FolderIcon className="h-3 w-3 flex-shrink-0" /><span className="truncate">{thread.projectName}</span>
-              </a>
-            )}
             {thread?.receivedAt && (
               <span className="text-neutral-400 flex-shrink-0 tabular-nums ml-auto">{fmtWhen(thread.receivedAt)}</span>
             )}
@@ -3804,6 +3804,7 @@ function MeetingDetail({ id }: { id: string }) {
       {/* Header */}
       <DetailHeader
         chip={<KindChip tone="violet" icon={CalendarDaysIcon} label="Meeting" />}
+        action={<AddToProjectControl kind="meeting" id={id} compact />}
         title={title}
         meta={
           <>
@@ -4040,6 +4041,7 @@ function CommitmentDetail({ id }: { id: string }) {
             <CheckCircleIcon className="w-3 h-3" />{data?.direction === 'awaiting' ? 'Waiting on someone' : 'On your plate'}
           </span>
         }
+        action={<AddToProjectControl kind="commitment" id={id} compact />}
         status={overdue ? <span className="inline-flex items-center rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-600">Overdue</span> : undefined}
         title={data?.description || 'Commitment'}
         titleClass="text-[19px] leading-snug"
@@ -4268,6 +4270,7 @@ function FollowUpDetail({ id }: { id: string }) {
       {/* Header */}
       <DetailHeader
         chip={<KindChip tone="amber" icon={ClockIcon} label="Ball in your court" />}
+        action={<AddToProjectControl kind="inbox" id={id} compact />}
         title={title}
         titleClass="text-[19px] leading-snug"
         meta={who ? <span>Waiting on {who}</span> : undefined}

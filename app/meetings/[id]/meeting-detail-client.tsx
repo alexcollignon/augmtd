@@ -11,9 +11,7 @@ import {
   MicrophoneIcon,
   TrashIcon,
   ChatBubbleLeftRightIcon,
-  FolderIcon,
 } from '@heroicons/react/24/outline';
-import type { DriveFolder } from '@/lib/types/drive';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import { formatMeetingTime, calculateDuration } from '@/lib/types/meetings';
 import LinkedWorkPanel from '@/components/meetings/linked-work-panel';
@@ -190,28 +188,6 @@ export default function MeetingDetailClient({
     return () => clearInterval(intervalId);
   }, [localProcessed, localBotState, localAssistantState, transcript, event.id, router]);
 
-  // Fetch folders for the folder chip
-  useEffect(() => {
-    fetch('/api/drive/folders')
-      .then((r) => r.json())
-      .then((data) => setFolders(Array.isArray(data) ? data : (data.folders ?? [])));
-  }, []);
-
-  const handleMoveToFolder = async (folderId: string | null) => {
-    setMovingFolder(true);
-    try {
-      await fetch(`/api/meetings/${event.id}/folder`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderId }),
-      });
-      setCurrentFolderId(folderId);
-    } finally {
-      setMovingFolder(false);
-      setFolderPopoverOpen(false);
-    }
-  };
-
   const handleRetry = async () => {
     setRetrying(true);
     setRetryError(null);
@@ -235,10 +211,6 @@ export default function MeetingDetailClient({
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
-  const [folders, setFolders] = useState<DriveFolder[]>([]);
-  const [currentFolderId, setCurrentFolderId] = useState<string | null>(event.folder_id ?? null);
-  const [folderPopoverOpen, setFolderPopoverOpen] = useState(false);
-  const [movingFolder, setMovingFolder] = useState(false);
   const { primary } = formatMeetingTime(event.start_time, event.end_time);
   const duration = calculateDuration(event.start_time, event.end_time);
 
@@ -450,44 +422,6 @@ export default function MeetingDetailClient({
               </div>
             )}
 
-            {/* Folder chip */}
-            {currentFolderId && (
-              <div className="relative mt-2">
-                <button
-                  onClick={() => setFolderPopoverOpen((v) => !v)}
-                  className="inline-flex items-center gap-1 text-[11px] text-neutral-500 hover:text-neutral-700 bg-neutral-50 border border-neutral-100 px-2 py-0.5 transition-colors"
-                  title="Change folder"
-                >
-                  <FolderIcon className="w-3 h-3" />
-                  {folders.find((f) => f.id === currentFolderId)?.name ?? 'Folder'}
-                </button>
-                {folderPopoverOpen && (
-                  <div className="absolute left-0 top-full mt-1 z-20 bg-white border border-neutral-200 shadow-md min-w-[160px] py-1">
-                    <button
-                      onClick={() => handleMoveToFolder(null)}
-                      disabled={movingFolder}
-                      className="w-full text-left px-3 py-1.5 text-[12px] text-neutral-600 hover:bg-neutral-50 transition-colors"
-                    >
-                      Remove from folder
-                    </button>
-                    <div className="border-t border-neutral-100 my-1" />
-                    {folders.map((folder) => (
-                      <button
-                        key={folder.id}
-                        onClick={() => handleMoveToFolder(folder.id)}
-                        disabled={movingFolder}
-                        className={`w-full text-left px-3 py-1.5 text-[12px] flex items-center gap-1.5 hover:bg-neutral-50 transition-colors ${
-                          currentFolderId === folder.id ? 'text-neutral-900 font-medium' : 'text-neutral-600'
-                        }`}
-                      >
-                        <FolderIcon className="w-3 h-3 flex-shrink-0" />
-                        <span className="truncate">{folder.name}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
 
 

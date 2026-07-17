@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { FolderIcon, PlusIcon, PencilSquareIcon, TrashIcon, XMarkIcon, SparklesIcon, FlagIcon, ShieldCheckIcon, UsersIcon, ArrowPathIcon, EyeSlashIcon, FolderPlusIcon, ChevronRightIcon, ArrowRightIcon, CheckCircleIcon, ArchiveBoxIcon, ArrowUturnLeftIcon } from '@heroicons/react/24/outline';
 import { Button, IconButton, Input, Textarea, Card, EmptyState, SegmentedControl } from '@/components/ui';
 import ProjectDetail from '@/components/projects/project-detail';
+import { onProjectsUpdated } from '@/lib/projects/broadcast';
 import { RiseIn } from '@/components/home/rise-in';
 import { statusFromHealth, STATUS_TONE } from '@/lib/projects/status';
 import PortfolioGantt from '@/components/projects/portfolio-gantt';
@@ -299,6 +300,13 @@ export default function ProjectsView({ onDetailChange }: { onDetailChange?: (ope
     const target = new URLSearchParams(window.location.search).get('initiative');
     if (target) { setHighlightKey(target); setShowAllSuggestions(true); setStatusView('suggested'); autoPicked.current = true; }
   }, []);
+
+  // Instant sync: refetch when a project is created/attached/tracked anywhere (meetings sidebar, deep-dive,
+  // another tab) — so a project made in Meetings appears here without a reload.
+  useEffect(() => onProjectsUpdated(() => {
+    fetch('/api/projects').then((r) => r.json()).then((d) => { projectsCache = d.projects ?? []; setProjects(projectsCache); }).catch(() => {});
+    fetch('/api/projects/suggestions', { cache: 'no-store' }).then((r) => r.json()).then((d) => { suggestionsCache = d.suggestions ?? []; setSuggestions(suggestionsCache); }).catch(() => {});
+  }), []);
 
   // Persist to localStorage whenever the data changes → the next reload hydrates instantly.
   useEffect(() => { if (projects) saveLS(LS_PROJ, projects); }, [projects]);

@@ -42,7 +42,7 @@ export type InitiativeAction = {
   href: string;
   dueDate?: string | null;
 };
-export type InitiativeMemberRef = { table: 'inbox_items' | 'commitments' | 'calendar_events'; id: string; title: string; who: string | null };
+export type InitiativeMemberRef = { table: 'inbox_items' | 'commitments' | 'calendar_events' | 'meeting_transcripts'; id: string; title: string; who: string | null };
 export type ActiveInitiative = {
   key: string;
   label: string;
@@ -92,13 +92,18 @@ export async function getActiveInitiatives(
   userId: string,
   todayStr: string,
 ): Promise<ActiveInitiative[]> {
-  const [outbound, inbox, { data: commits }, muted] = await Promise.all([
+  const [outbound, inbox, { data: commits }, { data: transcripts }, muted] = await Promise.all([
     resolveOutboundAwaiting(supabase, userId, todayStr),
     fetchAllRows<Record<string, unknown>>((from, to) =>
       supabase.from('inbox_items').select('id, work_title, rule_type, work_state, source, source_data, project_id')
         .eq('user_id', userId).eq('status', 'pending').order('created_at', { ascending: false }).range(from, to)),
     supabase.from('commitments').select('id, description, counterparty, initiative, direction, due_date, created_at, project_id')
       .eq('user_id', userId).in('status', ['open', 'pending']).limit(1000),
+    // Recorded meetings carry a grounded `initiative` too (stamped at insight time) — count them as CONTEXT
+    // members so a labeled meeting reaches the cluster/suggestion (it was invisible: only emails/commitments/
+    // calendar/outbound fed the spine). NOT an action — meetings are context. Guarded (column may be absent).
+    supabase.from('meeting_transcripts').select('id, title, initiative, start_time, created_at, project_id')
+      .eq('user_id', userId).not('initiative', 'is', null).limit(500),
     readMutedMap(supabase, userId), // the persistent, revive-able "not relevant" set
   ]);
 
@@ -169,6 +174,20 @@ export async function getActiveInitiatives(
       if (ev.projectId && !b.projectId) b.projectId = ev.projectId;
     }
   } catch (e) { console.warn('[active-initiatives] calendar skipped:', (e as Error).message); }
+
+  // ── Recorded meetings (members + recency; NOT actions — like calendar, a meeting is context). A meeting's
+  // derived action-items already flow in as inbox_items/commitments; this adds the meeting itself so a
+  // labeled recording contributes to (and can seed) its initiative cluster. ──
+  for (const t of (transcripts ?? []) as unknown as Array<Record<string, unknown>>) {
+    const key = keyOf(t.initiative as string);
+    if (!key) continue;
+    // Display date = meeting time; arrival = when it was recorded/ingested (createdAt) for the mute-revive.
+    const at = String((t.start_time as string) || (t.created_at as string) || todayStr);
+    const b = bump(key, String(t.initiative), at, String((t.created_at as string) || at));
+    b.memberRefs.push({ table: 'meeting_transcripts', id: String(t.id), title: String(t.title || 'Meeting'), who: null });
+    b.meetings++;
+    if (t.project_id && !b.projectId) b.projectId = String(t.project_id);
+  }
 
   // ── Outbound-awaiting (members + a waiting action) ──
   for (const o of outbound) {
