@@ -11,7 +11,7 @@ import type { InboxRule, RuleEmail, RuleLabel } from './types';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
 
-const SYSTEM = `You match emails against an ordered list of user rules. Each rule has a "label" and a natural-language "description". For each email, return the label of the FIRST rule (in order) whose description fits the email. If no rule fits, return "none". Some emails include a "relationship" note (what we already know about the sender — an active deal, open commitments, a recent meeting): use it as context when judging whether a rule about clients / deals / active work fits. Respond ONLY with JSON: {"results":[{"id":"...","label":"..."}]}. Include every id. No explanations.`;
+const SYSTEM = `You match emails against an ordered list of user rules. Each rule has a "label" and a natural-language "description". For each email, return the label of the FIRST rule (in order) whose description fits the email. If no rule fits, return "none". Some emails include a "relationship" note (what we already know about the sender — an active deal, open commitments, a recent meeting): use it as context when judging whether a rule about clients / deals / active work fits. The relationship note is a reason to treat the email as MORE important (real, live work), NEVER less — do not let it route a message that otherwise needs a reply or an action into a lower-attention label (fyi / notifications / marketing). Respond ONLY with JSON: {"results":[{"id":"...","label":"..."}]}. Include every id. No explanations.`;
 
 // Pass the FULL rule set (deterministic + AI). The deterministic rules (no-reply/automated senders,
 // etc.) pre-filter: mail they already settle never reaches the AI — so the AI only adjudicates the

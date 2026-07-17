@@ -172,6 +172,12 @@ export function renderEntityContextForPrompt(ctx: EntityContext): string {
 // Phase 2 / the human rail, where a stray fact is low-stakes and the model reasons over it.
 export function renderRelationshipSignal(ctx: EntityContext): string | null {
   if (!ctx.initiative.label) return null;
+  // CORROBORATION required: a bare initiative label alone is too weak — a marketing tool / event newsletter
+  // can pick up a stray "deal" label from an earlier pass ("Linked Helper", "Data Con LA"), and the gate must
+  // NOT promote those. A REAL working relationship is backed by an open commitment or a real meeting; only
+  // then do we assert "known relationship" to the gate. (Garbage initiative in → no signal out.)
+  const corroborated = ctx.openCommitments.length > 0 || ctx.recentMeetings.length > 0 || ctx.upcomingMeetings.length > 0;
+  if (!corroborated) return null;
   const parts: string[] = [`active deal "${ctx.initiative.label}"`];
   if (ctx.openCommitments.length) parts.push(`${ctx.openCommitments.length} open commitment${ctx.openCommitments.length > 1 ? 's' : ''}`);
   if (ctx.recentMeetings.length) parts.push('met recently');
