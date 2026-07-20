@@ -47,8 +47,11 @@ export function buildDelegationPrompt(args: {
   itemContext: string;
   step?: Pick<ItemPlanTask, 'text' | 'detail'> | null;
   remainingSteps?: ItemPlanTask[];
+  // Step 4 — grounded delegation: the person + initiative BRAIN for this item, so the coworker does the
+  // work reasoning WITH the relationship + where the deal stands (not a cold prompt). Optional.
+  brainContext?: string;
 }): string {
-  const { kind, itemContext, step, remainingSteps } = args;
+  const { kind, itemContext, step, remainingSteps, brainContext } = args;
 
   const job = step
     ? `You're being handed ONE specific piece of work to do for me:\n\n` +
@@ -64,6 +67,7 @@ export function buildDelegationPrompt(args: {
     ``,
     job,
     ``,
+    ...(brainContext ? [brainContext, ``] : []),
     `--- THE ITEM (${kind}) ---`,
     itemContext || '(no additional context provided)',
     ``,

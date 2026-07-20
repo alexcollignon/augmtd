@@ -11,7 +11,7 @@
 // caller on the bundle-set signature so it runs only when the bundles actually change.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { aiCall } from '@/lib/ai/call';
 
 export type BundleNameInput = {
   key: string;
@@ -33,7 +33,6 @@ export async function nameBundles(
   inputs: BundleNameInput[],
 ): Promise<Record<string, BundleName>> {
   if (!inputs.length) return {};
-  const { client, model } = await getAIClient(userId, 'classification', supabase);
   const list = inputs
     .map((b) => `[${b.key}] (${KIND_HINT[b.kind]}) fallback name: "${b.label}"\n  items:\n${b.members.slice(0, 6).map((m) => `   - ${m.slice(0, 140)}`).join('\n')}`)
     .join('\n\n');
@@ -46,19 +45,12 @@ Return ONLY JSON: {"<key>": {"name": "...", "why": "..."}, ...} using the exact 
 Groups:
 ${list}`;
   try {
-    const res = await aiCreate(client, {
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0,
-      max_tokens: Math.min(1600, 120 + inputs.length * 60),
-      response_format: { type: 'json_object' },
+    // Shape-routed (aiCall {output:'json'}) — fence-stripping + provider quirks are the router's job now.
+    const res = await aiCall<Record<string, { name?: string; why?: string }>>({
+      userId, supabase, shape: { output: 'json' }, prompt, temperature: 0,
+      maxTokens: Math.min(1600, 120 + inputs.length * 60), source: 'bundle_naming',
     });
-    // Some tiers (Bedrock Haiku) ignore response_format and wrap JSON in ```json fences — strip them, then
-    // slice to the outermost { … } so a stray preamble can't break the parse.
-    let raw = (res.choices?.[0]?.message?.content ?? '{}').replace(/```(?:json)?/gi, '').trim();
-    const s = raw.indexOf('{'), e = raw.lastIndexOf('}');
-    if (s >= 0 && e > s) raw = raw.slice(s, e + 1);
-    const parsed = JSON.parse(raw) as Record<string, { name?: string; why?: string }>;
+    const parsed = res.json ?? {};
     const out: Record<string, BundleName> = {};
     for (const b of inputs) {
       const p = parsed[b.key];

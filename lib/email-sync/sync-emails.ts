@@ -1913,12 +1913,22 @@ export async function syncEmailsForConnection(
     try {
       const { data: touched } = await adminSupabase.from('inbox_items')
         .select('source_data').eq('user_id', connection.user_id).eq('source', 'email')
-        .gte('updated_at', syncStartedAt).not('source_data->understanding->>initiative', 'is', null).limit(200);
-      const labels = [...new Set((touched ?? []).map((it) => ((it.source_data as { understanding?: { initiative?: string } } | null)?.understanding?.initiative) || '').filter(Boolean))];
-      if (labels.length) {
-        const { refreshInitiativeStates } = await import('@/lib/initiatives/state-store');
-        await refreshInitiativeStates(adminSupabase, connection.user_id, labels);
+        .gte('updated_at', syncStartedAt).limit(200);
+      const rows = (touched ?? []) as Array<{ source_data: { understanding?: { initiative?: string }; from_address?: string; from?: string } | null }>;
+      // LIVE Person Brain (S1b) — a sender who mailed you this sync is an event on that RELATIONSHIP →
+      // refresh their person state (whoOwes/momentum/last-touch move). Sig-gated (unchanged cost nothing),
+      // non-fatal, degrades to no-op pre-migration. Same touched-window query, so no extra fetch.
+      const senders = [...new Set(rows.map((it) => it.source_data?.from_address || it.source_data?.from || '').filter(Boolean))];
+      if (senders.length) {
+        const { refreshPersonStates } = await import('@/lib/people/state-store');
+        await refreshPersonStates(adminSupabase, connection.user_id, senders);
       }
+      // ONE BRAIN shadow (Phase B) — recognize this sync's work items into the entity memory. SELF-GATING
+      // (no-op unless the user's memory exists — the backfilled evaluation users); non-fatal; capped.
+      try {
+        const { shadowRecognizeTouched } = await import('@/lib/entities/hooks');
+        await shadowRecognizeTouched(adminSupabase, connection.user_id, syncStartedAt);
+      } catch { /* non-fatal */ }
     } catch { /* non-fatal — Home-load hook backstops */ }
 
   } catch (error) {

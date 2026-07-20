@@ -9,7 +9,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getUnderstanding } from '@/lib/inbox/item-understanding';
 import { isAutomatedSender } from '@/lib/inbox/automated';
 import { buildInitiativeMap } from '@/lib/projects/initiative-resolver';
-import { initiativeKeyMatch } from '@/lib/projects/associate';
 import { normalizeInitiative } from '@/lib/inbox/item-understanding';
 import { computeEventUnderstanding } from '@/lib/calendar/event-understanding';
 import { resolveOutboundAwaiting } from '@/lib/outbound/resolve';
@@ -239,26 +238,15 @@ export async function buildWorkItems(
   // deep-dive target (the thread lives in your mailbox), so it links to the inbox.
   if (opts.includeOutbound) {
     try {
-      // Resolve outbound + the user's projects together, so an outreach item whose initiative matches a
-      // named project attaches to it (projectId) — that's how a rowless outbound item shows in a project's
-      // timeline/state without a DB row or the accept-suggestion machinery.
-      const [outbound, { data: projects }] = await Promise.all([
-        resolveOutboundAwaiting(supabase, userId, todayStr),
-        supabase.from('projects').select('id, name').eq('user_id', userId).eq('status', 'active'),
-      ]);
-      const keyed = ((projects ?? []) as Array<{ id: string; name: string }>)
-        .map((p) => ({ id: p.id, key: normalizeInitiative(p.name) }))
-        .filter((p) => p.key && p.key.length >= 3);
+      const outbound = await resolveOutboundAwaiting(supabase, userId, todayStr);
       for (const o of outbound) {
-        const ik = o.initiative ? normalizeInitiative(o.initiative) : null;
-        const match = ik ? keyed.find((p) => initiativeKeyMatch(p.key, ik, false)) : null;
         items.push({
           id: `outbound:${o.recipient}`, entityId: o.recipient, kind: 'followup',
           title: o.subject || `Reached out to ${o.who || 'someone'}`,
           who: o.who, actor: 'you', state: 'waiting',
           when: { explicit: null, bucket: inferBucket({ explicit: null, waiting: true, ageDays: o.ageDays, todayStr }) },
           source: 'email', href: '/inbox', at: o.lastSentAt, startAt: String(o.lastSentAt).slice(0, 10),
-          projectId: match?.id ?? null, automated: false, initiative: o.initiative, effort: null,
+          projectId: null, automated: false, initiative: o.initiative, effort: null,
         });
       }
     } catch (e) {

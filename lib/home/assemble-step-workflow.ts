@@ -49,7 +49,7 @@ export interface AssembleResult {
 type Task = Pick<ItemPlanTask, 'id' | 'text' | 'detail' | 'capability' | 'actor'>;
 
 // ── The reasoning call: given the step + item + pool, pick ONE fetch tool (or none) + its query. Kept
-// on the CLASSIFICATION tier (never reasoning — the Kimi blow-up note in item-plan.ts). Instance-honest:
+// on the CLASSIFICATION tier (fast structured output — see lib/ai/call.ts shape routing). Instance-honest:
 // it may only pick a tool that plausibly helps THIS step; otherwise "none" → a pure analyze.
 async function pickFetchTool(
   client: SupabaseClient,

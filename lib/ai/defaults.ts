@@ -80,23 +80,22 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
     conversation:   { provider: 'bedrock', model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
   },
 
-  // ── Bedrock optimised — Bedrock for user-facing, Together AI for background ───
-  // Conversation / generation / OCR stay on AWS Bedrock EU (Claude Haiku 4.5) for
-  // quality and data-residency guarantees on interactive work.
-  // Email triage, summarization, assignment → gpt-oss-120b on Together AI.
-  // processEmail (planning task) → Kimi K2.6 on Together AI (frontier quality).
-  // Embeddings stay on Together AI — same as private_shared, no re-indexing needed.
+  // ── Bedrock optimised — BEDROCK-ONLY completions, Sonnet as the intelligence/cost cap ─
+  // All chat/completion work stays on AWS Bedrock EU (data residency, one provider):
+  //   • Haiku 4.5 for the volume work (triage, summaries, background JSON) — cheap.
+  //   • Sonnet 4.5 ONLY where the extra intelligence pays (conversation, planning/deep) — the cap;
+  //     never Opus. (July 2026: replaced the Together AI split — Kimi/gpt-oss — so no prompt leaves
+  //     Bedrock; also removes the reasoning-channel trap from this tier entirely.)
+  // SOLE exception: embeddings stay on Together AI — switching the embedding model would invalidate
+  // every pgvector index (full KB re-index across tenants); revisit deliberately, not as a side effect.
   bedrock_optimised: {
     conversation:  { provider: 'bedrock',           model: 'eu.anthropic.claude-sonnet-4-5-20250929-v1:0', maxTokensDefault: 8192 },
     generation:    { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
     ocr:           { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
-    planning:      { provider: 'together',          model: 'moonshotai/Kimi-K2.6',
-                     baseURL: 'https://api.together.xyz/v1' },
+    planning:      { provider: 'bedrock',           model: 'eu.anthropic.claude-sonnet-4-5-20250929-v1:0', maxTokensDefault: 8192 },
     classification:{ provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
-    summarization: { provider: 'together',          model: 'openai/gpt-oss-120b',
-                     baseURL: 'https://api.together.xyz/v1' },
-    assignment:    { provider: 'together',          model: 'openai/gpt-oss-120b',
-                     baseURL: 'https://api.together.xyz/v1' },
+    summarization: { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
+    assignment:    { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
     embeddings:    { provider: 'openai_compatible', model: 'intfloat/multilingual-e5-large-instruct',
                      baseURL: 'https://api.together.xyz/v1' },
   },

@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdmin } from '@supabase/supabase-js';
 import { buildEntityContext } from '@/lib/context/entity-context';
+import { getPersonState } from '@/lib/people/state-store';
+import { canonicalPerson } from '@/lib/projects/identity';
+import { normalizeInitiative } from '@/lib/inbox/item-understanding';
 
 export const maxDuration = 20;
 
@@ -59,7 +62,48 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       emails: participantEmails.length ? participantEmails : emails,
       names, threadId, excludeItemId: kind === 'commitment' ? null : id,
     });
-    return NextResponse.json({ context });
+
+    // The PRIMARY person on this item (sender / counterparty) → their durable Person-Brain state (S1c) — the
+    // "who is this + where you stand" card. Keyed as person_state is (v1: lowercased email, else canonical
+    // name). Non-fatal; null pre-backfill / for an unknown correspondent.
+    let person: null | { key: string; name: string | null; org: string | null; isInternal: boolean; state: unknown; nextTouch: unknown; quietDays: number | null } = null;
+    try {
+      const primaryEmail = participantEmails[0] || null;
+      const primaryName = names.filter(Boolean)[0] || null;
+      // ENTITY-FIRST (One Brain cutover #4): one row per human, alias-matched. person_state fallback.
+      try {
+        const { getPersonEntities, findPersonEntity } = await import('@/lib/entities/people');
+        const pe = findPersonEntity(await getPersonEntities(supabase, user.id), primaryEmail, primaryName);
+        if (pe?.state?.summary) person = { key: pe.id, name: pe.name, org: null, isInternal: false, state: pe.state, nextTouch: pe.nextTouch, quietDays: pe.quietDays };
+      } catch { /* fall through */ }
+      const personKey = (primaryEmail || (primaryName ? canonicalPerson(primaryName) : null) || '').toLowerCase();
+      if (!person && personKey) {
+        const ps = await getPersonState(supabase, user.id, personKey);
+        if (ps?.state) person = { key: ps.person_key, name: ps.display_name, org: ps.org, isInternal: ps.is_internal, state: ps.state, nextTouch: ps.next_touch, quietDays: ps.quiet_days };
+      }
+    } catch { /* non-fatal */ }
+
+    // The DEAL this item belongs to — where it stands + the ONE next move (the same string as the deck
+    // bundle + project header). PHASE-C CUTOVER #3 (One Brain): resolve through the item's OWN entity link
+    // first (the natural join — the memory already decided what this item is about, with a stated reason);
+    // fall back to the initiative_state name-lookup for unlinked items (dies at demolition).
+    let deal: null | { label: string; momentum: string; summary: string | null; nextMove: { title: string; entityRef: string | null } | null } = null;
+    try {
+      const linkKind = kind === 'commitment' ? 'commitment' : 'inbox_item';
+      const { data: elink } = await supabase.from('entity_links').select('entity_id')
+        .eq('user_id', user.id).eq('item_kind', linkKind).eq('item_id', id).not('entity_id', 'is', null).maybeSingle();
+      if (elink?.entity_id) {
+        const { data: ent } = await supabase.from('work_entities')
+          .select('name, state, next_move').eq('id', elink.entity_id).eq('user_id', user.id).maybeSingle();
+        const st = (ent?.state ?? null) as { momentum?: string; summary?: string } | null;
+        if (st?.summary) {
+          const nm = (ent?.next_move ?? null) as { title?: string; entityRef?: string | null } | null;
+          deal = { label: (ent as { name?: string })?.name || 'This work', momentum: st.momentum || 'active', summary: st.summary, nextMove: nm?.title ? { title: nm.title, entityRef: nm.entityRef ?? null } : null };
+        }
+      }
+    } catch { /* non-fatal — no deal card without an entity link */ }
+
+    return NextResponse.json({ context, person, deal });
   } catch (e) {
     console.error('[items/context] error:', e);
     return NextResponse.json({ context: null });

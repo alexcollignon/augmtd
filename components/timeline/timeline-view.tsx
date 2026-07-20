@@ -38,10 +38,11 @@ const STATION_DOT: Record<TimeBucket | 'history' | 'unscheduled', string> = {
   unscheduled: 'bg-neutral-300',
 };
 
-type ProjectMap = Record<string, { name: string; color: string | null }>;
+// Entity tags — keyed by WORK-ITEM id (the item's body of work), from /api/home/timeline.
+type ProjectMap = Record<string, { name: string }>;
 
 function TimelineCard({ w, index, projectMap }: { w: WorkItem; index: number; projectMap?: ProjectMap }) {
-  const proj = w.projectId && projectMap ? projectMap[w.projectId] : undefined;
+  const proj = projectMap ? projectMap[w.id] : undefined;
   const meta = KIND_META[w.kind];
   const Icon = meta.icon;
   const team = w.actor === 'team';
@@ -121,18 +122,17 @@ function Station({ bucket, label, items, muted, index, projectMap }: { bucket: T
 export default function TimelineView() {
   const [items, setItems] = useState<WorkItem[] | null>(null);
   const [projectMap, setProjectMap] = useState<ProjectMap>({});
-  const [scope, setScope] = useState<'all' | 'mine' | 'team'>('all');
   const [err, setErr] = useState(false);
 
   useEffect(() => {
     let alive = true;
     // INSTANT: hydrate the last-known timeline from localStorage (no skeleton on reload), then refresh in
     // the background. The timeline spine (buildWorkItems) is expensive, so this matters most here.
-    const cached = loadLS<{ items: WorkItem[]; projectsById: ProjectMap }>('aug-timeline-v1');
-    if (cached?.items) { setItems(cached.items); setProjectMap(cached.projectsById ?? {}); }
+    const cached = loadLS<{ items: WorkItem[]; entityTags: ProjectMap }>('aug-timeline-v2');
+    if (cached?.items) { setItems(cached.items); setProjectMap(cached.entityTags ?? {}); }
     fetch('/api/home/timeline')
       .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((d) => { if (alive) { setItems(d.items ?? []); setProjectMap(d.projectsById ?? {}); saveLS('aug-timeline-v1', { items: d.items ?? [], projectsById: d.projectsById ?? {} }); } })
+      .then((d) => { if (alive) { setItems(d.items ?? []); setProjectMap(d.entityTags ?? {}); saveLS('aug-timeline-v2', { items: d.items ?? [], entityTags: d.entityTags ?? {} }); } })
       .catch(() => { if (alive && !cached?.items) setErr(true); });
     return () => { alive = false; };
   }, []);
@@ -151,22 +151,13 @@ export default function TimelineView() {
     );
   }
 
-  const visibleItems = scope === 'all' ? items : items.filter((w) => scope === 'team' ? w.actor === 'team' : w.actor !== 'team');
+  const visibleItems = items;
 
   return (
     <div className="mt-7">
-      <div className="mb-6 flex items-end justify-between gap-4">
-        <div>
-          <h2 className="text-[18px] font-semibold tracking-tight text-neutral-900">Timeline</h2>
-          <p className="text-[13px] text-neutral-400 mt-0.5">A calm view of what is happening next, with unscheduled work kept within reach.</p>
-        </div>
-        <div className="flex items-center gap-1 rounded-full border border-neutral-200/80 bg-white/80 p-1" role="tablist" aria-label="Timeline scope">
-          {(['all', 'mine', 'team'] as const).map((key) => (
-            <button key={key} role="tab" aria-selected={scope === key} onClick={() => setScope(key)} className={`rounded-full px-3 py-1.5 text-[11.5px] font-medium transition-all duration-200 ${scope === key ? 'bg-indigo-600 text-white shadow-sm' : 'text-neutral-500 hover:bg-neutral-100'}`}>
-              {key === 'all' ? 'Everything' : key === 'mine' ? 'My work' : 'Team'}
-            </button>
-          ))}
-        </div>
+      <div className="mb-6">
+        <h2 className="text-[18px] font-semibold tracking-tight text-neutral-900">Timeline</h2>
+        <p className="text-[13px] text-neutral-400 mt-0.5">A calm view of what is happening next, with unscheduled work kept within reach.</p>
       </div>
       <TimelineStations items={visibleItems} projectMap={projectMap} />
     </div>

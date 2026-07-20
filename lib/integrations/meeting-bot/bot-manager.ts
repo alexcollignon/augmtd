@@ -387,12 +387,20 @@ export async function storeTranscriptAndGenerateWork(
     console.error('[MeetingBot] Failed to mark transcript processed:', finalUpdateError);
   }
 
-  // LIVE Initiative Brain (S5) — a meeting just happened on this initiative → refresh its state so "where it
-  // stands" reflects it within seconds. Background, sig-gated, non-fatal.
-  if (meetingInitiative) {
-    try { const { refreshInitiativeStates } = await import('@/lib/initiatives/state-store'); await refreshInitiativeStates(supabase, userId, [meetingInitiative]); }
-    catch { /* non-fatal — Home-load hook backstops */ }
+
+  // LIVE Person Brain (S1b) — a meeting is an event on your relationship with each attendee → refresh their
+  // person state (last-touch/momentum move). Sig-gated, non-fatal, degrades to no-op pre-migration.
+  if (participants?.length) {
+    try { const { refreshPersonStates } = await import('@/lib/people/state-store'); await refreshPersonStates(supabase, userId, [...new Set(participants)]); }
+    catch { /* non-fatal */ }
   }
+
+  // ONE BRAIN shadow (Phase B) — recognize this meeting into the entity memory. Self-gating (no-op unless
+  // the user's memory exists), non-fatal.
+  try {
+    const { shadowRecognizeMeeting } = await import('@/lib/entities/hooks');
+    await shadowRecognizeMeeting(supabase, userId, transcriptRecord.id);
+  } catch { /* non-fatal */ }
 
   // Fire-and-forget: index transcript text into KB so it's searchable in Drive
   if (transcriptText.trim()) {

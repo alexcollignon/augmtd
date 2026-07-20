@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ChatBubbleLeftIcon,
   CalendarDaysIcon,
@@ -24,6 +24,7 @@ import ProjectMeetingsView from '@/components/meetings/project-meetings-view';
 import CalendarSidebar from '@/components/meetings/calendar-sidebar';
 import MeetingChatSidebar from '@/components/meetings/meeting-chat-sidebar';
 import ChatSidebar from '@/components/shared/chat-sidebar';
+import { createPortal } from 'react-dom';
 
 const SEEN_KEY = 'seen_transcripts';
 const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
@@ -55,12 +56,12 @@ export default function MeetingsShell({
   // hydration mismatch — then hydrate the localStorage fallback in a layout effect below (reading the cache
   // in the initializer would populate on the client but not the server). fetchAll refreshes after.
   const [upcoming, setUpcoming] = useState<CalendarEvent[]>(initialUpcoming ?? []);
-  const [transcripts, setTranscripts] = useState<Transcript[]>(initialTranscripts ?? []);
+  const [rawTranscripts, setRawTranscripts] = useState<Transcript[]>(initialTranscripts ?? []);
   const [loading, setLoading] = useState(!initialUpcoming);
   useLayoutEffect(() => {
     if (initialUpcoming) return; // SSR already provided the data
     const c = loadLS<{ upcoming: CalendarEvent[]; transcripts: Transcript[] }>('aug-meetings-v1');
-    if (c) { setUpcoming(c.upcoming ?? []); setTranscripts(c.transcripts ?? []); setLoading(false); }
+    if (c) { setUpcoming(c.upcoming ?? []); setRawTranscripts(c.transcripts ?? []); setLoading(false); }
   }, [initialUpcoming]);
   const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
   // Suggested initiatives that HAVE meetings — surfaced in the sidebar so a labeled-but-untracked meeting
@@ -111,7 +112,7 @@ export default function MeetingsShell({
       setUpcoming(events);
 
       const mapped = mapTranscripts(transcriptsData.transcripts ?? []);
-      setTranscripts(mapped);
+      setRawTranscripts(mapped);
       saveLS('aug-meetings-v1', { upcoming: events, transcripts: mapped }); // cache for instant re-entry
     } catch {
       // Swallow — polling will retry
@@ -134,29 +135,59 @@ export default function MeetingsShell({
     return () => ch.close();
   }, [fetchAll]);
 
-  // Projects (unification) — the same projects as Home; a meeting shows its project + can be filed into one.
-  // Projects fully replace the old meeting folders as the one organizer.
+  // ONE BRAIN (Blocker D): the meetings sidebar's "projects" ARE the entity registry — active bodies of
+  // work from the portfolio; a meeting files into one via ITS ENTITY LINK (via='user' + locked — recognition
+  // never overrides your filing). The label-era suggestions machinery died with the projects table.
   const loadProjects = useCallback(() => {
-    fetch('/api/projects?basic=1').then((r) => r.json()).then((d) => setProjects((d.projects ?? []).map((p: { id: string; name: string }) => ({ id: p.id, name: p.name })))).catch(() => {});
+    fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => setProjects(((d.entities ?? []) as Array<{ id: string; name: string; status: string; weight: number }>)
+      .filter((e) => e.status === 'active').sort((a, b) => b.weight - a.weight).map((e) => ({ id: e.id, name: e.name })))).catch(() => {});
   }, []);
-  const loadSuggestions = useCallback(() => {
-    fetch('/api/projects/suggestions').then((r) => r.json()).then((d) => {
-      const mapped: MeetingSuggestion[] = (d.suggestions ?? []).map((s: { key: string; name: string; items?: Array<{ table: string; id: string }> }) => {
-        const items = s.items ?? [];
-        return { key: s.key, name: s.name, items, meetingIds: items.filter((i) => i.table === 'meeting_transcripts').map((i) => i.id) };
-      }).filter((s: MeetingSuggestion) => s.meetingIds.length > 0); // meetings surface only shows suggestions with meetings
-      setSuggestions(mapped);
+  useEffect(() => { loadProjects(); }, [loadProjects]);
+  useEffect(() => onProjectsUpdated(() => { loadProjects(); fetchAll(); }), [loadProjects, fetchAll]);
+  // ENTITY membership map — kept in SEPARATE state so a `fetchAll` reload (which resets projectId from the
+  // dead legacy column) can't wipe it. The derived `transcripts` below reads projectId from this map, so
+  // membership survives polling. Keyed by transcript id → the entity it's recognized into.
+  const [mtgEntity, setMtgEntity] = useState<Record<string, string | null>>({});
+  const transcriptIdsKey = rawTranscripts.map((t) => t.id).join(',');
+  useEffect(() => {
+    if (!transcriptIdsKey) return;
+    let alive = true;
+    fetch(`/api/items/entity?kind=meeting&ids=${transcriptIdsKey}`).then((r) => r.json()).then((d) => {
+      if (!alive || !d?.links) return;
+      const links = d.links as Record<string, { entityId: string }>;
+      setMtgEntity((prev) => { const next = { ...prev }; for (const id of transcriptIdsKey.split(',')) next[id] = links[id]?.entityId ?? null; return next; });
     }).catch(() => {});
-  }, []);
-  useEffect(() => { loadProjects(); loadSuggestions(); }, [loadProjects, loadSuggestions]);
-  // Instant cross-surface sync: if a project is created/attached/tracked ANYWHERE (Home, another tab, an
-  // item deep-dive), refresh the sidebar's projects + suggestions + transcript memberships without a reload.
-  useEffect(() => onProjectsUpdated(() => { loadProjects(); loadSuggestions(); fetchAll(); }), [loadProjects, loadSuggestions, fetchAll]);
-  // File a meeting into a project (or clear) — sticky (server sets project_locked). Optimistic.
-  const moveToProject = async (transcriptId: string, projectId: string | null) => {
-    setTranscripts((prev) => prev.map((t) => t.id === transcriptId ? { ...t, projectId } : t));
-    try { await fetch('/api/items/project', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'meeting', id: transcriptId, projectId }) }); broadcastProjectsUpdated({ reason: 'meeting-move' }); }
+    return () => { alive = false; };
+  }, [transcriptIdsKey]);
+  // The transcripts the UI sees — projectId ALWAYS from the entity map (falls back to the raw value while
+  // the map warms), so the sidebar filter + chips reflect real membership regardless of reloads.
+  const transcripts = useMemo(() => rawTranscripts.map((t) => ({ ...t, projectId: mtgEntity[t.id] ?? t.projectId ?? null })), [rawTranscripts, mtgEntity]);
+  // File a meeting into a body of work (or clear) — a locked user link (final; a detach is a remembered
+  // "none"). The meeting's ACTION ITEMS move WITH it (server cascade), so it's never split from its work.
+  const moveToProject = async (transcriptId: string, entityId: string | null) => {
+    setMtgEntity((prev) => ({ ...prev, [transcriptId]: entityId }));
+    try { await fetch('/api/items/entity', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'meeting', id: transcriptId, entityId }) }); broadcastProjectsUpdated({ reason: 'meeting-move' }); }
     catch { /* non-fatal; next fetchAll reconciles */ }
+  };
+  // A drag-to-project asks for CONFIRMATION first (it moves the meeting AND its action items). Resolve the
+  // from/to names + the action-item count, then show the modal; only on confirm do we actually move.
+  const [pendingMove, setPendingMove] = useState<null | { transcriptId: string; title: string; fromName: string | null; toId: string; toName: string; count: number }>(null);
+  const [movePending, setMovePending] = useState(false);
+  const requestMove = async (transcriptId: string, toId: string | null) => {
+    if (!toId) { moveToProject(transcriptId, null); return; } // detach doesn't need a confirm
+    const t = transcripts.find((x) => x.id === transcriptId);
+    if (t?.projectId === toId) return; // already there — no-op
+    const fromName = t?.projectId ? (projects.find((p) => p.id === t.projectId)?.name ?? null) : null;
+    const toName = projects.find((p) => p.id === toId)?.name ?? 'this project';
+    let count = 0;
+    try { const d = await fetch(`/api/items/entity?kind=meeting&id=${transcriptId}`).then((r) => r.json()); count = d?.commitmentCount ?? 0; } catch { /* count optional */ }
+    setPendingMove({ transcriptId, title: t?.title || 'this meeting', fromName, toId, toName, count });
+  };
+  const confirmMove = async () => {
+    if (!pendingMove) return;
+    setMovePending(true);
+    await moveToProject(pendingMove.transcriptId, pendingMove.toId);
+    setMovePending(false); setPendingMove(null);
   };
 
   // Adaptive polling
@@ -186,47 +217,26 @@ export default function MeetingsShell({
 
 
   // ── Handlers ─────────────────────────────────────────────────────────────
-  // Create a project inline from the meetings sidebar (same projects as Home). Optimistic + reconcile.
+  // Create a body of work inline — FOUNDS a tracked entity (a user declaring work = a registry row).
   const handleCreateProject = async (name: string) => {
-    const res = await fetch('/api/projects', {
+    const res = await fetch('/api/entities', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
     });
     if (res.ok) {
       const data = await res.json();
-      const p = data.project ?? data;
-      if (p?.id) setProjects((prev) => [...prev, { id: p.id, name: p.name }]);
+      if (data?.id) setProjects((prev) => [...prev, { id: data.id, name }]);
       loadProjects();
-      broadcastProjectsUpdated({ reason: 'create' }); // Home + other surfaces pick up the new project instantly
+      broadcastProjectsUpdated({ reason: 'create' });
     }
   };
 
-  // Track a suggested initiative as a real project (accept-suggestion) — the magnet then adopts its meetings.
-  const handleTrackSuggestion = async (s: MeetingSuggestion) => {
-    setTrackingKey(s.key);
-    try {
-      const res = await fetch('/api/projects/accept-suggestion', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: s.name, items: s.items }),
-      });
-      if (res.ok) {
-        const { project } = await res.json();
-        setSelectedSuggestionKey(null);
-        setSuggestions((prev) => prev.filter((x) => x.key !== s.key));
-        if (project?.id) { setProjects((prev) => [...prev, { id: project.id, name: project.name }]); setSelectedProjectId(project.id); }
-        loadProjects();
-        fetchAll(); // pull the newly-attached project_id onto the transcripts
-        broadcastProjectsUpdated({ reason: 'track' });
-      }
-    } finally {
-      setTrackingKey(null);
-    }
-  };
+  // Label-era suggestions died with the projects table (entities appear in the sidebar automatically).
+  const handleTrackSuggestion = async (_s: MeetingSuggestion) => { setSelectedSuggestionKey(null); };
 
   const handleRenameTranscript = async (id: string, title: string) => {
-    setTranscripts((prev) => prev.map((t) => t.id === id ? { ...t, title } : t));
+    setRawTranscripts((prev) => prev.map((t) => t.id === id ? { ...t, title } : t));
     try {
       await fetch(`/api/meetings/notes/${id}`, {
         method: 'PATCH',
@@ -239,7 +249,7 @@ export default function MeetingsShell({
   };
 
   const handleDeleteTranscript = async (transcriptId: string) => {
-    setTranscripts((prev) => prev.filter((t) => t.id !== transcriptId));
+    setRawTranscripts((prev) => prev.filter((t) => t.id !== transcriptId));
     try {
       await fetch(`/api/meetings/recording/${transcriptId}`, { method: 'DELETE' });
     } catch {
@@ -248,7 +258,7 @@ export default function MeetingsShell({
   };
 
   const handleRetryFailed = async (transcriptId: string) => {
-    setTranscripts((prev) =>
+    setRawTranscripts((prev) =>
       prev.map((t) =>
         t.id === transcriptId ? { ...t, processed: false, botState: 'processing' } : t
       )
@@ -328,7 +338,7 @@ export default function MeetingsShell({
             if (id) router.push('/meetings');
           }}
           onCreateProject={handleCreateProject}
-          onMoveToProject={moveToProject}
+          onMoveToProject={requestMove}
           suggestions={suggestions.map((s) => ({ key: s.key, name: s.name, meetingCount: s.meetingIds.length }))}
           selectedSuggestionKey={selectedSuggestionKey}
           onSelectSuggestion={(key) => {
@@ -510,6 +520,24 @@ export default function MeetingsShell({
           onSuccess={fetchAll}
         />
       </div>
+      {pendingMove && typeof document !== 'undefined' && createPortal((
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" onClick={() => !movePending && setPendingMove(null)}>
+          <div className="absolute inset-0 bg-neutral-900/25 backdrop-blur-[2px]" />
+          <div onClick={(e) => e.stopPropagation()} className="relative w-full max-w-md rounded-2xl border border-neutral-200 bg-white shadow-xl p-5">
+            <h3 className="text-[15px] font-semibold text-neutral-900">Move this meeting?</h3>
+            <p className="text-[13px] text-neutral-600 leading-relaxed mt-2">
+              <span className="font-medium text-neutral-800">{pendingMove.title}</span>{pendingMove.fromName ? <> will move from <span className="font-medium">{pendingMove.fromName}</span></> : <> will be added</>} to <span className="font-medium text-indigo-700">{pendingMove.toName}</span>.
+            </p>
+            {pendingMove.count > 0 && (
+              <p className="text-[12.5px] text-neutral-500 mt-1.5">Its {pendingMove.count} action item{pendingMove.count === 1 ? '' : 's'} will move with it, so nothing is left behind.</p>
+            )}
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button onClick={() => setPendingMove(null)} disabled={movePending} className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-neutral-500 hover:text-neutral-800 transition-colors">Cancel</button>
+              <button onClick={confirmMove} disabled={movePending} className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 px-3.5 py-1.5 text-[12.5px] font-medium text-white transition-colors">{movePending ? 'Moving…' : 'Move meeting'}</button>
+            </div>
+          </div>
+        </div>
+      ), document.body)}
     </MeetingsDataContext.Provider>
   );
 }

@@ -49,11 +49,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const subject = item.work_title || sd.subject || '(no subject)';
 
-  let projectName: string | null = null;
-  if (item.project_id) {
-    const { data: project } = await supabase.from('projects').select('id, name').eq('id', item.project_id).eq('user_id', user.id).maybeSingle();
-    projectName = project?.name ?? null;
-  }
+  // ONE BRAIN: the label-era project chip died; the deep-dive's entity control resolves membership itself.
+  const projectName: string | null = null;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type EmailRow = Record<string, any>;

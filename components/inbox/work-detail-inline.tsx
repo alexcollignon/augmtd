@@ -20,7 +20,7 @@ import {
 } from '@heroicons/react/24/outline';
 import type { InboxItem } from '@/lib/types/inbox';
 import type { ConnectionFolders } from '@/components/inbox/folder-rail';
-import AddToProjectControl from '@/components/projects/add-to-project-control';
+import AddToProjectControl from '@/components/entities/add-to-work-control';
 
 import RsvpButtons from './rsvp-buttons';
 import KbFilePicker from './kb-file-picker';

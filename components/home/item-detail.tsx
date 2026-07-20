@@ -28,7 +28,7 @@ import ReplyEditor from '@/components/inbox/reply-editor';
 import KbFilePicker from '@/components/inbox/kb-file-picker';
 import { proposeOwner, coarseCapabilityKind, type ProposedOwner } from '@/lib/home/capability-map';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
-import AddToProjectControl from '@/components/projects/add-to-project-control';
+import AddToProjectControl from '@/components/entities/add-to-work-control';
 import RelationshipContext from '@/components/home/relationship-context';
 
 // ── Shared visual language across ALL deep-dive variants (coherence pass #3). One header, one
@@ -3063,6 +3063,17 @@ function TasksPanel({ hasBreakdown, plan, onDraft, onInvite, onForward, children
                 <div className="h-full rounded-full bg-emerald-500 transition-[width] duration-500 ease-out" style={{ width: `${Math.min(100, Math.round((progress.done / progress.total) * 100))}%` }} />
               </div>
             )}
+            {/* WHO-composition — "what's being handled by whom", at a glance (the visibility ask): how much
+                is prepared/handled by the system, how much a coworker carries, how much needs YOU. */}
+            {(() => {
+              const ts = (plan?.tasks ?? []).filter((t) => !t.dismissed);
+              if (!ts.length) return null;
+              const team = ts.filter((t) => t.handedTo).length;
+              const prepared = ts.filter((t) => !t.handedTo && t.actor === 'system').length;
+              const you = ts.filter((t) => !t.handedTo && t.actor !== 'system' && !t.done).length;
+              const bits = [prepared ? `${prepared} handled by AUGMTD` : '', team ? `${team} with your team` : '', you ? `${you} need${you === 1 ? 's' : ''} you` : ''].filter(Boolean);
+              return bits.length ? <p className="text-[10.5px] text-neutral-400 leading-snug">{bits.join(' · ')}</p> : null;
+            })()}
           </div>
           {/* Body — its own scroll when long. min-w keeps the stepper from crushing during animation. */}
           <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 min-w-[268px]">

@@ -296,7 +296,7 @@ export default function MeetingsLeftPanel({
                   </div>
                 )}
 
-                {projects.map((project) => {
+                {projects.filter((project) => transcripts.some((t) => t.projectId === project.id)).map((project) => {
                   const count = transcripts.filter(
                     (t) => t.processed && t.botState !== 'failed' && t.projectId === project.id
                   ).length;
@@ -363,8 +363,8 @@ export default function MeetingsLeftPanel({
                   );
                 })}
 
-                {projects.length === 0 && !newProjectOpen && (
-                  <p className="text-[11px] text-neutral-400 px-1">No projects yet</p>
+                {!projects.some((p) => transcripts.some((t) => t.projectId === p.id)) && !newProjectOpen && (
+                  <p className="text-[11px] text-neutral-400 px-1">No projects with recordings yet</p>
                 )}
               </div>
 

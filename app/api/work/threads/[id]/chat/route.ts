@@ -439,6 +439,13 @@ export async function POST(
         if (skillsBlock) contextParts.push(skillsBlock);
         const integrationsBlock = await buildConnectedIntegrationsBlock(adminClient, user.id, agent.id);
         if (integrationsBlock) contextParts.push(integrationsBlock);
+        // Step 2: the user's WORLD (live initiatives + relationships needing attention) — so the coworker
+        // reasons WITH the deals/people. Same block the AgentOS bridge injects (parity). Read-only, non-fatal.
+        try {
+          const { renderWorldContext } = await import('@/lib/context/brain-context');
+          const worldBlock = await renderWorldContext(adminClient, user.id);
+          if (worldBlock) contextParts.push(worldBlock);
+        } catch { /* non-fatal */ }
       }
 
       if (agent.memory_text?.trim()) {

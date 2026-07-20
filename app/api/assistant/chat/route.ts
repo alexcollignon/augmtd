@@ -301,20 +301,28 @@ export async function POST(request: NextRequest) {
       // the chat reasons WITH the project, plus awareness that the user can add/remove the meeting from a
       // project (the meeting's project control). Fetched server-side from the transcript's project_id.
       if (meetingContext.transcriptId) {
+        // ONE BRAIN (cutover #4): the meeting's ENTITY — where the body of work stands + its next move —
+        // is the richest deal context; injected FIRST when the meeting is linked. Non-fatal, additive.
         try {
-          const { data: mt } = await supabase.from('meeting_transcripts').select('project_id').eq('id', meetingContext.transcriptId).eq('user_id', user.id).maybeSingle();
-          if (mt?.project_id) {
-            const { data: proj } = await supabase.from('projects').select('name, description, goals, rules').eq('id', mt.project_id).maybeSingle();
-            if (proj) {
-              lines.push(`Project: this meeting belongs to the project "${proj.name}"${proj.description ? ` — ${proj.description}` : ''}. Reason and act with this deal's context in mind.`);
-              if (Array.isArray(proj.goals) && proj.goals.length) lines.push(`Project goals:\n${(proj.goals as string[]).map((g) => `- ${g}`).join('\n')}`);
-              if (Array.isArray(proj.rules) && proj.rules.length) lines.push(`Project rules (how work on it should be done):\n${(proj.rules as string[]).map((r) => `- ${r}`).join('\n')}`);
+          const { data: ml } = await supabase.from('entity_links').select('entity_id')
+            .eq('user_id', user.id).eq('item_kind', 'meeting').eq('item_id', meetingContext.transcriptId).not('entity_id', 'is', null).maybeSingle();
+          if (ml?.entity_id) {
+            const { data: ent } = await supabase.from('work_entities').select('name, state, next_move').eq('id', ml.entity_id).eq('user_id', user.id).maybeSingle();
+            const st = (ent?.state ?? null) as { summary?: string; momentum?: string; whoOwes?: { you?: string[]; them?: string[] } } | null;
+            if (st?.summary) {
+              lines.push(`The body of work this meeting belongs to: "${(ent as { name?: string })?.name}" — where it stands: ${st.summary}${st.momentum ? ` [${st.momentum}]` : ''}.`);
+              if (st.whoOwes?.you?.length) lines.push(`The user owes on this: ${st.whoOwes.you.join('; ')}`);
+              const nm = (ent?.next_move ?? null) as { title?: string } | null;
+              if (nm?.title) lines.push(`The single next move on this work: ${nm.title}. Anything you draft or plan here should advance it.`);
+              // Goals/rules the user set on this body of work (Blocker D — intent lives on the entity).
+              try {
+                const { data: gi } = await supabase.from('work_entities').select('goals, rules').eq('id', ml.entity_id).maybeSingle();
+                if (Array.isArray(gi?.goals) && (gi.goals as string[]).length) lines.push(`Goals for this work:\n${(gi.goals as string[]).map((g) => `- ${g}`).join('\n')}`);
+                if (Array.isArray(gi?.rules) && (gi.rules as string[]).length) lines.push(`Rules for how work on it should be done:\n${(gi.rules as string[]).map((r) => `- ${r}`).join('\n')}`);
+              } catch { /* pre-migration */ }
             }
-          } else {
-            lines.push(`Project: this meeting is not yet assigned to a project.`);
           }
-          lines.push(`Project membership is under the user's control: they can ADD this meeting to a project or REMOVE it from the meeting's project control. If it clearly belongs to a deal, you may suggest adding it, and use the project's goals & rules to guide anything you draft or do.`);
-        } catch { /* non-fatal — project context is best-effort */ }
+        } catch { /* non-fatal */ }
       }
       focusedMeetingBlock = lines.join('\n');
     }

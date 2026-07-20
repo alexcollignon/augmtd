@@ -12,7 +12,6 @@ import { loadUserRules } from '@/lib/inbox/rules/load';
 import { buildInitiativeClusters, type ClusterMap } from '@/lib/projects/initiative-clusters';
 import { normalizeInitiative } from '@/lib/inbox/item-understanding';
 import { resolveOutboundAwaiting } from '@/lib/outbound/resolve';
-import { getActiveInitiatives, type ActiveInitiative } from '@/lib/projects/active-initiatives';
 import { reconcileRepliedItems } from '@/lib/inbox/reconcile-replied';
 import { computeBundles } from '@/lib/home/bundle-brief';
 import { nameBundles, type BundleName, type BundleNameInput } from '@/lib/home/name-bundles';
@@ -69,6 +68,19 @@ function dedupByDescription<T extends { description: string }>(rows: T[]): T[] {
 // removes an item from the must-respond (needs_reply) pool — the item still flows through the FYI /
 // awareness path. Matches on the from ADDRESS localpart (no-reply@, notifications@, billing@…), a few
 // bulk-sender domains, and unmistakable automated display-name / subject phrases.
+// The ONE quiet relationship CUE for a card, from the durable Person Brain — short + snappy (≤1 word / "quiet
+// Nw"), rendered as a muted tag on the item card so stakes read at a glance WITHOUT a new section. Priority:
+// a gone-quiet relationship's time signal ("quiet 3w") beats the relationship word. Skips low-signal
+// (colleague/unknown) so only meaningful cues show → the ones that do stand out.
+function relationshipCue(relationship?: string | null, momentum?: string | null, quietDays?: number | null): { label: string; tone: 'neutral' | 'amber' } | null {
+  if (momentum === 'gone_quiet' && typeof quietDays === 'number' && quietDays >= 4) {
+    return { label: quietDays >= 10 ? `quiet ${Math.round(quietDays / 7)}w` : `quiet ${quietDays}d`, tone: 'amber' };
+  }
+  const rel = (relationship || '').toLowerCase();
+  if (rel && rel !== 'unknown' && rel !== 'colleague') return { label: rel, tone: 'neutral' };
+  return null;
+}
+
 function isAutomatedSender(fromEmail: string | null, fromName: string | null, subject: string | null): boolean {
   const email = (fromEmail || '').toLowerCase();
   const localpart = email.split('@')[0] || '';
@@ -175,7 +187,7 @@ export async function GET() {
   const outboundAwaiting = await resolveOutboundAwaiting(supabase, user.id, todayStr).catch(() => []);
   let clusters: ClusterMap = new Map();
   try { clusters = await buildInitiativeClusters(supabase, user.id, { includeCalendar: false, outbound: outboundAwaiting }); } catch { /* non-fatal */ }
-  // "In motion" (activeInitiatives) is expensive (~1–2.5s) — it's now FOLDED INTO the brief cache below
+  // (The label-era "In motion" fold died with the projects table — the portfolio owns that view now.)
   // (served last-good instantly, recomputed in the background on staleness), not computed on every load.
   const clusterTag = (init: string | null | undefined): { initiative: string; initiativeTotal: number } | null => {
     const k = init ? (normalizeInitiative(init)?.replace(/\s+/g, '') || null) : null;
@@ -739,7 +751,7 @@ export async function GET() {
   type MustRespond = { teaser: string; items: Reply[] };
   type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
   type CommitmentPlacement = 'on_your_plate' | 'ball_in_court' | 'informational';
-  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; keepAnEyeOn?: KeepAnEyeOn | null; droppedItemIds?: string[]; commitmentPlacements?: Record<string, CommitmentPlacement>; activeInitiatives?: ActiveInitiative[]; bundleNames?: { sig: string; names: Record<string, BundleName> }; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
+  const cached = (profileRes.data as { home_brief?: { text?: string; tldr?: Tldr; followups?: Followups | null; fyiDigest?: FyiDigest | null; mustRespond?: MustRespond | null; keepAnEyeOn?: KeepAnEyeOn | null; droppedItemIds?: string[]; commitmentPlacements?: Record<string, CommitmentPlacement>; bundleNames?: { sig: string; names: Record<string, BundleName> }; generated_at: string; sig?: string } } | null)?.home_brief ?? null;
   let tldr: Tldr | null = cached?.tldr ?? null;
   let followups: Followups | null = cached?.followups ?? null;
   let fyiDigest: FyiDigest | null = cached?.fyiDigest ?? null;
@@ -756,23 +768,7 @@ export async function GET() {
   // a one-time regen for such legacy caches when there are open commitments to (re-)place, so the
   // synthesis verdict actually takes without a manual cache wipe. General — no hardcoded item.
   const legacyPlacements = cached != null && cached.commitmentPlacements === undefined && commitmentCands.length > 0;
-  // A pre-fold cache blob has no activeInitiatives field at all — force ONE background regen to fill it
-  // (mirrors legacyPlacements), so "In motion" isn't stuck empty on a cache-HIT of an old blob until TTL.
-  const legacyInitiatives = cached != null && cached.activeInitiatives === undefined;
-  const stale = !cached || cached.sig !== sig || legacyPlacements || legacyInitiatives || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL;
-  // "In motion" — serve the last-good cached set immediately (fast on EVERY request, hit or stale); on
-  // staleness it's recomputed in the background alongside the enriched brief (persisted under the same
-  // sig). In-motion shifts slowly, so being one refetch behind is invisible — same model as the prose.
-  let activeInitiatives: ActiveInitiative[] = cached?.activeInitiatives ?? [];
-  // If the cache has no NON-EMPTY set (brand-new, pre-fold, OR a stale/empty blob whose background fill
-  // never landed), compute it SYNCHRONOUSLY so the FIRST response already renders "In motion" instead of an
-  // empty-then-fill flash. The fast cache-hit path still applies to everyone WITH initiatives (the common
-  // case); only a genuinely-zero user recomputes each load (they see nothing regardless; sub-caches keep it
-  // cheap). Can't distinguish "authoritatively empty" from "never filled" — so treat empty as needs-compute.
-  const initiativesJustComputed = !cached?.activeInitiatives?.length;
-  if (initiativesJustComputed) {
-    activeInitiatives = await getActiveInitiatives(supabase, user.id, todayStr).catch(() => []);
-  }
+  const stale = !cached || cached.sig !== sig || legacyPlacements || (now.getTime() - new Date(cached.generated_at).getTime()) > BRIEF_TTL;
   if (stale) {
     // ── OPTIMISTIC SURFACING ─────────────────────────────────────────────────────────────────────
     // The AI synthesis (~10–30s) is what enriches the brief (ask/angle/ordering/supersession drops).
@@ -809,7 +805,7 @@ export async function GET() {
     // 3. Persist the basic brief IMMEDIATELY with the NEW sig. This is the anti-regen-storm guard:
     //    the very next request (poll / realtime refetch) is a cache-HIT on this basic brief and does
     //    NOT trigger a second synthesis while the background one is still running.
-    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, keepAnEyeOn, droppedItemIds, commitmentPlacements, activeInitiatives, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, keepAnEyeOn, droppedItemIds, commitmentPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
 
     // 4. Enrich in the BACKGROUND — same inputs as before — and persist the ENRICHED brief with the
     //    SAME sig (upgrades the cache in place: real ask/angle, ordering, supersession drops,
@@ -825,16 +821,19 @@ export async function GET() {
     );
     after(async () => {
       try {
-        // Recompute "In motion" (the ~1–2.5s — cold, more — that used to run on EVERY request) CONCURRENTLY
-        // with the synthesis, so its wall-time OVERLAPS the AI pass instead of adding to it (keeps the whole
-        // background job inside maxDuration even for a cold user). Both persist below under the same sig;
-        // getActiveInitiatives falls back to the last-good set on error. NB: even if this callback is cut
-        // short, getActiveInitiatives has already warmed the calendar/outbound sub-caches, so the next stale
-        // cycle fills In-motion fast.
-        const [freshInitiatives, synth] = await Promise.all([
-          // Reuse the value we just computed synchronously (first-fill); otherwise refresh in the background.
-          initiativesJustComputed ? Promise.resolve(activeInitiatives) : getActiveInitiatives(supabase, user.id, todayStr).catch(() => activeInitiatives),
-          synthesizeBrief(getSystemClient('summarization'), {
+        // Step 2 — the durable Person-Brain verdict for each must-respond correspondent (keyed by lowercased
+        // email). Targeted (only the relevant people), non-fatal → the synthesis reasons the reply ANGLE WITH
+        // the relationship. Empty map pre-backfill / for unknown senders.
+        const personStates = new Map<string, { momentum: string; summary: string }>();
+        try {
+          const { getPersonEntities, findPersonEntity } = await import('@/lib/entities/people');
+          const registry = await getPersonEntities(supabase, user.id);
+          for (const k of [...new Set(mustRespondRaw.map((m) => (m.fromEmail || '').toLowerCase()).filter(Boolean))]) {
+            const pe = findPersonEntity(registry, k, null);
+            if (pe?.state?.summary) personStates.set(k, { momentum: pe.state.momentum || 'active', summary: pe.state.summary });
+          }
+        } catch { /* non-fatal */ }
+        const synth = await synthesizeBrief(getSystemClient('summarization'), {
             firstName, now, ctx: briefCtx, schedule,
             commitments: owedFacts,
             commitmentCandidates: commitmentCands,
@@ -843,22 +842,29 @@ export async function GET() {
             topPriorities: cappedPriorities.map((p) => ({ title: p.title, posture: p.posture, source: p.source, overdue: !!p.overdue })),
             mustRespond: mustRespondRaw,
             protectedItemIds,
+            personStates,
             // Waiting candidates = the ingest-awaiting commitments — the synthesis writes the follow-up
             // prose (status + nextMove) over these. Final lane routing is by the placement verdict below;
             // a commitment re-placed to ball_in_court that wasn't here still appears via the raw fallback.
             waiting: commitmentCands.filter((c) => c.direction === 'awaiting').map((c) => ({ id: c.id, counterparty: c.counterparty || c.sourceLabel, description: c.description, ageDays: c.ageDays })),
             fyiGroups: fyiTop.map((g) => ({ label: g.label, count: g.count, kind: g.kind, subjects: g.subjects })),
             keepAnEyeOn: keepAnEyeOnRaw,
-          }, { userId: user.id, supabase }),
-        ]);
+          }, { userId: user.id, supabase });
         // Initiative Brain (S3) — LIVE refresh: recompute the durable per-initiative state for the active
         // initiatives whenever the Home recomputes (the activity signal). sig-gated, so unchanged ones cost
         // nothing (no AI). Fire-and-forget; degrades to no-op pre-migration. This keeps "where each stands"
         // current as mail/meetings land. (Ingestion-time hooks for instant updates are a later increment.)
+        // ONE BRAIN — on Home activity: (1) BOOTSTRAP the memory incrementally for users who never got a
+        // backfill (chunked, idempotent, self-completing → the onboarding path that lets the label-era
+        // fallbacks die), then (2) refresh entity states (sig-gated: unchanged ledgers cost nothing).
         try {
-          const { refreshInitiativeStates } = await import('@/lib/initiatives/state-store');
-          await refreshInitiativeStates(supabase, user.id, freshInitiatives.map((i) => i.key));
-        } catch { /* non-fatal — table may not exist yet */ }
+          const { bootstrapMemory } = await import('@/lib/entities/hooks');
+          await bootstrapMemory(supabase, user.id);
+        } catch { /* non-fatal */ }
+        try {
+          const { refreshEntityStates } = await import('@/lib/entities/state');
+          await refreshEntityStates(supabase, user.id);
+        } catch { /* non-fatal */ }
         // Start from the basic brief we just persisted; upgrade each section the synthesis produced
         // (nulls only overwrite when we got something, same rule as before). This is the ENRICHED blob.
         let enrTldr = tldr, enrFollowups = followups, enrFyiDigest = fyiDigest;
@@ -880,7 +886,7 @@ export async function GET() {
         if (Object.keys(synth.commitmentPlacements).length) enrPlacements = synth.commitmentPlacements;
         // Persist the enriched brief under the SAME sig — upgrades the cache in place so the next
         // refetch is a cache-hit on the fully-synthesized version.
-        await supabase.from('profiles').update({ home_brief: { text: enrBriefLine, tldr: enrTldr, followups: enrFollowups, fyiDigest: enrFyiDigest, mustRespond: enrMustRespond, keepAnEyeOn: enrKeepAnEyeOn, droppedItemIds: enrDropped, commitmentPlacements: enrPlacements, activeInitiatives: freshInitiatives, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+        await supabase.from('profiles').update({ home_brief: { text: enrBriefLine, tldr: enrTldr, followups: enrFollowups, fyiDigest: enrFyiDigest, mustRespond: enrMustRespond, keepAnEyeOn: enrKeepAnEyeOn, droppedItemIds: enrDropped, commitmentPlacements: enrPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
       } catch { /* non-fatal — basic brief stays cached */ }
     });
   }
@@ -1111,22 +1117,98 @@ export async function GET() {
     const { data: mt } = await supabase.from('meeting_transcripts').select('id, title').in('id', meetingIds);
     for (const m of (mt ?? []) as Array<{ id: string; title: string | null }>) if (m.title) meetingTitle.set(m.id, m.title);
   }
-  const bundleAtoms = [
-    ...((mustRespondOut?.items ?? []) as Array<{ itemId: string; initiative?: string | null; subject?: string }>).map((m) => {
+  const bundleAtoms: Array<import('@/lib/home/bundle-brief').BundleAtom> = [
+    ...((mustRespondOut?.items ?? []) as Array<{ itemId: string; subject?: string }>).map((m) => {
       const raw = itemById.get(m.itemId);
-      return { id: m.itemId, initiative: m.initiative ?? null, threadId: (raw?.source_data?.thread_id as string) ?? null, subject: (raw?.work_title as string) ?? m.subject ?? null };
+      return { id: m.itemId, threadId: (raw?.source_data?.thread_id as string) ?? null, subject: (raw?.work_title as string) ?? m.subject ?? null };
     }),
     ...actionNotices.map((n) => {
       const raw = itemById.get(n.itemId);
-      return { id: n.itemId, initiative: n.initiative ?? null, threadId: (raw?.source_data?.thread_id as string) ?? null, subject: (raw?.work_title as string) ?? n.summary ?? null };
+      return { id: n.itemId, threadId: (raw?.source_data?.thread_id as string) ?? null, subject: (raw?.work_title as string) ?? n.summary ?? null };
     }),
-    ...(commitments as Array<{ id: string; initiative?: string | null; description?: string }>).map((c) => {
+    ...(commitments as Array<{ id: string; description?: string }>).map((c) => {
       const raw = commitById.get(c.id);
       const mId = raw?.source === 'meeting' ? ((raw?.source_id as string) ?? null) : null;
-      return { id: c.id, initiative: c.initiative ?? null, meetingId: mId, meetingLabel: mId ? (meetingTitle.get(mId) ?? 'Meeting follow-ups') : null, threadId: (raw?.thread_id as string) ?? null, subject: c.description ?? null };
+      return { id: c.id, meetingId: mId, meetingLabel: mId ? (meetingTitle.get(mId) ?? 'Meeting follow-ups') : null, threadId: (raw?.thread_id as string) ?? null, subject: c.description ?? null };
     }),
   ];
+  // ONE BRAIN (Blocker C): resolve each atom's ENTITY (its own link) BEFORE bundling — the entity IS the
+  // primary grouping key. ONE fetch here also feeds slipping / bundleStates / deckEntityIds below.
+  let wentsRows: Array<Record<string, unknown>> = [];
+  let alinksRows: Array<{ item_id: string; entity_id: string }> = [];
+  try {
+    const { data: wents } = await supabase.from('work_entities')
+      .select('id, name, status, state, next_move, priority, last_event_at')
+      .eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null).limit(400);
+    wentsRows = (wents ?? []) as Array<Record<string, unknown>>;
+    const atomIds = bundleAtoms.map((a) => a.id);
+    if (atomIds.length) {
+      const { data: alinks } = await supabase.from('entity_links').select('item_id, entity_id').eq('user_id', user.id)
+        .in('item_kind', ['inbox_item', 'commitment']).in('item_id', atomIds.slice(0, 400)).not('entity_id', 'is', null);
+      alinksRows = (alinks ?? []) as Array<{ item_id: string; entity_id: string }>;
+    }
+    const nameById = new Map(wentsRows.map((e) => [e.id as string, e.name as string]));
+    const linkByAtom = new Map(alinksRows.map((l) => [l.item_id, l.entity_id]));
+    for (const a of bundleAtoms) {
+      const eid = linkByAtom.get(a.id);
+      const nm = eid ? nameById.get(eid) : undefined;
+      if (eid && nm) a.entity = { id: eid, name: nm };
+    }
+  } catch { /* non-fatal — atoms bundle by meeting/thread only */ }
   const bundles = computeBundles(bundleAtoms);
+
+  // ── PROACTIVE SLIPPING (one-digest, no new section) — a deal that's quietly SLIPPING (gone-quiet/stalled
+  // with something open on you, per the ONE verdict) surfaces as a card IN the deck EVEN WITH NO NEW MAIL.
+  // Deduped against the deck's actionable pool (bundleAtoms) so a deal already in play never doubles up. The
+  // card leads with the SAME one next move the deck/projects/deep-dive show. Read-only, non-fatal. ──
+  const slippingDeals: Array<{ key: string; label: string; momentum: string; summary: string; weight: number; nextMove: { title: string; entityRef: string | null } | null }> = [];
+  // The deck's per-bundle ENTITY state (the membership join — bundle atoms → their entity links → the
+  // dominant entity's state+next-move). Replaces the label-keyed initiative_state join (Blocker A).
+  const bundleStates: Record<string, { momentum: string; summary: string | null; quietDays: number | null; nextMove: { title: string; entityRef: string | null; reason?: string } | null }> = {};
+  let deckEntityIdsOut: string[] = [];
+  try {
+    const nowMs = Date.now();
+    const entById = new Map(wentsRows.map((e) => [e.id as string, e]));
+
+    // ── SLIPPING (entity verdict, inline): gone-quiet/stalled + something open on you → a proactive card,
+    // deduped against entities already actionable in the deck (their atoms' links, fetched above). ──
+    const deckEntityIds = new Set(alinksRows.map((l) => l.entity_id));
+    deckEntityIdsOut = [...deckEntityIds];
+    for (const e of wentsRows) {
+      const st = (e.state ?? {}) as { momentum?: string; summary?: string; whoOwes?: { you?: string[]; them?: string[] } };
+      const quiet = e.last_event_at ? Math.floor((nowMs - new Date(e.last_event_at as string).getTime()) / 86400000) : null;
+      // Slipping = quiet/stalled with something open ON YOU. Quiet with NO open loops is the OPPOSITE
+      // signal (a closure candidate — the portfolio proposes "mark done?"), never a proactive deck card.
+      const slipping = (st.momentum === 'gone_quiet' || st.momentum === 'stalled') && (st.whoOwes?.you?.length ?? 0) > 0;
+      if (!slipping || !st.summary || deckEntityIds.has(e.id as string)) continue;
+      const nm = (e.next_move ?? null) as { title?: string; entityRef?: string | null } | null;
+      slippingDeals.push({
+        key: e.id as string, label: e.name as string, momentum: st.momentum || 'stalled', summary: st.summary,
+        weight: Number((e.priority as { weight?: number } | null)?.weight ?? 20),
+        nextMove: nm?.title ? { title: nm.title, entityRef: nm.entityRef ?? null } : null,
+      });
+    }
+    slippingDeals.sort((a, b) => b.weight - a.weight);
+    slippingDeals.splice(3); // the deck stays calm — top 3 by reasoned weight; the rest live on the portfolio/Timeline
+
+    // ── BUNDLE STATES (the membership vote per bundle key). ──
+    const votes = new Map<string, Map<string, number>>(); // bundleKey → entityId → votes
+    for (const l of alinksRows) {
+      const ref = bundles[l.item_id];
+      if (!ref) continue;
+      (votes.get(ref.key) ?? votes.set(ref.key, new Map()).get(ref.key)!).set(l.entity_id, ((votes.get(ref.key)!.get(l.entity_id)) ?? 0) + 1);
+    }
+    for (const [bkey, m] of votes) {
+      const [best] = [...m.entries()].sort((a, b) => b[1] - a[1])[0] ?? [];
+      const e = best ? entById.get(best) : undefined;
+      if (!e) continue;
+      const st = (e.state ?? {}) as { momentum?: string; summary?: string };
+      if (!st.summary) continue;
+      const nm = (e.next_move ?? null) as { title?: string; entityRef?: string | null; reason?: string } | null;
+      const quiet = e.last_event_at ? Math.floor((nowMs - new Date(e.last_event_at as string).getTime()) / 86400000) : null;
+      bundleStates[bkey] = { momentum: st.momentum || 'active', summary: st.summary, quietDays: quiet, nextMove: nm?.title ? { title: nm.title, entityRef: nm.entityRef ?? null, reason: nm.reason } : null };
+    }
+  } catch { /* non-fatal — no proactive cards / no bundle states */ }
 
   // REASONED NAMING (conservative, cached) — turn each bundle into a short human name + grounded "why".
   // The deterministic `label` above is the fallback; a cached AI pass (keyed by the bundle-set signature)
@@ -1154,7 +1236,7 @@ export async function GET() {
     }
     const nameInputs: BundleNameInput[] = bundleKeys.map((key) => ({
       key,
-      kind: key.startsWith('i:') ? 'initiative' : key.startsWith('m:') ? 'meeting' : 'thread',
+      kind: key.startsWith('e:') ? 'initiative' : key.startsWith('m:') ? 'meeting' : 'thread',
       label: bundleNames[key].name,
       members: gistsByKey.get(key) ?? [],
     }));
@@ -1170,5 +1252,125 @@ export async function GET() {
     });
   }
 
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress, activeInitiatives, bundles, bundleNames });
+  // ── The ONE quiet relationship cue per must-respond item (Person Brain) — itemId → {label,tone}. Computed
+  // from mustRespondRaw (fresh every load, like the other facts), so no cache plumbing. One cheap query on the
+  // must-respond senders. The card renders a muted tag; a miss = no cue (only meaningful stakes show). ──
+  // itemWeights (itemId → 0–100) come from the SHARED verdict (lib/brains/verdict.ts personVerdict) — the
+  // ONE judgment authority. The deck's "Important" lens READS this; it does not re-derive priority. Same
+  // person_state row also yields the cue. (Timeline/Projects will call the same verdict functions.)
+  const personCues: Record<string, { label: string; tone: 'neutral' | 'amber' }> = {};
+  const itemWeights: Record<string, number> = {};
+  try {
+    const { personVerdict } = await import('@/lib/brains/verdict');
+    const keyToItems = new Map<string, string[]>();
+    for (const m of mustRespondRaw) { const k = (m.fromEmail || '').toLowerCase(); if (!k) continue; const a = keyToItems.get(k) ?? []; a.push(m.itemId); keyToItems.set(k, a); }
+    const keys = [...keyToItems.keys()];
+    if (keys.length) {
+      // ENTITY-FIRST (One Brain cutover #4): resolve each sender to the ONE human in the person registry
+      // (alias-matched — a person's several addresses land on one entity, killing duplicate cues/weights).
+      // person_state remains only for senders the registry doesn't know.
+      const unresolved = new Set(keys);
+      try {
+        const { getPersonEntities, findPersonEntity } = await import('@/lib/entities/people');
+        const registry = await getPersonEntities(supabase, user.id);
+        for (const k of keys) {
+          const pe = findPersonEntity(registry, k, null);
+          if (!pe?.state?.summary) continue;
+          unresolved.delete(k);
+          const cue = relationshipCue(pe.state.relationship, pe.state.momentum, pe.quietDays);
+          const v = personVerdict({ state: pe.state, next_touch: pe.nextTouch, quiet_days: pe.quietDays } as never);
+          for (const id of (keyToItems.get(k) ?? [])) { if (cue) personCues[id] = cue; itemWeights[id] = v.weight; }
+        }
+      } catch { /* fall through to person_state for all keys */ }
+      if (unresolved.size) {
+        const { data: ps } = await supabase.from('person_state').select('person_key, state, next_touch, quiet_days').eq('user_id', user.id).in('person_key', [...unresolved]);
+        for (const r of (ps ?? []) as Array<{ person_key: string; state: { relationship?: string; momentum?: string; summary?: string; whoOwes?: { you: string[]; them: string[] } } | null; next_touch: { title?: string; reason?: string; entityRef?: string | null } | null; quiet_days: number | null }>) {
+          const ids = keyToItems.get(r.person_key.toLowerCase()) ?? [];
+          const cue = relationshipCue(r.state?.relationship, r.state?.momentum, r.quiet_days);
+          const v = personVerdict(r);
+          for (const id of ids) { if (cue) personCues[id] = cue; itemWeights[id] = v.weight; }
+        }
+      }
+    }
+  } catch { /* non-fatal — cards just render without a cue / default weight */ }
+
+  // ── PHASE-C CUTOVER #1 (One Brain): where an item is LINKED to an entity, its weight is the entity's
+  // REASONED priority (the memory's judgment: stakes read from the whole ledger — deadlines, money, who's
+  // waiting), OVERRIDING the person-verdict formula above. Self-gating: users without entity memory have no
+  // links → the formula fallback stands (the staged cutover; the formula dies at demolition). Covers both
+  // inbox items AND commitments (the deck's two weighted atom kinds). One query, non-fatal. ──
+  try {
+    const atomIds = [
+      ...mustRespondRaw.map((m) => m.itemId),
+      ...actionNotices.map((n) => n.itemId),
+      ...commitments.map((c) => c.id),
+    ].filter(Boolean);
+    if (atomIds.length) {
+      const { data: elinks } = await supabase.from('entity_links')
+        .select('item_id, entity_id').eq('user_id', user.id)
+        .in('item_kind', ['inbox_item', 'commitment']).in('item_id', atomIds).not('entity_id', 'is', null);
+      const entIds = [...new Set((elinks ?? []).map((l) => l.entity_id as string))];
+      if (entIds.length) {
+        const { data: ents } = await supabase.from('work_entities').select('id, priority').in('id', entIds);
+        const prioById = new Map((ents ?? []).map((e) => [e.id as string, (e.priority as { weight?: number } | null)?.weight]));
+        for (const l of (elinks ?? []) as Array<{ item_id: string; entity_id: string }>) {
+          const w = prioById.get(l.entity_id);
+          if (typeof w === 'number') itemWeights[l.item_id] = w;
+        }
+      }
+    }
+  } catch { /* non-fatal — the formula fallback stands */ }
+
+  // ══ THE REASONED BRIEFING (S1, docs/home-briefing-plan.md) — the chief-of-staff brief, WRITTEN BY THE
+  // BRAIN over judged state. daySig-gated (composes only when the day's SHAPE changed), background,
+  // last-good served. Stored inside home_brief.briefing (read-merge-write — the bundleNames pattern). ══
+  const cachedBriefing = (cached as { briefing?: import('@/lib/briefing/compose').Briefing } | null)?.briefing ?? null;
+  try {
+    const { composeBriefing, briefingDaySig } = await import('@/lib/briefing/compose');
+    const entNameById = new Map(wentsRows.map((e) => [e.id as string, { name: e.name as string, move: ((e.next_move ?? null) as { title?: string } | null)?.title ?? null }]));
+    const entByAtom = new Map(alinksRows.map((l) => [l.item_id, entNameById.get(l.entity_id) ?? null]));
+    const inputs: import('@/lib/briefing/compose').BriefingInputs = {
+      todayStr, firstName: firstName || 'there',
+      actions: [
+        ...((mustRespondOut?.items ?? []) as Array<{ itemId: string; who: string; ask: string; dueDate?: string | null }>).map((m) => ({
+          itemId: m.itemId, itemKind: 'inbox_item' as const, who: m.who, ask: m.ask,
+          move: entByAtom.get(m.itemId)?.move ?? null, entityName: entByAtom.get(m.itemId)?.name ?? null,
+          weight: itemWeights[m.itemId] ?? 20, overdue: false, dueDate: m.dueDate ?? null, href: `/item/${m.itemId}?kind=email`,
+        })),
+        ...actionNotices.map((n) => ({
+          itemId: n.itemId, itemKind: 'inbox_item' as const, who: n.who, ask: n.summary,
+          move: entByAtom.get(n.itemId)?.move ?? null, entityName: entByAtom.get(n.itemId)?.name ?? null,
+          weight: itemWeights[n.itemId] ?? 15, overdue: false, dueDate: n.dueDate ?? null, href: `/item/${n.itemId}?kind=email`,
+        })),
+        ...commitments.map((c) => ({
+          itemId: c.id, itemKind: 'commitment' as const, who: c.counterparty, ask: c.description,
+          move: entByAtom.get(c.id)?.move ?? null, entityName: entByAtom.get(c.id)?.name ?? null,
+          weight: itemWeights[c.id] ?? 18, overdue: !!c.overdue, dueDate: c.dueDate ?? null, href: `/item/${c.id}?kind=commitment`,
+        })),
+      ],
+      watch: slippingDeals.map((d) => ({ entityId: d.key, name: d.label, summary: d.summary, move: d.nextMove?.title ?? null, quietDays: null, weight: d.weight })),
+      moving: (() => {
+        const deckSet = new Set(deckEntityIdsOut);
+        const mv = wentsRows.filter((e) => { const st = (e.state ?? {}) as { momentum?: string; summary?: string }; return !deckSet.has(e.id as string) && st.summary && (st.momentum === 'active' || st.momentum === 'waiting'); });
+        const best = [...mv].sort((a, b) => Number((b.priority as { weight?: number } | null)?.weight ?? 0) - Number((a.priority as { weight?: number } | null)?.weight ?? 0))[0];
+        return { count: mv.length, closest: best ? { entityId: best.id as string, name: best.name as string, summary: String(((best.state ?? {}) as { summary?: string }).summary ?? '') } : null };
+      })(),
+      schedule: schedule.map((sc) => ({ time: sc.time, title: sc.title })),
+      counts: { needYou: (mustRespondOut?.items?.length ?? 0) + actionNotices.length + commitments.length, cleared: dayProgress?.cleared ?? 0, fromTeam: 0, followUps: followups?.items?.length ?? 0, fyi: forYourAwareness.length },
+      prior: cachedBriefing ? { lead: cachedBriefing.lead?.text, action: cachedBriefing.action?.text, watchlist: cachedBriefing.watchlist?.text, pulse: cachedBriefing.pulse?.text, composedAt: cachedBriefing.composedAt } : null,
+    };
+    if (cachedBriefing?.daySig !== briefingDaySig(inputs)) {
+      after(async () => {
+        try {
+          const briefing = await composeBriefing(supabase, user.id, inputs);
+          if (!briefing) return;
+          const { data } = await supabase.from('profiles').select('home_brief').eq('id', user.id).single();
+          const hb = ((data?.home_brief as Record<string, unknown>) ?? {});
+          await supabase.from('profiles').update({ home_brief: { ...hb, briefing } }).eq('id', user.id).then(() => {}, () => {});
+        } catch { /* non-fatal — last-good briefing stays */ }
+      });
+    }
+  } catch { /* non-fatal */ }
+
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices, mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, briefing: cachedBriefing });
 }
