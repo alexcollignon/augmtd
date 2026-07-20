@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -13,12 +13,13 @@ import {
   FolderPlusIcon, EyeSlashIcon, ArrowUturnLeftIcon,
 } from '@heroicons/react/24/outline';
 import ActivityPanel from '@/components/activity/activity-panel';
-import type { ActiveInitiative, InitiativeState, InitiativeAction } from '@/lib/projects/active-initiatives';
+import { onProjectsUpdated } from '@/lib/projects/broadcast';
 import { ROLE_AVATARS, ROLE_LABELS } from '@/lib/workers/roles';
 import { RiseIn } from '@/components/home/rise-in';
+import { BriefingBlock, useBriefingNavigate, type Briefing as ReasonedBriefing } from '@/components/briefing/briefing-view';
 import ViewSwitcher, { type HomeView as HomeViewLens } from '@/components/home/view-switcher';
-import TimelineView from '@/components/timeline/timeline-view';
-import ProjectsView from '@/components/projects/projects-view';
+import TimelineGantt from '@/components/timeline/timeline-gantt';
+import PortfolioView from '@/components/entities/portfolio-view';
 
 type Priority = {
   id: string; source: 'email' | 'meeting'; posture: 'needs_reply' | 'to_do' | 'waiting_on';
@@ -57,153 +58,6 @@ const GROUP_STATE_TONE: Record<GroupStateTone, { dot: string; text: string; bg: 
 // awareness folded into a "+N quiet" toggle. NOT a re-list of actions (those live complete in "What needs
 // you"). Click a chip → a small state panel (state · people · counts · open in Projects). Marquee only when
 // it overflows, pausing on hover + still under reduced-motion.
-const STATE_TONE: Record<InitiativeState, GroupStateTone> = { needs_attention: 'rose', active: 'emerald', waiting: 'blue', awareness: 'neutral' };
-
-// Phrase an initiative's top action for the tile's "next" line — by KIND + who + timing, never the raw
-// subject. Deterministic. Returns null when there's nothing to do (an awareness-only initiative).
-function tileNextLine(a: InitiativeAction | undefined): { text: string; Icon: React.ElementType; time: string; overdue: boolean } | null {
-  if (!a) return null;
-  const today = new Date().toISOString().slice(0, 10);
-  const overdue = !!a.dueDate && a.dueDate < today;
-  let time = '';
-  if (overdue) time = 'overdue';
-  else if (a.dueDate) {
-    const days = Math.round((new Date(a.dueDate + 'T00:00:00').getTime() - Date.now()) / 86400000);
-    time = days <= 0 ? 'today' : days <= 7 ? `${days}d` : fmtDue(a.dueDate);
-  }
-  const text = a.kind === 'followup' ? (a.who ? `Waiting on ${a.who}` : 'Waiting on a reply')
-    : a.kind === 'reply' ? (a.who ? `Reply to ${a.who}` : 'Reply needed')
-    : a.title; // action / commitment — the title is already an action phrase ("Send the deck", "Confirm the dates")
-  const Icon = a.kind === 'followup' ? ClockIcon : a.kind === 'reply' ? ArrowUturnLeftIcon : BoltIcon;
-  return { text, Icon, time, overdue };
-}
-
-function InitiativeStrip({ inits, trackedKeys, onOpenProjects, onMute, onTrack }: { inits: ActiveInitiative[]; trackedKeys: Set<string>; onOpenProjects: (key: string) => void; onMute: (key: string, label: string) => void; onTrack: (init: ActiveInitiative) => Promise<void> }) {
-  const [openKey, setOpenKey] = useState<string | null>(null);
-  const [showQuiet, setShowQuiet] = useState(false);
-  const [busy, setBusy] = useState(false); // guards double-clicks on Track (a network create)
-  const live = inits.filter((i) => i.state !== 'awareness');
-  const quiet = inits.filter((i) => i.state === 'awareness');
-  const shown = showQuiet ? inits : live;
-  const open = inits.find((i) => i.key === openKey) ?? null;
-  // Marquee whenever the row ACTUALLY overflows (measured, not a magic count) — so it scrolls whether there
-  // are 7 chips or a few wide ones, and stops cleanly when they fit. It stays MOUNTED and PAUSES via
-  // play-state while a chip is open (or on hover), so collapsing resumes it instead of restarting.
-  const trackRef = useRef<HTMLDivElement>(null);
-  const [marquee, setMarquee] = useState(false);
-  useEffect(() => {
-    const el = trackRef.current; const parent = el?.parentElement;
-    if (!el || !parent) return;
-    const measure = () => {
-      const single = el.scrollWidth / (marquee ? 2 : 1); // divide out the duplicated copy when already looping
-      setMarquee(single > parent.clientWidth + 8);
-    };
-    measure();
-    const ro = new ResizeObserver(measure); ro.observe(parent);
-    return () => ro.disconnect();
-  }, [shown.length, showQuiet, marquee]);
-  const chips = marquee ? [...shown, ...shown] : shown;
-  return (
-    <section>
-      <Label count={inits.length} icon={FolderIcon}>Your projects</Label>
-      <div className="relative -mx-1 overflow-x-auto py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div ref={trackRef} className={`flex items-stretch gap-2 px-1 ${marquee ? `w-max animate-[augMarquee_50s_linear_infinite] hover:[animation-play-state:paused] motion-reduce:animate-none motion-reduce:w-full ${openKey ? '[animation-play-state:paused]' : ''}` : ''}`}>
-          {chips.map((i, idx) => {
-            const t = GROUP_STATE_TONE[STATE_TONE[i.state]];
-            const isOpen = openKey === i.key;
-            const count = i.actionCount + i.waitingCount;
-            // The "next" line = the most-urgent action (actions[0], pre-sorted by the spine) phrased as an
-            // action — "Reply to <who>" / "Waiting on <who>" / the commitment title — plus its timing
-            // (overdue / Nd / date), NOT the raw email subject. Deterministic from kind/who/dueDate.
-            const nextLine = tileNextLine(i.actions[0]);
-            // A rectangular project TILE (distinct from a to-do row on purpose — this is a project glance):
-            // name + state·count, and the next move a pill couldn't show.
-            return (
-              <button
-                key={`${i.key}-${idx}`}
-                onClick={() => setOpenKey(isOpen ? null : i.key)}
-                title={`${i.label} · ${i.stateLabel}`}
-                className={`flex-shrink-0 w-[212px] text-left rounded-xl border px-3 py-2.5 transition-colors duration-150 ease-out ${isOpen ? 'border-indigo-300 bg-indigo-50/50' : i.state === 'awareness' ? 'border-neutral-200/70 bg-white/60 hover:bg-neutral-50' : 'border-neutral-200/80 bg-white hover:border-indigo-300 hover:bg-indigo-50/30'}`}
-              >
-                <div className="flex items-center gap-1.5">
-                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${t.dot}`} />
-                  <span className={`text-[13px] truncate ${i.state === 'awareness' ? 'font-normal text-neutral-500' : 'font-semibold text-neutral-800'}`}>{i.label}</span>
-                  {(i.projectId || trackedKeys.has(i.key)) && (
-                    <span className="ml-auto flex-shrink-0 inline-flex items-center gap-0.5 text-[9px] font-semibold uppercase tracking-wide text-indigo-500 bg-indigo-50 rounded px-1 py-0.5" title="Tracked as a project">
-                      <FolderIcon className="w-2.5 h-2.5" />Tracked
-                    </span>
-                  )}
-                </div>
-                <div className="mt-1 text-[11px] text-neutral-400">
-                  <span className={`font-medium ${t.text}`}>{i.stateLabel}</span>{count > 0 && ` · ${count} open`}
-                </div>
-                <div className="mt-0.5 text-[11.5px]">
-                  {nextLine ? (
-                    <span className="inline-flex items-center gap-1 max-w-full text-neutral-500">
-                      <nextLine.Icon className="w-3 h-3 flex-shrink-0 text-neutral-400" />
-                      <span className="truncate">{nextLine.text}</span>
-                      {nextLine.time && <span className={`flex-shrink-0 ${nextLine.overdue ? 'text-rose-500 font-medium' : 'text-neutral-400'}`}>· {nextLine.time}</span>}
-                    </span>
-                  ) : <span className="text-neutral-300">Nothing needed now</span>}
-                </div>
-              </button>
-            );
-          })}
-          {quiet.length > 0 && (
-            <button onClick={() => setShowQuiet((v) => !v)} className="flex-shrink-0 self-center inline-flex items-center h-9 px-3 text-[12.5px] font-medium text-neutral-400 hover:text-indigo-600 transition-all duration-150 ease-out">
-              {showQuiet ? 'Show less' : `+${quiet.length} quiet`}
-            </button>
-          )}
-        </div>
-      </div>
-      {open && (
-        <RiseIn key={open.key}>
-          <div className="mt-3 max-w-[520px] rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50/40 to-white px-4 py-3">
-            <div className="flex items-center gap-2">
-              <span className={`inline-flex items-center gap-1 text-[10px] font-semibold ${GROUP_STATE_TONE[STATE_TONE[open.state]].text} ${GROUP_STATE_TONE[STATE_TONE[open.state]].bg} rounded-full px-1.5 py-0.5`}><span className={`w-1.5 h-1.5 rounded-full ${GROUP_STATE_TONE[STATE_TONE[open.state]].dot}`} />{open.stateLabel}</span>
-              <span className="text-[13.5px] font-semibold text-neutral-900 truncate">{open.label}</span>
-            </div>
-            <p className="text-[12px] text-neutral-500 mt-1.5">
-              {[open.actionCount > 0 ? `${open.actionCount} to do` : null, open.waitingCount > 0 ? `${open.waitingCount} waiting` : null, `${open.total} related`, open.meetings > 0 ? `${open.meetings} mtg` : null].filter(Boolean).join(' · ')}
-              {open.actionCount === 0 && open.waitingCount === 0 && ' — nothing needed right now'}
-            </p>
-            {open.stakeholders.length > 0 && (
-              <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                {open.stakeholders.slice(0, 5).map((p, i) => <span key={i} className="text-[11px] font-medium text-neutral-600 bg-white border border-neutral-200/70 rounded-full px-2 py-0.5">{p}</span>)}
-              </div>
-            )}
-            {/* Curation lives ONLY on the intentional drill-in (never the bare chip). Two orthogonal
-                actions on the initiative — Track as project (formalize) · Not relevant (persistent mute) —
-                plus a doorway to Projects. Tracking keeps it in In-motion (it's now a project); muting
-                removes it (optimistic, undoable). */}
-            <div className="flex items-center gap-3 mt-3 pt-2.5 border-t border-indigo-100/70">
-              {(() => { const tracked = !!open.projectId || trackedKeys.has(open.key); return (
-              <button
-                disabled={busy || tracked}
-                onClick={async () => { setBusy(true); try { await onTrack(open); setOpenKey(null); } finally { setBusy(false); } }}
-                className="inline-flex items-center gap-1 text-[12px] font-semibold text-indigo-600 hover:text-indigo-700 disabled:opacity-40 transition-all duration-150 ease-out"
-              >
-                <FolderPlusIcon className="w-3.5 h-3.5" />{tracked ? 'Tracked' : busy ? 'Tracking…' : 'Track as project'}
-              </button>
-              ); })()}
-              <button
-                disabled={busy}
-                onClick={() => { onMute(open.key, open.label); setOpenKey(null); }}
-                className="inline-flex items-center gap-1 text-[12px] font-medium text-neutral-400 hover:text-neutral-600 disabled:opacity-40 transition-all duration-150 ease-out"
-              >
-                <EyeSlashIcon className="w-3.5 h-3.5" />Not relevant
-              </button>
-              <button onClick={() => onOpenProjects(open.key)} className="group ml-auto inline-flex items-center gap-1 text-[12px] font-medium text-indigo-500 hover:text-indigo-700 transition-all duration-150 ease-out">
-                Open in Projects <ArrowRightIcon className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-        </RiseIn>
-      )}
-    </section>
-  );
-}
-
 // A tiny "feels doable" cue — effort estimate + a real due date when the item states one. Presentation
 // only: reduces dread ("~2 min") and surfaces genuine deadlines. Shows nothing when neither is known.
 function EffortDate({ effort, dueDate, overdue }: { effort?: 'quick' | 'medium' | 'deep' | null; dueDate?: string | null; overdue?: boolean }) {
@@ -248,10 +102,18 @@ type Brief = {
   waitingOn: { id: string; description: string; counterparty: string | null; ageDays: number; initiative?: string | null; initiativeTotal?: number | null }[];
   schedule: { id: string; time: string; title: string; attendees: number; prep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null }[];
   handled?: { triaged: number; filtered: number; summarised: number; tracked: number; resolved: number };
-  activeInitiatives?: ActiveInitiative[];
   bundles?: Record<string, { key: string; label: string }>; // server-side "what needs you" bundling (atomId → bundle)
   bundleNames?: Record<string, { name: string; why?: string }>; // reasoned name + grounded "why" per bundle key
+  personCues?: Record<string, { label: string; tone: 'neutral' | 'amber' }>; // itemId → one quiet Person-Brain cue
+  itemWeights?: Record<string, number>; // itemId → verdict weight (lib/brains/verdict.ts) — the "Important" order
+  briefing?: ReasonedBriefing | null; // the chief-of-staff brief AUTHORED BY THE BRAIN (docs/home-briefing-plan.md)
+  slippingDeals?: SlippingDeal[]; // proactive: entities quietly slipping, surfaced as deck cards
+  bundleStates?: Record<string, BundleState>; // bundle key → its dominant ENTITY's state (membership join)
+  deckEntityIds?: string[]; // entities already actionable in the deck (MovingTier contradiction-guard)
 };
+// A deal the verdict flags as SLIPPING (gone-quiet/stalled with something open on you) — surfaced proactively
+// as a card in the deck even with no new mail. Leads with the SAME one next move as the bundle/project/deep-dive.
+type SlippingDeal = { key: string; label: string; momentum: string; summary: string; weight: number; nextMove: { title: string; entityRef: string | null } | null };
 type TeamMsg = { workerId?: string; workerName?: string; workerRole?: string | null; text?: string };
 type TeamReview = { artifactId?: string; threadId?: string; title?: string; workerName?: string; workerId?: string; workerRole?: string | null };
 
@@ -522,6 +384,7 @@ function PriorityCard({ p, first, expanded, onToggle, onCleared, onUndoInbox }: 
   const { removed, exiting, startExit } = useExit();
   const [acting, setActing] = useState(false);
   const open = () => router.push(priorityHref(p));
+  const prefetch = () => { prefetchItem(priorityHref(p)); router.prefetch?.(priorityHref(p)); };
   // Done/Dismiss a Needs-you card → act on its inbox item(s): the email's itemId, or all of a
   // meeting's action-item ids. classifyItem hides completed/dismissed, so it never resurfaces.
   // Reversible → after acting, show a "…· Undo" toast (restores the single-item case cleanly).
@@ -536,7 +399,7 @@ function PriorityCard({ p, first, expanded, onToggle, onCleared, onUndoInbox }: 
   };
   if (removed) return null;
   return (
-    <div className={`group relative rounded-xl border bg-white transition-all duration-300 ease-out hover:shadow-[0_4px_20px_-4px_rgba(0,0,0,0.08)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${first ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/70 hover:border-neutral-300'}`}>
+    <div onMouseEnter={prefetch} onFocus={prefetch} className={`group relative rounded-xl border bg-white transition-all duration-300 ease-out hover:shadow-[0_4px_20px_-4px_rgba(0,0,0,0.08)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${first ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/70 hover:border-neutral-300'}`}>
       {first && (
         <div className="absolute -top-2 left-4 inline-flex items-center gap-1 rounded-full bg-indigo-600 px-2 py-0.5 shadow-sm">
           <BoltIcon className="w-3 h-3 text-white" />
@@ -1038,14 +901,44 @@ type DoItem = {
   second?: string | null;    // subject / "You owe X · ↳ initiative" / "Action needed"
   when?: string | null; effort?: 'quick' | 'medium' | 'deep' | null; dueDate?: string | null;
   overdue?: boolean; dueToday?: boolean; initiative?: string | null; initiativeTotal?: number | null;
+  relCue?: { label: string; tone: 'neutral' | 'amber' } | null; // ONE quiet Person-Brain cue (who they are / quiet Nw)
 };
 const DO_META: Record<DoSource, { Icon: React.ElementType; ring: string; text: string }> = {
   reply:      { Icon: EnvelopeIcon,    ring: 'bg-indigo-50',   text: 'text-indigo-500' },
   notice:     { Icon: BellAlertIcon,   ring: 'bg-amber-50',    text: 'text-amber-600' },
   commitment: { Icon: CheckCircleIcon, ring: 'bg-neutral-100', text: 'text-neutral-500' },
 };
-function DoRow({ item, emphasis = false, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment }: {
-  item: DoItem; emphasis?: boolean;
+
+// ── Deep-dive PREFETCH — warm the item's content cache on HOVER so the click opens INSTANTLY. The
+// deep-dive (item-detail) hydrates from these exact localStorage keys and skips its skeleton when they're
+// warm; pre-writing them on hover means the modal renders with real content immediately instead of waiting
+// on a cold fetch. Deduped once per id per session, and a no-op when the cache is already warm. The href
+// encodes id + kind: /item/<id>?kind=email|meeting|commitment|followup (kind absent → email).
+const PREFETCH_PLAN: Record<string, (id: string) => { key: string; url: string }> = {
+  email:      (id) => ({ key: `aug-item-thread-${id}`,     url: `/api/inbox/${id}/thread` }),
+  followup:   (id) => ({ key: `aug-item-followup-${id}`,   url: `/api/commitments/${id}/thread` }),
+  meeting:    (id) => ({ key: `aug-item-meeting-${id}`,    url: `/api/meetings/${id}/full` }),
+  commitment: (id) => ({ key: `aug-item-commitment-${id}`, url: `/api/commitments/${id}` }),
+};
+const _prefetchedItems = new Set<string>();
+function prefetchItem(href: string | null | undefined) {
+  if (!href) return;
+  try {
+    const m = href.match(/\/item\/([^/?#]+)/);
+    if (!m) return;
+    const id = m[1];
+    const kind = new URLSearchParams(href.split('?')[1] || '').get('kind') || 'email';
+    const dedupeKey = `${kind}:${id}`;
+    if (_prefetchedItems.has(dedupeKey)) return;
+    _prefetchedItems.add(dedupeKey);
+    const plan = (PREFETCH_PLAN[kind] ?? PREFETCH_PLAN.email)(id);
+    if (loadLS(plan.key) != null) return; // already warm from a prior open
+    fetch(plan.url).then((r) => (r.ok ? r.json() : null)).then((d) => { if (d) saveLS(plan.key, d); }).catch(() => {});
+  } catch { /* non-fatal */ }
+}
+
+function DoRow({ item, emphasis = false, hideInitiative = false, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment }: {
+  item: DoItem; emphasis?: boolean; hideInitiative?: boolean;
   onDismissInbox?: (id: string) => void; onClearedCommitment?: (id: string) => void;
   onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void;
   onUndoCommitment?: (message: string, id: string) => void;
@@ -1069,14 +962,20 @@ function DoRow({ item, emphasis = false, onDismissInbox, onClearedCommitment, on
   const done = (e?: React.MouseEvent) => { e?.stopPropagation(); if (isCommit) commit.act('done'); else actInbox('complete', e); };
   const drop = (e?: React.MouseEvent) => { e?.stopPropagation(); if (isCommit) commit.act('dismissed'); else actInbox('dismiss', e); };
   const open = () => router.push(item.href);
+  // Hover = intent to open → warm the deep-dive cache + the route JS so the click is instant.
+  const prefetch = () => { prefetchItem(item.href); router.prefetch?.(item.href); };
 
   if (removed) return null;
   const { Icon, ring, text } = DO_META[item.source];
   const iconTone = isCommit && item.overdue ? 'text-rose-500' : text;
   const badge = item.overdue ? 'Overdue' : item.dueToday ? 'Today' : (isCommit && item.dueDate) ? fmtDue(item.dueDate) : null;
   const busy = acting || commit.acting;
+  // The single item's next action — DETERMINISTIC from its type (not the Initiative Brain: a loose atom's
+  // action is intrinsic, always known, no reasoning needed). Shown only on the focused hero card, mirroring
+  // the bundle's next-move chip so every "Start here" card leads with a concrete action, not a bare arrow.
+  const actionLabel = isCommit ? 'Follow up' : item.source === 'notice' ? 'Review' : 'Reply';
   return (
-    <div className={`group rounded-xl border bg-white transition-all duration-300 ease-out hover:shadow-[0_4px_20px_-4px_rgba(0,0,0,0.08)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/70 hover:border-neutral-300'}`}>
+    <div onMouseEnter={prefetch} onFocus={prefetch} className={`group rounded-xl border bg-white transition-all duration-300 ease-out hover:shadow-[0_4px_20px_-4px_rgba(0,0,0,0.08)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/70 hover:border-neutral-300'}`}>
       <div role="button" tabIndex={0} onClick={open}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
         className="w-full flex items-start gap-3 p-4 text-left cursor-pointer">
@@ -1086,13 +985,17 @@ function DoRow({ item, emphasis = false, onDismissInbox, onClearedCommitment, on
           <div className="flex items-baseline gap-2">
             <p className={`${emphasis ? 'text-[14.5px]' : 'text-[13.5px]'} font-semibold text-neutral-900 leading-snug min-w-0 truncate`}>
               {item.primary && <span className="text-neutral-800">{item.primary}</span>}
+              {/* ONE quiet relationship cue (Person Brain) — a muted tag right after the name: who they are to
+                  you ("partner") or the time signal ("quiet 3w"). Short + snappy; only meaningful stakes show. */}
+              {item.relCue && <span className={`ml-1 text-[11px] font-medium ${item.relCue.tone === 'amber' ? 'text-amber-600' : 'text-neutral-400'}`}>{item.relCue.label}</span>}
               {item.primary && item.ask && <span className="font-normal text-neutral-400"> · </span>}
               {item.ask && <span className="font-semibold text-neutral-800">{item.ask}</span>}
             </p>
             <span className="flex-shrink-0 ml-auto flex items-center gap-2">
               {badge && <span className={`text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 ${item.overdue ? 'bg-rose-50 text-rose-600' : item.dueToday ? 'bg-amber-50 text-amber-600' : 'bg-neutral-100 text-neutral-500'}`}>{badge}</span>}
               {!badge && <EffortDate effort={item.effort} dueDate={item.dueDate} overdue={!!item.dueDate && item.dueDate < new Date().toISOString().slice(0, 10)} />}
-              <InitiativeTag initiative={item.initiative} total={item.initiativeTotal} />
+              {/* Inside a bundle already named by this initiative, the per-row tag is redundant — hide it. */}
+              {!hideInitiative && <InitiativeTag initiative={item.initiative} total={item.initiativeTotal} />}
               {item.when && <span className="text-[11px] text-neutral-300 tabular-nums">{item.when}</span>}
             </span>
           </div>
@@ -1104,6 +1007,18 @@ function DoRow({ item, emphasis = false, onDismissInbox, onClearedCommitment, on
           <ArrowRightIcon className="w-3.5 h-3.5 text-neutral-200 group-hover:text-indigo-400 transition-colors" />
         </span>
       </div>
+      {emphasis && (
+        <div className="px-4 pb-3 -mt-1 pl-[2.9rem]">
+          <button
+            onClick={open}
+            onMouseEnter={prefetch}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 text-[12px] font-medium text-indigo-700 transition-colors"
+          >
+            <span>{actionLabel}</span>
+            <ArrowRightIcon className="w-3.5 h-3.5 flex-shrink-0" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1151,45 +1066,192 @@ function bundleDoItems(items: DoItem[], bundleMap: Record<string, BundleRef>, na
   return out;
 }
 
-// A bundle card — the initiative + count + a one-line lead (the most-urgent atom's gist), expanding to the
-// individual DoRows. The lead lets you act on the whole unit at a glance; nothing is buried (count + expand).
-function BundleGroup({ title, why, items, emphasis = false, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment }: {
-  title: string; why?: string; items: DoItem[]; emphasis?: boolean;
+// Initiative Brain state joined into the deck (from /api/initiatives/states) — where a bundle-initiative
+// stands + its ONE next move. This is what makes each card read like a chief-of-staff briefing (state +
+// the next move) instead of a bare count.
+type BrainState = {
+  key: string; label: string; projectId: string | null;
+  momentum: 'active' | 'needs_you' | 'waiting' | 'gone_quiet' | 'stalled';
+  summary: string | null; stage: string | null;
+  whoOwes: { you: string[]; them: string[] }; quietDays: number | null;
+  people: { external: string[]; internal: string[] };
+  nextMove: { kind: string; title: string; entityRef: string | null; owner: string; irreversible: boolean; reason: string } | null;
+};
+// The deck's per-bundle ENTITY state (Blocker A: served by the brief's membership join over entity_links —
+// no more label-keyed initiative_state join).
+type BundleState = {
+  momentum: BrainState['momentum'];
+  summary: string | null; quietDays: number | null;
+  nextMove: { title: string; entityRef: string | null; reason?: string } | null;
+};
+// entityRef ("inbox:<id>" / "commit:<id>" / "meeting:<id>") → the deep-dive route to act on it.
+function brainRefHref(ref: string | null | undefined): string | null {
+  if (!ref) return null;
+  const [k, id] = ref.split(':');
+  return k === 'inbox' ? `/item/${id}?kind=email` : k === 'commit' ? `/item/${id}?kind=commitment` : k === 'meeting' ? `/item/${id}?kind=meeting` : null;
+}
+// Momentum → dot/label/text (shared with the S4 rollup — one visual language for "where an initiative stands").
+const MOMENTUM: Record<BrainState['momentum'], { dot: string; label: string; text: string }> = {
+  needs_you:  { dot: 'bg-rose-500',    label: 'Needs you',  text: 'text-rose-600' },
+  gone_quiet: { dot: 'bg-amber-500',   label: 'Gone quiet', text: 'text-amber-600' },
+  stalled:    { dot: 'bg-amber-500',   label: 'Stalled',    text: 'text-amber-600' },
+  waiting:    { dot: 'bg-blue-400',    label: 'Waiting',    text: 'text-blue-600' },
+  active:     { dot: 'bg-emerald-500', label: 'Active',     text: 'text-emerald-600' },
+};
+
+// A bundle card — the initiative + count + a one-line lead. When Brain `state` is present (this bundle IS a
+// tracked initiative), the card reads like a chief-of-staff briefing: a momentum dot + label, WHERE IT STANDS
+// as the lead, and the ONE next move as a chip you can act on without expanding. Otherwise it falls back to
+// the grounded "why" / most-urgent atom's gist. The member atoms always expand underneath — nothing buried.
+function BundleGroup({ title, why, items, state, emphasis = false, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment }: {
+  title: string; why?: string; items: DoItem[]; state?: BundleState | null; emphasis?: boolean;
   onDismissInbox?: (id: string) => void; onClearedCommitment?: (id: string) => void;
   onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void;
   onUndoCommitment?: (message: string, id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const router = useRouter();
   const todayISO = new Date().toISOString().slice(0, 10);
   const lead = items[0];
   const overdue = items.some((i) => i.overdue || (!!i.dueDate && i.dueDate < todayISO));
-  // The grounded "why it matters" (when present) is the most useful lead — show it; otherwise the
+  const m = state ? (MOMENTUM[state.momentum] ?? MOMENTUM.active) : null;
+  const moveHref = state?.nextMove ? brainRefHref(state.nextMove.entityRef) : null;
+  // Lead line: the Brain's where-it-stands summary is the richest; then the grounded "why"; else the
   // most-urgent atom's gist so the card still says what's inside.
+  const leadNode = state?.summary
+    ? <>{state.summary}</>
+    : why
+      ? <>{why}</>
+      : <>{lead.primary ? <>{lead.primary}<span className="text-neutral-400"> · </span></> : null}{lead.ask}</>;
   return (
     <div className={`rounded-xl border bg-white transition-all duration-300 ease-out ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/70'}`}>
       <button onClick={() => setOpen((v) => !v)} className="w-full flex items-start gap-3 p-4 text-left">
-        <span className="flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-50 text-indigo-500"><FolderIcon className="w-4 h-4" /></span>
+        {m
+          ? <span className={`flex-shrink-0 mt-1.5 w-2.5 h-2.5 rounded-full ${m.dot}`} title={m.label} />
+          : <span className="flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-50 text-indigo-500"><FolderIcon className="w-4 h-4" /></span>}
         <div className="min-w-0 flex-1">
           {emphasis && <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-500 mb-1"><SparklesIcon className="w-3 h-3" />Start here</p>}
           <div className="flex items-baseline gap-2">
             <p className="text-[13.5px] font-semibold text-neutral-900 truncate min-w-0">{title}<span className="font-normal text-neutral-400"> · {items.length}</span></p>
+            {m && <span className={`flex-shrink-0 text-[10px] font-semibold uppercase tracking-wide ${m.text}`}>{m.label}{state?.momentum === 'gone_quiet' && state?.quietDays ? ` ${state.quietDays}d` : ''}</span>}
             {overdue && <span className="flex-shrink-0 ml-auto text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 bg-rose-50 text-rose-600">Overdue</span>}
           </div>
           <p className="text-[12px] text-neutral-500 mt-0.5 leading-snug line-clamp-1">
-            {why
-              ? why
-              : <>{lead.primary ? <>{lead.primary}<span className="text-neutral-400"> · </span></> : null}{lead.ask}</>}
+            {leadNode}
             {items.length > 1 ? <span className="text-neutral-400"> · +{items.length - 1} more</span> : null}
           </p>
         </div>
         <ChevronRightIcon className={`w-4 h-4 flex-shrink-0 text-neutral-300 mt-0.5 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
       </button>
+      {state?.nextMove && (
+        <div className="px-4 pb-3 -mt-1 pl-[2.4rem]">
+          <button
+            onClick={(e) => { e.stopPropagation(); if (moveHref) router.push(moveHref); else setOpen(true); }}
+            onMouseEnter={() => prefetchItem(moveHref)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 text-[12px] font-medium text-indigo-700 transition-colors max-w-full"
+            title={state.nextMove.reason}
+          >
+            <span className="truncate">{state.nextMove.title}</span>
+            <ArrowRightIcon className="w-3.5 h-3.5 flex-shrink-0" />
+          </button>
+        </div>
+      )}
       <Collapse open={open}>
         <div className="border-t border-neutral-100 px-2 py-2 space-y-2">
-          {items.map((it) => <DoRow key={it.key} item={it} onDismissInbox={onDismissInbox} onClearedCommitment={onClearedCommitment} onUndoInbox={onUndoInbox} onUndoCommitment={onUndoCommitment} />)}
+          {items.map((it) => <DoRow key={it.key} item={it} hideInitiative onDismissInbox={onDismissInbox} onClearedCommitment={onClearedCommitment} onUndoInbox={onUndoInbox} onUndoCommitment={onUndoCommitment} />)}
         </div>
       </Collapse>
     </div>
+  );
+}
+
+// ── PROACTIVE SLIPPING card — a deal quietly slipping (gone-quiet/stalled with something open on you), surfaced
+// IN the deck even with no new mail. Amber "Slipping" cue + where it stands + the ONE next move (same string as
+// the bundle/project/deep-dive). Dismissable ("not now" — session). The chief-of-staff "this is aging" nudge.
+function DealCard({ deal, emphasis = false, onDismiss }: { deal: SlippingDeal; emphasis?: boolean; onDismiss: (key: string) => void }) {
+  const router = useRouter();
+  const moveHref = brainRefHref(deal.nextMove?.entityRef);
+  return (
+    <div className={`group rounded-xl border bg-white transition-all duration-300 ease-out ${emphasis ? 'border-amber-200 ring-1 ring-amber-100' : 'border-neutral-200/70'}`}>
+      <div className="flex items-start gap-3 p-4">
+        <span className="flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-lg bg-amber-50 text-amber-500"><FolderIcon className="w-4 h-4" /></span>
+        <div className="min-w-0 flex-1">
+          {emphasis && <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-amber-500 mb-1"><SparklesIcon className="w-3 h-3" />Quietly slipping</p>}
+          <div className="flex items-baseline gap-2">
+            <p className="text-[13.5px] font-semibold text-neutral-900 truncate min-w-0">{deal.label}</p>
+            <span className="flex-shrink-0 text-[10px] font-semibold uppercase tracking-wide text-amber-600">Slipping</span>
+          </div>
+          <p className="text-[12px] text-neutral-500 mt-0.5 leading-snug line-clamp-2">{deal.summary}</p>
+        </div>
+        <button onClick={() => onDismiss(deal.key)} title="Not now" className="flex-shrink-0 text-neutral-300 hover:text-rose-600 transition-colors text-[13px] leading-none mt-0.5">✕</button>
+      </div>
+      {deal.nextMove && (
+        <div className="px-4 pb-3 -mt-1 pl-[3.4rem]">
+          <button
+            onClick={() => { if (moveHref) router.push(moveHref); }}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 text-[12px] font-medium text-indigo-700 transition-colors max-w-full"
+          >
+            <span className="truncate">{deal.nextMove.title}</span>
+            <ArrowRightIcon className="w-3.5 h-3.5 flex-shrink-0" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── MOVING · nothing needed — the calm reassurance tier. Initiatives that are progressing but need nothing
+// from you right now (active / waiting). Collapsed by default (one summary line: "N moving · nothing needed
+// from you") so it never competes with "what needs you"; expands to per-initiative rows (momentum + where it
+// stands, opens the project/deep-dive). This is the ambient half of the chief-of-staff view, kept quiet.
+function MovingTier({ exclude }: { exclude?: Set<string> }) {
+  const [open, setOpen] = useState(false);
+  const router = useRouter();
+  // ONE BRAIN (Blocker A): read the entity PORTFOLIO (the same registry Projects/Timeline read) instead of
+  // the retired /api/initiatives/states. Instant-load from the shared portfolio cache, background refresh.
+  const [ents, setEnts] = useState<Array<{ id: string; name: string; status: string; momentum: string; summary: string | null; nextMove: { title: string; entityRef: string | null } | null }>>(
+    () => (loadLS<{ entities?: Array<{ id: string; name: string; status: string; momentum: string; summary: string | null; nextMove: { title: string; entityRef: string | null } | null }> }>('aug-portfolio-v1')?.entities ?? []));
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => { if (alive && d?.entities) { setEnts(d.entities); saveLS('aug-portfolio-v1', d); } }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  // Progressing work that needs nothing now — AND isn't already surfaced as an action in the deck above
+  // (the `exclude` entity-id set), so "nothing needed from you" can never contradict "What needs you".
+  const moving = ents.filter((e) => e.status === 'active' && (e.momentum === 'active' || e.momentum === 'waiting') && e.summary && !exclude?.has(e.id));
+  if (!moving.length) return null;
+  return (
+    <section className="mt-8">
+      <button onClick={() => setOpen((v) => !v)} className="group w-full flex items-center gap-2 text-left">
+        <span className="inline-flex -space-x-1">
+          {moving.slice(0, 4).map((e) => <span key={e.id} className={`w-2 h-2 rounded-full ring-2 ring-white ${(MOMENTUM[e.momentum as BrainState['momentum']] ?? MOMENTUM.active).dot}`} />)}
+        </span>
+        <span className="text-[12px] font-medium text-neutral-500">{moving.length} moving · nothing needed from you</span>
+        <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-300 group-hover:text-neutral-500 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
+      </button>
+      <Collapse open={open}>
+        <div className="space-y-1.5 pt-3">
+          {moving.map((e) => {
+            const m = MOMENTUM[e.momentum as BrainState['momentum']] ?? MOMENTUM.active;
+            const href = e.nextMove ? brainRefHref(e.nextMove.entityRef) : null;
+            const go = () => href ? router.push(href) : undefined;
+            return (
+              <button key={e.id} onClick={go} className="group w-full flex items-start gap-2.5 rounded-lg border border-neutral-200/50 bg-white/50 px-3 py-2 text-left transition-all duration-200 hover:bg-white hover:border-neutral-300">
+                <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${m.dot}`} title={m.label} />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="text-[12.5px] font-medium text-neutral-700 truncate">{e.name}</span>
+                    <span className={`text-[10px] font-semibold uppercase tracking-wide flex-shrink-0 ${m.text}`}>{m.label}</span>
+                  </span>
+                  {e.summary && <span className="block text-[11.5px] text-neutral-400 truncate mt-0.5">{e.summary}</span>}
+                </span>
+                <ChevronRightIcon className="flex-shrink-0 w-3.5 h-3.5 text-neutral-300 group-hover:text-indigo-400 transition-colors mt-0.5" />
+              </button>
+            );
+          })}
+        </div>
+      </Collapse>
+    </section>
   );
 }
 
@@ -1199,9 +1261,10 @@ function BundleGroup({ title, why, items, emphasis = false, onDismissInbox, onCl
 // hidden: every peek stays reachable and "N more" reveals the tail. The heavy actions (open, draft, dismiss)
 // all live on the hero card; a peek is a one-line preview + a promote tap.
 type DeckEntry =
-  | { key: string; kind: 'bundle'; title: string; why?: string; items: DoItem[] }
+  | { key: string; kind: 'bundle'; title: string; why?: string; items: DoItem[]; state?: BundleState | null }
   | { key: string; kind: 'single'; item: DoItem }
-  | { key: string; kind: 'priority'; p: Priority };
+  | { key: string; kind: 'priority'; p: Priority }
+  | { key: string; kind: 'deal'; deal: SlippingDeal };
 type PeekDesc = { Icon: React.ElementType; ring: string; text: string; title: string; hint?: string | null; count?: number; overdue?: boolean; dueToday?: boolean };
 const POSTURE_META: Record<Priority['posture'], { Icon: React.ElementType; ring: string; text: string }> = {
   needs_reply: { Icon: EnvelopeIcon, ring: 'bg-indigo-50', text: 'text-indigo-500' },
@@ -1209,6 +1272,9 @@ const POSTURE_META: Record<Priority['posture'], { Icon: React.ElementType; ring:
   waiting_on:  { Icon: CheckCircleIcon, ring: 'bg-neutral-100', text: 'text-neutral-500' },
 };
 function peekOf(e: DeckEntry): PeekDesc {
+  if (e.kind === 'deal') {
+    return { Icon: FolderIcon, ring: 'bg-amber-50', text: 'text-amber-600', title: e.deal.label, hint: e.deal.summary };
+  }
   if (e.kind === 'bundle') {
     const overdue = e.items.some((i) => i.overdue);
     return { Icon: FolderIcon, ring: 'bg-indigo-50', text: 'text-indigo-500', title: e.title, hint: e.why || e.items[0]?.ask, count: e.items.length, overdue };
@@ -1222,10 +1288,18 @@ function peekOf(e: DeckEntry): PeekDesc {
   const m = POSTURE_META[e.p.posture] ?? POSTURE_META.to_do;
   return { Icon: m.Icon, ring: m.ring, text: m.text, title: e.p.title, hint: e.p.context, overdue: e.p.overdue };
 }
+// A peek's underlying deep-dive href (single row / priority card) — used to warm the cache on hover so a
+// promote→click is instant. A bundle peek opens on promote (no direct href) → nothing to prefetch here.
+function peekHref(e: DeckEntry): string | null {
+  if (e.kind === 'single') return e.item.href;
+  if (e.kind === 'priority') return priorityHref(e.p);
+  if (e.kind === 'deal') return brainRefHref(e.deal.nextMove?.entityRef);
+  return null;
+}
 function PeekRow({ e, onPromote }: { e: DeckEntry; onPromote: () => void }) {
   const d = peekOf(e);
   return (
-    <button onClick={onPromote} className="group w-full flex items-center gap-2.5 rounded-lg border border-neutral-200/60 bg-white/60 px-3 py-2 text-left transition-all duration-200 ease-out hover:bg-white hover:border-neutral-300">
+    <button onClick={onPromote} onMouseEnter={() => prefetchItem(peekHref(e))} className="group w-full flex items-center gap-2.5 rounded-lg border border-neutral-200/60 bg-white/60 px-3 py-2 text-left transition-all duration-200 ease-out hover:bg-white hover:border-neutral-300">
       <span className={`flex-shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-md ${d.ring} ${d.overdue ? 'text-rose-500' : d.text}`}><d.Icon className="w-3.5 h-3.5" /></span>
       <span className="min-w-0 flex-1 flex items-baseline gap-1.5">
         <span className="text-[12.5px] font-medium text-neutral-700 truncate">{d.title}{typeof d.count === 'number' && <span className="font-normal text-neutral-400"> · {d.count}</span>}</span>
@@ -1246,29 +1320,43 @@ function PeekRow({ e, onPromote }: { e: DeckEntry; onPromote: () => void }) {
 // A smart default (Urgent) means most people never touch it. Sort is presentation-only — nothing added or
 // hidden, the same entries reorder.
 type DoSort = 'urgent' | 'important' | 'quick';
-function entryMetrics(e: DeckEntry, today: string) {
+// The verdict WEIGHT for a deck entry — READ from the server's `itemWeights` (lib/brains/verdict.ts, the ONE
+// judgment authority), never re-derived here. A bundle takes its most-important member's weight.
+function entryWeight(e: DeckEntry, weights: Record<string, number>): number {
+  if (e.kind === 'deal') return e.deal.weight;
+  if (e.kind === 'bundle') return e.items.reduce((mx, it) => Math.max(mx, weights[it.entityId] ?? 0), 0);
+  if (e.kind === 'single') return weights[e.item.entityId] ?? 0;
+  return weights[e.p.itemId ?? ''] ?? 0;
+}
+function entryMetrics(e: DeckEntry, today: string, weights: Record<string, number>) {
+  const weight = entryWeight(e, weights);
+  // A slipping deal is undated but AGING — treat it as soft-urgent (you're overdue on the relationship) so it
+  // surfaces even in the Urgent lens; its verdict weight carries the Important lens.
+  if (e.kind === 'deal') return { urg: 1, effort: 2, hasInit: true, size: 1, weight };
   if (e.kind === 'bundle') {
     const its = e.items;
-    return { urg: its.some((i) => i.overdue) ? 0 : its.some((i) => i.dueToday) ? 1 : its.some((i) => i.dueDate) ? 2 : 3, effort: 3, hasInit: true, size: its.length };
+    return { urg: its.some((i) => i.overdue) ? 0 : its.some((i) => i.dueToday) ? 1 : its.some((i) => i.dueDate) ? 2 : 3, effort: 3, hasInit: true, size: its.length, weight };
   }
   if (e.kind === 'single') {
     const it = e.item;
-    return { urg: it.overdue ? 0 : it.dueToday ? 1 : it.dueDate ? 2 : 3, effort: it.effort === 'quick' ? 0 : it.effort === 'deep' ? 2 : 1, hasInit: !!it.initiative, size: 1 };
+    return { urg: it.overdue ? 0 : it.dueToday ? 1 : it.dueDate ? 2 : 3, effort: it.effort === 'quick' ? 0 : it.effort === 'deep' ? 2 : 1, hasInit: !!it.initiative, size: 1, weight };
   }
   const p = e.p;
   const dueToday = !!(p.dueDate && p.dueDate === today);
-  return { urg: p.overdue ? 0 : dueToday ? 1 : p.dueDate ? 2 : 3, effort: p.effort === 'quick' ? 0 : p.effort === 'deep' ? 2 : 1, hasInit: !!p.initiative, size: p.items?.length ?? 1 };
+  return { urg: p.overdue ? 0 : dueToday ? 1 : p.dueDate ? 2 : 3, effort: p.effort === 'quick' ? 0 : p.effort === 'deep' ? 2 : 1, hasInit: !!p.initiative, size: p.items?.length ?? 1, weight };
 }
-function sortEntries(entries: DeckEntry[], mode: DoSort): DeckEntry[] {
+function sortEntries(entries: DeckEntry[], mode: DoSort, weights: Record<string, number> = {}): DeckEntry[] {
   const today = new Date().toISOString().slice(0, 10);
   return entries
-    .map((e, i) => ({ e, i, m: entryMetrics(e, today) }))
+    .map((e, i) => ({ e, i, m: entryMetrics(e, today, weights) }))
     .sort((A, B) => {
       const a = A.m, b = B.m;
+      // "Important" now leads with the BRAIN VERDICT weight (relationship + deal stakes) — the existing
+      // heuristic (project-tied, size) is only the tiebreak where no verdict exists (coverage tail).
       const d = mode === 'urgent'
         ? a.urg - b.urg
         : mode === 'important'
-          ? ((b.hasInit ? 1 : 0) - (a.hasInit ? 1 : 0)) || (b.size - a.size) || (a.urg - b.urg)
+          ? (b.weight - a.weight) || ((b.hasInit ? 1 : 0) - (a.hasInit ? 1 : 0)) || (b.size - a.size) || (a.urg - b.urg)
           : (a.effort - b.effort) || (a.size - b.size) || (a.urg - b.urg);
       return d || (A.i - B.i); // stable: preserve the base order on ties
     })
@@ -1385,15 +1473,12 @@ function mergeBrief(prev: Brief | null, next: Brief): Brief {
     };
   }
 
-  // "In motion" (activeInitiatives) is folded into the cached brief and can arrive EMPTY on a stale/
-  // pre-fill response while the background regen is still computing it. Preserve the last-good set so the
-  // strip never blanks on a background refetch (e.g. returning from Projects/Timeline) — same principle as
-  // the enriched-text preservation above.
-  const activeInitiatives = (next.activeInitiatives && next.activeInitiatives.length)
-    ? next.activeInitiatives
-    : (prev.activeInitiatives ?? next.activeInitiatives);
 
-  return { ...next, mustRespond, keepAnEyeOn, activeInitiatives };
+  // The briefing composes in the BACKGROUND (daySig-gated) — a refetch right after a cache-bust carries
+  // briefing:null until the compose lands. Preserve last-good so the prose never flashes out (the same
+  // last-good discipline as mustRespond).
+  const briefing = next.briefing ?? prev.briefing ?? null;
+  return { ...next, mustRespond, keepAnEyeOn, briefing };
 }
 
 export function HomeView() {
@@ -1407,14 +1492,26 @@ export function HomeView() {
   useEffect(() => { try { const s = localStorage.getItem('aug-do-sort'); if (s === 'urgent' || s === 'important' || s === 'quick') setDoSort(s); } catch { /* ignore */ } }, []);
   const chooseSort = (v: DoSort) => { setDoSort(v); setFocusKey(null); try { localStorage.setItem('aug-do-sort', v); } catch { /* ignore */ } };
   const [dismissed, setDismissed] = useState<Set<string>>(new Set()); // itemIds acted this session → live count + list refill
+  const [dismissedDeals, setDismissedDeals] = useState<Set<string>>(new Set()); // proactive slipping-deal keys dismissed ("not now") this session
+  const dismissDeal = useCallback((key: string) => setDismissedDeals((prev) => new Set(prev).add(key)), []);
   // Ids of priority CARDS + commitments cleared this session (Done/Dismiss). Separate from `dismissed`
   // (which is keyed on must-respond reply itemIds) so we can decrement `needYou` for cards/commitments
   // without disturbing the digest's own refill logic. Keyed by the row's own id → idempotent counting.
   const [clearedIds, setClearedIds] = useState<Set<string>>(new Set());
-  const [mutedKeys, setMutedKeys] = useState<Set<string>>(new Set()); // initiatives muted this session (optimistic hide; reset on settled refetch — a revived one re-shows)
-  const [trackedKeys, setTrackedKeys] = useState<Set<string>>(new Set()); // initiatives just-tracked this session (optimistic "Tracked"; reset on settled refetch — the real project_id takes over)
+  // The briefing's struck-refs: anything acted on this session (strike-and-collapse; the background
+  // re-reason re-authors the prose on the next shape change).
+  const actedIds = useMemo(() => new Set([...dismissed, ...clearedIds]), [dismissed, clearedIds]);
+  const briefNav = useBriefingNavigate((v) => setView(v as HomeViewLens));
   const [sessionCleared, setSessionCleared] = useState(0); // this session's Done/Dismiss/Send → ring `cleared`
   const [activityOpen, setActivityOpen] = useState(false); // right-side Activity slide-over
+  // Initiative Brain state — joined into the deck so a bundle (an initiative) shows WHERE IT STANDS + its ONE
+  // next move (the "across your work" data, unified INTO the one list — no separate second list). Keyed by
+  // normalized label to match the bundle key (i:<normKey>). Instant-load cached.
+
+  useEffect(() => {
+    let alive = true;
+    return () => { alive = false; };
+  }, []);
   const [view, setViewState] = useState<HomeViewLens>('dashboard'); // Home lens: dashboard · timeline · projects
   const [projectDetailOpen, setProjectDetailOpen] = useState(false); // a project deep-dive is open → hide the Home greeting header
   // Reflect the lens in the URL (?view=…) WITHOUT a reload (replaceState, not a soft nav) — deep-linkable,
@@ -1480,6 +1577,9 @@ export function HomeView() {
       seen.add(key);
       return true;
     }).slice(0, 6);
+    // Warm the deep-dive CONTENT cache for these same top items right away (cheap read queries, no AI) —
+    // so opening any of them is instant even before the user hovers. Deduped + skips already-warm keys.
+    for (const t of queue) prefetchItem(`/item/${t.entityId}?kind=${t.kind}`);
     // Fire sequentially with a small stagger so we don't hammer the reasoning tier all at once.
     queue.forEach((t, i) => {
       const key = `${t.kind}:${t.entityId}`;
@@ -1538,8 +1638,6 @@ export function HomeView() {
         for (const k of b?.keepAnEyeOn?.items ?? []) if (k.itemId) freshIds.add(k.itemId);
         setDismissed((prev) => new Set([...prev].filter((id) => freshIds.has(id))));
         setClearedIds((prev) => new Set([...prev].filter((id) => freshIds.has(id))));
-        setMutedKeys(new Set()); // server is authoritative (muted = suppressed; revived = re-included)
-        setTrackedKeys(new Set()); // server is authoritative (the refetched initiative now carries project_id)
       }
       // On a background refresh the server now counts this session's actions, so drop the transient
       // client ring bump to avoid double-counting.
@@ -1570,7 +1668,10 @@ export function HomeView() {
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onVisible);
     const id = window.setInterval(() => { if (document.visibilityState === 'visible') load(true); }, 90_000);
-    return () => { aliveRef.current = false; document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onVisible); window.clearInterval(id); };
+    // Instant sync when a project is created/attached/tracked anywhere (meetings sidebar, an item deep-dive,
+    // another tab) — In-motion + the Projects lens reflect it without a manual reload.
+    const offProjects = onProjectsUpdated(() => load(true));
+    return () => { aliveRef.current = false; document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onVisible); window.clearInterval(id); offProjects(); };
   }, [load]);
 
   // Persist brief + team to localStorage so the next reload hydrates instantly (see the mount effect above).
@@ -1706,47 +1807,6 @@ export function HomeView() {
     showUndoToast({ message: `Muted ${sender}`, entityType: 'sender', entityId: sender, onUndo: () => load(true) });
   };
 
-  // ── In-motion curation (P3) — the two orthogonal initiative actions on the chip-expand ──────────────
-  // MUTE ("not relevant"): optimistic-hide the cluster (mutedKeys), persist via /api/initiatives/mute, and
-  // offer Undo → /api/restore un-mutes + re-shows. Cluster-only; underlying items untouched.
-  const muteInitiative = (key: string, label: string) => {
-    markActed();
-    setMutedKeys((prev) => new Set(prev).add(key));
-    fetch('/api/initiatives/mute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, label }) }).catch(() => {});
-    showUndoToast({
-      message: `Marked "${label}" not relevant`, entityType: 'initiative', entityId: key,
-      onUndo: () => { setMutedKeys((prev) => { const n = new Set(prev); n.delete(key); return n; }); load(true); },
-    });
-  };
-  // TRACK ("as a project"): formalize via accept-suggestion. Stays in In-motion (it's now a tracked
-  // project) — no optimistic removal; a background refresh reflects its projectId.
-  const trackInitiative = async (init: ActiveInitiative) => {
-    markActed();
-    // OPTIMISTIC: mark it tracked instantly (the tile flips to "Tracked" + the button disables) so it feels
-    // immediate — the background refetch below then confirms with the real project_id. Roll back on error.
-    setTrackedKeys((prev) => new Set(prev).add(init.key));
-    try {
-      const res = await fetch('/api/projects/accept-suggestion', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: init.label, items: init.members.map((m) => ({ table: m.table, id: m.id })) }),
-      });
-      if (!res.ok) throw new Error();
-      toast.success(`Tracking "${init.label}" as a project`);
-      load(true);
-    } catch {
-      setTrackedKeys((prev) => { const n = new Set(prev); n.delete(init.key); return n; });
-      toast.error('Could not create the project');
-    }
-  };
-  // Deep-link the chip's "Open in Projects" to land on THIS initiative's suggestion (?initiative=<key>).
-  const openProjectsAt = (key: string) => {
-    setViewState('projects');
-    const url = new URL(window.location.href);
-    url.searchParams.set('view', 'projects');
-    url.searchParams.set('initiative', key);
-    window.history.replaceState({}, '', url);
-  };
-
   // Called by the Activity-log Undo (which lives in a separate component tree and can't reach this
   // state). After a restore succeeds there, this un-hides the item on the Home for ANY type: drop its
   // id from the session filter sets, un-bump the ring, and refetch immediately so the restored item
@@ -1779,7 +1839,6 @@ export function HomeView() {
   // action is pulled out of the lists: "What needs you" / "Your next moves" / waiting show the COMPLETE set,
   // so a project's action can never be hidden. In-motion is the project-level *state* glance; the lists are
   // the item-level actions. Two granularities, one truth.
-  const activeInitiatives = (b?.activeInitiatives ?? []).filter((i) => !mutedKeys.has(i.key)); // hide session-muted (optimistic; server suppresses them on next load)
   const looseReplies = digestReplies;
   const looseCards = cards;
   // Filter cleared ids (done/dismiss) so a commitment drops from the deck the moment it's acted — otherwise
@@ -2044,9 +2103,9 @@ export function HomeView() {
               {/* ONE tight summary line — the teaser (else the briefLine). No bullets, no "Don't miss"
                   banner, no status chips: the sections + their Label counts already carry the numbers,
                   and the first emphasized digest row IS the focal "start here". Straight into the brief. */}
-              {(b?.tldr?.teaser || b?.briefLine) && (
+              {!b?.briefing && (b?.tldr?.teaser || b?.briefLine) ? (
                 <p className="mt-2 text-[14.5px] text-neutral-500 leading-relaxed max-w-[760px]">{b?.tldr?.teaser || b?.briefLine}</p>
-              )}
+              ) : null}
               {/* KPI strip removed (July 13) — it duplicated the per-section counts + a vanity "N filtered".
                   Counts now live only on the section headers + the day-cleared ring. */}
             </div>
@@ -2074,11 +2133,11 @@ export function HomeView() {
         {/* TIMELINE lens — the unified work-item spine laid out by when (the floating switcher toggles). The
             keyed RiseIn re-triggers the shared rise-in on each switch, so a lens change feels as smooth as
             the dashboard (never an abrupt swap). */}
-        {view === 'timeline' && <RiseIn key="lens-timeline"><TimelineView /></RiseIn>}
+        {view === 'timeline' && <RiseIn key="lens-timeline"><TimelineGantt onDetailChange={setProjectDetailOpen} /></RiseIn>}
 
         {/* PROJECTS lens — initiatives grouping your work (goals + rules your coworkers respect).
             onDetailChange lets a project deep-dive hide the Home greeting above (deep-dive framing). */}
-        {view === 'projects' && <RiseIn key="lens-projects"><ProjectsView onDetailChange={setProjectDetailOpen} /></RiseIn>}
+        {view === 'projects' && <RiseIn key="lens-projects"><PortfolioView onDetailChange={setProjectDetailOpen} /></RiseIn>}
 
         {view === 'dashboard' && (<>
         {nothing && (
@@ -2101,9 +2160,13 @@ export function HomeView() {
             {/* ── ACTION content ─────────────────────────────────────────────────────────────── */}
             <div className="min-w-0 gap-10 flex-1 flex flex-col">
 
-            {/* IN MOTION / "Your projects" strip REMOVED from the Home (July 14) — projects now live only on
-                the Projects page. The Home is purely "what needs you, right now". `activeInitiatives` is
-                still computed + cached (Projects reads it), just no longer rendered here. */}
+            {/* THE REASONED BRIEFING body — the brain's action/watchlist/pulse paragraphs, every mention a
+                live chip. The deck below is its UNFOLDED state. Absent briefing → nothing (old UI stands). */}
+            {b?.briefing && (
+              <RiseIn>
+                <BriefingBlock briefing={b.briefing} clearedIds={actedIds} onNavigate={briefNav} />
+              </RiseIn>
+            )}
 
             {/* 1 · WHAT NEEDS YOU — ONE prioritized list of everything you owe: email replies, action
                 notices, and commitments, all rendered by the same DoRow (a leading TYPE ICON tells them
@@ -2119,6 +2182,7 @@ export function HomeView() {
                 // never render twice. Never echo the subject/snippet as a fake ask.
                 primary: m.who, ask: (m.ask && m.ask.trim() && m.ask.trim() !== (m.subject ?? '').trim()) ? m.ask : '', second: m.subject ?? null,
                 when: fmtWhen(m.receivedAt), effort: m.effort ?? null, dueDate: m.dueDate ?? null, initiative: m.initiative ?? null, initiativeTotal: m.initiativeTotal ?? null,
+                relCue: b?.personCues?.[m.itemId] ?? null,
               }));
               const noticeItems: DoItem[] = (b?.actionNotices ?? []).filter((a) => !clearedIds.has(a.itemId) && !dismissed.has(a.itemId)).map((a) => ({
                 source: 'notice', key: `n-${a.itemId}`, entityId: a.itemId, href: `/item/${a.itemId}?kind=email`,
@@ -2151,22 +2215,43 @@ export function HomeView() {
               // map each bundle-or-single to a node (a bundle collapses N atoms into ONE row; rest stay plain).
               const doNodes = bundleDoItems(doItems, b?.bundles ?? {}, b?.bundleNames ?? {});
               // The DECK entries — one ordered list of heroes-or-peeks (bundles, single rows, priority cards).
+              // PROACTIVE slipping deals → deck cards (verdict `slipping`, deduped server-side vs the actionable
+              // pool), minus any dismissed this session. Weighted by the verdict → they sort into place; they're
+              // the chief-of-staff "this is quietly aging" nudge, in the ONE digest, no new section.
+              const liveDeals = (b?.slippingDeals ?? []).filter((d) => !dismissedDeals.has(d.key));
+              // THE BRIEF de-dup: items the brain SENTENCED live in the prose above — they leave the deck
+              // (except the hero, which carries the inline action). The folded tail IS the deck.
+              const sentencedIds = new Set(
+                (b?.briefing?.refs ?? []).filter((r) => r.kind === 'action' && !(b?.briefing?.tail ?? []).includes(r.itemId)).map((r) => r.itemId),
+              );
               const entries: DeckEntry[] = [
                 ...doNodes.map((n): DeckEntry => n.kind === 'bundle'
-                  ? { key: n.key, kind: 'bundle', title: n.title, why: n.why, items: n.items }
+                  // Join the ENTITY state onto the bundle (One Brain: the brief's membership join computed
+                  // bundleStates per bundle key server-side — works for initiative AND meeting/thread
+                  // bundles, since it resolves through the atoms' entity links, not label matching).
+                  ? { key: n.key, kind: 'bundle', title: n.title, why: n.why, items: n.items, state: b?.bundleStates?.[n.key.slice(2)] ?? null }
                   : { key: n.key, kind: 'single', item: n.item }),
                 ...bodyCards.map((p): DeckEntry => ({ key: p.id, kind: 'priority', p })),
-              ];
-              const liveCount = doItems.length + liveBodyCards.length;
+                ...liveDeals.map((d): DeckEntry => ({ key: `deal-${d.key}`, kind: 'deal', deal: d })),
+              ].filter((e, i) =>
+                // De-dup vs THE BRIEF: sentenced items live in the prose; keep the hero (i===0) for its
+                // inline action, drop the other singles/cards the brain already sentenced.
+                i === 0 || !sentencedIds.size
+                || (e.kind === 'single' ? !sentencedIds.has(e.item.entityId)
+                  : e.kind === 'priority' ? !(e.p.itemId && sentencedIds.has(e.p.itemId)) && !sentencedIds.has(e.p.id)
+                  : true));
+              const liveCount = doItems.length + liveBodyCards.length + liveDeals.length;
               // Render one entry as its FULL hero card (the existing renderers keep every inline action).
               const renderFull = (e: DeckEntry, emphasis: boolean) =>
                 e.kind === 'bundle'
-                  ? <BundleGroup title={e.title} why={e.why} items={e.items} emphasis={emphasis} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />
+                  ? <BundleGroup title={e.title} why={e.why} items={e.items} state={e.state} emphasis={emphasis} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />
                   : e.kind === 'single'
                     ? <DoRow item={e.item} emphasis={emphasis} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />
-                    : <PriorityCard p={e.p} first={emphasis} expanded={expanded === e.p.id} onToggle={() => setExpanded(expanded === e.p.id ? null : e.p.id)} onCleared={onCleared} onUndoInbox={toastInbox} />;
+                    : e.kind === 'deal'
+                      ? <DealCard deal={e.deal} emphasis={emphasis} onDismiss={dismissDeal} />
+                      : <PriorityCard p={e.p} first={emphasis} expanded={expanded === e.p.id} onToggle={() => setExpanded(expanded === e.p.id ? null : e.p.id)} onCleared={onCleared} onUndoInbox={toastInbox} />;
               // Order by the chosen lens (urgent / important / quick wins) — presentation-only reorder.
-              const ordered = sortEntries(entries, doSort);
+              const ordered = sortEntries(entries, doSort, b?.itemWeights ?? {});
               // FOCUS + PEEK DECK — one hero (the top, or a peek you promoted); the REST always stay visible as
               // peeks so nothing disappears. Clearing the hero drops it and the next slides into focus.
               const hero = ordered.find((e) => e.key === focusKey) ?? ordered[0];
@@ -2211,8 +2296,11 @@ export function HomeView() {
               );
             })()}
 
-            {/* Project Pulse removed — redundant with the "In motion" strip at the top of the Home (both
-                answered "which initiatives are moving?") and the full Projects lens. One project cue, not two. */}
+            {/* ── MOVING · nothing needed — the calm reassurance tier. Initiatives that need you now surface
+                IN the deck above (as bundle cards carrying momentum + next move); this collapsed strip holds
+                only the ones that are progressing but need nothing from you, so the Home reads as ONE
+                initiative-aware list, not two competing rollups. Renders nothing until states populate. */}
+            {!b?.briefing?.pulse && <RiseIn><MovingTier exclude={new Set(b?.deckEntityIds ?? [])} /></RiseIn>}
 
             {/* ── ZONE 3 · AMBIENT BAR — a sticky calm footer of count chips, pinned to the bottom of the
                 column so it's always reachable; the chosen section expands UPWARD. Calm at rest, one tap away. */}

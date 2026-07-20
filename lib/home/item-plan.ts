@@ -558,7 +558,7 @@ export async function generateItemPlan(
     `--- ITEM (${input.kind}) ---\n${context || '(no additional context)'}`;
 
   try {
-    // Use the CLASSIFICATION tier, NOT planning. On bedrock_optimised, planning = Kimi (a REASONING model)
+    // Use the CLASSIFICATION tier — the fast structured-output slot (the shape router in lib/ai/call.ts
     // that burns the whole token budget in its `reasoning` channel and emits EMPTY content — and the richer
     // title+detail ask made it over-reason past even an 8000 cap (35k chars of reasoning, 0 content → the
     // "Handle this" fallback, panel empty). Classification routes to a NON-reasoning model (Bedrock Haiku 4.5

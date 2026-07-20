@@ -3,6 +3,7 @@
 
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { buildVoiceBlock, buildMeetingFollowupContext } from '@/lib/context/voice-context';
+import { renderBrainContext } from '@/lib/context/brain-context';
 import { detectLanguage } from '@/lib/inbox/detect-language';
 import { coerceUnderstanding, languageName } from '@/lib/inbox/item-understanding';
 
@@ -22,12 +23,19 @@ export async function generateReplyDraft(
   planSteps?: string[] | null,
 ): Promise<string> {
   const from = String(sourceData.from || sourceData.from_address || '');
+  const fromName = String(sourceData.from_name || '');
   const subject = String(sourceData.subject || '');
   const body = String(sourceData.body || '');
 
-  const [voiceBlock, meetingFollowup] = await Promise.all([
+  // The unified `understanding` (coerced up-front) — its `initiative` grounds the Brain-context read below.
+  const understanding = coerceUnderstanding((sourceData as Record<string, unknown>).understanding);
+
+  const [voiceBlock, meetingFollowup, brainBlock] = await Promise.all([
     buildVoiceBlock(userId, from, client).catch(() => ''),
     buildMeetingFollowupContext(userId, from, client).catch(() => ''),
+    // Step 2: read the durable Person + Initiative brains — the draft reasons WITH the relationship (who
+    // they are, who owes whom, how they write) + where the deal stands. Additive, non-fatal, no AI.
+    renderBrainContext(client, userId, { personEmail: from, personName: fromName, initiative: understanding?.initiative ?? null }).catch(() => ''),
   ]);
   let userName = 'me';
   try {
@@ -39,8 +47,7 @@ export async function generateReplyDraft(
   // — reasoned over the full thread in the classification pass, so it's decisive even on short text
   // (where the stopword detector fell back to the user's PT-heavy voice → the A2 wrong-language bug).
   // `detectLanguage` is now only the FALLBACK when there's no understanding (legacy items). The voice
-  // block governs TONE only — never the language.
-  const understanding = coerceUnderstanding((sourceData as Record<string, unknown>).understanding);
+  // block governs TONE only — never the language. (`understanding` is coerced up-front, above.)
   const detected = languageName(understanding?.language) || detectLanguage(`${subject}\n${body}`);
   const langRule = detected
     ? `IMPORTANT — LANGUAGE: The email you are replying to is written in ${detected}. Write your ENTIRE ` +
@@ -66,7 +73,7 @@ export async function generateReplyDraft(
   const res = await aiCreate(ai, {
     model, max_tokens: 600, temperature: 0.6,
     messages: [{ role: 'user', content:
-      `${voiceBlock ? voiceBlock + '\n\n' : ''}${meetingFollowup ? meetingFollowup + '\n\n' : ''}` +
+      `${voiceBlock ? voiceBlock + '\n\n' : ''}${meetingFollowup ? meetingFollowup + '\n\n' : ''}${brainBlock ? brainBlock + '\n\n' : ''}` +
       `${planBlock}` +
       `${instructions?.trim() ? `Follow this guidance for the reply: ${instructions.trim()}\n\n` : ''}` +
       // Anchor the perspective hard — the model otherwise mirrors the sender and signs with THEIR name.
@@ -92,8 +99,11 @@ export async function generateNudgeDraft(
   client: DBClient,
 ): Promise<string> {
   const recipientEmail = (opts.counterparty || '').match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || null;
-  const [voiceBlock] = await Promise.all([
+  const [voiceBlock, brainBlock] = await Promise.all([
     buildVoiceBlock(userId, recipientEmail, client).catch(() => ''),
+    // Step 2: the nudge reasons WITH the relationship — who they are, what's actually open with them, their
+    // register — so a check-in lands right instead of generic. Additive, non-fatal, no AI.
+    renderBrainContext(client, userId, { personEmail: recipientEmail, personName: recipientEmail ? null : opts.counterparty }).catch(() => ''),
   ]);
   let userName = 'me';
   try {
@@ -107,7 +117,7 @@ export async function generateNudgeDraft(
   const res = await aiCreate(ai, {
     model, max_tokens: 400, temperature: 0.6,
     messages: [{ role: 'user', content:
-      `${voiceBlock ? voiceBlock + '\n\n' : ''}` +
+      `${voiceBlock ? voiceBlock + '\n\n' : ''}${brainBlock ? brainBlock + '\n\n' : ''}` +
       `You are ${userName}. Write a brief, friendly NUDGE from ${userName} to ${who}, following up on ` +
       `something ${userName} is waiting on them for: "${opts.description}".${aged} Keep it warm, low-pressure, ` +
       `and short — a gentle check-in, not a demand. Address ${who} and sign as ${userName} — NEVER sign as ` +

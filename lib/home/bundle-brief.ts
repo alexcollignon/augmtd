@@ -1,14 +1,13 @@
 // ── Home simplification L1 — SERVER-SIDE bundling of the "what needs you" atoms into human-sized units.
 // The grouping DECISION lives here (one clean home), the client just renders by the key we hand it.
 //
-// DETERMINISTIC by design (the same discipline as the initiative machine: reason ONCE at labeling, group
-// CHEAPLY — never a freeform AI clustering pass, which is exactly what merged distinct clients before). An
-// atom bundles by the HIGHEST-priority key it carries whose group has ≥2 members:
-//   1. INITIATIVE (the deal/client, reasoned upstream) — the broadest cohesive unit; distinct initiatives
-//      → distinct keys → NEVER merge, by construction.
-//   2. MEETING source — a meeting's commitments group together even when they carry no initiative label
-//      (coverage for meeting-driven users). Fallback below initiative so an initiative never splits.
-//   3. THREAD — items on one email thread (a minor fallback for un-labelled correspondence).
+// DETERMINISTIC by design (reason ONCE at recognition, group CHEAPLY — never a freeform AI clustering
+// pass). ONE BRAIN (Blocker C): an atom bundles by the HIGHEST-priority key it carries whose group has ≥2
+// members:
+//   1. ENTITY (the atom's own entity link — the memory already judged what it's about, with a reason).
+//      Distinct entities → distinct keys → NEVER merge, by construction. The label-era initiative key died.
+//   2. MEETING source — a meeting's commitments group together even when unlinked (structural coverage).
+//   3. THREAD — items on one email thread (a minor fallback for unrecognized correspondence).
 //
 // Returns { atomId → { key, label } } for every atom in a ≥2 bundle; atoms not in the dictionary are
 // singles. PRESENTATION grouping only — nothing is reclassified or dropped; the client re-counts the atoms
@@ -16,7 +15,7 @@
 
 export type BundleAtom = {
   id: string;
-  initiative?: string | null;
+  entity?: { id: string; name: string } | null; // the atom's OWN entity link (resolved by the caller)
   meetingId?: string | null;
   meetingLabel?: string | null;
   threadId?: string | null;
@@ -24,13 +23,12 @@ export type BundleAtom = {
 };
 export type BundleRef = { key: string; label: string };
 
-const normKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
 const cleanSubject = (s?: string | null) => (s ? s.replace(/^\s*(re|fwd|fw|enc)\s*:\s*/i, '').trim() : '');
 
 // Candidate bundle keys for an atom, in PRIORITY order (initiative > meeting > thread).
 function candidatesOf(a: BundleAtom): BundleRef[] {
   const out: BundleRef[] = [];
-  if (a.initiative) { const k = normKey(a.initiative); if (k) out.push({ key: `i:${k}`, label: a.initiative }); }
+  if (a.entity) out.push({ key: `e:${a.entity.id}`, label: a.entity.name });
   if (a.meetingId) out.push({ key: `m:${a.meetingId}`, label: a.meetingLabel || 'Meeting follow-ups' });
   if (a.threadId) out.push({ key: `t:${a.threadId}`, label: cleanSubject(a.subject) || 'This thread' });
   return out;

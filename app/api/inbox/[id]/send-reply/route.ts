@@ -164,6 +164,13 @@ export async function POST(
     after(async () => {
       const { reconcileItemLabel } = await import('@/lib/inbox/reconcile-item-label');
       await reconcileItemLabel({ userId: user.id, itemId: id, item, targetLabel: 'done', client: supabase });
+      // LIVE Initiative Brain (S5) — you just sent on this thread → refresh its initiative's state (whoOwes
+      // flips, momentum moves). Background, sig-gated, non-fatal.
+      const init = (sourceData as { understanding?: { initiative?: string } } | null)?.understanding?.initiative;
+      // LIVE Person Brain (S1b) — you just replied to this person → refresh their state (you no longer owe;
+      // momentum/last-touch move). Sig-gated, non-fatal, degrades to no-op pre-migration.
+      const recip = (to as string) || (sourceData as { from?: string } | null)?.from;
+      if (recip) { try { const { refreshPersonStates } = await import('@/lib/people/state-store'); await refreshPersonStates(supabase, user.id, [recip]); } catch { /* non-fatal */ } }
     });
 
     // Chain handoff: a promise inside the reply ("I'll send X Friday") becomes a follow-up

@@ -49,11 +49,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const subject = item.work_title || sd.subject || '(no subject)';
 
-  let projectName: string | null = null;
-  if (item.project_id) {
-    const { data: project } = await supabase.from('projects').select('id, name').eq('id', item.project_id).eq('user_id', user.id).maybeSingle();
-    projectName = project?.name ?? null;
-  }
+  // ONE BRAIN: the label-era project chip died; the deep-dive's entity control resolves membership itself.
+  const projectName: string | null = null;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type EmailRow = Record<string, any>;
@@ -116,6 +113,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     relevance,
     projectId: item.project_id ?? null,
     projectName,
+    // The AI best-guess initiative label (for the Add-to-project pre-suggestion when unassigned).
+    initiative: getUnderstanding(item)?.initiative ?? null,
     fromName: newest?.fromName ?? sd.from_name ?? null,
     fromAddress: newest?.from ?? sd.from ?? null,
     receivedAt: newest?.receivedAt ?? sd.received_at ?? item.created_at ?? null,

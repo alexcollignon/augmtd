@@ -927,7 +927,8 @@ Respond ONLY with valid JSON matching the structure above.`;
 // DEFAULT path (promoted from a recovery-only fallback): Kimi flakiness on the main planning pass can
 // never affect the understanding. AGNOSTIC — reasons over the addressing facts + body, never a
 // keyword/header rule.
-export async function computeUnderstanding(email: EmailData, supabase: SupabaseClient): Promise<ItemUnderstanding | null> {
+export async function computeUnderstanding(email: EmailData, supabase: SupabaseClient, opts: { useEntityContext?: boolean } = {}): Promise<ItemUnderstanding | null> {
+  const useEntityContext = opts.useEntityContext !== false; // default ON
   const mine = (email.user_addresses && email.user_addresses.length
     ? email.user_addresses
     : [email.recipient_email].filter(Boolean) as string[]);
@@ -937,13 +938,32 @@ export async function computeUnderstanding(email: EmailData, supabase: SupabaseC
   // sent, so "Friday" resolves correctly regardless of when we process it.
   const refISO = email.received_at && !Number.isNaN(Date.parse(email.received_at)) ? email.received_at : new Date().toISOString();
   const refStr = new Date(refISO).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-  // Context-grounded labeling: the initiatives this SENDER is already associated with, so the model reuses
-  // an existing label instead of inventing a synonym for the same deal (the "Jean-Marie pilot" vs "Soboplac
-  // AI Agent" split). Non-fatal — empty for a new sender, in which case the label is minted fresh as before.
-  const { getInitiativeCandidates, initiativeGroundingClause } = await import('@/lib/inbox/initiative-candidates');
-  const initCand = await getInitiativeCandidates(supabase, email.user_id!, { personEmails: [email.from_address], personNames: [email.from_name] }).catch(() => ({ canonical: null, candidates: [] as string[] }));
-  const initiativeGrounding = initiativeGroundingClause(initCand.canonical, initCand.candidates);
+  // ENTITY / RELATIONSHIP CONTEXT — assemble what we already know about this thread's people and their deal
+  // (the grounded initiative + open commitments + recent/upcoming meetings + other threads) so the model
+  // reasons WITH the neighborhood, like a human who recognizes the sender. Assembled over ALL participants
+  // (from + to + cc, minus the user's own addresses) — a deal spans people, and the label often lives with
+  // someone cc'd (the Soboplac case: Jean-Marie cc'd carries "Soboplac AI Agent System"). Non-fatal.
+  const { initiativeGroundingClause } = await import('@/lib/inbox/initiative-candidates');
+  const { buildEntityContext, renderEntityContextForPrompt } = await import('@/lib/context/entity-context');
+  const { getTeamRoster, renderTeamContext } = await import('@/lib/context/team-context');
+  // ORG / TEAM — the user's professional surroundings: who their own colleagues are, so internal coordination
+  // reads differently from client/partner work and a teammate is never taken for a deal counterparty.
+  const teamContext = renderTeamContext(await getTeamRoster(supabase, email.user_id!).catch(() => ({ names: [], emails: [] })));
+  const mineSet = new Set(mine.map((m) => m.toLowerCase()));
+  const participants = [email.from_address, ...(email.to_addresses ?? []), ...(email.cc_addresses ?? [])]
+    .filter((e) => e && !mineSet.has(String(e).toLowerCase()));
+  const entityCtx = useEntityContext
+    ? await buildEntityContext(supabase, email.user_id!, {
+        emails: participants, names: [email.from_name], threadId: null, excludeItemId: email.id ?? null,
+      }).catch(() => null)
+    : null;
+  // The grounding clause now rides the RICHER all-participants initiative (was sender-only) — so a deal
+  // labeled on a cc'd colleague still consolidates instead of fragmenting.
+  const initiativeGrounding = entityCtx ? initiativeGroundingClause(entityCtx.initiative.label, entityCtx.initiative.variants) : '';
+  const relationshipContext = entityCtx ? renderEntityContextForPrompt(entityCtx) : '';
   const content =
+    (relationshipContext ? `${relationshipContext}\n\n` : '') +
+    teamContext +
     `You judge an email from the seat of the user, whose own address(es) are: ${mine.join(', ') || '(unknown)'}${email.user_name ? ` (name: ${email.user_name})` : ''}.\n` +
     `This email — To: ${(email.to_addresses ?? []).join(', ') || '(none)'} ; Cc: ${(email.cc_addresses ?? []).join(', ') || '(none)'}\n` +
     `From: ${email.from_name} <${email.from_address}>\nSubject: ${email.subject}\nBody:\n${truncateText(email.body, 2000)}\n\n` +

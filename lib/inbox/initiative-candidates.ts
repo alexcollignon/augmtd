@@ -20,6 +20,29 @@ const TTL_MS = 60_000;
 const emailOf = (s?: string | null): string | null =>
   (String(s || '').toLowerCase().match(/[^\s<>"]+@[^\s<>"]+/)?.[0]) || null;
 const nameKey = (s?: string | null): string => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const domainOf = (raw?: string | null): string | null => { const e = emailOf(raw); return e ? (e.split('@')[1] || null) : null; };
+
+// Free providers are NOT corporate domains — a personal gmail address is not an "internal colleague".
+const FREE_EMAIL_DOMAINS = new Set(['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'yahoo.com', 'icloud.com', 'me.com', 'aol.com', 'proton.me', 'protonmail.com', 'gmx.com', 'mail.com', 'yandex.com', 'zoho.com', 'pm.me']);
+
+// The user's CORPORATE domain(s) — non-free-provider domains of their login + connected mailboxes. A person
+// on one of these is an INTERNAL colleague who's on EVERYTHING, so they must NEVER bridge an email to a deal
+// (the documented "Galp swallowed 47 unrelated items via an internal colleague" over-merge). Cached per user.
+const corpMemo = new Map<string, { at: number; domains: Set<string> }>();
+async function corporateDomains(supabase: SupabaseClient, userId: string): Promise<Set<string>> {
+  const c = corpMemo.get(userId);
+  if (c && Date.now() - c.at < TTL_MS) return c.domains;
+  const [{ data: prof }, { data: conns }] = await Promise.all([
+    supabase.from('profiles').select('email').eq('id', userId).maybeSingle(),
+    supabase.from('connections').select('metadata, provider_account_id').eq('user_id', userId),
+  ]);
+  const domains = new Set<string>();
+  const add = (a?: string | null) => { const d = domainOf(a); if (d && !FREE_EMAIL_DOMAINS.has(d)) domains.add(d); };
+  add((prof as { email?: string } | null)?.email);
+  for (const cn of (conns ?? []) as Array<{ metadata: { email?: string } | null; provider_account_id?: string | null }>) add(cn.metadata?.email || cn.provider_account_id);
+  corpMemo.set(userId, { at: Date.now(), domains });
+  return domains;
+}
 
 async function loadLabeled(supabase: SupabaseClient, userId: string) {
   const cached = memo.get(userId);
@@ -54,8 +77,17 @@ export async function getInitiativeCandidates(
 ): Promise<{ canonical: string | null; candidates: string[] }> {
   try {
     const { items, commits } = await loadLabeled(supabase, userId);
-    const emails = new Set((opts.personEmails ?? []).map(emailOf).filter(Boolean) as string[]);
-    const nameTokenSets = (opts.personNames ?? []).map(nameKey).filter((n) => n.length > 2).map((n) => new Set(n.split(' ').filter((t) => t.length > 2)));
+    // INTERNAL-COLLEAGUE GUARD: an internal colleague (same corporate domain) is on everything, so they must
+    // never bridge this email to a deal. Keep only EXTERNAL participant emails for the bridge. And if the
+    // query HAD emails but they were ALL internal (an internal-only thread), don't let names bridge either —
+    // otherwise the internal colleague's NAME re-introduces the over-merge. A name-only query (no emails, e.g.
+    // a commitment counterparty) keeps its names.
+    const corp = await corporateDomains(supabase, userId);
+    const allEmails = (opts.personEmails ?? []).map(emailOf).filter(Boolean) as string[];
+    const externalEmails = allEmails.filter((e) => { const d = e.split('@')[1]; return d && !corp.has(d); });
+    const emails = new Set(externalEmails);
+    const namesAllowed = allEmails.length === 0 || externalEmails.length > 0;
+    const nameTokenSets = (namesAllowed ? (opts.personNames ?? []) : []).map(nameKey).filter((n) => n.length > 2).map((n) => new Set(n.split(' ').filter((t) => t.length > 2)));
     // Link a person across email + name forms: a commitment's counterparty "Jean-Marie" and an email's
     // sender "Jean-Marie LAMBERT" are the same person, so both draw from ONE candidate pool → ONE canonical.
     const nameMatches = (raw?: string | null): boolean => {
@@ -82,17 +114,18 @@ export async function getInitiativeCandidates(
   }
 }
 
-/** Render the grounding clause. Leads with the sender's CANONICAL initiative and tells the labeler to
- * consolidate on it (converge a fragmented deal) while still allowing a genuinely separate deal to split.
- * Empty when there's no established label (new person/thread → label fresh, today's behavior). */
+/** Render the grounding clause — CONTENT-FIRST (chief-of-staff logic). Presents the sender's known areas of
+ * work as a CANDIDATE SET the labeler reasons over by the email's actual content — never a most-frequent
+ * default. A person can run several distinct areas at once; the content decides which one this is (or whether
+ * it's a new one). Empty when the sender is new (label fresh). `canonical`+`otherVariants` are merged into the
+ * candidate set (the parameter shape is kept for back-compat; there is no "preferred" one anymore). */
 export function initiativeGroundingClause(canonical: string | null, otherVariants: string[]): string {
-  if (!canonical) return '';
-  const others = otherVariants.filter((c) => c && c !== canonical);
+  const areas = [...new Set([canonical, ...otherVariants].filter(Boolean) as string[])];
+  if (!areas.length) return '';
   return (
-    `\n- INITIATIVE GROUNDING (converge, don't fragment): this sender's ESTABLISHED initiative label is ` +
-    `"${canonical}". Use "${canonical}" — its EXACT text — for anything about this ongoing relationship/effort, ` +
-    `EVEN IF this particular message emphasises a different facet of it (a meeting, a price, a document, a ` +
-    `sub-topic). ${others.length ? `Older variant labels seen for the SAME relationship: ${others.map((c) => `"${c}"`).join(', ')} — do NOT reuse those; consolidate on "${canonical}". ` : ''}` +
-    `Use a DIFFERENT label ONLY if this item is about a genuinely SEPARATE, unrelated deal or effort with this sender.\n`
+    `\n- AREAS OF WORK WITH THIS SENDER (decide by CONTENT, never by frequency): you already have these DISTINCT areas of work with this person — ${areas.map((a) => `"${a}"`).join(', ')}. ` +
+    `A person is often involved in SEVERAL separate areas at once (e.g. a partnership, a product integration, a hiring intro — same person, different work). ` +
+    `Read THIS email's actual subject/body and decide which ONE area it is about, then reuse that area's EXACT label so the same area stays consolidated. ` +
+    `If the content is clearly about a DIFFERENT or NEW area than any listed, name that area freshly from the content — do NOT force it onto one of the above, and NEVER pick an area just because it is the most common one for this person. The email's content is the decider; the list is only context.\n`
   );
 }

@@ -15,7 +15,9 @@ export type AIUsageSource =
   | 'brief_synthesis'
   | 'worker_briefing'
   | 'team_briefing'
-  | 'alignment_synthesis';
+  | 'alignment_synthesis'
+  | 'brain_synthesis'        // initiative/person brain state synthesis (lib/initiatives/brain.ts, lib/people/brain.ts)
+  | 'bundle_naming';         // Home deck bundle naming (lib/home/name-bundles.ts)
 
 export interface LogAIUsageParams {
   userId: string;

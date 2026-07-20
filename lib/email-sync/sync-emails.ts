@@ -526,6 +526,45 @@ export async function syncEmailsForConnection(
       body_preview: p.body?.slice(0, 500) || '',
     }));
 
+    // ENTITY CONTEXT (Slice 1b) — assemble the relationship neighborhood for the WHOLE batch ONCE, then
+    // attach a compact signal to each envelope so the routing gate (batchClassifyEmails) AND the rules
+    // (batchMatchRules) reason WITH the relationship: a live-deal contact is never routed to noise/fyi, by
+    // construction (the label is decided HERE, before Phase 2). Over all participants (from+to+cc, minus the
+    // user's own addresses) since a deal's label often lives with a cc'd colleague. Non-fatal.
+    try {
+      const emailOfLocal = (s: string) => String(s || '').toLowerCase().match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || null;
+      // The user's OWN addresses — login/profile email + EVERY connected mailbox. MUST be complete: an
+      // unexcluded own address becomes a "participant" and matches the user's entire commitment/meeting
+      // history → a FALSE relationship signal on unrelated mail (e.g. newsletters where the user is a To).
+      const ownAddr = new Set<string>();
+      const ce = emailOfLocal(connection.metadata?.email || connection.provider_account_id || '');
+      if (ce) ownAddr.add(ce);
+      try {
+        const [{ data: _conns }, { data: _prof }] = await Promise.all([
+          adminSupabase.from('connections').select('metadata, provider_account_id').eq('user_id', connection.user_id),
+          adminSupabase.from('profiles').select('email').eq('id', connection.user_id).maybeSingle(),
+        ]);
+        for (const c of (_conns ?? []) as Array<{ metadata: { email?: string } | null; provider_account_id?: string | null }>) {
+          const e = emailOfLocal(c.metadata?.email || c.provider_account_id || ''); if (e) ownAddr.add(e);
+        }
+        const pe = emailOfLocal((_prof as { email?: string } | null)?.email || ''); if (pe) ownAddr.add(pe);
+      } catch { /* connection email alone is the primary signal */ }
+      const { buildEntityContextMap, renderRelationshipSignal } = await import('@/lib/context/entity-context');
+      const sets = parsedMessages.map((p, i) => ({
+        key: String(i),
+        emails: [p.from_address, ...(((p as any).to_addresses as string[]) ?? []), ...(((p as any).cc_addresses as string[]) ?? [])]
+          .map(emailOfLocal).filter((e): e is string => !!e && !ownAddr.has(e)),
+        names: [(p as any).from_name as string | undefined],
+        threadId: ((p as any).thread_id as string | undefined) ?? null,
+      }));
+      const ctxMap = await buildEntityContextMap(adminSupabase, connection.user_id, sets);
+      for (let i = 0; i < envelopes.length; i++) {
+        const ctx = ctxMap.get(String(i));
+        const sig = ctx ? renderRelationshipSignal(ctx) : null;
+        if (sig) envelopes[i].relationship = sig;
+      }
+    } catch { /* non-fatal — the gates fall back to text-only classification */ }
+
     const classMap = await batchClassifyEmails(envelopes, connection.user_id, adminSupabase);
 
     // AI-match rules drive the type via ONE batched call (they're shown as AI rules, so they run
@@ -1866,6 +1905,31 @@ export async function syncEmailsForConnection(
         ...(isPreloaded ? {} : { last_sync: syncStartedAt }),
       })
       .eq('id', connection.id);
+
+    // LIVE Initiative Brain (S5) — an email arriving/sent is an event on its initiative, so refresh the
+    // state for the initiatives this sync TOUCHED (items written in this window), in the background. Bounded
+    // (only the moved initiatives), sig-gated (unchanged cost nothing), non-fatal. The Home-load hook is the
+    // backstop. This is what makes "where it stands" update within seconds of new mail.
+    try {
+      const { data: touched } = await adminSupabase.from('inbox_items')
+        .select('source_data').eq('user_id', connection.user_id).eq('source', 'email')
+        .gte('updated_at', syncStartedAt).limit(200);
+      const rows = (touched ?? []) as Array<{ source_data: { understanding?: { initiative?: string }; from_address?: string; from?: string } | null }>;
+      // LIVE Person Brain (S1b) — a sender who mailed you this sync is an event on that RELATIONSHIP →
+      // refresh their person state (whoOwes/momentum/last-touch move). Sig-gated (unchanged cost nothing),
+      // non-fatal, degrades to no-op pre-migration. Same touched-window query, so no extra fetch.
+      const senders = [...new Set(rows.map((it) => it.source_data?.from_address || it.source_data?.from || '').filter(Boolean))];
+      if (senders.length) {
+        const { refreshPersonStates } = await import('@/lib/people/state-store');
+        await refreshPersonStates(adminSupabase, connection.user_id, senders);
+      }
+      // ONE BRAIN shadow (Phase B) — recognize this sync's work items into the entity memory. SELF-GATING
+      // (no-op unless the user's memory exists — the backfilled evaluation users); non-fatal; capped.
+      try {
+        const { shadowRecognizeTouched } = await import('@/lib/entities/hooks');
+        await shadowRecognizeTouched(adminSupabase, connection.user_id, syncStartedAt);
+      } catch { /* non-fatal */ }
+    } catch { /* non-fatal — Home-load hook backstops */ }
 
   } catch (error) {
     console.error(`Error syncing connection ${connection.id}:`, error);

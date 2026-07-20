@@ -124,7 +124,7 @@ async function buildWorkerRunContext(
   userId: string,
   agentId: string,
 ): Promise<string> {
-  const [agentRes, identityBlock, routinesRes, skillsBlock, integrationsBlock] = await Promise.all([
+  const [agentRes, identityBlock, routinesRes, skillsBlock, integrationsBlock, worldBlock] = await Promise.all([
     adminClient
       .from('custom_agents')
       .select('memory_text, user_preferences')
@@ -141,6 +141,9 @@ async function buildWorkerRunContext(
       .limit(10),
     buildSkillsBlock(adminClient, agentId),
     buildConnectedIntegrationsBlock(adminClient, userId, agentId),
+    // Step 2: the user's WORLD (live initiatives + relationships needing attention) — so the coworker
+    // reasons WITH the deals/people, not a cold prompt. Read-only, non-fatal.
+    import('@/lib/context/brain-context').then((m) => m.renderWorldContext(adminClient, userId)).catch(() => ''),
   ])
 
   const agent = agentRes?.data as { memory_text: string | null; user_preferences: string | null } | null
@@ -167,6 +170,9 @@ async function buildWorkerRunContext(
   }
   if (identityBlock) {
     parts.push(identityBlock)
+  }
+  if (worldBlock) {
+    parts.push(worldBlock)
   }
 
   const routines = (routinesRes?.data ?? []) as Array<{

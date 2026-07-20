@@ -5,6 +5,7 @@ import {
   MagnifyingGlassIcon,
   FolderIcon,
   FolderOpenIcon,
+  SparklesIcon,
   PlusIcon,
   ChevronRightIcon,
   ChevronDownIcon,
@@ -12,7 +13,6 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { Button } from '@/components/ui';
-import type { DriveFolder } from '@/lib/types/drive';
 
 interface Transcript {
   id: string;
@@ -26,24 +26,34 @@ interface Transcript {
   source: 'bot' | 'recording' | 'upload' | 'text';
   summary?: string | null;
   processedAt?: string | null;
-  folderId?: string | null;
+  projectId?: string | null;
   attendees?: Array<{ email: string; name?: string }>;
 }
 
+interface ProjectRef { id: string; name: string }
+interface SuggestionRef { key: string; name: string; meetingCount: number }
+
 interface MeetingsLeftPanelProps {
   transcripts: Transcript[];
-  folders: DriveFolder[];
-  selectedFolderId: string | null;
-  onSelectFolder: (id: string | null) => void;
-  onCreateFolder: (name: string) => Promise<void>;
+  // Projects replace folders as the one organizer (same projects as Home).
+  projects: ProjectRef[];
+  selectedProjectId: string | null;
+  onSelectProject: (id: string | null) => void;
+  onCreateProject: (name: string) => Promise<void>;
+  // Suggested initiatives that have meetings — visible + one-click trackable (mirrors Home Projects).
+  suggestions: SuggestionRef[];
+  selectedSuggestionKey: string | null;
+  onSelectSuggestion: (key: string | null) => void;
+  onTrackSuggestion: (key: string) => void;
+  trackingKey: string | null;
   // Inline note selection (still used for search results)
   selectedMeetingId: string | null;
   onSelectMeeting: (id: string | null) => void;
   // Person filter — state lives in parent, affects Home screen
   filterPersonEmail: string | null;
   onFilterPerson: (email: string | null) => void;
-  // Folder drag-drop
-  onMoveToFolder?: (transcriptId: string, folderId: string | null) => Promise<void>;
+  // Project drag-drop (file a meeting into a project)
+  onMoveToProject?: (transcriptId: string, projectId: string | null) => Promise<void>;
   // Note creation
   onNewNote: () => void;
   // Home navigation
@@ -93,15 +103,20 @@ function fmtElapsed(secs: number) {
 
 export default function MeetingsLeftPanel({
   transcripts,
-  folders,
-  selectedFolderId,
-  onSelectFolder,
-  onCreateFolder,
+  projects,
+  selectedProjectId,
+  onSelectProject,
+  onCreateProject,
+  suggestions,
+  selectedSuggestionKey,
+  onSelectSuggestion,
+  onTrackSuggestion,
+  trackingKey,
   selectedMeetingId,
   onSelectMeeting,
   filterPersonEmail,
   onFilterPerson,
-  onMoveToFolder,
+  onMoveToProject,
   onNewNote,
   onNavigateHome,
   isHome,
@@ -111,13 +126,11 @@ export default function MeetingsLeftPanel({
   onNavigateToRecording,
 }: MeetingsLeftPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [newFolderOpen, setNewFolderOpen] = useState(false);
-  const [newFolderName, setNewFolderName] = useState('');
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
   const [peopleExpanded, setPeopleExpanded] = useState(false);
-  const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
+  const [dragOverProjectId, setDragOverProjectId] = useState<string | null>(null);
   const dragCounterRef = useRef<Map<string, number>>(new Map());
-
-  const userFolders = folders.filter((f) => !f.is_system);
 
   // People aggregation from all processed transcripts
   const people = useMemo(() => {
@@ -146,16 +159,16 @@ export default function MeetingsLeftPanel({
       ).slice(0, 20)
     : null;
 
-  const handleCreateFolder = async () => {
-    if (!newFolderName.trim()) { setNewFolderOpen(false); return; }
-    await onCreateFolder(newFolderName.trim());
-    setNewFolderName('');
-    setNewFolderOpen(false);
+  const handleCreateProject = async () => {
+    if (!newProjectName.trim()) { setNewProjectOpen(false); return; }
+    await onCreateProject(newProjectName.trim());
+    setNewProjectName('');
+    setNewProjectOpen(false);
   };
 
   const handleSelectTranscript = (t: Transcript) => {
     const id = t.calendarEventId ?? t.id;
-    onSelectFolder(null);
+    onSelectProject(null);
     onSelectMeeting(id);
   };
 
@@ -246,36 +259,36 @@ export default function MeetingsLeftPanel({
               {/* Divider */}
               <div className="border-t border-neutral-100 mx-2 my-1" />
 
-              {/* Folders */}
+              {/* Projects — the one organizer (same projects as Home). Filing a meeting here is sticky. */}
               <div className="px-2 pt-1 pb-1">
                 <div className="flex items-center justify-between px-1 mb-1.5">
                   <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">
-                    Folders
+                    Projects
                   </p>
                   <button
-                    onClick={() => setNewFolderOpen(true)}
+                    onClick={() => setNewProjectOpen(true)}
                     className="p-0.5 text-neutral-400 hover:text-neutral-600 transition-colors"
-                    title="New folder"
+                    title="New project"
                   >
                     <PlusIcon className="w-3 h-3" />
                   </button>
                 </div>
 
-                {newFolderOpen && (
+                {newProjectOpen && (
                   <div className="flex items-center gap-1 px-1 mb-1.5">
                     <input
                       autoFocus
-                      value={newFolderName}
-                      onChange={(e) => setNewFolderName(e.target.value)}
+                      value={newProjectName}
+                      onChange={(e) => setNewProjectName(e.target.value)}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleCreateFolder();
-                        if (e.key === 'Escape') { setNewFolderOpen(false); setNewFolderName(''); }
+                        if (e.key === 'Enter') handleCreateProject();
+                        if (e.key === 'Escape') { setNewProjectOpen(false); setNewProjectName(''); }
                       }}
-                      placeholder="Folder name"
+                      placeholder="Project name"
                       className="flex-1 min-w-0 border border-neutral-200 rounded px-1.5 py-0.5 text-[11px] outline-none focus:border-indigo-400"
                     />
                     <button
-                      onClick={handleCreateFolder}
+                      onClick={handleCreateProject}
                       className="px-1.5 py-0.5 bg-indigo-600 text-white text-[10px] rounded font-medium"
                     >
                       Add
@@ -283,50 +296,50 @@ export default function MeetingsLeftPanel({
                   </div>
                 )}
 
-                {userFolders.map((folder) => {
+                {projects.filter((project) => transcripts.some((t) => t.projectId === project.id)).map((project) => {
                   const count = transcripts.filter(
-                    (t) => t.processed && t.botState !== 'failed' && t.folderId === folder.id
+                    (t) => t.processed && t.botState !== 'failed' && t.projectId === project.id
                   ).length;
-                  const isSelected = selectedFolderId === folder.id;
-                  const isDragOver = dragOverFolderId === folder.id;
+                  const isSelected = selectedProjectId === project.id;
+                  const isDragOver = dragOverProjectId === project.id;
                   return (
                     <button
-                      key={folder.id}
+                      key={project.id}
                       onClick={() => {
                         onSelectMeeting(null);
-                        onSelectFolder(isSelected ? null : folder.id);
+                        onSelectProject(isSelected ? null : project.id);
                       }}
                       onDragOver={(e) => {
-                        if (!onMoveToFolder) return;
+                        if (!onMoveToProject) return;
                         e.preventDefault();
                         e.dataTransfer.dropEffect = 'move';
                       }}
                       onDragEnter={(e) => {
-                        if (!onMoveToFolder) return;
+                        if (!onMoveToProject) return;
                         e.preventDefault();
-                        const cnt = (dragCounterRef.current.get(folder.id) ?? 0) + 1;
-                        dragCounterRef.current.set(folder.id, cnt);
-                        setDragOverFolderId(folder.id);
+                        const cnt = (dragCounterRef.current.get(project.id) ?? 0) + 1;
+                        dragCounterRef.current.set(project.id, cnt);
+                        setDragOverProjectId(project.id);
                       }}
                       onDragLeave={() => {
-                        if (!onMoveToFolder) return;
-                        const cnt = (dragCounterRef.current.get(folder.id) ?? 1) - 1;
-                        dragCounterRef.current.set(folder.id, cnt);
+                        if (!onMoveToProject) return;
+                        const cnt = (dragCounterRef.current.get(project.id) ?? 1) - 1;
+                        dragCounterRef.current.set(project.id, cnt);
                         if (cnt <= 0) {
-                          dragCounterRef.current.delete(folder.id);
-                          setDragOverFolderId(null);
+                          dragCounterRef.current.delete(project.id);
+                          setDragOverProjectId(null);
                         }
                       }}
                       onDrop={(e) => {
-                        if (!onMoveToFolder) return;
+                        if (!onMoveToProject) return;
                         e.preventDefault();
-                        dragCounterRef.current.delete(folder.id);
-                        setDragOverFolderId(null);
+                        dragCounterRef.current.delete(project.id);
+                        setDragOverProjectId(null);
                         const raw = e.dataTransfer.getData('application/x-meetings-items');
                         if (!raw) return;
                         try {
                           const ids: string[] = JSON.parse(raw);
-                          ids.forEach((id) => onMoveToFolder(id, folder.id));
+                          ids.forEach((id) => onMoveToProject(id, project.id));
                         } catch {}
                       }}
                       className={`w-full flex items-center gap-2 px-2 rounded-lg transition-all text-left ${
@@ -342,7 +355,7 @@ export default function MeetingsLeftPanel({
                       ) : (
                         <FolderIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
                       )}
-                      <span className="text-[12px] font-medium truncate flex-1">{folder.name}</span>
+                      <span className="text-[12px] font-medium truncate flex-1">{project.name}</span>
                       {count > 0 && !isDragOver && (
                         <span className="text-[10px] text-neutral-400">{count}</span>
                       )}
@@ -350,10 +363,57 @@ export default function MeetingsLeftPanel({
                   );
                 })}
 
-                {userFolders.length === 0 && !newFolderOpen && (
-                  <p className="text-[11px] text-neutral-400 px-1">No folders yet</p>
+                {!projects.some((p) => transcripts.some((t) => t.projectId === p.id)) && !newProjectOpen && (
+                  <p className="text-[11px] text-neutral-400 px-1">No projects with recordings yet</p>
                 )}
               </div>
+
+              {/* Suggested — labeled initiatives (with meetings) not yet tracked. Track = it becomes a project. */}
+              {suggestions.length > 0 && (
+                <div className="px-2 pt-1 pb-1">
+                  <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider px-1 mb-1.5">
+                    Suggested
+                  </p>
+                  {suggestions.map((s) => {
+                    const isSelected = selectedSuggestionKey === s.key;
+                    const isTracking = trackingKey === s.key;
+                    return (
+                      <div
+                        key={s.key}
+                        className={`group/sg w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors ${
+                          isSelected ? 'bg-amber-50' : 'hover:bg-neutral-50'
+                        }`}
+                      >
+                        <button
+                          onClick={() => {
+                            onSelectMeeting(null);
+                            onSelectSuggestion(isSelected ? null : s.key);
+                          }}
+                          className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                          title={s.name}
+                        >
+                          <SparklesIcon className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-amber-500' : 'text-amber-400'}`} />
+                          <span className={`text-[12px] font-medium truncate ${isSelected ? 'text-amber-700' : 'text-neutral-600'}`}>{s.name}</span>
+                        </button>
+                        {/* Track (appears on hover / when selected) */}
+                        <button
+                          onClick={() => onTrackSuggestion(s.key)}
+                          disabled={isTracking}
+                          title="Track as a project"
+                          className={`flex-shrink-0 text-[10px] font-semibold text-amber-600 hover:text-amber-700 transition-opacity ${
+                            isSelected ? 'opacity-100' : 'opacity-0 group-hover/sg:opacity-100'
+                          }`}
+                        >
+                          {isTracking ? '…' : 'Track'}
+                        </button>
+                        {s.meetingCount > 0 && !isSelected && (
+                          <span className="text-[10px] text-neutral-400 flex-shrink-0 group-hover/sg:hidden">{s.meetingCount}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Divider */}
               <div className="border-t border-neutral-100 mx-2 my-1" />

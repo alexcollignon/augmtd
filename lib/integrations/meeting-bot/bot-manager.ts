@@ -326,12 +326,27 @@ export async function storeTranscriptAndGenerateWork(
   // Pass the real named participants (assignees + decision owners) so a 1:1 user-task commitment can
   // resolve its counterpart instead of leaving it null; and the user's own name so we don't treat the
   // user as the "other" party. writeMeetingCommitments dedups + drops fabricated due_dates.
+  const participants = [
+    ...(insights.actionItems ?? []).map((a) => a.assignee),
+    ...(insights.decisions ?? []).map((d) => d.owner),
+  ].filter(Boolean) as string[];
+
+  // GROUNDED meeting initiative — resolve from the attendees the SAME way meeting commitments do, so the
+  // transcript joins its project via the magnet (lib/projects/associate.ts). Only when the attendees point
+  // to ONE clean initiative (no other variants — the "exactly one" bridge safety); a group spanning deals
+  // or a brand-new contact stays loose (null). Hoisted so it tags BOTH the commitments and the transcript.
+  let meetingInitiative: string | null = null;
+  try {
+    const { getInitiativeCandidates } = await import('@/lib/inbox/initiative-candidates');
+    const names = [...new Set(participants)];
+    if (names.length) {
+      const { canonical, candidates } = await getInitiativeCandidates(supabase, userId, { personNames: names, personEmails: names });
+      if (canonical && candidates.length === 0) meetingInitiative = canonical;
+    }
+  } catch { /* non-fatal */ }
+
   try {
     const { writeMeetingCommitments } = await import('@/lib/commitments/extract');
-    const participants = [
-      ...(insights.actionItems ?? []).map((a) => a.assignee),
-      ...(insights.decisions ?? []).map((d) => d.owner),
-    ];
     const { data: prof } = await supabase.from('profiles').select('full_name').eq('id', userId).maybeSingle();
     await writeMeetingCommitments(
       userId,
@@ -355,6 +370,9 @@ export async function storeTranscriptAndGenerateWork(
       document: insights.document || '',
       live_notes: liveNotes || '',
     },
+    // The deal this meeting belongs to (grounded from attendees) — the magnet associates the transcript to
+    // its project by this, so the notes become first-class project context. null = loose (safe default).
+    ...(meetingInitiative ? { initiative: meetingInitiative } : {}),
   };
 
   if (insights.generatedTitle && isGenericTitle(title)) {
@@ -368,6 +386,21 @@ export async function storeTranscriptAndGenerateWork(
   if (finalUpdateError) {
     console.error('[MeetingBot] Failed to mark transcript processed:', finalUpdateError);
   }
+
+
+  // LIVE Person Brain (S1b) — a meeting is an event on your relationship with each attendee → refresh their
+  // person state (last-touch/momentum move). Sig-gated, non-fatal, degrades to no-op pre-migration.
+  if (participants?.length) {
+    try { const { refreshPersonStates } = await import('@/lib/people/state-store'); await refreshPersonStates(supabase, userId, [...new Set(participants)]); }
+    catch { /* non-fatal */ }
+  }
+
+  // ONE BRAIN shadow (Phase B) — recognize this meeting into the entity memory. Self-gating (no-op unless
+  // the user's memory exists), non-fatal.
+  try {
+    const { shadowRecognizeMeeting } = await import('@/lib/entities/hooks');
+    await shadowRecognizeMeeting(supabase, userId, transcriptRecord.id);
+  } catch { /* non-fatal */ }
 
   // Fire-and-forget: index transcript text into KB so it's searchable in Drive
   if (transcriptText.trim()) {

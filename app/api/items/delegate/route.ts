@@ -57,6 +57,18 @@ export async function POST(request: NextRequest) {
     const itemCtx = await buildItemContext(supabase, user.id, kind, entityId);
     const itemContext = itemCtx?.text || '';
 
+    // ── Step 4 — grounded delegation: the PERSON brain for whoever this item is with, so the coworker does
+    // the work reasoning WITH the relationship (who they are, who owes whom, their register). The INITIATIVE
+    // brain is already inside itemContext (buildItemContext). Read-only, non-fatal. ──
+    let brainContext = '';
+    try {
+      const primary = (itemCtx?.participants ?? []).find((p) => p.email) ?? (itemCtx?.participants ?? [])[0];
+      if (primary) {
+        const { renderBrainContext } = await import('@/lib/context/brain-context');
+        brainContext = await renderBrainContext(supabase, user.id, { personEmail: primary.email ?? null, personName: primary.name ?? null });
+      }
+    } catch { /* non-fatal */ }
+
     // ── Load the current plan (for a per-step intent OR the remaining-plan job). ──
     const { data: planRow } = await supabase
       .from('item_plans')
@@ -79,6 +91,7 @@ export async function POST(request: NextRequest) {
       itemContext,
       step: step ? { text: step.text, detail: step.detail } : null,
       remainingSteps: taskId ? undefined : currentTasks,
+      brainContext,
     });
 
     // The user's first name (for the report-back voice).

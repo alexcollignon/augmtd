@@ -169,19 +169,38 @@ export async function writeMeetingCommitments(
   }
   const soleCounterpart = people.length === 1 ? people[0] : null;
 
-  const list: ExtractedCommitment[] = (actionItems ?? [])
-    .filter((a) => a?.action?.trim())
-    .map((a) => {
-      const isUser = a.isUserTask === true || a.isUserTask == null || !a.assignee;
-      return {
-        direction: isUser ? 'you_owe' : 'awaiting',
-        description: a.action!.trim(),
-        due_date: a.dueDate ?? a.due_date ?? null,
-        // Assigned-to-other → the assignee. User task → the sole counterpart if this was a 1:1,
-        // else null (unresolvable in a group meeting; display derives a source label).
-        counterparty: isUser ? soleCounterpart : (a.assignee ?? soleCounterpart ?? null),
-      } as ExtractedCommitment;
-    });
+  // Persist the initiative at write time (meeting commitments were born initiative-less and only got one
+  // via the read-time person-bridge). Resolve each counterpart's GROUNDED canonical — the same label the
+  // deal's emails carry — so a meeting joins the right project durably (and clusters immediately). Only when
+  // the contact has ONE clear initiative (no other variants) — mirrors the bridge's "exactly one" safety;
+  // ambiguous (multiple deals) or a brand-new contact → null (loose), never a guessed assignment.
+  const { getInitiativeCandidates } = await import('@/lib/inbox/initiative-candidates');
+  const initByPerson = new Map<string, string | null>();
+  const resolveInitiative = async (cp: string | null): Promise<string | null> => {
+    if (!cp) return null;
+    const k = cp.toLowerCase().trim();
+    if (initByPerson.has(k)) return initByPerson.get(k) ?? null;
+    const { canonical, candidates } = await getInitiativeCandidates(client, userId, { personNames: [cp], personEmails: [cp] }).catch(() => ({ canonical: null, candidates: [] as string[] }));
+    const val = canonical && candidates.length === 0 ? canonical : null;
+    initByPerson.set(k, val);
+    return val;
+  };
+
+  const list: ExtractedCommitment[] = [];
+  for (const a of actionItems ?? []) {
+    if (!a?.action?.trim()) continue;
+    const isUser = a.isUserTask === true || a.isUserTask == null || !a.assignee;
+    // Assigned-to-other → the assignee. User task → the sole counterpart if this was a 1:1, else null
+    // (unresolvable in a group meeting; display derives a source label).
+    const counterparty = isUser ? soleCounterpart : (a.assignee ?? soleCounterpart ?? null);
+    list.push({
+      direction: isUser ? 'you_owe' : 'awaiting',
+      description: a.action!.trim(),
+      due_date: a.dueDate ?? a.due_date ?? null,
+      counterparty,
+      initiative: await resolveInitiative(counterparty),
+    } as ExtractedCommitment);
+  }
   await writeCommitments(userId, list, { source: 'meeting', sourceId: meta.transcriptId, threadId: null }, client);
 }
 

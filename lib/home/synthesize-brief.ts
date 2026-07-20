@@ -109,6 +109,10 @@ export interface SynthesisInput {
       appear then vanish after enrichment. Only items where the user has the last word are droppable
       for closure. Missing from the set → not protected (droppable as before). */
   protectedItemIds?: Set<string>;
+  /** Step 2: the durable Person-Brain verdict per correspondent (keyed by lowercased email) — the
+      synthesized momentum + one-line "where you stand". Sharpens the reply ANGLE (reason with the
+      relationship, not just the raw thread). Optional; absent → today's behavior. */
+  personStates?: Map<string, { momentum: string; summary: string }>;
 }
 
 // ── Output shapes — identical to what the client already renders ──
@@ -178,6 +182,10 @@ function renderPeople(input: SynthesisInput): string {
     for (const c of p.commitments.slice(0, 4)) {
       parts.push(`${c.direction === 'you_owe' ? 'you owe' : 'they owe'}: "${c.description}"${c.dueDate ? ` (due ${c.dueDate})` : ''}`);
     }
+    // Step 2 — the durable Person-Brain verdict: the synthesized where-you-stand + momentum, so the
+    // angle reasons WITH the relationship (e.g. "relationship tense; you owe the pricing"), not just events.
+    const pb = input.personStates?.get((p.key || '').toLowerCase());
+    if (pb?.summary) parts.push(`RELATIONSHIP [${pb.momentum}]: ${pb.summary}`);
     if (parts.length) lines.push(`- ${who}: ${parts.join('; ')}`);
   }
   return lines.length ? lines.join('\n') : '(no cross-source people to reconcile)';
