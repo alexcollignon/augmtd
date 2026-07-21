@@ -33,6 +33,14 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!commitment) return NextResponse.json({ error: 'not found' }, { status: 404 });
 
   try {
+    // PREPARED-FIRST (Phase C): the Preparation Pass may have already written this nudge to the
+    // deliverable pool — serve it INSTANTLY (fresh <24h) instead of regenerating on every open.
+    const { data: prepared } = await supabase.from('item_deliverables')
+      .select('content, created_at').eq('user_id', user.id).eq('kind', 'commitment').eq('entity_id', id).eq('type', 'draft')
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (prepared?.content && (Date.now() - Date.parse(prepared.created_at as string)) < 24 * 3_600_000) {
+      return NextResponse.json({ draft: prepared.content, prepared: true });
+    }
     const ageDays = commitment.created_at ? Math.floor((Date.now() - new Date(commitment.created_at).getTime()) / 86_400_000) : undefined;
     const draft = await generateNudgeDraft(user.id, {
       counterparty: commitment.counterparty ?? null,
