@@ -848,7 +848,7 @@ function priorityToItem(p: Priority): DoItem {
   return {
     source: p.posture === 'needs_reply' ? 'reply' : 'notice',
     key: p.id, entityId: p.itemId ?? p.id, href: p.href,
-    ask: p.title, second: p.context ?? (p.items?.length ? `${p.items.length} action item${p.items.length > 1 ? 's' : ''}` : null),
+    ask: cleanTitle(p.title), second: p.context ?? (p.items?.length ? `${p.items.length} action item${p.items.length > 1 ? 's' : ''}` : null),
     overdue: p.overdue, dueDate: p.dueDate ?? null, effort: p.effort ?? null,
     initiative: p.initiative ?? null, initiativeTotal: p.initiativeTotal ?? null,
   };
@@ -857,7 +857,7 @@ function dealToItem(d: SlippingDeal): DoItem {
   return {
     source: 'deal', key: `deal-${d.key}`, entityId: d.key, href: `/?view=projects`,
     // One CLAUSE, not the whole state summary — a row is a line, the deep-dive holds the story.
-    ask: d.label, second: d.summary.split(/[;.](?:\s|$)/)[0].slice(0, 90),
+    ask: cleanTitle(d.label), second: d.summary.split(/[;.](?:\s|$)/)[0].slice(0, 90),
   };
 }
 
@@ -1201,8 +1201,13 @@ function BundleGroup({ title, why, items, state, emphasis = false, onDismissInbo
 
 function PeekRow({ e, onPromote }: { e: DeckEntry; onPromote: () => void }) {
   const d = peekOf(e);
+  const router = useRouter();
+  // CLICK = OPEN, instantly (users click to act, not to rearrange the deck). A bundle has no single
+  // target, so it promotes to hero — its expansion IS its open. Hover already prefetched the deep-dive.
+  const href = peekHref(e);
+  const onClick = () => { if (e.kind !== 'bundle' && href) router.push(href); else onPromote(); };
   return (
-    <button onClick={onPromote} onMouseEnter={() => prefetchItem(peekHref(e))} className="group w-full flex items-center gap-2.5 rounded-lg border border-neutral-200/60 bg-white/60 px-3 py-2 text-left transition-all duration-200 ease-out hover:bg-white hover:border-neutral-300">
+    <button onClick={onClick} onMouseEnter={() => prefetchItem(href)} className="group w-full flex items-center gap-2.5 rounded-lg border border-neutral-200/60 bg-white/60 px-3 py-2 text-left transition-all duration-200 ease-out hover:bg-white hover:border-neutral-300">
       <span className={`flex-shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-md ${d.ring} ${d.overdue ? 'text-rose-500' : d.text}`}><d.Icon className="w-3.5 h-3.5" /></span>
       <span className="min-w-0 flex-1 flex items-baseline gap-1.5">
         <span className="text-[12.5px] font-medium text-neutral-700 truncate">{d.title}{typeof d.count === 'number' && <span className="font-normal text-neutral-400"> · {d.count}</span>}</span>

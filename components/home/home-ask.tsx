@@ -117,10 +117,11 @@ export default function HomeAsk({ briefing, clearedIds, onBriefNavigate, suggest
       <div className="sticky bottom-0 z-20 pt-4 pb-5 bg-gradient-to-t from-[#fbfbfd] via-[#fbfbfd] to-transparent">
         <div ref={shellRef} className="relative" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
 
-          {revealed && (
+          {(!!briefing || hasThread) && (
             <div
-              className="absolute bottom-full left-0 right-0 rounded-t-2xl border border-b-0 border-neutral-200 bg-white px-4 pt-4 pb-1 shadow-[0_-16px_48px_-20px_rgba(23,23,23,0.18)]"
-              style={{ animation: 'augAskIn 0.28s cubic-bezier(0.22,1,0.36,1)' }}
+              className={`absolute bottom-full left-0 right-0 rounded-t-2xl border border-b-0 border-neutral-200 bg-white px-4 pt-4 pb-1 shadow-[0_-16px_48px_-20px_rgba(23,23,23,0.18)] transition-all duration-300 ease-out ${revealed
+                ? 'opacity-100 translate-y-0'
+                : 'opacity-0 translate-y-3 pointer-events-none'}`}
             >
               {expanded && hasThread && (
                 <div className="flex justify-end mb-1">
