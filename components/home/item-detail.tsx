@@ -21,7 +21,7 @@ import {
   ArrowUturnRightIcon,
   ArrowUturnLeftIcon,
   EllipsisHorizontalIcon,
-  Bars2Icon,
+  Bars2Icon, ChevronRightIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import ReplyEditor from '@/components/inbox/reply-editor';
@@ -3592,7 +3592,10 @@ function EmailDetail({ id, angle }: { id: string; angle?: string | null }) {
           {threadErr ? (
             <p className="text-[13px] text-neutral-400">Could not load the thread.</p>
           ) : (
-            <ThreadMessages messages={threadMessages} fallback={fallback} />
+            <>
+              <PreparedLead kind="email" itemId={id} />
+              <ThreadMessages messages={threadMessages} fallback={fallback} />
+            </>
           )}
         </div>
 
@@ -4302,7 +4305,10 @@ function FollowUpDetail({ id }: { id: string }) {
           ) : !hasMessages && thread ? (
             <p className="text-[13px] text-neutral-400 leading-relaxed">No linked email thread — write a follow-up below.</p>
           ) : (
-            <ThreadMessages messages={threadMessages} fallback={null} />
+            <>
+              <PreparedLead kind="commitment" itemId={id} />
+              <ThreadMessages messages={threadMessages} fallback={null} />
+            </>
           )}
         </div>
 
@@ -4376,5 +4382,44 @@ function FollowUpDetail({ id }: { id: string }) {
         <KbFilePicker onSelect={atts.onKbSelect} onClose={() => atts.setKbPickerOpen(false)} />
       )}
     </DeepDiveShell>
+  );
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// PREPARED LEAD (Prepared-Work C3) — the deep-dive LEADS with what the staff already produced: a quiet
+// indigo card above the thread listing the item's prepared deliverables ("✦ Prepared · <title>", with
+// worker attribution when a coworker made it), each expandable to its full content. Grounded-or-absent:
+// renders nothing when the pool has no prepared work. Read-only — acting stays with the composer/plan.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+function PreparedLead({ kind, itemId }: { kind: 'email' | 'commitment'; itemId: string }) {
+  const [items, setItems] = useState<Array<{ id: string; title: string | null; content: string | null; metadata?: { worker?: string } | null }>>([]);
+  const [openId, setOpenId] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/items/pool?kind=${kind}&id=${itemId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive && d?.prepared) setItems(d.prepared.filter((x: { content?: string | null }) => x.content)); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [kind, itemId]);
+  if (!items.length) return null;
+  return (
+    <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50/40 px-4 py-3">
+      {items.slice(0, 3).map((d) => {
+        const worker = d.metadata?.worker ?? null;
+        const open = openId === d.id;
+        return (
+          <div key={d.id} className="py-1">
+            <button onClick={() => setOpenId(open ? null : d.id)} className="w-full flex items-baseline gap-2 text-left">
+              <span className="text-[11px] font-semibold text-indigo-500 flex-shrink-0">✦ {worker ? `Prepared by ${worker.split(' ')[0]}` : 'Prepared'}</span>
+              <span className="text-[13px] font-medium text-neutral-800 truncate min-w-0 flex-1">{d.title || 'Deliverable'}</span>
+              <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-400 flex-shrink-0 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
+            </button>
+            {open && <div className="mt-2 text-[13px] text-neutral-700 leading-relaxed whitespace-pre-wrap max-h-[320px] overflow-y-auto [scrollbar-width:thin]">{d.content}</div>}
+          </div>
+        );
+      })}
+    </div>
   );
 }
