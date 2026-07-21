@@ -836,7 +836,28 @@ const DO_META: Record<DoSource, { Icon: React.ElementType; ring: string; text: s
   reply:      { Icon: EnvelopeIcon,    ring: 'bg-indigo-50',   text: 'text-indigo-500' },
   notice:     { Icon: BellAlertIcon,   ring: 'bg-amber-50',    text: 'text-amber-600' },
   commitment: { Icon: CheckCircleIcon, ring: 'bg-neutral-100', text: 'text-neutral-500' },
+  deal:       { Icon: FolderIcon,      ring: 'bg-amber-50',    text: 'text-amber-600' },
 };
+
+// ── THE ONE WORKCARD RULE (species → the one row grammar). Priority cards and slipping deals CONVERT
+// into DoItems, so every deck entry renders through the SAME component with the SAME anatomy and the
+// SAME action system — one primary verb by posture + the quiet ✓ ✕ pair. Depth (a meeting's nested
+// action items, a deal's next move) lives in the deep-dive, not in per-species card chrome. ──
+function priorityToItem(p: Priority): DoItem {
+  return {
+    source: p.posture === 'needs_reply' ? 'reply' : 'notice',
+    key: p.id, entityId: p.itemId ?? p.id, href: p.href,
+    ask: p.title, second: p.context ?? (p.items?.length ? `${p.items.length} action item${p.items.length > 1 ? 's' : ''}` : null),
+    overdue: p.overdue, dueDate: p.dueDate ?? null, effort: p.effort ?? null,
+    initiative: p.initiative ?? null, initiativeTotal: p.initiativeTotal ?? null,
+  };
+}
+function dealToItem(d: SlippingDeal): DoItem {
+  return {
+    source: 'deal', key: `deal-${d.key}`, entityId: d.key, href: `/?view=projects`,
+    ask: d.label, second: d.summary,
+  };
+}
 
 // ── Deep-dive PREFETCH — warm the item's content cache on HOVER so the click opens INSTANTLY. The
 // deep-dive (item-detail) hydrates from these exact localStorage keys and skips its skeleton when they're
@@ -1014,14 +1035,17 @@ function peekHref(e: DeckEntry): string | null {
 // swallows the screen. Only ONE opens at a time; nothing removed; the count IS the honest promise. Calm
 // at rest (blurred surface, content reads cleanly behind it); empty sections drop out.
 type AmbientSection = { key: string; label: string; count: number | null; node: React.ReactNode };
-function DoRow({ item, emphasis = false, hideInitiative = false, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment }: {
+function DoRow({ item, emphasis = false, hideInitiative = false, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment, dismissOverride }: {
   item: DoItem; emphasis?: boolean; hideInitiative?: boolean;
   onDismissInbox?: (id: string) => void; onClearedCommitment?: (id: string) => void;
   onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void;
   onUndoCommitment?: (message: string, id: string) => void;
+  /** A session-only dismiss (slipping deals) — replaces the endpoint call; ✓ hides (nothing to complete). */
+  dismissOverride?: () => void;
 }) {
   const router = useRouter();
   const isCommit = item.source === 'commitment';
+  const isDeal = item.source === 'deal';
   const inbox = useExit();
   const commit = useCommitmentAct(isCommit ? item.entityId : undefined, onClearedCommitment, onUndoCommitment);
   const [acting, setActing] = useState(false);
@@ -1036,8 +1060,8 @@ function DoRow({ item, emphasis = false, hideInitiative = false, onDismissInbox,
     onUndoInbox?.(kind === 'complete' ? 'Marked done' : 'Dismissed', item.entityId, [item.entityId]);
     try { await fetch(`/api/inbox/${item.entityId}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) }); } finally { setActing(false); }
   };
-  const done = (e?: React.MouseEvent) => { e?.stopPropagation(); if (isCommit) commit.act('done'); else actInbox('complete', e); };
-  const drop = (e?: React.MouseEvent) => { e?.stopPropagation(); if (isCommit) commit.act('dismissed'); else actInbox('dismiss', e); };
+  const done = (e?: React.MouseEvent) => { e?.stopPropagation(); if (isDeal) return; if (isCommit) commit.act('done'); else actInbox('complete', e); };
+  const drop = (e?: React.MouseEvent) => { e?.stopPropagation(); if (dismissOverride) { dismissOverride(); return; } if (isCommit) commit.act('dismissed'); else actInbox('dismiss', e); };
   const open = () => router.push(item.href);
   // Hover = intent to open → warm the deep-dive cache + the route JS so the click is instant.
   const prefetch = () => { prefetchItem(item.href); router.prefetch?.(item.href); };
@@ -1050,7 +1074,7 @@ function DoRow({ item, emphasis = false, hideInitiative = false, onDismissInbox,
   // The single item's next action — DETERMINISTIC from its type (not the Initiative Brain: a loose atom's
   // action is intrinsic, always known, no reasoning needed). Shown only on the focused hero card, mirroring
   // the bundle's next-move chip so every "Start here" card leads with a concrete action, not a bare arrow.
-  const actionLabel = isCommit ? 'Follow up' : item.source === 'notice' ? 'Review' : 'Reply';
+  const actionLabel = isCommit ? 'Follow up' : (item.source === 'notice' || isDeal) ? 'Review' : 'Reply';
   return (
     <div onMouseEnter={prefetch} onFocus={prefetch} className={`group rounded-xl border bg-white transition-all duration-300 ease-out hover:shadow-[0_4px_20px_-4px_rgba(0,0,0,0.08)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/70 hover:border-neutral-300'}`}>
       <div role="button" tabIndex={0} onClick={open}
@@ -1081,7 +1105,7 @@ function DoRow({ item, emphasis = false, hideInitiative = false, onDismissInbox,
           {item.second && <p className={`${emphasis ? 'text-[12.5px]' : 'text-[12px]'} text-neutral-500 mt-0.5 leading-snug line-clamp-1`}>{item.second}</p>}
         </div>
         <span className="flex-shrink-0 flex items-center gap-2.5 mt-0.5">
-          <button onClick={done} disabled={busy} title="Mark done" className="text-neutral-300 hover:text-emerald-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✓</button>
+          {!isDeal && <button onClick={done} disabled={busy} title="Mark done" className="text-neutral-300 hover:text-emerald-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✓</button>}
           <button onClick={drop} disabled={busy} title="Dismiss — won't show again" className="text-neutral-300 hover:text-rose-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✕</button>
           <ArrowRightIcon className="w-3.5 h-3.5 text-neutral-200 group-hover:text-indigo-400 transition-colors" />
         </span>
@@ -1164,116 +1188,6 @@ function BundleGroup({ title, why, items, state, emphasis = false, onDismissInbo
           {items.map((it) => <DoRow key={it.key} item={it} hideInitiative onDismissInbox={onDismissInbox} onClearedCommitment={onClearedCommitment} onUndoInbox={onUndoInbox} onUndoCommitment={onUndoCommitment} />)}
         </div>
       </Collapse>
-    </div>
-  );
-}
-
-function PriorityCard({ p, first, expanded, onToggle, onCleared, onUndoInbox }: { p: Priority; first: boolean; expanded: boolean; onToggle: () => void; onCleared?: (id: string) => void; onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void }) {
-  const router = useRouter();
-  const cfg = SOURCE[p.source];
-  const Icon = cfg.icon;
-  const hasItems = !!p.items?.length;
-  const { removed, exiting, startExit } = useExit();
-  const [acting, setActing] = useState(false);
-  const open = () => router.push(priorityHref(p));
-  const prefetch = () => { prefetchItem(priorityHref(p)); router.prefetch?.(priorityHref(p)); };
-  // Done/Dismiss a Needs-you card → act on its inbox item(s): the email's itemId, or all of a
-  // meeting's action-item ids. classifyItem hides completed/dismissed, so it never resurfaces.
-  // Reversible → after acting, show a "…· Undo" toast (restores the single-item case cleanly).
-  const act = (kind: 'complete' | 'dismiss') => {
-    const ids = p.itemId ? [p.itemId] : (p.items ?? []).map(it => it.id);
-    if (acting || !ids.length) return;
-    setActing(true); startExit(); onCleared?.(p.id); // raise the day-cleared ring live
-    Promise.all(ids.map(id => fetch(`/api/inbox/${id}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) })))
-      .catch(() => {}).finally(() => setActing(false));
-    // Undo restores the first (usually only) acted item; clears both the itemId and the card's p.id.
-    onUndoInbox?.(kind === 'complete' ? 'Marked done' : 'Dismissed', ids[0], [ids[0], p.id]);
-  };
-  if (removed) return null;
-  return (
-    <div onMouseEnter={prefetch} onFocus={prefetch} className={`group relative rounded-xl border bg-white transition-all duration-300 ease-out hover:shadow-[0_4px_20px_-4px_rgba(0,0,0,0.08)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${first ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/70 hover:border-neutral-300'}`}>
-      {first && (
-        <div className="absolute -top-2 left-4 inline-flex items-center gap-1 rounded-full bg-indigo-600 px-2 py-0.5 shadow-sm">
-          <BoltIcon className="w-3 h-3 text-white" />
-          <span className="text-[9.5px] font-semibold uppercase tracking-wide text-white">Suggested start</span>
-        </div>
-      )}
-      {/* SAME row language as DoRow (leading type-icon ring · title · muted context · inline ✓ ✕ →), so a
-          prepared/awareness priority and a reply-you-owe read as ONE consistent list, not two card styles.
-          Row click opens the deep-dive; ✓/✕ triage inline. Meeting action items expand one layer below. */}
-      <div className="flex items-start gap-3 p-4">
-        <span className={`flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-lg ${p.source === 'meeting' ? 'bg-violet-50 text-violet-500' : 'bg-indigo-50 text-indigo-500'}`}><Icon className="w-4 h-4" /></span>
-        <div role="button" tabIndex={0} onClick={open}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
-          className="min-w-0 flex-1 cursor-pointer">
-          <div className="flex items-baseline gap-2">
-            <p className={`${first ? 'text-[14.5px]' : 'text-[13.5px]'} font-semibold text-neutral-900 leading-snug min-w-0 truncate`}>{p.title}</p>
-            <span className="flex-shrink-0 ml-auto flex items-center gap-2">
-              {p.overdue && <span className="text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 bg-rose-50 text-rose-600">Overdue</span>}
-              {!p.overdue && <EffortDate effort={p.effort} dueDate={p.dueDate} overdue={p.overdue} />}
-              <InitiativeTag initiative={p.initiative} total={p.initiativeTotal} />
-            </span>
-          </div>
-          {p.context && <p className={`${first ? 'text-[12.5px]' : 'text-[12px]'} text-neutral-500 mt-0.5 leading-snug line-clamp-1`}>{p.context}</p>}
-        </div>
-        <span className="flex-shrink-0 flex items-center gap-2.5 mt-0.5">
-          <button onClick={() => act('complete')} disabled={acting} title="Mark done" className="text-neutral-300 hover:text-emerald-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✓</button>
-          <button onClick={() => act('dismiss')} disabled={acting} title="Dismiss" className="text-neutral-300 hover:text-rose-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✕</button>
-          <ArrowRightIcon className="w-3.5 h-3.5 text-neutral-200 group-hover:text-indigo-400 transition-colors" />
-        </span>
-      </div>
-
-      {/* Layered: meeting action items live one layer down — collapsed by default */}
-      {hasItems && (
-        <div className="px-4 pb-3 -mt-1">
-          <button onClick={onToggle} className="inline-flex items-center gap-1 text-[12px] text-neutral-400 hover:text-neutral-700 transition-colors">
-            <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`} />
-            {p.items!.length} action item{p.items!.length > 1 ? 's' : ''}
-          </button>
-          <div className={`grid transition-all duration-300 ease-out ${expanded ? 'grid-rows-[1fr] opacity-100 mt-2' : 'grid-rows-[0fr] opacity-0'}`}>
-            <ul className="overflow-hidden space-y-1.5 border-l-2 border-indigo-100 pl-3">
-              {p.items!.map(it => (
-                <li key={it.id} className="text-[12.5px] text-neutral-600 leading-snug">{it.text}</li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── PROACTIVE SLIPPING card — a deal quietly slipping (gone-quiet/stalled with something open on you), surfaced
-// IN the deck even with no new mail. Amber "Slipping" cue + where it stands + the ONE next move (same string as
-// the bundle/project/deep-dive). Dismissable ("not now" — session). The chief-of-staff "this is aging" nudge.
-function DealCard({ deal, emphasis = false, onDismiss }: { deal: SlippingDeal; emphasis?: boolean; onDismiss: (key: string) => void }) {
-  const router = useRouter();
-  const moveHref = brainRefHref(deal.nextMove?.entityRef);
-  return (
-    <div className={`group rounded-xl border bg-white transition-all duration-300 ease-out ${emphasis ? 'border-amber-200 ring-1 ring-amber-100' : 'border-neutral-200/70'}`}>
-      <div className="flex items-start gap-3 p-4">
-        <span className="flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-lg bg-amber-50 text-amber-500"><FolderIcon className="w-4 h-4" /></span>
-        <div className="min-w-0 flex-1">
-          {emphasis && <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-amber-500 mb-1"><SparklesIcon className="w-3 h-3" />Quietly slipping</p>}
-          <div className="flex items-baseline gap-2">
-            <p className="text-[13.5px] font-semibold text-neutral-900 truncate min-w-0">{deal.label}</p>
-            <span className="flex-shrink-0 text-[10px] font-semibold uppercase tracking-wide text-amber-600">Slipping</span>
-          </div>
-          <p className="text-[12px] text-neutral-500 mt-0.5 leading-snug line-clamp-2">{deal.summary}</p>
-        </div>
-        <button onClick={() => onDismiss(deal.key)} title="Not now" className="flex-shrink-0 text-neutral-300 hover:text-rose-600 transition-colors text-[13px] leading-none mt-0.5">✕</button>
-      </div>
-      {deal.nextMove && (
-        <div className="px-4 pb-3 -mt-1 pl-[3.4rem]">
-          <button
-            onClick={() => { if (moveHref) router.push(moveHref); }}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 text-[12px] font-medium text-indigo-700 transition-colors max-w-full"
-          >
-            <span className="truncate">{deal.nextMove.title}</span>
-            <ArrowRightIcon className="w-3.5 h-3.5 flex-shrink-0" />
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -2157,8 +2071,8 @@ export function HomeView() {
                   : e.kind === 'single'
                     ? <DoRow item={e.item} emphasis={emphasis} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />
                     : e.kind === 'deal'
-                      ? <DealCard deal={e.deal} emphasis={emphasis} onDismiss={dismissDeal} />
-                      : <PriorityCard p={e.p} first={emphasis} expanded={expanded === e.p.id} onToggle={() => setExpanded(expanded === e.p.id ? null : e.p.id)} onCleared={onCleared} onUndoInbox={toastInbox} />;
+                      ? <DoRow item={dealToItem(e.deal)} emphasis={emphasis} dismissOverride={() => dismissDeal(e.deal.key)} />
+                      : <DoRow item={priorityToItem(e.p)} emphasis={emphasis} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />;
               const hero = ordered.find((e) => e.key === focusKey) ?? agenda.first ?? undefined;
               const peeks = ordered.filter((e) => e.key !== hero?.key);
               const PEEK_VISIBLE = 3;

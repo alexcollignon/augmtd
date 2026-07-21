@@ -11,7 +11,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 // ── The atom + entry types (moved verbatim from components/home/home-view.tsx) ───────────────────
-export type DoSource = 'reply' | 'notice' | 'commitment';
+export type DoSource = 'reply' | 'notice' | 'commitment' | 'deal';
 export type DoItem = {
   source: DoSource; key: string; entityId: string; href: string;
   primary?: string | null;   // sender / null (a commitment carries its who in `second`)
