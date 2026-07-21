@@ -23,7 +23,7 @@ export type ResolveCtx = {
 };
 
 export type UniversalCandidate = {
-  source: 'pool' | 'kb' | 'gdrive' | 'dropbox';
+  source: 'pool' | 'kb' | 'gdrive' | 'onedrive' | 'dropbox';
   id: string;                 // source-scoped id (knowledge_files.id / deliverable id / provider file id)
   filename: string;
   snippet: string;            // what ranking + the reasoned pick see
@@ -33,7 +33,7 @@ export type UniversalCandidate = {
 };
 
 export type FileSource = {
-  key: 'pool' | 'kb' | 'gdrive' | 'dropbox';
+  key: 'pool' | 'kb' | 'gdrive' | 'onedrive' | 'dropbox';
   enabled: (admin: SupabaseClient, ctx: ResolveCtx) => Promise<boolean> | boolean;
   search: (admin: SupabaseClient, ctx: ResolveCtx, query: string, limit: number) => Promise<UniversalCandidate[]>;
 };
@@ -67,7 +67,35 @@ const SOURCES: FileSource[] = [
       }));
     },
   },
-  // gdrive / dropbox: Tier-0 catalog search entries land here with the Nango connect rail (Phase B3).
+  // ── Connected drives (Phase B3) — TIER-0 catalog over the NATIVE clients (the mailbox connection's
+  // token already carries the Drive scope; no new OAuth rail). v1 is a SHALLOW catalog (root + first-level
+  // listings, name-ranked) — honest and cheap; the full catalog sweep + delta cursors are the follow-up.
+  // JIT content extraction (readDriveFile/readOneDriveFile → ingestFile) happens only when a candidate is
+  // actually USED (Tier 2, cached by content hash).
+  {
+    key: 'gdrive',
+    enabled: async (admin, ctx) => !!(await driveTokens(admin, ctx.userId, 'gmail')),
+    search: async (admin, ctx, query, limit) => {
+      const tokens = await driveTokens(admin, ctx.userId, 'gmail');
+      if (!tokens) return [];
+      const { listDriveContents } = await import('./google-drive');
+      const items = await listDriveContents(tokens).catch(() => []);
+      return nameRank(items.filter((i: { mimeType?: string }) => !String(i.mimeType || '').includes('folder'))
+        .map((i: { id: string; name: string }) => ({ id: i.id, name: i.name })), query, 'gdrive', limit);
+    },
+  },
+  {
+    key: 'onedrive',
+    enabled: async (admin, ctx) => !!(await driveTokens(admin, ctx.userId, 'outlook')),
+    search: async (admin, ctx, query, limit) => {
+      const tokens = await driveTokens(admin, ctx.userId, 'outlook');
+      if (!tokens) return [];
+      const { listOneDriveContents } = await import('./onedrive');
+      const items = await listOneDriveContents(tokens).catch(() => []);
+      return nameRank(items.filter((i: { type?: string; mimeType?: string }) => (i as { type?: string }).type !== 'folder')
+        .map((i: { id: string; name: string }) => ({ id: i.id, name: i.name })), query, 'onedrive', limit);
+    },
+  },
 ];
 
 /** Search all enabled sources, merge, and rank — ENTITY AFFINITY first among close scores (a file that
@@ -90,4 +118,28 @@ export async function resolveFileUniversal(
     .map((c) => ({ ...c, score: c.source === 'pool' ? 2 : c.score + (ctx.entityId && c.entityId === ctx.entityId ? 0.35 : 0) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
+}
+
+
+// ── Drive helpers (B3) ───────────────────────────────────────────────────────────────────────────
+async function driveTokens(admin: SupabaseClient, userId: string, provider: 'gmail' | 'outlook'): Promise<string | null> {
+  try {
+    const { data } = await admin.from('connections').select('metadata')
+      .eq('user_id', userId).eq('provider', provider).eq('status', 'active').limit(1).maybeSingle();
+    return ((data?.metadata as { tokens?: string } | null)?.tokens) ?? null;
+  } catch { return null; }
+}
+
+/** Cheap Tier-0 ranking: query-word overlap against the filename (catalog has no content yet). */
+function nameRank(items: Array<{ id: string; name: string }>, query: string, source: UniversalCandidate['source'], limit: number): UniversalCandidate[] {
+  const qw = query.toLowerCase().split(/\W+/).filter((w) => w.length >= 3); // >=3: acronyms (client codes) are prime signals
+  return items
+    .map((i) => {
+      const name = i.name.toLowerCase();
+      const hits = qw.filter((w) => name.includes(w)).length;
+      return { source, id: i.id, filename: i.name, snippet: `(drive catalog: ${i.name})`, score: hits ? Math.min(0.9, 0.3 + hits * 0.2) : 0 };
+    })
+    .filter((c) => c.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.min(3, limit)); // catalog is a supplement, never floods the KB results
 }

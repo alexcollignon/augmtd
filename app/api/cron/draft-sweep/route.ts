@@ -4,6 +4,7 @@ import { loadUserRules } from '@/lib/inbox/rules/load';
 import { setInboxRules, classifyItem, shouldDraftReply, type ItemType } from '@/lib/inbox/classify-item';
 import { LABEL_TO_TYPE } from '@/lib/inbox/rules/types';
 import { generateReplyDraft } from '@/lib/inbox/draft-reply';
+import { runPreparationPass } from '@/lib/prepare/pass';
 
 export const maxDuration = 300;
 
@@ -70,6 +71,9 @@ export async function GET(request: NextRequest) {
       } catch { /* skip this item */ }
     }
     if (any) usersTouched++;
+    // THE PREPARATION PASS (Phase C slice 1) — beyond rule-covered drafts: the deck's TOP items get
+    // reply drafts + waiting-on nudges ambiently (idempotent, drafts only — nothing ever sends).
+    try { await runPreparationPass(sb, p.id); } catch { /* non-fatal per user */ }
   }
 
   return NextResponse.json({ drafted, usersTouched });
