@@ -16,7 +16,28 @@ import { BriefingBlock, type Briefing, type BriefingRef } from '@/components/bri
 type Ref = { id: string; kind: string; label: string; href: string | null };
 type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[] };
 
+// TYPEWRITER — the same streaming feel as the coworker chats. The answer arrives whole (JSON + refs need
+// the full text), so we REVEAL it progressively: ~3 chars/frame, a partial trailing [ref tag is trimmed
+// so raw tags never flash mid-reveal. Only the newest assistant turn animates; history renders static.
+function useTypewriter(full: string, active: boolean): string {
+  const [len, setLen] = useState(active ? 0 : full.length);
+  useEffect(() => {
+    if (!active) { setLen(full.length); return; }
+    setLen(0);
+    const iv = window.setInterval(() => {
+      setLen((l) => { const n = Math.min(full.length, l + 3); if (n >= full.length) window.clearInterval(iv); return n; });
+    }, 16);
+    return () => window.clearInterval(iv);
+  }, [full, active]);
+  return full.slice(0, len).replace(/\[[ECRF]?\d*$/, '');
+}
+
 // Split answer text on [E#]/[C#]/[R#] tags → inline chips that open the referenced item.
+function AnimatedAnswer({ text, refs, onOpen, animate }: { text: string; refs: Ref[]; onOpen: (r: Ref) => void; animate: boolean }) {
+  const shown = useTypewriter(text, animate);
+  return <Answer text={shown} refs={refs} onOpen={onOpen} />;
+}
+
 function Answer({ text, refs, onOpen }: { text: string; refs: Ref[]; onOpen: (r: Ref) => void }) {
   // FORMATTING GUARDS: the renderer is plain-prose — strip any markdown the model leaks (**bold** was
   // printing literally), and SEPARATE adjacent refs with " · " (two refs back-to-back were gluing their

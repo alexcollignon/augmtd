@@ -244,6 +244,20 @@ export default function EntityDetail({ entityId, onBack, initialTab }: { entityI
 // ENTITY ASK (Prepared-Work D2) — talk to THIS deal's brain. A compact grounded chat under the Overview:
 // state + ledger + files in view, refs resolve to deep-dives, honest-or-silent. Session-local thread.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
+// TYPEWRITER reveal (consistent with the coworker chats' streaming feel) — newest answer animates.
+function TypedAnswer({ text, render, animate }: { text: string; render: (shown: string) => React.ReactNode; animate: boolean }) {
+  const [len, setLen] = useState(animate ? 0 : text.length);
+  useEffect(() => {
+    if (!animate) { setLen(text.length); return; }
+    setLen(0);
+    const iv = window.setInterval(() => {
+      setLen((l) => { const n = Math.min(text.length, l + 3); if (n >= text.length) window.clearInterval(iv); return n; });
+    }, 16);
+    return () => window.clearInterval(iv);
+  }, [text, animate]);
+  return <>{render(text.slice(0, len).replace(/\[[LF]?\d*$/, ''))}</>;
+}
+
 function EntityAsk({ entityId, name }: { entityId: string; name: string }) {
   const router = useRouter();
   const [turns, setTurns] = useState<Array<{ role: 'user' | 'assistant'; text: string; refs?: Array<{ id: string; label: string; href: string | null }> }>>([]);
@@ -286,7 +300,7 @@ function EntityAsk({ entityId, name }: { entityId: string; name: string }) {
         <div className="space-y-3 mb-3">
           {turns.map((t, i) => t.role === 'user'
             ? <div key={i} className="flex justify-end"><span className="rounded-2xl rounded-br-sm bg-neutral-100 px-3 py-1.5 text-[13px] text-neutral-800 max-w-[80%]">{t.text}</span></div>
-            : <p key={i} className="text-[13.5px] text-neutral-700 leading-relaxed pr-4">{renderAnswer(t.text, t.refs ?? [])}</p>)}
+            : <TypedAnswer key={i} text={t.text} render={(shown) => <p className="text-[13.5px] text-neutral-700 leading-relaxed pr-4">{renderAnswer(shown, t.refs ?? [])}</p>} animate={i === turns.length - 1 && !busy} />)}
           {busy && <p className="text-[12.5px] text-neutral-400">Thinking…</p>}
         </div>
       )}
