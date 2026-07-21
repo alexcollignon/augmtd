@@ -1733,6 +1733,7 @@ export default function DriveClient({ initialSources, connections }: DriveClient
               onDeleteFolder={handleDeleteFolder}
               onDropFiles={handleDropFiles}
             />
+            <KnowledgeStatusStrip />
           </div>
         </div>
 
@@ -1783,5 +1784,44 @@ export default function DriveClient({ initialSources, connections }: DriveClient
         />
       )}
     </>
+  );
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// KNOWLEDGE STATUS (Prepared-Work D1) — the verification surface: what the system holds and where it
+// came from (email attachments · uploads · transcripts · generated · connected drives) + freshness.
+// Status, not a file manager — the regulated-SME trust answer to "what does it have about me?".
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+function KnowledgeStatusStrip() {
+  const [st, setSt] = useState<{ total: number; byOrigin: Record<string, number>; freshest: string | null; sources: Array<{ provider: string; active: boolean; capabilities: string[] }> } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/knowledge/status').then((r) => (r.ok ? r.json() : null)).then((d) => { if (alive && d && !d.error) setSt(d); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  if (!st) return null;
+  const LABELS: Record<string, string> = { email_attachment: 'email attachments', upload: 'uploads', transcript: 'meeting notes', generated: 'generated', chat: 'chat uploads', coworker: 'coworker uploads', gdrive: 'Google Drive', dropbox: 'Dropbox' };
+  const rows = Object.entries(st.byOrigin).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const fresh = st.freshest ? Math.round((Date.now() - Date.parse(st.freshest)) / 3_600_000) : null;
+  return (
+    <div className="mt-auto border-t border-neutral-100 px-4 py-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-400 mb-1.5">What the system holds</p>
+      <p className="text-[12px] text-neutral-600 mb-1"><span className="font-semibold tabular-nums">{st.total}</span> indexed documents{fresh != null && fresh < 48 && <span className="text-neutral-400"> · updated {fresh <= 1 ? 'just now' : `${fresh}h ago`}</span>}</p>
+      <div className="space-y-0.5">
+        {rows.map(([k, n]) => (
+          <p key={k} className="text-[11px] text-neutral-400 tabular-nums">{n} {LABELS[k] ?? k}</p>
+        ))}
+      </div>
+      {st.sources.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {st.sources.map((sc) => (
+            <span key={sc.provider} title={sc.capabilities.join(' + ')} className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-medium ${sc.active ? 'bg-emerald-50 text-emerald-600' : 'bg-neutral-100 text-neutral-400'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${sc.active ? 'bg-emerald-500' : 'bg-neutral-300'}`} />{sc.provider}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
