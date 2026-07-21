@@ -23,6 +23,7 @@ import {
   buildAgenda, type Agenda, type DoItem, type DoSort, type DoSource, type DeckEntry,
   type Priority, type SlippingDeal, type BundleState,
 } from '@/lib/home/agenda';
+import { cleanTitle } from '@/lib/work-items/report';
 import TimelineGantt from '@/components/timeline/timeline-gantt';
 import PortfolioView from '@/components/entities/portfolio-view';
 
@@ -855,7 +856,8 @@ function priorityToItem(p: Priority): DoItem {
 function dealToItem(d: SlippingDeal): DoItem {
   return {
     source: 'deal', key: `deal-${d.key}`, entityId: d.key, href: `/?view=projects`,
-    ask: d.label, second: d.summary,
+    // One CLAUSE, not the whole state summary — a row is a line, the deep-dive holds the story.
+    ask: d.label, second: d.summary.split(/[;.](?:\s|$)/)[0].slice(0, 90),
   };
 }
 
@@ -1104,20 +1106,25 @@ function DoRow({ item, emphasis = false, hideInitiative = false, onDismissInbox,
           </div>
           {item.second && <p className={`${emphasis ? 'text-[12.5px]' : 'text-[12px]'} text-neutral-500 mt-0.5 leading-snug line-clamp-1`}>{item.second}</p>}
         </div>
-        <span className="flex-shrink-0 flex items-center gap-2.5 mt-0.5">
+        {/* Controls appear ONLY on hover — at rest every row is a pure line (the Madalena cleanliness).
+            Identical set, identical position, every species. */}
+        <span className="flex-shrink-0 flex items-center gap-2.5 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
           {!isDeal && <button onClick={done} disabled={busy} title="Mark done" className="text-neutral-300 hover:text-emerald-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✓</button>}
           <button onClick={drop} disabled={busy} title="Dismiss — won't show again" className="text-neutral-300 hover:text-rose-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✕</button>
           <ArrowRightIcon className="w-3.5 h-3.5 text-neutral-200 group-hover:text-indigo-400 transition-colors" />
         </span>
       </div>
-      {emphasis && (
+      {/* CTA only when EARNED by a preparation, NAMED by it ("✦ Review draft" / "✦ See Max's work").
+          No preparation → no button; the row click opens the deep-dive (the natural action). A generic
+          verb button on every card was noise — Madalena's summary has zero buttons and reads cleaner. */}
+      {emphasis && item.prepared && (
         <div className="px-4 pb-3 -mt-1 pl-[2.9rem]">
           <button
             onClick={open}
             onMouseEnter={prefetch}
             className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 text-[12px] font-medium text-indigo-700 transition-colors"
           >
-            <span>{actionLabel}</span>
+            <span>✦ {item.prepared === 'draft' ? (isCommit ? 'Review follow-up' : 'Review draft') : `See ${item.prepared.split(' ')[0]}'s work`}</span>
             <ArrowRightIcon className="w-3.5 h-3.5 flex-shrink-0" />
           </button>
         </div>
@@ -1748,14 +1755,14 @@ export function HomeView() {
   const agendaReplyItems: DoItem[] = bodyReplies.map((m) => ({
     source: 'reply', key: `r-${m.itemId}`, entityId: m.itemId, href: `/item/${m.itemId}${enc(m.angle)}`,
     // Only show a "what to do" line when the synthesis produced a DISTINCT one — never echo the subject.
-    primary: m.who, ask: (m.ask && m.ask.trim() && m.ask.trim() !== (m.subject ?? '').trim()) ? m.ask : '', second: m.subject ?? null,
+    primary: m.who, ask: cleanTitle((m.ask && m.ask.trim() && m.ask.trim() !== (m.subject ?? '').trim()) ? m.ask : ''), second: m.subject ? cleanTitle(m.subject) : null,
     when: fmtWhen(m.receivedAt), effort: m.effort ?? null, dueDate: m.dueDate ?? null, initiative: m.initiative ?? null, initiativeTotal: m.initiativeTotal ?? null,
     relCue: b?.personCues?.[m.itemId] ?? null,
     prepared: m.preparedBy ?? (m.draft ? 'draft' : null),
   }));
   const agendaNoticeItems: DoItem[] = (b?.actionNotices ?? []).filter((a) => !clearedIds.has(a.itemId) && !dismissed.has(a.itemId)).map((a) => ({
     source: 'notice', key: `n-${a.itemId}`, entityId: a.itemId, href: `/item/${a.itemId}?kind=email`,
-    primary: a.who || null, ask: a.summary, second: 'Action needed',
+    primary: a.who || null, ask: cleanTitle(a.summary), second: 'Action needed',
     dueDate: a.dueDate ?? null, overdue: !!a.dueDate && a.dueDate < todayISOStr,
     prepared: a.preparedBy ?? null,
   }));

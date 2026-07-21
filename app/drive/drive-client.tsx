@@ -1208,6 +1208,8 @@ interface DriveSidebarProps {
   onDropFiles: (kbIds: string[], augmtdIds: string[], folderId: string | null) => Promise<void>;
 }
 
+const SHOW_FOLDERS = false; // D1 demotion — knowledge is contextual, not filed
+
 function DriveSidebar({
   sidebarView, setSidebarView, setSelectedFile,
   searchQuery, setSearchQuery,
@@ -1293,6 +1295,10 @@ function DriveSidebar({
           />
         </div>
 
+        {/* DRIVE DEMOTION (Prepared-Work D1, user-confirmed): the folder tree is retired — files are
+            found IN CONTEXT (search here, per-project on the entity detail, ask in chat), not browsed
+            in folders. Folder data + assignment stay intact server-side; flip SHOW_FOLDERS to restore. */}
+        {SHOW_FOLDERS && (<>
         {/* My Folders */}
         <div className="flex items-center justify-between pr-1 pt-3 pb-1">
           <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider px-2">My Folders</p>
@@ -1380,6 +1386,8 @@ function DriveSidebar({
             <button onClick={() => setNewFolderOpen(false)} className="text-[11px] text-neutral-400 px-1">✕</button>
           </div>
         )}
+
+        </>)}
 
         {/* Divider */}
         <div className="my-2 border-t border-neutral-100" />
