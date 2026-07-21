@@ -21,7 +21,7 @@ function Answer({ text, refs, onOpen }: { text: string; refs: Ref[]; onOpen: (r:
   const byTag = new Map<string, Ref>(); // tags aren't returned per-position; map label order is enough — resolve by index tag
   // The model emits [E1]/[C2]/[R3]; refs are the resolved items in use-order. Build a tag→ref best-effort.
   const parts: React.ReactNode[] = [];
-  const re = /\[([ECR]\d+)\]/g;
+  const re = /\[([ECRF]\d+)\]/g;
   let last = 0, m: RegExpExecArray | null, k = 0, refIdx = 0;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) parts.push(<span key={`t${k++}`}>{text.slice(last, m.index)}</span>);

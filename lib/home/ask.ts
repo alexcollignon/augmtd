@@ -8,8 +8,9 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
+import { resolveFileUniversal } from '@/lib/knowledge/resolve';
 
-export type AskRef = { id: string; kind: 'entity' | 'inbox_item' | 'commitment' | 'meeting'; label: string; href: string | null };
+export type AskRef = { id: string; kind: 'entity' | 'inbox_item' | 'commitment' | 'meeting' | 'file'; label: string; href: string | null };
 export type AskAnswer = { answer: string; refs: AskRef[] };
 export type AskTurn = { role: 'user' | 'assistant'; text: string };
 
@@ -75,20 +76,34 @@ export async function answerHomeQuestion(
   supabase: SupabaseClient, userId: string, question: string, history: AskTurn[] = [],
 ): Promise<AskAnswer> {
   const { text: snapshot, refs } = await buildBrainSnapshot(supabase, userId);
+  // FILE LANE via THE ONE RESOLVER (single-source #2): question-driven retrieval across pool → KB →
+  // connected drives, so "do we have the deck?" is answerable. Top hits ride as [F#] refs. Non-fatal.
+  let fileBlock = '';
+  try {
+    const fCands = await resolveFileUniversal(supabase, { userId }, question, 4);
+    if (fCands.length) {
+      const lines = fCands.map((c, i) => {
+        const id = `F${i + 1}`;
+        refs.set(id, { id, kind: 'file', label: c.filename, href: null });
+        return `[${id}] ${c.filename}${c.snippet ? ` — ${c.snippet.slice(0, 90)}` : ''}${c.source === 'gdrive' || c.source === 'onedrive' ? ` (${c.source})` : ''}`;
+      });
+      fileBlock = `\n\nFILES that may relate to the question (reference as [F#]):\n${lines.join('\n')}`;
+    }
+  } catch { /* no file lane */ }
   const priorTurns = history.slice(-6).map((t) => `${t.role === 'user' ? 'THEM' : 'YOU'}: ${t.text}`).join('\n');
   const prompt =
     `You are the user's assistant inside their work app — you hold their whole working context (emails, ` +
     `meetings, projects, calendar, commitments, people) and answer like a sharp, calm colleague who already ` +
     `knows their world. Answer their question GROUNDED STRICTLY in the context below.\n\n` +
-    `THEIR CONTEXT:\n${snapshot}\n\n` +
+    `THEIR CONTEXT:\n${snapshot}${fileBlock}\n\n` +
     (priorTurns ? `EARLIER IN THIS CHAT:\n${priorTurns}\n\n` : '') +
     `THEIR QUESTION: ${question}\n\n` +
     `Rules:\n` +
     `- Answer ONLY from the context. If it doesn't cover the question, say so plainly ("I don't have anything on that yet") — NEVER invent people, dates, or facts.\n` +
     `- Be brief and specific — a couple of sentences, the way a colleague would say it out loud. Lead with the answer.\n` +
-    `- Reference the items you used by their tag ([E#]/[C#]/[R#]) inline where natural — the app turns them into links.\n` +
+    `- Reference the items you used by their tag ([E#]/[C#]/[R#]/[F#]) inline where natural — the app turns them into links.\n` +
     `- Reason across items when useful (connect a deal to its commitments / its meeting / who owes what).\n` +
-    `Return ONLY JSON: {"answer":"<the answer, with [E#]/[C#]/[R#] tags>","refs":["E1","C2",...]}`;
+    `Return ONLY JSON: {"answer":"<the answer, with [E#]/[C#]/[R#]/[F#] tags>","refs":["E1","C2","F1",...]}`;
 
   const res = await aiCall<{ answer?: string; refs?: string[] }>({
     userId, supabase, shape: { output: 'json', reasoning: 'deep' }, prompt, maxTokens: 700, temperature: 0.2, source: 'brain_synthesis',

@@ -143,3 +143,14 @@ function nameRank(items: Array<{ id: string; name: string }>, query: string, sou
     .sort((a, b) => b.score - a.score)
     .slice(0, Math.min(3, limit)); // catalog is a supplement, never floods the KB results
 }
+
+/** A one-line drive supplement for KB-search consumers (coworker tools): catalog hits from the connected
+ *  drives for this query, as plain text — '' when none. ONE source; call sites stay one-liners. */
+export async function driveSupplementLine(admin: SupabaseClient, userId: string, query: string): Promise<string> {
+  try {
+    const cands = await resolveFileUniversal(admin, { userId }, query, 6);
+    const drive = cands.filter((c) => c.source === 'gdrive' || c.source === 'onedrive');
+    if (!drive.length) return '';
+    return `\n\nAlso in connected drives (not yet indexed — name matches): ${drive.map((c) => `"${c.filename}" (${c.source === 'gdrive' ? 'Google Drive' : 'OneDrive'})`).join(', ')}. Mention these to the user if relevant.`;
+  } catch { return ''; }
+}

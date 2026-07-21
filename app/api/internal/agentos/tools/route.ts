@@ -168,7 +168,10 @@ export async function POST(request: NextRequest) {
           maxTotalChars: 8000,
           scopeFileIds,
         });
-        result = kbCtx.context || 'No relevant documents found in your knowledge base.';
+        // SINGLE-SOURCE #2: connected drives ride the same search (one shared helper).
+        const { driveSupplementLine } = await import('@/lib/knowledge/resolve');
+        const driveLine = await driveSupplementLine(ac, user_id, query);
+        result = (kbCtx.context || 'No relevant documents found in your knowledge base.') + driveLine;
         break;
       }
 

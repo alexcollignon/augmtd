@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { searchKnowledgeGrouped } from '@/lib/knowledge/search';
+import { resolveFileUniversal } from '@/lib/knowledge/resolve';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { readPool, type Deliverable } from './deliverable-pool';
 import type { ItemPlanKind, ItemPlanTask } from './item-plan';
@@ -200,25 +201,39 @@ export async function resolveFileForStep(
   if (!query) return { status: 'none', candidates: [], description };
 
   let groups: Awaited<ReturnType<typeof searchKnowledgeGrouped>> = [];
+  let universal: Awaited<ReturnType<typeof resolveFileUniversal>> = [];
   try {
     const admin = createAdminClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
     );
     groups = await searchKnowledgeGrouped(userId, query, MAX_CANDIDATES, admin, { maxChunksPerFile: 2, threshold: SEARCH_THRESHOLD });
+    try { universal = await resolveFileUniversal(admin, { userId }, query, MAX_CANDIDATES); } catch { /* KB-only */ }
   } catch (e) {
     console.error('[resolve-file] KB search failed (non-fatal):', e);
     return { status: 'none', candidates: [], description };
   }
 
-  const all: FileCandidate[] = groups
+  // THE ONE RESOLVER (single-source #2): supplement the KB groups with the universal registry (pool →
+  // KB → connected drives) so a step can find a file that lives ONLY in Google Drive/OneDrive. Drive
+  // candidates ride with a `gdrive::`/`onedrive::` id prefix — the reasoned pick sees them; use-file
+  // JIT-ingests on selection. Non-fatal: a registry failure leaves the KB groups as-is.
+  const driveExtras = universal.filter((u) => (u.source === 'gdrive' || u.source === 'onedrive') && !groups.some((g) => g.filename === u.filename));
+
+  const all: FileCandidate[] = [...groups
     .filter((g) => g.fileId && g.filename)
     .map((g) => ({
       knowledgeFileId: g.fileId,
       filename: g.filename,
       snippet: snippetFromGroup(g),
       score: g.similarity ?? 0,
-    }))
+    })),
+    ...driveExtras.map((u) => ({
+      knowledgeFileId: `${u.source}::${u.id}`, // prefixed — not (yet) a knowledge_files row; JIT on use
+      filename: u.filename,
+      snippet: u.snippet,
+      score: u.score,
+    }))]
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_CANDIDATES);
 
