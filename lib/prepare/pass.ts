@@ -146,6 +146,7 @@ export async function runPreparationPass(admin: SupabaseClient, userId: string):
         await runDelegation({
           supabase: admin, userId, worker, prompt, itemLabel: w.title.slice(0, 80),
           pool: { kind: poolKind, entityId: w.entityId, taskId: 'prepare-pass' },
+          provenance: { item: w.title.slice(0, 100), ...(w.entity ? { entity: w.entity.name } : {}), ...(w.who ? { who: w.who } : {}), ...(w.when.explicit ? { due: w.when.explicit } : {}) },
         });
         // ATTRIBUTION — the card/deep-dive reads who prepared it (the jaws-drop is arrival + attribution).
         if (w.id.startsWith('inbox:')) {

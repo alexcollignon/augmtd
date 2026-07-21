@@ -23,7 +23,7 @@ export type EntityState = {
 export type EntityNextMove = { kind: 'reply' | 'send' | 'followup' | 'none'; title: string; reason: string; entityRef: string | null };
 export type EntityPriority = { weight: number; reason: string };
 
-type LedgerLine = { at: string; kind: string; who: string | null; text: string; ref: string };
+export type LedgerLine = { at: string; kind: string; who: string | null; text: string; ref: string };
 
 const daysBetween = (a: string, b: number) => Math.floor((b - new Date(a).getTime()) / 86400000);
 
@@ -39,7 +39,7 @@ async function getUserName(supabase: SupabaseClient, userId: string): Promise<st
 }
 
 /** Assemble the entity's cross-source ledger from its links — deterministic, no AI. */
-async function assembleLedger(supabase: SupabaseClient, userId: string, entityId: string): Promise<{ ledger: LedgerLine[]; sig: string; quietDays: number | null }> {
+export async function assembleLedger(supabase: SupabaseClient, userId: string, entityId: string): Promise<{ ledger: LedgerLine[]; sig: string; quietDays: number | null }> {
   const { data: links } = await supabase.from('entity_links')
     .select('item_kind, item_id').eq('user_id', userId).eq('entity_id', entityId).neq('item_kind', 'email_thread').limit(200);
   const byKind = new Map<string, string[]>();
@@ -80,7 +80,7 @@ async function assembleLedger(supabase: SupabaseClient, userId: string, entityId
       const { data } = await supabase.from('item_deliverables').select('entity_id, title, type, created_at, metadata')
         .eq('user_id', userId).in('entity_id', itemIds).order('created_at', { ascending: false }).limit(12);
       for (const d of (data ?? []) as Array<Record<string, any>>) {
-        ledger.push({ at: d.created_at ?? '', kind: 'commitment', who: (d.metadata?.worker as string) ?? 'team', text: `team prepared: ${String(d.title || d.type || 'deliverable')}`, ref: `deliv:${d.entity_id}` });
+        ledger.push({ at: d.created_at ?? '', kind: 'commitment', who: (d.metadata?.agentName as string) ?? (d.metadata?.worker as string) ?? 'team', text: `team prepared: ${String(d.title || d.type || 'deliverable')}`, ref: `deliv:${d.entity_id}` });
       }
     } catch { /* pre-migration / non-fatal */ }
   }

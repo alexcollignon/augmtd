@@ -109,6 +109,9 @@ export async function runDelegation(args: {
   // output back into the pool for downstream steps. Optional/back-compatible: absent → no pool wiring
   // (identical to pre-S2 behaviour). `taskId` = the plan step being delegated (dedup key for the write).
   pool?: { kind: ItemPlanKind; entityId: string; taskId?: string | null };
+  /** PROVENANCE (Prepared-Work): what this work was grounded in — rides the deliverable's metadata so
+   *  the PreparedLead / entity ledger can show "from: <item> · <deal>" (trust is the product). */
+  provenance?: Record<string, unknown>;
 }): Promise<DelegateResult> {
   const { supabase, userId, worker, prompt, itemLabel, firstName, pool: poolScope } = args;
 
@@ -206,7 +209,7 @@ export async function runDelegation(args: {
       title: itemLabel.slice(0, 100),
       content: output.slice(0, 8000),
       gist,
-      metadata: { source: 'delegation', agentId: worker.id, agentName: worker.name },
+      metadata: { source: 'delegation', agentId: worker.id, agentName: worker.name, ...(args.provenance ? { provenance: args.provenance } : {}) },
     }) ?? undefined;
   }
 

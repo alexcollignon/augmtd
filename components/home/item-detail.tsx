@@ -4393,7 +4393,7 @@ function FollowUpDetail({ id }: { id: string }) {
 // renders nothing when the pool has no prepared work. Read-only — acting stays with the composer/plan.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 function PreparedLead({ kind, itemId }: { kind: 'email' | 'commitment'; itemId: string }) {
-  const [items, setItems] = useState<Array<{ id: string; title: string | null; content: string | null; metadata?: { worker?: string } | null }>>([]);
+  const [items, setItems] = useState<Array<{ id: string; title: string | null; content: string | null; metadata?: { worker?: string; agentName?: string; provenance?: Record<string, string> } | null }>>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
@@ -4407,7 +4407,8 @@ function PreparedLead({ kind, itemId }: { kind: 'email' | 'commitment'; itemId: 
   return (
     <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50/40 px-4 py-3">
       {items.slice(0, 3).map((d) => {
-        const worker = d.metadata?.worker ?? null;
+        const worker = d.metadata?.agentName ?? d.metadata?.worker ?? null;
+        const prov = d.metadata?.provenance ?? null;
         const open = openId === d.id;
         return (
           <div key={d.id} className="py-1">
@@ -4416,7 +4417,16 @@ function PreparedLead({ kind, itemId }: { kind: 'email' | 'commitment'; itemId: 
               <span className="text-[13px] font-medium text-neutral-800 truncate min-w-0 flex-1">{d.title || 'Deliverable'}</span>
               <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-400 flex-shrink-0 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
             </button>
-            {open && <div className="mt-2 text-[13px] text-neutral-700 leading-relaxed whitespace-pre-wrap max-h-[320px] overflow-y-auto [scrollbar-width:thin]">{d.content}</div>}
+            {open && (
+              <div className="mt-2">
+                {prov && (
+                  <p className="mb-1.5 text-[11px] text-neutral-400">
+                    from: {[prov.item, prov.entity && `📁 ${prov.entity}`, prov.who].filter(Boolean).join(' · ')}
+                  </p>
+                )}
+                <div className="text-[13px] text-neutral-700 leading-relaxed whitespace-pre-wrap max-h-[320px] overflow-y-auto [scrollbar-width:thin]">{d.content}</div>
+              </div>
+            )}
           </div>
         );
       })}

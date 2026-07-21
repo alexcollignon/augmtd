@@ -218,6 +218,8 @@ export default function EntityDetail({ entityId, onBack, initialTab }: { entityI
         </div>
       )}
 
+      {tab === 'overview' && <EntityAsk entityId={entityId} name={e.name} />}
+
       {tab === 'work' && (
         <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-3">
           <BoardList title="To do" items={d.board.todo} empty="Nothing to do." />
@@ -233,6 +235,72 @@ export default function EntityDetail({ entityId, onBack, initialTab }: { entityI
             : <GanttChart groups={ganttGroups} today={new Date().toISOString().slice(0, 10)} />}
         </div>
       )}
+    </div>
+  );
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// ENTITY ASK (Prepared-Work D2) — talk to THIS deal's brain. A compact grounded chat under the Overview:
+// state + ledger + files in view, refs resolve to deep-dives, honest-or-silent. Session-local thread.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+function EntityAsk({ entityId, name }: { entityId: string; name: string }) {
+  const router = useRouter();
+  const [turns, setTurns] = useState<Array<{ role: 'user' | 'assistant'; text: string; refs?: Array<{ id: string; label: string; href: string | null }> }>>([]);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const ask = async (q: string) => {
+    const question = q.trim();
+    if (!question || busy) return;
+    setInput('');
+    const history = turns.map((t) => ({ role: t.role, text: t.text }));
+    setTurns((prev) => [...prev, { role: 'user', text: question }]);
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/entities/${entityId}/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, history }) });
+      const d = await res.json();
+      setTurns((prev) => [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [] }]);
+    } catch {
+      setTurns((prev) => [...prev, { role: 'assistant', text: 'Something went wrong — try again.' }]);
+    } finally { setBusy(false); }
+  };
+  // Answer text with [L#]/[F#] tags swapped for clickable ref chips (resolved in emit order).
+  const renderAnswer = (text: string, refs: Array<{ id: string; label: string; href: string | null }>) => {
+    const parts: React.ReactNode[] = [];
+    const re = /\[([LF]\d+)\]/g;
+    let last = 0, m: RegExpExecArray | null, k = 0;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) parts.push(<span key={`t${k++}`}>{text.slice(last, m.index)}</span>);
+      const r = refs.find((x) => x.id === m![1]);
+      if (r) parts.push(r.href
+        ? <button key={`r${k++}`} onClick={() => router.push(r.href!)} className="inline font-medium text-indigo-700 hover:underline underline-offset-2">{r.label}</button>
+        : <span key={`r${k++}`} className="font-medium text-neutral-600">{r.label}</span>);
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) parts.push(<span key={`t${k++}`}>{text.slice(last)}</span>);
+    return parts;
+  };
+  return (
+    <div className="mt-5 rounded-2xl border border-neutral-200/70 bg-white p-4">
+      {turns.length > 0 && (
+        <div className="space-y-3 mb-3">
+          {turns.map((t, i) => t.role === 'user'
+            ? <div key={i} className="flex justify-end"><span className="rounded-2xl rounded-br-sm bg-neutral-100 px-3 py-1.5 text-[13px] text-neutral-800 max-w-[80%]">{t.text}</span></div>
+            : <p key={i} className="text-[13.5px] text-neutral-700 leading-relaxed pr-4">{renderAnswer(t.text, t.refs ?? [])}</p>)}
+          {busy && <p className="text-[12.5px] text-neutral-400">Thinking…</p>}
+        </div>
+      )}
+      <div className="flex items-center gap-2 rounded-xl border border-neutral-200 px-3 py-2 focus-within:border-indigo-300 transition-colors">
+        <input
+          value={input} onChange={(ev) => setInput(ev.target.value)}
+          onKeyDown={(ev) => { if (ev.key === 'Enter') { ev.preventDefault(); ask(input); } }}
+          placeholder={`Ask about ${name}…`}
+          className="flex-1 bg-transparent text-[13.5px] text-neutral-800 placeholder:text-neutral-400 outline-none"
+        />
+        <button onClick={() => ask(input)} disabled={!input.trim() || busy} className="flex-shrink-0 text-indigo-500 hover:text-indigo-700 disabled:opacity-30 transition-colors">
+          <ArrowRightIcon className="w-4 h-4" />
+        </button>
+      </div>
     </div>
   );
 }
