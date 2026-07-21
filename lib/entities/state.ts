@@ -49,10 +49,13 @@ async function assembleLedger(supabase: SupabaseClient, userId: string, entityId
   const ledger: LedgerLine[] = [];
   const inboxIds = byKind.get('inbox_item') ?? [];
   if (inboxIds.length) {
-    const { data } = await supabase.from('inbox_items').select('id, work_title, source_data, created_at').in('id', inboxIds.slice(0, 100));
+    const { data } = await supabase.from('inbox_items').select('id, work_title, source_data, created_at, status').in('id', inboxIds.slice(0, 100));
     for (const it of (data ?? []) as Array<Record<string, any>>) {
       const sd = it.source_data ?? {};
-      ledger.push({ at: sd.received_at ?? it.created_at ?? '', kind: 'email', who: sd.from_name ?? sd.from_address ?? null, text: String(it.work_title || sd.subject || ''), ref: `inbox:${it.id}` });
+      // Resolution status rides the line (L2): a handled/dismissed item must read as SETTLED — so the
+      // synthesis can see "he already dealt with this" instead of re-arguing it as open.
+      const res = it.status === 'completed' ? ' (handled)' : it.status === 'dismissed' ? ' (dismissed)' : '';
+      ledger.push({ at: sd.received_at ?? it.created_at ?? '', kind: 'email', who: sd.from_name ?? sd.from_address ?? null, text: `${String(it.work_title || sd.subject || '')}${res}`, ref: `inbox:${it.id}` });
     }
   }
   const mtgIds = byKind.get('meeting') ?? [];
@@ -78,7 +81,11 @@ async function assembleLedger(supabase: SupabaseClient, userId: string, entityId
   const nowMs = Date.now();
   const past = ledger.filter((l) => l.at && new Date(l.at).getTime() <= nowMs);
   const quietDays = past.length ? Math.max(0, daysBetween(past[0].at, nowMs)) : null;
-  const sig = `${ledger.length}:${ledger[0]?.at ?? ''}`;
+  // CONTENT-HASH sig (L2) — the old `length:newest-at` was DEAF to user actions: resolving an item adds no
+  // line and moves no timestamp, so the brain literally could not notice a dismissal/completion. Hashing
+  // the line texts (which now carry resolution status) makes any status flip count as change.
+  let h = 0; for (const l of ledger) { const s = `${l.at}|${l.text}`; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; }
+  const sig = `${ledger.length}:${h}`;
   return { ledger: ledger.slice(0, 28), sig, quietDays };
 }
 

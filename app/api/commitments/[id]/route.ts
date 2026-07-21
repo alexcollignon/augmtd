@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logActivity } from '@/lib/activity/log';
+import { after } from 'next/server';
+import { noteItemAction } from '@/lib/entities/on-action';
 
 // GET /api/commitments/[id] — one commitment + its SOURCE CONTEXT, RLS-safe (cookie client). Powers
 // the Home commitment deep-dive: the description / counterparty / due date, plus enough of what it
@@ -130,6 +132,8 @@ export async function PATCH(
       entityId: id,
     });
 
+    // L2 ACTION EVENT — the brain hears this action (entity re-synthesis + brief-cache bust).
+    after(async () => { await noteItemAction(supabase, user.id, { kind: 'commitment', id }).catch(() => {}); });
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Commitment status update error:', error);

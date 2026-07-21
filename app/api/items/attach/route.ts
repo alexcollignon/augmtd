@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { extractTextFromAttachment } from '@/lib/attachments/text-extractor';
 import { indexUploadedFile } from '@/lib/knowledge/indexer';
+import { stampFileMeta } from '@/lib/knowledge/ingest';
 import { writeDeliverable } from '@/lib/home/deliverable-pool';
 import { logActivity } from '@/lib/activity/log';
 import type { ItemPlanKind, ItemPlanTask } from '@/lib/home/item-plan';
@@ -135,6 +136,11 @@ export async function POST(request: NextRequest) {
     } catch (e) {
       // Non-fatal — the pool deliverable (with extracted text) still lands; indexing can be retried.
       console.error('[items/attach] KB index failed (non-fatal):', e);
+    }
+    // FILE SPINE (A2): stamp provenance + inherit the item's entity (the brain tie).
+    if (knowledgeFileId) {
+      const viaKind = kind === 'email' ? 'inbox_item' : kind === 'commitment' ? 'commitment' : kind === 'meeting' ? 'meeting' : null;
+      await stampFileMeta(adminClient, knowledgeFileId, { kind: 'upload', ref: `${kind}:${entityId}` }, viaKind ? { itemKind: viaKind, itemId: entityId } : null).catch(() => {});
     }
 
     // ── Land the file as a `file` DELIVERABLE in the per-item pool. `content` = extracted text (the

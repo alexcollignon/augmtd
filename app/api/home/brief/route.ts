@@ -215,7 +215,7 @@ export async function GET() {
       .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(60),
     supabase.from('commitments').select('*').eq('user_id', user.id).eq('status', 'open'),
     supabase.from('calendar_events')
-      .select('id, title, start_time, attendees')
+      .select('id, title, start_time, attendees, timezone, is_all_day')
       .eq('user_id', user.id).eq('status', 'confirmed')
       .gte('start_time', new Date(now.getTime() - 30 * 60_000).toISOString())
       .lte('start_time', endOfDay).order('start_time', { ascending: true }).limit(6),
@@ -687,8 +687,21 @@ export async function GET() {
       };
     }
   }
+  // The USER's home timezone — a meeting must show in the user's local clock, NOT the organiser's zone (a
+  // Dubai-created event would otherwise read +4h). No stored preference, so derive it agnostically: the most
+  // common timezone across the user's own calendar events (their home zone), fallback UTC.
+  const { data: tzRows } = await supabase.from('calendar_events').select('timezone').eq('user_id', user.id).not('timezone', 'is', null).limit(300);
+  const tzFreq = new Map<string, number>();
+  for (const r of (tzRows ?? []) as Array<{ timezone: string | null }>) { const t = r.timezone; if (t) tzFreq.set(t, (tzFreq.get(t) ?? 0) + 1); }
+  const userTz = [...tzFreq.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'UTC';
+  // The model has no browser TZ, so a raw UTC ISO reads as the wrong hour; format every event in userTz.
+  const localHHMM = (iso: string, allDay: boolean): string => {
+    if (allDay) return 'all day';
+    try { return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: userTz }).format(new Date(iso)); }
+    catch { return String(iso).slice(11, 16); }
+  };
   const schedule = meetings.map((m, i) => ({
-    id: m.id, time: m.start_time, title: m.title || '(untitled)',
+    id: m.id, time: m.start_time, localTime: localHHMM(m.start_time, !!m.is_all_day), title: m.title || '(untitled)',
     attendees: attendeeEmails(m).filter((e) => e !== self).length,
     prep: i === 0 ? nextPrep : null,
   }));
@@ -1329,33 +1342,66 @@ export async function GET() {
     const { composeBriefing, briefingDaySig } = await import('@/lib/briefing/compose');
     const entNameById = new Map(wentsRows.map((e) => [e.id as string, { name: e.name as string, move: ((e.next_move ?? null) as { title?: string } | null)?.title ?? null }]));
     const entByAtom = new Map(alinksRows.map((l) => [l.item_id, entNameById.get(l.entity_id) ?? null]));
+    const entIdByAtom = new Map(alinksRows.map((l) => [l.item_id, l.entity_id]));
+    const entStateById = new Map(wentsRows.map((e) => [e.id as string, (e.state ?? {}) as { category?: string }]));
+    const isAdminEntity = (id: string | undefined | null) => id != null && entStateById.get(id)?.category === 'admin';
+    // ── THE AGENDA (Living-Home S1) — replicate the deck's ordering server-side with the SAME pure spine
+    // (lib/home/agenda) so the brief's lead anchors on the SAME first thing the deck shows as its hero.
+    // Session state (this browser's dismissals / chosen lens) can't be known here — this is the canonical
+    // default-lens (Urgent) agenda, which is what a fresh load renders.
+    const { buildAgenda, agendaAtomOrder } = await import('@/lib/home/agenda');
+    const todayISOStr = todayStr;
+    const serverAgenda = buildAgenda({
+      replyItems: ((mustRespondOut?.items ?? []) as Array<{ itemId: string; who: string; ask: string; dueDate?: string | null }>).map((m) => ({
+        source: 'reply' as const, key: `r-${m.itemId}`, entityId: m.itemId, href: `/item/${m.itemId}?kind=email`,
+        ask: m.ask, primary: m.who, dueDate: m.dueDate ?? null,
+      })),
+      noticeItems: actionNotices.map((n) => ({
+        source: 'notice' as const, key: `n-${n.itemId}`, entityId: n.itemId, href: `/item/${n.itemId}?kind=email`,
+        ask: n.summary, primary: n.who || null, dueDate: n.dueDate ?? null, overdue: !!n.dueDate && n.dueDate < todayISOStr,
+      })),
+      commitItems: commitments.map((c) => ({
+        source: 'commitment' as const, key: `c-${c.id}`, entityId: c.id, href: `/item/${c.id}?kind=commitment`,
+        ask: c.description, overdue: !!c.overdue, dueDate: c.dueDate ?? null, initiative: c.initiative ?? null,
+      })),
+      priorityCards: cappedPriorities.filter((p) => p.posture !== 'needs_reply'),
+      deals: slippingDeals,
+      bundles, bundleNames: bundleNames ?? {},
+      bundleStates: bundleStates as Record<string, import('@/lib/home/agenda').BundleState | null>,
+      sort: 'urgent', weights: itemWeights,
+    });
+    // Deck-order index: itemId → its position in the agenda's atom order (bundle members expanded).
+    const atomOrder = agendaAtomOrder(serverAgenda);
+    const orderIdx = new Map(atomOrder.map((id, i) => [id, i]));
     const inputs: import('@/lib/briefing/compose').BriefingInputs = {
       todayStr, firstName: firstName || 'there',
+      // ACTION prose = genuine HUMAN obligations only: replies you owe + commitments. Automated/system
+      // notices (payment/subscription/security) are deliberately EXCLUDED — the brief must never invent a
+      // person or urgency for a no-reply sender ("before X escalates again"). They still surface in the deck.
+      // Ordered by the AGENDA (deck order) — the composer keeps this order, so {A1} IS the deck's first
+      // actionable and the prose lead and the deck hero point at the same thing by construction.
       actions: [
         ...((mustRespondOut?.items ?? []) as Array<{ itemId: string; who: string; ask: string; dueDate?: string | null }>).map((m) => ({
           itemId: m.itemId, itemKind: 'inbox_item' as const, who: m.who, ask: m.ask,
-          move: entByAtom.get(m.itemId)?.move ?? null, entityName: entByAtom.get(m.itemId)?.name ?? null,
+          move: entByAtom.get(m.itemId)?.move ?? null, entityId: entIdByAtom.get(m.itemId) ?? null, entityName: entByAtom.get(m.itemId)?.name ?? null,
           weight: itemWeights[m.itemId] ?? 20, overdue: false, dueDate: m.dueDate ?? null, href: `/item/${m.itemId}?kind=email`,
-        })),
-        ...actionNotices.map((n) => ({
-          itemId: n.itemId, itemKind: 'inbox_item' as const, who: n.who, ask: n.summary,
-          move: entByAtom.get(n.itemId)?.move ?? null, entityName: entByAtom.get(n.itemId)?.name ?? null,
-          weight: itemWeights[n.itemId] ?? 15, overdue: false, dueDate: n.dueDate ?? null, href: `/item/${n.itemId}?kind=email`,
         })),
         ...commitments.map((c) => ({
           itemId: c.id, itemKind: 'commitment' as const, who: c.counterparty, ask: c.description,
-          move: entByAtom.get(c.id)?.move ?? null, entityName: entByAtom.get(c.id)?.name ?? null,
+          move: entByAtom.get(c.id)?.move ?? null, entityId: entIdByAtom.get(c.id) ?? null, entityName: entByAtom.get(c.id)?.name ?? null,
           weight: itemWeights[c.id] ?? 18, overdue: !!c.overdue, dueDate: c.dueDate ?? null, href: `/item/${c.id}?kind=commitment`,
         })),
-      ],
-      watch: slippingDeals.map((d) => ({ entityId: d.key, name: d.label, summary: d.summary, move: d.nextMove?.title ?? null, quietDays: null, weight: d.weight })),
+      ].sort((a, b) => (orderIdx.get(a.itemId) ?? 1e9) - (orderIdx.get(b.itemId) ?? 1e9)),
+      // WATCH / PULSE = real bodies of work only — an admin/vendor/SaaS entity (a subscription, a utility
+      // account) is background, never surfaced as "quietly slipping" or "moving without you".
+      watch: slippingDeals.filter((d) => !isAdminEntity(d.key)).map((d) => ({ entityId: d.key, name: d.label, summary: d.summary, move: d.nextMove?.title ?? null, quietDays: null, weight: d.weight })),
       moving: (() => {
         const deckSet = new Set(deckEntityIdsOut);
-        const mv = wentsRows.filter((e) => { const st = (e.state ?? {}) as { momentum?: string; summary?: string }; return !deckSet.has(e.id as string) && st.summary && (st.momentum === 'active' || st.momentum === 'waiting'); });
+        const mv = wentsRows.filter((e) => { const st = (e.state ?? {}) as { momentum?: string; summary?: string; category?: string }; return !deckSet.has(e.id as string) && st.summary && st.category !== 'admin' && (st.momentum === 'active' || st.momentum === 'waiting'); });
         const best = [...mv].sort((a, b) => Number((b.priority as { weight?: number } | null)?.weight ?? 0) - Number((a.priority as { weight?: number } | null)?.weight ?? 0))[0];
         return { count: mv.length, closest: best ? { entityId: best.id as string, name: best.name as string, summary: String(((best.state ?? {}) as { summary?: string }).summary ?? '') } : null };
       })(),
-      schedule: schedule.map((sc) => ({ time: sc.time, title: sc.title })),
+      schedule: schedule.map((sc) => ({ time: sc.localTime, title: sc.title })),
       counts: { needYou: (mustRespondOut?.items?.length ?? 0) + actionNotices.length + commitments.length, cleared: dayProgress?.cleared ?? 0, fromTeam: 0, followUps: followups?.items?.length ?? 0, fyi: forYourAwareness.length },
       prior: cachedBriefing ? { lead: cachedBriefing.lead?.text, action: cachedBriefing.action?.text, watchlist: cachedBriefing.watchlist?.text, pulse: cachedBriefing.pulse?.text, composedAt: cachedBriefing.composedAt } : null,
     };

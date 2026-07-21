@@ -15,7 +15,7 @@ import React from 'react';
 import { useRouter } from 'next/navigation';
 
 export type BriefingRef = {
-  id: string; kind: 'action' | 'watch' | 'pulse';
+  id: string; kind: 'action' | 'watch' | 'pulse' | 'group';
   itemId: string; itemKind: 'inbox_item' | 'commitment' | 'entity';
   who: string | null; href: string | null;
 };
@@ -54,7 +54,7 @@ function Prose({ text, refs, clearedIds, onNavigate, className }: {
   const byId = new Map(refs.map((r) => [r.id, r]));
   const parts: React.ReactNode[] = [];
   let last = 0;
-  const re = /\{([AWP]\d+)\}/g;
+  const re = /\{([AWPG]\d+)\}/g;
   let m: RegExpExecArray | null;
   let k = 0;
   while ((m = re.exec(text)) !== null) {
@@ -72,7 +72,7 @@ function Prose({ text, refs, clearedIds, onNavigate, className }: {
  *  ResizeObserver keeps it honest as prose re-composes), so the motion has true, even timing in both
  *  directions — no max-height guessing. The fade is an overlay whose opacity animates in step. */
 const COLLAPSED_PX = 84;
-export function BriefingBlock({ briefing, clearedIds, onNavigate }: { briefing: Briefing; clearedIds: Set<string>; onNavigate: (r: BriefingRef) => void }) {
+export function BriefingBlock({ briefing, clearedIds, onNavigate, flat = false }: { briefing: Briefing; clearedIds: Set<string>; onNavigate: (r: BriefingRef) => void; flat?: boolean }) {
   const [open, setOpen] = React.useState(false);
   const [contentH, setContentH] = React.useState(0);
   const innerRef = React.useRef<HTMLDivElement>(null);
@@ -85,8 +85,31 @@ export function BriefingBlock({ briefing, clearedIds, onNavigate }: { briefing: 
     ro.observe(el);
     return () => ro.disconnect();
   }, [briefing]);
-  const collapsible = contentH > COLLAPSED_PX + 24; // short briefs just show whole (no fade, no button)
+  // FLAT (chat) mode — the brief is the opening message of the conversation, so it shows WHOLE, minimal,
+  // no "Read the brief" collapse, no amber-bordered watchlist chrome: just calm flowing prose that reads
+  // as the assistant's first turn.
+  const collapsible = !flat && contentH > COLLAPSED_PX + 24; // short briefs just show whole (no fade, no button)
   const expanded = open || !collapsible;
+  if (flat) {
+    // The brief is one continuous message — uniform size and an even, readable tone throughout. The lead
+    // sits a touch stronger; the rest share ONE colour (no progressive fade to near-invisible, no shrink).
+    return (
+      <div className="space-y-2">
+        <Prose text={briefing.lead.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
+          className="text-[14.5px] text-neutral-800 leading-[1.75]" />
+        <Prose text={briefing.action.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
+          className="text-[14.5px] text-neutral-600 leading-[1.75]" />
+        {briefing.watchlist && (
+          <Prose text={briefing.watchlist.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
+            className="text-[14.5px] text-neutral-600 leading-[1.75]" />
+        )}
+        {briefing.pulse && (
+          <Prose text={briefing.pulse.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
+            className="text-[14.5px] text-neutral-600 leading-[1.75]" />
+        )}
+      </div>
+    );
+  }
   return (
     <section className="w-full">
       <div

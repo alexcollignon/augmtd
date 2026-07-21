@@ -26,7 +26,7 @@ async function buildInputs(uid: string): Promise<{ inp: BriefingInputs; subjects
     const e = entById.get(linkByAtom.get(it.id));
     return {
       itemId: it.id, itemKind: 'inbox_item' as const, who: it.source_data?.from_name ?? null,
-      ask: String(it.work_title || ''), move: e?.next_move?.title ?? null, entityName: e?.name ?? null,
+      ask: String(it.work_title || ''), move: e?.next_move?.title ?? null, entityId: linkByAtom.get(it.id) ?? null, entityName: e?.name ?? null,
       weight: e?.priority?.weight ?? 20, overdue: false, dueDate: it.source_data?.understanding?.deadline ?? null,
       href: `/item/${it.id}?kind=email`,
     };

@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { after } from 'next/server';
+import { noteItemAction } from '@/lib/entities/on-action';
 import { createClient } from '@/lib/supabase/server';
 import { logActivity } from '@/lib/activity/log';
 
@@ -31,6 +33,10 @@ export async function POST(request: NextRequest) {
       try { await supabase.from('profiles').update({ home_brief: null }).eq('id', user.id); } catch { /* non-fatal */ }
     };
 
+    // L2 ACTION EVENT — a restore is an action too: the entity re-reasons with the item OPEN again.
+    if (entityType === 'inbox_item' || entityType === 'commitment') {
+      after(async () => { await noteItemAction(supabase, user.id, { kind: entityType as 'inbox_item' | 'commitment', id: entityId }).catch(() => {}); });
+    }
     if (entityType === 'inbox_item') {
       // Flip the item back to pending so classifyItem surfaces it again on the Home. Also CLEAR
       // source_data.resolved_at/resolved_reason — a reopened item is no longer "cleared today", so it

@@ -52,6 +52,15 @@ export async function shadowRecognizeTouched(supabase: SupabaseClient, userId: s
       await recognizeItem(supabase, userId, item).catch(() => {});
       ran++;
     }
+    // FILE SPINE (Prepared-Work A3): ingest the touched items' email attachments into the KB — runs
+    // AFTER recognition so the file inherits the item's fresh entity link. Idempotent (content-hash),
+    // noise-filtered, capped, non-fatal.
+    try {
+      const { ingestItemAttachments } = await import('@/lib/knowledge/ingest');
+      const withAtts = ((touched ?? []) as Array<Record<string, any>>)
+        .filter((it) => Array.isArray(it.source_data?.attachments) && it.source_data.attachments.length).slice(0, 6);
+      for (const it of withAtts) await ingestItemAttachments(supabase, userId, { id: it.id, source_data: it.source_data }).catch(() => {});
+    } catch { /* non-fatal */ }
     return { ran };
   } catch { return null; }
 }

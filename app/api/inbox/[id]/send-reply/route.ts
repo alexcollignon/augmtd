@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse, after } from 'next/server';
+import { noteItemAction } from '@/lib/entities/on-action';
 import { createHash } from 'crypto';
 import { createClient } from '@/lib/supabase/server';
 import { sendGmailReply, EmailAttachment } from '@/lib/google/gmail';
@@ -162,6 +163,8 @@ export async function POST(
     // blocks the send response. We have the connection + thread id already, but reconcileItemLabel
     // re-resolves them cheaply from the item for a single code path.
     after(async () => {
+      // L2 ACTION EVENT — the brain hears this send (entity re-synthesis + brief-cache bust).
+      await noteItemAction(supabase, user.id, { kind: 'inbox_item', id }).catch(() => {});
       const { reconcileItemLabel } = await import('@/lib/inbox/reconcile-item-label');
       await reconcileItemLabel({ userId: user.id, itemId: id, item, targetLabel: 'done', client: supabase });
       // LIVE Initiative Brain (S5) — you just sent on this thread → refresh its initiative's state (whoOwes

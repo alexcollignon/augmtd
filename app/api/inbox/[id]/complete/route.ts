@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logActivity } from '@/lib/activity/log';
+import { noteItemAction } from '@/lib/entities/on-action';
 
 // Derive a human title for an inbox item from its stored source_data.
 function inboxItemTitle(item: { title?: string | null; source_data?: Record<string, unknown> | null }): string {
@@ -92,6 +93,8 @@ export async function POST(
     // Swap the mailbox label to AUGMTD/Done (honors auto_label). Non-fatal, after() so it never
     // blocks the response.
     after(async () => {
+      // L2 ACTION EVENT — the brain hears this action (entity re-synthesis + brief-cache bust).
+      await noteItemAction(supabase, user.id, { kind: 'inbox_item', id }).catch(() => {});
       const { reconcileItemLabel } = await import('@/lib/inbox/reconcile-item-label');
       await reconcileItemLabel({ userId: user.id, itemId: id, item, targetLabel: 'done', client: supabase });
     });
