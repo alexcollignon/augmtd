@@ -168,7 +168,34 @@ export async function runPreparationPass(admin: SupabaseClient, userId: string):
       for (let i = 0; i < candidates.length; i++) {
         if (String(shapes[String(i)] ?? '') !== 'send_document') continue;
         const w = candidates[i];
-        if (!w.id.startsWith('inbox:')) continue; // commitment doc-sends: next slice
+        // ── COMMITMENT doc-send: resolve the file + prepare a send-draft into the pool (the followup
+        // deep-dive serves the newest pool draft instantly). Same two gates as inbox: score + reasoned. ──
+        if (w.id.startsWith('commit:')) {
+          const { data: prior } = await admin.from('item_deliverables').select('id, metadata, created_at')
+            .eq('user_id', userId).eq('kind', 'commitment').eq('entity_id', w.entityId).eq('type', 'draft')
+            .order('created_at', { ascending: false }).limit(1).maybeSingle();
+          if ((prior?.metadata as { attachment?: unknown } | null)?.attachment) continue; // already prepared with a file
+          const cCands = await resolveFileUniversal(admin, { userId, entityId: w.entity?.id ?? null }, w.title, 4).catch(() => []);
+          const cTop = cCands.find((c) => c.source === 'kb');
+          if (!cTop || cTop.score < 0.7) continue;
+          const cJudge = await aiCall<{ match?: boolean }>({
+            userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 60, source: 'brain_synthesis',
+            prompt: `TASK: ${w.title.slice(0, 140)}\nCANDIDATE FILE: "${cTop.filename}"\nSnippet: ${cTop.snippet.slice(0, 200)}\n\n` +
+              `Is this file THE document the task asks to send/share (not merely related)? JSON only: {"match":true|false}`,
+          }).catch(() => ({ json: { match: false } }));
+          if (cJudge.json?.match !== true) continue;
+          const cBody = await generateNudgeDraft(userId, { counterparty: w.who ?? w.blockedOn ?? null, description: `${w.title} — the document "${cTop.filename}" will be attached.` }, admin).catch(() => null);
+          if (!cBody) continue;
+          const { writeDeliverable } = await import('@/lib/home/deliverable-pool');
+          await writeDeliverable(admin, userId, {
+            kind: 'commitment', entityId: w.entityId, taskId: 'prepare-pass-docsend', type: 'draft',
+            title: `Send ${cTop.filename}`.slice(0, 100), content: cBody, gist: `send draft with ${cTop.filename}`,
+            metadata: { source: 'preparation_pass', attachment: { fileId: cTop.id, filename: cTop.filename, source: cTop.source }, provenance: { item: w.title.slice(0, 100), ...(w.entity ? { entity: w.entity.name } : {}) } },
+          }).catch(() => {});
+          prepared++;
+          continue;
+        }
+        if (!w.id.startsWith('inbox:')) continue;
         const { data: it } = await admin.from('inbox_items').select('id, source_data, status').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
         if (!it || it.status !== 'pending') continue;
         const sd = (it.source_data ?? {}) as Record<string, unknown>;

@@ -336,8 +336,10 @@ export async function buildWorkItems(
       }
       w.priority = priorityOf({ entityWeight: e?.weight ?? null, explicit: w.when.explicit, state: w.state, automated: w.automated, todayStr });
       // Structural blocked-on: a waiting item is blocked on its counterparty — a real name from the row,
-      // never invented, and NEVER the user themself (self-block guard). Unnamed waits stay null.
-      if (w.state === 'waiting' && w.who && !isSelf(w.who)) w.blockedOn = w.who;
+      // never invented, NEVER the user themself (self-block guard), and NEVER an automated sender
+      // (no-reply/bounce/notification addresses are not people you can be blocked on).
+      const whoIsAutomated = !!w.who && (/no-?reply|bounce|notif|mailer-daemon|@mail\.|@send\.|donotreply|^[0-9a-f]{12,}[-@]/i.test(w.who) || isAutomatedSender(w.who.match(/[^\s<>"]+@[^\s<>"]+/)?.[0] ?? null, w.who, null));
+      if (w.state === 'waiting' && w.who && !isSelf(w.who) && !whoIsAutomated) w.blockedOn = w.who;
     }
   } catch { /* non-fatal — ledger fields stay at defaults */ }
 
