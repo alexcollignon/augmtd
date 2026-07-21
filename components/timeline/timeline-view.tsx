@@ -130,11 +130,18 @@ export default function TimelineView() {
     // the background. The timeline spine (buildWorkItems) is expensive, so this matters most here.
     const cached = loadLS<{ items: WorkItem[]; entityTags: ProjectMap }>('aug-timeline-v2');
     if (cached?.items) { setItems(cached.items); setProjectMap(cached.entityTags ?? {}); }
-    fetch('/api/home/timeline')
+    const load = () => fetch('/api/home/timeline')
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((d) => { if (alive) { setItems(d.items ?? []); setProjectMap(d.entityTags ?? {}); saveLS('aug-timeline-v2', { items: d.items ?? [], entityTags: d.entityTags ?? {} }); } })
       .catch(() => { if (alive && !cached?.items) setErr(true); });
-    return () => { alive = false; };
+    load();
+    // LIVE (Living-Home): the timeline reflects actions as they happen — refetch on focus/visibility +
+    // a gentle interval while visible, same pattern as the Home. Background swaps, never a skeleton.
+    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    const iv = window.setInterval(() => { if (document.visibilityState === 'visible') load(); }, 90_000);
+    return () => { alive = false; document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onVisible); window.clearInterval(iv); };
   }, []);
 
   if (err) return <div className="mt-10 text-[13px] text-neutral-400">Couldn&apos;t load your timeline.</div>;

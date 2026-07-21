@@ -63,20 +63,30 @@ export default function HomeAsk({ briefing, clearedIds, onBriefNavigate, suggest
   };
 
   const hasThread = turns.length > 0;
+  // GRANOLA-STYLE PROGRESSIVE REVEAL: at rest = pills + input only; HOVER slides in a 2-line brief
+  // preview; FOCUS (or a live thread) opens the full brief + conversation. One smooth max-height motion.
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const expanded = focused || hasThread;
   return (
     // Fills the remaining height so the composer can OWN the bottom. No label, no card chrome — the brief
     // reads as the opening message and the whole thing is one continuous surface, full width like the cards.
-    <section className="flex flex-col flex-1 min-h-0 w-full">
+    <section className="flex flex-col flex-1 min-h-0 w-full" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {/* The brief — the opening message of the conversation (flat: no "Read the brief", minimal prose).
           A quiet "New" affordance appears at the top-right once a thread is going. */}
       {(briefing || hasThread) && (
-        <div className="relative">
+        <div
+          className="relative overflow-hidden transition-all duration-300 ease-out"
+          style={{ maxHeight: expanded ? 1400 : hovered ? 68 : 0, opacity: expanded || hovered ? 1 : 0 }}
+        >
           {hasThread && (
             <button onClick={() => setTurns([])} className="absolute -top-1 right-0 inline-flex items-center gap-1 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-700 transition-colors">
               <ArrowPathIcon className="w-3.5 h-3.5" /> New
             </button>
           )}
           {briefing && <BriefingBlock briefing={briefing} clearedIds={clearedIds} onNavigate={onBriefNavigate} flat />}
+          {/* Preview fade — the 2-line hover state dissolves at its edge; gone once fully open. */}
+          {!expanded && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-[#fbfbfd] to-transparent" />}
         </div>
       )}
 
@@ -110,6 +120,7 @@ export default function HomeAsk({ briefing, clearedIds, onBriefNavigate, suggest
         <div className="flex items-center gap-2 rounded-2xl border border-neutral-200 bg-white px-3.5 py-2.5 shadow-[0_4px_28px_-12px_rgba(23,23,23,0.22)] focus-within:border-indigo-300 focus-within:shadow-[0_4px_32px_-10px_rgba(79,70,229,0.28)] transition-all duration-200">
           <input
             value={input} onChange={(e) => setInput(e.target.value)}
+            onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(input); } }}
             placeholder="Ask anything about your work…"
             className="flex-1 bg-transparent text-[14px] text-neutral-800 placeholder:text-neutral-400 outline-none py-1"

@@ -84,7 +84,7 @@ type ForYourAwareness = { itemId: string; who: string; summary: string }[];
 // NOT a reply-to-a-person (payment failed, security alert, account expiring, storage full, "pay for
 // your booking"). Its OWN home, separate from replies ("What needs you") so notices don't clutter the
 // reply lane. Same row shape as For-your-awareness (sender + grounded one-liner + deep-dive + dismiss).
-type ActionNotices = { itemId: string; who: string; summary: string; dueDate?: string | null }[];
+type ActionNotices = { itemId: string; who: string; summary: string; preparedBy?: string | null; dueDate?: string | null }[];
 type Brief = {
   firstName: string | null;
   briefLine: string | null;
@@ -984,7 +984,8 @@ function peekOf(e: DeckEntry): PeekDesc {
   }
   if (e.kind === 'bundle') {
     const overdue = e.items.some((i) => i.overdue);
-    return { Icon: FolderIcon, ring: 'bg-indigo-50', text: 'text-indigo-500', title: e.title, hint: e.why || e.items[0]?.ask, count: e.items.length, overdue };
+    const prepped = e.items.filter((i) => i.prepared).length;
+    return { Icon: FolderIcon, ring: 'bg-indigo-50', text: 'text-indigo-500', title: e.title, hint: e.why || e.items[0]?.ask, count: e.items.length, overdue, prepared: prepped ? `${prepped} ready` : null };
   }
   if (e.kind === 'single') {
     const m = DO_META[e.item.source];
@@ -1068,6 +1069,8 @@ function DoRow({ item, emphasis = false, hideInitiative = false, onDismissInbox,
               {item.ask && <span className="font-semibold text-neutral-800">{item.ask}</span>}
             </p>
             <span className="flex-shrink-0 ml-auto flex items-center gap-2">
+              {/* PREPARED — the work already arrived: "✦ drafted" (in-house) or "✦ <coworker>" (attributed). */}
+              {item.prepared && <span className="text-[11px] font-medium text-indigo-500">✦ {item.prepared === 'draft' ? 'drafted' : item.prepared.split(' ')[0]}</span>}
               {badge && <span className={`text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 ${item.overdue ? 'bg-rose-50 text-rose-600' : item.dueToday ? 'bg-amber-50 text-amber-600' : 'bg-neutral-100 text-neutral-500'}`}>{badge}</span>}
               {!badge && <EffortDate effort={item.effort} dueDate={item.dueDate} overdue={!!item.dueDate && item.dueDate < new Date().toISOString().slice(0, 10)} />}
               {/* Inside a bundle already named by this initiative, the per-row tag is redundant — hide it. */}
@@ -1840,6 +1843,7 @@ export function HomeView() {
     source: 'notice', key: `n-${a.itemId}`, entityId: a.itemId, href: `/item/${a.itemId}?kind=email`,
     primary: a.who || null, ask: a.summary, second: 'Action needed',
     dueDate: a.dueDate ?? null, overdue: !!a.dueDate && a.dueDate < todayISOStr,
+    prepared: a.preparedBy ?? null,
   }));
   const agendaCommitItems: DoItem[] = looseCommitments.map((c) => ({
     source: 'commitment', key: `c-${c.id}`, entityId: c.id, href: `/item/${c.id}?kind=commitment`,

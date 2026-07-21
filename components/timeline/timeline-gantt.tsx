@@ -24,12 +24,19 @@ export default function TimelineGantt({ onDetailChange }: { onDetailChange?: (op
 
   useEffect(() => {
     let alive = true;
-    fetch('/api/home/timeline').then((r) => (r.ok ? r.json() : Promise.reject())).then((d) => {
+    const load = () => fetch('/api/home/timeline').then((r) => (r.ok ? r.json() : Promise.reject())).then((d) => {
       if (!alive) return;
       const next = { ganttGroups: (d.ganttGroups ?? []) as GanttGroup[], todayStr: d.todayStr as string };
       setData(next); saveLS('aug-timeline-gantt-v1', next);
     }).catch(() => { if (alive && !data) setErr(true); });
-    return () => { alive = false; };
+    load();
+    // LIVE (Living-Home): refetch on focus/visibility + a gentle interval — actions taken anywhere
+    // (done/dismiss/prepared work) show up here without a manual reload.
+    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    const iv = window.setInterval(() => { if (document.visibilityState === 'visible') load(); }, 90_000);
+    return () => { alive = false; document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onVisible); window.clearInterval(iv); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
