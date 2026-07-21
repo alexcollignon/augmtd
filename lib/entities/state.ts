@@ -71,6 +71,19 @@ async function assembleLedger(supabase: SupabaseClient, userId: string, entityId
       ledger.push({ at: c.created_at ?? '', kind: 'commitment', who: c.counterparty ?? null, text: `${owes}${c.status === 'done' ? ' (done)' : ''}: ${c.description}${c.due_date ? ` (due ${c.due_date})` : ''}`, ref: `commit:${c.id}` });
     }
   }
+  // COWORKER DELIVERABLES (Prepared-Work C3): what the team produced for this entity's items — the deal's
+  // brain SEES prepared work ("a proposal was drafted"), so state/next-move reason with it. Deliverables
+  // hang off items (kind+entity_id = the item id), so we join through the entity's linked item ids.
+  const itemIds = [...inboxIds.slice(0, 60), ...cIds.slice(0, 40)];
+  if (itemIds.length) {
+    try {
+      const { data } = await supabase.from('item_deliverables').select('entity_id, title, type, created_at, metadata')
+        .eq('user_id', userId).in('entity_id', itemIds).order('created_at', { ascending: false }).limit(12);
+      for (const d of (data ?? []) as Array<Record<string, any>>) {
+        ledger.push({ at: d.created_at ?? '', kind: 'commitment', who: (d.metadata?.worker as string) ?? 'team', text: `team prepared: ${String(d.title || d.type || 'deliverable')}`, ref: `deliv:${d.entity_id}` });
+      }
+    } catch { /* pre-migration / non-fatal */ }
+  }
   const calIds = byKind.get('calendar_event') ?? [];
   if (calIds.length) {
     const { data } = await supabase.from('calendar_events').select('id, title, start_time').in('id', calIds.slice(0, 40));

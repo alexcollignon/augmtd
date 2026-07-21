@@ -15,11 +15,22 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { buildWorkItems } from '@/lib/work-items/model';
 import { partitionDailyReport } from '@/lib/work-items/report';
 import { generateReplyDraft, generateNudgeDraft } from '@/lib/inbox/draft-reply';
+import { aiCall } from '@/lib/ai/call';
+import { resolveFileUniversal } from '@/lib/knowledge/resolve';
+import { logActivity } from '@/lib/activity/log';
 
 const TOP_N = 8;          // prepare the working set, not the inventory
 const FRESH_HOURS = 24;   // a draft older than this (or older than new thread activity) re-prepares
 
-export type PrepareResult = { prepared: number; skipped: number; nudges: number };
+export type PrepareResult = { prepared: number; skipped: number; nudges: number; delegated: number };
+
+// ── C2: judgment shapes → the right COWORKER by role (the routing brain — one map, no bespoke code).
+// Only shapes a coworker genuinely adds expertise to; everything else stays in-house or with the user.
+const SHAPE_TO_ROLE: Record<string, string> = {
+  prepare_document: 'content_manager',   // decks, proposals, reports, one-pagers — the writer
+  research_analyze: 'research_analyst',  // research, analysis, monitoring — the analyst
+};
+const DELEGATE_CAP = 2; // coworker runs are the expensive preparation — trickle, don't burst
 
 export async function runPreparationPass(admin: SupabaseClient, userId: string): Promise<PrepareResult> {
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -88,5 +99,104 @@ export async function runPreparationPass(admin: SupabaseClient, userId: string):
     } catch { skipped++; }
   }
 
-  return { prepared, skipped, nudges };
+  // ── C2 · COWORKER ROUTING — judgment-shaped top items are prepared by the right coworker, with the
+  // item's grounding + the deliverable pool (runDelegation reads+writes it). Idempotent per item (a pool
+  // deliverable with task_id 'prepare-pass' means it's already prepared). Nothing sends — prompt-level
+  // prepare-and-hand-back guardrail lives in buildDelegationPrompt.
+  let delegated = 0;
+  try {
+    const candidates = rep.needsYou
+      .filter((w) => !w.automated && w.kind !== 'reply' && (w.id.startsWith('inbox:') || w.id.startsWith('commit:')))
+      .slice(0, 5);
+    if (candidates.length) {
+      // ONE cheap reasoned pass: which candidates are judgment work a coworker should produce?
+      const list = candidates.map((w, i) => `${i}. ${w.title.slice(0, 110)}`).join('\n');
+      const res = await aiCall<{ shapes?: Record<string, string> }>({
+        userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 200, source: 'brain_synthesis',
+        prompt: `For each task, classify what DOING it involves. Shapes:\n` +
+          `- prepare_document: create a doc/deck/proposal/report/one-pager\n` +
+          `- research_analyze: research/analyze/summarize/monitor something\n` +
+          `- send_document: send/share/forward an EXISTING document or file to someone\n` +
+          `- other: anything else (replying, admin, deciding)\n\nTASKS:\n${list}\n\n` +
+          `JSON only: {"shapes":{"<index>":"<shape>"}}`,
+      });
+      const shapes = res.json?.shapes ?? {};
+      const { data: workers } = await admin.from('custom_agents').select('id, name, worker_role, is_worker')
+        .eq('user_id', userId).eq('is_worker', true);
+      const byRole = new Map((workers ?? []).map((wk: Record<string, unknown>) => [String(wk.worker_role), wk]));
+      for (let i = 0; i < candidates.length && delegated < DELEGATE_CAP; i++) {
+        const shape = String(shapes[String(i)] ?? 'other');
+        const role = SHAPE_TO_ROLE[shape];
+        if (!role) continue;
+        const worker = byRole.get(role) as { id: string; name: string; worker_role: string | null; is_worker: boolean | null } | undefined;
+        if (!worker) continue;
+        const w = candidates[i];
+        const poolKind = w.id.startsWith('commit:') ? 'commitment' : 'email';
+        // Idempotency: already prepared by a prior pass → skip.
+        const { data: prior } = await admin.from('item_deliverables').select('id')
+          .eq('user_id', userId).eq('kind', poolKind).eq('entity_id', w.entityId).eq('task_id', 'prepare-pass').limit(1).maybeSingle();
+        if (prior) continue;
+        const { buildDelegationPrompt, runDelegation } = await import('@/lib/home/delegate');
+        const prompt = buildDelegationPrompt({
+          kind: poolKind,
+          itemContext: `TASK: ${w.title}\n` + (w.who ? `Counterparty: ${w.who}\n` : '') +
+            (w.entity ? `Body of work: ${w.entity.name}\n` : '') + (w.when.explicit ? `Due: ${w.when.explicit}\n` : ''),
+          step: { text: w.title.slice(0, 120), detail: shape === 'prepare_document' ? 'Produce the document/deck content, ready for my review.' : 'Produce the research/analysis, ready for my review.' },
+        });
+        await runDelegation({
+          supabase: admin, userId, worker, prompt, itemLabel: w.title.slice(0, 80),
+          pool: { kind: poolKind, entityId: w.entityId, taskId: 'prepare-pass' },
+        });
+        // ATTRIBUTION — the card/deep-dive reads who prepared it (the jaws-drop is arrival + attribution).
+        if (w.id.startsWith('inbox:')) {
+          const { data: it } = await admin.from('inbox_items').select('source_data').eq('id', w.entityId).maybeSingle();
+          const sd = (it?.source_data ?? {}) as Record<string, unknown>;
+          await admin.from('inbox_items').update({ source_data: { ...sd, prepared_by: { worker: worker.name, at: new Date().toISOString() } } }).eq('id', w.entityId).then(() => {}, () => {});
+        }
+        // The Activity TRAIL — pass-initiated delegations appear on the timeline like user-initiated ones.
+        await logActivity(admin, userId, {
+          type: 'delegated_prepared', title: `${worker.name} prepared: ${w.title.slice(0, 70)}`,
+          entityType: w.id.startsWith('commit:') ? 'commitment' : 'inbox_item', entityId: w.entityId,
+          metadata: { via: 'preparation_pass', worker: worker.name, shape },
+        }).catch(() => {});
+        delegated++;
+      }
+      // ── C3 · DOC-SEND PREP — a send-an-existing-file task gets the FILE RESOLVED (universal registry:
+      // pool → KB → drives) and, for inbox-backed items, a ready draft with the attachment reference.
+      // The approve-gate holds: nothing sends; the deep-dive leads with the prepared draft + file.
+      for (let i = 0; i < candidates.length; i++) {
+        if (String(shapes[String(i)] ?? '') !== 'send_document') continue;
+        const w = candidates[i];
+        if (!w.id.startsWith('inbox:')) continue; // commitment doc-sends: next slice
+        const { data: it } = await admin.from('inbox_items').select('id, source_data, status').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
+        if (!it || it.status !== 'pending') continue;
+        const sd = (it.source_data ?? {}) as Record<string, unknown>;
+        const existingDraft = (sd.draft ?? null) as { attachment?: unknown } | null;
+        if (existingDraft?.attachment) continue; // already prepared with a file
+        const cands = await resolveFileUniversal(admin, { userId, entityId: w.entity?.id ?? null }, w.title, 4).catch(() => []);
+        // Only attach on a CONFIDENT KB hit (bytes we hold → previewable + attachable); drive-catalog
+        // candidates surface in the deep-dive picker instead of silently auto-attaching.
+        const top = cands.find((c) => c.source === 'kb');
+        if (!top || top.score < 0.7) continue;
+        // THE REASONED PICK (the S4 rule — a score is retrieval, not judgment): one cheap yes/no on
+        // whether this file IS what the task asks to send. Reject → no auto-attach (the deep-dive's
+        // picker offers candidates instead). A wrong attach is worse than none — trust is the product.
+        const judge = await aiCall<{ match?: boolean }>({
+          userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 60, source: 'brain_synthesis',
+          prompt: `TASK: ${w.title.slice(0, 140)}\nCANDIDATE FILE: "${top.filename}"\nSnippet: ${top.snippet.slice(0, 200)}\n\n` +
+            `Is this file THE document the task asks to send/share (not merely related)? JSON only: {"match":true|false}`,
+        }).catch(() => ({ json: { match: false } }));
+        if (judge.json?.match !== true) continue;
+        const body = (existingDraft as { body?: string } | null)?.body
+          || (await generateReplyDraft(userId, sd as Record<string, never>, admin, `The reply should send the document "${top.filename}" (it will be attached).`).catch(() => null));
+        if (!body) continue;
+        await admin.from('inbox_items').update({
+          source_data: { ...sd, draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', attachment: { fileId: top.id, filename: top.filename, source: top.source } } },
+        }).eq('id', it.id);
+        prepared++;
+      }
+    }
+  } catch { /* routing is an enhancement — drafts/nudges already landed */ }
+
+  return { prepared, skipped, nudges, delegated };
 }
