@@ -9,6 +9,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { resolveFileUniversal } from '@/lib/knowledge/resolve';
+import { getTodaySchedule, renderScheduleBlock } from '@/lib/calendar/today-schedule';
 
 export type AskRef = { id: string; kind: 'entity' | 'inbox_item' | 'commitment' | 'meeting' | 'file'; label: string; href: string | null };
 export type AskAnswer = { answer: string; refs: AskRef[] };
@@ -57,11 +58,10 @@ async function buildBrainSnapshot(supabase: SupabaseClient, userId: string): Pro
     parts.push(`OPEN COMMITMENTS (reference as [C#]):\n${lines.join('\n')}`);
   }
 
-  // Today + upcoming calendar.
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const { data: events } = await supabase.from('calendar_events')
-    .select('title, start_time, attendees').eq('user_id', userId).gte('start_time', todayStr).order('start_time', { ascending: true }).limit(12);
-  if ((events ?? []).length) parts.push(`UPCOMING CALENDAR:\n${(events ?? []).map((e) => { const r = e as Record<string, unknown>; const att = Array.isArray(r.attendees) ? (r.attendees as unknown[]).length : 0; return `- ${String(r.start_time).slice(0, 16).replace('T', ' ')} · ${r.title}${att ? ` (${att} attendees)` : ''}`; }).join('\n')}`);
+  // Today's schedule — THE ONE READ (single-source with the brief/report) + the NOW anchor, so the
+  // answer never lists this morning's meetings as if they were still ahead.
+  const sched = await getTodaySchedule(supabase, userId);
+  parts.push(renderScheduleBlock(sched));
 
   // Recent replies owed.
   const { data: items } = await supabase.from('inbox_items')
@@ -101,12 +101,17 @@ export async function answerHomeQuestion(
     `Rules:\n` +
     `- Answer ONLY from the context. If it doesn't cover the question, say so plainly ("I don't have anything on that yet") — NEVER invent people, dates, or facts.\n` +
     `- Be brief and specific — a couple of sentences, the way a colleague would say it out loud. Lead with the answer.\n` +
+    `- PLAIN PROSE ONLY: no markdown (no **bold**, no headers, no tables, no bullet lists). Never place two refs back-to-back — connect them with words.\n` +
     `- Reference the items you used by their tag ([E#]/[C#]/[R#]/[F#]) inline where natural — the app turns them into links.\n` +
     `- Reason across items when useful (connect a deal to its commitments / its meeting / who owes what).\n` +
     `Return ONLY JSON: {"answer":"<the answer, with [E#]/[C#]/[R#]/[F#] tags>","refs":["E1","C2","F1",...]}`;
 
+  // BUDGET ROUTING (one policy, deterministic): lookups run on the CHEAP tier; only synthesis-intent
+  // questions ("what did I miss", "prioritize", "should I…") escalate to deep reasoning. Typical asks
+  // become ~5-8x cheaper with no visible loss on the easy majority.
+  const deep = /miss|summar|priorit|plan\b|why\b|should|think|advice|catch me up|overview|strategy|recommend/i.test(question) || question.length > 120;
   const res = await aiCall<{ answer?: string; refs?: string[] }>({
-    userId, supabase, shape: { output: 'json', reasoning: 'deep' }, prompt, maxTokens: 700, temperature: 0.2, source: 'brain_synthesis',
+    userId, supabase, shape: deep ? { output: 'json', reasoning: 'deep' } : { output: 'json' }, prompt, maxTokens: 700, temperature: 0.2, source: 'brain_synthesis',
   });
   const answer = String(res.json?.answer || '').trim() || "I don't have anything on that yet.";
   const used = (res.json?.refs ?? []).map((t) => refs.get(t)).filter((r): r is AskRef => !!r);

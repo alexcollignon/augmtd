@@ -18,19 +18,21 @@ type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[] };
 
 // Split answer text on [E#]/[C#]/[R#] tags → inline chips that open the referenced item.
 function Answer({ text, refs, onOpen }: { text: string; refs: Ref[]; onOpen: (r: Ref) => void }) {
-  const byTag = new Map<string, Ref>(); // tags aren't returned per-position; map label order is enough — resolve by index tag
-  // The model emits [E1]/[C2]/[R3]; refs are the resolved items in use-order. Build a tag→ref best-effort.
+  // FORMATTING GUARDS: the renderer is plain-prose — strip any markdown the model leaks (**bold** was
+  // printing literally), and SEPARATE adjacent refs with " · " (two refs back-to-back were gluing their
+  // labels together: "Revolut AccountAUGMTD…"). Refs resolve by emit order.
+  const clean = text.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/(?<!\w)\*([^*\n]+)\*(?!\w)/g, '$1').replace(/^#+\s*/gm, '');
   const parts: React.ReactNode[] = [];
   const re = /\[([ECRF]\d+)\]/g;
-  let last = 0, m: RegExpExecArray | null, k = 0, refIdx = 0;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) parts.push(<span key={`t${k++}`}>{text.slice(last, m.index)}</span>);
+  let last = 0, m: RegExpExecArray | null, k = 0, refIdx = 0, prevWasRef = false;
+  while ((m = re.exec(clean)) !== null) {
+    if (m.index > last) { parts.push(<span key={`t${k++}`}>{clean.slice(last, m.index)}</span>); prevWasRef = false; }
+    else if (prevWasRef) parts.push(<span key={`s${k++}`} className="text-neutral-300"> · </span>);
     const r = refs[refIdx] ?? null; refIdx++;
-    if (r) parts.push(<button key={`r${k++}`} onClick={() => onOpen(r)} className="inline font-medium text-indigo-700 hover:underline decoration-indigo-300 underline-offset-2">{r.label}</button>);
+    if (r) { parts.push(<button key={`r${k++}`} onClick={() => onOpen(r)} className="inline font-medium text-indigo-700 hover:underline decoration-indigo-300 underline-offset-2">{r.label}</button>); prevWasRef = true; }
     last = m.index + m[0].length;
-    void byTag;
   }
-  if (last < text.length) parts.push(<span key={`t${k++}`}>{text.slice(last)}</span>);
+  if (last < clean.length) parts.push(<span key={`t${k++}`}>{clean.slice(last)}</span>);
   return <p className="text-[14px] text-neutral-700 leading-[1.7]">{parts}</p>;
 }
 
@@ -68,8 +70,20 @@ export default function HomeAsk({ briefing, clearedIds, onBriefNavigate, suggest
   // ELEVATED CARD (border + surface + shadow) holding brief → conversation → composer. One smooth motion.
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
-  const expanded = focused || hasThread;
+  // The panel's OPEN state is explicit: focusing the input opens it; clicking OUTSIDE closes it smoothly.
+  // The conversation STATE persists (component state) — reopening restores it; a reload or "New" clears.
+  const [open, setOpen] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onDown = (ev: MouseEvent) => {
+      if (shellRef.current && !shellRef.current.contains(ev.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+  const expanded = focused || open;
   const revealed = (hovered || expanded) && (!!briefing || hasThread);
+  const showThread = hasThread && expanded;
   return (
     <section className="flex flex-col flex-1 min-h-0 w-full">
       <style>{`@keyframes augAskIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}`}</style>
@@ -80,7 +94,7 @@ export default function HomeAsk({ briefing, clearedIds, onBriefNavigate, suggest
           moves; the page never grows. Motion: the reveal slides+fades in (augAskIn); the bottom half
           morphs its chrome with one transition. */}
       <div className="sticky bottom-0 z-20 pt-4 pb-5 bg-gradient-to-t from-[#fbfbfd] via-[#fbfbfd] to-transparent">
-        <div className="relative" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+        <div ref={shellRef} className="relative" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
 
           {revealed && (
             <div
@@ -100,7 +114,7 @@ export default function HomeAsk({ briefing, clearedIds, onBriefNavigate, suggest
                   {!expanded && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-5 bg-gradient-to-t from-white to-transparent" />}
                 </div>
               )}
-              {hasThread && (
+              {showThread && (
                 <div className="space-y-4 mt-3 max-h-[36vh] overflow-y-auto [scrollbar-width:thin] pr-1">
                   {turns.map((t, i) => (
                     t.role === 'user' ? (
@@ -133,7 +147,7 @@ export default function HomeAsk({ briefing, clearedIds, onBriefNavigate, suggest
               : 'border-neutral-200 bg-white shadow-[0_4px_28px_-12px_rgba(23,23,23,0.22)] focus-within:border-indigo-300 focus-within:shadow-[0_4px_32px_-10px_rgba(79,70,229,0.28)]'}`}>
               <input
                 value={input} onChange={(e) => setInput(e.target.value)}
-                onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+                onFocus={() => { setFocused(true); setOpen(true); }} onBlur={() => setFocused(false)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(input); } }}
                 placeholder="Ask anything about your work…"
                 className="flex-1 bg-transparent text-[14px] text-neutral-800 placeholder:text-neutral-400 outline-none py-1"

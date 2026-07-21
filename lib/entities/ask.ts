@@ -68,10 +68,12 @@ export async function answerEntityQuestion(
     `Rules:\n` +
     `- Answer ONLY from this context. If it doesn't cover the question, say so plainly — NEVER invent people, dates, or facts.\n` +
     `- Brief and specific, a couple of sentences; lead with the answer. Reference items/files by [L#]/[F#] inline.\n` +
+    `- PLAIN PROSE ONLY: no markdown of any kind. Never place two refs back-to-back — connect with words.\n` +
     `Return ONLY JSON: {"answer":"<with [L#]/[F#] tags>","refs":["L1","F2",...]}`;
 
+  const deep = /miss|summar|priorit|plan\b|why\b|should|think|advice|strategy|recommend|overview/i.test(question) || question.length > 120;
   const res = await aiCall<{ answer?: string; refs?: string[] }>({
-    userId, supabase, shape: { output: 'json', reasoning: 'deep' }, prompt, maxTokens: 500, temperature: 0.2, source: 'brain_synthesis',
+    userId, supabase, shape: deep ? { output: 'json', reasoning: 'deep' } : { output: 'json' }, prompt, maxTokens: 500, temperature: 0.2, source: 'brain_synthesis',
   });
   const answer = String(res.json?.answer || '').trim() || "I don't have anything on that yet.";
   const used = (res.json?.refs ?? []).map((t) => refs.get(t)).filter((r): r is EntityAskRef => !!r);
