@@ -20,6 +20,7 @@ export type DoItem = {
   when?: string | null; effort?: 'quick' | 'medium' | 'deep' | null; dueDate?: string | null;
   overdue?: boolean; dueToday?: boolean; initiative?: string | null; initiativeTotal?: number | null;
   relCue?: { label: string; tone: 'neutral' | 'amber' } | null; // ONE quiet Person-Brain cue
+  prepared?: string | null;  // '✦' token: 'draft' (in-house) or a coworker's name — prepared work has arrived
 };
 export type Priority = {
   id: string; source: 'email' | 'meeting'; posture: 'needs_reply' | 'to_do' | 'waiting_on';

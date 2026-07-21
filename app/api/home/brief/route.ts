@@ -983,10 +983,18 @@ export async function GET() {
   // Drop must-respond items whose inbox item is no longer pending (dismissed/completed since the
   // brief prose was cached) — so the list + count reflect actions on reload without a full regen.
   const pendingItemIds = new Set(items.map((it) => it.id));
+  // C3 SURFACING — who/what prepared each item ("✦ drafted" / "✦ prepared by <coworker>") rides the
+  // payload so the deck announces arrival + attribution (the jaws-drop is seeing it before you ask).
+  const preparedByItem = new Map<string, string>();
+  for (const it of items) {
+    const sd = (it.source_data ?? {}) as { prepared_by?: { worker?: string }; draft?: { body?: string } };
+    if (sd.prepared_by?.worker) preparedByItem.set(String(it.id), String(sd.prepared_by.worker));
+    else if (sd.draft?.body) preparedByItem.set(String(it.id), 'draft');
+  }
   const mustRespondOut = mustRespond
     ? { ...mustRespond, items: mustRespond.items
         .filter((r) => !r.itemId || pendingItemIds.has(r.itemId))
-        .map((r) => ({ ...r, draft: draftByItem.get(r.itemId) ?? null })) }
+        .map((r) => ({ ...r, draft: draftByItem.get(r.itemId) ?? null, preparedBy: preparedByItem.get(r.itemId) ?? null })) }
     : mustRespond;
   // "Keep an eye on" is awareness — no action buttons — but still drop items that are no longer
   // pending (dismissed elsewhere) so a stale cached tier can't show a gone item. Also enforce the

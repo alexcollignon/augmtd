@@ -74,7 +74,7 @@ function EffortDate({ effort, dueDate, overdue }: { effort?: 'quick' | 'medium' 
 type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
 type Followups = { teaser: string; items: { id?: string; who: string; status: string; nextMove: string }[]; closing: string | null };
 type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
-type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string; draft?: string | null; subject?: string; snippet?: string; receivedAt?: string; effort?: 'quick' | 'medium' | 'deep' | null; dueDate?: string | null; initiative?: string | null; initiativeTotal?: number | null }[] };
+type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string; draft?: string | null; preparedBy?: string | null; subject?: string; snippet?: string; receivedAt?: string; effort?: 'quick' | 'medium' | 'deep' | null; dueDate?: string | null; initiative?: string | null; initiativeTotal?: number | null }[] };
 type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
 // "For your awareness" — REAL correspondence you're only informed on (understanding=awareness):
 // real people, real work, no move expected. Distinct from the `noted` newsletter/promotion bulk,
@@ -972,7 +972,7 @@ function MovingTier({ exclude }: { exclude?: Set<string> }) {
 // hidden: every peek stays reachable and "N more" reveals the tail. The heavy actions (open, draft, dismiss)
 // all live on the hero card; a peek is a one-line preview + a promote tap.
 // (DeckEntry moved to lib/home/agenda.ts — the agenda spine.)
-type PeekDesc = { Icon: React.ElementType; ring: string; text: string; title: string; hint?: string | null; count?: number; overdue?: boolean; dueToday?: boolean; due?: string | null };
+type PeekDesc = { Icon: React.ElementType; ring: string; text: string; title: string; hint?: string | null; count?: number; overdue?: boolean; dueToday?: boolean; due?: string | null; prepared?: string | null };
 const POSTURE_META: Record<Priority['posture'], { Icon: React.ElementType; ring: string; text: string }> = {
   needs_reply: { Icon: EnvelopeIcon, ring: 'bg-indigo-50', text: 'text-indigo-500' },
   to_do:       { Icon: BellAlertIcon, ring: 'bg-amber-50', text: 'text-amber-600' },
@@ -992,7 +992,7 @@ function peekOf(e: DeckEntry): PeekDesc {
     // waits for the expand. Without an ask, the subject stands in.
     const title = e.item.ask || e.item.second || e.item.primary || '';
     const hint = e.item.ask ? (e.item.primary || null) : (e.item.ask === e.item.second ? null : e.item.primary);
-    return { Icon: m.Icon, ring: m.ring, text: m.text, title, hint, overdue: e.item.overdue, dueToday: e.item.dueToday, due: e.item.dueDate };
+    return { Icon: m.Icon, ring: m.ring, text: m.text, title, hint, overdue: e.item.overdue, dueToday: e.item.dueToday, due: e.item.dueDate, prepared: e.item.prepared ?? null };
   }
   const m = POSTURE_META[e.p.posture] ?? POSTURE_META.to_do;
   return { Icon: m.Icon, ring: m.ring, text: m.text, title: e.p.title, hint: e.p.context, overdue: e.p.overdue, due: e.p.dueDate };
@@ -1286,6 +1286,8 @@ function PeekRow({ e, onPromote }: { e: DeckEntry; onPromote: () => void }) {
       </span>
       {(() => { const r = d.due ? relDue(d.due) : (d.overdue ? { label: 'overdue', overdue: true } : d.dueToday ? { label: 'due today', overdue: false } : null);
         return r ? <span className={`flex-shrink-0 text-[11px] font-medium ${r.overdue ? 'text-rose-600' : 'text-neutral-500'}`}>{r.label}</span> : null; })()}
+      {/* PREPARED token — the work already arrived: "✦ drafted" (in-house) or "✦ <coworker>" (attributed). */}
+      {d.prepared && <span className="flex-shrink-0 text-[11px] font-medium text-indigo-500">✦ {d.prepared === 'draft' ? 'drafted' : d.prepared.split(' ')[0]}</span>}
       <ChevronRightIcon className="flex-shrink-0 w-3.5 h-3.5 text-neutral-300 group-hover:text-indigo-400 transition-colors" />
     </button>
   );
@@ -1832,6 +1834,7 @@ export function HomeView() {
     primary: m.who, ask: (m.ask && m.ask.trim() && m.ask.trim() !== (m.subject ?? '').trim()) ? m.ask : '', second: m.subject ?? null,
     when: fmtWhen(m.receivedAt), effort: m.effort ?? null, dueDate: m.dueDate ?? null, initiative: m.initiative ?? null, initiativeTotal: m.initiativeTotal ?? null,
     relCue: b?.personCues?.[m.itemId] ?? null,
+    prepared: m.preparedBy ?? (m.draft ? 'draft' : null),
   }));
   const agendaNoticeItems: DoItem[] = (b?.actionNotices ?? []).filter((a) => !clearedIds.has(a.itemId) && !dismissed.has(a.itemId)).map((a) => ({
     source: 'notice', key: `n-${a.itemId}`, entityId: a.itemId, href: `/item/${a.itemId}?kind=email`,
