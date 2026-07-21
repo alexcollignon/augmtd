@@ -69,20 +69,24 @@ export default function HomeAsk({ briefing, clearedIds, onBriefNavigate, suggest
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const expanded = focused || hasThread;
+  const revealed = (hovered || expanded) && (!!briefing || hasThread);
   return (
     <section className="flex flex-col flex-1 min-h-0 w-full">
+      <style>{`@keyframes augAskIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}`}</style>
       <div className="flex-1" />
-      {/* Bottom-anchored block. The brief/conversation OVERLAYS UPWARD (absolute, bottom-full) — the
-          composer NEVER moves and the page never grows/scrolls (the Granola float, not in-flow growth). */}
+      {/* ONE CARD, growing UPWARD from the composer (the Granola model): the reveal (brief/conversation)
+          and the composer share a single continuous surface — top half overlays up (absolute, joined via
+          border-b-0/border-t-0 at the seam), bottom half wraps the chips + input. The composer never
+          moves; the page never grows. Motion: the reveal slides+fades in (augAskIn); the bottom half
+          morphs its chrome with one transition. */}
       <div className="sticky bottom-0 z-20 pt-4 pb-5 bg-gradient-to-t from-[#fbfbfd] via-[#fbfbfd] to-transparent">
         <div className="relative" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
 
-          {/* THE FLOATING PANEL — hover: a tight 2-line brief peek; open: the elevated card with the
-              full brief + conversation. Anchored to the composer's top edge, rising OVER the page. */}
-          {(briefing || hasThread) && (hovered || expanded) && (
-            <div className={`absolute bottom-full left-0 right-0 mb-2 transition-all duration-300 ease-out ${expanded
-              ? 'rounded-2xl border border-neutral-200 bg-white shadow-[0_12px_48px_-12px_rgba(23,23,23,0.22)] p-4'
-              : 'rounded-xl border border-neutral-200/70 bg-white/95 backdrop-blur-sm shadow-[0_8px_28px_-10px_rgba(23,23,23,0.16)] px-4 py-3'}`}>
+          {revealed && (
+            <div
+              className="absolute bottom-full left-0 right-0 rounded-t-2xl border border-b-0 border-neutral-200 bg-white px-4 pt-4 pb-1 shadow-[0_-16px_48px_-20px_rgba(23,23,23,0.18)]"
+              style={{ animation: 'augAskIn 0.28s cubic-bezier(0.22,1,0.36,1)' }}
+            >
               {expanded && hasThread && (
                 <div className="flex justify-end mb-1">
                   <button onClick={() => setTurns([])} className="inline-flex items-center gap-1 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-700 transition-colors">
@@ -91,7 +95,7 @@ export default function HomeAsk({ briefing, clearedIds, onBriefNavigate, suggest
                 </div>
               )}
               {briefing && (
-                <div className={`relative overflow-hidden ${expanded ? 'max-h-[300px] overflow-y-auto [scrollbar-width:thin] pr-1' : 'max-h-[58px]'}`}>
+                <div className={`relative overflow-hidden transition-all duration-300 ease-out ${expanded ? 'max-h-[300px] overflow-y-auto [scrollbar-width:thin] pr-1' : 'max-h-[58px]'}`}>
                   <BriefingBlock briefing={briefing} clearedIds={clearedIds} onNavigate={onBriefNavigate} flat />
                   {!expanded && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-5 bg-gradient-to-t from-white to-transparent" />}
                 </div>
@@ -112,25 +116,32 @@ export default function HomeAsk({ briefing, clearedIds, onBriefNavigate, suggest
             </div>
           )}
 
-          {/* Chips + composer — fixed in place, always. */}
-          {!hasThread && suggestions.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mb-2.5">
-              {suggestions.map((s) => (
-                <button key={s} onClick={() => ask(s)} disabled={busy} className="rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-[12px] text-neutral-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-white transition-all duration-150">{s}</button>
-              ))}
+          {/* The bottom half of the ONE card — chips + the input pill. At rest it floats alone; on reveal
+              it fuses with the panel above (shared border, no top edge, matching surface). */}
+          <div className={`transition-all duration-300 ease-out ${revealed
+            ? 'rounded-b-2xl border border-t-0 border-neutral-200 bg-white px-4 pb-4 pt-2 shadow-[0_16px_48px_-20px_rgba(23,23,23,0.18)]'
+            : ''}`}>
+            {!hasThread && suggestions.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2.5">
+                {suggestions.map((s) => (
+                  <button key={s} onClick={() => ask(s)} disabled={busy} className="rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-[12px] text-neutral-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-white transition-all duration-150">{s}</button>
+                ))}
+              </div>
+            )}
+            <div className={`flex items-center gap-2 rounded-2xl border px-3.5 py-2.5 transition-all duration-300 ${revealed
+              ? 'border-neutral-200 bg-neutral-50/70 focus-within:border-indigo-300'
+              : 'border-neutral-200 bg-white shadow-[0_4px_28px_-12px_rgba(23,23,23,0.22)] focus-within:border-indigo-300 focus-within:shadow-[0_4px_32px_-10px_rgba(79,70,229,0.28)]'}`}>
+              <input
+                value={input} onChange={(e) => setInput(e.target.value)}
+                onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(input); } }}
+                placeholder="Ask anything about your work…"
+                className="flex-1 bg-transparent text-[14px] text-neutral-800 placeholder:text-neutral-400 outline-none py-1"
+              />
+              <button onClick={() => ask(input)} disabled={!input.trim() || busy} className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-30 disabled:hover:bg-indigo-600 text-white transition-colors">
+                <ArrowUpIcon className="w-4 h-4" />
+              </button>
             </div>
-          )}
-          <div className="flex items-center gap-2 rounded-2xl border border-neutral-200 bg-white px-3.5 py-2.5 shadow-[0_4px_28px_-12px_rgba(23,23,23,0.22)] focus-within:border-indigo-300 focus-within:shadow-[0_4px_32px_-10px_rgba(79,70,229,0.28)] transition-all duration-200">
-            <input
-              value={input} onChange={(e) => setInput(e.target.value)}
-              onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(input); } }}
-              placeholder="Ask anything about your work…"
-              className="flex-1 bg-transparent text-[14px] text-neutral-800 placeholder:text-neutral-400 outline-none py-1"
-            />
-            <button onClick={() => ask(input)} disabled={!input.trim() || busy} className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-30 disabled:hover:bg-indigo-600 text-white transition-colors">
-              <ArrowUpIcon className="w-4 h-4" />
-            </button>
           </div>
         </div>
       </div>
