@@ -7,11 +7,12 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getUnderstanding } from '@/lib/inbox/item-understanding';
-import { isAutomatedSender } from '@/lib/inbox/automated';
+import { isAutomatedSender, isAutomatedWho } from '@/lib/inbox/automated';
 import { buildInitiativeMap } from '@/lib/projects/initiative-resolver';
 import { computeEventUnderstanding } from '@/lib/calendar/event-understanding';
 import { resolveOutboundAwaiting } from '@/lib/outbound/resolve';
 import { reconcileRepliedItems } from '@/lib/inbox/reconcile-replied';
+import { isDupOfVisible, visibleObligationsFromItems } from '@/lib/home/dedupe-deck';
 import { inferBucket, type TimeBucket } from './timeframe';
 
 // 'event' = a scheduled calendar meeting — a dated CONTEXT point, never an action (no done/dismiss). It
@@ -122,12 +123,12 @@ export async function buildWorkItems(
   const [{ data: commits }, { data: inbox }, { data: threads }] = await Promise.all([
     supabase.from('commitments')
       // Active commitments use status 'open' (some legacy 'pending'); resolved = done/dismissed.
-      .select('id, description, counterparty, direction, source, source_id, due_date, status, resolved_at, created_at, resolved_reason, project_id, initiative')
+      .select('id, description, counterparty, direction, source, source_id, thread_id, due_date, status, resolved_at, created_at, resolved_reason, project_id, initiative')
       .eq('user_id', userId)
       .or(`status.in.(open,pending),and(status.in.(done,dismissed),resolved_at.gte.${doneSince})`)
       .limit(500),
     supabase.from('inbox_items')
-      .select('id, work_title, work_state, rule_type, type_override, source, source_data, status, created_at, last_activity_at, project_id')
+      .select('id, work_title, work_state, rule_type, type_override, source, source_id, source_meeting_transcript_id, source_data, status, created_at, last_activity_at, project_id')
       .eq('user_id', userId)
       .or(`and(status.eq.pending,or(work_state.in.(work_prepared,decision_required,action_required),rule_type.in.(needs_reply,to_do,waiting_on),source.eq.meeting)),and(status.in.(completed,dismissed),source_data->>resolved_at.gte.${doneSince})`)
       .limit(800),
@@ -142,8 +143,20 @@ export async function buildWorkItems(
       .limit(60),
   ]);
 
+  // CROSS-TYPE DEDUP (P2): an OPEN commitment extracted from an email/meeting that the ledger ALSO
+  // carries as a pending actionable item is the same obligation twice — the item is the resolving
+  // surface, the commitment folds (same rule as the Home deck, so the Timeline agrees with it).
+  const pendingVisible = visibleObligationsFromItems(
+    ((inbox ?? []) as Array<Record<string, unknown>>).filter((it) => String(it.status || 'pending') === 'pending'),
+  );
+  const dedupedCommits = ((commits ?? []) as Array<Record<string, unknown>>).filter((c) => {
+    const open = ['open', 'pending'].includes(String(c.status || 'pending'));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return !open || !isDupOfVisible(c as any, pendingVisible);
+  });
+
   // Commitments → work items.
-  for (const c of (commits ?? []) as Array<Record<string, unknown>>) {
+  for (const c of dedupedCommits) {
     const status = String(c.status || 'pending');
     const dir = String(c.direction || 'you_owe');
     const waiting = dir === 'awaiting';
@@ -338,8 +351,7 @@ export async function buildWorkItems(
       // Structural blocked-on: a waiting item is blocked on its counterparty — a real name from the row,
       // never invented, NEVER the user themself (self-block guard), and NEVER an automated sender
       // (no-reply/bounce/notification addresses are not people you can be blocked on).
-      const whoIsAutomated = !!w.who && (/no-?reply|bounce|notif|mailer-daemon|@mail\.|@send\.|donotreply|^[0-9a-f]{12,}[-@]/i.test(w.who) || isAutomatedSender(w.who.match(/[^\s<>"]+@[^\s<>"]+/)?.[0] ?? null, w.who, null));
-      if (w.state === 'waiting' && w.who && !isSelf(w.who) && !whoIsAutomated) w.blockedOn = w.who;
+      if (w.state === 'waiting' && w.who && !isSelf(w.who) && !isAutomatedWho(w.who)) w.blockedOn = w.who;
     }
   } catch { /* non-fatal — ledger fields stay at defaults */ }
 

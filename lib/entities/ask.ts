@@ -23,6 +23,9 @@ const hrefOfRef = (ref: string): string | null => {
 
 export async function answerEntityQuestion(
   supabase: SupabaseClient, userId: string, entityId: string, question: string, history: EntityAskTurn[] = [],
+  // The VIEWING ANCHOR (P7a): the item the user is looking at right now — the answer must be
+  // consistent with it (the on-screen-contradiction class is structurally impossible when passed).
+  opts: { viewing?: string } = {},
 ): Promise<{ answer: string; refs: EntityAskRef[] }> {
   const [{ data: ent }, { ledger }, { data: files }] = await Promise.all([
     supabase.from('work_entities')
@@ -43,7 +46,7 @@ export async function answerEntityQuestion(
   const ledgerLines = ledger.slice(0, 22).map((l, i) => {
     const id = `L${i + 1}`;
     refs.set(id, { id, kind: 'item', label: l.text.slice(0, 60), href: hrefOfRef(l.ref) });
-    return `[${id}] ${(l.at || '').slice(0, 10)} · ${l.kind}${l.who ? ` · ${l.who}` : ''}: ${l.text.slice(0, 110)}`;
+    return `[${id}] ${(l.at || '').slice(0, 10)} · ${l.kind}${l.who ? ` · ${l.who}` : ''}: ${l.text.slice(0, 200)}`;
   });
   const fileLines = ((files ?? []) as Array<{ id: string; filename: string; summary: string | null }>).map((f, i) => {
     const id = `F${i + 1}`;
@@ -64,6 +67,7 @@ export async function answerEntityQuestion(
     `\nHISTORY (newest first — reference as [L#]):\n${ledgerLines.join('\n') || '(nothing yet)'}\n` +
     (fileLines.length ? `\nFILES on this work (reference as [F#]):\n${fileLines.join('\n')}\n` : '') +
     (priorTurns ? `\nEARLIER IN THIS CHAT:\n${priorTurns}\n` : '') +
+    (opts.viewing ? `\n${opts.viewing}\n` : '') +
     `\nTHEIR QUESTION: ${question}\n\n` +
     `Rules:\n` +
     `- Answer ONLY from this context. If it doesn't cover the question, say so plainly — NEVER invent people, dates, or facts.\n` +

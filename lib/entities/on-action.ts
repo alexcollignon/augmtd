@@ -3,8 +3,11 @@
 // dismiss/done/send updated only the row's status: the entity whose state said "you owe them X" kept
 // saying it until the next email happened to change its ledger. Now every action on a LINKED item:
 //   1. re-synthesizes that ONE entity's state (force — the reasoned pass sees the resolution-marked
-//      ledger line and can flip whoOwes / next_move / priority),
-//   2. busts the Home brief cache (the invariant: any write changing what the Home derives busts it).
+//      ledger line and can flip whoOwes / next_move / priority).
+// NOTE (P0 perf): this deliberately does NOT null the home_brief cache anymore. The brief's `sig` is
+// computed from live counts + freshest timestamps every request, so an action that changes the deck
+// changes the sig NATURALLY — nulling the blob only destroyed the last-good content (forcing a cold
+// path + a full AI tail on EVERY dismiss/done, the "cache never warm" bug behind the 100s loads).
 // Fire-and-forget from the action endpoints' after() — non-fatal, no user-visible latency. Unlinked
 // items (or refusals) are a cheap no-op.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -25,7 +28,5 @@ export async function noteItemAction(
     if (link?.entity_id) {
       await refreshEntityState(supabase, userId, link.entity_id as string, { force: true }).catch(() => {});
     }
-    // Bust the brief cache even for unlinked items — the action changed the deck either way.
-    await supabase.from('profiles').update({ home_brief: null }).eq('id', userId).then(() => {}, () => {});
   } catch { /* non-fatal */ }
 }

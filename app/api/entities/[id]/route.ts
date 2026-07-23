@@ -16,7 +16,7 @@ import { logActivity } from '@/lib/activity/log';
 // and busts the Home brief cache (entity status feeds deck weights — the established invariant).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-const ACTIONS = ['track', 'untrack', 'done', 'archive', 'mute', 'reopen', 'rename', 'forget', 'intent'] as const;
+const ACTIONS = ['track', 'untrack', 'done', 'archive', 'mute', 'reopen', 'rename', 'forget', 'intent', 'merge', 'category'] as const;
 type Action = (typeof ACTIONS)[number];
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -25,7 +25,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const { id } = await params;
-    const body = (await request.json()) as { action?: Action; name?: string; goals?: string[]; rules?: string[] };
+    const body = (await request.json()) as { action?: Action; name?: string; goals?: string[]; rules?: string[]; targetId?: string; category?: string };
     const action = body.action;
     if (!action || !ACTIONS.includes(action)) return NextResponse.json({ error: 'invalid action' }, { status: 400 });
 
@@ -43,6 +43,38 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       const { error: ierr } = await supabase.from('work_entities').update(patch).eq('id', id).eq('user_id', user.id);
       if (ierr) return NextResponse.json({ error: 'apply migration 20260722_work_entities_goals.sql' }, { status: 400 });
       return NextResponse.json({ ok: true });
+    }
+    if (action === 'category') {
+      // The HUMAN's category (R1) — one of the 4 defaults, LOCKED over the grounded classifier
+      // (state.categoryLocked; the synthesis already preserves category, the backfill respects the lock).
+      const cat = String(body.category ?? '');
+      if (!['client', 'internal', 'personal', 'admin'].includes(cat)) return NextResponse.json({ error: 'invalid category' }, { status: 400 });
+      const { data: cur } = await supabase.from('work_entities').select('state').eq('id', id).eq('user_id', user.id).maybeSingle();
+      const st = ((cur?.state ?? {}) as Record<string, unknown>);
+      await supabase.from('work_entities').update({ state: { ...st, category: cat, categoryLocked: true }, updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', user.id);
+      import('@/lib/home/bust-brief').then(({ softBustBrief }) => softBustBrief(supabase, user.id)).catch(() => {});
+      return NextResponse.json({ ok: true });
+    }
+    if (action === 'merge') {
+      // MERGE (S5, click path) — THIS entity folds INTO the target: the ONE absorb mechanics shared
+      // with reflection + the chat capability. Keeper re-judged immediately.
+      const targetId = String(body.targetId ?? '').trim();
+      if (!targetId || targetId === id) return NextResponse.json({ error: 'targetId required' }, { status: 400 });
+      const { data: target } = await supabase.from('work_entities').select('id, name').eq('id', targetId).eq('user_id', user.id).maybeSingle();
+      if (!target) return NextResponse.json({ error: 'target not found' }, { status: 404 });
+      const { absorbEntity } = await import('@/lib/entities/reflect');
+      const r = await absorbEntity(supabase, user.id, targetId, id);
+      if (!r.ok) return NextResponse.json({ error: 'merge failed' }, { status: 500 });
+      const { after } = await import('next/server');
+      after(async () => {
+        try { const { refreshEntityState } = await import('@/lib/entities/state'); await refreshEntityState(supabase, user.id, targetId, { force: true }); } catch { /* non-fatal */ }
+      });
+      await logActivity(supabase, user.id, {
+        type: 'membership_move', title: `Merged ${ent.name} into ${r.primaryName ?? String(target.name)}`,
+        entityType: 'work_entity', entityId: targetId, metadata: { merged: id },
+      }).catch(() => {});
+      import('@/lib/home/bust-brief').then(({ softBustBrief }) => softBustBrief(supabase, user.id)).catch(() => {});
+      return NextResponse.json({ ok: true, keptId: targetId, keptName: r.primaryName ?? target.name });
     }
     if (action === 'forget') {
       await supabase.from('entity_links').delete().eq('user_id', user.id).eq('entity_id', id);
@@ -73,7 +105,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       user_id: user.id, inbox_item_id: null, signal_type: 'action_taken',
       signal_data: { action: `entity_${action}`, entity_name: ent.name },
     }).then(() => {}, () => {});
-    supabase.from('profiles').update({ home_brief: null }).eq('id', user.id).then(() => {}, () => {});
+    import('@/lib/home/bust-brief').then(({ softBustBrief }) => softBustBrief(supabase, user.id)).catch(() => {}); // sig-only bust (renames/lifecycle don't change counts)
 
     return NextResponse.json({ ok: true });
   } catch (e) {

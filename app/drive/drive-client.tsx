@@ -21,6 +21,7 @@ import {
 } from '@heroicons/react/24/outline';
 import type { DriveAugmtdFile, DriveFolder } from '@/lib/types/drive';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { useLiveRefresh } from '@/hooks/use-live-refresh';
 import { Button, IconButton, Badge, Input, Select, EmptyState } from '@/components/ui';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -1618,11 +1619,9 @@ export default function DriveClient({ initialSources, connections }: DriveClient
     fetch('/api/drive/kb-files').then((r) => r.ok ? r.json() : []).then((data) => { const f = Array.isArray(data) ? data : []; setKbFiles(f); saveLS('aug-drive-kb-v1', f); });
   }, []);
 
-  useEffect(() => {
-    const onVisible = () => { if (document.visibilityState === 'visible') refreshAugmtdFiles(); };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, []);
+  // The ONE live-refresh idiom — hooks/use-live-refresh (visibility + focus + a long interval; the
+  // file list is cheap metadata).
+  useLiveRefresh(() => refreshAugmtdFiles(), { intervalMs: 300_000 });
 
   // Keep kb-files fresh while any source is actively indexing
   useEffect(() => {

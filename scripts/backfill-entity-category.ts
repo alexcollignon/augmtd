@@ -34,6 +34,8 @@ const domainOf = (e: string) => (e.includes('@') ? e.split('@')[1].toLowerCase()
 
     let done = 0; const dist: Record<string, number> = {};
     for (const e of (ents ?? []) as any[]) {
+      // HUMAN LOCK (R1): a user-set category outranks the grounded classifier, permanently.
+      if (e.state?.categoryLocked === true) { dist[`${e.state?.category} (locked)`] = (dist[`${e.state?.category} (locked)`] ?? 0) + 1; continue; }
       const info = byEnt.get(e.id) ?? { people: new Set(), domains: new Set() };
       const people = [...info.people].slice(0, 8);
       const hasInternal = [...info.domains].some((d) => ownDomains.has(d));

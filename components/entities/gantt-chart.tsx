@@ -3,6 +3,7 @@
 import { useState, useRef, useLayoutEffect } from 'react';
 import Link from 'next/link';
 import { ChevronRightIcon } from '@heroicons/react/24/outline';
+import { itemStateOf } from '@/lib/work-items/states';
 
 // ── GanttChart — the shared timeline used by BOTH the portfolio (all projects) and a single project's
 // detail. It answers the questions a timeline should: "what was DONE and when", and "what's DUE and when".
@@ -11,18 +12,13 @@ import { ChevronRightIcon } from '@heroicons/react/24/outline';
 // else → a neutral dot at when it arrived. Left task-tree · week columns · today line · the date on every
 // row. No dependency arrows / assignees / progress — that data doesn't exist here.
 
-export type GanttItem = { title: string; who: string | null; state: string; marker: 'done' | 'due' | 'open'; date: string; arrival: string; overdue: boolean; href?: string | null };
+export type GanttItem = { title: string; who: string | null; state: string; marker: 'done' | 'due' | 'open' | 'undated'; date: string; arrival: string; overdue: boolean; href?: string | null };
 export type GanttGroup = { id: string; name: string; statusDot?: string; items: GanttItem[] };
 
 // STATUS (what state the work is in) — distinct from the EVENT marker (when it happened / is due). The
 // left-tree dot uses this so a row shows both: its status AND its dated event.
-const STATUS: Record<string, { dot: string; text: string; label: string }> = {
-  todo:        { dot: 'bg-indigo-500',  text: 'text-indigo-600',  label: 'To do' },
-  waiting:     { dot: 'bg-amber-400',   text: 'text-amber-600',   label: 'Pending' },
-  in_progress: { dot: 'bg-indigo-400',  text: 'text-indigo-600',  label: 'In progress' },
-  done:        { dot: 'bg-emerald-500', text: 'text-emerald-600', label: 'Done' },
-};
-const statusOf = (s: string) => STATUS[s] ?? STATUS.todo;
+// The ONE item-state palette — lib/work-items/states.ts.
+const statusOf = itemStateOf;
 
 const DAY = 86_400_000;
 const ms = (d: string) => Date.parse(`${d}T00:00:00Z`);
@@ -53,7 +49,14 @@ export default function GanttChart({ groups, today, onOpenGroup, emptyLine }: {
   // Guard against a stale/partial cache shape: only keep valid YYYY-MM-DD strings (a missing date would
   // propagate NaN into a `left`/`width` style and crash the render).
   const isDate = (d: unknown): d is string => typeof d === 'string' && Number.isFinite(ms(d));
-  const allDates = groups.flatMap((g) => g.items.flatMap((i) => [i.arrival, i.date])).filter(isDate);
+  // TIMELINE HONESTY (projecthood-plan P3): only DATED events are plotted — an undated open item (or a
+  // stale-cache 'open' marker) folds into its group header as a count, never a fake arrival-date dot.
+  const datedGroups = groups.map((g) => ({
+    ...g,
+    items: g.items.filter((i) => i.marker === 'done' || i.marker === 'due'),
+    undatedCount: g.items.filter((i) => i.marker !== 'done' && i.marker !== 'due').length,
+  }));
+  const allDates = datedGroups.flatMap((g) => g.items.flatMap((i) => [i.arrival, i.date])).filter(isDate);
   if (!allDates.length) {
     return <div className="mt-4 rounded-xl border border-dashed border-neutral-200 px-6 py-12 text-center text-[13px] text-neutral-400">{emptyLine || 'Work will appear here on the timeline as it’s captured.'}</div>;
   }
@@ -80,7 +83,7 @@ export default function GanttChart({ groups, today, onOpenGroup, emptyLine }: {
 
   // Status roll-up across everything shown — "what's done, to do, pending" at a glance.
   const roll = { todo: 0, waiting: 0, done: 0, overdue: 0 };
-  for (const g of groups) for (const it of g.items) {
+  for (const g of datedGroups) for (const it of g.items) {
     if (it.state === 'done') roll.done++;
     else if (it.state === 'waiting' || it.state === 'in_progress') roll.waiting++;
     else roll.todo++;
@@ -122,7 +125,7 @@ export default function GanttChart({ groups, today, onOpenGroup, emptyLine }: {
             <div className="absolute top-0 bottom-0 w-px bg-indigo-400/70 z-10" style={{ left: todayX }} />
           </div>
 
-          {groups.map((g) => {
+          {datedGroups.map((g) => {
             const open = !collapsed.has(g.id);
             const gStart = g.items.reduce((m, i) => minS(m, minS(i.arrival, i.date)), g.items[0] ? minS(g.items[0].arrival, g.items[0].date) : today);
             const gEnd = g.items.reduce((m, i) => maxS(m, i.date), g.items[0]?.date ?? today);
@@ -134,7 +137,7 @@ export default function GanttChart({ groups, today, onOpenGroup, emptyLine }: {
                     <button onClick={() => toggle(g.id)} className="flex-shrink-0 text-neutral-300 hover:text-neutral-600 transition-colors"><ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} /></button>
                     {g.statusDot && <span className={`w-2 h-2 rounded-full flex-shrink-0 ${g.statusDot}`} />}
                     <button onClick={() => onOpenGroup?.(g.id, 'overview')} className="min-w-0 flex-1 text-left text-[12.5px] font-semibold text-neutral-800 truncate hover:text-indigo-600 transition-colors" disabled={!onOpenGroup}>{g.name}</button>
-                    <span className="flex-shrink-0 text-[10px] font-medium text-neutral-300 tabular-nums">{g.items.length}</span>
+                    <span className="flex-shrink-0 text-[10px] font-medium text-neutral-300 tabular-nums whitespace-nowrap">{g.items.length}{g.undatedCount > 0 ? ` · ${g.undatedCount} undated` : ''}</span>
                   </div>
                   <div className="relative h-full flex-shrink-0" style={{ width: trackW }}>
                     {g.items.length > 0 && <div className="absolute top-1/2 -translate-y-1/2 h-1 rounded-full bg-neutral-200/80" style={{ left: xOf(gStart), width: Math.max(2, days(clampD(gStart), clampD(gEnd)) * DAY_W) }} />}

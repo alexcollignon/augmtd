@@ -17,8 +17,9 @@ export type AskTurn = { role: 'user' | 'assistant'; text: string };
 
 const entHref = (id: string) => `/?view=projects&entity=${id}`;
 
-/** Assemble a compact, bounded snapshot of the brain — everything the answer may reason over. */
-async function buildBrainSnapshot(supabase: SupabaseClient, userId: string): Promise<{ text: string; refs: Map<string, AskRef> }> {
+/** Assemble a compact, bounded snapshot of the brain — everything the answer may reason over.
+ *  Exported: the converse core grounds global-scope open turns on the SAME read. */
+export async function buildBrainSnapshot(supabase: SupabaseClient, userId: string): Promise<{ text: string; refs: Map<string, AskRef> }> {
   const refs = new Map<string, AskRef>();
   const parts: string[] = [];
   const nowMs = Date.now();

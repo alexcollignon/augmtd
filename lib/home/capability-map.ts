@@ -28,6 +28,12 @@ export const PLAN_VERSION = 3;
 // 'judgment' → benefits from a coworker's voice/reasoning/skills → an `agent` step.
 export type CapabilityKind = 'atomic' | 'judgment';
 
+// Who may HOLD a capability (P6b): 'chief_of_staff' = the user's own conversational surfaces (rail /
+// Home / entity chat — acts on the user's behalf with their consent in-channel); 'coworker' = the AI
+// coworkers' agent loop; 'workflow' = Studio task steps. Personal-surface actions (dismissing YOUR
+// inbox, remembering on YOUR deals) are chief_of_staff-only — a coworker never holds them.
+export type CapabilityExposure = 'chief_of_staff' | 'coworker' | 'workflow';
+
 export interface Capability {
   intent: string;               // human phrase the classifier matches a step's intent against
   tool: string;                 // registry key in lib/tools/* (or a route id for send-as-user paths)
@@ -36,6 +42,8 @@ export interface Capability {
   irreversible: boolean;        // send / post / create-invite → forces an approval gate
   feature?: FeatureKey | null;  // cross-ref to TOOL_FEATURE so a disabled feature also gates it
   blurb: string;                // one terse line rendered into the classifier prompt
+  /** Which agents/surfaces may hold this tool. Absent = the pre-P6b default (coworker + workflow). */
+  exposure?: CapabilityExposure[];
 }
 
 // Keyed by the registry key (1:1 with the tools registry / TOOL_FEATURE so they can't drift).
@@ -43,17 +51,17 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
   // ── Read / fetch (atomic, reversible) ──
   search_knowledge_base: {
     intent: 'search or read the knowledge base / Drive documents',
-    tool: 'search_knowledge_base', built: true, kind: 'atomic', irreversible: false, feature: 'drive',
+    tool: 'search_knowledge_base', built: true, kind: 'atomic', irreversible: false, feature: 'drive', exposure: ['chief_of_staff', 'coworker', 'workflow'],
     blurb: 'search / read the knowledge base (Drive documents we have indexed)',
   },
   read_document: {
     intent: 'read a specific document or file we already have',
-    tool: 'read_document', built: true, kind: 'atomic', irreversible: false, feature: 'drive',
+    tool: 'read_document', built: true, kind: 'atomic', irreversible: false, feature: 'drive', exposure: ['chief_of_staff', 'coworker', 'workflow'],
     blurb: 'read a specific document/file we already have',
   },
   get_emails: {
     intent: 'read emails / look up an email thread in the inbox',
-    tool: 'get_emails', built: true, kind: 'atomic', irreversible: false, feature: 'email',
+    tool: 'get_emails', built: true, kind: 'atomic', irreversible: false, feature: 'email', exposure: ['chief_of_staff', 'coworker', 'workflow'],
     blurb: 'read the inbox / an email thread we have',
   },
   get_calendar: {
@@ -63,7 +71,7 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
   },
   get_meeting_context: {
     intent: 'read a meeting / transcript we recorded',
-    tool: 'get_meeting_context', built: true, kind: 'atomic', irreversible: false, feature: 'meetings',
+    tool: 'get_meeting_context', built: true, kind: 'atomic', irreversible: false, feature: 'meetings', exposure: ['chief_of_staff', 'coworker', 'workflow'],
     blurb: 'read a meeting / transcript we recorded',
   },
   web_search: {
@@ -128,7 +136,66 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     tool: 'forward_email', built: true, kind: 'atomic', irreversible: true, feature: 'email',
     blurb: 'FORWARD an existing email to another recipient (real send as the user)',
   },
+
+  // ── P6b — the personal-surface doables (chief-of-staff exposure ONLY; a coworker never resolves
+  // the user's inbox or writes their deal memory). Executors in lib/tools/item-actions.ts — the SAME
+  // implementations the API routes call. Reversible ones execute directly (undoable via /api/restore);
+  // the irreversible flag on sends stays the structural approve gate.
+  resolve_inbox_item: {
+    intent: 'mark the current email/notice done or dismiss it from the Home',
+    tool: 'resolve_inbox_item', built: true, kind: 'atomic', irreversible: false, feature: 'email',
+    blurb: 'mark the current item done / dismiss it (reversible)', exposure: ['chief_of_staff'],
+  },
+  resolve_commitment: {
+    intent: 'mark the current commitment or follow-up done or dismissed',
+    tool: 'resolve_commitment', built: true, kind: 'atomic', irreversible: false, feature: null,
+    blurb: 'mark the current commitment done / dismissed (reversible)', exposure: ['chief_of_staff'],
+  },
+  find_file: {
+    intent: 'find a document/file across the knowledge base, past attachments and connected drives',
+    tool: 'find_file', built: true, kind: 'atomic', irreversible: false, feature: 'drive',
+    blurb: 'find a file (KB, attachments, connected drives — read-only)', exposure: ['chief_of_staff', 'coworker', 'workflow'],
+  },
+  remember_fact: {
+    intent: "save a durable fact/constraint onto this deal's memory",
+    tool: 'remember_fact', built: true, kind: 'atomic', irreversible: false, feature: null,
+    blurb: "remember a durable fact on the deal (future drafts respect it)", exposure: ['chief_of_staff'],
+  },
+  // ── MEMBERSHIP / PROJECT management (projecthood-plan P4) — the "manage my projects" verbs, in the
+  // registry so every chat surface gets them at once. All reversible-or-logged; none send anything.
+  move_item_to_project: {
+    intent: 'move this item into a different project, or take it out of its project',
+    tool: 'move_item_to_project', built: true, kind: 'atomic', irreversible: false, feature: null,
+    blurb: "move the open item to another project / out of its project ('this isn't part of X')", exposure: ['chief_of_staff'],
+  },
+  set_project_status: {
+    intent: "change a project's lifecycle: done, archived, reopened, or not-a-project",
+    tool: 'set_project_status', built: true, kind: 'atomic', irreversible: false, feature: null,
+    blurb: "mark a project done / archive / reopen / 'not a project'", exposure: ['chief_of_staff'],
+  },
+  merge_projects: {
+    intent: 'merge two projects that are really one body of work',
+    tool: 'merge_projects', built: true, kind: 'atomic', irreversible: false, feature: null,
+    blurb: 'merge two projects into one (everything moves to the kept one)', exposure: ['chief_of_staff'],
+  },
+  create_project: {
+    intent: 'start a new project to track, optionally founded from the item being viewed',
+    tool: 'create_project', built: true, kind: 'atomic', irreversible: false, feature: null,
+    blurb: 'start a new project ("start a project called X from this")', exposure: ['chief_of_staff'],
+  },
+  create_task_item: {
+    intent: "add a task to the user's plate, optionally on a project",
+    tool: 'create_task_item', built: true, kind: 'atomic', irreversible: false, feature: null,
+    blurb: 'add a task ("add a task on Acme: chase the signed NDA, due Friday")', exposure: ['chief_of_staff'],
+  },
 };
+
+/** The capability slice a given surface/agent may hold — THE exposure filter (P6b). Absent exposure =
+ *  the pre-P6b default (coworker + workflow), so existing tools' behavior is unchanged. */
+export function capabilitiesFor(surface: CapabilityExposure): Capability[] {
+  return Object.values(CAPABILITY_MAP).filter((c) =>
+    c.built && (c.exposure ? c.exposure.includes(surface) : surface !== 'chief_of_staff'));
+}
 
 // Only the capabilities that are actually wired today drive the classifier prompt.
 function builtCapabilities(): Capability[] {

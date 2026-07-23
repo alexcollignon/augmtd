@@ -137,8 +137,9 @@ export async function reactivateResolvedThreadOnReply(params: ReactivateParams):
 
     console.log('    ♻️  Reopened resolved thread on new inbound reply');
 
-    // Bust the Home brief cache so the reopened item resurfaces next load.
-    await client.from('profiles').update({ home_brief: null }).eq('id', userId).then(() => {}, () => {});
+    // P0 perf: no null-bust needed — reactivation flips the item back to pending + bumps
+    // last_activity_at, both of which change the brief's sig naturally (the item resurfaces on the
+    // next load). Nulling the blob destroyed last-good serving for every other section.
 
     // Relabel the mailbox back to the ACTIVE state (NOT Done). reconcile STRIPS the stale AUGMTD/Done
     // first; the label matches THIS email's class so a fyi/noise reply doesn't get an actionable label.

@@ -778,7 +778,10 @@ async function extractActionItemsWithAI(
 Transcript:
 ${transcriptText}
 
-Extract concrete action items from this meeting transcript. Return ONLY a JSON array:
+Extract concrete action items from this meeting transcript. Only SPECIFIC obligations a participant
+explicitly took on (or is explicitly owed) — NOT every idea, sub-step, or suggestion discussed. Merge
+related sub-tasks of one obligation into a single item; a recurring meeting RE-STATING a known
+obligation is not a new item. Be selective: prefer fewer, real commitments (typically 0-6). Return ONLY a JSON array:
 [
   {
     "action": "Brief description of what needs to be done",

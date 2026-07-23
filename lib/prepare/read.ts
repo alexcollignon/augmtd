@@ -4,7 +4,7 @@
 // and `item_deliverables` (coworker/pass deliverables, commitment drafts). Consumers must NEVER know
 // that: they call getPrepared()/preparedFromSourceData() and get one normalized shape. Storage may stay
 // plural; the knowledge of where things live is singular, here.
-// Consumers: /api/items/pool (PreparedLead) · commitments nudge route · brief route (✦ tokens) · smokes.
+// Consumers: /api/items/view (deep-dive prepared/byline) · commitments nudge route · brief route (✦ tokens) · smokes.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';

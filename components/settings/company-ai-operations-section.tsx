@@ -12,6 +12,7 @@ import { AgentIcon } from '@/components/agents/agent-icons';
 import { ROLE_AVATARS, ROLE_LABELS } from '@/lib/workers/roles';
 import { humanizeToolName } from '@/lib/tools/tool-labels';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { useLiveRefresh } from '@/hooks/use-live-refresh';
 import { MINUTES_SAVED_PER_RUN, MIN_HOURLY_RATE_EUR, MAX_HOURLY_RATE_EUR, type AgentWorkRow, type AIOperationsSummary, type Period } from '@/lib/company/ai-operations-metrics';
 
 // One color per anonymous user "slot" (0, 1, 2…) — same slot = same real
@@ -399,17 +400,9 @@ export default function CompanyAIOperationsSection() {
   // Keep this live while the tab is open: refetch on regaining focus/visibility, plus a gentle
   // 2-minute poll — the underlying query is a cheap aggregation (no LLM call), so this is safe
   // to run often. Mirrors the pattern already used on Home.
-  useEffect(() => {
-    const onVisible = () => { if (document.visibilityState === 'visible') fetchSummary(period, true); };
-    document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('focus', onVisible);
-    const id = window.setInterval(() => { if (document.visibilityState === 'visible') fetchSummary(period, true); }, 120_000);
-    return () => {
-      document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener('focus', onVisible);
-      window.clearInterval(id);
-    };
-  }, [period, fetchSummary]);
+  // The ONE live-refresh idiom — hooks/use-live-refresh (the callback rides a ref, so the fresh
+  // period/fetchSummary closure is always the one that fires).
+  useLiveRefresh(() => fetchSummary(period, true), { intervalMs: 120_000 });
 
   return (
     <div className="flex-1 overflow-y-auto">

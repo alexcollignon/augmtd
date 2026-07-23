@@ -60,53 +60,12 @@ export async function PATCH(request: NextRequest) {
   if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const body = (await request.json()) as { kind?: string; id?: string; entityId?: string | null };
   if (!KINDS.includes((body.kind ?? '') as never) || !body.id) return NextResponse.json({ error: 'kind and id required' }, { status: 400 });
-  let destName: string | null = null;
-  if (body.entityId) {
-    const { data: ent } = await supabase.from('work_entities').select('id, name').eq('id', body.entityId).eq('user_id', user.id).maybeSingle();
-    if (!ent) return NextResponse.json({ error: 'entity not found' }, { status: 404 });
-    destName = (ent.name as string) ?? null;
-  }
-  // Capture the SOURCE entity (before the upsert) — it also needs re-reasoning after losing this item.
-  const { data: prevLink } = await supabase.from('entity_links').select('entity_id')
-    .eq('user_id', user.id).eq('item_kind', body.kind).eq('item_id', body.id).maybeSingle();
-  const srcEntity = (prevLink?.entity_id as string) ?? null;
-
-  await supabase.from('entity_links').upsert(
-    { user_id: user.id, entity_id: body.entityId ?? null, item_kind: body.kind, item_id: body.id, via: 'user', locked: true, reason: body.entityId ? 'attached by the user' : 'detached by the user' },
-    { onConflict: 'user_id,item_kind,item_id' },
-  );
-  // PROVENANCE CASCADE — a meeting's action items (commitments) are fragments of it; moving the meeting
-  // moves them too (links AND the legacy initiative label so old reads stay consistent), so a manual move
-  // can't split a meeting from its own work (the integrity invariant).
-  let cascaded = 0;
-  if (body.kind === 'meeting') {
-    const { data: commits } = await supabase.from('commitments').select('id').eq('user_id', user.id).eq('source', 'meeting').eq('source_id', body.id);
-    const cids = (commits ?? []).map((c) => (c as { id: string }).id);
-    for (const cid of cids) {
-      await supabase.from('entity_links').upsert(
-        { user_id: user.id, entity_id: body.entityId ?? null, item_kind: 'commitment', item_id: cid, via: 'user', locked: true, reason: 'moved with its meeting' },
-        { onConflict: 'user_id,item_kind,item_id' },
-      );
-      cascaded++;
-    }
-    if (cids.length && destName !== undefined) await supabase.from('commitments').update({ initiative: destName }).in('id', cids).eq('user_id', user.id).then(() => {}, () => {});
-  }
-  supabase.from('profiles').update({ home_brief: null }).eq('id', user.id).then(() => {}, () => {});
-
-  // RECONCILE — both the source AND destination changed: re-reason both brains, recompute their people
-  // fingerprints + grounded category, archive an emptied source. Plus audit + a learning signal (a manual
-  // move is a correction of recognition). Background, non-fatal — the move already returned committed.
-  after(async () => {
-    try {
-      const { reconcileEntities } = await import('@/lib/entities/reconcile');
-      await reconcileEntities(supabase, user.id, [srcEntity, body.entityId ?? null]);
-    } catch { /* non-fatal */ }
-    try {
-      const { logActivity } = await import('@/lib/activity/log');
-      await logActivity(supabase, user.id, { type: 'membership_move', title: destName ? `Moved to ${destName}` : 'Removed from project', entityType: body.kind === 'meeting' ? 'meeting' : body.kind, entityId: body.id!, metadata: { from: srcEntity, to: body.entityId ?? null } });
-    } catch { /* non-fatal */ }
-    supabase.from('learning_signals').insert({ user_id: user.id, inbox_item_id: null, signal_type: 'action_taken', signal_data: { action: 'membership_move', kind: body.kind, to: body.entityId ?? null } }).then(() => {}, () => {});
-  });
-
-  return NextResponse.json({ ok: true, cascaded });
+  // THE ONE membership write (lib/entities/membership.ts) — shared with the move_item_to_project
+  // capability so a chat command and this route can never behave differently. Reconcile/log/signal
+  // tails run inline within the request's after().
+  const { setItemMembership } = await import('@/lib/entities/membership');
+  const r = await setItemMembership(supabase, user.id, { kind: body.kind as 'meeting' | 'inbox_item' | 'commitment', id: body.id, entityId: body.entityId ?? null }, { inline: false });
+  if (!r.ok) return NextResponse.json({ error: r.error ?? 'failed' }, { status: r.error === 'entity not found' ? 404 : 500 });
+  if (r.runTails) after(r.runTails); // reconcile both sides + activity log + learning signal, backgrounded
+  return NextResponse.json({ ok: true, cascaded: r.cascaded });
 }

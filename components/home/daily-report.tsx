@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation';
 import { CheckCircleIcon, ChevronRightIcon, FolderIcon } from '@heroicons/react/24/outline';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { useLiveRefresh } from '@/hooks/use-live-refresh';
 import { cleanTitle } from '@/lib/work-items/report';
 import type { WorkItem } from '@/lib/work-items/model';
 import { RiseIn } from '@/components/home/rise-in';
@@ -116,11 +117,10 @@ export default function DailyReport({ onCounts }: { onCounts?: (c: ReportCounts)
     const cached = loadLS<Report>(LS_KEY);
     if (cached) setReport(cached);
     load(true);
-    const onVisible = () => { if (document.visibilityState === 'visible') load(true); };
-    document.addEventListener('visibilitychange', onVisible);
-    const id = window.setInterval(() => { if (document.visibilityState === 'visible') load(true); }, 90_000);
-    return () => { aliveRef.current = false; document.removeEventListener('visibilitychange', onVisible); window.clearInterval(id); };
+    return () => { aliveRef.current = false; };
   }, [load]);
+  // The ONE live-refresh idiom — hooks/use-live-refresh.
+  useLiveRefresh(() => load(true));
 
   // Live counts (session-acted removed) → the ring, so the numbers on screen stay ONE truth.
   const live = useMemo(() => {

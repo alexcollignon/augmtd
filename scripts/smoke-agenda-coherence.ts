@@ -25,39 +25,43 @@ const commit = (id: string, over: Partial<DoItem> = {}): DoItem => ({ source: 'c
   // S1a — bundling: 3 of 5 atoms share a bundle → 3 rows (1 bundle + 2 singles), 5 atoms, first defined.
   const atoms = [reply('a1'), reply('a2'), reply('a3'), commit('a4'), commit('a5')];
   const bundles = { a1: { key: 'e:x', label: 'Deal X' }, a2: { key: 'e:x', label: 'Deal X' }, a4: { key: 'e:x', label: 'Deal X' } };
-  const ag = buildAgenda({ replyItems: atoms.slice(0, 3), noticeItems: [], commitItems: atoms.slice(3), priorityCards: [], deals: [], bundles, bundleNames: {}, sort: 'urgent', todayISO: T });
+  const ag = buildAgenda({ replyItems: atoms.slice(0, 3), noticeItems: [], commitItems: atoms.slice(3), priorityCards: [], deals: [], bundles, bundleNames: {}, todayISO: T });
   check('S1a rows = visible entries (bundle counts once)', ag.rows === ag.entries.length && ag.rows === 3, `rows=${ag.rows}`);
   check('S1a atoms = underlying volume', ag.atoms === 5, `atoms=${ag.atoms}`);
   check('S1a first = entries[0]', !!ag.first && ag.first.key === ag.entries[0].key);
   check('S1a atom order expands bundle members', agendaAtomOrder(ag).length === 5, `${agendaAtomOrder(ag).length}`);
 
   // S1b — a bundle whose live membership drops to 1 renders as a plain row (no 1-item bundle).
-  const ag2 = buildAgenda({ replyItems: [reply('a1')], noticeItems: [], commitItems: [commit('a5')], priorityCards: [], deals: [], bundles, bundleNames: {}, sort: 'urgent', todayISO: T });
+  const ag2 = buildAgenda({ replyItems: [reply('a1')], noticeItems: [], commitItems: [commit('a5')], priorityCards: [], deals: [], bundles, bundleNames: {}, todayISO: T });
   check('S1b 1-member bundle renders single', ag2.entries.every((e) => e.kind === 'single') && ag2.rows === 2);
 
   // S1c — dismissal coherence: removing an atom shrinks rows+atoms together.
   check('S1c dismissal shrinks both counts', ag.atoms - ag2.atoms === 3 && ag.rows - ag2.rows === 1);
 
-  // S1d — urgency: an OVERDUE commitment outranks undated replies; it is `first` under the Urgent lens.
-  const ag3 = buildAgenda({ replyItems: [reply('b1'), reply('b2')], noticeItems: [], commitItems: [commit('b3', { overdue: true, dueDate: '2026-07-10' })], priorityCards: [], deals: [], bundles: {}, bundleNames: {}, sort: 'urgent', todayISO: T });
-  check('S1d overdue leads the Urgent lens', ag3.first?.kind === 'single' && ag3.first.item.entityId === 'b3');
+  // S1d — THE DOCTRINE (Phase 3 F1): ordering is the REASONED priority, never a date rule. A
+  // judged-heavy item leads regardless of position; without judgment, NO fact reorders (stable
+  // assembly order holds — an overdue date renders as a chip, it does not sort).
+  const ag3 = buildAgenda({ replyItems: [reply('b1'), reply('b2')], noticeItems: [], commitItems: [commit('b3', { overdue: true, dueDate: '2026-07-10' })], priorityCards: [], deals: [], bundles: {}, bundleNames: {}, todayISO: T, weights: { b3: 80 } });
+  check('S1d judged weight leads (the judge weighed the deadline)', ag3.first?.kind === 'single' && ag3.first.item.entityId === 'b3');
+  const ag3n = buildAgenda({ replyItems: [reply('b1'), reply('b2')], noticeItems: [], commitItems: [commit('b3', { overdue: true, dueDate: '2026-07-10' })], priorityCards: [], deals: [], bundles: {}, bundleNames: {}, todayISO: T });
+  check('S1d no judgment → no date-rule reorder (stable base order)', ag3n.first?.kind === 'single' && ag3n.first.item.entityId === 'b1');
 
   // S1e — Important lens: verdict weight leads; a bundle carries its max member weight.
-  const ag4 = buildAgenda({ replyItems: [reply('c1'), reply('c2'), reply('c3')], noticeItems: [], commitItems: [], priorityCards: [], deals: [], bundles: { c2: { key: 'e:y', label: 'Y' }, c3: { key: 'e:y', label: 'Y' } }, bundleNames: {}, sort: 'important', weights: { c1: 10, c2: 5, c3: 80 }, todayISO: T });
+  const ag4 = buildAgenda({ replyItems: [reply('c1'), reply('c2'), reply('c3')], noticeItems: [], commitItems: [], priorityCards: [], deals: [], bundles: { c2: { key: 'e:y', label: 'Y' }, c3: { key: 'e:y', label: 'Y' } }, bundleNames: {}, weights: { c1: 10, c2: 5, c3: 80 }, todayISO: T });
   check('S1e Important: bundle takes max member weight', ag4.first?.kind === 'bundle', ag4.first?.kind ?? 'none');
 
   // S1f — sentenced de-dup: sentenced items leave the deck but the hero (first) is kept.
-  const ag5 = buildAgenda({ replyItems: [reply('d1'), reply('d2'), reply('d3')], noticeItems: [], commitItems: [], priorityCards: [], deals: [], bundles: {}, bundleNames: {}, sentencedIds: new Set(['d1', 'd2']), sort: 'urgent', todayISO: T });
+  const ag5 = buildAgenda({ replyItems: [reply('d1'), reply('d2'), reply('d3')], noticeItems: [], commitItems: [], priorityCards: [], deals: [], bundles: {}, bundleNames: {}, sentencedIds: new Set(['d1', 'd2']), todayISO: T });
   check('S1f sentenced leave, hero kept', ag5.rows === 2 && ag5.entries.some((e) => e.kind === 'single' && e.item.entityId === 'd1'), `rows=${ag5.rows}`);
 
   // S1g — empty input → calm zero.
-  const ag6 = buildAgenda({ replyItems: [], noticeItems: [], commitItems: [], priorityCards: [], deals: [], bundles: {}, bundleNames: {}, sort: 'urgent', todayISO: T });
+  const ag6 = buildAgenda({ replyItems: [], noticeItems: [], commitItems: [], priorityCards: [], deals: [], bundles: {}, bundleNames: {}, todayISO: T });
   check('S1g empty → rows 0, first null', ag6.rows === 0 && ag6.atoms === 0 && ag6.first === null);
 
   // S1h — cards + deals count as one row AND one atom each (mirrors the server's needYou unit).
   const card: Priority = { id: 'p1', source: 'meeting', posture: 'to_do', title: 'Review meeting', context: null, href: '/x', items: [{ id: 'i1', text: 't' }, { id: 'i2', text: 't' }] };
   const deal: SlippingDeal = { key: 'e-1', label: 'Deal', momentum: 'stalled', summary: 's', weight: 30, nextMove: null };
-  const ag7 = buildAgenda({ replyItems: [reply('e1')], noticeItems: [], commitItems: [], priorityCards: [card], deals: [deal], bundles: {}, bundleNames: {}, sort: 'urgent', todayISO: T });
+  const ag7 = buildAgenda({ replyItems: [reply('e1')], noticeItems: [], commitItems: [], priorityCards: [card], deals: [deal], bundles: {}, bundleNames: {}, todayISO: T });
   check('S1h cards/deals: 1 row + 1 atom each', ag7.rows === 3 && ag7.atoms === 3, `rows=${ag7.rows} atoms=${ag7.atoms}`);
 }
 
@@ -102,18 +106,20 @@ async function buildReal(uid: string): Promise<RealInputs> {
     const u = uid.slice(0, 8);
     const real = await buildReal(uid);
     if (!real.replies.length && !real.commits.length) { check(`${u}: real-data coherence`, true, 'skipped — nothing live'); continue; }
-    for (const sort of ['urgent', 'important', 'quick'] as const) {
-      const ag = buildAgenda({ replyItems: real.replies, noticeItems: [], commitItems: real.commits, priorityCards: [], deals: [], bundles: real.bundles, bundleNames: {}, sort, weights: real.weights });
+    {
+      const ag = buildAgenda({ replyItems: real.replies, noticeItems: [], commitItems: real.commits, priorityCards: [], deals: [], bundles: real.bundles, bundleNames: {}, weights: real.weights });
       const keys = ag.entries.map((e) => e.key);
       const atomsListed = agendaAtomOrder(ag).length;
+      // atoms ≤ raw: the near-dup fold may collapse twin notices (pre-existing, data-dependent).
+      const raw = real.replies.length + real.commits.length;
       const ok = ag.rows === ag.entries.length && new Set(keys).size === keys.length
-        && ag.atoms === real.replies.length + real.commits.length && atomsListed === ag.atoms
+        && ag.atoms <= raw && ag.atoms > 0 && atomsListed === ag.atoms
         && (ag.rows === 0 ? ag.first === null : ag.first?.key === ag.entries[0].key) && ag.rows <= ag.atoms;
-      check(`${u}: coherent under '${sort}' (rows=${ag.rows} atoms=${ag.atoms})`, ok);
-      if (sort === 'urgent') { const first = agendaAtomOrder(ag)[0]; if (first) firstIds.set(uid, first); }
+      check(`${u}: coherent (rows=${ag.rows} atoms=${ag.atoms})`, ok);
+      { const first = agendaAtomOrder(ag)[0]; if (first) firstIds.set(uid, first); }
     }
     // Ordering the compose actions by the agenda puts the deck-first actionable at A1.
-    const ag = buildAgenda({ replyItems: real.replies, noticeItems: [], commitItems: real.commits, priorityCards: [], deals: [], bundles: real.bundles, bundleNames: {}, sort: 'urgent', weights: real.weights });
+    const ag = buildAgenda({ replyItems: real.replies, noticeItems: [], commitItems: real.commits, priorityCards: [], deals: [], bundles: real.bundles, bundleNames: {}, weights: real.weights });
     const orderIdx = new Map(agendaAtomOrder(ag).map((id, i) => [id, i]));
     const sorted = [...real.actions].sort((a, b) => (orderIdx.get(a.itemId) ?? 1e9) - (orderIdx.get(b.itemId) ?? 1e9));
     check(`${u}: A1 == deck-first actionable`, sorted[0]?.itemId === firstIds.get(uid), sorted[0]?.itemId?.slice(0, 8) ?? 'none');
@@ -126,7 +132,7 @@ async function buildReal(uid: string): Promise<RealInputs> {
     const u = uid.slice(0, 8);
     const real = await buildReal(uid);
     if (!real.actions.length) continue;
-    const ag = buildAgenda({ replyItems: real.replies, noticeItems: [], commitItems: real.commits, priorityCards: [], deals: [], bundles: real.bundles, bundleNames: {}, sort: 'urgent', weights: real.weights });
+    const ag = buildAgenda({ replyItems: real.replies, noticeItems: [], commitItems: real.commits, priorityCards: [], deals: [], bundles: real.bundles, bundleNames: {}, weights: real.weights });
     const orderIdx = new Map(agendaAtomOrder(ag).map((id, i) => [id, i]));
     const actions = [...real.actions].sort((a, b) => (orderIdx.get(a.itemId) ?? 1e9) - (orderIdx.get(b.itemId) ?? 1e9));
     const { data: prof } = await sb.from('profiles').select('full_name').eq('id', uid).maybeSingle();

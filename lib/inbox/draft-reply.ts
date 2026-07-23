@@ -95,7 +95,8 @@ export async function generateReplyDraft(
 // the Home's "Ball in your court" section (Bug #2) — a draft the user reviews + sends, never auto-sent.
 export async function generateNudgeDraft(
   userId: string,
-  opts: { counterparty: string | null; description: string; ageDays?: number },
+  // `instructions` — optional extra guidance folded into the nudge (the steer channel's regenerate path).
+  opts: { counterparty: string | null; description: string; ageDays?: number; instructions?: string | null },
   client: DBClient,
 ): Promise<string> {
   const recipientEmail = (opts.counterparty || '').match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || null;
@@ -126,6 +127,7 @@ export async function generateNudgeDraft(
       // the language they communicate in evident, write the nudge in THAT language; otherwise English.
       `Write it in the language the recipient communicates in (infer from the recipient and the ` +
       `description above); if unclear, use English. ` +
+      (opts.instructions ? `\n${opts.instructions}\n` : '') +
       `Return ONLY the message body — no subject line, no preamble, no surrounding quotes.` }],
   });
   return res.choices?.[0]?.message?.content?.trim() || '';

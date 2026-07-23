@@ -11,7 +11,8 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowUpIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
-import { BriefingBlock, type Briefing, type BriefingRef } from '@/components/briefing/briefing-view';
+// (BriefingBlock removed from the chat — Phase 3 F2: the prose brief duplicated the deck; the
+// composeBriefing machinery survives as the deck's ordering anchor + the daily report.)
 
 type Ref = { id: string; kind: string; label: string; href: string | null };
 type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[] };
@@ -57,9 +58,7 @@ function Answer({ text, refs, onOpen }: { text: string; refs: Ref[]; onOpen: (r:
   return <p className="text-[14px] text-neutral-700 leading-[1.7]">{parts}</p>;
 }
 
-export default function HomeAsk({ briefing, clearedIds, onBriefNavigate, suggestions }: {
-  briefing: Briefing | null; clearedIds: Set<string>; onBriefNavigate: (r: BriefingRef) => void; suggestions: string[];
-}) {
+export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   const router = useRouter();
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
@@ -67,7 +66,7 @@ export default function HomeAsk({ briefing, clearedIds, onBriefNavigate, suggest
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [turns.length, busy]);
 
-  const openRef = (r: Ref | BriefingRef) => { if ('href' in r && r.href) router.push(r.href); };
+  const openRef = (r: Ref) => { if ('href' in r && r.href) router.push(r.href); };
 
   const ask = async (q: string) => {
     const question = q.trim();
@@ -103,7 +102,7 @@ export default function HomeAsk({ briefing, clearedIds, onBriefNavigate, suggest
     return () => document.removeEventListener('mousedown', onDown);
   }, []);
   const expanded = focused || open;
-  const revealed = (hovered || expanded) && (!!briefing || hasThread);
+  const revealed = (hovered || expanded) && hasThread;
   const showThread = hasThread && expanded;
   return (
     <section className="flex flex-col flex-1 min-h-0 w-full">
@@ -117,7 +116,7 @@ export default function HomeAsk({ briefing, clearedIds, onBriefNavigate, suggest
       <div className="sticky bottom-0 z-20 pt-4 pb-5 bg-gradient-to-t from-[#fbfbfd] via-[#fbfbfd] to-transparent">
         <div ref={shellRef} className="relative" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
 
-          {(!!briefing || hasThread) && (
+          {hasThread && (
             <div
               className={`absolute bottom-full left-0 right-0 rounded-t-2xl border border-b-0 border-neutral-200 bg-white px-4 pt-4 pb-1 shadow-[0_-16px_48px_-20px_rgba(23,23,23,0.18)] transition-all duration-300 ease-out ${revealed
                 ? 'opacity-100 translate-y-0'
@@ -128,12 +127,6 @@ export default function HomeAsk({ briefing, clearedIds, onBriefNavigate, suggest
                   <button onClick={() => setTurns([])} className="inline-flex items-center gap-1 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-700 transition-colors">
                     <ArrowPathIcon className="w-3.5 h-3.5" /> New
                   </button>
-                </div>
-              )}
-              {briefing && (
-                <div className={`relative overflow-hidden transition-all duration-300 ease-out ${expanded ? 'max-h-[300px] overflow-y-auto [scrollbar-width:thin] pr-1' : 'max-h-[58px]'}`}>
-                  <BriefingBlock briefing={briefing} clearedIds={clearedIds} onNavigate={onBriefNavigate} flat />
-                  {!expanded && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-5 bg-gradient-to-t from-white to-transparent" />}
                 </div>
               )}
               {showThread && (

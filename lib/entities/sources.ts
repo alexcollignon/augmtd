@@ -11,17 +11,27 @@ import type { RecogItem } from './recognize';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = Record<string, any>;
 
+// Carry EVERY identity form a participant arrives in ("Name <email>") — personForms() in recognize.ts
+// splits it into name + email + company-domain tokens, so the fingerprint matches whichever form a
+// LATER item uses (a bare address, a display name, a new teammate at the same company).
 const attendeeNames = (raw: unknown): string[] =>
   (Array.isArray(raw) ? raw : [])
-    .map((a) => (typeof a === 'string' ? a : (a?.name || a?.displayName || a?.email || '')))
+    .map((a) => {
+      if (typeof a === 'string') return a;
+      const name = (a?.name || a?.displayName || '') as string;
+      const email = (a?.email || '') as string;
+      return name && email ? `${name} <${email}>` : (name || email);
+    })
     .filter(Boolean).slice(0, 8);
 
 export function itemFromInbox(it: Row): RecogItem {
   const sd = it.source_data ?? {};
+  const name = (sd.from_name as string) || '';
+  const addr = (sd.from_address as string) || '';
   return {
     kind: 'inbox_item', id: String(it.id), title: String(it.work_title || sd.subject || ''),
     body: typeof sd.body === 'string' ? sd.body : null,
-    from: (sd.from_name as string) || (sd.from_address as string) || null,
+    from: name && addr ? `${name} <${addr}>` : (name || addr || null),
     at: (sd.received_at as string) ?? (it.created_at as string), threadId: (sd.thread_id as string) ?? null,
   };
 }

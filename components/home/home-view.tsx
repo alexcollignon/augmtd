@@ -6,10 +6,13 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { showUndoToast } from '@/lib/activity/undo-toast';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { useLiveRefresh } from '@/hooks/use-live-refresh';
+import { MOMENTUM as MOMENTUM_TOKENS } from '@/lib/work-items/states';
+import { WorkRow as DoRow, useExit, useCommitmentAct, EffortDate, InitiativeTag, prefetchItem, fmtDue, exitCls, DO_META } from '@/components/work/work-row';
 import { createClient } from '@/lib/supabase/client';
 import {
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon, ClockIcon, UsersIcon, FolderIcon,
-  ChevronRightIcon, ArrowRightIcon, BoltIcon, SparklesIcon, EyeIcon, BellAlertIcon,
+  ChevronRightIcon, ArrowRightIcon, BoltIcon, EyeIcon, BellAlertIcon, ChatBubbleLeftRightIcon,
   FolderPlusIcon, EyeSlashIcon, ArrowUturnLeftIcon,
 } from '@heroicons/react/24/outline';
 import ActivityPanel from '@/components/activity/activity-panel';
@@ -20,7 +23,7 @@ import { useBriefingNavigate, type Briefing as ReasonedBriefing } from '@/compon
 import HomeAsk from '@/components/home/home-ask';
 import ViewSwitcher, { type HomeView as HomeViewLens } from '@/components/home/view-switcher';
 import {
-  buildAgenda, type Agenda, type DoItem, type DoSort, type DoSource, type DeckEntry,
+  buildAgenda, coveredIds, type Agenda, type DoItem, type DoSource, type DeckEntry,
   type Priority, type SlippingDeal, type BundleState,
 } from '@/lib/home/agenda';
 import { cleanTitle } from '@/lib/work-items/report';
@@ -30,19 +33,7 @@ import PortfolioView from '@/components/entities/portfolio-view';
 // Priority / SlippingDeal / DoItem / DeckEntry / bundling / sorting now live in lib/home/agenda.ts —
 // the ONE agenda spine the deck, the day ring, and the brief composer all project from (Living-Home S1).
 
-// The initiative-cluster tag — "↳ <initiative> · 9". Shows an actionable item's PROJECT context (Phase 5):
-// it belongs to a real initiative you're working, with N total related items. Presentation only,
-// deterministic (never the model). Nothing renders when the item isn't part of a cluster.
-function InitiativeTag({ initiative, total }: { initiative?: string | null; total?: number | null }) {
-  if (!initiative) return null;
-  return (
-    <span className="inline-flex items-center gap-1 max-w-full text-[10.5px] font-medium text-indigo-500 bg-indigo-50 rounded-full px-1.5 py-0.5 align-middle" title={`Part of ${initiative}${total ? ` — ${total} related items` : ''}`}>
-      <FolderIcon className="w-2.5 h-2.5 flex-shrink-0" />
-      <span className="truncate max-w-[140px]">{initiative}</span>
-      {total && total > 1 ? <span className="text-indigo-400 font-normal">· {total}</span> : null}
-    </span>
-  );
-}
+// (InitiativeTag / EffortDate / the row kit live in components/work/work-row.tsx — the ONE row grammar.)
 
 // Shared state-tone palette — used by the in-motion strip (initiative state chips + panel).
 type GroupStateTone = 'emerald' | 'blue' | 'amber' | 'rose' | 'neutral';
@@ -59,19 +50,7 @@ const GROUP_STATE_TONE: Record<GroupStateTone, { dot: string; text: string; bg: 
 // awareness folded into a "+N quiet" toggle. NOT a re-list of actions (those live complete in "What needs
 // you"). Click a chip → a small state panel (state · people · counts · open in Projects). Marquee only when
 // it overflows, pausing on hover + still under reduced-motion.
-// A tiny "feels doable" cue — effort estimate + a real due date when the item states one. Presentation
-// only: reduces dread ("~2 min") and surfaces genuine deadlines. Shows nothing when neither is known.
-function EffortDate({ effort, dueDate, overdue }: { effort?: 'quick' | 'medium' | 'deep' | null; dueDate?: string | null; overdue?: boolean }) {
-  if (!effort && !dueDate) return null;
-  const eff = effort === 'quick' ? '~2 min' : effort === 'medium' ? '~15 min' : effort === 'deep' ? '30+ min' : null;
-  const date = dueDate ? new Date(`${dueDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : null;
-  return (
-    <span className="inline-flex items-center gap-1.5 text-[11px] flex-shrink-0">
-      {date && <span className={`font-medium ${overdue ? 'text-rose-500' : 'text-indigo-500'}`}>{overdue ? 'Overdue · ' : ''}{date}</span>}
-      {eff && <span className="text-neutral-400">{eff}</span>}
-    </span>
-  );
-}
+
 type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
 type Followups = { teaser: string; items: { id?: string; who: string; status: string; nextMove: string }[]; closing: string | null };
 type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
@@ -128,7 +107,6 @@ function greeting() {
   return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
 }
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-const fmtDue = (iso: string | null) => (iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '');
 // Relative due words — "overdue 3d" / "due today" / "due tomorrow" / "due Wed" (readable at a glance,
 // zero width — the Madalena line grammar).
 function relDue(iso?: string | null): { label: string; overdue: boolean } | null {
@@ -390,29 +368,7 @@ function priorityHref(p: Priority): string {
   return p.href;
 }
 
-// Smooth exit on Done/Dismiss/Send: fade + slight scale, then unmount — consistent with the app's
-// transitions. `startExit` triggers the fade; after the animation the row unmounts.
-function useExit(ms = 300): { removed: boolean; exiting: boolean; startExit: () => void } {
-  const [removed, setRemoved] = useState(false);
-  const [exiting, setExiting] = useState(false);
-  const startExit = () => { setExiting(true); setTimeout(() => setRemoved(true), ms); };
-  return { removed, exiting, startExit };
-}
-const exitCls = (exiting: boolean) => `transition-all duration-300 ease-out ${exiting ? 'opacity-0 scale-[0.97]' : 'opacity-100'}`;
 
-// Done ✓ / Dismiss ✕ for a commitment-backed row → PATCH /api/commitments/[id]. Optimistic, animated.
-function useCommitmentAct(id?: string, onCleared?: (id: string) => void, onUndoCommitment?: (message: string, id: string) => void): { removed: boolean; exiting: boolean; acting: boolean; act: (s: 'done' | 'dismissed') => void } {
-  const { removed, exiting, startExit } = useExit();
-  const [acting, setActing] = useState(false);
-  const act = (status: 'done' | 'dismissed') => {
-    if (acting || !id) return;
-    setActing(true); startExit(); onCleared?.(id); // raise the day-cleared ring live
-    fetch(`/api/commitments/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
-      .catch(() => {}).finally(() => setActing(false));
-    onUndoCommitment?.(status === 'done' ? 'Marked done' : 'Dismissed', id);
-  };
-  return { removed, exiting, acting, act };
-}
 
 // ── Expandable list — the shared "show a few, expand to all" pattern (same affordance as DigestList's
 // "Show N more"). No hard cap: renders `limit` rows, then a single "Show N more" button reveals the
@@ -512,7 +468,7 @@ function DigestReply({ m, onDismiss, emphasis = false, onUndoInbox }: { m: Diges
         <SenderAvatar name={m.who} size={emphasis ? 'md' : 'sm'} />
         <div className="min-w-0 flex-1">
           {/* Soft "start here" suggestion on the top row — a place to begin, not a command. */}
-          {emphasis && <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-500 mb-1"><SparklesIcon className="w-3 h-3" />Start here</p>}
+          {emphasis && <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-500 mb-1">Start here</p>}
           <div className="flex items-baseline gap-2">
             {/* Line 1 = sender · the SYNTHESIZED ASK (the actionable summary — prominent), snippet fallback
                 until the enrich lands. Line 2 = the raw email subject (muted, secondary). Inverted so the
@@ -833,12 +789,7 @@ function ActionNoticeRow({ a, onDismiss, onUndoInbox }: { a: { itemId: string; w
 // notices / commitments read as one consistent list instead of a list + a card + a grid. Reply and notice
 // sources act via the inbox endpoints (complete/dismiss); a commitment via useCommitmentAct.
 // (DoSource/DoItem moved to lib/home/agenda.ts — the agenda spine.)
-const DO_META: Record<DoSource, { Icon: React.ElementType; ring: string; text: string }> = {
-  reply:      { Icon: EnvelopeIcon,    ring: 'bg-indigo-50',   text: 'text-indigo-500' },
-  notice:     { Icon: BellAlertIcon,   ring: 'bg-amber-50',    text: 'text-amber-600' },
-  commitment: { Icon: CheckCircleIcon, ring: 'bg-neutral-100', text: 'text-neutral-500' },
-  deal:       { Icon: FolderIcon,      ring: 'bg-amber-50',    text: 'text-amber-600' },
-};
+
 
 // ── THE ONE WORKCARD RULE (species → the one row grammar). Priority cards and slipping deals CONVERT
 // into DoItems, so every deck entry renders through the SAME component with the SAME anatomy and the
@@ -855,9 +806,11 @@ function priorityToItem(p: Priority): DoItem {
 }
 function dealToItem(d: SlippingDeal): DoItem {
   return {
-    source: 'deal', key: `deal-${d.key}`, entityId: d.key, href: `/?view=projects`,
-    // One CLAUSE, not the whole state summary — a row is a line, the deep-dive holds the story.
-    ask: cleanTitle(d.label), second: d.summary.split(/[;.](?:\s|$)/)[0].slice(0, 90),
+    // Opens the deal's ROOM directly (F1 dead-click fix — `/?view=projects` landed on the grid).
+    source: 'deal', key: `deal-${d.key}`, entityId: d.key, href: `/?view=projects&entity=${d.key}`,
+    // GLANCE register: the reasoned next-move imperative when present, else the label. The summary
+    // sentence stays in the room.
+    ask: cleanTitle(d.label), second: d.nextMove?.title ?? null,
   };
 }
 
@@ -865,29 +818,7 @@ function dealToItem(d: SlippingDeal): DoItem {
 // deep-dive (item-detail) hydrates from these exact localStorage keys and skips its skeleton when they're
 // warm; pre-writing them on hover means the modal renders with real content immediately instead of waiting
 // on a cold fetch. Deduped once per id per session, and a no-op when the cache is already warm. The href
-// encodes id + kind: /item/<id>?kind=email|meeting|commitment|followup (kind absent → email).
-const PREFETCH_PLAN: Record<string, (id: string) => { key: string; url: string }> = {
-  email:      (id) => ({ key: `aug-item-thread-${id}`,     url: `/api/inbox/${id}/thread` }),
-  followup:   (id) => ({ key: `aug-item-followup-${id}`,   url: `/api/commitments/${id}/thread` }),
-  meeting:    (id) => ({ key: `aug-item-meeting-${id}`,    url: `/api/meetings/${id}/full` }),
-  commitment: (id) => ({ key: `aug-item-commitment-${id}`, url: `/api/commitments/${id}` }),
-};
-const _prefetchedItems = new Set<string>();
-function prefetchItem(href: string | null | undefined) {
-  if (!href) return;
-  try {
-    const m = href.match(/\/item\/([^/?#]+)/);
-    if (!m) return;
-    const id = m[1];
-    const kind = new URLSearchParams(href.split('?')[1] || '').get('kind') || 'email';
-    const dedupeKey = `${kind}:${id}`;
-    if (_prefetchedItems.has(dedupeKey)) return;
-    _prefetchedItems.add(dedupeKey);
-    const plan = (PREFETCH_PLAN[kind] ?? PREFETCH_PLAN.email)(id);
-    if (loadLS(plan.key) != null) return; // already warm from a prior open
-    fetch(plan.url).then((r) => (r.ok ? r.json() : null)).then((d) => { if (d) saveLS(plan.key, d); }).catch(() => {});
-  } catch { /* non-fatal */ }
-}
+
 
 // Smooth height collapse — the shared `grid-rows-[0fr]→[1fr]` + opacity pattern, so every expand/collapse
 // in the Home grows and shrinks smoothly (one motion language). Content stays mounted; only its height +
@@ -926,13 +857,8 @@ function brainRefHref(ref: string | null | undefined): string | null {
   return k === 'inbox' ? `/item/${id}?kind=email` : k === 'commit' ? `/item/${id}?kind=commitment` : k === 'meeting' ? `/item/${id}?kind=meeting` : null;
 }
 // Momentum → dot/label/text (shared with the S4 rollup — one visual language for "where an initiative stands").
-const MOMENTUM: Record<BrainState['momentum'], { dot: string; label: string; text: string }> = {
-  needs_you:  { dot: 'bg-rose-500',    label: 'Needs you',  text: 'text-rose-600' },
-  gone_quiet: { dot: 'bg-amber-500',   label: 'Gone quiet', text: 'text-amber-600' },
-  stalled:    { dot: 'bg-amber-500',   label: 'Stalled',    text: 'text-amber-600' },
-  waiting:    { dot: 'bg-blue-400',    label: 'Waiting',    text: 'text-blue-600' },
-  active:     { dot: 'bg-emerald-500', label: 'Active',     text: 'text-emerald-600' },
-};
+// The ONE momentum vocabulary — lib/work-items/states.ts (same dot = same meaning on every surface).
+const MOMENTUM = MOMENTUM_TOKENS;
 
 // ── MOVING · nothing needed — the calm reassurance tier. Initiatives that are progressing but need nothing
 // from you right now (active / waiting). Collapsed by default (one summary line: "N moving · nothing needed
@@ -1003,7 +929,7 @@ const POSTURE_META: Record<Priority['posture'], { Icon: React.ElementType; ring:
 };
 function peekOf(e: DeckEntry): PeekDesc {
   if (e.kind === 'deal') {
-    return { Icon: FolderIcon, ring: 'bg-amber-50', text: 'text-amber-600', title: e.deal.label, hint: e.deal.summary };
+    return { Icon: FolderIcon, ring: 'bg-amber-50', text: 'text-amber-600', title: e.deal.label, hint: e.deal.nextMove?.title ?? null };
   }
   if (e.kind === 'bundle') {
     const overdue = e.items.some((i) => i.overdue);
@@ -1019,14 +945,16 @@ function peekOf(e: DeckEntry): PeekDesc {
     return { Icon: m.Icon, ring: m.ring, text: m.text, title, hint, overdue: e.item.overdue, dueToday: e.item.dueToday, due: e.item.dueDate, prepared: e.item.prepared ?? null };
   }
   const m = POSTURE_META[e.p.posture] ?? POSTURE_META.to_do;
-  return { Icon: m.Icon, ring: m.ring, text: m.text, title: e.p.title, hint: e.p.context, overdue: e.p.overdue, due: e.p.dueDate };
+  // GLANCE register (F1): no prose hint on a peek — the title + fact chips carry it; the hero shows detail.
+  return { Icon: m.Icon, ring: m.ring, text: m.text, title: e.p.title, hint: null, overdue: e.p.overdue, due: e.p.dueDate };
 }
 // A peek's underlying deep-dive href (single row / priority card) — used to warm the cache on hover so a
 // promote→click is instant. A bundle peek opens on promote (no direct href) → nothing to prefetch here.
 function peekHref(e: DeckEntry): string | null {
   if (e.kind === 'single') return e.item.href;
   if (e.kind === 'priority') return priorityHref(e.p);
-  if (e.kind === 'deal') return brainRefHref(e.deal.nextMove?.entityRef);
+  // A deal with no move-ref still opens SOMEWHERE — its room (the dead-click fix, F1).
+  if (e.kind === 'deal') return brainRefHref(e.deal.nextMove?.entityRef) ?? `/?view=projects&entity=${e.deal.key}`;
   return null;
 }
 
@@ -1037,101 +965,7 @@ function peekHref(e: DeckEntry): string | null {
 // swallows the screen. Only ONE opens at a time; nothing removed; the count IS the honest promise. Calm
 // at rest (blurred surface, content reads cleanly behind it); empty sections drop out.
 type AmbientSection = { key: string; label: string; count: number | null; node: React.ReactNode };
-function DoRow({ item, emphasis = false, hideInitiative = false, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment, dismissOverride }: {
-  item: DoItem; emphasis?: boolean; hideInitiative?: boolean;
-  onDismissInbox?: (id: string) => void; onClearedCommitment?: (id: string) => void;
-  onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void;
-  onUndoCommitment?: (message: string, id: string) => void;
-  /** A session-only dismiss (slipping deals) — replaces the endpoint call; ✓ hides (nothing to complete). */
-  dismissOverride?: () => void;
-}) {
-  const router = useRouter();
-  const isCommit = item.source === 'commitment';
-  const isDeal = item.source === 'deal';
-  const inbox = useExit();
-  const commit = useCommitmentAct(isCommit ? item.entityId : undefined, onClearedCommitment, onUndoCommitment);
-  const [acting, setActing] = useState(false);
-  useEffect(() => { if (inbox.removed) onDismissInbox?.(item.entityId); }, [inbox.removed]); // eslint-disable-line react-hooks/exhaustive-deps
-  const removed = isCommit ? commit.removed : inbox.removed;
-  const exiting = isCommit ? commit.exiting : inbox.exiting;
-
-  const actInbox = async (kind: 'complete' | 'dismiss', e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    if (acting || !item.entityId) return;
-    setActing(true); inbox.startExit();
-    onUndoInbox?.(kind === 'complete' ? 'Marked done' : 'Dismissed', item.entityId, [item.entityId]);
-    try { await fetch(`/api/inbox/${item.entityId}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) }); } finally { setActing(false); }
-  };
-  const done = (e?: React.MouseEvent) => { e?.stopPropagation(); if (isDeal) return; if (isCommit) commit.act('done'); else actInbox('complete', e); };
-  const drop = (e?: React.MouseEvent) => { e?.stopPropagation(); if (dismissOverride) { dismissOverride(); return; } if (isCommit) commit.act('dismissed'); else actInbox('dismiss', e); };
-  const open = () => router.push(item.href);
-  // Hover = intent to open → warm the deep-dive cache + the route JS so the click is instant.
-  const prefetch = () => { prefetchItem(item.href); router.prefetch?.(item.href); };
-
-  if (removed) return null;
-  const { Icon, ring, text } = DO_META[item.source];
-  const iconTone = isCommit && item.overdue ? 'text-rose-500' : text;
-  const badge = item.overdue ? 'Overdue' : item.dueToday ? 'Today' : (isCommit && item.dueDate) ? fmtDue(item.dueDate) : null;
-  const busy = acting || commit.acting;
-  // The single item's next action — DETERMINISTIC from its type (not the Initiative Brain: a loose atom's
-  // action is intrinsic, always known, no reasoning needed). Shown only on the focused hero card, mirroring
-  // the bundle's next-move chip so every "Start here" card leads with a concrete action, not a bare arrow.
-  const actionLabel = isCommit ? 'Follow up' : (item.source === 'notice' || isDeal) ? 'Review' : 'Reply';
-  return (
-    <div onMouseEnter={prefetch} onFocus={prefetch} className={`group rounded-xl border bg-white transition-all duration-300 ease-out hover:shadow-[0_4px_20px_-4px_rgba(0,0,0,0.08)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/70 hover:border-neutral-300'}`}>
-      <div role="button" tabIndex={0} onClick={open}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
-        className="w-full flex items-start gap-3 p-4 text-left cursor-pointer">
-        <span className={`flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-lg ${ring} ${iconTone}`}><Icon className="w-4 h-4" /></span>
-        <div className="min-w-0 flex-1">
-          {emphasis && <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-500 mb-1"><SparklesIcon className="w-3 h-3" />Start here</p>}
-          <div className="flex items-baseline gap-2">
-            <p className={`${emphasis ? 'text-[14.5px]' : 'text-[13.5px]'} font-semibold text-neutral-900 leading-snug min-w-0 truncate`}>
-              {item.primary && <span className="text-neutral-800">{item.primary}</span>}
-              {/* ONE quiet relationship cue (Person Brain) — a muted tag right after the name: who they are to
-                  you ("partner") or the time signal ("quiet 3w"). Short + snappy; only meaningful stakes show. */}
-              {item.relCue && <span className={`ml-1 text-[11px] font-medium ${item.relCue.tone === 'amber' ? 'text-amber-600' : 'text-neutral-400'}`}>{item.relCue.label}</span>}
-              {item.primary && item.ask && <span className="font-normal text-neutral-400"> · </span>}
-              {item.ask && <span className="font-semibold text-neutral-800">{item.ask}</span>}
-            </p>
-            <span className="flex-shrink-0 ml-auto flex items-center gap-2">
-              {/* PREPARED — the work already arrived: "✦ drafted" (in-house) or "✦ <coworker>" (attributed). */}
-              {item.prepared && <span className="text-[11px] font-medium text-indigo-500">✦ {item.prepared === 'draft' ? 'drafted' : item.prepared.split(' ')[0]}</span>}
-              {badge && <span className={`text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 ${item.overdue ? 'bg-rose-50 text-rose-600' : item.dueToday ? 'bg-amber-50 text-amber-600' : 'bg-neutral-100 text-neutral-500'}`}>{badge}</span>}
-              {!badge && <EffortDate effort={item.effort} dueDate={item.dueDate} overdue={!!item.dueDate && item.dueDate < new Date().toISOString().slice(0, 10)} />}
-              {/* Inside a bundle already named by this initiative, the per-row tag is redundant — hide it. */}
-              {!hideInitiative && <InitiativeTag initiative={item.initiative} total={item.initiativeTotal} />}
-              {item.when && <span className="text-[11px] text-neutral-300 tabular-nums">{item.when}</span>}
-            </span>
-          </div>
-          {item.second && <p className={`${emphasis ? 'text-[12.5px]' : 'text-[12px]'} text-neutral-500 mt-0.5 leading-snug line-clamp-1`}>{item.second}</p>}
-        </div>
-        {/* Controls appear ONLY on hover — at rest every row is a pure line (the Madalena cleanliness).
-            Identical set, identical position, every species. */}
-        <span className="flex-shrink-0 flex items-center gap-2.5 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-          {!isDeal && <button onClick={done} disabled={busy} title="Mark done" className="text-neutral-300 hover:text-emerald-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✓</button>}
-          <button onClick={drop} disabled={busy} title="Dismiss — won't show again" className="text-neutral-300 hover:text-rose-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✕</button>
-          <ArrowRightIcon className="w-3.5 h-3.5 text-neutral-200 group-hover:text-indigo-400 transition-colors" />
-        </span>
-      </div>
-      {/* CTA only when EARNED by a preparation, NAMED by it ("✦ Review draft" / "✦ See Max's work").
-          No preparation → no button; the row click opens the deep-dive (the natural action). A generic
-          verb button on every card was noise — Madalena's summary has zero buttons and reads cleaner. */}
-      {emphasis && item.prepared && (
-        <div className="px-4 pb-3 -mt-1 pl-[2.9rem]">
-          <button
-            onClick={open}
-            onMouseEnter={prefetch}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 text-[12px] font-medium text-indigo-700 transition-colors"
-          >
-            <span>✦ {item.prepared === 'draft' ? (isCommit ? 'Review follow-up' : 'Review draft') : `See ${item.prepared.split(' ')[0]}'s work`}</span>
-            <ArrowRightIcon className="w-3.5 h-3.5 flex-shrink-0" />
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
+// (The row itself is the shared WorkRow — components/work/work-row.tsx.)
 
 // A bundle card — the initiative + count + a one-line lead. When Brain `state` is present (this bundle IS a
 // tracked initiative), the card reads like a chief-of-staff briefing: a momentum dot + label, WHERE IT STANDS
@@ -1150,13 +984,12 @@ function BundleGroup({ title, why, items, state, emphasis = false, onDismissInbo
   const overdue = items.some((i) => i.overdue || (!!i.dueDate && i.dueDate < todayISO));
   const m = state ? (MOMENTUM[state.momentum] ?? MOMENTUM.active) : null;
   const moveHref = state?.nextMove ? brainRefHref(state.nextMove.entityRef) : null;
-  // Lead line: the Brain's where-it-stands summary is the richest; then the grounded "why"; else the
-  // most-urgent atom's gist so the card still says what's inside.
-  const leadNode = state?.summary
-    ? <>{state.summary}</>
-    : why
-      ? <>{why}</>
-      : <>{lead.primary ? <>{lead.primary}<span className="text-neutral-400"> · </span></> : null}{lead.ask}</>;
+  // GLANCE register (Phase 3 F1): collapsed = the reasoned one-line "why" or the lead atom's
+  // who · verb-ask — never the state paragraph. The judged summary (full sentence) renders inside
+  // the EXPANSION: glance → expand → room, three registers.
+  const leadNode = why
+    ? <>{why}</>
+    : <>{lead.primary ? <>{lead.primary}<span className="text-neutral-400"> · </span></> : null}{lead.ask}</>;
   return (
     <div className={`rounded-xl border bg-white transition-all duration-300 ease-out ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/70'}`}>
       <button onClick={() => setOpen((v) => !v)} className="w-full flex items-start gap-3 p-4 text-left">
@@ -1164,7 +997,7 @@ function BundleGroup({ title, why, items, state, emphasis = false, onDismissInbo
           ? <span className={`flex-shrink-0 mt-1.5 w-2.5 h-2.5 rounded-full ${m.dot}`} title={m.label} />
           : <span className="flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-50 text-indigo-500"><FolderIcon className="w-4 h-4" /></span>}
         <div className="min-w-0 flex-1">
-          {emphasis && <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-500 mb-1"><SparklesIcon className="w-3 h-3" />Start here</p>}
+          {emphasis && <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-500 mb-1">Start here</p>}
           <div className="flex items-baseline gap-2">
             <p className="text-[13.5px] font-semibold text-neutral-900 truncate min-w-0">{title}<span className="font-normal text-neutral-400"> · {items.length}</span></p>
             {m && <span className={`flex-shrink-0 text-[10px] font-semibold uppercase tracking-wide ${m.text}`}>{m.label}{state?.momentum === 'gone_quiet' && state?.quietDays ? ` ${state.quietDays}d` : ''}</span>}
@@ -1192,46 +1025,79 @@ function BundleGroup({ title, why, items, state, emphasis = false, onDismissInbo
       )}
       <Collapse open={open}>
         <div className="border-t border-neutral-100 px-2 py-2 space-y-2">
-          {items.map((it) => <DoRow key={it.key} item={it} hideInitiative onDismissInbox={onDismissInbox} onClearedCommitment={onClearedCommitment} onUndoInbox={onUndoInbox} onUndoCommitment={onUndoCommitment} />)}
+          {/* The judged where-it-stands — the EXPAND register (one sentence, demoted from the card face). */}
+          {state?.summary && <p className="px-2 pt-1 text-[12.5px] text-neutral-500 leading-snug">{state.summary}</p>}
+          {(() => { const covered = coveredIds(state); return items.map((it) =>
+            // THE ARBITER (P6a): a member the deal's next move RESOLVES renders as quiet evidence —
+            // the bundle's next-move chip is the ONE call-to-action; uncovered members keep their ask.
+            <DoRow key={it.key} item={it} hideInitiative evidence={covered.has(it.entityId)} onDismissInbox={onDismissInbox} onClearedCommitment={onClearedCommitment} onUndoInbox={onUndoInbox} onUndoCommitment={onUndoCommitment} />); })()}
         </div>
       </Collapse>
     </div>
   );
 }
 
-function PeekRow({ e, onPromote }: { e: DeckEntry; onPromote: () => void }) {
+function PeekRow({ e, onPromote, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment, onDismissDeal }: {
+  e: DeckEntry; onPromote: () => void;
+  onDismissInbox?: (id: string) => void; onClearedCommitment?: (id: string) => void;
+  onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void;
+  onUndoCommitment?: (message: string, id: string) => void;
+  onDismissDeal?: (key: string) => void;
+}) {
   const d = peekOf(e);
   const router = useRouter();
   // CLICK = OPEN, instantly (users click to act, not to rearrange the deck). A bundle has no single
   // target, so it promotes to hero — its expansion IS its open. Hover already prefetched the deep-dive.
   const href = peekHref(e);
   const onClick = () => { if (e.kind !== 'bundle' && href) router.push(href); else onPromote(); };
+  // The peek's underlying actionable item — a peek must ACT like a full row (P5c: secondary items are
+  // never second-class; ✓/✕ everywhere or the deck traps work below the hero).
+  const target = e.kind === 'single' ? e.item : e.kind === 'priority' ? priorityToItem(e.p) : null;
+  const isCommit = target?.source === 'commitment';
+  const commit = useCommitmentAct(isCommit ? target?.entityId : undefined, onClearedCommitment, onUndoCommitment);
+  const inboxExit = useExit();
+  const [acting, setActing] = useState(false);
+  useEffect(() => { if (inboxExit.removed && target) onDismissInbox?.(target.entityId); }, [inboxExit.removed]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (isCommit ? commit.removed : inboxExit.removed) return null;
+  const actInbox = async (kind: 'complete' | 'dismiss') => {
+    if (acting || !target?.entityId) return;
+    setActing(true); inboxExit.startExit();
+    onUndoInbox?.(kind === 'complete' ? 'Marked done' : 'Dismissed', target.entityId, [target.entityId]);
+    try { await fetch(`/api/inbox/${target.entityId}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) }); } finally { setActing(false); }
+  };
+  const done = (ev: React.MouseEvent) => { ev.stopPropagation(); if (!target) return; if (isCommit) commit.act('done'); else actInbox('complete'); };
+  const drop = (ev: React.MouseEvent) => {
+    ev.stopPropagation();
+    if (e.kind === 'deal') { onDismissDeal?.(e.deal.key); return; }
+    if (!target) return;
+    if (isCommit) commit.act('dismissed'); else actInbox('dismiss');
+  };
+  const canAct = !!target || e.kind === 'deal';
+  const exiting = isCommit ? commit.exiting : inboxExit.exiting;
   return (
-    <button onClick={onClick} onMouseEnter={() => prefetchItem(href)} className="group w-full flex items-center gap-2.5 rounded-lg border border-neutral-200/60 bg-white/60 px-3 py-2 text-left transition-all duration-200 ease-out hover:bg-white hover:border-neutral-300">
-      <span className={`flex-shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-md ${d.ring} ${d.overdue ? 'text-rose-500' : d.text}`}><d.Icon className="w-3.5 h-3.5" /></span>
-      <span className="min-w-0 flex-1 flex items-baseline gap-1.5">
-        <span className="text-[12.5px] font-medium text-neutral-700 truncate">{d.title}{typeof d.count === 'number' && <span className="font-normal text-neutral-400"> · {d.count}</span>}</span>
-        {d.hint && <span className="hidden sm:inline text-[11.5px] text-neutral-400 truncate min-w-0">— {d.hint}</span>}
+    <div onMouseEnter={() => prefetchItem(href)} className={`group w-full flex items-center gap-2.5 rounded-lg border border-neutral-200/60 bg-white/60 px-3 py-2 transition-all duration-300 ease-out hover:bg-white hover:border-neutral-300 ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'}`}>
+      <button onClick={onClick} className="min-w-0 flex-1 flex items-center gap-2.5 text-left cursor-pointer">
+        <span className={`flex-shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-md ${d.ring} ${d.overdue ? 'text-rose-500' : d.text}`}><d.Icon className="w-3.5 h-3.5" /></span>
+        <span className="min-w-0 flex-1 flex items-baseline gap-1.5">
+          <span className="text-[12.5px] font-medium text-neutral-700 truncate">{d.title}{typeof d.count === 'number' && <span className="font-normal text-neutral-400"> · {d.count}</span>}</span>
+          {d.hint && <span className="hidden sm:inline text-[11.5px] text-neutral-400 truncate min-w-0">— {d.hint}</span>}
+        </span>
+        {(() => { const r = d.due ? relDue(d.due) : (d.overdue ? { label: 'overdue', overdue: true } : d.dueToday ? { label: 'due today', overdue: false } : null);
+          return r ? <span className={`flex-shrink-0 text-[11px] font-medium ${r.overdue ? 'text-rose-600' : 'text-neutral-500'}`}>{r.label}</span> : null; })()}
+        {/* PREPARED token — the work already arrived: "drafted" (in-house) or the coworker's name. */}
+        {d.prepared && <span className="flex-shrink-0 text-[11px] font-medium text-indigo-500">{d.prepared === 'draft' ? 'drafted' : d.prepared.split(' ')[0]}</span>}
+      </button>
+      {/* Hover-only controls — the SAME quiet ✓ ✕ pair every row species has (bundles expand instead). */}
+      <span className="flex-shrink-0 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+        {target && <button onClick={done} disabled={acting || commit.acting} title="Mark done" className="text-neutral-300 hover:text-emerald-600 transition-colors disabled:opacity-50 text-[12px] leading-none">✓</button>}
+        {canAct && <button onClick={drop} disabled={acting || commit.acting} title="Dismiss — won't show again" className="text-neutral-300 hover:text-rose-600 transition-colors disabled:opacity-50 text-[12px] leading-none">✕</button>}
       </span>
-      {(() => { const r = d.due ? relDue(d.due) : (d.overdue ? { label: 'overdue', overdue: true } : d.dueToday ? { label: 'due today', overdue: false } : null);
-        return r ? <span className={`flex-shrink-0 text-[11px] font-medium ${r.overdue ? 'text-rose-600' : 'text-neutral-500'}`}>{r.label}</span> : null; })()}
-      {/* PREPARED token — the work already arrived: "✦ drafted" (in-house) or "✦ <coworker>" (attributed). */}
-      {d.prepared && <span className="flex-shrink-0 text-[11px] font-medium text-indigo-500">✦ {d.prepared === 'draft' ? 'drafted' : d.prepared.split(' ')[0]}</span>}
-      <ChevronRightIcon className="flex-shrink-0 w-3.5 h-3.5 text-neutral-300 group-hover:text-indigo-400 transition-colors" />
-    </button>
-  );
-}
-
-function DoSortToggle({ value, onChange }: { value: DoSort; onChange: (v: DoSort) => void }) {
-  const opts: { k: DoSort; label: string }[] = [{ k: 'urgent', label: 'Urgent' }, { k: 'important', label: 'Important' }, { k: 'quick', label: 'Quick wins' }];
-  return (
-    <div className="inline-flex items-center gap-0.5 rounded-lg bg-neutral-100/70 p-0.5">
-      {opts.map((o) => (
-        <button key={o.k} onClick={() => onChange(o.k)} className={`text-[11px] font-medium px-2 py-1 rounded-md transition-all duration-150 ease-out ${value === o.k ? 'bg-white text-indigo-600 shadow-sm' : 'text-neutral-400 hover:text-neutral-600'}`}>{o.label}</button>
-      ))}
+      <ChevronRightIcon onClick={onClick} className="flex-shrink-0 w-3.5 h-3.5 text-neutral-300 group-hover:text-indigo-400 transition-colors cursor-pointer" />
     </div>
   );
 }
+
+// (DoSortToggle deleted — Phase 3 F1: ordering is the brain's reasoned priority; no lens controls.)
 
 const AMBIENT_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   schedule: CalendarDaysIcon, team: UsersIcon, eye: EyeIcon, followups: ArrowUturnLeftIcon,
@@ -1367,9 +1233,8 @@ export function HomeView() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [nowExpanded, setNowExpanded] = useState(false); // Zone 1 — reveal the full prioritized list past the cap
   const [focusKey, setFocusKey] = useState<string | null>(null); // deck — which entry is the hero (null = the top one)
-  const [doSort, setDoSort] = useState<DoSort>('urgent'); // how "what needs you" is prioritized (plain-language lens)
-  useEffect(() => { try { const s = localStorage.getItem('aug-do-sort'); if (s === 'urgent' || s === 'important' || s === 'quick') setDoSort(s); } catch { /* ignore */ } }, []);
-  const chooseSort = (v: DoSort) => { setDoSort(v); setFocusKey(null); try { localStorage.setItem('aug-do-sort', v); } catch { /* ignore */ } };
+
+
   const [dismissed, setDismissed] = useState<Set<string>>(new Set()); // itemIds acted this session → live count + list refill
   const [dismissedDeals, setDismissedDeals] = useState<Set<string>>(new Set()); // proactive slipping-deal keys dismissed ("not now") this session
   const dismissDeal = useCallback((key: string) => setDismissedDeals((prev) => new Set(prev).add(key)), []);
@@ -1420,6 +1285,9 @@ export function HomeView() {
   const [realtimeConnected, setRealtimeConnected] = useState(false);
 
   const aliveRef = useRef(true);
+  // One brief request at a time — every trigger (mount/focus/poll/realtime) funnels through load(),
+  // and load() drops the call when one is already in flight (P0: no more stacked concurrent GETs).
+  const loadInFlightRef = useRef(false);
   // Entity keys we've already fired a pre-gen POST for (dedup across the focus/interval polls, so we
   // warm each item's plan at most once per session — pre-gen must stay cheap + silent).
   const preGennedRef = useRef<Set<string>>(new Set());
@@ -1485,12 +1353,19 @@ export function HomeView() {
   // The background/foreground brief loader, lifted to component scope so an Undo can trigger an
   // immediate refresh (bringing a just-restored item back on screen without waiting for the poll).
   const load = useCallback((background = false) => {
+    // IN-FLIGHT DEDUP (P0): mount + focus + visibility + 90s poll + realtime each call load() —
+    // without this guard they STACK concurrent /api/home/brief requests (5+ seen in the logs), each
+    // hitting the server before the previous finished. One request at a time; the next trigger
+    // (poll/focus) picks up whatever this one missed.
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
     if (!background) setLoading(true);
     else setSyncing(true); // drives the header "Syncing…" pulse (background refresh only)
     Promise.all([
       fetch('/api/home/brief').then(r => r.json()).catch(() => null),
       fetch('/api/workers/home').then(r => r.json()).catch(() => null),
     ]).then(([b, t]) => {
+      loadInFlightRef.current = false;
       if (!aliveRef.current) return;
       // Background refresh only SWAPS in fresh data — it never blanks the view.
       if (b && !b.error) { setBrief((prev) => mergeBrief(prev, b)); preGenPlans(b); }
@@ -1524,7 +1399,7 @@ export function HomeView() {
       setLoading(false);
       setSyncing(false);
       setLastUpdatedAt(new Date()); // "Updated just now" — freshness clock resets on every success
-    }).catch(() => { if (aliveRef.current) setSyncing(false); });
+    }).catch(() => { loadInFlightRef.current = false; if (aliveRef.current) setSyncing(false); });
   }, [preGenPlans]);
 
   useEffect(() => {
@@ -1549,15 +1424,13 @@ export function HomeView() {
     }
     // Keep the Home ALIVE: background-refetch when the tab regains focus/visibility, and on a gentle
     // interval while visible — so new mail / items / the ring update without a manual reload.
-    const onVisible = () => { if (document.visibilityState === 'visible') load(true); };
-    document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('focus', onVisible);
-    const id = window.setInterval(() => { if (document.visibilityState === 'visible') load(true); }, 90_000);
     // Instant sync when a project is created/attached/tracked anywhere (meetings sidebar, an item deep-dive,
     // another tab) — In-motion + the Projects lens reflect it without a manual reload.
     const offProjects = onProjectsUpdated(() => load(true));
-    return () => { aliveRef.current = false; document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onVisible); window.clearInterval(id); offProjects(); };
+    return () => { aliveRef.current = false; offProjects(); };
   }, [load]);
+  // Focus + visibility + 90s-while-visible — the shared live-refresh idiom (hooks/use-live-refresh).
+  useLiveRefresh(() => load(true));
 
   // Persist brief + team to localStorage so the next reload hydrates instantly (see the mount effect above).
   useEffect(() => { if (brief) saveLS('aug-home-brief-v1', brief); }, [brief]);
@@ -1786,7 +1659,7 @@ export function HomeView() {
     replyItems: agendaReplyItems, noticeItems: agendaNoticeItems, commitItems: agendaCommitItems,
     priorityCards: liveBodyCards, deals: liveDeals,
     bundles: b?.bundles ?? {}, bundleNames: b?.bundleNames ?? {}, bundleStates: b?.bundleStates,
-    sentencedIds, sort: doSort, weights: b?.itemWeights ?? {},
+    sentencedIds, weights: b?.itemWeights ?? {},
   });
 
   // ── Per-section LIVE counts — same clearedIds/dismissed derivation, applied per lane so each section
@@ -1838,7 +1711,7 @@ export function HomeView() {
               <div className="mt-1.5 text-[11.5px] text-neutral-400 space-y-0.5">
                 {m.prep.lastMeeting && (
                   <p className="flex items-start gap-1 text-violet-500 line-clamp-2">
-                    <SparklesIcon className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                    <CalendarDaysIcon className="w-3 h-3 flex-shrink-0 mt-0.5" />
                     <span>Last time with {m.prep.lastMeeting.person} ({m.prep.lastMeeting.date}): {m.prep.lastMeeting.recall}</span>
                   </p>
                 )}
@@ -1876,7 +1749,7 @@ export function HomeView() {
         </ol>
         {b!.followups!.closing && (
           <div className="mt-3.5 pt-3.5 border-t border-neutral-100 flex items-start gap-2">
-            <SparklesIcon className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
+            <ChatBubbleLeftRightIcon className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
             <p className="text-[12px] text-neutral-500 leading-relaxed">{b!.followups!.closing}</p>
           </div>
         )}
@@ -1965,7 +1838,9 @@ export function HomeView() {
     // (NOT an overlay). `h-full` fills the `(main)` layout's `flex h-screen` container.
     <div className="relative flex-1 min-w-0 h-full flex overflow-hidden bg-[#fbfbfd]">
       <div className="flex-1 min-w-0 overflow-y-auto flex flex-col">
-      <div className="w-full max-w-[1120px] mx-auto px-8 md:px-10 py-8 xl:py-10 flex flex-col flex-1">
+      <div className={projectDetailOpen
+        ? 'w-full flex flex-col flex-1 min-h-0'
+        : 'w-full max-w-[1120px] mx-auto px-8 md:px-10 py-8 xl:py-10 flex flex-col flex-1'}>
         {/* Header + narration + live status chips. HIDDEN when a project deep-dive is open — a project
             detail owns the screen (its own back-link + title header), like the item deep-dive, so the day
             greeting shouldn't sit above it. */}
@@ -2095,7 +1970,7 @@ export function HomeView() {
                 <section>
                   <div className="flex items-center justify-between gap-3">
                     <Label count={agenda.rows} icon={BoltIcon}>What needs you</Label>
-                    {agenda.rows > 1 && <div className="mb-3"><DoSortToggle value={doSort} onChange={chooseSort} /></div>}
+
                   </div>
                   {agenda.rows === 0 || !hero ? (
                     <SectionCleared line="All handled — nothing else needs you." />
@@ -2104,12 +1979,12 @@ export function HomeView() {
                       <div key={hero.key} style={{ animation: 'augDeckIn 0.28s ease-out' }}>{renderFull(hero, true)}</div>
                       {peekTop.length > 0 && (
                         <div className="space-y-1.5 pt-0.5">
-                          {peekTop.map((e) => <PeekRow key={e.key} e={e} onPromote={() => setFocusKey(e.key)} />)}
+                          {peekTop.map((e) => <PeekRow key={e.key} e={e} onPromote={() => setFocusKey(e.key)} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} onDismissDeal={dismissDeal} />)}
                         </div>
                       )}
                       {peekRest.length > 0 && (
                         <Collapse open={nowExpanded}>
-                          <div className="space-y-1.5 pt-1.5">{peekRest.map((e) => <PeekRow key={e.key} e={e} onPromote={() => setFocusKey(e.key)} />)}</div>
+                          <div className="space-y-1.5 pt-1.5">{peekRest.map((e) => <PeekRow key={e.key} e={e} onPromote={() => setFocusKey(e.key)} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} onDismissDeal={dismissDeal} />)}</div>
                         </Collapse>
                       )}
                       {peekRest.length > 0 && (
@@ -2138,9 +2013,6 @@ export function HomeView() {
                 fixed, not to lift in. No label — the system's own voice. */}
             <div className="flex-1 flex flex-col min-h-0">
               <HomeAsk
-                briefing={b?.briefing ?? null}
-                clearedIds={actedIds}
-                onBriefNavigate={briefNav}
                 suggestions={(() => {
                   // Short, snappy, meaningful — general prompts the brain can always answer well.
                   const s: string[] = ['What needs me today?', "What's slipping?"];

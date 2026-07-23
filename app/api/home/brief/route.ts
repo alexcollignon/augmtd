@@ -13,6 +13,8 @@ import { buildInitiativeClusters, type ClusterMap } from '@/lib/projects/initiat
 import { normalizeInitiative } from '@/lib/inbox/item-understanding';
 import { resolveOutboundAwaiting } from '@/lib/outbound/resolve';
 import { reconcileRepliedItems } from '@/lib/inbox/reconcile-replied';
+import { foldDuplicateCommitments, visibleObligationsFromItems } from '@/lib/home/dedupe-deck';
+import { isCalendarSystemSubject } from '@/lib/inbox/automated';
 import { computeBundles } from '@/lib/home/bundle-brief';
 import { nameBundles, type BundleName, type BundleNameInput } from '@/lib/home/name-bundles';
 
@@ -149,11 +151,7 @@ function isCancelledEventTitle(title: string | null | undefined): boolean {
 // "last thread" subtitle as raw provider strings. These are the literal multi-language subjects
 // providers auto-generate — a prefix/pattern list is correct here (not a content heuristic). When a
 // related email's subject matches, suppress the subtitle rather than show the raw string.
-function isCalendarSystemSubject(subject: string | null | undefined): boolean {
-  const s = (subject || '').trim();
-  if (!s) return false;
-  return /^(convite atualizado|invitation updated|updated invitation|updated:|canceled event|cancelled event|canceled:|cancelled:|convite cancelado|convite:|invitation:|invite:|accepted:|declined:|tentative:|aceito:|recusado:|talvez:|einladung|aktualisierte einladung|abgesagt:)/i.test(s);
-}
+// (isCalendarSystemSubject → lib/inbox/automated.ts — one module owns machine-mail tests.)
 
 export async function GET() {
   const supabase = await createClient();
@@ -168,27 +166,71 @@ export async function GET() {
   const startOfDay = `${todayStr}T00:00:00Z`;
   const self = user.email?.toLowerCase();
 
-  // SELF-HEAL FIRST (trust): re-derive reply state from the actual threads and resolve any "reply needed"
-  // item the user has ALREADY answered (from Gmail/Outlook directly) — so the Home never keeps nagging
-  // about a reply you've sent. Runs before the item fetch below so the corrected status is reflected in
-  // THIS response. When it actually resolves something it busts the brief cache (forcing a re-synthesis
-  // that drops the item); when nothing changed it's a cheap ~2-query no-op that leaves the cache intact.
-  await reconcileRepliedItems(supabase, user.id, {
-    bustBriefCache: async () => { await supabase.from('profiles').update({ home_brief: null }).eq('id', user.id).then(() => {}, () => {}); },
-  });
+  // ── P0 perf: coarse phase marks, logged as ONE line when a request runs slow (catch regressions). ──
+  const t0 = Date.now();
+  const marks: Array<[string, number]> = [];
+  const mark = (label: string) => { marks.push([label, Date.now() - t0]); };
+
+  // Profile FIRST (one cheap read): home_brief carries the last-good brief AND the `aux` side-cache
+  // (reconcile stamp + clusters/outbound snapshots) that lets the hot path SKIP its expensive phases.
+  // The GET path's hard rule (P0): no AI call, no >500ms phase — heavy work serves last-good and
+  // recomputes in after().
+  const { data: profileRow } = await supabase.from('profiles').select('full_name, home_brief').eq('id', user.id).single();
+  const profileRes = { data: profileRow as { full_name?: string; home_brief?: Record<string, unknown> } | null };
+  type BriefAux = {
+    reconciledAt?: string;
+    clustersAt?: string;
+    outbound?: Awaited<ReturnType<typeof resolveOutboundAwaiting>>;
+    clusters?: Array<[string, { key: string; label: string; total: number }]>;
+  };
+  const aux: BriefAux = ((profileRow?.home_brief as { aux?: BriefAux } | null | undefined)?.aux) ?? {};
+  // Read-merge-write a patch into home_brief.aux (never clobbers the brief or sibling aux keys).
+  const mergeAux = async (patch: Partial<BriefAux>) => {
+    try {
+      const { data } = await supabase.from('profiles').select('home_brief').eq('id', user.id).single();
+      const hb = ((data?.home_brief as Record<string, unknown>) ?? {});
+      const curAux = ((hb.aux as BriefAux) ?? {});
+      await supabase.from('profiles').update({ home_brief: { ...hb, aux: { ...curAux, ...patch } } }).eq('id', user.id).then(() => {}, () => {});
+    } catch { /* non-fatal */ }
+  };
+
+  // SELF-HEAL (trust), THROTTLED: re-derive reply state from the actual threads and resolve any "reply
+  // needed" item the user has ALREADY answered. Correct but ~0.7s — so it runs at most every 10 min (a
+  // stamp in aux), not on every 90s poll. No cache-bust needed: a resolution changes the pending counts,
+  // which changes the brief's sig naturally.
+  const RECONCILE_EVERY_MS = 10 * 60_000;
+  if (!aux.reconciledAt || now.getTime() - Date.parse(aux.reconciledAt) > RECONCILE_EVERY_MS) {
+    await reconcileRepliedItems(supabase, user.id, { bustBriefCache: async () => {} });
+    after(async () => { await mergeAux({ reconciledAt: now.toISOString() }); });
+  }
+  mark('reconcile');
 
   // Initiative CLUSTERS (Phase 5) — an actionable item belongs to a real initiative (a deal/client/program)
-  // when its initiative has ≥2 TOTAL items (correspondence + commitments), so a deal with 1 current action
-  // still shows its context. Cheap email+commit build (no calendar map) since this is the hot, polled path;
-  // calendar-fold stays in the Projects lens. `clusterTag` resolves an item's initiative → {label, total}.
-  // Cold outreach you're awaiting a reply to (resolved once, reused for clusters + the waiting lane). Its
-  // initiatives fold into the cluster totals so a pure-outreach effort (e.g. a hiring round) surfaces on
-  // the Home like any other active initiative.
-  const outboundAwaiting = await resolveOutboundAwaiting(supabase, user.id, todayStr).catch(() => []);
-  let clusters: ClusterMap = new Map();
-  try { clusters = await buildInitiativeClusters(supabase, user.id, { includeCalendar: false, outbound: outboundAwaiting }); } catch { /* non-fatal */ }
-  // (The label-era "In motion" fold died with the projects table — the portfolio owns that view now.)
-  // (served last-good instantly, recomputed in the background on staleness), not computed on every load.
+  // when its initiative has ≥2 TOTAL items (correspondence + commitments). Together with the cold-outbound
+  // resolve this is ~5s of queries, so BOTH are served from the aux side-cache (15-min TTL): last-good
+  // instantly, recomputed in after() when stale. Synchronous ONLY when no snapshot exists at all
+  // (first-ever load) so initiative tags aren't blank forever. `clusterTag` resolves an item's
+  // initiative → {label, total}; outbound also feeds the "waiting on" lane below.
+  const AUX_TTL_MS = 15 * 60_000;
+  let outboundAwaiting: Awaited<ReturnType<typeof resolveOutboundAwaiting>> = aux.outbound ?? [];
+  let clusters: ClusterMap = new Map((aux.clusters ?? []) as Array<[string, { key: string; label: string; total: number }]>);
+  const clustersFresh = !!aux.clustersAt && now.getTime() - Date.parse(aux.clustersAt) < AUX_TTL_MS;
+  if (!aux.clustersAt) {
+    outboundAwaiting = await resolveOutboundAwaiting(supabase, user.id, todayStr).catch(() => []);
+    try { clusters = await buildInitiativeClusters(supabase, user.id, { includeCalendar: false, outbound: outboundAwaiting }); } catch { /* non-fatal */ }
+    const snapOb = outboundAwaiting, snapCl = [...clusters.entries()];
+    after(async () => { await mergeAux({ clustersAt: now.toISOString(), outbound: snapOb, clusters: snapCl }); });
+  } else if (!clustersFresh) {
+    after(async () => {
+      try {
+        const ob = await resolveOutboundAwaiting(supabase, user.id, todayStr).catch(() => []);
+        let cl: ClusterMap = new Map();
+        try { cl = await buildInitiativeClusters(supabase, user.id, { includeCalendar: false, outbound: ob }); } catch { /* non-fatal */ }
+        await mergeAux({ clustersAt: new Date().toISOString(), outbound: ob, clusters: [...cl.entries()] });
+      } catch { /* non-fatal */ }
+    });
+  }
+  mark('clusters');
   const clusterTag = (init: string | null | undefined): { initiative: string; initiativeTotal: number } | null => {
     const k = init ? (normalizeInitiative(init)?.replace(/\s+/g, '') || null) : null;
     const c = k ? clusters.get(k) : null;
@@ -201,7 +243,7 @@ export async function GET() {
   const userRules = await loadUserRules(user.id, supabase);
 
   const since24 = new Date(now.getTime() - DAY).toISOString();
-  const [itemsRes, commitsRes, meetingsRes, handledRes, profileRes, triagedRes, summarisedRes, trackedRes, filteredRes, fyiRes] = await Promise.all([
+  const [itemsRes, commitsRes, meetingsRes, handledRes, triagedRes, summarisedRes, trackedRes, filteredRes, fyiRes] = await Promise.all([
     supabase.from('inbox_items')
       .select('id, work_title, work_state, rule_type, type_override, source, source_id, source_meeting_transcript_id, source_data, created_at, last_activity_at')
       .eq('user_id', user.id).eq('status', 'pending')
@@ -221,7 +263,7 @@ export async function GET() {
       .lte('start_time', endOfDay).order('start_time', { ascending: true }).limit(6),
     supabase.from('commitments').select('id', { count: 'exact', head: true })
       .eq('user_id', user.id).eq('status', 'done').gte('updated_at', new Date(now.getTime() - DAY).toISOString()),
-    supabase.from('profiles').select('full_name, home_brief').eq('id', user.id).single(),
+    // (profiles row is fetched FIRST, before this batch — it carries the aux side-cache)
     // ── Heartbeat (Slice D): what the system handled autonomously in the last 24h ──
     supabase.from('inbox_items').select('id', { count: 'exact', head: true })
       .eq('user_id', user.id).gte('created_at', since24),                                  // triaged
@@ -239,11 +281,20 @@ export async function GET() {
       .eq('user_id', user.id).eq('status', 'pending').eq('work_state', 'noted')
       .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(200),
   ]);
+  mark('queries');
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const items = (itemsRes.data ?? []) as any[];
+  // CROSS-TYPE DEDUP (P2): a commitment extracted from an email/meeting the deck ALSO shows as an
+  // actionable row is the SAME obligation wearing two types — the item is the resolving surface, the
+  // commitment folds (filtered here, so every lane, count, sig and synthesis input downstream agrees).
+  // Deterministic (structural source/thread tie + text overlap; strong overlap alone across sources).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const commits = (commitsRes.data ?? []) as any[];
+  const commitsRaw = (commitsRes.data ?? []) as any[];
+  const { kept: commits, foldedIds: foldedCommitmentIds } = foldDuplicateCommitments(
+    commitsRaw, visibleObligationsFromItems(items),
+  );
+  if (foldedCommitmentIds.length) mark(`fold:${foldedCommitmentIds.length}`);
 
   // The item's freshness = latest thread activity. Prefer the explicit last_activity_at column
   // (bumped by sync on every new message), fall back to the newest message time in source_data,
@@ -410,7 +461,9 @@ export async function GET() {
       // emailSeeds so per-person context stays complete, then skip the reply/priority wiring.
       const who = fromName || (sd.from as string) || 'Notice';
       const snippet = ((sd.body as string) || '').replace(/\s+/g, ' ').trim();
-      const summary = (subj || '').trim() || (snippet ? snippet.slice(0, 90) : 'Action needed');
+      // VERB-FIRST (P4): lead with the understanding's imperative ask ("Fix the failing payment"),
+      // never the raw subject ("Serif AI Subscription") — the deck reads as to-dos, not mail headers.
+      const summary = (typeof u.ask === 'string' && u.ask ? u.ask : '') || (subj || '').trim() || (snippet ? snippet.slice(0, 90) : 'Action needed');
       actionNoticesRaw.push({ itemId: it.id, who, summary: summary.length > 120 ? summary.slice(0, 117) + '…' : summary, dueDate: (u.deadline as string) ?? null, initiative: clusterTag(u.initiative as string | null)?.initiative ?? (u.initiative as string | null) ?? null });
       actionNoticeIds.add(it.id);
       const threadMsgsA = tid ? threadMsgsById.get(tid) : undefined;
@@ -498,6 +551,7 @@ export async function GET() {
   }
   // Layer 1: assemble the reconciled per-person context (meetings + commitments + these emails).
   const briefCtx = await buildBriefContext(user.id, self, now, supabase, emailSeeds);
+  mark('context');
 
   // ── Commitment CANDIDATES — every open commitment, normalized. The raw ingest `direction` is only
   // a DEFAULT hint here: the grounded synthesis (Layer 3) re-judges each one's placement (on_your_plate
@@ -818,7 +872,10 @@ export async function GET() {
     // 3. Persist the basic brief IMMEDIATELY with the NEW sig. This is the anti-regen-storm guard:
     //    the very next request (poll / realtime refetch) is a cache-HIT on this basic brief and does
     //    NOT trigger a second synthesis while the background one is still running.
-    await supabase.from('profiles').update({ home_brief: { text: briefLine, tldr, followups, fyiDigest, mustRespond, keepAnEyeOn, droppedItemIds, commitmentPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+    //    SPREAD the cached blob first (P0): the persist must PRESERVE the sibling caches that live in
+    //    home_brief (aux / bundleNames / briefing) — writing a fresh object silently wiped them, which
+    //    re-fired the bundle-naming + briefing AI passes on every sig change.
+    await supabase.from('profiles').update({ home_brief: { ...((profileRes.data?.home_brief as Record<string, unknown>) ?? {}), text: briefLine, tldr, followups, fyiDigest, mustRespond, keepAnEyeOn, droppedItemIds, commitmentPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
 
     // 4. Enrich in the BACKGROUND — same inputs as before — and persist the ENRICHED brief with the
     //    SAME sig (upgrades the cache in place: real ask/angle, ordering, supersession drops,
@@ -834,6 +891,15 @@ export async function GET() {
     );
     after(async () => {
       try {
+        // SINGLE-FLIGHT (P0): concurrent stale loads each persisted a basic brief stamped with their own
+        // `generated_at`; only the request whose stamp SURVIVED the write race runs the expensive AI tail.
+        // Before this gate, 5 stacked polls each kicked a full synthesis (dozens of concurrent AI calls →
+        // 429 backoff storms → the 100s loads). Losers exit here for free.
+        {
+          const { data: gate } = await supabase.from('profiles').select('home_brief').eq('id', user.id).single();
+          const gen = ((gate?.home_brief as { generated_at?: string } | null | undefined)?.generated_at) ?? null;
+          if (gen !== now.toISOString()) return;
+        }
         // Step 2 — the durable Person-Brain verdict for each must-respond correspondent (keyed by lowercased
         // email). Targeted (only the relevant people), non-fatal → the synthesis reasons the reply ANGLE WITH
         // the relationship. Empty map pre-backfill / for unknown senders.
@@ -863,20 +929,17 @@ export async function GET() {
             fyiGroups: fyiTop.map((g) => ({ label: g.label, count: g.count, kind: g.kind, subjects: g.subjects })),
             keepAnEyeOn: keepAnEyeOnRaw,
           }, { userId: user.id, supabase });
-        // Initiative Brain (S3) — LIVE refresh: recompute the durable per-initiative state for the active
-        // initiatives whenever the Home recomputes (the activity signal). sig-gated, so unchanged ones cost
-        // nothing (no AI). Fire-and-forget; degrades to no-op pre-migration. This keeps "where each stands"
-        // current as mail/meetings land. (Ingestion-time hooks for instant updates are a later increment.)
-        // ONE BRAIN — on Home activity: (1) BOOTSTRAP the memory incrementally for users who never got a
+        // ONE BRAIN — on Home activity: BOOTSTRAP the memory incrementally for users who never got a
         // backfill (chunked, idempotent, self-completing → the onboarding path that lets the label-era
-        // fallbacks die), then (2) refresh entity states (sig-gated: unchanged ledgers cost nothing).
+        // fallbacks die). Cheap once complete; now behind the single-flight gate so it can't stack.
+        // NOTE (P0): the blanket `refreshEntityStates` sweep was REMOVED from this tail — per-entity
+        // refresh already happens where ledgers actually change (noteItemAction on user actions,
+        // reconcileEntities on moves, the sync/insights hooks); the catch-all sweep lives in the
+        // 2-hourly draft-sweep cron. Running it here made every sig change a potential multi-minute
+        // token burn (dozens of entity syntheses), saturating the AI channel for all other requests.
         try {
           const { bootstrapMemory } = await import('@/lib/entities/hooks');
           await bootstrapMemory(supabase, user.id);
-        } catch { /* non-fatal */ }
-        try {
-          const { refreshEntityStates } = await import('@/lib/entities/state');
-          await refreshEntityStates(supabase, user.id);
         } catch { /* non-fatal */ }
         // Start from the basic brief we just persisted; upgrade each section the synthesis produced
         // (nulls only overwrite when we got something, same rule as before). This is the ENRICHED blob.
@@ -898,8 +961,12 @@ export async function GET() {
         enrDropped = synth.droppedItemIds.filter((id) => !protectedItemIds.has(id));
         if (Object.keys(synth.commitmentPlacements).length) enrPlacements = synth.commitmentPlacements;
         // Persist the enriched brief under the SAME sig — upgrades the cache in place so the next
-        // refetch is a cache-hit on the fully-synthesized version.
-        await supabase.from('profiles').update({ home_brief: { text: enrBriefLine, tldr: enrTldr, followups: enrFollowups, fyiDigest: enrFyiDigest, mustRespond: enrMustRespond, keepAnEyeOn: enrKeepAnEyeOn, droppedItemIds: enrDropped, commitmentPlacements: enrPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+        // refetch is a cache-hit on the fully-synthesized version. READ-MERGE-WRITE (P0): preserve the
+        // sibling caches (aux / bundleNames / briefing) that other after() callbacks may have written
+        // while the synthesis ran.
+        const { data: curRow } = await supabase.from('profiles').select('home_brief').eq('id', user.id).single();
+        const curHb = ((curRow?.home_brief as Record<string, unknown>) ?? {});
+        await supabase.from('profiles').update({ home_brief: { ...curHb, text: enrBriefLine, tldr: enrTldr, followups: enrFollowups, fyiDigest: enrFyiDigest, mustRespond: enrMustRespond, keepAnEyeOn: enrKeepAnEyeOn, droppedItemIds: enrDropped, commitmentPlacements: enrPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
       } catch { /* non-fatal — basic brief stays cached */ }
     });
   }
@@ -1185,7 +1252,7 @@ export async function GET() {
   const slippingDeals: Array<{ key: string; label: string; momentum: string; summary: string; weight: number; nextMove: { title: string; entityRef: string | null } | null }> = [];
   // The deck's per-bundle ENTITY state (the membership join — bundle atoms → their entity links → the
   // dominant entity's state+next-move). Replaces the label-keyed initiative_state join (Blocker A).
-  const bundleStates: Record<string, { momentum: string; summary: string | null; quietDays: number | null; nextMove: { title: string; entityRef: string | null; reason?: string } | null }> = {};
+  const bundleStates: Record<string, { momentum: string; summary: string | null; quietDays: number | null; nextMove: { title: string; entityRef: string | null; reason?: string; covers?: string[] } | null }> = {};
   let deckEntityIdsOut: string[] = [];
   try {
     const nowMs = Date.now();
@@ -1225,9 +1292,12 @@ export async function GET() {
       if (!e) continue;
       const st = (e.state ?? {}) as { momentum?: string; summary?: string };
       if (!st.summary) continue;
-      const nm = (e.next_move ?? null) as { title?: string; entityRef?: string | null; reason?: string } | null;
+      const nm = (e.next_move ?? null) as { title?: string; entityRef?: string | null; reason?: string; covers?: string[] } | null;
       const quiet = e.last_event_at ? Math.floor((nowMs - new Date(e.last_event_at as string).getTime()) / 86400000) : null;
-      bundleStates[bkey] = { momentum: st.momentum || 'active', summary: st.summary, quietDays: quiet, nextMove: nm?.title ? { title: nm.title, entityRef: nm.entityRef ?? null, reason: nm.reason } : null };
+      // THE ARBITER (P6a): covers rides along as PLAIN item ids (the deck matches on DoItem.entityId),
+      // so covered members render as evidence under the ONE next move instead of parallel asks.
+      const covers = Array.isArray(nm?.covers) ? nm!.covers!.map((r) => String(r).split(':')[1]).filter(Boolean) : [];
+      bundleStates[bkey] = { momentum: st.momentum || 'active', summary: st.summary, quietDays: quiet, nextMove: nm?.title ? { title: nm.title, entityRef: nm.entityRef ?? null, reason: nm.reason, covers } : null };
     }
   } catch { /* non-fatal — no proactive cards / no bundle states */ }
 
@@ -1376,8 +1446,9 @@ export async function GET() {
       deals: slippingDeals,
       bundles, bundleNames: bundleNames ?? {},
       bundleStates: bundleStates as Record<string, import('@/lib/home/agenda').BundleState | null>,
-      sort: 'urgent', weights: itemWeights,
+      weights: itemWeights,
     });
+    const realCounterpartyById = new Map(commitmentCands.map((c) => [c.id, c.counterparty]));
     // Deck-order index: itemId → its position in the agenda's atom order (bundle members expanded).
     const atomOrder = agendaAtomOrder(serverAgenda);
     const orderIdx = new Map(atomOrder.map((id, i) => [id, i]));
@@ -1395,7 +1466,11 @@ export async function GET() {
           weight: itemWeights[m.itemId] ?? 20, overdue: false, dueDate: m.dueDate ?? null, href: `/item/${m.itemId}?kind=email`,
         })),
         ...commitments.map((c) => ({
-          itemId: c.id, itemKind: 'commitment' as const, who: c.counterparty, ask: c.description,
+          itemId: c.id, itemKind: 'commitment' as const,
+          // The REAL counterparty only (nullable) — `c.counterparty` here is the display-mapped
+          // `counterparty || sourceLabel`, and a sourceLabel ("from <meeting>") must never become a
+          // briefing ref's name. The composer resolves null → the deal's registry name.
+          who: realCounterpartyById.get(c.id) ?? null, ask: c.description,
           move: entByAtom.get(c.id)?.move ?? null, entityId: entIdByAtom.get(c.id) ?? null, entityName: entByAtom.get(c.id)?.name ?? null,
           weight: itemWeights[c.id] ?? 18, overdue: !!c.overdue, dueDate: c.dueDate ?? null, href: `/item/${c.id}?kind=commitment`,
         })),
@@ -1426,5 +1501,9 @@ export async function GET() {
     }
   } catch { /* non-fatal */ }
 
+  // P0 perf watchdog: one line when the GET path itself (pre-after()) ran slow — names the phase.
+  mark('assemble');
+  const totalMs = Date.now() - t0;
+  if (totalMs > 2500) console.log(`[home/brief] slow ${totalMs}ms — ${marks.map(([l, m]) => `${l}:${m}ms`).join(' · ')}`);
   return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => ({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null })), mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, briefing: cachedBriefing });
 }

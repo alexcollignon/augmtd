@@ -34,8 +34,15 @@ export type Momentum = 'active' | 'needs_you' | 'waiting' | 'gone_quiet' | 'stal
 export type BundleState = {
   momentum: Momentum;
   summary: string | null; quietDays: number | null;
-  nextMove: { title: string; entityRef: string | null; reason?: string } | null;
+  // covers (P6a — the arbiter): plain item ids the next move RESOLVES; the deck renders those members
+  // as evidence under the one action instead of parallel asks.
+  nextMove: { title: string; entityRef: string | null; reason?: string; covers?: string[] } | null;
 };
+
+/** The member ids a bundle's next move covers — one Set for the render pass. */
+export function coveredIds(state: BundleState | null | undefined): Set<string> {
+  return new Set(state?.nextMove?.covers ?? []);
+}
 export type BundleRef = { key: string; label: string };
 export type BundleName = { name: string; why?: string };
 export type DoNode = { kind: 'bundle'; key: string; title: string; why?: string; items: DoItem[] } | { kind: 'single'; key: string; item: DoItem };
@@ -44,7 +51,8 @@ export type DeckEntry =
   | { key: string; kind: 'single'; item: DoItem }
   | { key: string; kind: 'priority'; p: Priority }
   | { key: string; kind: 'deal'; deal: SlippingDeal };
-export type DoSort = 'urgent' | 'important' | 'quick';
+// (The Urgent/Important/Quick-wins lens type died with the lens sorts — Phase 3 F1: ordering is the
+// REASONED priority only; a date is a fact the judge already weighed, never a sort rule.)
 
 // ── Bundling (moved verbatim) — group flat atoms by the SERVER's bundle decision into ≥2 units;
 // order-preserving (a bundle takes its most-urgent member's position); a bundle whose live membership
@@ -68,54 +76,24 @@ export function bundleDoItems(items: DoItem[], bundleMap: Record<string, BundleR
   return out;
 }
 
-// ── Urgency + lens ordering (moved verbatim) ─────────────────────────────────────────────────────
-/** Stable urgency rank: overdue → due today → has a due date → undated. */
-export function urgencyRank(it: DoItem, todayISO: string): number {
-  if (it.overdue || (it.dueDate && it.dueDate < todayISO)) return 0;
-  if (it.dueToday || it.dueDate === todayISO) return 1;
-  if (it.dueDate) return 2;
-  return 3;
-}
-
-// The verdict WEIGHT for a deck entry — READ from the server's `itemWeights` (the ONE judgment authority),
-// never re-derived. A bundle takes its most-important member's weight.
+// ── ORDERING = THE REASONED PRIORITY (Phase 3 F1, the doctrine). The verdict WEIGHT is READ from the
+// server's `itemWeights` — the entity synthesis's judged priority, which already weighed deadlines,
+// stakes and momentum with the ledger in view. NO date-rule sorts, no effort/size heuristics: a fact
+// may render (the overdue chip) but never order. Where the brain has NOT judged (an unlinked item),
+// the weight is a NEUTRAL constant — absence of judgment is not judgment — and the stable base order
+// (arrival/assembly) breaks ties mechanically.
+const NEUTRAL_WEIGHT = 20;
 export function entryWeight(e: DeckEntry, weights: Record<string, number>): number {
   if (e.kind === 'deal') return e.deal.weight;
-  if (e.kind === 'bundle') return e.items.reduce((mx, it) => Math.max(mx, weights[it.entityId] ?? 0), 0);
-  if (e.kind === 'single') return weights[e.item.entityId] ?? 0;
-  return weights[e.p.itemId ?? ''] ?? 0;
-}
-function entryMetrics(e: DeckEntry, today: string, weights: Record<string, number>) {
-  const weight = entryWeight(e, weights);
-  // A slipping deal is undated but AGING — soft-urgent so it surfaces even in the Urgent lens.
-  if (e.kind === 'deal') return { urg: 1, effort: 2, hasInit: true, size: 1, weight };
-  if (e.kind === 'bundle') {
-    const its = e.items;
-    return { urg: its.some((i) => i.overdue) ? 0 : its.some((i) => i.dueToday) ? 1 : its.some((i) => i.dueDate) ? 2 : 3, effort: 3, hasInit: true, size: its.length, weight };
-  }
-  if (e.kind === 'single') {
-    const it = e.item;
-    return { urg: it.overdue ? 0 : it.dueToday ? 1 : it.dueDate ? 2 : 3, effort: it.effort === 'quick' ? 0 : it.effort === 'deep' ? 2 : 1, hasInit: !!it.initiative, size: 1, weight };
-  }
-  const p = e.p;
-  const dueToday = !!(p.dueDate && p.dueDate === today);
-  return { urg: p.overdue ? 0 : dueToday ? 1 : p.dueDate ? 2 : 3, effort: p.effort === 'quick' ? 0 : p.effort === 'deep' ? 2 : 1, hasInit: !!p.initiative, size: p.items?.length ?? 1, weight };
+  if (e.kind === 'bundle') return e.items.reduce((mx, it) => Math.max(mx, weights[it.entityId] ?? NEUTRAL_WEIGHT), 0);
+  if (e.kind === 'single') return weights[e.item.entityId] ?? NEUTRAL_WEIGHT;
+  return weights[e.p.itemId ?? ''] ?? NEUTRAL_WEIGHT;
 }
 
-export function sortEntries(entries: DeckEntry[], mode: DoSort, weights: Record<string, number> = {}): DeckEntry[] {
-  const today = new Date().toISOString().slice(0, 10);
+export function orderEntries(entries: DeckEntry[], weights: Record<string, number> = {}): DeckEntry[] {
   return entries
-    .map((e, i) => ({ e, i, m: entryMetrics(e, today, weights) }))
-    .sort((A, B) => {
-      const a = A.m, b = B.m;
-      // "Important" leads with the BRAIN VERDICT weight; the heuristic (project-tied, size) tiebreaks.
-      const d = mode === 'urgent'
-        ? a.urg - b.urg
-        : mode === 'important'
-          ? (b.weight - a.weight) || ((b.hasInit ? 1 : 0) - (a.hasInit ? 1 : 0)) || (b.size - a.size) || (a.urg - b.urg)
-          : (a.effort - b.effort) || (a.size - b.size) || (a.urg - b.urg);
-      return d || (A.i - B.i); // stable: preserve the base order on ties
-    })
+    .map((e, i) => ({ e, i, w: entryWeight(e, weights) }))
+    .sort((A, B) => (B.w - A.w) || (A.i - B.i))
     .map((x) => x.e);
 }
 
@@ -141,20 +119,43 @@ export type AgendaInput = {
   bundleStates?: Record<string, BundleState | null>;
   /** Brief-sentenced item ids (minus tail) — those live in the prose, so they leave the deck (hero kept). */
   sentencedIds?: Set<string>;
-  sort: DoSort;
   weights?: Record<string, number>;
   todayISO?: string; // injectable for tests; defaults to today
 };
 
 /** Build the ONE agenda every surface projects from. Pure; faithful to the deck's original assembly. */
+// ── Deck-level NEAR-DUP fold (P5c): two visible rows saying the same thing (twin automated notices
+// like a portal sending the same alert twice, re-synced copies) collapse to the most urgent one. Pure
+// + client-safe (agenda runs in the browser — the server-side isNearDuplicate lives in a module that
+// drags the AI graph, so this is its deliberately tiny twin: same-sender + near-identical title).
+const normText = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+function nearDupRow(a: DoItem, b: DoItem): boolean {
+  if ((a.primary ?? '') !== (b.primary ?? '')) return false; // different sender → different obligation
+  const na = normText(a.ask), nb = normText(b.ask);
+  if (!na || !nb) return false;
+  if (na === nb || na.includes(nb) || nb.includes(na)) return true;
+  const ta = new Set(na.split(' ')), tb = new Set(nb.split(' '));
+  let inter = 0; for (const t of ta) if (tb.has(t)) inter++;
+  const union = ta.size + tb.size - inter;
+  return union > 0 && inter / union >= 0.8;
+}
+function foldNearDupItems(items: DoItem[]): DoItem[] {
+  const kept: DoItem[] = [];
+  for (const it of items) { if (!kept.some((k) => k.source === it.source && nearDupRow(k, it))) kept.push(it); }
+  return kept;
+}
+
 export function buildAgenda(input: AgendaInput): Agenda {
-  const todayISO = input.todayISO ?? new Date().toISOString().slice(0, 10);
   const sentencedIds = input.sentencedIds ?? new Set<string>();
-  // Order atoms by URGENCY, not by type — a dated action must not fall into the fold under undated replies.
-  const doItems = [...input.replyItems, ...input.noticeItems, ...input.commitItems]
-    .map((it, i) => ({ it, i }))
-    .sort((a, b) => urgencyRank(a.it, todayISO) - urgencyRank(b.it, todayISO) || a.i - b.i)
-    .map((x) => x.it);
+  const w = input.weights ?? {};
+  // Order atoms by the REASONED weight, not by type or date rules — a judged-heavy item must not fall
+  // into the fold under neutral ones. Ties keep assembly order (mechanical, stable).
+  const doItems = foldNearDupItems(
+    [...input.replyItems, ...input.noticeItems, ...input.commitItems]
+      .map((it, i) => ({ it, i, wt: w[it.entityId] ?? NEUTRAL_WEIGHT }))
+      .sort((a, b) => (b.wt - a.wt) || (a.i - b.i))
+      .map((x) => x.it),
+  );
   const doNodes = bundleDoItems(doItems, input.bundles, input.bundleNames);
   const entries: DeckEntry[] = [
     ...doNodes.map((n): DeckEntry => n.kind === 'bundle'
@@ -168,7 +169,7 @@ export function buildAgenda(input: AgendaInput): Agenda {
     || (e.kind === 'single' ? !sentencedIds.has(e.item.entityId)
       : e.kind === 'priority' ? !(e.p.itemId && sentencedIds.has(e.p.itemId)) && !sentencedIds.has(e.p.id)
       : true));
-  const ordered = sortEntries(entries, input.sort, input.weights ?? {});
+  const ordered = orderEntries(entries, w);
   const atoms = doItems.length + input.priorityCards.length + input.deals.length;
   return { entries: ordered, rows: ordered.length, atoms, first: ordered[0] ?? null };
 }

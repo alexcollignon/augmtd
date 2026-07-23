@@ -11,16 +11,39 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
+import { isAutomatedSender } from '@/lib/inbox/automated';
+
+// VOICE (P5a): bump whenever the synthesis prompt/voice changes — threaded into the stored sig so every
+// cached state regenerates through the existing sig-gated paths (the alignment-cache lesson: a
+// prompt-driven cache must invalidate on the prompt itself, not only on the data).
+export const STATE_PROMPT_VERSION = 4; // 4: P1 projecthood — the reasoned `scope` verdict (project|errand|background)
+
+// The BANNED machinery register — the system describing its own bookkeeping instead of the matter.
+// ONE definition: the synthesis self-checks against it (with a corrective retry) and the voice smoke
+// gates with the same regex — they can never drift.
+export const MACHINERY_REGISTER = /prepared for nudge|nudge (?:sent|prepared|ready)|completion signals?|draft (?:is )?ready|pending confirmation|documentation deliverables|communication (?:to \S+ )?overdue|no (?:response|reply) signal|awaiting your documentation|reminder (?:sent|scheduled)|follow-?up (?:prepared|queued)/i;
 
 export type EntityState = {
   summary: string;                                  // where it stands right now
   momentum: 'active' | 'needs_you' | 'waiting' | 'gone_quiet' | 'stalled';
   category?: 'client' | 'internal' | 'personal' | 'admin'; // what KIND of work (reasoned)
+  /** PROJECTHOOD (projecthood-plan P1) — the JUDGED scope. `project` = an ongoing body of work that
+   *  belongs in the user's portfolio; `errand` = real but self-contained (one action closes it);
+   *  `background` = automated/admin hum. The user's `tracked` pin is a READ-TIME override
+   *  (consumers treat tracked as project) — the judgment itself stays pure. */
+  scope?: 'project' | 'errand' | 'background';
   whoOwes: { you: string[]; them: string[] };
   stage: string | null;
   blocking: string | null;
 };
-export type EntityNextMove = { kind: 'reply' | 'send' | 'followup' | 'none'; title: string; reason: string; entityRef: string | null };
+export type EntityNextMove = {
+  kind: 'reply' | 'send' | 'followup' | 'none'; title: string; reason: string; entityRef: string | null;
+  /** THE ARBITER (P6a): ledger refs ("inbox:<id>" / "commit:<id>") of the member items this move
+   *  RESOLVES — the emails/commitments whose whole point IS this move. Consumers render covered
+   *  members as EVIDENCE under the one action instead of parallel calls-to-action ("one deal, one
+   *  ask" — the semantic twin of one-obligation-one-row). Items NOT covered keep their own ask. */
+  covers?: string[];
+};
 export type EntityPriority = { weight: number; reason: string };
 
 export type LedgerLine = { at: string; kind: string; who: string | null; text: string; ref: string };
@@ -38,8 +61,19 @@ async function getUserName(supabase: SupabaseClient, userId: string): Promise<st
   return name;
 }
 
+/** STRUCTURAL FACTS for the projecthood judgment (P1) — computed alongside the ledger, never AI.
+ *  They CONSTRAIN the scope verdict the way domain facts constrain category. */
+export type LedgerFacts = {
+  counts: Record<string, number>;      // members by kind (email/meeting/commitment/event)
+  spanDays: number;                    // first→last dated event
+  activeDays: number;                  // distinct calendar days with activity
+  automatedEmails: number;             // inbox members from automated/no-reply senders
+  totalEmails: number;
+  humanCounterparty: boolean;          // any real human on the other side (sender or commitment counterparty)
+};
+
 /** Assemble the entity's cross-source ledger from its links — deterministic, no AI. */
-export async function assembleLedger(supabase: SupabaseClient, userId: string, entityId: string): Promise<{ ledger: LedgerLine[]; sig: string; quietDays: number | null }> {
+export async function assembleLedger(supabase: SupabaseClient, userId: string, entityId: string): Promise<{ ledger: LedgerLine[]; sig: string; quietDays: number | null; facts: LedgerFacts }> {
   const { data: links } = await supabase.from('entity_links')
     .select('item_kind, item_id').eq('user_id', userId).eq('entity_id', entityId).neq('item_kind', 'email_thread').limit(200);
   const byKind = new Map<string, string[]>();
@@ -47,6 +81,7 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
     (byKind.get(l.item_kind) ?? byKind.set(l.item_kind, []).get(l.item_kind)!).push(l.item_id);
   }
   const ledger: LedgerLine[] = [];
+  let totalEmails = 0, automatedEmails = 0, humanCounterparty = false;
   const inboxIds = byKind.get('inbox_item') ?? [];
   if (inboxIds.length) {
     const { data } = await supabase.from('inbox_items').select('id, work_title, source_data, created_at, status').in('id', inboxIds.slice(0, 100));
@@ -55,7 +90,20 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
       // Resolution status rides the line (L2): a handled/dismissed item must read as SETTLED — so the
       // synthesis can see "he already dealt with this" instead of re-arguing it as open.
       const res = it.status === 'completed' ? ' (handled)' : it.status === 'dismissed' ? ' (dismissed)' : '';
-      ledger.push({ at: sd.received_at ?? it.created_at ?? '', kind: 'email', who: sd.from_name ?? sd.from_address ?? null, text: `${String(it.work_title || sd.subject || '')}${res}`, ref: `inbox:${it.id}` });
+      // PROJECTION FLOOR (P7a): the line carries a CONTENT gist + an attachment note, not just the
+      // subject — a title-only ledger made the brain confidently wrong about what an email contained
+      // (the "no catalog yet" class). Every ledger consumer (state synthesis, entity ask, the
+      // conversation loop's grounding) inherits this.
+      const gist = String(sd.body || '').replace(/\s+/g, ' ').trim().slice(0, 90);
+      const atts = Array.isArray(sd.attachments) ? (sd.attachments as Array<{ filename?: string }>).map((a) => a.filename).filter(Boolean) : [];
+      totalEmails++;
+      if (isAutomatedSender((sd.from_address as string) || null, (sd.from_name as string) || null, (sd.subject as string) || '')) automatedEmails++;
+      else humanCounterparty = true;
+      ledger.push({
+        at: sd.received_at ?? it.created_at ?? '', kind: 'email', who: sd.from_name ?? sd.from_address ?? null,
+        text: `${String(it.work_title || sd.subject || '')}${res}${gist ? ` — "${gist}"` : ''}${atts.length ? ` [attached: ${atts.slice(0, 3).join(', ')}]` : ''}`,
+        ref: `inbox:${it.id}`,
+      });
     }
   }
   const mtgIds = byKind.get('meeting') ?? [];
@@ -68,6 +116,7 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
     const { data } = await supabase.from('commitments').select('id, description, counterparty, direction, due_date, created_at, status').in('id', cIds.slice(0, 60));
     for (const c of (data ?? []) as Array<Record<string, any>>) {
       const owes = String(c.direction || 'you_owe') === 'awaiting' ? 'they owe' : 'you owe';
+      if (c.counterparty) humanCounterparty = true;
       ledger.push({ at: c.created_at ?? '', kind: 'commitment', who: c.counterparty ?? null, text: `${owes}${c.status === 'done' ? ' (done)' : ''}: ${c.description}${c.due_date ? ` (due ${c.due_date})` : ''}`, ref: `commit:${c.id}` });
     }
   }
@@ -99,7 +148,15 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
   // the line texts (which now carry resolution status) makes any status flip count as change.
   let h = 0; for (const l of ledger) { const s = `${l.at}|${l.text}`; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; }
   const sig = `${ledger.length}:${h}`;
-  return { ledger: ledger.slice(0, 28), sig, quietDays };
+  // Structural facts (P1) — derived from the same rows, deliberately OUTSIDE the sig (they add no
+  // information the ledger hash doesn't already cover).
+  const counts: Record<string, number> = {};
+  for (const l of ledger) counts[l.kind] = (counts[l.kind] ?? 0) + 1;
+  const datedMs = ledger.filter((l) => l.at).map((l) => new Date(l.at).getTime()).filter((n) => !Number.isNaN(n));
+  const spanDays = datedMs.length >= 2 ? Math.round((Math.max(...datedMs) - Math.min(...datedMs)) / 86400000) : 0;
+  const activeDays = new Set(ledger.filter((l) => l.at).map((l) => String(l.at).slice(0, 10))).size;
+  const facts: LedgerFacts = { counts, spanDays, activeDays, automatedEmails, totalEmails, humanCounterparty };
+  return { ledger: ledger.slice(0, 28), sig, quietDays, facts };
 }
 
 /** Sig-gated synthesis of ONE entity's state + next move + reasoned priority. */
@@ -108,48 +165,112 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
     const { data: ent } = await supabase.from('work_entities')
       .select('id, name, summary, aliases, sig').eq('id', entityId).eq('user_id', userId).maybeSingle();
     if (!ent) return;
-    const { ledger, sig, quietDays } = await assembleLedger(supabase, userId, entityId);
-    if (!ledger.length) return;
-    if (!opts.force && ent.sig === sig) return; // unchanged → no AI
+    const { ledger, sig: ledgerSig, quietDays, facts } = await assembleLedger(supabase, userId, entityId);
+    if (!ledger.length) {
+      // SELF-HEAL: an active initiative with NO ledger and NO members is registry pollution — a
+      // born-empty row (or one emptied outside reconcile). Archive it here (the same rule reconcile
+      // applies on membership moves) so it can't sit in the portfolio/recall/snapshot forever.
+      const { count } = await supabase.from('entity_links').select('*', { count: 'exact', head: true })
+        .eq('user_id', userId).eq('entity_id', entityId);
+      if (!count) {
+        await supabase.from('work_entities').update({ status: 'archived' }).eq('id', entityId).eq('user_id', userId)
+          .then(() => {}, () => {});
+      }
+      return;
+    }
+    const sig = `v${STATE_PROMPT_VERSION}:${ledgerSig}`;
+    if (!opts.force && ent.sig === sig) return; // unchanged ledger + unchanged voice → no AI
 
     const userName = await getUserName(supabase, userId);
-    const lines = ledger.map((l) => `${(l.at || '').slice(0, 10)} · ${l.kind}${l.who ? ` · ${l.who}` : ''}: ${l.text.slice(0, 110)}`).join('\n');
+    const lines = ledger.map((l, i) => `[#${i + 1}] ${(l.at || '').slice(0, 10)} · ${l.kind}${l.who ? ` · ${l.who}` : ''}: ${l.text.slice(0, 200)}`).join('\n');
     const prompt =
-      `You maintain the live STATE of one body of work in a person's life, pick its single NEXT MOVE, and judge ` +
-      `its PRIORITY. It can be anything bounded — a deal, a program, a hire, an operation, a personal matter. ` +
-      `No funnel assumptions.\n\n` +
-      (userName ? `The owner is ${userName} — always "you", never the name.\n` : '') +
+      `You are the user's chief of staff, keeping the live picture of ONE body of work — it can be anything ` +
+      `bounded: a deal, a program, a hire, an operation, a personal matter. No funnel assumptions. From its ` +
+      `event ledger, write where it stands, pick the single next move, and judge its priority.\n\n` +
+      (userName ? `The owner is ${userName} — address them as "you", never by name.\n` : '') +
       `Body of work: ${ent.name}${ent.summary ? ` — ${ent.summary}` : ''}\n` +
-      `Days since last real touch: ${quietDays ?? 'unknown'}\n\n` +
+      `Days since last real touch: ${quietDays ?? 'unknown'}\n` +
+      `STRUCTURAL FACTS (these CONSTRAIN your scope judgment):\n` +
+      `- members: ${Object.entries(facts.counts).map(([k, n]) => `${n} ${k}`).join(', ') || 'none'}\n` +
+      `- activity span: ${facts.spanDays} days (${facts.activeDays} distinct days)\n` +
+      `- automated senders: ${facts.automatedEmails}/${facts.totalEmails} emails\n` +
+      `- human counterparty present: ${facts.humanCounterparty ? 'yes' : 'no'}\n\n` +
       `Event ledger (most recent first — ALL you know; never invent beyond it):\n${lines}\n\n` +
+      `VOICE — this text renders on the user's cards and briefs; write like a sharp colleague, not a system:\n` +
+      `- Speak about the MATTER: the people, the thing being done, what just happened, what's genuinely next. Plain words.\n` +
+      `- NEVER describe this system's own bookkeeping or internal status: no "prepared for nudge", "draft ready", ` +
+      `"no completion signal", any talk of "signals", "communication overdue", "awaiting deliverables", "pending confirmation", ` +
+      `"documentation deliverables" — that register is banned. A ledger line like "team prepared: X" is OUR ` +
+      `machinery: reason with it, but the summary talks about the deal, never about us or our drafts.\n` +
+      `- "summary": 1-2 short sentences, <=30 words, concrete and current — what you'd say if asked "where's ` +
+      `this at?" over coffee. Name the real person or thing driving it. NO semicolon chains, NO status-report telegrams.\n` +
+      `- whoOwes entries: short human phrases as a colleague would say them ("send them your pricing", "their signed contract").\n\n` +
       `Return ONLY JSON:\n` +
-      `{"summary":"<=15 words: where it stands right now, factual",` +
+      `{"summary":"1-2 sentences, <=30 words, colleague voice",` +
       `"momentum":"active|needs_you|waiting|gone_quiet|stalled",` +
       `"whoOwes":{"you":["short items YOU owe"],"them":["short items OTHERS owe you"]},` +
       `"stage":"<=4 words in its own terms, or null",` +
       `"blocking":"<=12 words if something concrete blocks it, else null",` +
-      `"next_move":{"kind":"reply|send|followup|none","title":"<=10 words imperative","reason":"<=15 words why now"},` +
+      `"scope":"project|errand|background",` +
+      `"next_move":{"kind":"reply|send|followup|none","title":"<=10 words, an imperative you could act on as-is","reason":"<=15 words why now","covers":["#N refs of ledger items this move RESOLVES"]},` +
       `"priority":{"weight":0-100,"reason":"<=12 words"}}\n` +
       `priority calibration — judge against a busy person's whole day: 80+ = drop-everything (a major matter ` +
       `needs you now / hard deadline); 50-79 = important active matter; 20-49 = routine upkeep; <20 = background ` +
       `noise/awareness. Judge by stakes IN THE LEDGER (who's waiting, money, deadlines, momentum) — never inflate.\n` +
-      `next_move — honest: "none" when nothing is owed (do NOT invent a move).`;
+      `scope — PROJECTHOOD, the judgment that decides whether this earns a slot in the user's portfolio:\n` +
+      `- "project" = an ongoing body of work: multiple touches over time, a human counterparty/team, an ` +
+      `objective that outlives any single action (a deal, a program, a hire, an engagement).\n` +
+      `- "errand" = real but SELF-CONTAINED: one action (or a short exchange) closes it — a bill, a security ` +
+      `alert, a single ask, a delivery problem, a one-off intro. Real work, but not a slot in their head.\n` +
+      `- "background" = automated/administrative hum with no genuine action for the user.\n` +
+      `HARD CONSTRAINTS from the facts: all-automated senders with NO human counterparty can NEVER be ` +
+      `"project". A single email with no follow-on is not a "project". When genuinely unsure between ` +
+      `project and errand, choose "errand" — the user can always promote it, but a portfolio full of ` +
+      `non-projects destroys trust.\n` +
+      `next_move — honest: "none" when nothing is owed (do NOT invent a move).\n` +
+      `next_move.covers — the ARBITER: list the [#N] refs of OPEN ledger items whose whole point IS this ` +
+      `move (the email asking for it, the commitment promising it) — doing the move settles them. Items ` +
+      `merely related but with their OWN distinct ask are NOT covered. Empty when unsure.`;
 
-    const res = await aiCall<{
+    type StateJson = {
       summary?: string; momentum?: string; whoOwes?: { you?: string[]; them?: string[] }; stage?: string | null; blocking?: string | null;
-      next_move?: { kind?: string; title?: string; reason?: string }; priority?: { weight?: number; reason?: string };
-    }>({ userId, supabase, shape: { output: 'json' }, prompt, temperature: 0, maxTokens: 500, source: 'brain_synthesis' });
-    const p = res.json ?? {};
-    if (!p.summary) return;
+      scope?: string;
+      next_move?: { kind?: string; title?: string; reason?: string; covers?: unknown[] }; priority?: { weight?: number; reason?: string };
+    };
+    const res = await aiCall<StateJson>({ userId, supabase, shape: { output: 'json' }, prompt, temperature: 0, maxTokens: 900, source: 'brain_synthesis' });
+    let p = res.json ?? {};
+    if (!p.summary) { console.warn('[state] synthesis returned no summary (likely truncation) — state left as-is'); return; }
+    // SELF-CORRECTION: temp-0 can repeat a banned phrase verbatim even when the prompt names it. One
+    // corrective retry quoting the violation; if it persists, keep the retry's output (the smoke gate
+    // reports any systemic leak). Costs one extra call ONLY on a violation — rare.
+    if (MACHINERY_REGISTER.test(String(p.summary))) {
+      const bad = String(p.summary).match(MACHINERY_REGISTER)?.[0] ?? '';
+      const retry = await aiCall<StateJson>({
+        userId, supabase, shape: { output: 'json' }, temperature: 0.4, maxTokens: 900, source: 'brain_synthesis',
+        prompt: prompt + `\n\nYOUR PREVIOUS DRAFT used the banned system-register phrase "${bad}" in the summary. Rewrite the WHOLE JSON with the summary in plain colleague speech about the matter — no bookkeeping/status-register words at all.`,
+      });
+      if (retry.json?.summary) p = retry.json;
+    }
 
     const mo = ['active', 'needs_you', 'waiting', 'gone_quiet', 'stalled'].includes(p.momentum as string) ? p.momentum : 'active';
     // Category is owned by the GROUNDED classifier (scripts/backfill-entity-category.ts — domain-aware),
     // NOT this ledger-only pass. PRESERVE the existing grounded value so a state refresh never overwrites it.
     let priorCategory: EntityState['category'] | undefined;
     try { const { data: cur } = await supabase.from('work_entities').select('state').eq('id', entityId).maybeSingle(); priorCategory = ((cur?.state ?? null) as { category?: EntityState['category'] } | null)?.category; } catch { /* non-fatal */ }
+    // SCOPE — validated; the structural constraint is enforced in CODE too (a fact can't be argued
+    // with): no human counterparty + majority-automated mail can never judge "project". Missing/invalid
+    // scope falls back to a conservative structural read.
+    let scope = (['project', 'errand', 'background'].includes(p.scope as string) ? p.scope : null) as EntityState['scope'] | null;
+    if (!scope) {
+      scope = facts.humanCounterparty && (Object.keys(facts.counts).length >= 2 || facts.spanDays >= 7) ? 'project' : 'errand';
+    }
+    if (scope === 'project' && !facts.humanCounterparty && facts.totalEmails > 0 && facts.automatedEmails >= facts.totalEmails) {
+      scope = 'errand';
+    }
     const state: EntityState = {
       summary: String(p.summary).slice(0, 200), momentum: mo as EntityState['momentum'],
       category: priorCategory,
+      scope,
       whoOwes: { you: (p.whoOwes?.you ?? []).slice(0, 5).map(String), them: (p.whoOwes?.them ?? []).slice(0, 5).map(String) },
       stage: p.stage ? String(p.stage).slice(0, 40) : null,
       blocking: p.blocking ? String(p.blocking).slice(0, 120) : null,
@@ -158,7 +279,13 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
     const nm = p.next_move;
     if (nm?.kind && ['reply', 'send', 'followup'].includes(nm.kind) && nm.title) {
       const latestInbound = ledger.find((l) => l.kind === 'email')?.ref ?? null;
-      nextMove = { kind: nm.kind as EntityNextMove['kind'], title: String(nm.title).slice(0, 120), reason: String(nm.reason || '').slice(0, 140), entityRef: latestInbound };
+      // covers: "#N" citations → ledger refs. Only refs that actually exist survive (grounded-or-absent).
+      const covers = (Array.isArray((nm as { covers?: unknown }).covers) ? ((nm as { covers?: unknown[] }).covers ?? []) : [])
+        .map((c) => { const i = parseInt(String(c).replace(/\D/g, ''), 10) - 1; return ledger[i]?.ref ?? null; })
+        // Only FOLDABLE members (emails/commitments — the rows the deck arbitrates). A calendar event or
+        // team deliverable is context the move may cite, but nothing downstream folds it.
+        .filter((r): r is string => !!r && (r.startsWith('inbox:') || r.startsWith('commit:'))).slice(0, 12);
+      nextMove = { kind: nm.kind as EntityNextMove['kind'], title: String(nm.title).slice(0, 120), reason: String(nm.reason || '').slice(0, 140), entityRef: latestInbound, ...(covers.length ? { covers } : {}) };
     }
     const priority: EntityPriority = {
       weight: Math.max(0, Math.min(100, Math.round(Number(p.priority?.weight ?? 20)))),

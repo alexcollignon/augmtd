@@ -6,7 +6,7 @@
 //
 // Contract (the cost/quality deal): each source returns cheap CANDIDATES (name + snippet + affinity);
 // candidates are merged + ranked (entity affinity boosts a file that BELONGS to the same body of work —
-// the brain tie); one reasoned pick happens in the CALLER's existing engine (resolve-file-step) or the
+// the brain tie); one reasoned pick happens in the CALLER's existing engine (the preparation pass) or the
 // preparation pass. Adding Dropbox = one `FileSource` entry — never a bespoke path. NO eager deep
 // indexing: Tier-2 extraction happens just-in-time for hot candidates only, cached by content hash.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -42,8 +42,34 @@ export type FileSource = {
 const SOURCES: FileSource[] = [
   {
     key: 'pool',
-    enabled: (_a, ctx) => !!ctx.poolCandidates?.length,
-    search: async (_a, ctx) => (ctx.poolCandidates ?? []).map((c) => ({ ...c, score: 1 })), // pool = already in-context, top rank
+    enabled: () => true,
+    search: async (admin, ctx, query, limit) => {
+      // Caller-supplied candidates (a step's own pool read) rank first, verbatim.
+      if (ctx.poolCandidates?.length) return ctx.poolCandidates.map((c) => ({ ...c, score: 1 }));
+      // Otherwise the pool is a REAL source: files/documents the user (or the rail's 📎 funnel)
+      // dropped into item_deliverables — matched by title/gist token overlap, recency-bounded.
+      try {
+        const { data } = await admin.from('item_deliverables')
+          .select('id, title, content, metadata, created_at')
+          .eq('user_id', ctx.userId).in('type', ['file', 'document'])
+          .order('created_at', { ascending: false }).limit(60);
+        const qTokens = query.toLowerCase().split(/\W+/).filter((w) => w.length > 2);
+        if (!qTokens.length) return [];
+        return ((data ?? []) as Array<Record<string, unknown>>)
+          .map((r) => {
+            const hay = `${String(r.title ?? '')} ${String((r.metadata as { gist?: string } | null)?.gist ?? '')}`.toLowerCase();
+            const hits = qTokens.filter((t) => hay.includes(t)).length;
+            return { r, overlap: hits / qTokens.length };
+          })
+          .filter((x) => x.overlap >= 0.5)
+          .slice(0, limit)
+          .map(({ r }) => ({
+            source: 'pool' as const, id: r.id as string, filename: String(r.title ?? 'file'),
+            snippet: String(r.content ?? '').replace(/\s+/g, ' ').slice(0, 200),
+            entityId: null, score: 1,
+          }));
+      } catch { return []; }
+    },
   },
   {
     key: 'kb',

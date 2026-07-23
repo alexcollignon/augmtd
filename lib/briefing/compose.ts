@@ -63,7 +63,7 @@ export type BriefingInputs = {
 
 // Bump whenever the PROMPT changes — folded into the daySig so a prompt edit recomposes existing briefs
 // (the cached-AI-output lesson: inputs changing must not be the only invalidator).
-const BRIEFING_PROMPT_VERSION = 7;
+const BRIEFING_PROMPT_VERSION = 8; // 8: P6d — grammar-safe refs law + displayWho ref handles
 
 const sigOf = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0; return String(h); };
 
@@ -79,6 +79,17 @@ export function briefingDaySig(inp: BriefingInputs): string {
     m: inp.moving.count, s: inp.schedule.map((sc) => [sc.time, sc.title.slice(0, 40)]), c: inp.counts.needYou,
   }));
 }
+
+// REF DISPLAY LAW (P6d): the handle a ref renders as must be a PERSON'S name or the DEAL'S registry
+// name — never a meeting/channel label ("from X x Y - AI Chat" reads as a person and breaks the
+// sentence). A source-derived label ("from …", " x " join titles) yields to the entity name.
+// Exported for the voice smoke.
+export const channelish = (w: string): boolean => /^from\s/i.test(w) || /\s+x\s+/i.test(w);
+export const displayWho = (who: string | null, entityName: string | null): string | null => {
+  const w = (who ?? '').trim();
+  if (w && !channelish(w)) return w;
+  return entityName ?? (w || null);
+};
 
 export async function composeBriefing(
   supabase: SupabaseClient, userId: string, inp: BriefingInputs,
@@ -103,7 +114,7 @@ export async function composeBriefing(
   }
 
   const refs: BriefingRef[] = [
-    ...actions.map((a, i) => ({ id: `A${i + 1}`, kind: 'action' as const, itemId: a.itemId, itemKind: a.itemKind, who: a.who, href: a.href })),
+    ...actions.map((a, i) => ({ id: `A${i + 1}`, kind: 'action' as const, itemId: a.itemId, itemKind: a.itemKind, who: displayWho(a.who, a.entityName), href: a.href })),
     ...watch.map((w, i) => ({ id: `W${i + 1}`, kind: 'watch' as const, itemId: w.entityId, itemKind: 'entity' as const, who: w.name, href: null })),
     ...(inp.moving.closest ? [{ id: 'P1', kind: 'pulse' as const, itemId: inp.moving.closest.entityId, itemKind: 'entity' as const, who: inp.moving.closest.name, href: null }] : []),
     ...groupRefs,
@@ -135,6 +146,8 @@ export async function composeBriefing(
     candidateBlock + priorBlock + `\n\nWrite FOUR segments, JSON only:\n` +
     `{"lead": "...", "action": "...", "watchlist": "..." | null, "pulse": "..." | null, "sentenced": ["A1", ...]}\n\n` +
     `THE ONE UNBREAKABLE RULE — you write around REFS, you never author identities:\n` +
+    `- Every {ref} must sit GRAMMATICALLY inside its sentence (as subject or object — "{A1} is waiting on your ` +
+    `pricing"), never as a bare opener or a dangling tag.\n` +
     `- EVERY person, company, deal, project, or body of work you mention MUST be a {ref} ({A#}/{W#}/{P#}/{G#}). ` +
     `NEVER type a name, company, product, or subject line yourself — not even if it appears in the ask text below. ` +
     `The ask/move text is context for YOUR judgment; paraphrase the action, and point to who/what via its {ref}. ` +

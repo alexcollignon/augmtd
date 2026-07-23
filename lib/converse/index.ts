@@ -1,0 +1,428 @@
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE ONE CONVERSATION CORE (P6b) — every chat surface (deep-dive rail, Home ask, entity ask) wires
+// here; none owns logic. Agent-over-registry, not router-plus-executor:
+//
+//   • The FAST-PATH (the 80%): one cheap classification decides whether the turn is a simple COMMAND
+//     ("dismiss this", "mark done", "find the deck", "have Max research X"), a QUESTION, or a
+//     CORRECTION — commands dispatch DIRECTLY onto the registry executors (~1 small call total).
+//   • The AGENT LOOP (the 20%): composite/open turns run a bounded function-calling loop holding the
+//     CHIEF-OF-STAFF exposure slice of the capability registry (lib/home/capability-map.ts
+//     `capabilitiesFor('chief_of_staff')`) — it composes, reasons, and calls tools mid-answer.
+//
+// SAFETY IS STRUCTURAL: the chief-of-staff slice contains ONLY reversible tools (resolve/find/
+// remember). No send executor exists in this module or its toolset — sending stays with the user's
+// explicit approve on the existing surfaces. Reversible acts are undoable via /api/restore.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { capabilitiesFor } from '@/lib/home/capability-map';
+import {
+  executeResolveInboxItem, executeResolveCommitment, executeFindFile, executeRememberFact,
+  resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition,
+} from '@/lib/tools/item-actions';
+import { getEmailsDefinition, executeGetEmails, getMeetingContextDefinition, executeGetMeetingContext } from '@/lib/tools';
+import {
+  executeMoveItemToProject, executeSetProjectStatus, executeMergeProjects, executeCreateProject, executeCreateTaskItem, resolveItemByDescription,
+  moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition,
+} from '@/lib/tools/project-actions';
+
+// KB content search for the chief loop — wraps the existing grounded KB context builder (retrieval,
+// not a new capability; the registry row is `search_knowledge_base`).
+const searchKnowledgeDefinition = {
+  name: 'search_knowledge_base',
+  description: "Search the user's knowledge base (indexed documents, meeting notes, uploads) by topic and read the matching content. Use to CHECK facts in documents.",
+  input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+};
+
+export type ConverseScope =
+  | { kind: 'item'; itemKind: 'email' | 'followup' | 'commitment' | 'meeting' | 'awareness'; itemId: string }
+  | { kind: 'entity'; entityId: string }
+  | { kind: 'global' };
+
+export type ConverseHistoryTurn = { role: 'user' | 'assistant'; text: string };
+
+export type ConverseTurn = {
+  say: string;
+  refs: Array<{ id?: string; kind?: string; label: string; href: string | null }>;
+  files?: Array<{ id: string; filename: string; source: string }>;
+  /** Reversible actions the turn APPLIED (already done, undoable) — the surface confirms them. */
+  applied?: Array<{ tool: string; title: string }>;
+  /** The correction path's reworked draft (item scope) — the surface re-seeds its composer. */
+  draft?: string | null;
+  learned?: string[];
+  entityName?: string | null;
+  delegated?: { agentName: string } | null;
+};
+
+const linkKindOf = (s: Extract<ConverseScope, { kind: 'item' }>): 'inbox_item' | 'commitment' | 'meeting' =>
+  s.itemKind === 'commitment' || s.itemKind === 'followup' ? 'commitment' : s.itemKind === 'meeting' ? 'meeting' : 'inbox_item';
+
+/** The item's entity (the deal the conversation is scoped to), when linked. */
+async function entityOfScope(client: SupabaseClient, userId: string, scope: ConverseScope): Promise<string | null> {
+  if (scope.kind === 'entity') return scope.entityId;
+  if (scope.kind !== 'item') return null;
+  const { data } = await client.from('entity_links').select('entity_id')
+    .eq('user_id', userId).eq('item_kind', linkKindOf(scope)).eq('item_id', scope.itemId).not('entity_id', 'is', null).maybeSingle();
+  return (data?.entity_id as string) ?? null;
+}
+
+// ── The fast-path verdict — ONE classification over the registry-derived command list. ──
+type Verdict = {
+  command: { tool: string; args: Record<string, unknown> } | null;
+  question: boolean;
+  facts: string[];
+  delegate: { coworker: string; task: string } | null;
+  open: boolean; // composite / doesn't fit → the agent loop
+};
+
+async function classifyTurn(client: SupabaseClient, userId: string, scope: ConverseScope, text: string): Promise<Verdict> {
+  // The command list is DERIVED from the chief-of-staff registry slice — the router can only route to
+  // what's registered (adding a capability row updates this prompt automatically; the one-truth law).
+  const commands = capabilitiesFor('chief_of_staff')
+    .map((c) => `- ${c.tool}: ${c.blurb}`).join('\n');
+  const inItem = scope.kind === 'item';
+  const prompt =
+    `You are the router of a work assistant's chat. The user typed a note${inItem ? ' while viewing ONE work item' : ''}. ` +
+    `Classify it. Available direct COMMANDS (from the capability registry):\n${commands}\n\n` +
+    `Return ONLY JSON:\n` +
+    `{"command":{"tool":"<registry tool>","args":{...}}|null,` +
+    `"question":true|false,"facts":["0-3 durable facts worth remembering on this deal"],` +
+    `"delegate":{"coworker":"<name>","task":"<what>"}|null,"open":true|false}\n` +
+    `Rules:\n` +
+    `- "command" ONLY for a plain single action the registry lists (e.g. "dismiss this" → resolve_inbox_item ` +
+    `{"resolution":"dismiss"}; "mark it done" → {"resolution":"complete"}; "find the pricing deck" → find_file ` +
+    `{"query":"pricing deck"}; "this isn't part of this project / remove it from the project" → ` +
+    `move_item_to_project {"project_name":"none"}; "move this to Acme" → move_item_to_project ` +
+    `{"project_name":"Acme"}; "put the Acme invoice email into Admin" → move_item_to_project ` +
+    `{"project_name":"Admin","item_description":"Acme invoice"}; "start a project called Acme Pilot ` +
+    `from this" → create_project {"name":"Acme Pilot"}; "add a task: chase the signed NDA by Friday" → ` +
+    `create_task_item {"text":"Chase the signed NDA","due_date":"<that Friday>"}). Ambiguous / multi-step → null.\n` +
+    `- "question" = the note primarily ASKS (status/info/advice). A correction/instruction is NOT a question.\n` +
+    `- "facts" = durable constraints/preferences/numbers to remember; a one-off phrasing tweak is NOT one.\n` +
+    `- "delegate" ONLY when a named coworker/assistant is explicitly asked.\n` +
+    `- "open" = true when the note needs COMPOSITION (several actions, or an action the registry doesn't list).\n` +
+    `THE NOTE: ${text}`;
+  try {
+    const { client: ai, model } = await getAIClient(userId, 'classification', client);
+    const res = await aiCreate(ai, { model, max_tokens: 500, temperature: 0, messages: [{ role: 'user', content: prompt }] });
+    const raw = res.choices?.[0]?.message?.content ?? '';
+    const o = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)) as Partial<Verdict> & { command?: { tool?: string; args?: Record<string, unknown> } | null };
+    return {
+      command: o.command?.tool ? { tool: String(o.command.tool), args: o.command.args ?? {} } : null,
+      question: o.question === true,
+      facts: Array.isArray(o.facts) ? o.facts.filter((f): f is string => typeof f === 'string' && !!f.trim()).slice(0, 3) : [],
+      delegate: o.delegate && typeof (o.delegate as { coworker?: string }).coworker === 'string' ? o.delegate as Verdict['delegate'] : null,
+      open: o.open === true,
+    };
+  } catch { return { command: null, question: false, facts: [], delegate: null, open: true }; }
+}
+
+// ── Registry dispatch — the ONE place a chat command becomes an execution. Only the chief-of-staff
+// slice is reachable; an unknown/unexposed tool is refused (exposure is enforced here, structurally).
+async function dispatchCommand(
+  client: SupabaseClient, userId: string, scope: ConverseScope, tool: string, args: Record<string, unknown>,
+): Promise<ConverseTurn | null> {
+  const allowed = new Set(capabilitiesFor('chief_of_staff').map((c) => c.tool));
+  if (!allowed.has(tool)) return null;
+  const ctx = { client, userId };
+  if (tool === 'resolve_inbox_item' && scope.kind === 'item' && linkKindOf(scope) === 'inbox_item') {
+    const resolution = args.resolution === 'complete' ? 'complete' as const : 'dismiss' as const;
+    const r = await executeResolveInboxItem(ctx, { itemId: scope.itemId, resolution, reason: (args.reason as string) ?? null });
+    if (!r.ok) return { say: r.error ?? "I couldn't do that.", refs: [] };
+    return { say: `${resolution === 'complete' ? 'Done — marked it handled' : 'Dismissed it'}. You can undo from the activity log.`, refs: [], applied: [{ tool, title: r.title ?? 'item' }] };
+  }
+  if (tool === 'resolve_commitment' && scope.kind === 'item' && linkKindOf(scope) === 'commitment') {
+    const resolution = args.resolution === 'done' ? 'done' as const : 'dismissed' as const;
+    const r = await executeResolveCommitment(ctx, { commitmentId: scope.itemId, resolution });
+    if (!r.ok) return { say: r.error ?? "I couldn't do that.", refs: [] };
+    return { say: `${resolution === 'done' ? 'Marked it done' : 'Dismissed it'}. Undo lives in the activity log.`, refs: [], applied: [{ tool, title: r.title ?? 'commitment' }] };
+  }
+  if (tool === 'find_file') {
+    const entityId = await entityOfScope(client, userId, scope);
+    const r = await executeFindFile(ctx, { query: String(args.query ?? ''), entityId });
+    if (!r.files.length) return { say: "I couldn't find a matching file in the knowledge base, past attachments, or connected drives.", refs: [] };
+    return { say: `Found ${r.files.length === 1 ? 'this' : 'these'}:`, refs: [], files: r.files };
+  }
+  if (tool === 'remember_fact' && scope.kind !== 'global') {
+    const r = await executeRememberFact(ctx, scope.kind === 'entity'
+      ? { fact: String(args.fact ?? ''), entityId: scope.entityId }
+      : { fact: String(args.fact ?? ''), linkKind: linkKindOf(scope), itemId: scope.itemId });
+    return { say: r.ok ? `Noted${r.entityName ? ` on ${r.entityName}` : ''} — future drafts will respect it.` : "This isn't tied to a deal I can remember that on yet.", refs: [] };
+  }
+  // MEMBERSHIP / PROJECT management (P4/S3) — the manage verbs, same executors as the click paths.
+  if (tool === 'move_item_to_project') {
+    // Tolerant arg keys — the fast-path classifier improvises ("project_name"/"project"/"name"/"to").
+    const pn = (args.project_name ?? args.projectName ?? args.project ?? args.name ?? args.to ?? null) as string | null;
+    const desc = String(args.item_description ?? args.item ?? '').trim();
+    // Which item? An explicit description resolves ANYWHERE (S3); otherwise the open item (item scope).
+    let target: { linkKind: 'inbox_item' | 'commitment' | 'meeting'; itemId: string } | null =
+      scope.kind === 'item' && !desc ? { linkKind: linkKindOf(scope), itemId: scope.itemId } : null;
+    if (!target && desc) {
+      const hit = await resolveItemByDescription(client, userId, desc);
+      if (hit && 'ambiguous' in hit) return { say: `A few things match — did you mean: ${hit.ambiguous.join(' · ')}?`, refs: [] };
+      if (hit) target = { linkKind: hit.linkKind, itemId: hit.itemId };
+    }
+    if (!target) return { say: desc ? `I couldn't find anything matching "${desc}".` : 'Which item do you mean?', refs: [] };
+    const r = await executeMoveItemToProject(ctx, { ...target, projectName: pn });
+    return { say: r.message, refs: [], ...(r.ok ? { applied: [{ tool, title: 'membership' }] } : {}) };
+  }
+  if (tool === 'create_task_item') {
+    // In a room / on a linked item, the task defaults to THAT deal (no name needed).
+    const entityId = scope.kind === 'entity' ? scope.entityId : scope.kind === 'item' ? await entityOfScope(client, userId, scope) : null;
+    const r = await executeCreateTaskItem(ctx, {
+      text: String(args.text ?? args.task ?? args.description ?? ''),
+      dueDate: (args.due_date as string) ?? null,
+      projectName: (args.project_name as string) ?? null,
+      entityId: (args.project_name ? null : entityId),
+    });
+    return { say: r.message, refs: [], ...(r.ok ? { applied: [{ tool, title: 'task' }] } : {}) };
+  }
+  if (tool === 'create_project') {
+    const nm = String(args.name ?? args.project_name ?? '').trim();
+    const attach = scope.kind === 'item' && args.attach_current_item !== false
+      ? { linkKind: linkKindOf(scope), itemId: scope.itemId } : null;
+    const r = await executeCreateProject(ctx, { name: nm, description: (args.description as string) ?? null, attach });
+    return { say: r.message, refs: [], ...(r.ok ? { applied: [{ tool, title: nm }] } : {}) };
+  }
+  if (tool === 'set_project_status') {
+    let name = String(args.project_name ?? args.projectName ?? args.project ?? args.name ?? '').trim();
+    if (!name && scope.kind === 'entity') {
+      const { data: ent } = await client.from('work_entities').select('name').eq('id', scope.entityId).maybeSingle();
+      name = String(ent?.name ?? '');
+    }
+    if (!name) return { say: 'Which project do you mean?', refs: [] };
+    const rawAct = String(args.status_action ?? args.action ?? args.status ?? 'done').toLowerCase();
+    const act = (['done', 'archive', 'reopen', 'mute'].find((a) => rawAct.includes(a)) ?? 'done') as 'done' | 'archive' | 'reopen' | 'mute';
+    const r = await executeSetProjectStatus(ctx, { projectName: name, action: act });
+    return { say: r.message, refs: [], ...(r.ok ? { applied: [{ tool, title: name }] } : {}) };
+  }
+  if (tool === 'merge_projects') {
+    const r = await executeMergeProjects(ctx, { keepName: String(args.keep_name ?? args.keep ?? ''), mergeName: String(args.merge_name ?? args.merge ?? args.into ?? '') });
+    return { say: r.message, refs: [], ...(r.ok ? { applied: [{ tool, title: 'merge' }] } : {}) };
+  }
+  // READ tools (P7a — retrieval-capable grounding): the chief can GO LOOK like a coworker can.
+  if (tool === 'get_emails') {
+    const text = await executeGetEmails({ filter: args.filter, from: args.from, since: args.since ?? '30d', mode: 'search' }, userId, client).catch(() => '');
+    return { say: text.slice(0, 3000) || 'No matching emails found.', refs: [] };
+  }
+  if (tool === 'get_meeting_context') {
+    const text = await executeGetMeetingContext({ since: args.since ?? '30d', include: args.include ?? 'summaries', filter: args.filter }, userId, client).catch(() => '');
+    return { say: text.slice(0, 3000) || 'No matching meetings found.', refs: [] };
+  }
+  if (tool === 'search_knowledge_base') {
+    try {
+      const { buildKBContext } = await import('@/lib/knowledge/build-kb-context');
+      const kb = await buildKBContext(userId, String(args.query ?? ''), client, { fileLimit: 4 });
+      const text = typeof kb === 'string' ? kb : ((kb as { context?: string })?.context ?? '');
+      return { say: (text || '').slice(0, 3000) || 'Nothing matching in the knowledge base.', refs: [] };
+    } catch { return { say: 'Nothing matching in the knowledge base.', refs: [] }; }
+  }
+  return null;
+}
+
+// ── The bounded AGENT LOOP (the 20%) — function-calling over the chief-of-staff toolset. ──
+const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition];
+
+async function agentLoop(
+  client: SupabaseClient, userId: string, scope: ConverseScope, text: string, grounding: string,
+): Promise<ConverseTurn> {
+  const { toOpenAITool } = await import('@/lib/tools');
+  const { client: ai, model } = await getAIClient(userId, 'conversation', client);
+  const applied: ConverseTurn['applied'] = [];
+  const files: NonNullable<ConverseTurn['files']> = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const messages: any[] = [
+    { role: 'system', content:
+      `You are the user's chief of staff inside their work platform. You hold a SMALL set of reversible tools ` +
+      `(resolving items, finding files, remembering facts) — use them when the user asks; you can NEVER send ` +
+      `anything (drafts are sent only by the user's explicit approve elsewhere). Ground every claim in the ` +
+      `CONTEXT below; when it doesn't cover something, say so plainly. PLAIN PROSE, no markdown, 1-4 sentences.\n\n` +
+      `--- CONTEXT ---\n${grounding.slice(0, 4000)}` },
+    { role: 'user', content: text },
+  ];
+  for (let i = 0; i < 4; i++) {
+    const res = await aiCreate(ai, { model, max_tokens: 700, temperature: 0.2, messages, tools: CHIEF_TOOL_DEFS.map(toOpenAITool) });
+    const msg = res.choices?.[0]?.message;
+    if (!msg) break;
+    const calls = (msg.tool_calls ?? []) as Array<{ id: string; function: { name: string; arguments: string } }>;
+    if (!calls.length) return { say: (msg.content ?? '').trim() || 'Done.', refs: [], applied, files: files.length ? files : undefined };
+    messages.push(msg);
+    for (const call of calls) {
+      let args: Record<string, unknown> = {};
+      try { args = JSON.parse(call.function.arguments || '{}'); } catch { /* empty */ }
+      const out = await dispatchCommand(client, userId, scope, call.function.name, args);
+      if (out?.applied) applied.push(...out.applied);
+      if (out?.files) files.push(...out.files);
+      messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(out ?? { error: 'tool unavailable in this context' }).slice(0, 1500) });
+    }
+  }
+  return { say: applied.length ? 'Done.' : "I couldn't finish that one.", refs: [], applied, files: files.length ? files : undefined };
+}
+
+/** THE VIEWING ANCHOR (P7a, structural): whatever the user is looking at is ALWAYS in the grounding —
+ *  the system must be physically unable to contradict the document on screen. */
+async function viewingExcerpt(client: SupabaseClient, userId: string, scope: ConverseScope): Promise<string> {
+  if (scope.kind !== 'item') return '';
+  try {
+    if (linkKindOf(scope) === 'inbox_item') {
+      const { data: it } = await client.from('inbox_items').select('work_title, source_data').eq('id', scope.itemId).eq('user_id', userId).maybeSingle();
+      if (!it) return '';
+      const sd = (it.source_data ?? {}) as Record<string, unknown>;
+      const atts = Array.isArray(sd.attachments) ? (sd.attachments as Array<{ filename?: string }>).map((a) => a.filename).filter(Boolean) : [];
+      return `THE ITEM THE USER IS VIEWING RIGHT NOW (your answer MUST be consistent with it):\n` +
+        `From: ${(sd.from_name as string) || (sd.from as string) || ''}\nSubject: ${(sd.subject as string) || it.work_title || ''}\n` +
+        (atts.length ? `Attachments: ${atts.join(', ')}\n` : '') +
+        `Body: ${String(sd.body || '').replace(/\s+/g, ' ').slice(0, 900)}`;
+    }
+    if (linkKindOf(scope) === 'commitment') {
+      const { data: c } = await client.from('commitments').select('description, counterparty, due_date').eq('id', scope.itemId).eq('user_id', userId).maybeSingle();
+      return c ? `THE COMMITMENT THE USER IS VIEWING: ${c.description}${c.counterparty ? ` (with ${c.counterparty})` : ''}${c.due_date ? ` due ${c.due_date}` : ''}` : '';
+    }
+    const { data: m } = await client.from('meeting_transcripts').select('title, summary').eq('id', scope.itemId).eq('user_id', userId).maybeSingle();
+    return m ? `THE MEETING THE USER IS VIEWING: ${m.title}\n${String(m.summary || '').slice(0, 700)}` : '';
+  } catch { return ''; }
+}
+
+/** THE entry — every chat surface calls this with its scope. */
+export async function converse(
+  client: SupabaseClient, userId: string, scope: ConverseScope, text: string,
+  opts: { history?: ConverseHistoryTurn[] } = {},
+): Promise<ConverseTurn> {
+  const verdict = await classifyTurn(client, userId, scope, text);
+  const viewing = await viewingExcerpt(client, userId, scope);
+
+  // 1 — COMMAND fast-path: direct registry dispatch (~1 extra small call total).
+  if (verdict.command) {
+    const out = await dispatchCommand(client, userId, scope, verdict.command.tool, verdict.command.args);
+    if (out) return out;
+  }
+
+  // 2 — DELEGATE: "have Max research X" → the real delegation engine (prepare + report back).
+  if (verdict.delegate) {
+    try {
+      const { createClient: createAdmin } = await import('@supabase/supabase-js');
+      const admin = createAdmin(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+      const { data: workers } = await client.from('custom_agents').select('id, name, worker_role').eq('user_id', userId).eq('is_worker', true);
+      const want = verdict.delegate.coworker.toLowerCase();
+      const worker = (workers ?? []).find((w) => String(w.name).toLowerCase().startsWith(want) || String(w.worker_role ?? '').toLowerCase().includes(want));
+      if (worker) {
+        const [{ buildItemContext }, { buildDelegationPrompt, runDelegation }, { data: prof }] = await Promise.all([
+          import('@/lib/home/item-context'), import('@/lib/home/delegate'),
+          client.from('profiles').select('full_name').eq('id', userId).single(),
+        ]);
+        const itemCtx = scope.kind === 'item' ? await buildItemContext(client, userId, scope.itemKind, scope.itemId) : null;
+        const prompt = buildDelegationPrompt({
+          kind: scope.kind === 'item' ? scope.itemKind : 'email',
+          itemContext: itemCtx?.text || '',
+          step: { text: verdict.delegate.task, detail: `The user asked for this in chat: "${text}"` },
+        });
+        const out = await runDelegation({
+          supabase: admin, userId, worker: { id: worker.id as string, name: String(worker.name), worker_role: (worker.worker_role as string) ?? null, is_worker: true },
+          prompt, itemLabel: verdict.delegate.task.slice(0, 80),
+          firstName: (prof?.full_name as string | undefined)?.split(' ')[0] ?? null,
+          ...(scope.kind === 'item' ? { pool: { kind: scope.itemKind, entityId: scope.itemId }, provenance: { item: verdict.delegate.task.slice(0, 80), steered: true } } : {}),
+        });
+        if (out) return { say: `${String(worker.name).split(' ')[0]} is on it and will report back.`, refs: [], delegated: { agentName: String(worker.name) } };
+      }
+      return { say: "I couldn't find that coworker on your team.", refs: [] };
+    } catch { return { say: "The hand-off didn't go through — try again in a moment.", refs: [] }; }
+  }
+
+  // 3 — QUESTION: grounded answer from the scope's memory — the whole brain (global), the deal's
+  // memory (entity / linked item), or the item's own context. ONE core; the graders stay single-source.
+  if (verdict.question) {
+    if (scope.kind === 'global') {
+      const { answerHomeQuestion } = await import('@/lib/home/ask');
+      const { answer, refs } = await answerHomeQuestion(client, userId, text, opts.history ?? []);
+      return { say: answer, refs };
+    }
+    const entityId = await entityOfScope(client, userId, scope);
+    if (entityId) {
+      const { answerEntityQuestion } = await import('@/lib/entities/ask');
+      const { answer, refs } = await answerEntityQuestion(client, userId, entityId, text, opts.history ?? [], { viewing });
+      return { say: answer, refs };
+    }
+    if (scope.kind === 'item') {
+      const { buildItemContext } = await import('@/lib/home/item-context');
+      const ctx = await buildItemContext(client, userId, scope.itemKind, scope.itemId);
+      const { aiCall } = await import('@/lib/ai/call');
+      const res = await aiCall<{ answer?: string }>({
+        userId, supabase: client, shape: { output: 'json' }, maxTokens: 300, temperature: 0.2, source: 'brain_synthesis',
+        prompt: `Answer STRICTLY from this context — plainly, a couple of sentences; if it doesn't cover the question, say so. PLAIN PROSE.\n${viewing ? `${viewing}\n` : ''}--- CONTEXT ---\n${(ctx?.text || '').slice(0, 3000)}\n--- QUESTION ---\n${text}\nReturn ONLY JSON: {"answer":"..."}`,
+      });
+      return { say: String(res.json?.answer || "I don't have enough on that here."), refs: [] };
+    }
+  }
+
+  // 4 — CORRECTION with durable facts (item scope): remember + rework the draft.
+  if (scope.kind === 'item' && !verdict.open) {
+    const turn: ConverseTurn = { say: '', refs: [] };
+    if (verdict.facts.length) {
+      for (const f of verdict.facts) {
+        const r = await executeRememberFact({ client, userId }, { fact: f, linkKind: linkKindOf(scope), itemId: scope.itemId });
+        if (r.ok) { turn.learned = [...(turn.learned ?? []), f]; turn.entityName = r.entityName ?? turn.entityName; }
+      }
+    }
+    // Rework the prepared draft with the guidance (email → reply draft; followup/commitment → nudge).
+    try {
+      if (linkKindOf(scope) === 'inbox_item') {
+        const { data: item } = await client.from('inbox_items').select('source_data').eq('id', scope.itemId).eq('user_id', userId).maybeSingle();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const sd = (item?.source_data ?? {}) as Record<string, any>;
+        if (sd.from || sd.from_address) {
+          const { generateReplyDraft } = await import('@/lib/inbox/draft-reply');
+          const instr = `THE USER'S STEERING NOTE (fold this into the reply — it overrides anything conflicting): ${text}` +
+            (turn.learned?.length ? `\nDURABLE FACTS on this work: ${turn.learned.join(' · ')}` : '');
+          const body = await generateReplyDraft(userId, sd, client, instr);
+          if (body) {
+            await client.from('inbox_items').update({ source_data: { ...sd, draft: { ...(sd.draft ?? {}), body, generated_at: new Date().toISOString(), steered: true } } }).eq('id', scope.itemId);
+            turn.draft = body;
+          }
+        }
+      } else if (linkKindOf(scope) === 'commitment') {
+        const { data: c } = await client.from('commitments').select('id, description, counterparty').eq('id', scope.itemId).eq('user_id', userId).maybeSingle();
+        if (c) {
+          const { generateNudgeDraft } = await import('@/lib/inbox/draft-reply');
+          const instr = `THE USER'S STEERING NOTE (fold this in — it overrides anything conflicting): ${text}` +
+            (turn.learned?.length ? `\nDURABLE FACTS on this work: ${turn.learned.join(' · ')}` : '');
+          const body = await generateNudgeDraft(userId, { counterparty: (c.counterparty as string) ?? null, description: String(c.description), ageDays: 0, instructions: instr }, client);
+          if (body) {
+            await client.from('item_deliverables').insert({
+              user_id: userId, kind: 'commitment', entity_id: scope.itemId, type: 'draft',
+              title: `Nudge — ${String(c.counterparty ?? '').split('<')[0].trim() || 'follow-up'}`.slice(0, 100),
+              content: body, ref: null, metadata: { steered: true },
+            }).then(() => {}, () => {});
+            turn.draft = body;
+          }
+        }
+      }
+    } catch { /* non-fatal — memory still landed */ }
+    const bits: string[] = [];
+    if (turn.draft) bits.push('I reworked the draft with that');
+    if (turn.learned?.length) bits.push(turn.entityName ? `noted it on ${turn.entityName}` : 'noted it for next time');
+    turn.say = bits.length ? `${bits.join(', ')}.` : 'Got it.';
+    return turn;
+  }
+
+  // 5 — OPEN / composite → the agent loop, grounded in the scope's memory.
+  let grounding = '';
+  const entityId = await entityOfScope(client, userId, scope);
+  if (entityId) {
+    const { assembleLedger } = await import('@/lib/entities/state');
+    const { data: ent } = await client.from('work_entities').select('name, state, next_move').eq('id', entityId).maybeSingle();
+    const st = (ent?.state ?? {}) as { summary?: string };
+    const { ledger } = await assembleLedger(client, userId, entityId);
+    grounding = `Deal: ${ent?.name}\nWhere it stands: ${st.summary ?? ''}\nRecent events:\n` +
+      ledger.slice(0, 14).map((l) => `- ${(l.at || '').slice(0, 10)} ${l.kind}${l.who ? ` ${l.who}` : ''}: ${l.text.slice(0, 100)}`).join('\n');
+  } else if (scope.kind === 'item') {
+    const { buildItemContext } = await import('@/lib/home/item-context');
+    const ctx = await buildItemContext(client, userId, scope.itemKind, scope.itemId);
+    grounding = (ctx?.text || '').slice(0, 3500);
+  } else if (scope.kind === 'global') {
+    // Global open turns hold the SAME brain snapshot the Home ask answers from (one read, one truth).
+    const { buildBrainSnapshot } = await import('@/lib/home/ask');
+    grounding = (await buildBrainSnapshot(client, userId)).text.slice(0, 3500);
+  }
+  return agentLoop(client, userId, scope, text, viewing ? `${viewing}\n\n${grounding}` : grounding);
+}
