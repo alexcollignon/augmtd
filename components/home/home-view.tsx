@@ -78,7 +78,7 @@ type Brief = {
   status: { needsReply: number; meetingsToday: number; waitingOn: number; handledToday: number };
   dayProgress?: { cleared: number; needYou: number };
   priorities: Priority[];
-  commitments: { id: string; description: string; counterparty: string | null; dueDate: string | null; overdue: boolean; dueToday: boolean; initiative?: string | null; initiativeTotal?: number | null }[];
+  commitments: { id: string; description: string; prepared?: string | null; counterparty: string | null; dueDate: string | null; overdue: boolean; dueToday: boolean; initiative?: string | null; initiativeTotal?: number | null }[];
   waitingOn: { id: string; description: string; counterparty: string | null; ageDays: number; initiative?: string | null; initiativeTotal?: number | null }[];
   schedule: { id: string; time: string; title: string; attendees: number; prep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null }[];
   handled?: { triaged: number; filtered: number; summarised: number; tracked: number; resolved: number };
@@ -1649,6 +1649,7 @@ export function HomeView() {
     primary: null, ask: c.description,
     second: c.counterparty ? (/^from /i.test(c.counterparty) ? c.counterparty : `You owe ${c.counterparty}`) : null,
     overdue: c.overdue, dueToday: c.dueToday, dueDate: c.dueDate ?? null, initiative: c.initiative ?? null, initiativeTotal: c.initiativeTotal ?? null,
+    prepared: c.prepared ?? null,
   }));
   const liveDeals = (b?.slippingDeals ?? []).filter((d) => !dismissedDeals.has(d.key));
   // THE BRIEF de-dup: items the brain SENTENCED live in the prose — they leave the deck (hero kept).
@@ -1886,6 +1887,15 @@ export function HomeView() {
               {!b?.briefing && (b?.tldr?.teaser || b?.briefLine) ? (
                 <p className="mt-2 text-[14.5px] text-neutral-500 leading-relaxed max-w-[760px]">{b?.tldr?.teaser || b?.briefLine}</p>
               ) : null}
+              {/* TODAY STRIP (5A.7) — one slim line from the EXISTING schedule read; nothing new computed. */}
+              {(b?.schedule?.length ?? 0) > 0 && (
+                <p className="mt-1.5 flex items-center gap-1.5 text-[12.5px] text-neutral-400">
+                  <CalendarDaysIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span className="tabular-nums">{b!.schedule![0].time}</span>
+                  <span className="text-neutral-500 truncate max-w-[380px]">{b!.schedule![0].title}</span>
+                  {(b!.schedule!.length > 1) && <span className="flex-shrink-0">· {b!.schedule!.length - 1} more</span>}
+                </p>
+              )}
               {/* KPI strip removed (July 13) — it duplicated the per-section counts + a vanity "N filtered".
                   Counts now live only on the section headers + the day-cleared ring. */}
             </div>

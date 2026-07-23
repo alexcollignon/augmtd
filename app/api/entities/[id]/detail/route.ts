@@ -49,9 +49,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     const memberInboxIds = (links ?? []).filter((l) => l.item_kind === 'inbox_item').map((l) => l.item_id as string);
     const drafted = new Set<string>();
     const preparedBy = new Map<string, string>();
+    const preparedRef = new Map<string, string>(); // commit id → deliverable id (the tappable preview)
     // Conversations + attachments (R3d) ride the same read.
     let conversations: Array<{ id: string; subject: string; who: string | null; at: string | null; open: boolean }> = [];
-    const attachDocs: Array<{ name: string; source: string; at: string | null }> = [];
+    const attachDocs: Array<{ name: string; source: string; at: string | null; ref?: { kind: 'attachment'; path: string } | null }> = [];
     if (memberInboxIds.length) {
       const { data: convRows } = await supabase.from('inbox_items').select('id, work_title, status, source_data, last_activity_at, created_at')
         .in('id', memberInboxIds.slice(0, 60)).eq('user_id', user.id);
@@ -59,8 +60,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       for (const it of (convRows ?? []) as Array<Record<string, unknown>>) {
         const sd = (it.source_data ?? {}) as Record<string, unknown>;
         if ((sd as { draft?: unknown }).draft) drafted.add(it.id as string);
-        for (const a of (Array.isArray(sd.attachments) ? sd.attachments as Array<{ filename?: string }> : [])) {
-          if (a.filename) attachDocs.push({ name: a.filename, source: 'attachment', at: ((sd.received_at as string) || null)?.slice(0, 10) ?? null });
+        for (const a of (Array.isArray(sd.attachments) ? sd.attachments as Array<{ filename?: string; storagePath?: string }> : [])) {
+          if (a.filename) attachDocs.push({ name: a.filename, source: 'attachment', at: ((sd.received_at as string) || null)?.slice(0, 10) ?? null, ref: a.storagePath ? { kind: 'attachment' as const, path: a.storagePath } : null });
         }
         const subj = (sd.subject as string) || String(it.work_title || '');
         if (isCalendarSystemSubject(subj)) continue;
@@ -77,12 +78,15 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     let coworkerDocs: Array<{ name: string; source: string; at: string | null }> = [];
     if (commitIds.length || memberInboxIds.length) {
       const memberIdsAll = [...memberInboxIds, ...commitIds].slice(0, 200);
-      const { data: dl } = await supabase.from('item_deliverables').select('entity_id, title, type, created_at, metadata')
+      const { data: dl } = await supabase.from('item_deliverables').select('id, entity_id, title, type, created_at, metadata')
         .eq('user_id', user.id).in('entity_id', memberIdsAll).order('created_at', { ascending: false }).limit(30);
       for (const d of (dl ?? []) as Array<Record<string, unknown>>) {
         const meta = (d.metadata ?? {}) as { agentName?: string; worker?: string };
         const by = meta.agentName ?? meta.worker ?? null;
-        if (d.type === 'draft' && by) preparedBy.set(d.entity_id as string, String(by).split(' ')[0]);
+        const eidRaw = d.entity_id as string;
+        if (d.type === 'draft' || d.type === 'document') {
+          if (!preparedBy.has(eidRaw)) { preparedBy.set(eidRaw, by ? String(by).split(' ')[0] : 'draft'); preparedRef.set(eidRaw, d.id as string); }
+        }
         if (d.type === 'file' || d.type === 'document') coworkerDocs.push({ name: String(d.title || d.type), source: by ? `by ${String(by).split(' ')[0]}` : 'document', at: ((d.created_at as string) || null)?.slice(0, 10) ?? null });
       }
       coworkerDocs = coworkerDocs.slice(0, 15);
@@ -94,6 +98,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         source: (w as { source?: string }).source ?? null,
         origin: commitOrigin.get(rawId) ?? null, // email|meeting|manual (commitments)
         prepared: drafted.has(rawId) ? 'draft' : preparedBy.get(rawId) ?? null,
+        preparedRef: preparedRef.get(rawId) ?? null, // → the deliverable preview (5B.3)
       };
     };
     const board = {
@@ -143,11 +148,32 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       },
       counts: { todo: board.todo.length, waiting: board.waiting.length, done: board.done.length, total: items.length },
       board, gantt, meetings, history, suggestions, conversations,
-      files: [
-        ...kbFiles.map((f) => ({ name: f.filename, source: 'knowledge', at: null as string | null })),
-        ...coworkerDocs,
-        ...attachDocs.slice(0, 15),
-      ].slice(0, 30),
+      // FILES (5A.3): dedupe by normalized filename across sources (the same contract as a KB file
+      // AND an email attachment folds to ONE row — richest ref wins, the date survives). Each row
+      // carries a preview REF for the file-preview endpoint.
+      files: (() => {
+        type FRow = { name: string; source: string; at: string | null; ref?: { kind: 'kb'; id: string } | { kind: 'attachment'; path: string } | null };
+        const rows: FRow[] = [
+          ...kbFiles.map((f) => ({ name: f.filename, source: 'knowledge', at: null as string | null, ref: { kind: 'kb' as const, id: f.id } })),
+          ...coworkerDocs.map((d) => ({ ...d, ref: null })),
+          ...attachDocs.slice(0, 15),
+        ];
+        const norm = (n: string) => n.toLowerCase().replace(/\s+/g, ' ').trim();
+        const byName = new Map<string, FRow>();
+        for (const r of rows) {
+          const k = norm(r.name);
+          const prev = byName.get(k);
+          if (!prev) { byName.set(k, r); continue; }
+          // Fold: keep the richer ref; carry the date; join provenance.
+          byName.set(k, {
+            name: prev.name,
+            source: prev.source === r.source ? prev.source : `${prev.source} · ${r.source}`,
+            at: prev.at ?? r.at,
+            ref: prev.ref ?? r.ref ?? null,
+          });
+        }
+        return [...byName.values()].slice(0, 30);
+      })(),
     });
   } catch (e) {
     console.error('[entities/detail] error:', e);

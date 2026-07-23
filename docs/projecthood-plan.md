@@ -414,7 +414,7 @@ we run the work so you only approve.*
 **PREREQUISITE: DEPLOY.** Prod's old code keeps rewriting entity states (wiping scope) on live
 traffic — every visual evaluation is degraded until this arc ships.
 
-## 5A — POLISH BATCH (the July-23 screenshot feedback)
+## 5A — POLISH BATCH — ✅ SHIPPED (July 23; smoke-tasks 31/31, room 15/15, portfolio 12/12, projecthood 31/31, build clean)
 1. **Suggestion member lines get TYPE ICONS** (Envelope / CalendarDays / CheckCircle by kind) and the
    per-member ✕ becomes ALWAYS-VISIBLE (it exists but hover-only — undiscoverable). Manage works
    both before Accept (prune) and after (the room) — same locked mechanics.
@@ -442,7 +442,17 @@ traffic — every visual evaluation is degraded until this arc ships.
   SAME spine items; if a per-deal dated view earns its way back it's a filtered lane there, never a
   second component.
 
-## 5B — THE PREPARATION PASS OVER TASKS (the differentiator)
+## 5B — THE PREPARATION PASS OVER TASKS — ✅ SHIPPED (July 23; smoke-tasks 39/39, all suites green)
+SHIPPED: the EXISTING Preparation Pass (lib/prepare/pass.ts — replies/nudges/coworker-routing/
+doc-send) IS the engine; 5B made TASKS first-class citizens of it: (1) `declared` on the spine — a
+manual commitment is never `triage` (the user's declaration IS the engagement), so manual tasks
+enter the pass's working set (live-proven both users; the bug: freshly-bootstrapped entities made
+EVERYTHING triage). (2) `classifyTaskShapes` exported (the routing judgment, testable without firing
+delegations — "prepare a one-pager"→prepare_document, "call the lawyer"→other, live-gated). (3) NEW
+`task_preparation` AIUsageSource on the pass's judge calls. (4) SURFACE: deck commitment rows carry
+prepared tokens (one pool query in the brief route); the room's prepared tokens are TAPPABLE — a
+pool deliverable opens in the preview modal (`ref {kind:'deliverable'}`), an inbox draft focuses the
+thread. The pass NEVER sends (structural gate).
 The ambient pass that today prepares replies/nudges walks OPEN TASKS: "can a built capability
 advance this?" — if yes, the work arrives prepared; if no, the task is left honestly alone.
 - **B1 — the pass** (`lib/prepare/task-pass.ts`): per user → open commitments (incl. manual, incl.
@@ -465,7 +475,16 @@ advance this?" — if yes, the work arrives prepared; if no, the task is left ho
   untouched (the honest-skip proof); NO send ever fires from the pass (structural + live assert);
   unchanged tasks re-run at zero AI cost (sig proof); all prior gates green.
 
-## 5C — THE SHAREABLE DEAL STATUS UPDATE (their most-loved agent feature, from judgment we already compute)
+## 5C — THE SHAREABLE DEAL STATUS UPDATE — ✅ SHIPPED (July 23; smoke-tasks 45/45, live cross-user)
+SHIPPED: `POST /api/entities/[id]/status-update` — one reasoned compose over judged state + the
+ledger since the last shared update; MACHINERY_REGISTER self-check + corrective retry; CACHED as an
+`item_deliverables` row (kind 'entity', metadata {statusUpdate, sig}) — an unchanged deal re-serves
+with zero AI (live-proven), and past updates anchor "since last time". Room ⋯ → "Share a status
+update" → editable modal → Copy, or Send via the user's own mailbox (/api/compose/send) — recipient
+only ever SUGGESTED from the people fingerprint, explicit approve. 5D rewrite queued: the MCP rail
+(self-hosted servers behind the registry, Nango custody, review+pin per server; Composio ruled out
+on sovereignty; core capabilities stay first-party) + vertical coworker packs (role × skills ×
+grounding × tool slice × eval gates).
 - `POST /api/entities/[id]/status-update` — ONE reasoned compose (the briefing's voice laws:
   colleague speech, say-less-than-you-know, grounded-or-absent) over the entity's judged state +
   recent ledger: "where it stands · what happened since <last update> · what's next · what we need

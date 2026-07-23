@@ -16,6 +16,7 @@ import { useRouter } from 'next/navigation';
 import { ChevronLeftIcon, ChevronRightIcon, ArrowRightIcon, CheckIcon, XMarkIcon, ArchiveBoxIcon, BellSlashIcon, ArrowUturnLeftIcon, EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
 import { ItemRail, type RailView } from '@/components/home/item-rail';
 import { ItemDetail } from '@/components/home/item-detail';
+import { pushDealTurn } from '@/components/home/item-rail';
 import { toast } from 'sonner';
 
 // A deep-dive href → the room's FOCUS target (R2 — the one shell: room-internal navigation swaps the
@@ -31,7 +32,7 @@ export function focusFromHref(href: string | null): FocusItem | null {
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { MOMENTUM as MOMENTUM_TOKENS } from '@/lib/work-items/states';
 
-type BoardItem = { id: string; title: string; who: string | null; href: string; when: string | null; source?: string | null; origin?: string | null; prepared?: string | null };
+type BoardItem = { id: string; title: string; who: string | null; href: string; when: string | null; source?: string | null; origin?: string | null; prepared?: string | null; preparedRef?: string | null };
 type HistoryLine = { at: string; kind: string; who: string | null; text: string; ref: string };
 type Detail = {
   entity: {
@@ -48,8 +49,9 @@ type Detail = {
   history?: HistoryLine[];
   suggestions?: Array<{ kind: 'inbox_item' | 'commitment'; id: string; label: string; who: string | null }>;
   conversations?: Array<{ id: string; subject: string; who: string | null; at: string | null; open: boolean }>;
-  files?: Array<{ name: string; source: string; at: string | null }>;
+  files?: Array<{ name: string; source: string; at: string | null; ref?: { kind: 'kb'; id: string } | { kind: 'attachment'; path: string } | null }>;
 };
+type FileRef = NonNullable<NonNullable<Detail['files']>[number]['ref']> | { kind: 'deliverable'; id: string };
 type LooseItem = { kind: 'inbox_item' | 'commitment' | 'meeting'; id: string; label: string; who: string | null; at: string | null };
 
 // The ONE momentum vocabulary — lib/work-items/states.ts.
@@ -112,10 +114,10 @@ function fmtProv(w: BoardItem): string {
   return w.who ? `email · ${w.who.split('<')[0].trim()}` : 'email';
 }
 
-function TaskRow({ w, onDone, onDetach, onEdit, onDue, onOpen }: {
+function TaskRow({ w, onDone, onDetach, onEdit, onDue, onOpen, onPreviewDeliverable }: {
   w: BoardItem; onDone?: () => void; onDetach: () => void;
   onEdit?: (text: string) => void; onDue?: (d: string | null) => void;
-  onOpen?: (href: string) => void;
+  onOpen?: (href: string) => void; onPreviewDeliverable?: (name: string, deliverableId: string) => void;
 }) {
   const isCommit = linkKindOfHref(w.href) === 'commitment';
   const [editing, setEditing] = useState(false);
@@ -144,8 +146,14 @@ function TaskRow({ w, onDone, onDetach, onEdit, onDue, onOpen }: {
         )}
         <p className="text-[11px] text-neutral-400 mt-0.5">
           <button onClick={() => onOpen?.(w.href)} className="hover:text-indigo-500 transition-colors">{fmtProv(w)}</button>
-          {/* PREPARED (R3c) — the system already worked your side: "drafted" or the coworker's name. */}
-          {w.prepared && <span className="ml-2 text-indigo-500 font-medium">{w.prepared === 'draft' ? 'drafted' : `${w.prepared} prepared this`}</span>}
+          {/* PREPARED (R3c/5B) — the system already worked your side. Tappable: a pool deliverable
+              previews; an inbox draft opens the thread (the draft sits in its composer). */}
+          {w.prepared && (
+            <button
+              onClick={() => { if (w.preparedRef && onPreviewDeliverable) onPreviewDeliverable(w.title, w.preparedRef); else onOpen?.(w.href); }}
+              className="ml-2 text-indigo-500 font-medium hover:text-indigo-700 transition-colors"
+            >{w.prepared === 'draft' ? 'drafted' : `${w.prepared} prepared this`}</button>
+          )}
         </p>
       </div>
       {/* Due date — a FACT chip; click-to-set for commitment-backed tasks. */}
@@ -172,10 +180,10 @@ function TaskRow({ w, onDone, onDetach, onEdit, onDue, onOpen }: {
   );
 }
 
-function TaskList({ board, onRefresh, onDetach, entityId, onOpen }: {
+function TaskList({ board, onRefresh, onDetach, entityId, onOpen, onPreviewDeliverable }: {
   board: { todo: BoardItem[]; waiting: BoardItem[]; done: BoardItem[] };
   onRefresh: () => void; onDetach: (id: string, kind: 'inbox_item' | 'commitment' | 'meeting') => void;
-  entityId: string; onOpen?: (href: string) => void;
+  entityId: string; onOpen?: (href: string) => void; onPreviewDeliverable?: (name: string, deliverableId: string) => void;
 }) {
   const [doneOpen, setDoneOpen] = useState(false);
   const [newTask, setNewTask] = useState('');
@@ -207,7 +215,7 @@ function TaskList({ board, onRefresh, onDetach, entityId, onOpen }: {
       <div>
         {board.todo.length === 0 && <p className="text-[12.5px] text-neutral-300 px-2 py-1">Nothing on your plate here.</p>}
         {board.todo.map((w) => (
-          <TaskRow key={w.id} w={w} onDone={() => complete(w)} onDetach={() => onDetach(w.id, linkKindOfHref(w.href))} onOpen={onOpen}
+          <TaskRow key={w.id} w={w} onDone={() => complete(w)} onDetach={() => onDetach(w.id, linkKindOfHref(w.href))} onOpen={onOpen} onPreviewDeliverable={onPreviewDeliverable}
             onEdit={linkKindOfHref(w.href) === 'commitment' ? (t) => edit(w, t) : undefined}
             onDue={linkKindOfHref(w.href) === 'commitment' ? (d) => due(w, d) : undefined} />
         ))}
@@ -225,7 +233,7 @@ function TaskList({ board, onRefresh, onDetach, entityId, onOpen }: {
       {[...waitingBy.entries()].map(([name, ws]) => (
         <div key={name}>
           <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-400 mb-0.5">Waiting on {name}</p>
-          {ws.map((w) => <TaskRow key={w.id} w={w} onDetach={() => onDetach(w.id, linkKindOfHref(w.href))} onOpen={onOpen} />)}
+          {ws.map((w) => <TaskRow key={w.id} w={w} onDetach={() => onDetach(w.id, linkKindOfHref(w.href))} onOpen={onOpen} onPreviewDeliverable={onPreviewDeliverable} />)}
         </div>
       ))}
       {board.done.length > 0 && (
@@ -310,6 +318,120 @@ function AddItemPicker({ onPick, onClose }: { onPick: (it: LooseItem) => void; o
   );
 }
 
+// FILE PREVIEW (5A.3) — one modal: signed URL for binaries (PDF/images inline), extracted text
+// otherwise. Portaled-free (fixed overlay), Escape/backdrop closes.
+function FilePreviewModal({ name, refv, onClose }: { name: string; refv: FileRef; onClose: () => void }) {
+  const [state, setState] = useState<{ url?: string; text?: string; loading: boolean }>({ loading: true });
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/files/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ref: refv }) })
+      .then((r) => r.json()).then((d) => { if (alive) setState({ url: d.url, text: d.text, loading: false }); })
+      .catch(() => { if (alive) setState({ loading: false }); });
+    return () => { alive = false; };
+  }, [refv]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6" onClick={onClose}>
+      <div className="absolute inset-0 bg-neutral-900/30 backdrop-blur-[2px]" />
+      <div onClick={(e) => e.stopPropagation()} className="relative w-full max-w-3xl h-[80vh] rounded-2xl border border-neutral-200 bg-white shadow-xl flex flex-col overflow-hidden">
+        <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-neutral-100">
+          <span className="min-w-0 flex-1 text-[13px] font-semibold text-neutral-800 truncate">{name}</span>
+          {state.url && <a href={state.url} target="_blank" rel="noreferrer" className="flex-shrink-0 text-[12px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors">Open in tab</a>}
+          <button onClick={onClose} className="flex-shrink-0 text-neutral-300 hover:text-neutral-600 transition-colors"><XMarkIcon className="w-4 h-4" /></button>
+        </div>
+        <div className="flex-1 min-h-0 bg-neutral-50">
+          {state.loading ? (
+            <div className="h-full flex items-center justify-center text-[13px] text-neutral-400">Loading…</div>
+          ) : state.url ? (
+            <iframe src={state.url} className="w-full h-full" title={name} />
+          ) : state.text ? (
+            <pre className="h-full overflow-y-auto whitespace-pre-wrap p-5 text-[12.5px] text-neutral-700 font-sans leading-relaxed">{state.text}</pre>
+          ) : (
+            <div className="h-full flex items-center justify-center text-[13px] text-neutral-400">No preview available.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// STATUS UPDATE (5C) — one reasoned compose over the deal's judged state, editable, shared by YOUR
+// explicit action only (Copy, or Send through the user's own connected mailbox).
+function StatusUpdateModal({ entityId, dealName, onClose }: { entityId: string; dealName: string; onClose: () => void }) {
+  const [text, setText] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [to, setTo] = useState('');
+  const [suggested, setSuggested] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/entities/${entityId}/status-update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then((r) => r.json()).then((d) => { if (!alive) return; setText(d.text ?? ''); setSuggested(d.suggestedTo ?? null); setLoading(false); })
+      .catch(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [entityId]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const copy = () => { navigator.clipboard.writeText(text).then(() => toast('Copied')).catch(() => {}); };
+  const send = async () => {
+    const rcpt = to.trim();
+    if (!rcpt || !text.trim() || sending) return;
+    setSending(true);
+    try {
+      const bodyHTML = text.split(/\n{2,}/).map((par) => `<p>${par.replace(/\n/g, '<br/>')}</p>`).join('');
+      const res = await fetch('/api/compose/send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: [rcpt], subject: `Update — ${dealName}`, bodyHTML }),
+      });
+      if (!res.ok) throw new Error();
+      toast('Sent'); onClose();
+    } catch { toast('Send failed — try again'); } finally { setSending(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6" onClick={onClose}>
+      <div className="absolute inset-0 bg-neutral-900/30 backdrop-blur-[2px]" />
+      <div onClick={(e) => e.stopPropagation()} className="relative w-full max-w-xl rounded-2xl border border-neutral-200 bg-white shadow-xl flex flex-col overflow-hidden">
+        <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-neutral-100">
+          <span className="min-w-0 flex-1 text-[13px] font-semibold text-neutral-800 truncate">Status update — {dealName}</span>
+          <button onClick={onClose} className="flex-shrink-0 text-neutral-300 hover:text-neutral-600 transition-colors"><XMarkIcon className="w-4 h-4" /></button>
+        </div>
+        {loading ? (
+          <div className="h-48 flex items-center justify-center text-[13px] text-neutral-400">Composing from what I know…</div>
+        ) : (
+          <>
+            <textarea
+              value={text} onChange={(e) => setText(e.target.value)} rows={10}
+              className="m-4 mb-2 rounded-xl border border-neutral-200 p-3 text-[13px] text-neutral-800 leading-relaxed outline-none focus:border-indigo-300 resize-none"
+            />
+            <div className="flex items-center gap-2 px-4 pb-4">
+              <input
+                value={to} onChange={(e) => setTo(e.target.value)}
+                placeholder={suggested ? `Send to… (${suggested}?)` : 'Send to…'}
+                className="min-w-0 flex-1 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[12.5px] text-neutral-700 placeholder:text-neutral-300 outline-none focus:border-indigo-300 transition-colors"
+              />
+              {suggested && !to && (
+                <button onClick={() => setTo(suggested)} className="flex-shrink-0 text-[12px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors">Use suggestion</button>
+              )}
+              <button onClick={copy} className="flex-shrink-0 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[12.5px] font-medium text-neutral-600 hover:border-neutral-300 transition-colors">Copy</button>
+              <button onClick={send} disabled={!to.trim() || !text.trim() || sending}
+                className="flex-shrink-0 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors">
+                {sending ? 'Sending…' : 'Send'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // A DISCLOSURE row (F4) — one calm line, count as the honest promise, expands inline. The room's
 // entire depth lives behind these; first paint stays general.
 function Disclosure({ label, count, open, onToggle, children }: {
@@ -337,18 +459,35 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
   // THE ONE SHELL (R2): a focused artifact renders INSIDE the room's main card — the header, rail
   // and per-deal conversation stay put; a breadcrumb steps back to the room's first paint.
   const [focused, setFocused] = useState<FocusItem | null>(null);
-  const openHref = (href: string | null) => {
+  const openHref = (href: string | null, narrate = false) => {
     const f = focusFromHref(href);
-    if (f) setFocused(f); else if (href) router.push(href);
+    if (f) {
+      setFocused(f);
+      // CONTINUATION (5A.5): a CTA-focus speaks in the room's conversation — one deterministic
+      // line from facts, no AI. The chat and the artifact move together.
+      if (narrate) {
+        pushDealTurn(entityId,
+          f.kind === 'email' ? "Here's the thread — if there's a draft it's below the messages; tell me what to change and I'll rework it."
+            : f.kind === 'meeting' ? "Here's the meeting — notes and action items below; ask me anything about it."
+              : "Here's the task — mark it done when it's handled, or tell me how to move it.");
+      }
+    } else if (href) router.push(href);
   };
   const [adding, setAdding] = useState(false);
   const [menu, setMenu] = useState(false); // the header ⋯ (status + category)
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
   const [dismissedSugg, setDismissedSugg] = useState<Set<string>>(new Set()); // session-only
+  const [preview, setPreview] = useState<{ name: string; ref: FileRef } | null>(null);
+  const [statusShare, setStatusShare] = useState(false);
   const router = useRouter();
 
   const toggle = (k: string) => setOpenSections((prev) => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  // Tasks OPEN BY DEFAULT when there's work (5A.6) — the heart of the room shows on first paint.
+  const autoOpened = useState(() => ({ done: false }))[0];
+  useEffect(() => {
+    if (!autoOpened.done && d && d.counts.total > 0) { autoOpened.done = true; setOpenSections((prev) => new Set(prev).add('work')); }
+  }, [d, autoOpened]);
 
   // Cold init + effect hydration (the SSR'd-route rule) — the artifact paints from cache first,
   // then background-refreshes; the rail hydrates after (never blocks the artifact).
@@ -447,7 +586,7 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
           </div>
         ) : (
           <div className="flex-1 min-h-0 overflow-y-auto">
-            <div className="px-6 pt-5 pb-6 max-w-[860px]">
+            <div className="px-6 pt-5 pb-6 max-w-[1000px]">
               {/* Header */}
               <button onClick={onBack} className="inline-flex items-center gap-1 text-[12.5px] font-medium text-neutral-400 hover:text-neutral-700 transition-colors mb-3">
                 <ChevronLeftIcon className="w-3.5 h-3.5" />Your work
@@ -486,6 +625,7 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
                         ) : (
                           <button onClick={() => lifecycle('reopen')} className="flex items-center gap-2 w-full px-3 py-1.5 text-[12px] text-neutral-600 hover:bg-neutral-50"><ArrowUturnLeftIcon className="w-3.5 h-3.5" />Reopen</button>
                         )}
+                        <button onClick={() => { setMenu(false); setStatusShare(true); }} className="flex items-center gap-2 w-full px-3 py-1.5 text-[12px] text-neutral-600 hover:bg-neutral-50"><EnvelopeIcon className="w-3.5 h-3.5" />Share a status update</button>
                         <div className="my-1 border-t border-neutral-100" />
                         {(['client', 'internal', 'personal', 'admin'] as const).map((c) => (
                           <button key={c} onClick={() => setCategory(c)} className="flex items-center gap-2 w-full px-3 py-1 text-[12px] text-neutral-500 hover:bg-neutral-50">
@@ -499,12 +639,15 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
                 </div>
               </div>
 
-              {/* ── FIRST PAINT (F4): THE next move + one quiet you-owe line. General; depth below. ── */}
-              <div className="mt-5 rounded-2xl border border-neutral-200/70 bg-white p-5">
+              {/* ── FIRST PAINT (F4/5A.6): the width works — next move (+ suggestions) LEFT, Goals &
+                  Rules RIGHT on wide screens (the disclosure covers narrow). ── */}
+              <div className="mt-5 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_280px] gap-4 items-start">
+              <div className="space-y-4 min-w-0">
+              <div className="rounded-2xl border border-neutral-200/70 bg-white p-5">
                 {e.nextMove ? (
                   <>
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400 mb-2">The next move</p>
-                    <button onClick={() => openHref(moveHref)} className="inline-flex items-center gap-2 rounded-lg bg-indigo-50 hover:bg-indigo-100 px-3 py-2 text-[13.5px] font-medium text-indigo-700 transition-colors max-w-full">
+                    <button onClick={() => openHref(moveHref, true)} className="inline-flex items-center gap-2 rounded-lg bg-indigo-50 hover:bg-indigo-100 px-3 py-2 text-[13.5px] font-medium text-indigo-700 transition-colors max-w-full">
                       <span className="truncate">{e.nextMove.title}</span><ArrowRightIcon className="w-4 h-4 flex-shrink-0" />
                     </button>
                   </>
@@ -527,7 +670,7 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
 
               {/* "Might belong here" — the JUDGE's verdicts (actionable, so it earns first-paint). */}
               {suggestions.length > 0 && (
-                <div className="mt-4 rounded-2xl border border-dashed border-indigo-200/70 bg-indigo-50/30 p-4">
+                <div className="rounded-2xl border border-dashed border-indigo-200/70 bg-indigo-50/30 p-4">
                   <h3 className="text-[13px] font-semibold text-neutral-800 mb-2">Might belong here</h3>
                   <div className="space-y-1.5">
                     {suggestions.map((sg) => (
@@ -543,6 +686,15 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
                 </div>
               )}
 
+              </div>
+              {/* Goals & Rules beside the state on wide screens. */}
+              <div className="hidden lg:block rounded-2xl border border-neutral-200/70 bg-white p-5 space-y-5">
+                <EditableIntent entityId={entityId} label="Goals" hint="What this work is trying to achieve." values={e.goals} onSaved={(g) => patch({ goals: g })} />
+                <div className="border-t border-neutral-100" />
+                <EditableIntent entityId={entityId} label="Rules" hint="How to work on it, and what to avoid." values={e.rules} onSaved={(r) => patch({ rules: r })} />
+              </div>
+              </div>
+
               {/* ── THE DISCLOSURES — everything else, one calm row each, inline expand. ── */}
               <div className="mt-4 space-y-2.5">
                 <Disclosure label="Tasks" count={d!.counts.total} open={openSections.has('work')} onToggle={() => toggle('work')}>
@@ -550,7 +702,8 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
                     <button onClick={() => setAdding((v) => !v)} className="inline-flex items-center gap-1 text-[12px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors">+ Add existing</button>
                     {adding && <AddItemPicker onClose={() => setAdding(false)} onPick={(it) => { setAdding(false); setMembership(it.id, it.kind, entityId); }} />}
                   </div>
-                  <TaskList board={d!.board} onRefresh={refresh} onDetach={detachItem} entityId={entityId} onOpen={openHref} />
+                  <TaskList board={d!.board} onRefresh={refresh} onDetach={detachItem} entityId={entityId} onOpen={openHref}
+                    onPreviewDeliverable={(name, id) => setPreview({ name, ref: { kind: 'deliverable', id } })} />
                 </Disclosure>
 
                 {d!.meetings.length > 0 && (
@@ -585,22 +738,25 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
                   <Disclosure label="Files & docs" count={(d!.files ?? []).length} open={openSections.has('files')} onToggle={() => toggle('files')}>
                     <div className="space-y-1">
                       {(d!.files ?? []).map((f, i) => (
-                        <div key={i} className="flex items-center gap-2.5 px-2 py-1.5">
-                          <span className="min-w-0 flex-1 text-[12.5px] text-neutral-700 truncate">{f.name}</span>
+                        <button key={i} onClick={() => { if (f.ref) setPreview({ name: f.name, ref: f.ref }); }}
+                          className={`w-full text-left flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors ${f.ref ? 'hover:bg-neutral-50/70 cursor-pointer' : 'cursor-default'}`}>
+                          <span className={`min-w-0 flex-1 text-[12.5px] truncate ${f.ref ? 'text-neutral-700' : 'text-neutral-500'}`}>{f.name}</span>
                           <span className="flex-shrink-0 text-[11px] text-neutral-400">{f.source}</span>
                           {f.at && <span className="flex-shrink-0 text-[11px] text-neutral-300 tabular-nums">{f.at}</span>}
-                        </div>
+                        </button>
                       ))}
                     </div>
                   </Disclosure>
                 )}
 
-                <Disclosure label="Goals & Rules" count={(e.goals.length + e.rules.length) || null} open={openSections.has('intent')} onToggle={() => toggle('intent')}>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <EditableIntent entityId={entityId} label="Goals" hint="What this work is trying to achieve." values={e.goals} onSaved={(g) => patch({ goals: g })} />
-                    <EditableIntent entityId={entityId} label="Rules" hint="How to work on it, and what to avoid." values={e.rules} onSaved={(r) => patch({ rules: r })} />
-                  </div>
-                </Disclosure>
+                <div className="lg:hidden">
+                  <Disclosure label="Goals & Rules" count={(e.goals.length + e.rules.length) || null} open={openSections.has('intent')} onToggle={() => toggle('intent')}>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                      <EditableIntent entityId={entityId} label="Goals" hint="What this work is trying to achieve." values={e.goals} onSaved={(g) => patch({ goals: g })} />
+                      <EditableIntent entityId={entityId} label="Rules" hint="How to work on it, and what to avoid." values={e.rules} onSaved={(r) => patch({ rules: r })} />
+                    </div>
+                  </Disclosure>
+                </div>
 
                 {history.length > 0 && (
                   <Disclosure label="Activity" count={history.length} open={openSections.has('history')} onToggle={() => toggle('history')}>
@@ -612,6 +768,9 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
           </div>
         )}
       </div>
+
+      {preview && <FilePreviewModal name={preview.name} refv={preview.ref} onClose={() => setPreview(null)} />}
+      {statusShare && e && <StatusUpdateModal entityId={entityId} dealName={e.name} onClose={() => setStatusShare(false)} />}
 
       {/* ── THE RAIL — pure conversation (the artifact owns the state; the rail never repeats it). ── */}
       <aside className="hidden lg:flex w-[380px] flex-shrink-0 flex-col h-full min-h-0">

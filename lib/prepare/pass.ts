@@ -32,6 +32,23 @@ const SHAPE_TO_ROLE: Record<string, string> = {
 };
 const DELEGATE_CAP = 2; // coworker runs are the expensive preparation — trickle, don't burst
 
+/** ONE reasoned pass: what does DOING each task involve? (The routing judgment — exported so the
+ *  gate can prove candidacy honestly without firing delegations.) */
+export async function classifyTaskShapes(admin: SupabaseClient, userId: string, titles: string[]): Promise<Record<string, string>> {
+  if (!titles.length) return {};
+  const list = titles.map((tt, i) => `${i}. ${tt.slice(0, 110)}`).join('\n');
+  const res = await aiCall<{ shapes?: Record<string, string> }>({
+    userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 200, source: 'task_preparation',
+    prompt: `For each task, classify what DOING it involves. Shapes:\n` +
+      `- prepare_document: create a doc/deck/proposal/report/one-pager\n` +
+      `- research_analyze: research/analyze/summarize/monitor something\n` +
+      `- send_document: send/share/forward an EXISTING document or file to someone\n` +
+      `- other: anything else (replying, calling, admin, deciding — HUMAN-ONLY work stays other)\n\nTASKS:\n${list}\n\n` +
+      `JSON only: {"shapes":{"<index>":"<shape>"}}`,
+  });
+  return res.json?.shapes ?? {};
+}
+
 export async function runPreparationPass(admin: SupabaseClient, userId: string): Promise<PrepareResult> {
   const todayStr = new Date().toISOString().slice(0, 10);
   const items = await buildWorkItems(admin, userId, { todayStr, skipReconcile: true });
@@ -109,18 +126,7 @@ export async function runPreparationPass(admin: SupabaseClient, userId: string):
       .filter((w) => !w.automated && w.kind !== 'reply' && (w.id.startsWith('inbox:') || w.id.startsWith('commit:')))
       .slice(0, 5);
     if (candidates.length) {
-      // ONE cheap reasoned pass: which candidates are judgment work a coworker should produce?
-      const list = candidates.map((w, i) => `${i}. ${w.title.slice(0, 110)}`).join('\n');
-      const res = await aiCall<{ shapes?: Record<string, string> }>({
-        userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 200, source: 'brain_synthesis',
-        prompt: `For each task, classify what DOING it involves. Shapes:\n` +
-          `- prepare_document: create a doc/deck/proposal/report/one-pager\n` +
-          `- research_analyze: research/analyze/summarize/monitor something\n` +
-          `- send_document: send/share/forward an EXISTING document or file to someone\n` +
-          `- other: anything else (replying, admin, deciding)\n\nTASKS:\n${list}\n\n` +
-          `JSON only: {"shapes":{"<index>":"<shape>"}}`,
-      });
-      const shapes = res.json?.shapes ?? {};
+      const shapes = await classifyTaskShapes(admin, userId, candidates.map((w) => w.title));
       const { data: workers } = await admin.from('custom_agents').select('id, name, worker_role, is_worker')
         .eq('user_id', userId).eq('is_worker', true);
       const byRole = new Map((workers ?? []).map((wk: Record<string, unknown>) => [String(wk.worker_role), wk]));
@@ -179,7 +185,7 @@ export async function runPreparationPass(admin: SupabaseClient, userId: string):
           const cTop = cCands.find((c) => c.source === 'kb');
           if (!cTop || cTop.score < 0.7) continue;
           const cJudge = await aiCall<{ match?: boolean }>({
-            userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 60, source: 'brain_synthesis',
+            userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 60, source: 'task_preparation',
             prompt: `TASK: ${w.title.slice(0, 140)}\nCANDIDATE FILE: "${cTop.filename}"\nSnippet: ${cTop.snippet.slice(0, 200)}\n\n` +
               `Is this file THE document the task asks to send/share (not merely related)? JSON only: {"match":true|false}`,
           }).catch(() => ({ json: { match: false } }));
@@ -210,7 +216,7 @@ export async function runPreparationPass(admin: SupabaseClient, userId: string):
         // whether this file IS what the task asks to send. Reject → no auto-attach (the deep-dive's
         // picker offers candidates instead). A wrong attach is worse than none — trust is the product.
         const judge = await aiCall<{ match?: boolean }>({
-          userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 60, source: 'brain_synthesis',
+          userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 60, source: 'task_preparation',
           prompt: `TASK: ${w.title.slice(0, 140)}\nCANDIDATE FILE: "${top.filename}"\nSnippet: ${top.snippet.slice(0, 200)}\n\n` +
             `Is this file THE document the task asks to send/share (not merely related)? JSON only: {"match":true|false}`,
         }).catch(() => ({ json: { match: false } }));

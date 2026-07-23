@@ -53,6 +53,8 @@ export type WorkItem = {
                               // "blocked on <person>". Only ever a real name from the row; reasoned later.
   triage: boolean;            // NEW & UNSORTED cue: its entity was founded in the last ~7 days (a fresh
                               // body of work that hasn't been engaged yet) — the report's triage lane.
+  /** A USER-DECLARED task (manual commitment) — the declaration IS the engagement; never triage. */
+  declared?: boolean;
 };
 
 const CONTENT_RULE = new Set(['needs_reply', 'to_do', 'waiting_on']);
@@ -170,6 +172,7 @@ export async function buildWorkItems(
       actor: 'you', state,
       when: { explicit, bucket: inferBucket({ explicit, waiting, ageDays: ageDaysOf((c.created_at as string) || null, todayMs), todayStr }) },
       source: 'commitment', href: '/', at, startAt: ((c.created_at as string) || at).slice(0, 10), projectId: (c.project_id as string) || null, automated: false, initiative: (c.initiative as string) || null, effort: null,
+      declared: c.source === 'manual', // the user wrote it — the declaration IS the engagement
       ...LEDGER_DEFAULTS,
     });
   }
@@ -345,7 +348,7 @@ export async function buildWorkItems(
       const e = eid ? entById.get(eid) : undefined;
       if (eid && e?.name) {
         w.entity = { id: eid, name: e.name };
-        w.triage = !!e.createdAt && Date.parse(e.createdAt) >= triageFloorMs;
+        w.triage = !w.declared && !!e.createdAt && Date.parse(e.createdAt) >= triageFloorMs;
       }
       w.priority = priorityOf({ entityWeight: e?.weight ?? null, explicit: w.when.explicit, state: w.state, automated: w.automated, todayStr });
       // Structural blocked-on: a waiting item is blocked on its counterparty — a real name from the row,

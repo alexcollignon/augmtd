@@ -604,6 +604,24 @@ export async function GET() {
       ageDays: Math.floor((now.getTime() - new Date(c.created_at).getTime()) / DAY),
       initiative: (c.initiative as string | null) ?? null,
     }));
+  // PREPARED tokens for commitment rows (5B.3 — one cheap pool query, facts only): a commitment with
+  // a prepared draft/deliverable shows "drafted" / the preparer's name on the deck like inbox rows do.
+  const commitPrepared = new Map<string, string>();
+  try {
+    const openCommitIds = commitmentCands.map((c) => c.id);
+    if (openCommitIds.length) {
+      const { data: dl } = await supabase.from('item_deliverables').select('entity_id, type, metadata')
+        .eq('user_id', user.id).eq('kind', 'commitment').in('entity_id', openCommitIds.slice(0, 200))
+        .in('type', ['draft', 'document']).order('created_at', { ascending: false }).limit(100);
+      for (const d of (dl ?? []) as Array<Record<string, unknown>>) {
+        const id = d.entity_id as string;
+        if (commitPrepared.has(id)) continue;
+        const meta = (d.metadata ?? {}) as { agentName?: string; worker?: string };
+        commitPrepared.set(id, (meta.agentName ?? meta.worker ?? 'draft') as string);
+      }
+    }
+  } catch { /* non-fatal — tokens are an enhancement */ }
+
   // Default placement from the ingest direction — used as the fallback when the synthesis has no
   // verdict for a commitment (failure / not enumerated), so behavior degrades to the old routing.
   const defaultPlacement = (dir: string): 'on_your_plate' | 'ball_in_court' | 'informational' =>
@@ -986,7 +1004,7 @@ export async function GET() {
   const commitments = dedupByDescription(
     commitmentCands
       .filter((c) => placementOf(c) === 'on_your_plate')
-      .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty || c.sourceLabel, dueDate: c.dueDate, overdue: c.overdue, dueToday: c.dueToday, initiative: clusterTag(c.initiative)?.initiative ?? null, initiativeTotal: clusterTag(c.initiative)?.initiativeTotal ?? null })),
+      .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty || c.sourceLabel, dueDate: c.dueDate, overdue: c.overdue, dueToday: c.dueToday, prepared: commitPrepared.get(c.id) ?? null, initiative: clusterTag(c.initiative)?.initiative ?? null, initiativeTotal: clusterTag(c.initiative)?.initiativeTotal ?? null })),
   )
     .sort((a, b) => {
       const rk = (x: typeof a) => (x.overdue ? 0 : x.dueToday ? 1 : x.dueDate ? 2 : 3);

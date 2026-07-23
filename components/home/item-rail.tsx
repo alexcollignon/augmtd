@@ -52,6 +52,15 @@ type Coworker = { id: string; name: string; worker_role: string | null };
 // item (no deal) keys by its own id.
 const _dealTurns = new Map<string, Turn[]>();
 
+/** Push a narration turn into a deal's conversation from OUTSIDE the rail (5A.5 — the room's
+ *  CTA-focus continuation). Writes the module store + notifies any mounted rail via a window event
+ *  (the rail re-reads its roomKey store on it). Deterministic — no AI. */
+export function pushDealTurn(entityId: string, text: string): void {
+  const turns = _dealTurns.get(entityId) ?? [];
+  _dealTurns.set(entityId, [...turns, { role: 'system', text }]);
+  try { window.dispatchEvent(new CustomEvent('aug:deal-turn', { detail: { entityId } })); } catch { /* SSR-safe */ }
+}
+
 // One roster fetch per page session (the rail only needs names/roles for the hand-off chip).
 let _coworkers: Promise<Coworker[]> | null = null;
 function fetchCoworkers(): Promise<Coworker[]> {
@@ -125,8 +134,14 @@ export function ItemRail({ kind, id, view, onDraft }: {
   const setTurns = (updater: (prev: Turn[]) => Turn[]) => {
     setTurnsRaw((prev) => { const next = updater(prev); _dealTurns.set(roomKey, next); return next; });
   };
-  // Same-deal navigation remounts the rail — restore the deal's conversation.
+  // Same-deal navigation remounts the rail — restore the deal's conversation. External pushes
+  // (pushDealTurn) land live via the window event.
   useEffect(() => { setTurnsRaw(_dealTurns.get(roomKey) ?? []); }, [roomKey]);
+  useEffect(() => {
+    const onTurn = (ev: Event) => { if ((ev as CustomEvent).detail?.entityId === roomKey) setTurnsRaw(_dealTurns.get(roomKey) ?? []); };
+    window.addEventListener('aug:deal-turn', onTurn);
+    return () => window.removeEventListener('aug:deal-turn', onTurn);
+  }, [roomKey]);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [workers, setWorkers] = useState<Coworker[]>([]);

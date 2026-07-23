@@ -45,7 +45,7 @@ function DetailHeader({
   action,
   titleClass = 'text-[20px] leading-tight',
 }: {
-  chip: React.ReactNode;
+  chip?: React.ReactNode;
   status?: React.ReactNode;
   title: string;
   meta?: React.ReactNode;
@@ -54,11 +54,13 @@ function DetailHeader({
 }) {
   return (
     <div className="flex-shrink-0 px-7 pt-6 pb-5 border-b border-neutral-200">
-      <div className="flex items-center gap-1.5 mb-2">
-        {chip}
-        {status}
-        {action && <span className="ml-auto flex-shrink-0">{action}</span>}
-      </div>
+      {(chip || status || action) && (
+        <div className="flex items-center gap-1.5 mb-2">
+          {chip}
+          {status}
+          {action && <span className="ml-auto flex-shrink-0">{action}</span>}
+        </div>
+      )}
       <h1 className={`${titleClass} font-semibold text-neutral-900`}>{title}</h1>
       {meta && <div className="flex items-center gap-2 mt-1.5 text-[13px] text-neutral-500">{meta}</div>}
     </div>
@@ -1400,8 +1402,8 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
       {/* 1 — Header: subject + sender + date (fixed at top). The badge reflects the item's REAL
           classification (a `noted`/FYI newsletter reads "For awareness", not "Reply needed"). */}
       <DetailHeader
-        chip={<KindChip tone="indigo" icon={EnvelopeIcon} label={EMAIL_BADGE[thread?.type ?? 'needs_reply'].label} />}
-        action={<AddToProjectControl kind="inbox" id={id} projectId={thread?.projectId ?? null} projectName={thread?.projectName ?? null} suggestName={thread?.initiative ?? null} compact />}
+        chip={embedded ? null : <KindChip tone="indigo" icon={EnvelopeIcon} label={EMAIL_BADGE[thread?.type ?? 'needs_reply'].label} />}
+        action={embedded ? undefined : <AddToProjectControl kind="inbox" id={id} projectId={thread?.projectId ?? null} projectName={thread?.projectName ?? null} suggestName={thread?.initiative ?? null} compact />}
         title={subject}
         meta={
           <>
@@ -1654,8 +1656,8 @@ function MeetingDetail({ id, embedded = false }: { id: string; embedded?: boolea
     <DeepDiveShell embedded={embedded} rail={railView ? <ItemRail kind="meeting" id={id} view={railView} /> : undefined}>
       {/* Header */}
       <DetailHeader
-        chip={<KindChip tone="violet" icon={CalendarDaysIcon} label="Meeting" />}
-        action={<AddToProjectControl kind="meeting" id={id} compact />}
+        chip={embedded ? null : <KindChip tone="violet" icon={CalendarDaysIcon} label="Meeting" />}
+        action={embedded ? undefined : <AddToProjectControl kind="meeting" id={id} compact />}
         title={title}
         meta={
           <>
@@ -1879,12 +1881,12 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
     <DeepDiveShell embedded={embedded} rail={railView ? <ItemRail kind="commitment" id={id} view={railView} /> : undefined}>
       {/* Header */}
       <DetailHeader
-        chip={
+        chip={embedded ? null :
           <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600">
             <CheckCircleIcon className="w-3 h-3" />{data?.direction === 'awaiting' ? 'Waiting on someone' : 'On your plate'}
           </span>
         }
-        action={<AddToProjectControl kind="commitment" id={id} compact />}
+        action={embedded ? undefined : <AddToProjectControl kind="commitment" id={id} compact />}
         status={overdue ? <span className="inline-flex items-center rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-600">Overdue</span> : undefined}
         title={data?.description || 'Commitment'}
         titleClass="text-[19px] leading-snug"
@@ -2114,8 +2116,8 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
     ) : undefined}>
       {/* Header */}
       <DetailHeader
-        chip={<KindChip tone="amber" icon={ClockIcon} label="Ball in your court" />}
-        action={<AddToProjectControl kind="inbox" id={id} compact />}
+        chip={embedded ? null : <KindChip tone="amber" icon={ClockIcon} label="Ball in your court" />}
+        action={embedded ? undefined : <AddToProjectControl kind="inbox" id={id} compact />}
         title={title}
         titleClass="text-[19px] leading-snug"
         meta={who ? <span>Waiting on {who}</span> : undefined}

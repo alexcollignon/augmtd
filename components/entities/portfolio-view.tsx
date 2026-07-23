@@ -19,6 +19,7 @@ import { useRouter } from 'next/navigation';
 import {
   ChevronRightIcon, CheckIcon, XMarkIcon, ArrowRightIcon, StarIcon,
   ArchiveBoxIcon, PencilIcon, TrashIcon, ArrowUturnLeftIcon, BellSlashIcon, MagnifyingGlassIcon, PlusIcon, ArrowsPointingInIcon,
+  EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon,
 } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
 import { broadcastProjectsUpdated } from '@/lib/projects/broadcast';
@@ -225,17 +226,21 @@ function SuggestRow({ e, onAction, onOpen }: { e: Entity; onAction: (id: string,
       </div>
       {open && (
         <div className="border-t border-indigo-100/70 px-4 py-2 space-y-1">
-          {members.slice(0, 8).map((ev) => (
-            <div key={ev.id} className="group/m flex items-center gap-2 text-[12px] text-neutral-600">
-              <span className="text-neutral-300 tabular-nums flex-shrink-0">{ev.at.slice(0, 10)}</span>
-              <span className="min-w-0 flex-1 truncate">{ev.label}</span>
-              {detachKindOf(ev.kind) && (
-                <button onClick={() => prune(ev)} className="opacity-0 group-hover/m:opacity-100 text-neutral-300 hover:text-rose-500 transition-all flex-shrink-0" title="Doesn't belong — remove before accepting">
-                  <XMarkIcon className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-          ))}
+          {members.slice(0, 8).map((ev) => {
+            const Icon = ev.kind === 'inbox_item' ? EnvelopeIcon : ev.kind === 'commitment' ? CheckCircleIcon : CalendarDaysIcon;
+            return (
+              <div key={ev.id} className="flex items-center gap-2 text-[12px] text-neutral-600">
+                <Icon className="w-3.5 h-3.5 text-neutral-300 flex-shrink-0" />
+                <span className="text-neutral-300 tabular-nums flex-shrink-0">{ev.at.slice(0, 10)}</span>
+                <span className="min-w-0 flex-1 truncate">{ev.label}</span>
+                {detachKindOf(ev.kind) && (
+                  <button onClick={() => prune(ev)} className="text-neutral-300 hover:text-rose-500 transition-colors flex-shrink-0" title="Doesn't belong — remove before accepting">
+                    <XMarkIcon className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
           {members.length === 0 && <p className="text-[12px] text-neutral-300 py-1">Nothing left — dismiss the suggestion.</p>}
         </div>
       )}
@@ -319,7 +324,20 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
     return () => { document.body.style.overflow = prev; };
   }, [creating]);
 
+  // ACCEPT is INSTANT (5A.2): flip tracked locally (the row moves to "Your projects" in the same
+  // render), fire the PATCH behind, restore + toast on failure. A silent reconcile load follows.
+  const acceptOptimistic = useCallback((id: string) => {
+    setData((prev) => (prev ? { ...prev, entities: prev.entities.map((e) => (e.id === id ? { ...e, tracked: true } : e)) } : prev));
+    fetch(`/api/entities/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'track' }) })
+      .then((r) => { if (!r.ok) throw new Error(); load(); })
+      .catch(() => {
+        setData((prev) => (prev ? { ...prev, entities: prev.entities.map((e) => (e.id === id ? { ...e, tracked: false } : e)) } : prev));
+        toast.error("Couldn't accept — try again");
+      });
+  }, [load]);
+
   const onAction = useCallback(async (id: string, action: string, name?: string) => {
+    if (action === 'track') { acceptOptimistic(id); return; }
     if (action.startsWith('intent-')) {
       const vals = JSON.parse(name || '[]') as string[];
       const body = action === 'intent-goals' ? { action: 'intent', goals: vals } : { action: 'intent', rules: vals };
@@ -331,7 +349,7 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
     const payload = action === 'merge' ? { action, targetId: name } : action === 'category' ? { action, category: name } : { action, name };
     await fetch(`/api/entities/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => {});
     load();
-  }, [load]);
+  }, [load, acceptOptimistic]);
 
   if (selected) return <EntityRoom entityId={selected} onBack={closeDetail} />;
 
@@ -387,9 +405,11 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
   // over the judged weight — plumbing, per the doctrine).
   const main = flat ? projects : projects.filter((e) => e.prominent);
   const tail = flat ? [] : projects.filter((e) => !e.prominent);
-  const acceptAll = async () => {
-    await Promise.all(suggested.map((e) => fetch(`/api/entities/${e.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'track' }) }).catch(() => {})));
-    load();
+  const acceptAll = () => {
+    const ids = suggested.map((e) => e.id);
+    setData((prev) => (prev ? { ...prev, entities: prev.entities.map((e) => (ids.includes(e.id) ? { ...e, tracked: true } : e)) } : prev));
+    Promise.all(ids.map((id) => fetch(`/api/entities/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'track' }) }).catch(() => {})))
+      .then(() => load());
   };
   // Merge targets: every ACTIVE project (the ⋯ "Merge into…" list).
   const mergeTargets = live.filter((e) => e.status === 'active' && (e.tracked || e.scope === 'project' || e.scope === null)).map((e) => ({ id: e.id, name: e.name }));
