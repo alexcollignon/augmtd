@@ -1047,16 +1047,19 @@ export async function syncEmailsForConnection(
             // Assemble the thread's messages (direction + time) for the structural check. Includes the
             // user's SENT messages — backfill/Sent-folder sync store them with is_from_user computed
             // from from_address, so the reply state is grounded in real thread history.
+            // Sender + recipients ride along for the T1 resolution floor (a forward to a third
+            // party is NOT fulfillment — only a message TO the counterparty settles the thread).
             const { data: threadMsgs } = await adminSupabase
               .from('emails')
-              .select('is_from_user, received_at')
+              .select('is_from_user, received_at, from_address, to_addresses, cc_addresses')
               .eq('user_id', connection.user_id)
               .eq('thread_id', storedEmail.thread_id);
             const { resolveThreadOnReply } = await import('@/lib/inbox/resolve-on-reply');
             await resolveThreadOnReply({
               userId: connection.user_id,
               threadId: storedEmail.thread_id,
-              threadEmails: (threadMsgs ?? []) as { is_from_user: boolean; received_at: string | null }[],
+              threadEmails: ((threadMsgs ?? []) as Array<{ is_from_user: boolean; received_at: string | null; from_address?: string | null; to_addresses?: string[] | null; cc_addresses?: string[] | null }>)
+                .map((m) => ({ is_from_user: m.is_from_user, received_at: m.received_at, from: m.from_address ?? null, to: [...(m.to_addresses ?? []), ...(m.cc_addresses ?? [])] })),
               repliedAt: storedEmail.received_at || null,
               client: adminSupabase,
               // P0 perf: no null-bust — a resolution changes the pending counts, which changes the

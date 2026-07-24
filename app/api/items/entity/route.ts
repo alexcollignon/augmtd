@@ -44,12 +44,15 @@ export async function GET(request: NextRequest) {
     const { count } = await supabase.from('commitments').select('id', { count: 'exact', head: true }).eq('user_id', user.id).eq('source', 'meeting').eq('source_id', id);
     commitmentCount = count ?? 0;
   }
-  if (!link?.entity_id) return NextResponse.json({ entityId: null, entityName: null, momentum: null, commitmentCount });
-  const { data: ent } = await supabase.from('work_entities').select('name, state').eq('id', link.entity_id).eq('user_id', user.id).maybeSingle();
+  if (!link?.entity_id) return NextResponse.json({ entityId: null, entityName: null, momentum: null, tracked: null, commitmentCount });
+  const { data: ent } = await supabase.from('work_entities').select('name, state, tracked').eq('id', link.entity_id).eq('user_id', user.id).maybeSingle();
   return NextResponse.json({
     entityId: link.entity_id,
     entityName: (ent as { name?: string } | null)?.name ?? null,
     momentum: ((ent as { state?: { momentum?: string } } | null)?.state?.momentum) ?? null,
+    // T4 (work-surface): the Prepared→Suggested→ACCEPTED boundary rides to the UI — an untracked
+    // (never-accepted) entity must render as quiet context, not project chrome.
+    tracked: !!(ent as { tracked?: boolean } | null)?.tracked,
     commitmentCount,
   });
 }

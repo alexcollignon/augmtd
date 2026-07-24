@@ -25,9 +25,18 @@ export type ItemRelevance =
   | 'action'         // the user must do something (not necessarily a reply — external/task)
   | 'awareness';     // informational for the user; no move expected from them
 
+/** M1 (work-surface): the reasoned KIND of mail — registry-grounded (team = the user's own
+ *  colleagues; customer = a person tied to a client deal), never a keyword list. */
+export type MailKind =
+  | 'receipt' | 'newsletter' | 'notification' | 'calendar' | 'cold_outreach'
+  | 'customer' | 'team' | 'personal' | 'other';
+export const MAIL_KINDS: ReadonlySet<string> = new Set(['receipt', 'newsletter', 'notification', 'calendar', 'cold_outreach', 'customer', 'team', 'personal', 'other']);
+
 export type ItemUnderstanding = {
   role: ItemRole;
   relevance: ItemRelevance;
+  /** M1 — what this mail IS (the taxonomy under the user's rules). Absent on legacy items. */
+  mailKind?: MailKind;
   /** ISO-ish language code of the thread the user would reply in (e.g. 'en', 'pt', 'fr'). Lowercased. */
   language: string | null;
   /**
@@ -128,6 +137,9 @@ export function coerceUnderstanding(raw: unknown): ItemUnderstanding | null {
   // ownership: closed set.
   const own = String(r.ownership || '').toLowerCase();
   if (own === 'you_owe' || own === 'awaiting' || own === 'none') out.ownership = own;
+  // mailKind (M1): closed set; anything else drops (consumers fall back to bulk/header signals).
+  const mk = String((r as Record<string, unknown>).kind ?? (r as Record<string, unknown>).mailKind ?? '').toLowerCase();
+  if (MAIL_KINDS.has(mk)) out.mailKind = mk as MailKind;
   // effort: closed set (quick/medium/deep).
   const eff = String(r.effort || '').toLowerCase();
   if (eff === 'quick' || eff === 'medium' || eff === 'deep') out.effort = eff;

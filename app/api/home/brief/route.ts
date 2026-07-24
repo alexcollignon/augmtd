@@ -455,7 +455,12 @@ export async function GET() {
     // ONE relevance → ONE home (no overlap). Items lacking understanding fall back to today's behavior
     // (the automated re-posture below). No keyword/sender heuristic drives the split — relevance encodes it.
     const u = getUnderstanding(it);
-    if (u && u.relevance === 'action') {
+    // H4 (work-surface): a CALENDAR acceptance/update or a plain NOTIFICATION judged merely "action"
+    // is not a task — it leaves the deck (the digest keeps it) UNLESS a user rule explicitly said
+    // needs_reply/to_do (rules are authoritative) or a real stated deadline makes it an obligation.
+    const kindDemoted = !!u && (u.mailKind === 'calendar' || u.mailKind === 'notification')
+      && it.rule_type !== 'needs_reply' && it.rule_type !== 'to_do' && !u.deadline;
+    if (u && u.relevance === 'action' && !kindDemoted) {
       // An action-notice: its own section, never a reply card, never a needs-you priority. We DON'T push
       // it into `priorities` (so it can't count as needs-you) or `mustRespondRaw`; we still feed
       // emailSeeds so per-person context stays complete, then skip the reply/priority wiring.

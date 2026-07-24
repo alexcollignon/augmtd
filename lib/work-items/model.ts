@@ -55,6 +55,7 @@ export type WorkItem = {
                               // body of work that hasn't been engaged yet) — the report's triage lane.
   /** A USER-DECLARED task (manual commitment) — the declaration IS the engagement; never triage. */
   declared?: boolean;
+  manualPriority?: 'high' | 'low' | null; // B4 — the human's stored override (never computed)
 };
 
 const CONTENT_RULE = new Set(['needs_reply', 'to_do', 'waiting_on']);
@@ -124,10 +125,11 @@ export async function buildWorkItems(
   // ── Commitments (you_owe → todo · awaiting → waiting) ─────────────────────────────────────────────
   const [{ data: commits }, { data: inbox }, { data: threads }] = await Promise.all([
     supabase.from('commitments')
-      // Active commitments use status 'open' (some legacy 'pending'); resolved = done/dismissed.
+      // Active commitments use status 'open' (some legacy 'pending'; B4 adds the human-set
+      // 'in_progress'); resolved = done/dismissed. 'suggested' (B2) is excluded by construction.
       .select('id, description, counterparty, direction, source, source_id, thread_id, due_date, status, resolved_at, created_at, resolved_reason, project_id, initiative')
       .eq('user_id', userId)
-      .or(`status.in.(open,pending),and(status.in.(done,dismissed),resolved_at.gte.${doneSince})`)
+      .or(`status.in.(open,pending,in_progress),and(status.in.(done,dismissed),resolved_at.gte.${doneSince})`)
       .limit(500),
     supabase.from('inbox_items')
       .select('id, work_title, work_state, rule_type, type_override, source, source_id, source_meeting_transcript_id, source_data, status, created_at, last_activity_at, project_id')
@@ -162,7 +164,8 @@ export async function buildWorkItems(
     const status = String(c.status || 'pending');
     const dir = String(c.direction || 'you_owe');
     const waiting = dir === 'awaiting';
-    const state: WorkItemState = status === 'done' ? 'done' : status === 'dismissed' ? 'dismissed' : waiting ? 'waiting' : 'todo';
+    // B4: the human's hand ('in_progress') outranks the derived direction — you're actively on it.
+    const state: WorkItemState = status === 'done' ? 'done' : status === 'dismissed' ? 'dismissed' : status === 'in_progress' ? 'in_progress' : waiting ? 'waiting' : 'todo';
     const explicit = (c.due_date as string) || null;
     const at = explicit || (c.resolved_at as string) || (c.created_at as string) || todayStr;
     items.push({
@@ -311,17 +314,27 @@ export async function buildWorkItems(
   // blocked-on (the awaiting counterparty), and the triage cue (entity founded in the last ~7 days).
   // Non-fatal: a failed join leaves the defaults (entity null, priority 20). ──
   try {
-    // The user's OWN identities (login + connected mailboxes + name) — a wait can never be blocked on
-    // YOURSELF (the observed self-block bug: "blocked on <own address>" from a mis-captured counterparty).
-    const [{ data: selfProf }, { data: selfConns }] = await Promise.all([
+    // IDENTITY (orchestrated-loop O1c): "is this the user?" is answered by the PERSON REGISTRY —
+    // the self entity carries every form the user provably appears as (incl. nickname from-forms on
+    // their own sent mail, e.g. "Alex" for "Alexandre"). The structural floor underneath is EXACT
+    // equality with the login/mailbox addresses + profile name (facts that need no registry). The
+    // old name-substring lens is gone — it both missed nickname forms and could over-match.
+    const { getPersonEntities, resolveIdentity, parseWho } = await import('@/lib/entities/people');
+    const [{ data: selfProf }, { data: selfConns }, persons] = await Promise.all([
       supabase.from('profiles').select('email, full_name').eq('id', userId).maybeSingle(),
       supabase.from('connections').select('metadata, provider_account_id').eq('user_id', userId),
+      getPersonEntities(supabase, userId),
     ]);
-    const selfIds = new Set<string>();
-    const addSelf = (s: string | null | undefined) => { const t = String(s || '').toLowerCase().trim(); if (t) selfIds.add(t); };
+    const selfExact = new Set<string>();
+    const addSelf = (s: string | null | undefined) => { const t = String(s || '').toLowerCase().trim(); if (t) selfExact.add(t); };
     addSelf(selfProf?.email); addSelf(selfProf?.full_name);
     for (const c of (selfConns ?? []) as Array<Record<string, unknown>>) addSelf(((c.metadata as { email?: string } | null)?.email) || (c.provider_account_id as string));
-    const isSelf = (who: string): boolean => { const w = who.toLowerCase(); return [...selfIds].some((s) => w === s || w.includes(s) || (s.includes('@') && w.includes(s.split('@')[0] + '@'))); };
+    const isSelf = (who: string): boolean => {
+      const { email, name } = parseWho(who);
+      if (email && selfExact.has(email.toLowerCase())) return true;
+      if (name && selfExact.has(name.toLowerCase())) return true;
+      return resolveIdentity(persons, who).isSelf;
+    };
 
     const inboxIds = items.filter((w) => w.id.startsWith('inbox:')).map((w) => w.entityId);
     const commitIds = items.filter((w) => w.id.startsWith('commit:')).map((w) => w.entityId);
@@ -342,6 +355,16 @@ export async function buildWorkItems(
       }
     }
     const linkByItem = new Map(linkRows.map((l) => [l.item_id, l.entity_id]));
+    // B4: the human's MANUAL priority (commitments.priority — migration 20260724c; the query simply
+    // returns nothing pre-migration, so this degrades to no overrides).
+    const manualPriority = new Map<string, string>();
+    {
+      const { data: pr } = await supabase.from('commitments').select('id, priority')
+        .eq('user_id', userId).not('priority', 'is', null).limit(500);
+      for (const p of (pr ?? []) as Array<{ id: string; priority: string | null }>) {
+        if (p.priority) manualPriority.set(`commit:${p.id}`, String(p.priority));
+      }
+    }
     const triageFloorMs = todayMs - 7 * 86_400_000;
     for (const w of items) {
       const eid = linkByItem.get(w.entityId);
@@ -350,7 +373,16 @@ export async function buildWorkItems(
         w.entity = { id: eid, name: e.name };
         w.triage = !w.declared && !!e.createdAt && Date.parse(e.createdAt) >= triageFloorMs;
       }
+      // A "wait" whose counterparty IS the user is structurally impossible — you cannot be blocked on
+      // yourself — so it flips to the user's own to-do BEFORE priority reads the state (the observed
+      // "Waiting on <the user>" room bug: a mis-captured counterparty on an otherwise-real task).
+      if (w.state === 'waiting' && w.who && isSelf(w.who)) w.state = 'todo';
       w.priority = priorityOf({ entityWeight: e?.weight ?? null, explicit: w.when.explicit, state: w.state, automated: w.automated, todayStr });
+      // B4: a human-set priority OUTRANKS the computed weight, permanently (the project_locked rule).
+      const mp = manualPriority.get(w.id);
+      if (mp === 'high') w.priority = Math.max(w.priority, 85);
+      else if (mp === 'low') w.priority = Math.min(w.priority, 15);
+      if (mp === 'high' || mp === 'low') w.manualPriority = mp;
       // Structural blocked-on: a waiting item is blocked on its counterparty — a real name from the row,
       // never invented, NEVER the user themself (self-block guard), and NEVER an automated sender
       // (no-reply/bounce/notification addresses are not people you can be blocked on).

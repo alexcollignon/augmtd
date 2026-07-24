@@ -14,6 +14,10 @@ export interface ThreadMessage {
   is_from_user: boolean;
   /** ISO timestamp of the message. */
   received_at: string | null;
+  /** OPTIONAL recipient addresses (to+cc, any case) — powers the T1 resolution floor below. */
+  to?: string[] | null;
+  /** OPTIONAL sender address — used to derive the thread's counterparty. */
+  from?: string | null;
 }
 
 export interface ThreadReplyState {
@@ -31,6 +35,35 @@ function toTime(v: string | null | undefined): number | null {
   if (!v) return null;
   const t = new Date(v).getTime();
   return Number.isFinite(t) ? t : null;
+}
+
+// ── T1 (work-surface, docs/work-surface-plan.md): A FORWARD IS NOT FULFILLMENT. ──────────────────
+// A user-sent message counts toward RESOLUTION only when it's addressed to the thread's
+// counterparty — forwarding the thread to a colleague ("FYI") does not settle what the user owes
+// the sender. Structural: exact address membership in to/cc, no text inspection. A user message
+// with UNKNOWN recipients degrades to counting (the pre-T1 behavior) so callers that can't supply
+// recipients never silently stop resolving. The brief's display-level reply-state keeps the loose
+// meaning; this filter applies ONLY where a resolution is about to be committed.
+
+/** The thread's counterparty address — the newest non-user message's sender (null if unknowable). */
+export function threadCounterpartyEmail(messages: ThreadMessage[]): string | null {
+  let best: { t: number; from: string } | null = null;
+  for (const m of messages) {
+    if (m.is_from_user || !m.from) continue;
+    const t = toTime(m.received_at) ?? 0;
+    if (!best || t > best.t) best = { t, from: m.from };
+  }
+  return best ? best.from.toLowerCase().trim() : null;
+}
+
+/** Messages eligible for RESOLUTION judging: user messages not addressed to the counterparty drop. */
+export function messagesForResolution(messages: ThreadMessage[], counterpartyEmail: string | null | undefined): ThreadMessage[] {
+  const cp = (counterpartyEmail || '').toLowerCase().trim();
+  if (!cp) return messages; // counterparty unknowable → degrade to the pre-T1 behavior
+  return messages.filter((m) =>
+    !m.is_from_user
+    || !m.to || m.to.length === 0 // recipients unknown → degrade (never silently stop resolving)
+    || m.to.some((a) => String(a).toLowerCase().trim() === cp));
 }
 
 /**

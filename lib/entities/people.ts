@@ -9,7 +9,7 @@ export type PersonEntity = {
   id: string;
   name: string;
   aliases: string[];
-  state: { summary?: string; relationship?: string; momentum?: string; whoOwes?: { you: string[]; them: string[] }; cadence?: string | null; style?: string | null; last_touch?: { when: string | null; what: string; channel: string } | null } | null;
+  state: { self?: boolean; summary?: string; relationship?: string; momentum?: string; whoOwes?: { you: string[]; them: string[] }; cadence?: string | null; style?: string | null; last_touch?: { when: string | null; what: string; channel: string } | null } | null;
   nextTouch: { kind?: string; title?: string; reason?: string; entityRef?: string | null } | null;
   lastEventAt: string | null;
   /** Derived from last_event_at (the entity registry stores no quiet_days column). */
@@ -44,6 +44,26 @@ export async function getPersonEntities(supabase: SupabaseClient, userId: string
   } catch { /* pre-migration / non-fatal */ }
   memo.set(userId, { at: Date.now(), list });
   return list;
+}
+
+/** Split a raw "Name <email>" / bare-email / bare-name identity string into its forms. */
+export function parseWho(raw: string | null | undefined): { email: string | null; name: string | null } {
+  const s = String(raw ?? '').trim();
+  if (!s) return { email: null, name: null };
+  const m = s.match(/^(.*?)<([^>]+@[^>]+)>\s*$/);
+  if (m) return { name: m[1].trim() || null, email: m[2].trim() };
+  if (s.includes('@') && !s.includes(' ')) return { email: s, name: null };
+  return { email: null, name: s };
+}
+
+/** Resolve a raw identity string through the registry (orchestrated-loop O1) — the ONE identity
+ *  answer every consumer reads: which human, is it the user, and their canonical name. */
+export function resolveIdentity(list: PersonEntity[], raw: string | null | undefined): {
+  person: PersonEntity | null; isSelf: boolean; canonical: string | null;
+} {
+  const { email, name } = parseWho(raw);
+  const person = findPersonEntity(list, email, name);
+  return { person, isSelf: person?.state?.self === true, canonical: person?.name ?? null };
 }
 
 /** Find the ONE human an email/name refers to — alias containment (the registry did the identity work). */

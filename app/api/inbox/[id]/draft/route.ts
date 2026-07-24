@@ -35,6 +35,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const rules = await loadUserRules(user.id, supabase);
     setInboxRules(rules);
   } catch { /* fall back to default rules */ }
+  // T3 (work-surface): an AUTOMATED sender can never receive a reply — refuse before any
+  // generation AND never serve a stale pre-T3 draft for one.
+  const { isAutomatedSender } = await import('@/lib/inbox/automated');
+  if (isAutomatedSender((sd.from_address as string) || null, (sd.from_name as string) || null, (sd.subject as string) || '')) {
+    return NextResponse.json({ draft: '', skipped: 'automated_sender' });
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   if (!shouldDraftReply(item as any)) {
     return NextResponse.json({ draft: '', skipped: 'not_a_reply' });

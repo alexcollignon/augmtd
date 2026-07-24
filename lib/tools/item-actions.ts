@@ -40,8 +40,10 @@ export async function executeResolveInboxItem(
   const status = resolution === 'complete' ? 'completed' : 'dismissed';
   const resolvedReason = args.resolutionReason
     ?? (resolution === 'complete' ? 'completed' : 'dismissed');
+  // D2 (work-surface): the user's free-text context ("we'll discuss it Thursday") is a LEDGER fact —
+  // stored on the item so assembleLedger surfaces it and the next state synthesis reasons WITH it.
   const { error: updateError } = await client.from('inbox_items')
-    .update({ status, source_data: { ...sd, resolved_at: nowIso, resolution_reason: resolvedReason }, updated_at: nowIso })
+    .update({ status, source_data: { ...sd, resolved_at: nowIso, resolution_reason: resolvedReason, ...(args.reason?.trim() ? { dismiss_note: String(args.reason).trim().slice(0, 200) } : {}) }, updated_at: nowIso })
     .eq('id', itemId).eq('user_id', userId);
   if (updateError) return { ok: false, error: `Failed to ${resolution} item` };
 
@@ -80,14 +82,15 @@ export async function executeResolveInboxItem(
 /** Resolve a commitment (done / dismissed) — the PATCH /api/commitments/[id] core. Reversible. */
 export async function executeResolveCommitment(
   { client, userId }: Ctx,
-  args: { commitmentId: string; resolution: 'done' | 'dismissed' },
+  args: { commitmentId: string; resolution: 'done' | 'dismissed'; reason?: string | null },
 ): Promise<{ ok: boolean; title?: string; error?: string }> {
   const { data: c } = await client.from('commitments').select('id, description')
     .eq('id', args.commitmentId).eq('user_id', userId).maybeSingle();
   if (!c) return { ok: false, error: 'Commitment not found' };
   const nowIso = new Date().toISOString();
+  // D2: a stated reason becomes the resolved_reason (a ledger fact the synthesis reads).
   const { error } = await client.from('commitments')
-    .update({ status: args.resolution, resolved_at: nowIso, resolved_reason: 'chat', updated_at: nowIso })
+    .update({ status: args.resolution, resolved_at: nowIso, resolved_reason: args.reason?.trim() ? String(args.reason).trim().slice(0, 200) : 'chat', updated_at: nowIso })
     .eq('id', args.commitmentId).eq('user_id', userId);
   if (error) return { ok: false, error: 'Failed to update commitment' };
   await logActivity(client, userId, {

@@ -18,35 +18,50 @@ import { ItemRail, type RailView } from '@/components/home/item-rail';
 import { ItemDetail } from '@/components/home/item-detail';
 import { pushDealTurn } from '@/components/home/item-rail';
 import { AddItemPicker } from '@/components/entities/add-item-picker';
+import GanttChart from '@/components/entities/gantt-chart';
 import { toast } from 'sonner';
 
 // A deep-dive href → the room's FOCUS target (R2 — the one shell: room-internal navigation swaps the
 // focused artifact instead of leaving the shell). Unknown hrefs return null → normal navigation.
-type FocusItem = { kind: 'email' | 'commitment' | 'meeting' | 'followup'; id: string };
+// B5 (workbench): a pool DELIVERABLE is a first-class focus — it opens IN the main card (the
+// artifact plane), not a modal. The conversation and the room's context stay put around it.
+type FocusItem = { kind: 'email' | 'commitment' | 'meeting' | 'followup'; id: string } | { kind: 'deliverable'; id: string; title: string };
 export function focusFromHref(href: string | null): FocusItem | null {
   if (!href) return null;
   const m = href.match(/^\/item\/([^/?]+)(?:\?kind=(email|commitment|meeting|followup|awareness))?/);
   if (!m) return null;
-  const k = m[2] === 'awareness' ? 'email' : (m[2] ?? 'email');
-  return { kind: k as FocusItem['kind'], id: m[1] };
+  const k = (m[2] === 'awareness' ? 'email' : (m[2] ?? 'email')) as 'email' | 'commitment' | 'meeting' | 'followup';
+  return { kind: k, id: m[1] };
 }
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { MOMENTUM as MOMENTUM_TOKENS } from '@/lib/work-items/states';
 
-type BoardItem = { id: string; title: string; who: string | null; href: string; when: string | null; source?: string | null; origin?: string | null; prepared?: string | null; preparedRef?: string | null };
+type BoardItem = { id: string; title: string; who: string | null; href: string; when: string | null; source?: string | null; origin?: string | null; prepared?: string | null; preparedRef?: string | null; blockedOn?: string | null; priority?: 'high' | 'low' | null };
 type HistoryLine = { at: string; kind: string; who: string | null; text: string; ref: string };
 type Detail = {
   entity: {
     id: string; name: string; tracked: boolean; status: string;
+    category?: string | null;
     momentum: string; summary: string | null; stage: string | null;
     whoOwes: { you: string[]; them: string[] };
     nextMove: { title: string; entityRef: string | null } | null;
+    suggestedWorker?: { id: string; name: string; role: string } | null;
     weight: number; goals: string[]; rules: string[];
   };
   counts: { todo: number; waiting: number; done: number; total: number };
-  board: { todo: BoardItem[]; waiting: BoardItem[]; done: BoardItem[] };
-  gantt: Array<{ title: string; who: string | null; state: string; marker: 'done' | 'due' | 'open'; date: string; arrival: string; overdue: boolean; href: string | null }>;
+  board: { todo: BoardItem[]; doing?: BoardItem[]; waiting: BoardItem[]; done: BoardItem[] };
+  gantt: Array<{ title: string; who: string | null; state: string; marker: 'done' | 'due' | 'open' | 'undated'; date: string; arrival: string; overdue: boolean; href: string | null }>;
+  // B1b — the living status brief: pure server assembly of already-judged/factual lines.
+  statusBrief?: {
+    whatItIs: string | null; priorityNow: string | null;
+    keyDates: Array<{ date: string; label: string; href: string | null }>;
+    people: string[];
+    deliverables: Array<{ title: string; by: string | null; at: string | null; ref: string | null }>;
+    watchOuts: string[];
+  } | null;
   meetings: Array<{ id: string; title: string; date: string | null }>;
+  // B2 — meeting-proposed tasks (status 'suggested') awaiting the user's Accept/Reject.
+  proposed?: Array<{ id: string; description: string; counterparty: string | null; due: string | null; sourceId: string | null }>;
   history?: HistoryLine[];
   suggestions?: Array<{ kind: 'inbox_item' | 'commitment'; id: string; label: string; who: string | null }>;
   conversations?: Array<{ id: string; subject: string; who: string | null; at: string | null; open: boolean }>;
@@ -115,19 +130,28 @@ function fmtProv(w: BoardItem): string {
   return w.who ? `email · ${w.who.split('<')[0].trim()}` : 'email';
 }
 
-function TaskRow({ w, onDone, onDetach, onEdit, onDue, onOpen, onPreviewDeliverable }: {
+function TaskRow({ w, onDone, onDetach, onEdit, onDue, onOpen, onPreviewDeliverable, onPrepare, doing, onToggleDoing, onPriority }: {
   w: BoardItem; onDone?: () => void; onDetach: () => void;
   onEdit?: (text: string) => void; onDue?: (d: string | null) => void;
   onOpen?: (href: string) => void; onPreviewDeliverable?: (name: string, deliverableId: string) => void;
+  onPrepare?: () => Promise<void>;
+  // B4 — the human's hand: doing (in_progress) + a manual priority override.
+  doing?: boolean; onToggleDoing?: () => void; onPriority?: (p: 'high' | 'low' | null) => void;
 }) {
   const isCommit = linkKindOfHref(w.href) === 'commitment';
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(w.title);
   const [dating, setDating] = useState(false);
+  const [preparing, setPreparing] = useState(false);
   return (
     <div className="group/t flex items-start gap-2.5 rounded-lg px-2 py-1.5 hover:bg-neutral-50/70 transition-colors">
       {onDone ? (
-        <button onClick={onDone} className="flex-shrink-0 mt-0.5 w-4 h-4 rounded-[5px] border border-neutral-300 hover:border-emerald-500 hover:bg-emerald-50 transition-colors" title="Mark done" />
+        // The checkbox always COMPLETES (one tap — sacred); a "doing" row shows a half-filled box.
+        <button onClick={onDone}
+          className={`flex-shrink-0 mt-0.5 w-4 h-4 rounded-[5px] border transition-colors ${doing ? 'border-indigo-400 bg-indigo-100' : 'border-neutral-300 hover:border-emerald-500 hover:bg-emerald-50'}`}
+          title="Mark done">
+          {doing && <span className="block w-1.5 h-1.5 m-auto mt-[3.5px] rounded-[2px] bg-indigo-500" />}
+        </button>
       ) : (
         <span className="flex-shrink-0 mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-300" title="Waiting on them" />
       )}
@@ -154,6 +178,27 @@ function TaskRow({ w, onDone, onDetach, onEdit, onDue, onOpen, onPreviewDelivera
               onClick={() => { if (w.preparedRef && onPreviewDeliverable) onPreviewDeliverable(w.title, w.preparedRef); else onOpen?.(w.href); }}
               className="ml-2 text-indigo-500 font-medium hover:text-indigo-700 transition-colors"
             >{w.prepared === 'draft' ? 'drafted' : `${w.prepared} prepared this`}</button>
+          )}
+          {/* ON-DEMAND preparation (W4) — the same ONE engine the ambient pass walks; visible
+              in-flight state; the prepared token replaces this on refresh. */}
+          {!w.prepared && onPrepare && (
+            <button
+              onClick={async () => { if (preparing) return; setPreparing(true); try { await onPrepare(); } finally { setPreparing(false); } }}
+              className={`ml-2 font-medium transition-all ${preparing ? 'text-indigo-400 animate-pulse' : 'text-indigo-500 opacity-0 group-hover/t:opacity-100 hover:text-indigo-700'}`}
+            >{preparing ? 'Preparing…' : 'Prepare'}</button>
+          )}
+          {/* B4 — Start/Pause (in_progress) + the manual priority override (human outranks machine). */}
+          {onToggleDoing && (
+            <button onClick={onToggleDoing}
+              className={`ml-2 font-medium transition-all ${doing ? 'text-indigo-500 hover:text-indigo-700' : 'text-neutral-400 opacity-0 group-hover/t:opacity-100 hover:text-indigo-600'}`}
+            >{doing ? 'Pause' : 'Start'}</button>
+          )}
+          {onPriority && (
+            <button
+              onClick={() => onPriority(w.priority === 'high' ? 'low' : w.priority === 'low' ? null : 'high')}
+              className={`ml-2 font-medium transition-all ${w.priority === 'high' ? 'text-rose-500 hover:text-rose-700' : w.priority === 'low' ? 'text-neutral-400 hover:text-neutral-600' : 'text-neutral-300 opacity-0 group-hover/t:opacity-100 hover:text-neutral-500'}`}
+              title="Cycle priority: high → low → auto"
+            >{w.priority === 'high' ? 'high' : w.priority === 'low' ? 'low' : 'priority'}</button>
           )}
         </p>
       </div>
@@ -182,7 +227,7 @@ function TaskRow({ w, onDone, onDetach, onEdit, onDue, onOpen, onPreviewDelivera
 }
 
 function TaskList({ board, onRefresh, onDetach, entityId, onOpen, onPreviewDeliverable }: {
-  board: { todo: BoardItem[]; waiting: BoardItem[]; done: BoardItem[] };
+  board: { todo: BoardItem[]; doing?: BoardItem[]; waiting: BoardItem[]; done: BoardItem[] };
   onRefresh: () => void; onDetach: (id: string, kind: 'inbox_item' | 'commitment' | 'meeting') => void;
   entityId: string; onOpen?: (href: string) => void; onPreviewDeliverable?: (name: string, deliverableId: string) => void;
 }) {
@@ -205,20 +250,53 @@ function TaskList({ board, onRefresh, onDetach, entityId, onOpen, onPreviewDeliv
     setNewTask('');
     fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ description: t, entityId }) }).then(onRefresh).catch(() => {});
   };
-  // Waiting grouped BY COUNTERPARTY — the human owner made visible.
+  // B4 — the human's hand: Start/Pause (status in_progress ↔ open) + the manual priority override.
+  const toggleDoing = (w: BoardItem, nowDoing: boolean) =>
+    fetch(`/api/commitments/${w.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: nowDoing ? 'open' : 'in_progress' }) }).then(onRefresh).catch(() => {});
+  const setPriority = (w: BoardItem, p: 'high' | 'low' | null) =>
+    fetch(`/api/commitments/${w.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ priority: p }) }).then(onRefresh).catch(() => {});
+  // W4: on-demand preparation for a row — THE ONE engine (meetings aren't preparable).
+  const prepare = async (w: BoardItem) => {
+    const k = linkKindOfHref(w.href);
+    if (k === 'meeting') return;
+    await fetch('/api/items/prepare-now', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: k === 'commitment' ? 'commitment' : 'inbox', id: w.id }),
+    }).catch(() => {});
+    onRefresh();
+  };
+  // Waiting grouped BY COUNTERPARTY — the human owner made visible. Keys on the spine's GUARDED
+  // blockedOn (never the user themself, never an automated sender), not raw `who`.
   const waitingBy = new Map<string, BoardItem[]>();
   for (const w of board.waiting) {
-    const key = w.who ? w.who.split('<')[0].trim().split(' ')[0] : 'them';
+    const key = w.blockedOn ? w.blockedOn.split('<')[0].trim().split(' ')[0] : 'them';
     (waitingBy.get(key) ?? waitingBy.set(key, []).get(key)!).push(w);
   }
   return (
     <div className="space-y-3">
+      {/* B4 — DOING: the tasks the human marked as actively worked; lead the list. */}
+      {(board.doing ?? []).length > 0 && (
+        <div>
+          <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-indigo-400 mb-0.5">Doing</p>
+          {(board.doing ?? []).map((w) => (
+            <TaskRow key={w.id} w={w} doing onDone={() => complete(w)} onDetach={() => onDetach(w.id, linkKindOfHref(w.href))} onOpen={onOpen} onPreviewDeliverable={onPreviewDeliverable}
+              onEdit={linkKindOfHref(w.href) === 'commitment' ? (t) => edit(w, t) : undefined}
+              onDue={linkKindOfHref(w.href) === 'commitment' ? (d) => due(w, d) : undefined}
+              onPrepare={linkKindOfHref(w.href) !== 'meeting' ? () => prepare(w) : undefined}
+              onToggleDoing={() => toggleDoing(w, true)}
+              onPriority={linkKindOfHref(w.href) === 'commitment' ? (p) => setPriority(w, p) : undefined} />
+          ))}
+        </div>
+      )}
       <div>
-        {board.todo.length === 0 && <p className="text-[12.5px] text-neutral-300 px-2 py-1">Nothing on your plate here.</p>}
+        {board.todo.length === 0 && (board.doing ?? []).length === 0 && <p className="text-[12.5px] text-neutral-300 px-2 py-1">Nothing on your plate here.</p>}
         {board.todo.map((w) => (
           <TaskRow key={w.id} w={w} onDone={() => complete(w)} onDetach={() => onDetach(w.id, linkKindOfHref(w.href))} onOpen={onOpen} onPreviewDeliverable={onPreviewDeliverable}
             onEdit={linkKindOfHref(w.href) === 'commitment' ? (t) => edit(w, t) : undefined}
-            onDue={linkKindOfHref(w.href) === 'commitment' ? (d) => due(w, d) : undefined} />
+            onDue={linkKindOfHref(w.href) === 'commitment' ? (d) => due(w, d) : undefined}
+            onPrepare={linkKindOfHref(w.href) !== 'meeting' ? () => prepare(w) : undefined}
+            onToggleDoing={linkKindOfHref(w.href) === 'commitment' ? () => toggleDoing(w, false) : undefined}
+            onPriority={linkKindOfHref(w.href) === 'commitment' ? (p) => setPriority(w, p) : undefined} />
         ))}
         {/* + Task — created in THIS room (linked + locked); the brain sees it via the ledger. */}
         <div className="flex items-center gap-2.5 px-2 py-1.5">
@@ -234,7 +312,8 @@ function TaskList({ board, onRefresh, onDetach, entityId, onOpen, onPreviewDeliv
       {[...waitingBy.entries()].map(([name, ws]) => (
         <div key={name}>
           <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-400 mb-0.5">Waiting on {name}</p>
-          {ws.map((w) => <TaskRow key={w.id} w={w} onDetach={() => onDetach(w.id, linkKindOfHref(w.href))} onOpen={onOpen} onPreviewDeliverable={onPreviewDeliverable} />)}
+          {ws.map((w) => <TaskRow key={w.id} w={w} onDetach={() => onDetach(w.id, linkKindOfHref(w.href))} onOpen={onOpen} onPreviewDeliverable={onPreviewDeliverable}
+            onPrepare={linkKindOfHref(w.href) !== 'meeting' ? () => prepare(w) : undefined} />)}
         </div>
       ))}
       {board.done.length > 0 && (
@@ -281,6 +360,41 @@ function HistoryList({ lines, onOpen }: { lines: HistoryLine[]; onOpen?: (href: 
           ? <button key={i} onClick={() => (onOpen ? onOpen(href) : router.push(href))} className="group/h block w-full text-left">{row}</button>
           : <div key={i}>{row}</div>;
       })}
+    </div>
+  );
+}
+
+// ── B5 — the ARTIFACT PLANE for prepared work: a pool deliverable renders IN the main card (title,
+// by-whom, when, content) with the room's conversation beside it — the Claude pattern applied to
+// work. The chat can discuss it; a chat-driven REWORK (new pool version) is the queued next half. ──
+function DeliverableFocus({ id, title, meta }: {
+  id: string; title: string; meta: { by: string | null; at: string | null } | null;
+}) {
+  const [state, setState] = useState<{ text?: string; loading: boolean }>({ loading: true });
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/files/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ref: { kind: 'deliverable', id } }) })
+      .then((r) => r.json()).then((dd) => { if (alive) setState({ text: dd.text, loading: false }); })
+      .catch(() => { if (alive) setState({ loading: false }); });
+    return () => { alive = false; };
+  }, [id]);
+  return (
+    <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className="px-6 pt-5 pb-8 max-w-[760px]">
+        <h1 className="text-[19px] font-semibold tracking-tight text-neutral-900">{title}</h1>
+        {meta && (meta.by || meta.at) && (
+          <p className="text-[12px] text-neutral-400 mt-1">{meta.by ? `Prepared by ${meta.by}` : 'Prepared'}{meta.at ? ` · ${meta.at}` : ''}</p>
+        )}
+        <div className="mt-4">
+          {state.loading ? (
+            <p className="text-[13px] text-neutral-400">Loading…</p>
+          ) : state.text ? (
+            <p className="whitespace-pre-wrap text-[13.5px] text-neutral-800 leading-relaxed">{state.text}</p>
+          ) : (
+            <p className="text-[13px] text-neutral-400">Couldn&apos;t load this one.</p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -399,6 +513,65 @@ function StatusUpdateModal({ entityId, dealName, onClose }: { entityId: string; 
   );
 }
 
+// ── THE LIVING STATUS BRIEF (workbench B1b) — her "Current status", assembled server-side from
+// already-judged/factual lines (zero AI on read). What-it-is lives in the header summary and
+// Priority-now in the next-move card, so this card carries the REST: key dates · people ·
+// deliverables · watch-outs. Every line links to its source. Hidden when nothing to show. ──
+function StatusBriefCard({ brief, onOpen, onPreviewDeliverable }: {
+  brief: NonNullable<Detail['statusBrief']>;
+  onOpen: (href: string | null) => void;
+  onPreviewDeliverable: (name: string, ref: string) => void;
+}) {
+  const has = brief.keyDates.length || brief.people.length || brief.deliverables.length || brief.watchOuts.length;
+  if (!has) return null;
+  const Sect = ({ label, children }: { label: string; children: React.ReactNode }) => (
+    <div>
+      <p className="text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">{label}</p>
+      {children}
+    </div>
+  );
+  return (
+    <div className="rounded-2xl border border-neutral-200/70 bg-white p-5 space-y-4">
+      {brief.watchOuts.length > 0 && (
+        <Sect label="Watch-outs">
+          {brief.watchOuts.map((wo, i) => (
+            <p key={i} className="text-[12.5px] text-amber-700 leading-snug flex items-start gap-1.5"><span className="mt-[3px] flex-shrink-0 w-1.5 h-1.5 rounded-full bg-amber-400" />{wo}</p>
+          ))}
+        </Sect>
+      )}
+      {brief.keyDates.length > 0 && (
+        <Sect label="Key dates">
+          <div className="space-y-0.5">
+            {brief.keyDates.map((k, i) => (
+              <button key={i} onClick={() => onOpen(k.href)} className="flex items-baseline gap-2.5 w-full text-left group/kd">
+                <span className="flex-shrink-0 text-[11.5px] tabular-nums text-neutral-400 w-[74px]">{k.date}</span>
+                <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-700 group-hover/kd:text-indigo-600 transition-colors">{k.label}</span>
+              </button>
+            ))}
+          </div>
+        </Sect>
+      )}
+      {brief.deliverables.length > 0 && (
+        <Sect label="Deliverables">
+          <div className="space-y-0.5">
+            {brief.deliverables.map((dv, i) => (
+              <button key={i} onClick={() => dv.ref && onPreviewDeliverable(dv.title, dv.ref)} className="flex items-baseline gap-2 w-full text-left group/dv">
+                <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-700 group-hover/dv:text-indigo-600 transition-colors">{dv.title}</span>
+                <span className="flex-shrink-0 text-[11px] text-neutral-400">{dv.by ? `${dv.by} · ` : ''}{dv.at ?? ''}</span>
+              </button>
+            ))}
+          </div>
+        </Sect>
+      )}
+      {brief.people.length > 0 && (
+        <Sect label="People">
+          <p className="text-[12.5px] text-neutral-600">{brief.people.join(' · ')}</p>
+        </Sect>
+      )}
+    </div>
+  );
+}
+
 // A DISCLOSURE row (F4) — one calm line, count as the honest promise, expands inline. The room's
 // entire depth lives behind these; first paint stays general.
 function Disclosure({ label, count, open, onToggle, children }: {
@@ -430,13 +603,38 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
     const f = focusFromHref(href);
     if (f) {
       setFocused(f);
-      // CONTINUATION (5A.5): a CTA-focus speaks in the room's conversation — one deterministic
-      // line from facts, no AI. The chat and the artifact move together.
-      if (narrate) {
-        pushDealTurn(entityId,
-          f.kind === 'email' ? "Here's the thread — if there's a draft it's below the messages; tell me what to change and I'll rework it."
-            : f.kind === 'meeting' ? "Here's the meeting — notes and action items below; ask me anything about it."
-              : "Here's the task — mark it done when it's handled, or tell me how to move it.");
+      // CONTINUATION (5A.5 → W3): a CTA-focus speaks in the room's conversation — one deterministic
+      // line COMPOSED FROM FACTS (the board row's prepared state), never a hedge. Keyed, so a
+      // re-click can't duplicate it. When nothing's prepared, the offer is real: tappable
+      // "Draft it now" (the one engine) + the routed hand-off.
+      if (narrate && d) {
+        const row = [...d.board.todo, ...d.board.waiting, ...d.board.done].find((r) => r.id === f.id);
+        const key = `cta:${f.kind}:${f.id}`;
+        const itemKind = f.kind === 'commitment' || f.kind === 'followup' ? 'commitment' as const : 'inbox' as const;
+        const sw = d.entity.suggestedWorker ?? null;
+        const moveTitle = d.entity.nextMove?.title ?? row?.title ?? '';
+        if (f.kind === 'meeting') {
+          pushDealTurn(entityId, "Here's the meeting — notes and action items below; ask me anything about it.", { key });
+        } else if (row?.prepared === 'draft') {
+          pushDealTurn(entityId, "There's a draft ready below — send it as-is or tell me what to change.", { key });
+        } else if (row?.prepared) {
+          pushDealTurn(entityId, `${row.prepared} prepared this — it's on the work below; tell me what to change.`, { key });
+        } else {
+          // O5: the decision leads with the JUDGE's route (the roster verdict), the in-house draft is
+          // the alternative, and a prepared SIBLING on the same deal is surfaced honestly — the
+          // thread and its task are one obligation, so "nothing's prepared" must tell the whole truth.
+          const sibling = [...d.board.todo, ...d.board.waiting].find((r) => r.id !== f.id && r.prepared);
+          const sibNote = sibling
+            ? ` (${sibling.prepared === 'draft' ? 'A draft' : `${sibling.prepared}'s work`} is already on "${sibling.title.slice(0, 44)}" in Tasks.)`
+            : '';
+          pushDealTurn(entityId, `Nothing's prepared on this yet — want me on it?${sibNote}`, {
+            key,
+            actions: [
+              ...(sw && moveTitle ? [{ label: `Have ${sw.name.split(' ')[0]} prepare it`, act: 'say' as const, text: `Have ${sw.name.split(' ')[0]} ${moveTitle}` }] : []),
+              { label: f.kind === 'email' ? 'Draft the reply here' : 'Prepare it here', act: 'prepare' as const, itemKind, itemId: f.id },
+            ],
+          });
+        }
       }
     } else if (href) router.push(href);
   };
@@ -473,6 +671,17 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
     fetch(`/api/entities/${entityId}/detail`).then((r) => r.json()).then((data) => { if (data.entity) { setD(data); saveLS(`aug-entity-detail-${entityId}`, data); } }).catch(() => {});
     fetch(`/api/entities/${entityId}/room`).then((r) => r.json()).then((data) => { if (data.entity) { setRail(data); saveLS(`aug-entity-rail-${entityId}`, data); } }).catch(() => {});
   };
+  // B2 — Accept ('open') / Reject ('dismissed') a meeting-proposed task via the ONE commitments PATCH.
+  const setProposedStatus = (cid: string, status: 'open' | 'dismissed') =>
+    fetch(`/api/commitments/${cid}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }).catch(() => {});
+  // W3/W4: the rail announces a finished on-demand preparation — the board re-reads so the row's
+  // prepared token appears without a manual reload.
+  useEffect(() => {
+    const onPrepared = () => refresh();
+    window.addEventListener('aug:prepared', onPrepared);
+    return () => window.removeEventListener('aug:prepared', onPrepared);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entityId]);
   // Membership writes — BOTH directions ride the ONE sticky PATCH; the room refreshes both reads.
   const setMembership = (rawId: string, kind: 'inbox_item' | 'commitment' | 'meeting', toEntity: string | null) => {
     fetch('/api/items/entity', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, id: rawId, entityId: toEntity }) })
@@ -487,6 +696,7 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
   };
   const setCategory = async (category: string) => {
     setMenu(false);
+    patch({ category }); // optimistic — the menu's checkmark reflects the choice immediately
     await fetch(`/api/entities/${entityId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'category', category }) }).catch(() => {});
     refresh();
   };
@@ -498,12 +708,7 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
     await fetch(`/api/entities/${entityId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'rename', name: n }) }).catch(() => {});
   };
 
-  const [workers, setWorkers] = useState<Array<{ id: string; name: string; worker_role: string | null }>>([]);
   const [handing, setHanding] = useState(false);
-  useEffect(() => {
-    fetch('/api/workers').then((r) => (r.ok ? r.json() : { workers: [] }))
-      .then((dd) => setWorkers(Array.isArray(dd.workers) ? dd.workers : Array.isArray(dd) ? dd : [])).catch(() => {});
-  }, []);
 
   const e = d?.entity;
   const m = e ? (MOM[e.momentum] ?? MOM.active) : MOM.active;
@@ -511,14 +716,9 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
   const patch = (p: Partial<Detail['entity']>) => setD((prev) => (prev ? { ...prev, entity: { ...prev.entity, ...p } } : prev));
   const history = d?.history ?? [];
   const suggestions = (d?.suggestions ?? []).filter((sg) => !dismissedSugg.has(sg.id));
-  // The SAME conservative coworker match the item rail uses (no match → no chip).
-  const suggestedWorker = (() => {
-    const mv = e?.nextMove?.title?.toLowerCase() ?? '';
-    if (!mv) return null;
-    const role = /\bresearch|analy|compare|investigat|assess\b/.test(mv) ? 'research_analyst'
-      : /\bwrite|draft|post|article|content|deck|present|summar\b/.test(mv) ? 'content_manager' : null;
-    return role ? (workers.find((w) => w.worker_role === role) ?? null) : null;
-  })();
+  // The ONE routing brain's SERVED verdict (W2) — reasoned server-side, sig-cached on next_move;
+  // the client never matches keywords. No confident shape → no chip.
+  const suggestedWorker = e?.suggestedWorker ?? null;
   const handOff = async () => {
     if (!e?.nextMove || !suggestedWorker || handing) return;
     setHanding(true);
@@ -547,9 +747,14 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
                 <ChevronLeftIcon className="w-3.5 h-3.5" />{e.name}
               </button>
               <span className="text-[12px] text-neutral-300">›</span>
-              <span className="text-[12px] text-neutral-400">{focused.kind === 'email' ? 'this conversation' : focused.kind === 'meeting' ? 'this meeting' : 'this task'}</span>
+              <span className="text-[12px] text-neutral-400">{focused.kind === 'email' ? 'this conversation' : focused.kind === 'meeting' ? 'this meeting' : focused.kind === 'deliverable' ? 'prepared work' : 'this task'}</span>
             </div>
-            <ItemDetail key={`${focused.kind}-${focused.id}`} id={focused.id} kind={focused.kind} embedded />
+            {focused.kind === 'deliverable' ? (
+              <DeliverableFocus id={focused.id} title={focused.title}
+                meta={(d?.statusBrief?.deliverables ?? []).find((dv) => dv.ref === focused.id) ?? null} />
+            ) : (
+              <ItemDetail key={`${focused.kind}-${focused.id}`} id={focused.id} kind={focused.kind} embedded />
+            )}
           </div>
         ) : (
           <div className="flex-1 min-h-0 overflow-y-auto">
@@ -582,7 +787,7 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
                   <div className="relative">
                     <button onClick={() => setMenu((v) => !v)} className="text-neutral-300 hover:text-neutral-600 transition-colors text-[18px] leading-none" title="Status">⋯</button>
                     {menu && (
-                      <div className="absolute right-0 top-full mt-1 z-30 rounded-lg border border-neutral-200 bg-white shadow-lg py-1 min-w-[150px]" onMouseLeave={() => setMenu(false)}>
+                      <div className="absolute right-0 top-full mt-1 z-30 rounded-lg border border-neutral-200 bg-white shadow-lg py-1 min-w-[196px]" onMouseLeave={() => setMenu(false)}>
                         {e.status === 'active' ? (
                           <>
                             <button onClick={() => lifecycle('done')} className="flex items-center gap-2 w-full px-3 py-1.5 text-[12px] text-neutral-600 hover:bg-neutral-50"><CheckIcon className="w-3.5 h-3.5" />Mark done</button>
@@ -592,12 +797,15 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
                         ) : (
                           <button onClick={() => lifecycle('reopen')} className="flex items-center gap-2 w-full px-3 py-1.5 text-[12px] text-neutral-600 hover:bg-neutral-50"><ArrowUturnLeftIcon className="w-3.5 h-3.5" />Reopen</button>
                         )}
-                        <button onClick={() => { setMenu(false); setStatusShare(true); }} className="flex items-center gap-2 w-full px-3 py-1.5 text-[12px] text-neutral-600 hover:bg-neutral-50"><EnvelopeIcon className="w-3.5 h-3.5" />Share a status update</button>
+                        <button onClick={() => { setMenu(false); setStatusShare(true); }} className="flex items-center gap-2 w-full px-3 py-1.5 text-[12px] text-neutral-600 hover:bg-neutral-50 whitespace-nowrap"><EnvelopeIcon className="w-3.5 h-3.5 flex-shrink-0" />Share a status update</button>
                         <div className="my-1 border-t border-neutral-100" />
+                        {/* Category — the SAME active-highlight the portfolio row menu uses (one idiom). */}
+                        <p className="px-3 pt-0.5 pb-1 text-[10.5px] font-semibold uppercase tracking-wide text-neutral-300">Category</p>
                         {(['client', 'internal', 'personal', 'admin'] as const).map((c) => (
-                          <button key={c} onClick={() => setCategory(c)} className="flex items-center gap-2 w-full px-3 py-1 text-[12px] text-neutral-500 hover:bg-neutral-50">
+                          <button key={c} onClick={() => setCategory(c)} className={`flex items-center gap-2 w-full px-3 py-1 text-[12px] hover:bg-neutral-50 ${e.category === c ? 'text-indigo-600 font-medium' : 'text-neutral-500'}`}>
                             <span className={`w-1.5 h-1.5 rounded-full ${c === 'client' ? 'bg-emerald-500' : c === 'internal' ? 'bg-indigo-500' : c === 'personal' ? 'bg-violet-500' : 'bg-neutral-400'}`} />
                             {c[0].toUpperCase() + c.slice(1)}
+                            {e.category === c && <CheckIcon className="w-3 h-3 ml-auto text-indigo-500" />}
                           </button>
                         ))}
                       </div>
@@ -635,6 +843,12 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
                 )}
               </div>
 
+              {/* B1b — the living status brief (key dates · people · deliverables · watch-outs). */}
+              {d!.statusBrief && (
+                <StatusBriefCard brief={d!.statusBrief} onOpen={(h) => openHref(h)}
+                  onPreviewDeliverable={(name, ref) => setFocused({ kind: 'deliverable', id: ref, title: name })} />
+              )}
+
               {/* "Might belong here" — the JUDGE's verdicts (actionable, so it earns first-paint). */}
               {suggestions.length > 0 && (
                 <div className="rounded-2xl border border-dashed border-indigo-200/70 bg-indigo-50/30 p-4">
@@ -665,13 +879,56 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
               {/* ── THE DISCLOSURES — everything else, one calm row each, inline expand. ── */}
               <div className="mt-4 space-y-2.5">
                 <Disclosure label="Tasks" count={d!.counts.total} open={openSections.has('work')} onToggle={() => toggle('work')}>
+                  {/* B2 — PROPOSED from the meeting: the review gate. Accept = real work + a learning
+                      signal; Reject = dismissed + a learning signal. Never on the board until accepted. */}
+                  {(d!.proposed ?? []).length > 0 && (
+                    <div className="mb-3 rounded-xl border border-dashed border-indigo-200/70 bg-indigo-50/30 p-3">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Proposed from the meeting</p>
+                        <button
+                          onClick={() => Promise.all((d!.proposed ?? []).map((p) => setProposedStatus(p.id, 'open'))).then(refresh)}
+                          className="text-[11.5px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors"
+                        >Accept all</button>
+                      </div>
+                      <div className="space-y-1">
+                        {(d!.proposed ?? []).map((p) => {
+                          const mtg = p.sourceId ? d!.meetings.find((m) => m.id === p.sourceId) : null;
+                          return (
+                            <div key={p.id} className="flex items-center gap-2.5">
+                              <div className="min-w-0 flex-1">
+                                <p className="text-[12.5px] text-neutral-700 leading-snug truncate">{p.description}</p>
+                                <p className="text-[11px] text-neutral-400">
+                                  {p.counterparty ? `${p.counterparty.split('<')[0].trim()} · ` : ''}{p.due ? `due ${p.due} · ` : ''}from {mtg ? mtg.title.slice(0, 40) : 'a meeting'}
+                                </p>
+                              </div>
+                              <button onClick={() => setProposedStatus(p.id, 'open').then(refresh)} className="flex-shrink-0 rounded-lg bg-indigo-600 hover:bg-indigo-700 px-2 py-0.5 text-[11px] font-medium text-white transition-colors">Accept</button>
+                              <button onClick={() => setProposedStatus(p.id, 'dismissed').then(refresh)} className="flex-shrink-0 text-neutral-300 hover:text-rose-500 transition-colors" title="Not a real task"><XMarkIcon className="w-3.5 h-3.5" /></button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <div className="relative flex justify-end mb-1">
                     <button onClick={() => setAdding((v) => !v)} className="inline-flex items-center gap-1 text-[12px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors">+ Add existing</button>
                     {adding && <AddItemPicker onClose={() => setAdding(false)} onPick={(it) => { setAdding(false); setMembership(it.id, it.kind, entityId); }} />}
                   </div>
                   <TaskList board={d!.board} onRefresh={refresh} onDetach={detachItem} entityId={entityId} onOpen={openHref}
-                    onPreviewDeliverable={(name, id) => setPreview({ name, ref: { kind: 'deliverable', id } })} />
+                    onPreviewDeliverable={(name, id) => setFocused({ kind: 'deliverable', id, title: name })} />
                 </Disclosure>
+
+                {/* B1a — the deal's SCHEDULE: the shared event-Gantt over the served rows (the same
+                    component the portfolio/Timeline use — one timeline language everywhere). */}
+                {d!.gantt.length > 0 && (
+                  <Disclosure label="Schedule" count={d!.gantt.filter((g) => g.marker !== 'undated').length}
+                    open={openSections.has('schedule')} onToggle={() => toggle('schedule')}>
+                    <GanttChart
+                      groups={[{ id: entityId, name: e.name, items: d!.gantt }]}
+                      today={new Date().toISOString().slice(0, 10)}
+                      emptyLine="Nothing dated on this yet."
+                    />
+                  </Disclosure>
+                )}
 
                 {d!.meetings.length > 0 && (
                   <Disclosure label="Meetings" count={d!.meetings.length} open={openSections.has('meetings')} onToggle={() => toggle('meetings')}>

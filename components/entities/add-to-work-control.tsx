@@ -16,6 +16,7 @@ export default function AddToWorkControl({ kind, id, compact }: { kind: string; 
   const [entities, setEntities] = useState<Ent[]>(() => (loadLS<{ entities?: Ent[] }>('aug-portfolio-v1')?.entities ?? []).filter((e) => e.status === 'active'));
   const [entId, setEntId] = useState<string | null>(null);
   const [entName, setEntName] = useState<string | null>(null);
+  const [entTracked, setEntTracked] = useState<boolean>(true); // T4 — accepted vs merely-recognized
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -26,7 +27,7 @@ export default function AddToWorkControl({ kind, id, compact }: { kind: string; 
       if (alive && d?.entities) setEntities((d.entities as Ent[]).filter((e) => e.status === 'active').sort((a, b) => b.weight - a.weight));
     }).catch(() => {});
     fetch(`/api/items/entity?kind=${itemKind}&id=${id}`).then((r) => r.json()).then((m) => {
-      if (alive) { setEntId(m.entityId ?? null); setEntName(m.entityName ?? null); }
+      if (alive) { setEntId(m.entityId ?? null); setEntName(m.entityName ?? null); setEntTracked(m.tracked !== false); }
     }).catch(() => {});
     return () => { alive = false; };
   }, [itemKind, id]);
@@ -49,11 +50,28 @@ export default function AddToWorkControl({ kind, id, compact }: { kind: string; 
 
   return (
     <div ref={boxRef} className="relative inline-flex items-center">
-      {entId && entName ? (
+      {entId && entName && entTracked ? (
         <span className={`inline-flex items-center gap-1 rounded-full bg-indigo-50 border border-indigo-200/70 pl-2 pr-1 py-0.5 font-medium text-indigo-700 ${compact ? 'text-[11px]' : 'text-[12px]'}`}>
           <FolderIcon className="w-3 h-3 text-indigo-500" />
           <button onClick={() => setOpen((v) => !v)} className="hover:underline max-w-[140px] truncate">{entName}</button>
           <button onClick={() => setEntity(null)} disabled={busy} title="Unlink from this work" className="text-indigo-300 hover:text-rose-500 transition-colors"><XMarkIcon className="w-3 h-3" /></button>
+        </span>
+      ) : entId && entName ? (
+        /* T4 — the memory RECOGNIZED this grouping but the user never ACCEPTED it: quiet context,
+           no project chrome. Accept = track (the same verb as the portfolio). */
+        <span className={`inline-flex items-center gap-1.5 rounded-full border border-dashed border-neutral-300 pl-2 pr-1.5 py-0.5 text-neutral-500 ${compact ? 'text-[11px]' : 'text-[12px]'}`}>
+          <button onClick={() => setOpen((v) => !v)} className="hover:text-neutral-700 max-w-[160px] truncate">connects to {entName}</button>
+          <button
+            onClick={async () => {
+              setBusy(true);
+              try {
+                const r = await fetch(`/api/entities/${entId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'track' }) });
+                if (!r.ok) throw new Error();
+                setEntTracked(true); toast.success('Tracking as a project');
+              } catch { toast.error('Could not track'); } finally { setBusy(false); }
+            }}
+            disabled={busy} className="font-medium text-indigo-500 hover:text-indigo-700 transition-colors"
+          >Track</button>
         </span>
       ) : (
         <button onClick={() => setOpen((v) => !v)} disabled={busy} className={`inline-flex items-center gap-1 rounded-full border border-neutral-200 px-2 py-0.5 font-medium text-neutral-400 hover:border-indigo-300 hover:text-indigo-600 transition-colors ${compact ? 'text-[11px]' : 'text-[12px]'}`}>

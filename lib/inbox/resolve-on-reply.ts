@@ -10,7 +10,7 @@
 // home brief cache is busted so the Home drops the resolved item on next load. Fully non-fatal.
 
 import { logActivity } from '@/lib/activity/log';
-import { computeThreadReplyState, type ThreadMessage } from './thread-resolution';
+import { computeThreadReplyState, messagesForResolution, threadCounterpartyEmail, type ThreadMessage } from './thread-resolution';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
@@ -68,9 +68,14 @@ export async function resolveThreadOnReply(opts: {
       .or(`work_state.in.(${REPLY_STATES.join(',')}),rule_type.eq.needs_reply`)
       .eq('source_data->>thread_id', threadId);
 
-    for (const it of (openItems ?? []) as Array<{ id: string; created_at: string; work_title?: string; source_data?: { subject?: string }; connection_id?: string | null; type_override?: string }>) {
+    // T1: the thread's counterparty (the newest inbound sender) — the resolution floor's anchor.
+    const threadCp = threadCounterpartyEmail(messages);
+
+    for (const it of (openItems ?? []) as Array<{ id: string; created_at: string; work_title?: string; source_data?: { subject?: string; from_address?: string }; connection_id?: string | null; type_override?: string }>) {
       if (it.type_override === 'waiting_on' || it.type_override === 'fyi') continue;
-      const state = computeThreadReplyState(messages, it.created_at ? new Date(it.created_at) : null);
+      // T1: a forward is not fulfillment — only user messages ADDRESSED TO the counterparty count.
+      const cp = (it.source_data?.from_address || threadCp || null);
+      const state = computeThreadReplyState(messagesForResolution(messages, cp), it.created_at ? new Date(it.created_at) : null);
       if (!state.userReplied) continue; // conservative: no clear structural reply → leave it
 
       const resolvedAt = new Date().toISOString();
@@ -122,7 +127,8 @@ export async function resolveThreadOnReply(opts: {
       .eq('thread_id', threadId);
 
     for (const c of (openCommits ?? []) as Array<{ id: string; created_at: string; description: string }>) {
-      const state = computeThreadReplyState(messages, c.created_at ? new Date(c.created_at) : null);
+      // T1: same floor — a you-owe settles only via a message TO the thread's counterparty.
+      const state = computeThreadReplyState(messagesForResolution(messages, threadCp), c.created_at ? new Date(c.created_at) : null);
       if (!state.userReplied) continue;
 
       const resolvedAt = new Date().toISOString();

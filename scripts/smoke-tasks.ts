@@ -121,8 +121,10 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
     er.includes('function TaskList') && er.includes('Add a task…') && er.includes('Waiting on {name}'));
   check('R3c · prepared tokens + ONE suggested hand-off (no assignee column)',
     er.includes("w.prepared === 'draft'") && er.includes('can take this') && !er.includes('assignee'));
-  check('R3d · typed inventory (Conversations · Files & docs · Activity); Gantt out',
-    er.includes('label="Conversations"') && er.includes('label="Files & docs"') && er.includes('label="Activity"') && !er.includes('GanttChart'));
+  // Workbench B1a reversed the "Gantt out" call (user ask, July 24): the Schedule disclosure
+  // renders the ONE shared Gantt — behind a fold, so first paint stays calm.
+  check('R3d · typed inventory (Conversations · Files & docs · Activity); Schedule behind a fold',
+    er.includes('label="Conversations"') && er.includes('label="Files & docs"') && er.includes('label="Activity"') && er.includes('label="Schedule"'));
   check('R3a · create_task_item exposed to every chat surface',
     new Set(capabilitiesFor('chief_of_staff').map((c) => c.tool)).has('create_task_item'));
   // ── R2 — the one shell. ──
@@ -155,10 +157,14 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
       pv2.includes('acceptOptimistic') && pv2.includes("Couldn't accept"));
     check('5A.3 · files fold by filename + preview refs + modal + endpoint',
       dt2.includes('byName') && dt2.includes("kind: 'kb'") && er2.includes('FilePreviewModal') && existsSync('app/api/files/preview/route.ts'));
-    check('5A.4 · embedded artifact hides type/project pills (all 4 kinds)',
-      (id2.match(/chip=\{embedded \? null/g) ?? []).length === 4 && (id2.match(/action=\{embedded \? undefined/g) ?? []).length >= 2);
-    check('5A.5 · CTA-focus narrates in the per-deal chat (deterministic)',
-      rl2.includes('export function pushDealTurn') && er2.includes('openHref(moveHref, true)') && er2.includes("Here's the thread"));
+    // T4 (work-surface) made the EMAIL chip ALWAYS null (posture vocabulary is internal) —
+    // stronger than embedded-only; the other kinds stay embedded-conditional.
+    check('5A.4 · embedded artifact hides type/project pills (email chip gone entirely)',
+      id2.includes('chip={null}') && (id2.match(/chip=\{embedded \? null/g) ?? []).length === 3 && (id2.match(/action=\{embedded \? undefined/g) ?? []).length >= 2);
+    // W3 superseded the static line: the narration is now COMPOSED from the board row's prepared
+    // facts (keyed dedup, real offers) — still deterministic, never a hedge.
+    check('5A.5 · CTA-focus narrates in the per-deal chat (deterministic, grounded — W3)',
+      rl2.includes('export function pushDealTurn') && er2.includes('openHref(moveHref, true)') && er2.includes("row?.prepared === 'draft'"));
     check('5A.6 · room width + Tasks auto-open + Goals&Rules beside on lg',
       er2.includes('max-w-[1000px]') && er2.includes("add('work')") && er2.includes('lg:grid-cols-[minmax(0,1fr)_280px]'));
     check('5A.7 · Home today-strip from the existing schedule read',
@@ -167,13 +173,15 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
 
   // ══ 5B — the Preparation Pass over tasks. ══
   {
-    const { classifyTaskShapes } = await import('../lib/prepare/pass');
-    const shapes = await classifyTaskShapes(sb, A, [
+    // O2 superseded the shape map: routing is the ROSTER JUDGE (the team in view).
+    const { routeTasks } = await import('../lib/prepare/route-suggestion');
+    const routes = await routeTasks(sb, A, [
       'Prepare a one-page summary of the pilot results',
       'Call the lawyer about the lease renewal',
     ]);
-    check('5B judge: a doc-shaped task routes to preparation', shapes['0'] === 'prepare_document', JSON.stringify(shapes));
-    check('5B judge: human-only work is honestly OTHER (never faked)', shapes['1'] === 'other');
+    check('5B judge: a doc-shaped task routes to a teammate whose craft fits', !!routes[0]?.worker,
+      routes[0]?.worker ? `→ ${routes[0].worker.name} (${routes[0].worker.role})` : 'none');
+    check('5B judge: human-only work honestly routes to NO ONE (never faked)', !routes[1]?.worker && !routes[1]?.sendDoc);
     const pass = readFileSync('lib/prepare/pass.ts', 'utf8');
     check('5B doctrine: the pass NEVER sends (no send executors)', !/sendCoworkerEmail|send-reply|sendEmail\(/.test(pass));
     check('5B observability: task_preparation usage source wired',

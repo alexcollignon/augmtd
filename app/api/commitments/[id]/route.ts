@@ -89,17 +89,21 @@ export async function PATCH(
     if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { id } = await params;
-    const body = await request.json() as { status?: string; description?: string; due_date?: string | null };
+    const body = await request.json() as { status?: string; description?: string; due_date?: string | null; priority?: 'high' | 'low' | null; note?: string | null };
     const { status } = body;
 
-    // ── EDIT path (Phase 4 R3a): description / due_date — a task is WRITABLE. due_date must be
-    // absolute-or-null (never invented); edits log activity + bust the brief. No status change here.
+    // ── EDIT path (Phase 4 R3a + B4): description / due_date / manual priority — a task is
+    // WRITABLE. due_date must be absolute-or-null (never invented); priority is the human OVERRIDE
+    // the spine honors permanently. Edits log activity + bust the brief. No status change here.
     if (status === undefined) {
       const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
       if (typeof body.description === 'string' && body.description.trim()) patch.description = body.description.trim().slice(0, 500);
       if ('due_date' in body) {
         const { validDate } = await import('@/lib/commitments/extract');
         patch.due_date = validDate(body.due_date);
+      }
+      if ('priority' in body) {
+        patch.priority = body.priority === 'high' || body.priority === 'low' ? body.priority : null;
       }
       if (Object.keys(patch).length === 1) return NextResponse.json({ error: 'nothing to update' }, { status: 400 });
       const { error: uerr } = await supabase.from('commitments').update(patch).eq('id', id).eq('user_id', user.id);
@@ -111,6 +115,41 @@ export async function PATCH(
       return NextResponse.json({ ok: true });
     }
 
+    // B4: the human marks a task as actively WORKED ('in_progress', from open/pending only).
+    if (status === 'in_progress') {
+      const { data: cur } = await supabase.from('commitments').select('status').eq('id', id).eq('user_id', user.id).maybeSingle();
+      if (!cur || (cur.status !== 'open' && cur.status !== 'pending')) return NextResponse.json({ error: 'only an open task can move to in progress' }, { status: 400 });
+      const { error: perr } = await supabase.from('commitments').update({ status: 'in_progress', updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', user.id);
+      if (perr) return NextResponse.json({ error: perr.message }, { status: 500 });
+      import('@/lib/home/bust-brief').then(({ softBustBrief }) => softBustBrief(supabase, user.id)).catch(() => {});
+      return NextResponse.json({ ok: true });
+    }
+
+    // B2 (workbench): ACCEPT — a meeting-proposed task (status 'suggested') becomes real work. The
+    // accept is the trust ritual and a learning signal. B4: un-marking an in-progress task also
+    // returns it to open (the cycle's reverse) — no signal for that.
+    if (status === 'open') {
+      const { data: cur } = await supabase.from('commitments').select('description, status').eq('id', id).eq('user_id', user.id).maybeSingle();
+      if (!cur) return NextResponse.json({ error: 'not found' }, { status: 404 });
+      if (cur.status === 'in_progress') {
+        const { error: rerr } = await supabase.from('commitments').update({ status: 'open', updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', user.id);
+        if (rerr) return NextResponse.json({ error: rerr.message }, { status: 500 });
+        import('@/lib/home/bust-brief').then(({ softBustBrief }) => softBustBrief(supabase, user.id)).catch(() => {});
+        return NextResponse.json({ ok: true });
+      }
+      if (cur.status !== 'suggested') return NextResponse.json({ error: 'only a suggested task can be accepted' }, { status: 400 });
+      const { error: aerr } = await supabase.from('commitments').update({ status: 'open', updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', user.id);
+      if (aerr) return NextResponse.json({ error: aerr.message }, { status: 500 });
+      import('@/lib/home/bust-brief').then(({ softBustBrief }) => softBustBrief(supabase, user.id)).catch(() => {});
+      after(async () => {
+        try {
+          await logActivity(supabase, user.id, { type: 'task_accepted', title: `Accepted: ${String(cur.description).slice(0, 60)}`, entityType: 'commitment', entityId: id, metadata: { via: 'meeting_suggestion' } });
+          await supabase.from('learning_signals').insert({ user_id: user.id, signal_type: 'action_taken', inbox_item_id: null, signal_data: { action: 'suggested_task_accepted', commitmentId: id } });
+        } catch { /* non-fatal */ }
+      });
+      return NextResponse.json({ ok: true });
+    }
+
     if (status !== 'done' && status !== 'dismissed') {
       return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
     }
@@ -118,17 +157,26 @@ export async function PATCH(
     // Load the description first (for a readable activity title) — cheap, owner-scoped.
     const { data: commitment } = await supabase
       .from('commitments')
-      .select('description')
+      .select('description, status')
       .eq('id', id).eq('user_id', user.id).maybeSingle();
+    // B2: rejecting a meeting-PROPOSED task is a learning signal (the extractor hears the "no").
+    if (status === 'dismissed' && commitment?.status === 'suggested') {
+      after(async () => {
+        await supabase.from('learning_signals').insert({ user_id: user.id, signal_type: 'action_taken', inbox_item_id: null, signal_data: { action: 'suggested_task_rejected', commitmentId: id } }).then(() => {}, () => {});
+      });
+    }
 
     // Stamp resolved_at (the REAL resolution timestamp the Day-cleared ring counts by — the
     // commitments.resolved_at column from migration 20260705d). resolved_at/resolved_reason may not
     // exist on older schemas, so retry status-only if the column-aware update fails.
     const nowIso = new Date().toISOString();
+    // D2 (work-surface): an optional user NOTE ("we'll discuss it on Thursday's call") becomes the
+    // resolved_reason — a ledger fact the entity's next state synthesis reasons WITH.
+    const userNote = typeof body.note === 'string' && body.note.trim() ? body.note.trim().slice(0, 200) : null;
     let error;
     ({ error } = await supabase
       .from('commitments')
-      .update({ status, resolved_at: nowIso, resolved_reason: status === 'done' ? 'user_marked' : 'user_dismissed', updated_at: nowIso })
+      .update({ status, resolved_at: nowIso, resolved_reason: userNote ?? (status === 'done' ? 'user_marked' : 'user_dismissed'), updated_at: nowIso })
       .eq('id', id)
       .eq('user_id', user.id));
     if (error) {

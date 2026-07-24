@@ -58,24 +58,12 @@ const COMMON_RULES: InboxRule[] = [
     ai_match: "An automated update about my meetings or calendar events (rescheduled, cancelled, confirmed).",
     outcome: { set_type: 'meeting' }, source: 'default',
   },
-  {
-    name: 'Notifications',
-    enabled: true, priority: 70, trigger: 'received', match_mode: 'all', conditions: [],
-    ai_match: "An automated alert, reminder, or confirmation from a system or service.",
-    outcome: { set_type: 'notifications' }, source: 'default',
-  },
-  {
-    name: 'Marketing',
-    enabled: true, priority: 80, trigger: 'received', match_mode: 'all', conditions: [],
-    ai_match: "A promotional or commercial email (ads, newsletters, offers).",
-    outcome: { set_type: 'marketing' }, source: 'default',
-  },
-  {
-    name: 'FYI',
-    enabled: true, priority: 90, trigger: 'received', match_mode: 'all', conditions: [],
-    ai_match: "Contains useful information relevant to me but does not require a reply.",
-    outcome: { set_type: 'fyi' }, source: 'default',
-  },
+  // ── M3 (work-surface, docs/work-surface-plan.md): the v1 AI TAXONOMY rules ("Marketing",
+  // "Notifications", "FYI" as ai_match guesses) are RETIRED — describing what mail IS is now the
+  // reasoned `mailKind` on the understanding (registry-grounded, judged once per email), not a
+  // per-rule guess. RULES keep their real job: POSTURE — what needs the user (Urgent, Needs reply,
+  // Meeting updates, Waiting, Done) — plus the cheap deterministic floors above. The classifier's
+  // fyi fallback covers the rest. Your own rules always win over the kind (the precedence chain).
   {
     name: 'Waiting for reply',
     enabled: true, priority: 100, trigger: 'sent', match_mode: 'all', conditions: [],
