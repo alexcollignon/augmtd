@@ -26,6 +26,7 @@ import { broadcastProjectsUpdated } from '@/lib/projects/broadcast';
 import { RiseIn } from '@/components/home/rise-in';
 import EntityRoom from '@/components/entities/entity-room';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { AddItemPicker, type LooseItem } from '@/components/entities/add-item-picker';
 import { useLiveRefresh } from '@/hooks/use-live-refresh';
 import { MOMENTUM as MOMENTUM_TOKENS } from '@/lib/work-items/states';
 
@@ -199,12 +200,20 @@ function Row({ e, onAction, onOpen, others = [] }: { e: Entity; onAction: (id: s
 const detachKindOf = (k: string): 'inbox_item' | 'commitment' | 'meeting' | null =>
   k === 'inbox_item' || k === 'commitment' || k === 'meeting' ? k : null;
 
-function SuggestRow({ e, onAction, onOpen }: { e: Entity; onAction: (id: string, action: string) => void; onOpen: (id: string) => void }) {
+function SuggestRow({ e, onAction, onOpen, onChanged }: { e: Entity; onAction: (id: string, action: string) => void; onOpen: (id: string) => void; onChanged?: () => void }) {
   // The suggestion IS the judge's verdict — the row shows only FACTS (count) beside the name.
   // EXPANDABLE (R1): see the members the brain grouped, ✕ the wrong ones BEFORE accepting.
   const [open, setOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [pruned, setPruned] = useState<Set<string>>(new Set());
   const members = e.events.filter((ev) => !pruned.has(ev.id));
+  // SHAPE THE GROUP BOTH WAYS before accepting (July-24): the ONE shared picker + the ONE sticky
+  // membership write — identical mechanics to the room's "+ Add existing".
+  const addItem = (it: LooseItem) => {
+    setAdding(false);
+    fetch('/api/items/entity', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: it.kind, id: it.id, entityId: e.id }) })
+      .then(() => onChanged?.()).catch(() => {});
+  };
   const prune = (ev: { id: string; kind: string }) => {
     const k = detachKindOf(ev.kind);
     if (!k) return;
@@ -242,6 +251,10 @@ function SuggestRow({ e, onAction, onOpen }: { e: Entity; onAction: (id: string,
             );
           })}
           {members.length === 0 && <p className="text-[12px] text-neutral-300 py-1">Nothing left — dismiss the suggestion.</p>}
+          <div className="relative pt-0.5">
+            <button onClick={() => setAdding((v) => !v)} className="text-[12px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors">+ Add an item</button>
+            {adding && <AddItemPicker align="left" onClose={() => setAdding(false)} onPick={addItem} />}
+          </div>
         </div>
       )}
     </div>
@@ -288,6 +301,8 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  const [newItems, setNewItems] = useState<LooseItem[]>([]); // work chosen at creation (the one picker)
+  const [newPicking, setNewPicking] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(() => {
@@ -308,12 +323,17 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
       const res = await fetch('/api/entities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: n, description: newDesc.trim() || undefined }) });
       if (!res.ok) throw new Error();
       const { id } = await res.json();
+      // Attach the chosen work — the ONE sticky membership write per item (locked, cascaded, reconciled).
+      if (id && newItems.length) {
+        await Promise.all(newItems.map((it) =>
+          fetch('/api/items/entity', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: it.kind, id: it.id, entityId: id }) }).catch(() => {})));
+      }
       broadcastProjectsUpdated({ reason: 'create' });
-      setCreating(false); setNewName(''); setNewDesc('');
+      setCreating(false); setNewName(''); setNewDesc(''); setNewItems([]); setNewPicking(false);
       load();
       if (id) openDetail(id);
     } catch { toast.error('Could not create the project'); } finally { setSaving(false); }
-  }, [newName, newDesc, saving, load, openDetail]);
+  }, [newName, newDesc, newItems, saving, load, openDetail]);
   const closeDetail = useCallback(() => { setSelected(null); onDetailChange?.(false); load(); }, [onDetailChange, load]);
   useEffect(() => () => onDetailChange?.(false), [onDetailChange]);
   // Lock body scroll while the modal is open (stops the page jumping / scrolling behind the overlay).
@@ -447,6 +467,24 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
                 placeholder="Description (optional)"
                 className="w-full resize-none rounded-lg border border-neutral-200 bg-white px-3 py-2 text-[13px] text-neutral-700 outline-none focus:border-indigo-300 transition-colors"
               />
+              {/* Found it WITH work in it (July-24) — the ONE shared picker; chips are removable. */}
+              <div>
+                {newItems.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-1.5">
+                    {newItems.map((it) => (
+                      <span key={`${it.kind}-${it.id}`} className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[11.5px] text-neutral-600 max-w-[220px]">
+                        <span className="truncate">{it.label}</span>
+                        <button onClick={() => setNewItems((prev) => prev.filter((x) => x.id !== it.id))} className="text-neutral-300 hover:text-rose-500 transition-colors"><XMarkIcon className="w-3 h-3" /></button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="relative inline-block">
+                  <button onClick={() => setNewPicking((v) => !v)} className="text-[12.5px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors">+ Add work</button>
+                  {newPicking && <AddItemPicker align="left" onClose={() => setNewPicking(false)}
+                    onPick={(it) => { setNewPicking(false); setNewItems((prev) => (prev.some((x) => x.id === it.id) ? prev : [...prev, it])); }} />}
+                </div>
+              </div>
             </div>
             <div className="mt-4 flex items-center justify-end gap-2">
               <button onClick={() => setCreating(false)} disabled={saving} className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-neutral-500 hover:text-neutral-800 transition-colors">Cancel</button>
@@ -495,7 +533,7 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
                 </button>
               )}
             </div>
-            {suggested.map((e) => <SuggestRow key={e.id} e={e} onAction={onAction} onOpen={openDetail} />)}
+            {suggested.map((e) => <SuggestRow key={e.id} e={e} onAction={onAction} onOpen={openDetail} onChanged={load} />)}
           </div>
         )}
         {tail.length > 0 && (

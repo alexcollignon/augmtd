@@ -11,8 +11,8 @@ export type HomeView = 'dashboard' | 'timeline' | 'projects';
 
 const VIEWS: Array<{ id: HomeView; label: string; icon: React.ElementType }> = [
   { id: 'dashboard', label: 'Home',     icon: Squares2X2Icon },
-  { id: 'timeline',  label: 'Timeline', icon: CalendarDaysIcon },
   { id: 'projects',  label: 'Projects', icon: FolderIcon },
+  { id: 'timeline',  label: 'Timeline', icon: CalendarDaysIcon },
 ];
 
 export default function ViewSwitcher({ value, onChange, hidden }: { value: HomeView; onChange: (v: HomeView) => void; hidden?: boolean }) {

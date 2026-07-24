@@ -495,11 +495,73 @@ grounding × tool slice × eval gates).
 - Trust: refs ground to ledger lines; nothing invented; the voice smoke's banned-register check
   applies to the composed update too.
 
-## 5D — CAPABILITY GROWTH (backlog, the locked recipe — not built in this phase)
-Each = ONE registry row + a tool + (sends only) a prepared card; the classifier/pass/chat pick it up
-with zero new architecture: Google Docs/Drive document drafting · a scheduling-link tool ·
-CRM/Notion writes via the existing Nango rail · more coworker skills. Sequenced on evidence from 5B
-usage (which capability classifications MISS most often = what to build next).
+## 5D — CAPABILITY GROWTH: the MCP rail + vertical coworkers — ◐ SLICE 1 SHIPPED (July 24)
+**The rail decision (locked):** Nango (custody, in place) + SELF-HOSTED MCP servers on our box
+behind the capability registry. MCP = protocol/code, not a service — zero egress; Composio ruled
+out on sovereignty; core capabilities (email/calendar/drafting/Slack) stay first-party; nothing
+current migrates — MCP is for the unbuilt long tail.
+
+**Slice 1 — the rail scaffold (SHIPPED, flag-gated, zero behavior change until enabled):**
+- `infra/agentos/mcp_mount.py` — mounts `AGENTOS_MCP_SERVERS` (JSON) as Agno MCPTools; unset = [];
+  every failure logged+skipped (a bad server can never take the workers down). Wired into
+  `build_workers`.
+- **THE TENANT-SAFETY FINDING (discovered before deploying anything):** AgentOS is ONE process for
+  many users/companies, but ecosystem MCP servers take credentials at STARTUP — a static mount can
+  carry only one tenant's token. Therefore an adoptable server must be credential-free or
+  AUTH-SHIMMED (the acting user/company as a TOOL ARGUMENT, tokens fetched from Nango per call —
+  the same pattern our HTTP tools already use). A startup-credential-only server is wrapped or
+  skipped. This is a review-checklist item now, not a runtime surprise.
+- `Capability.mcp?: {server, tool}` on the registry (the gate: an MCP tool without a row does not
+  exist) + the per-server ADOPTION RUNBOOK in `infra/agentos/README.md` (review + pin → tenant-safe
+  → least-scope → localhost-bound docker → env → registry row).
+- **The shortlist (decided; adopt strictly ONE at a time):** 1) Google Drive/Docs WRITE (deliverables
+  become real shareable docs — the biggest unlock; needs the auth-shim + a Drive scope on connect),
+  2) Dropbox (files for Dropbox teams; also feeds the universal resolver's reserved 'dropbox'
+  source). HubSpot/Xero/QuickBooks parked (user call, July 24).
+
+## 5D SLICE 2 — "DELIVERABLES BECOME REAL GOOGLE DOCS" + the rail's live proof (planned July 24)
+
+**THE SECURITY DOCTRINE ADDENDUM (settled while planning, load-bearing):** a model-visible tool
+argument may NEVER carry identity — an agent that can pass `user_id` can pass someone else's.
+Per-user credentials flow ONLY through paths where OUR code injects the acting user (the existing
+HTTP-tool pattern: run_context → internal route → executor). Consequence, stated honestly:
+**per-user-credential capabilities ship FIRST-PARTY; MCP mounts are for credential-free or
+company-scoped-static servers** (until a per-run header mount exists in the runtime). The rail
+stays; the first VALUE ships first-party — which is right anyway, because "deliverables become
+real docs" is core-capability territory (trust + voice adjacent).
+
+- **2a — `create_google_doc`, first-party** (`lib/tools/create-doc.ts`): googleapis Docs/Drive
+  create using the user's EXISTING Gmail-connection token — **`drive.file` is already in
+  GMAIL_SCOPES** (least-scope: app-created files only), so most users need NO reconnect; a
+  pre-scope token degrades honestly ("reconnect Google to enable"). Registered everywhere the
+  one-truth law demands: tools registry + `TOOL_FEATURE` ('drive') + `CAPABILITY_MAP` row (atomic,
+  reversible — a private doc in the user's own Drive; exposure chief_of_staff + coworker +
+  workflow) + the AgentOS internal tools route (TS dispatch — **no Python change, no box redeploy
+  for the tool itself**). Outlook-only users: capability honestly absent (fact-gated on a Google
+  connection); OneDrive equivalent later.
+- **2b — surfaces (prepare-and-offer, never auto):** the preview modal (deliverables / status
+  updates / prepared work) gains **"Save to Google Docs"** → the tool → the doc link stored on the
+  deliverable's metadata + rendered; coworkers + workflows + the chief chat can call it by name
+  ("save this as a doc"). The ambient pass may CITE the capability but never creates docs
+  unprompted (the Motion lesson).
+- **2c — the MCP rail's LIVE PROOF (the box session; explicit go + quiet window):** deploy ONE
+  credential-free canary server (the reference `fetch` server) as a localhost-bound docker sibling →
+  `AGENTOS_MCP_SERVERS` in agentos.env → AgentOS rebuild via the documented manual sequence →
+  verify: service healthy, workers list the canary tool, a worker run uses it, rollback = previous
+  image + env unset. This proves mount→discovery→call end-to-end so future company-scoped servers
+  are config, not experiments.
+- **2d — gates:** LIVE create→verify-via-API→trash a real Doc (user A); scope-missing degradation
+  (a token without drive.file → the capability reports unavailable, never errors mid-run); canary
+  tool discoverable post-redeploy; all suites re-green.
+
+## 5D SLICE 3 — DROPBOX (its own pass, after slice 2)
+Nango OAuth provider (self-hosted, custody unchanged) → READ first: fill the universal resolver's
+reserved `dropbox` source ("find the deck" reaches Dropbox) + the picker surfaces → write later if
+usage asks. Same first-party-vs-MCP test applies (per-user creds → first-party executor).
+
+## 5D SLICE 4 — VERTICAL COWORKER PACKS (no infra)
+role × skills pack × grounding slice × tool slice × eval gates — consulting first
+(proposal/engagement shapes), then accounting. Pure configuration over the existing substrate.
 
 **Order: DEPLOY → 5A → 5B → 5C; 5D backlog.** Cross-user smokes per slice (extend smoke-tasks +
 a new smoke-preparation); the reasoning doctrine governs throughout (the pass's matching is the

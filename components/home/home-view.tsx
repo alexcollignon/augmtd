@@ -80,7 +80,7 @@ type Brief = {
   priorities: Priority[];
   commitments: { id: string; description: string; prepared?: string | null; counterparty: string | null; dueDate: string | null; overdue: boolean; dueToday: boolean; initiative?: string | null; initiativeTotal?: number | null }[];
   waitingOn: { id: string; description: string; counterparty: string | null; ageDays: number; initiative?: string | null; initiativeTotal?: number | null }[];
-  schedule: { id: string; time: string; title: string; attendees: number; prep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null }[];
+  schedule: { id: string; time: string; localTime?: string; title: string; attendees: number; prep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null }[];
   handled?: { triaged: number; filtered: number; summarised: number; tracked: number; resolved: number };
   bundles?: Record<string, { key: string; label: string }>; // server-side "what needs you" bundling (atomId → bundle)
   bundleNames?: Record<string, { name: string; why?: string }>; // reasoned name + grounded "why" per bundle key
@@ -1891,7 +1891,7 @@ export function HomeView() {
               {(b?.schedule?.length ?? 0) > 0 && (
                 <p className="mt-1.5 flex items-center gap-1.5 text-[12.5px] text-neutral-400">
                   <CalendarDaysIcon className="w-3.5 h-3.5 flex-shrink-0" />
-                  <span className="tabular-nums">{b!.schedule![0].time}</span>
+                  <span className="tabular-nums">{b!.schedule![0].localTime ?? b!.schedule![0].time}</span>
                   <span className="text-neutral-500 truncate max-w-[380px]">{b!.schedule![0].title}</span>
                   {(b!.schedule!.length > 1) && <span className="flex-shrink-0">· {b!.schedule!.length - 1} more</span>}
                 </p>

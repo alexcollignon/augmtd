@@ -44,6 +44,12 @@ export interface Capability {
   blurb: string;                // one terse line rendered into the classifier prompt
   /** Which agents/surfaces may hold this tool. Absent = the pre-P6b default (coworker + workflow). */
   exposure?: CapabilityExposure[];
+  /** MCP-backed capability (Phase 5D): served by a SELF-HOSTED MCP server mounted on AgentOS (never
+   *  a hosted relay — sovereignty). Adoption recipe (infra/agentos/README.md): review + pin the
+   *  server → verify TENANT-SAFETY (per-call auth via Nango, never startup credentials) → run on the
+   *  box → AGENTOS_MCP_SERVERS → THEN this row. The registry stays the gate: an MCP tool without a
+   *  row does not exist in the product. */
+  mcp?: { server: string; tool: string };
 }
 
 // Keyed by the registry key (1:1 with the tools registry / TOOL_FEATURE so they can't drift).

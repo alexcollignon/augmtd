@@ -17,6 +17,7 @@ import { ChevronLeftIcon, ChevronRightIcon, ArrowRightIcon, CheckIcon, XMarkIcon
 import { ItemRail, type RailView } from '@/components/home/item-rail';
 import { ItemDetail } from '@/components/home/item-detail';
 import { pushDealTurn } from '@/components/home/item-rail';
+import { AddItemPicker } from '@/components/entities/add-item-picker';
 import { toast } from 'sonner';
 
 // A deep-dive href → the room's FOCUS target (R2 — the one shell: room-internal navigation swaps the
@@ -52,7 +53,7 @@ type Detail = {
   files?: Array<{ name: string; source: string; at: string | null; ref?: { kind: 'kb'; id: string } | { kind: 'attachment'; path: string } | null }>;
 };
 type FileRef = NonNullable<NonNullable<Detail['files']>[number]['ref']> | { kind: 'deliverable'; id: string };
-type LooseItem = { kind: 'inbox_item' | 'commitment' | 'meeting'; id: string; label: string; who: string | null; at: string | null };
+
 
 // The ONE momentum vocabulary — lib/work-items/states.ts.
 const MOM: Record<string, { dot: string; text: string; label: string }> = MOMENTUM_TOKENS;
@@ -280,40 +281,6 @@ function HistoryList({ lines, onOpen }: { lines: HistoryLine[]; onOpen?: (href: 
           ? <button key={i} onClick={() => (onOpen ? onOpen(href) : router.push(href))} className="group/h block w-full text-left">{row}</button>
           : <div key={i}>{row}</div>;
       })}
-    </div>
-  );
-}
-
-// "+ Add" — the mini-picker over LOOSE items. Same visual language as the ⋯ menu.
-function AddItemPicker({ onPick, onClose }: { onPick: (it: LooseItem) => void; onClose: () => void }) {
-  const [q, setQ] = useState('');
-  const [items, setItems] = useState<LooseItem[] | null>(null);
-  useEffect(() => {
-    const t = setTimeout(() => {
-      fetch(`/api/entities/loose-items${q ? `?q=${encodeURIComponent(q)}` : ''}`)
-        .then((r) => r.json()).then((d) => setItems(Array.isArray(d.items) ? d.items : [])).catch(() => setItems([]));
-    }, q ? 200 : 0);
-    return () => clearTimeout(t);
-  }, [q]);
-  return (
-    <div className="absolute right-0 top-full mt-1 z-30 w-[320px] rounded-xl border border-neutral-200 bg-white shadow-lg p-2" onMouseLeave={onClose}>
-      <input
-        autoFocus value={q} onChange={(e) => setQ(e.target.value)}
-        placeholder="Search your loose emails, to-dos, meetings…"
-        className="w-full rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[12px] text-neutral-700 placeholder:text-neutral-300 outline-none focus:border-indigo-300 transition-colors"
-      />
-      <div className="mt-1.5 max-h-[260px] overflow-y-auto">
-        {items === null ? (
-          <p className="text-[12px] text-neutral-300 px-2 py-3">Loading…</p>
-        ) : items.length === 0 ? (
-          <p className="text-[12px] text-neutral-300 px-2 py-3">Nothing loose{q ? ' matches' : ''} — everything recent is already placed.</p>
-        ) : items.map((it) => (
-          <button key={`${it.kind}-${it.id}`} onClick={() => onPick(it)} className="block w-full text-left rounded-lg px-2 py-1.5 hover:bg-neutral-50 transition-colors">
-            <span className="block text-[12px] text-neutral-700 truncate">{it.label}</span>
-            {it.who && <span className="block text-[11px] text-neutral-400 truncate">{it.who.split('<')[0].trim()}</span>}
-          </button>
-        ))}
-      </div>
     </div>
   );
 }

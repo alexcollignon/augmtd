@@ -210,6 +210,59 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
       er4.includes('Use suggestion') && !er4.includes('setTo(suggested)]') );
   }
 
+  // ══ 5D slice 1 — the MCP rail scaffold. ══
+  {
+    const { existsSync } = await import('fs');
+    const mount = readFileSync('infra/agentos/mcp_mount.py', 'utf8');
+    const wk = readFileSync('infra/agentos/workers.py', 'utf8');
+    check('5D · MCP mount is FLAG-GATED + failure-proof (unset → [], bad config skipped)',
+      mount.includes('AGENTOS_MCP_SERVERS') && mount.includes('return []') && mount.includes('skipped'));
+    check('5D · workers wired to the mount (zero change when off)',
+      wk.includes('build_mcp_tools') && wk.includes('*mcp_tools'));
+    check('5D · tenant-safety is a REVIEW REQUIREMENT (auth-shim documented)',
+      mount.includes('TENANT-SAFE') && readFileSync('infra/agentos/README.md', 'utf8').includes('auth-shim'));
+    check('5D · the registry stays the gate (Capability.mcp field + recipe)',
+      readFileSync('lib/home/capability-map.ts', 'utf8').includes('mcp?: { server: string; tool: string }'));
+    check('5D · runbook shipped with the shortlist', existsSync('infra/agentos/README.md') && readFileSync('infra/agentos/README.md', 'utf8').includes('Shortlist'));
+  }
+
+  // ══ July-24 batch — one picker everywhere, create-with-work, time/order fixes. ══
+  {
+    const { existsSync } = await import('fs');
+    const pv3 = readFileSync('components/entities/portfolio-view.tsx', 'utf8');
+    const er5 = readFileSync('components/entities/entity-room.tsx', 'utf8');
+    const hv4 = readFileSync('components/home/home-view.tsx', 'utf8');
+    const vs = readFileSync('components/home/view-switcher.tsx', 'utf8');
+    check('J24 · ONE AddItemPicker shared (extracted; no local copy in the room)',
+      existsSync('components/entities/add-item-picker.tsx') && !er5.includes('function AddItemPicker') && er5.includes("from '@/components/entities/add-item-picker'"));
+    check('J24 · suggestion expansion can ADD (same picker, same sticky write)',
+      pv3.includes('+ Add an item') && pv3.includes('AddItemPicker align="left"'));
+    check('J24 · create-with-work (picker chips → membership writes on create)',
+      pv3.includes('newItems.map((it) =>') && pv3.includes('+ Add work'));
+    check('J24 · today-strip renders the HUMAN time (localTime, one formatter)',
+      hv4.includes('localTime ?? b!.schedule![0].time'));
+    check('J24 · switcher order Home · Projects · Timeline',
+      vs.indexOf("id: 'projects'") < vs.indexOf("id: 'timeline'"));
+  }
+  // LIVE: found a project WITH work in it — every chosen item lands linked+locked; full cleanup.
+  {
+    const { data: loose } = await sb.from('inbox_items').select('id').eq('user_id', A)
+      .eq('status', 'pending').eq('source', 'email').order('created_at', { ascending: false }).limit(30);
+    const ids = ((loose ?? []) as Array<{ id: string }>).map((r) => r.id);
+    const { data: linked } = await sb.from('entity_links').select('item_id').eq('user_id', A).in('item_id', ids).not('entity_id', 'is', null);
+    const linkedSet = new Set((linked ?? []).map((l) => l.item_id as string));
+    const pick = ids.filter((i) => !linkedSet.has(i)).slice(0, 2);
+    const { data: created } = await sb.from('work_entities').insert({ user_id: A, kind: 'initiative', name: 'ZZ Smoke Founded With Work', aliases: ['ZZ Smoke Founded With Work'], tracked: true, status: 'active' }).select('id').single();
+    const { setItemMembership } = await import('../lib/entities/membership');
+    for (const i of pick) await setItemMembership(sb, A, { kind: 'inbox_item', id: i, entityId: created!.id as string }, { inline: false });
+    const { data: lnks } = await sb.from('entity_links').select('item_id, locked').eq('user_id', A).eq('entity_id', created!.id as string);
+    check('J24 live · create-with-work lands every item linked+locked',
+      pick.length > 0 && (lnks ?? []).length === pick.length && (lnks ?? []).every((l) => l.locked === true), `${(lnks ?? []).length}/${pick.length}`);
+    for (const i of pick) await sb.from('entity_links').delete().eq('user_id', A).eq('item_kind', 'inbox_item').eq('item_id', i);
+    await sb.from('work_entities').delete().eq('id', created!.id as string);
+    await sb.from('activity_events').delete().eq('user_id', A).ilike('title', '%ZZ Smoke Founded%');
+  }
+
   console.log('\n════ PHASE-4 GATES (tasks · the room does the work) ════');
   let pass = 0;
   for (const [n, ok, d] of out) { if (ok) pass++; console.log(` ${ok ? '✓' : '✗'} ${n}${d ? `  → ${d}` : ''}`); }
