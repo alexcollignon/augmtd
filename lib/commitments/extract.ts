@@ -12,6 +12,9 @@ export type ExtractedCommitment = {
   due_date?: string | null;
   counterparty?: string | null;
   initiative?: string | null; // deal/client/project this belongs to (for project grouping); null = one-off
+  // G1 (work-surface): the obligation's SUB-PARTS ("attach the deck", "include pricing") — one
+  // commitment per MOTION, its clauses as steps. Persisted as the commitment's item plan.
+  steps?: string[];
 };
 
 // Clean an initiative label (drop the model's "null"/"none" filler; cap length).
@@ -94,7 +97,9 @@ function parseJson(text: string): any {
 export async function writeCommitments(
   userId: string,
   list: ExtractedCommitment[],
-  meta: { source: 'email' | 'meeting'; sourceId: string; threadId?: string | null; counterparty?: string | null },
+  // B2 (workbench): `status` — meeting-extracted commitments land as 'suggested' (a review gate:
+  // meetings are noisy; the user Accepts/Rejects). Email-extracted stay 'open' (explicit written text).
+  meta: { source: 'email' | 'meeting'; sourceId: string; threadId?: string | null; counterparty?: string | null; status?: 'open' | 'suggested' },
   client: DBClient,
 ): Promise<void> {
   const clean = (list ?? []).filter((c) => c?.description?.trim());
@@ -129,19 +134,94 @@ export async function writeCommitments(
     accepted.push(c);
   }
 
-  const rows = accepted.map((c) => ({
-    user_id: userId,
-    direction: c.direction === 'awaiting' ? 'awaiting' : 'you_owe',
-    description: c.description.trim().slice(0, 500),
-    counterparty: (c.counterparty || meta.counterparty || null)?.toString().slice(0, 200) ?? null,
-    due_date: validDate(c.due_date),
-    initiative: cleanInitiative(c.initiative),
-    source: meta.source,
-    source_id: meta.sourceId,
-    thread_id: meta.threadId ?? null,
-    status: 'open',
-  }));
-  if (rows.length) await client.from('commitments').insert(rows);
+  // ── G1 backstop (work-surface): ONE OBLIGATION = ONE TASK. Same-counterparty, same-direction
+  // fragments in one batch (the meeting insights extractor emits granular action items) get ONE
+  // reasoned check: are these parts of a single motion? Merge → one commitment + steps. Conservative
+  // by prompt (genuinely separate obligations stay apart); any failure → the batch stands as-is. ──
+  let consolidated = accepted;
+  if (accepted.length > 1) {
+    try {
+      const groups = new Map<string, number[]>();
+      accepted.forEach((c, i) => {
+        const key = `${c.direction}·${(c.counterparty || meta.counterparty || '').toString().toLowerCase().trim() || `solo-${i}`}`;
+        (groups.get(key) ?? groups.set(key, []).get(key)!).push(i);
+      });
+      const merged = new Set<number>();
+      const additions: ExtractedCommitment[] = [];
+      for (const g of [...groups.values()].filter((x) => x.length > 1)) {
+        const listTxt = g.map((i, n) => `${n}. ${accepted[i].description}`).join('\n');
+        const { client: ai, model } = await getAIClient(userId, 'classification', client);
+        const res = await aiCreate(ai, {
+          model, max_tokens: 300, temperature: 0,
+          messages: [{ role: 'user', content:
+            `These tasks were extracted from ONE ${meta.source} with the SAME counterparty:\n${listTxt}\n\n` +
+            `Are they parts of a SINGLE motion — one thing you'd mark done ONCE (e.g. one reply that must cover all of them)? ` +
+            `Merge ONLY if clearly one deliverable/motion; genuinely separate obligations (different deliverables, different moments) stay separate.\n` +
+            `JSON only: {"merge":true,"description":"<the one motion, short imperative>","steps":["<part>", "..."]} or {"merge":false}` }],
+        });
+        const parsed = JSON.parse((res.choices?.[0]?.message?.content ?? '{}').replace(/^```(json)?|```$/gm, '').trim()) as { merge?: boolean; description?: string; steps?: string[] };
+        if (parsed.merge === true && parsed.description?.trim()) {
+          g.forEach((i) => merged.add(i));
+          const first = accepted[g[0]];
+          additions.push({
+            ...first,
+            description: parsed.description.trim(),
+            steps: [...new Set([...(Array.isArray(parsed.steps) ? parsed.steps : []), ...g.flatMap((i) => accepted[i].steps ?? [])])].slice(0, 5),
+            due_date: g.map((i) => accepted[i].due_date).filter(Boolean).sort()[0] ?? null, // earliest stated
+          });
+        }
+      }
+      if (merged.size) consolidated = [...accepted.filter((_, i) => !merged.has(i)), ...additions];
+    } catch { /* consolidation is an enhancement — the batch stands */ }
+  }
+
+  // IDENTITY RESOLUTION at the write (orchestrated-loop O1b) — the counterparty RESOLVES through the
+  // person registry instead of being transcribed: one human never lands under two labels (the
+  // canonical name wins), and a counterparty that resolves to the USER'S OWN self entity is a
+  // structural impossibility with structural consequences — an "awaiting" on yourself IS your own
+  // task (direction flips to you_owe), and you can never be your own counterparty (null; the display
+  // layer derives a source label). Unresolved forms stay raw — honest, and future alias fodder.
+  const { getPersonEntities, resolveIdentity } = await import('@/lib/entities/people');
+  const persons = await getPersonEntities(client as never, userId).catch(() => []);
+  const rows = consolidated.map((c) => {
+    const rawCp = (c.counterparty || meta.counterparty || null)?.toString().slice(0, 200) ?? null;
+    const id = resolveIdentity(persons, rawCp);
+    const direction = id.isSelf ? 'you_owe' : (c.direction === 'awaiting' ? 'awaiting' : 'you_owe');
+    const counterparty = id.isSelf ? null : (id.canonical ?? rawCp);
+    return {
+      user_id: userId,
+      direction,
+      description: c.description.trim().slice(0, 500),
+      counterparty,
+      due_date: validDate(c.due_date),
+      initiative: cleanInitiative(c.initiative),
+      source: meta.source,
+      source_id: meta.sourceId,
+      thread_id: meta.threadId ?? null,
+      status: meta.status ?? 'open',
+    };
+  });
+  if (!rows.length) return;
+  const { data: inserted } = await client.from('commitments').insert(rows).select('id, description');
+
+  // ── G1: the obligation's STEPS persist as its item plan (the deep-dive checklist), version-stamped
+  // so the plan route serves them instead of regenerating. Non-fatal. ──
+  try {
+    const withSteps = consolidated.filter((c) => Array.isArray(c.steps) && c.steps.length >= 2);
+    if (withSteps.length && inserted?.length) {
+      const { PLAN_VERSION } = await import('@/lib/home/capability-map');
+      const byDesc = new Map((inserted as Array<{ id: string; description: string }>).map((r) => [r.description, r.id]));
+      for (const c of withSteps) {
+        const cid = byDesc.get(c.description.trim().slice(0, 500));
+        if (!cid) continue;
+        await client.from('item_plans').upsert({
+          user_id: userId, kind: 'commitment', entity_id: cid,
+          tasks: c.steps!.slice(0, 5).map((s, i) => ({ id: `g1-${i}`, text: String(s).slice(0, 120), actor: 'you', done: false })),
+          version: PLAN_VERSION, updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,kind,entity_id' });
+      }
+    }
+  } catch { /* steps are an enhancement — the commitments landed */ }
 }
 
 // Meeting commitments — map already-extracted action items to commitments (no AI needed).
@@ -217,7 +297,9 @@ export async function writeMeetingCommitments(
       initiative: await resolveInitiative(counterparty),
     } as ExtractedCommitment);
   }
-  await writeCommitments(userId, list, { source: 'meeting', sourceId: meta.transcriptId, threadId: null }, client);
+  // B2: meeting follow-ups are PROPOSED, not imposed — they land 'suggested' for the user's
+  // Accept/Reject (the review gate the cognitive-cost doctrine always implied for noisy extraction).
+  await writeCommitments(userId, list, { source: 'meeting', sourceId: meta.transcriptId, threadId: null, status: 'suggested' }, client);
 }
 
 // Extract commitments from one email and persist them. Returns the count written.
@@ -252,8 +334,9 @@ export async function extractEmailCommitments(opts: {
   const prompt = `Extract concrete COMMITMENTS from this email — a SPECIFIC obligation a party EXPLICITLY took on, or is explicitly owed, between ${who} and a REAL person (e.g. "Send the Q3 proposal", "Review the contract by Friday").
 
 What counts as ONE commitment — be selective, prefer FEWER and higher-confidence:
+- ONE commitment per MOTION/DELIVERABLE — the thing you'd mark done ONCE. A reply that must include pricing, a deck, and answers to two questions is ONE commitment ("Reply to X with the pilot proposal") whose parts go into "steps" — NEVER four sibling commitments.
+- "steps": 2-5 short sub-parts of that one motion ("attach the deck", "include 7-8 seat pricing", "answer the data-source question"), or [] when the obligation has no distinct parts.
 - A clear, explicit obligation with an owner. NOT every idea, sub-step, suggestion, aside, or granular task mentioned in passing.
-- MERGE related sub-tasks of the same obligation into ONE commitment (don't split "send the deck" and "share the deck with Rene" into two).
 - When in doubt, LEAVE IT OUT. A short list of real obligations is far better than a long list of maybes.
 
 STRICTLY EXCLUDE and return an empty array if the message is a newsletter, promotion, receipt, invoice, or automated notification. NEVER treat marketing/newsletter calls-to-action as commitments — e.g. "reply with Q2", "submit your story", "subscribe", "reply for early access", "share your feedback", editorial/publishing schedules, or any mass-email ask. Also exclude CONDITIONAL or OPTIONAL offers ("reply if you need…", "let me know if you'd like…", "feel free to…", "happy to … if useful") — these are invitations, not commitments. Ignore pleasantries, vague intentions ("let's catch up sometime"), and anything already done.
@@ -273,7 +356,7 @@ ${text.slice(0, 2500)}
 """
 
 Return ONLY JSON. Empty array if there are no real commitments:
-{"commitments":[{"direction":"you_owe|awaiting","description":"short imperative, e.g. 'Send the Q3 proposal'","due_date":"YYYY-MM-DD or null","counterparty":"name/email or null","initiative":"short label or null"}]}`;
+{"commitments":[{"direction":"you_owe|awaiting","description":"short imperative, e.g. 'Send the Q3 proposal'","due_date":"YYYY-MM-DD or null","counterparty":"name/email or null","initiative":"short label or null","steps":["short sub-part", "..."]}]}`;
 
   try {
     const { client: ai, model } = await getAIClient(userId, 'summarization', client);

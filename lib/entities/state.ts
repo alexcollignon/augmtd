@@ -89,7 +89,10 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
       const sd = it.source_data ?? {};
       // Resolution status rides the line (L2): a handled/dismissed item must read as SETTLED — so the
       // synthesis can see "he already dealt with this" instead of re-arguing it as open.
-      const res = it.status === 'completed' ? ' (handled)' : it.status === 'dismissed' ? ' (dismissed)' : '';
+      // D2 (work-surface): a dismissal's USER NOTE is the strongest line here — the user told the
+      // brain something it didn't know ("we'll discuss it Thursday"); the synthesis reasons WITH it.
+      const note = typeof sd.dismiss_note === 'string' && sd.dismiss_note.trim() ? ` — user: "${sd.dismiss_note.trim()}"` : '';
+      const res = it.status === 'completed' ? ' (handled)' : it.status === 'dismissed' ? ` (dismissed${note})` : '';
       // PROJECTION FLOOR (P7a): the line carries a CONTENT gist + an attachment note, not just the
       // subject — a title-only ledger made the brain confidently wrong about what an email contained
       // (the "no catalog yet" class). Every ledger consumer (state synthesis, entity ask, the
@@ -113,11 +116,15 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
   }
   const cIds = byKind.get('commitment') ?? [];
   if (cIds.length) {
-    const { data } = await supabase.from('commitments').select('id, description, counterparty, direction, due_date, created_at, status').in('id', cIds.slice(0, 60));
+    const { data } = await supabase.from('commitments').select('id, description, counterparty, direction, due_date, created_at, status, resolved_reason').in('id', cIds.slice(0, 60));
+    // D2: a HUMAN resolved_reason (not one of the machine stamps) is the user's own context — surface it.
+    const MACHINE_REASONS = new Set(['user_marked', 'user_dismissed', 'replied', 'chat', 'consolidated', 'completed', 'dismissed']);
     for (const c of (data ?? []) as Array<Record<string, any>>) {
       const owes = String(c.direction || 'you_owe') === 'awaiting' ? 'they owe' : 'you owe';
       if (c.counterparty) humanCounterparty = true;
-      ledger.push({ at: c.created_at ?? '', kind: 'commitment', who: c.counterparty ?? null, text: `${owes}${c.status === 'done' ? ' (done)' : ''}: ${c.description}${c.due_date ? ` (due ${c.due_date})` : ''}`, ref: `commit:${c.id}` });
+      const rr = typeof c.resolved_reason === 'string' && c.resolved_reason.trim() && !MACHINE_REASONS.has(c.resolved_reason.trim()) ? ` — user: "${c.resolved_reason.trim()}"` : '';
+      const settled = c.status === 'done' ? ' (done)' : c.status === 'dismissed' ? ` (dismissed${rr})` : '';
+      ledger.push({ at: c.created_at ?? '', kind: 'commitment', who: c.counterparty ?? null, text: `${owes}${settled}: ${c.description}${c.due_date ? ` (due ${c.due_date})` : ''}`, ref: `commit:${c.id}` });
     }
   }
   // COWORKER DELIVERABLES (Prepared-Work C3): what the team produced for this entity's items — the deal's

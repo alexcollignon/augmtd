@@ -10,6 +10,32 @@ import { coerceUnderstanding, languageName } from '@/lib/inbox/item-understandin
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
 
+// ── O3a (orchestrated-loop): drafting belongs to the ASSISTANT coworker. Her identity attributes the
+// work ("Clara drafted this") and her assigned SKILLS shape every draft — causal attribution, one
+// place, every drafter caller. Memoized per process (60s). ──
+const paMemo = new Map<string, { at: number; pa: { id: string; name: string } | null }>();
+export async function getDraftingAssistant(client: DBClient, userId: string): Promise<{ id: string; name: string } | null> {
+  const c = paMemo.get(userId);
+  if (c && Date.now() - c.at < 60_000) return c.pa;
+  let pa: { id: string; name: string } | null = null;
+  try {
+    const { data } = await client.from('custom_agents').select('id, name')
+      .eq('user_id', userId).eq('is_worker', true).eq('worker_role', 'personal_assistant').limit(1).maybeSingle();
+    if (data) pa = { id: String(data.id), name: String(data.name) };
+  } catch { /* non-fatal */ }
+  paMemo.set(userId, { at: Date.now(), pa });
+  return pa;
+}
+
+async function buildAssistantSkillsBlock(client: DBClient, userId: string): Promise<string> {
+  try {
+    const pa = await getDraftingAssistant(client, userId);
+    if (!pa) return '';
+    const { buildSkillsBlock } = await import('@/lib/work/worker-skills-context');
+    return await buildSkillsBlock(client, pa.id);
+  } catch { return ''; }
+}
+
 export async function generateReplyDraft(
   userId: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -30,12 +56,15 @@ export async function generateReplyDraft(
   // The unified `understanding` (coerced up-front) — its `initiative` grounds the Brain-context read below.
   const understanding = coerceUnderstanding((sourceData as Record<string, unknown>).understanding);
 
-  const [voiceBlock, meetingFollowup, brainBlock] = await Promise.all([
+  const [voiceBlock, meetingFollowup, brainBlock, assistantSkills] = await Promise.all([
     buildVoiceBlock(userId, from, client).catch(() => ''),
     buildMeetingFollowupContext(userId, from, client).catch(() => ''),
     // Step 2: read the durable Person + Initiative brains — the draft reasons WITH the relationship (who
     // they are, who owes whom, how they write) + where the deal stands. Additive, non-fatal, no AI.
     renderBrainContext(client, userId, { personEmail: from, personName: fromName, initiative: understanding?.initiative ?? null }).catch(() => ''),
+    // O3a: drafting is the ASSISTANT coworker's craft — her assigned skills shape every draft, which is
+    // what makes the "{assistant} drafted this" attribution causal, not cosmetic.
+    buildAssistantSkillsBlock(client, userId),
   ]);
   let userName = 'me';
   try {
@@ -73,7 +102,7 @@ export async function generateReplyDraft(
   const res = await aiCreate(ai, {
     model, max_tokens: 600, temperature: 0.6,
     messages: [{ role: 'user', content:
-      `${voiceBlock ? voiceBlock + '\n\n' : ''}${meetingFollowup ? meetingFollowup + '\n\n' : ''}${brainBlock ? brainBlock + '\n\n' : ''}` +
+      `${voiceBlock ? voiceBlock + '\n\n' : ''}${meetingFollowup ? meetingFollowup + '\n\n' : ''}${brainBlock ? brainBlock + '\n\n' : ''}${assistantSkills ? assistantSkills + '\n\n' : ''}` +
       `${planBlock}` +
       `${instructions?.trim() ? `Follow this guidance for the reply: ${instructions.trim()}\n\n` : ''}` +
       // Anchor the perspective hard — the model otherwise mirrors the sender and signs with THEIR name.
@@ -100,11 +129,12 @@ export async function generateNudgeDraft(
   client: DBClient,
 ): Promise<string> {
   const recipientEmail = (opts.counterparty || '').match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || null;
-  const [voiceBlock, brainBlock] = await Promise.all([
+  const [voiceBlock, brainBlock, assistantSkills] = await Promise.all([
     buildVoiceBlock(userId, recipientEmail, client).catch(() => ''),
     // Step 2: the nudge reasons WITH the relationship — who they are, what's actually open with them, their
     // register — so a check-in lands right instead of generic. Additive, non-fatal, no AI.
     renderBrainContext(client, userId, { personEmail: recipientEmail, personName: recipientEmail ? null : opts.counterparty }).catch(() => ''),
+    buildAssistantSkillsBlock(client, userId), // O3a — the assistant's skills shape nudges too
   ]);
   let userName = 'me';
   try {
@@ -118,7 +148,7 @@ export async function generateNudgeDraft(
   const res = await aiCreate(ai, {
     model, max_tokens: 400, temperature: 0.6,
     messages: [{ role: 'user', content:
-      `${voiceBlock ? voiceBlock + '\n\n' : ''}${brainBlock ? brainBlock + '\n\n' : ''}` +
+      `${voiceBlock ? voiceBlock + '\n\n' : ''}${brainBlock ? brainBlock + '\n\n' : ''}${assistantSkills ? assistantSkills + '\n\n' : ''}` +
       `You are ${userName}. Write a brief, friendly NUDGE from ${userName} to ${who}, following up on ` +
       `something ${userName} is waiting on them for: "${opts.description}".${aged} Keep it warm, low-pressure, ` +
       `and short — a gentle check-in, not a demand. Address ${who} and sign as ${userName} — NEVER sign as ` +

@@ -915,6 +915,69 @@ function MovingTier({ exclude }: { exclude?: Set<string> }) {
   );
 }
 
+// ── B3b (iterated July 24) — THIS WEEK: the calendar rides BESIDE the task list as the second
+// column — day-grouped, deal-chipped, deterministic (zero AI). The "To prep" card was REMOVED
+// (the prep pass still prepares; its briefs live in the deal rooms). Cache-read lives in the
+// effect (the SSR'd-route rule — never in a useState initializer). ──
+type HorizonRow = { id: string; title: string; start: string; attendees: number; entity: { id: string; name: string } | null };
+function ThisWeekCard() {
+  const [h, setH] = useState<{ thisWeek: HorizonRow[] } | null>(null);
+  useEffect(() => {
+    const cached = loadLS<{ thisWeek: HorizonRow[] }>('aug-home-horizon-v2');
+    if (cached) setH(cached);
+    fetch('/api/home/horizon').then((r) => r.json())
+      .then((d) => { if (Array.isArray(d.thisWeek)) { setH({ thisWeek: d.thisWeek }); saveLS('aug-home-horizon-v2', { thisWeek: d.thisWeek }); } })
+      .catch(() => {});
+  }, []);
+  const rows = h?.thisWeek ?? [];
+  if (!rows.length) return <div className="hidden lg:block" />; // keep the grid stable
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const tomorrowISO = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+  const dayLabel = (iso: string) => {
+    const day = iso.slice(0, 10);
+    if (day === todayISO) return 'Today';
+    if (day === tomorrowISO) return 'Tomorrow';
+    return new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { weekday: 'long' });
+  };
+  const time = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  const days: Array<{ label: string; rows: HorizonRow[] }> = [];
+  for (const r of rows) {
+    const label = dayLabel(r.start);
+    const last = days[days.length - 1];
+    if (last && last.label === label) last.rows.push(r);
+    else days.push({ label, rows: [r] });
+  }
+  return (
+    <RiseIn delay={100}>
+      {/* H5 (work-surface): a slim, calm agenda rail — matches the dense list's type scale. */}
+      <div className="rounded-xl border border-neutral-200/60 bg-white p-3.5 lg:sticky lg:top-4">
+        <div className="flex items-center gap-1.5 mb-2.5">
+          <CalendarDaysIcon className="w-3.5 h-3.5 text-neutral-400" />
+          <p className="text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400">This week</p>
+        </div>
+        <div className="space-y-2.5">
+          {days.map((day) => (
+            <div key={day.label}>
+              <p className={`text-[10.5px] font-semibold uppercase tracking-wide mb-1 ${day.label === 'Today' ? 'text-indigo-500' : 'text-neutral-400'}`}>{day.label}</p>
+              <div className="space-y-1">
+                {day.rows.map((r) => (
+                  <div key={r.id} className="flex items-start gap-2">
+                    <span className="flex-shrink-0 text-[10.5px] tabular-nums text-neutral-400 pt-[2px] w-[36px]">{time(r.start)}</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[12px] text-neutral-700 leading-snug line-clamp-2">{r.title}</p>
+                      {r.entity && <p className="text-[10.5px] text-indigo-500 truncate">{r.entity.name}</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </RiseIn>
+  );
+}
+
 // ── The FOCUS+PEEK DECK for "What needs you". One hero card (the full DoRow / BundleGroup / PriorityCard)
 // leads; the next few are compact PEEK rows you can glance and promote. Tapping a peek makes it the hero;
 // clearing the hero drops it and the next one rises — "you work the top, the rest keep coming." Nothing is
@@ -1231,12 +1294,15 @@ export function HomeView() {
   const [team, setTeam] = useState<{ messages: TeamMsg[]; needsReview: TeamReview[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [nowExpanded, setNowExpanded] = useState(false); // Zone 1 — reveal the full prioritized list past the cap
-  const [focusKey, setFocusKey] = useState<string | null>(null); // deck — which entry is the hero (null = the top one)
 
 
   const [dismissed, setDismissed] = useState<Set<string>>(new Set()); // itemIds acted this session → live count + list refill
-  const [dismissedDeals, setDismissedDeals] = useState<Set<string>>(new Set()); // proactive slipping-deal keys dismissed ("not now") this session
+  const [dismissedDeals, setDismissedDeals] = useState<Set<string>>(new Set());
+  // H2 — the deck's grouping lens (time = default; project mirrors the power-user view). Persisted;
+  // hydrated in an effect (the SSR'd-route rule).
+  const [doGroupMode, setDoGroupMode] = useState<'time' | 'project'>('time');
+  useEffect(() => { try { const v = localStorage.getItem('aug-do-group'); if (v === 'project') setDoGroupMode('project'); } catch { /* ssr */ } }, []);
+  useEffect(() => { try { localStorage.setItem('aug-do-group', doGroupMode); } catch { /* ssr */ } }, [doGroupMode]); // proactive slipping-deal keys dismissed ("not now") this session
   const dismissDeal = useCallback((key: string) => setDismissedDeals((prev) => new Set(prev).add(key)), []);
   // Ids of priority CARDS + commitments cleared this session (Done/Dismiss). Separate from `dismissed`
   // (which is keyed on must-respond reply itemIds) so we can decrement `needYou` for cards/commitments
@@ -1960,6 +2026,8 @@ export function HomeView() {
                 hero + peeks with rich inline actions. The ledger (L1/L2) stays the substrate underneath;
                 the raw-inventory report presentation was tried and REVERTED (137 flat lines scared work
                 away — curation + cards ARE the product). */}
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-6 items-start">
+            <div className="min-w-0">
             {(hasBody || hadActionNotices || (b?.commitments?.length ?? 0) > 0) && (() => {
               const ordered = agenda.entries;
               const renderFull = (e: DeckEntry, emphasis: boolean) =>
@@ -1970,45 +2038,78 @@ export function HomeView() {
                     : e.kind === 'deal'
                       ? <DoRow item={dealToItem(e.deal)} emphasis={emphasis} dismissOverride={() => dismissDeal(e.deal.key)} />
                       : <DoRow item={priorityToItem(e.p)} emphasis={emphasis} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />;
-              const hero = ordered.find((e) => e.key === focusKey) ?? agenda.first ?? undefined;
-              const peeks = ordered.filter((e) => e.key !== hero?.key);
-              const PEEK_VISIBLE = 3;
-              const peekTop = peeks.slice(0, PEEK_VISIBLE);
-              const peekRest = peeks.slice(PEEK_VISIBLE);
+              // THE TIME-GROUPED LIST (the deck's 4th and final presentation — the lesson across the
+              // reverted report/carousel/deck: curation decides WHAT (the judged pool, unchanged),
+              // TIME decides the visible grouping (legible, verifiable), ONE row anatomy decides HOW.
+              // Judged priority still orders WITHIN each group (a date-frame over the reasoned order
+              // is presentation — plumbing).
+              const todayISO = new Date().toISOString().slice(0, 10);
+              const weekISO = new Date(Date.now() + 6 * 86_400_000).toISOString().slice(0, 10);
+              // H2 (work-surface): the second lens — the SAME entries regrouped by project. Time stays
+              // the default (legible); By-project mirrors the power-user's view. Persisted.
+              const projKeyOf = (e: DeckEntry): string =>
+                e.kind === 'bundle' ? e.title
+                  : e.kind === 'deal' ? e.deal.label
+                    : e.kind === 'single' ? (e.item.initiative ?? 'Loose')
+                      : 'Loose';
+              const dueOf = (e: DeckEntry): string | null =>
+                e.kind === 'single' ? (e.item.dueDate ?? null)
+                  : e.kind === 'bundle' ? ((e.items.map((i) => i.dueDate).filter(Boolean) as string[]).sort()[0] ?? null)
+                    : e.kind === 'priority' ? (e.p.dueDate ?? null) : null;
+              const groups = [
+                { key: 'overdue', label: 'Overdue', rows: ordered.filter((e) => { const dd = dueOf(e); return !!dd && dd < todayISO; }) },
+                { key: 'today', label: 'Due today', rows: ordered.filter((e) => dueOf(e) === todayISO) },
+                { key: 'week', label: 'This week', rows: ordered.filter((e) => { const dd = dueOf(e); return !!dd && dd > todayISO && dd <= weekISO; }) },
+                { key: 'rest', label: 'When you can', rows: ordered.filter((e) => { const dd = dueOf(e); return !dd || dd > weekISO; }) },
+              ].filter((g) => g.rows.length > 0);
+              let firstRow = true;
               return (
               <RiseIn delay={60}>
                 <section>
                   <div className="flex items-center justify-between gap-3">
                     <Label count={agenda.rows} icon={BoltIcon}>What needs you</Label>
-
+                    {agenda.rows > 0 && (
+                      <div className="flex items-center rounded-lg border border-neutral-200 p-0.5">
+                        {(['time', 'project'] as const).map((m) => (
+                          <button key={m} onClick={() => setDoGroupMode(m)}
+                            className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-all duration-150 ${doGroupMode === m ? 'bg-neutral-100 text-neutral-800' : 'text-neutral-400 hover:text-neutral-600'}`}
+                          >{m === 'time' ? 'Tasks' : 'By project'}</button>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  {agenda.rows === 0 || !hero ? (
+                  {agenda.rows === 0 ? (
                     <SectionCleared line="All handled — nothing else needs you." />
                   ) : (
-                    <div className="space-y-2.5">
-                      <div key={hero.key} style={{ animation: 'augDeckIn 0.28s ease-out' }}>{renderFull(hero, true)}</div>
-                      {peekTop.length > 0 && (
-                        <div className="space-y-1.5 pt-0.5">
-                          {peekTop.map((e) => <PeekRow key={e.key} e={e} onPromote={() => setFocusKey(e.key)} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} onDismissDeal={dismissDeal} />)}
+                    <div className="space-y-4 mt-1">
+                      {(doGroupMode === 'project'
+                        ? (() => {
+                            const by = new Map<string, DeckEntry[]>();
+                            for (const e of ordered) { const k = projKeyOf(e); (by.get(k) ?? by.set(k, []).get(k)!).push(e); }
+                            return [...by.entries()]
+                              .sort((a, b) => (a[0] === 'Loose' ? 1 : 0) - (b[0] === 'Loose' ? 1 : 0))
+                              .map(([k, rows]) => ({ key: `p-${k}`, label: k, rows }));
+                          })()
+                        : groups
+                      ).map((g) => (
+                        <div key={g.key}>
+                          <p className={`text-[10.5px] font-semibold uppercase tracking-wide mb-1.5 ${g.key === 'overdue' ? 'text-rose-500' : g.key === 'today' ? 'text-amber-500' : 'text-neutral-400'}`}>{g.label} · {g.rows.length}</p>
+                          <div className="space-y-1.5">
+                            {g.rows.map((e) => { const em = firstRow; firstRow = false; return <div key={e.key}>{renderFull(e, em)}</div>; })}
+                          </div>
                         </div>
-                      )}
-                      {peekRest.length > 0 && (
-                        <Collapse open={nowExpanded}>
-                          <div className="space-y-1.5 pt-1.5">{peekRest.map((e) => <PeekRow key={e.key} e={e} onPromote={() => setFocusKey(e.key)} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} onDismissDeal={dismissDeal} />)}</div>
-                        </Collapse>
-                      )}
-                      {peekRest.length > 0 && (
-                        <button onClick={() => setNowExpanded((v) => !v)} className="inline-flex items-center gap-1 text-[12px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors duration-150 ease-out pt-0.5">
-                          {nowExpanded ? 'See less' : `${peekRest.length} more`}
-                          <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${nowExpanded ? '-rotate-90' : 'rotate-90'}`} />
-                        </button>
-                      )}
+                      ))}
                     </div>
                   )}
                 </section>
               </RiseIn>
               );
             })()}
+            </div>
+            {/* Workbench (iterated): THIS WEEK rides BESIDE the list — two columns; the To-prep card
+                was removed (the prep pass still prepares; briefs live in the deal rooms). */}
+            <ThisWeekCard />
+            </div>
 
             {/* ── MOVING · nothing needed — the calm reassurance tier. Initiatives that need you now surface
                 IN the deck above (as bundle cards carrying momentum + next move); this collapsed strip holds
@@ -2024,10 +2125,11 @@ export function HomeView() {
             <div className="flex-1 flex flex-col min-h-0">
               <HomeAsk
                 suggestions={(() => {
-                  // Short, snappy, meaningful — general prompts the brain can always answer well.
-                  const s: string[] = ['What needs me today?', "What's slipping?"];
+                  // B3a — the composer INVITES work, not just questions (the converse core already
+                  // executes task creation + planning turns; this is framing).
+                  const s: string[] = ['Add a task…', 'Plan my week', "What's slipping?"];
                   if ((b?.schedule?.length ?? 0) > 0) s.push('Prep my next meeting');
-                  s.push('What did I miss?');
+                  else s.push('What did I miss?');
                   return s;
                 })()}
               />

@@ -175,11 +175,13 @@ export function WorkRow({ item, emphasis = false, hideInitiative = false, readon
   const badge = item.overdue ? 'Overdue' : item.dueToday ? 'Today' : (isCommit && item.dueDate) ? fmtDue(item.dueDate) : null;
   const busy = acting || commit.acting;
   return (
-    <div onMouseEnter={prefetch} onFocus={prefetch} className={`group rounded-xl border bg-white transition-all duration-300 ease-out hover:shadow-[0_4px_20px_-4px_rgba(0,0,0,0.08)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/70 hover:border-neutral-300'}`}>
+    // H1 (work-surface): a DENSE list row — one line of real estate per task (the whole curated
+    // pool fits one screen), hairline card, small type icon. The anatomy is unchanged; only the fat.
+    <div onMouseEnter={prefetch} onFocus={prefetch} className={`group rounded-lg border bg-white transition-all duration-300 ease-out hover:shadow-[0_2px_12px_-4px_rgba(0,0,0,0.07)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/60 hover:border-neutral-300'}`}>
       <div role="button" tabIndex={0} onClick={open}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
-        className="w-full flex items-start gap-3 p-4 text-left cursor-pointer">
-        <span className={`flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-lg ${evidence ? 'bg-neutral-50 text-neutral-400' : `${ring} ${iconTone}`}`}><Icon className="w-4 h-4" /></span>
+        className="w-full flex items-start gap-2.5 px-3 py-2 text-left cursor-pointer">
+        <span className={`flex-shrink-0 mt-[3px] inline-flex items-center justify-center w-5 h-5 rounded-md ${evidence ? 'bg-neutral-50 text-neutral-400' : `${ring} ${iconTone}`}`}><Icon className="w-3 h-3" /></span>
         <div className="min-w-0 flex-1">
           {emphasis && <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-500 mb-1">Start here</p>}
           <div className="flex items-baseline gap-2">
@@ -201,7 +203,7 @@ export function WorkRow({ item, emphasis = false, hideInitiative = false, readon
               {item.when && <span className="text-[11px] text-neutral-300 tabular-nums">{item.when}</span>}
             </span>
           </div>
-          {item.second && <p className={`${emphasis ? 'text-[12.5px]' : 'text-[12px]'} text-neutral-500 mt-0.5 leading-snug line-clamp-1`}>{item.second}</p>}
+          {item.second && <p className={`${emphasis ? 'text-[12.5px]' : 'text-[11.5px]'} text-neutral-400 mt-0 leading-snug line-clamp-1`}>{item.second}</p>}
         </div>
         {/* Controls appear ONLY on hover — at rest every row is a pure line. Identical set, identical
             position, every species and every surface. */}
@@ -214,7 +216,7 @@ export function WorkRow({ item, emphasis = false, hideInitiative = false, readon
       {/* CTA only when EARNED by a preparation, NAMED by it ("Review draft" / "See Max's work").
           No preparation → no button; the row click opens the deep-dive (the natural action). */}
       {emphasis && item.prepared && (
-        <div className="px-4 pb-3 -mt-1 pl-[2.9rem]">
+        <div className="px-3 pb-2.5 -mt-0.5 pl-[2.35rem]">
           <button
             onClick={open}
             onMouseEnter={prefetch}

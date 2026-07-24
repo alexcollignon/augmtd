@@ -566,3 +566,10 @@ role × skills pack × grounding slice × tool slice × eval gates — consultin
 **Order: DEPLOY → 5A → 5B → 5C; 5D backlog.** Cross-user smokes per slice (extend smoke-tasks +
 a new smoke-preparation); the reasoning doctrine governs throughout (the pass's matching is the
 registry-derived classifier, never keywords; skips are honest; sends never auto-fire).
+
+---
+
+**STATUS (July 24): 5D slice 1 shipped (MCP rail scaffold, flag-off). Slices 2–4 PAUSED — the
+proactive loop must work and be FELT first. The next arc is `docs/work-loop-plan.md` (THE WORK
+LOOP): grounded CTA narration, one reasoned coworker router (regex twins deleted), on-demand
+"Prepare this", visible per-task work-state, the self-waiting spine heal, room-menu polish.**

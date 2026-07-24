@@ -2,17 +2,21 @@
 // THE ROOM VIEW (just-works P7c-c2) — ONE builder for the rail's narration data, shared by BOTH doors:
 //   • the item deep-dive (GET /api/items/view — currentItemId marks the open thread)
 //   • the project room  (GET /api/entities/[id]/room — no current item; the Overview is focused)
-// Zero AI: the prose is the entity's own synthesized state; siblings are bounded parallel reads.
+// The prose is the entity's own synthesized state; siblings are bounded parallel reads. The one AI
+// touch is the sig-CACHED routing verdict (suggestWorkerForMove, W2) — zero AI on repeat loads.
 // One source — the deep-dive and the room can never drift in what "this deal's context" means.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { isAutomatedSender, isCalendarSystemSubject } from '@/lib/inbox/automated';
+import { suggestWorkerForMove, type SuggestedWorker } from '@/lib/prepare/route-suggestion';
 
 export type RoomEntity = {
   id: string; name: string;
+  tracked: boolean; // T4 — accepted by the user (project) vs merely recognized by memory (context)
   summary: string | null; momentum: string | null; nextMove: string | null;
   whoOwesYou: string[]; whoOwesThem: string[];
+  suggestedWorker: SuggestedWorker | null; // the ONE routing brain's verdict (W2) — served, never client-matched
 };
 
 export type RoomSiblings = {
@@ -29,18 +33,20 @@ export async function buildRoomView(
 ): Promise<{ entity: RoomEntity | null; siblings: RoomSiblings }> {
   const siblings = emptySiblings();
   const { data: ent } = await supabase.from('work_entities')
-    .select('id, name, summary, state, next_move').eq('id', entityId).eq('user_id', userId).maybeSingle();
+    .select('id, name, summary, state, next_move, tracked').eq('id', entityId).eq('user_id', userId).maybeSingle();
   if (!ent) return { entity: null, siblings };
 
   const st = ((ent.state ?? {}) as { summary?: string; momentum?: string; whoOwes?: { you?: string[]; them?: string[] } });
   const nm = ((ent.next_move ?? null) as { title?: string } | null);
   const entity: RoomEntity = {
     id: ent.id as string, name: String(ent.name),
+    tracked: !!ent.tracked,
     summary: st.summary ?? (ent.summary as string | null) ?? null,
     momentum: st.momentum ?? null,
     nextMove: nm?.title ?? null,
     whoOwesYou: Array.isArray(st.whoOwes?.you) ? st.whoOwes!.you!.slice(0, 3) : [],
     whoOwesThem: Array.isArray(st.whoOwes?.them) ? st.whoOwes!.them!.slice(0, 3) : [],
+    suggestedWorker: await suggestWorkerForMove(supabase, userId, entityId, { next_move: ent.next_move }),
   };
 
   // Everything else on this deal — the "this has 2 other threads" awareness.

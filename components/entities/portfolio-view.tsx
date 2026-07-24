@@ -35,7 +35,7 @@ type Entity = {
   momentum: string; summary: string | null; stage: string | null;
   whoOwes: { you: string[]; them: string[] };
   nextMove: { title: string; entityRef: string | null } | null;
-  weight: number; quietDays: number | null; itemCount: number; closureCandidate: boolean; prominent: boolean; category: string | null;
+  weight: number; nextDue?: string | null; quietDays: number | null; itemCount: number; closureCandidate: boolean; prominent: boolean; category: string | null;
   scope: 'project' | 'errand' | 'background' | null;
   events: Array<{ at: string; kind: string; label: string; id: string }>;
   goals?: string[]; rules?: string[];
@@ -109,6 +109,14 @@ function Row({ e, onAction, onOpen, others = [] }: { e: Entity; onAction: (id: s
           {!renaming && subline && <p className="text-[12px] text-neutral-400 leading-snug truncate mt-0.5">{subline}</p>}
         </button>
         <span className="flex-shrink-0 flex items-center gap-2">
+          {/* B6 — the urgency BADGE: a fact from the deal's own earliest open due date. */}
+          {e.status === 'active' && e.nextDue && (() => {
+            const today = new Date().toISOString().slice(0, 10);
+            const soon = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+            if (e.nextDue < today) return <span className="text-[10.5px] font-semibold uppercase tracking-wide text-rose-500">Overdue · {e.nextDue.slice(5)}</span>;
+            if (e.nextDue <= soon) return <span className="text-[10.5px] font-semibold uppercase tracking-wide text-amber-500">Due {e.nextDue === today ? 'today' : e.nextDue.slice(5)}</span>;
+            return null;
+          })()}
           {e.closureCandidate && (
             <button onClick={(ev) => { ev.stopPropagation(); onAction(e.id, 'done'); }} className="hidden group-hover:inline text-[11px] font-medium text-emerald-600 hover:text-emerald-700 transition-colors" title="No open loops and long quiet — conclude it?">
               Mark done?

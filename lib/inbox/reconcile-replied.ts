@@ -48,19 +48,24 @@ export async function reconcileRepliedItems(
     ];
     if (!threadIds.length) return { resolvedThreads };
 
-    // One query for ALL candidate threads' messages, grouped by thread.
+    // One query for ALL candidate threads' messages, grouped by thread. Sender + recipients ride
+    // along for the T1 resolution floor (a forward to a third party is not fulfillment).
     const { data: emails } = await client
       .from('emails')
-      .select('thread_id, is_from_user, received_at')
+      .select('thread_id, is_from_user, received_at, from_address, to_addresses, cc_addresses')
       .eq('user_id', userId)
       .in('thread_id', threadIds);
 
     const byThread = new Map<string, ThreadMessage[]>();
-    for (const e of (emails ?? []) as Array<{ thread_id: string; is_from_user: boolean; received_at: string | null }>) {
+    for (const e of (emails ?? []) as Array<{ thread_id: string; is_from_user: boolean; received_at: string | null; from_address?: string | null; to_addresses?: string[] | null; cc_addresses?: string[] | null }>) {
       const t = String(e.thread_id);
       let arr = byThread.get(t);
       if (!arr) { arr = []; byThread.set(t, arr); }
-      arr.push({ is_from_user: e.is_from_user, received_at: e.received_at });
+      arr.push({
+        is_from_user: e.is_from_user, received_at: e.received_at,
+        from: e.from_address ?? null,
+        to: [...(e.to_addresses ?? []), ...(e.cc_addresses ?? [])],
+      });
     }
 
     for (const tid of threadIds) {

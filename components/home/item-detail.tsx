@@ -1094,6 +1094,7 @@ function EmailActionPalette({
   onDismiss,
   onDone,
   onNoLongerRelevant,
+  onDismissWithNote,
   onForward,
   dismissing,
 }: {
@@ -1103,10 +1104,14 @@ function EmailActionPalette({
   onDismiss: () => void;
   onDone: () => void;
   onNoLongerRelevant: () => void;
+  /** D1 (work-surface): dismiss WITH context — the note becomes a ledger fact the brain reasons with. */
+  onDismissWithNote: (note: string) => void;
   onForward: () => void;
   dismissing: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [noting, setNoting] = useState(false);
+  const [note, setNote] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menuOpen) return;
@@ -1161,6 +1166,28 @@ function EmailActionPalette({
             >
               No longer relevant
             </button>
+            {/* D1 — dismiss WITH context: "had a call, waiting on X" / "we'll discuss it Thursday".
+                The note enters the deal's ledger; the next synthesis reasons with it. */}
+            {noting ? (
+              <div className="px-2 py-1.5">
+                <input
+                  autoFocus value={note} onChange={(e) => setNote(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && note.trim()) { setMenuOpen(false); setNoting(false); onDismissWithNote(note.trim()); setNote(''); }
+                    if (e.key === 'Escape') { setNoting(false); setNote(''); }
+                  }}
+                  placeholder='e.g. "we have a call Thursday — will discuss then"'
+                  className="w-full rounded-md border border-neutral-200 px-2 py-1 text-[12px] text-neutral-700 placeholder:text-neutral-300 outline-none focus:border-indigo-300"
+                />
+              </div>
+            ) : (
+              <button
+                onClick={() => setNoting(true)}
+                className="w-full text-left px-3 py-1.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50"
+              >
+                Dismiss with a note…
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -1352,6 +1379,22 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
   // A suggestion can become obsolete without being wrong: for example, the user already had the
   // call that an email was asking to schedule. Preserve that distinction from ordinary dismissal
   // so the Home, activity history, and future learning can tell the two outcomes apart.
+  // D1 — dismiss with the user's context: the note rides the dismiss and lands in the ledger.
+  const dismissWithNote = async (note: string) => {
+    if (dismissing || itemDismissed) return;
+    setDismissing(true);
+    try {
+      const res = await fetch(`/api/inbox/${id}/dismiss`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: note }),
+      });
+      if (res.ok) {
+        setItemResolution('dismissed');
+        setItemDismissed(true);
+        setTimeout(() => router.back(), 700);
+      }
+    } finally { setDismissing(false); }
+  };
+
   const markNoLongerRelevant = async () => {
     if (dismissing || itemDismissed) return;
     setDismissing(true);
@@ -1399,10 +1442,11 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
     <DeepDiveShell embedded={embedded} rail={railView ? (
       <ItemRail kind="email" id={id} view={railView} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }} />
     ) : undefined}>
-      {/* 1 — Header: subject + sender + date (fixed at top). The badge reflects the item's REAL
-          classification (a `noted`/FYI newsletter reads "For awareness", not "Reply needed"). */}
+      {/* 1 — Header: subject + sender + date (fixed at top). T4 (work-surface): the posture badge
+          ("For awareness"/"Reply needed") is INTERNAL vocabulary — it drives behavior; the user
+          never reads it. No chip on email deep-dives. */}
       <DetailHeader
-        chip={embedded ? null : <KindChip tone="indigo" icon={EnvelopeIcon} label={EMAIL_BADGE[thread?.type ?? 'needs_reply'].label} />}
+        chip={null}
         action={embedded ? undefined : <AddToProjectControl kind="inbox" id={id} projectId={thread?.projectId ?? null} projectName={thread?.projectName ?? null} suggestName={thread?.initiative ?? null} compact />}
         title={subject}
         meta={
@@ -1426,6 +1470,7 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
             onDismiss={dismissItem}
             onDone={markHandled}
             onNoLongerRelevant={markNoLongerRelevant}
+            onDismissWithNote={dismissWithNote}
             onForward={openForward}
             dismissing={dismissing}
           />

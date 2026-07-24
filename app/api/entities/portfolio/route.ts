@@ -17,7 +17,8 @@ export type PortfolioEntity = {
   momentum: string; summary: string | null; stage: string | null;
   whoOwes: { you: string[]; them: string[] };
   nextMove: { title: string; entityRef: string | null } | null;
-  weight: number; lastEventAt: string | null; quietDays: number | null;
+  weight: number; nextDue: string | null; // B6 — earliest open due date (fact; badge derives client-side)
+  lastEventAt: string | null; quietDays: number | null;
   itemCount: number;
   closureCandidate: boolean;
   events: Array<{ at: string; kind: string; label: string; id: string }>;
@@ -65,19 +66,28 @@ export async function GET() {
       if (!at) return;
       (events.get(entityId) ?? events.set(entityId, []).get(entityId)!).push({ at, kind, label: label.slice(0, 80), id: itemId });
     };
-    const fetchKind = async (kind: string, table: string, select: string, at: (r: Record<string, unknown>) => string | null, label: (r: Record<string, unknown>) => string) => {
+    // B6 — the earliest OPEN due date per entity: a FACT that powers the portfolio's urgency badge.
+    const nextDue = new Map<string, string>();
+    const fetchKind = async (kind: string, table: string, select: string, at: (r: Record<string, unknown>) => string | null, label: (r: Record<string, unknown>) => string, onRow?: (entityId: string, r: Record<string, unknown>) => void) => {
       const ls = byKind.get(kind) ?? [];
       if (!ls.length) return;
       const { data } = await supabase.from(table).select(select).in('id', ls.map((l) => l.itemId).slice(0, 400));
       const byId = new Map(((data ?? []) as unknown as Array<Record<string, unknown>>).map((r) => [String(r.id), r]));
-      for (const l of ls) { const r = byId.get(l.itemId); if (r) push(l.entityId, at(r), kind, label(r), l.itemId); }
+      for (const l of ls) { const r = byId.get(l.itemId); if (r) { push(l.entityId, at(r), kind, label(r), l.itemId); onRow?.(l.entityId, r); } }
     };
     await Promise.all([
       fetchKind('inbox_item', 'inbox_items', 'id, work_title, source_data, created_at',
         (r) => ((r.source_data as Record<string, unknown>)?.received_at as string) ?? (r.created_at as string) ?? null,
         (r) => String(r.work_title || '')),
       fetchKind('meeting', 'meeting_transcripts', 'id, title, start_time', (r) => (r.start_time as string) ?? null, (r) => String(r.title || 'Meeting')),
-      fetchKind('commitment', 'commitments', 'id, description, due_date, created_at', (r) => (r.due_date as string) ?? (r.created_at as string) ?? null, (r) => String(r.description || '')),
+      fetchKind('commitment', 'commitments', 'id, description, due_date, created_at, status', (r) => (r.due_date as string) ?? (r.created_at as string) ?? null, (r) => String(r.description || ''),
+        (entityId, r) => { // B6: min open due date per entity
+          const st = String(r.status || '');
+          if ((st === 'open' || st === 'pending' || st === 'in_progress') && r.due_date) {
+            const due = String(r.due_date);
+            if (!nextDue.has(entityId) || due < nextDue.get(entityId)!) nextDue.set(entityId, due);
+          }
+        }),
       fetchKind('calendar_event', 'calendar_events', 'id, title, start_time', (r) => (r.start_time as string) ?? null, (r) => String(r.title || 'Meeting')),
     ]);
 
@@ -108,6 +118,7 @@ export async function GET() {
         summary: state.summary ?? null, stage: state.stage ?? null, whoOwes: { you: owes.you, them: owes.them },
         nextMove: nm?.title ? { title: nm.title, entityRef: nm.entityRef ?? null } : null,
         weight,
+        nextDue: nextDue.get(id) ?? null, // B6 — the earliest open due date (a fact; the badge derives client-side)
         lastEventAt, quietDays, itemCount: counts.get(id) ?? 0, closureCandidate, events: evs,
         goals: intent.get(id)?.goals ?? [], rules: intent.get(id)?.rules ?? [],
       };

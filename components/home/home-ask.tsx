@@ -153,7 +153,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             {!hasThread && suggestions.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-2.5">
                 {suggestions.map((s) => (
-                  <button key={s} onClick={() => ask(s)} disabled={busy} className="rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-[12px] text-neutral-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-white transition-all duration-150">{s}</button>
+                  // B3a: a trailing "…" chip PREFILLS the composer (a fill-in verb like "Add a
+                  // task…" — the user completes it); everything else asks immediately.
+                  <button key={s} onClick={() => (s.endsWith('…') ? setInput(s.slice(0, -1) + ' ') : ask(s))} disabled={busy} className="rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-[12px] text-neutral-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-white transition-all duration-150">{s}</button>
                 ))}
               </div>
             )}

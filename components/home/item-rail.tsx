@@ -30,8 +30,10 @@ export type RailView = {
   gap: string | null;
   entity: {
     id: string; name: string;
+    tracked?: boolean; // T4 — accepted (project) vs merely recognized (quiet context)
     summary: string | null; momentum: string | null; nextMove: string | null;
     whoOwesYou: string[]; whoOwesThem: string[];
+    suggestedWorker?: { id: string; name: string; role: string } | null;
   } | null;
   siblings: {
     threads: Array<{ id: string; subject: string; who: string | null; at: string | null; current: boolean }>;
@@ -41,11 +43,16 @@ export type RailView = {
   };
 };
 
+/** A tappable offer inside a narration turn (W3) — the word is the deed:
+ *  'prepare' fires THE ONE preparation engine for the item; 'say' posts the text through the
+ *  one conversation core (hand-offs ride the existing steer path). */
+export type TurnAction = { label: string } & (
+  | { act: 'prepare'; itemKind: 'inbox' | 'commitment'; itemId: string }
+  | { act: 'say'; text: string });
+
 type Turn =
   | { role: 'user'; text: string }
-  | { role: 'system'; text: string; refs?: Array<{ label: string; href: string | null }>; files?: Array<{ id: string; filename: string; source: string }> };
-
-type Coworker = { id: string; name: string; worker_role: string | null };
+  | { role: 'system'; text: string; key?: string; actions?: TurnAction[]; refs?: Array<{ label: string; href: string | null }>; files?: Array<{ id: string; filename: string; source: string }> };
 
 // THE ROOM (P7c-c1): the conversation is PER-DEAL, not per-item — navigating between a deal's
 // artifacts keeps the chat (module-level store, keyed by entity id; a reload releases it). A loose
@@ -54,31 +61,19 @@ const _dealTurns = new Map<string, Turn[]>();
 
 /** Push a narration turn into a deal's conversation from OUTSIDE the rail (5A.5 — the room's
  *  CTA-focus continuation). Writes the module store + notifies any mounted rail via a window event
- *  (the rail re-reads its roomKey store on it). Deterministic — no AI. */
-export function pushDealTurn(entityId: string, text: string): void {
+ *  (the rail re-reads its roomKey store on it). Deterministic — no AI.
+ *  W3: an opts.key DEDUPES — any prior turn with the same key is dropped before appending, so a
+ *  re-clicked CTA re-surfaces its one line instead of stuttering duplicates. opts.actions render
+ *  as tappable offers ("Draft it now" / "Hand to …"). */
+export function pushDealTurn(entityId: string, text: string, opts?: { key?: string; actions?: TurnAction[] }): void {
   const turns = _dealTurns.get(entityId) ?? [];
-  _dealTurns.set(entityId, [...turns, { role: 'system', text }]);
+  const kept = opts?.key ? turns.filter((t) => t.role !== 'system' || t.key !== opts.key) : turns;
+  _dealTurns.set(entityId, [...kept, { role: 'system', text, key: opts?.key, actions: opts?.actions }]);
   try { window.dispatchEvent(new CustomEvent('aug:deal-turn', { detail: { entityId } })); } catch { /* SSR-safe */ }
 }
 
-// One roster fetch per page session (the rail only needs names/roles for the hand-off chip).
-let _coworkers: Promise<Coworker[]> | null = null;
-function fetchCoworkers(): Promise<Coworker[]> {
-  _coworkers ??= fetch('/api/workers')
-    .then((r) => (r.ok ? r.json() : { workers: [] }))
-    .then((d) => (Array.isArray(d.workers) ? d.workers : Array.isArray(d) ? d : []))
-    .catch(() => []);
-  return _coworkers;
-}
-
-// The coworker whose craft matches the deal's next move — conservative: no clear match → no chip.
-function coworkerForMove(move: string, workers: Coworker[]): Coworker | null {
-  const m = move.toLowerCase();
-  const role = /\bresearch|analy|compare|investigat|assess\b/.test(m) ? 'research_analyst'
-    : /\bwrite|draft|post|article|content|deck|present|summar\b/.test(m) ? 'content_manager'
-    : null;
-  return role ? (workers.find((w) => w.worker_role === role) ?? null) : null;
-}
+// The hand-off chip's coworker comes SERVED on the view (entity.suggestedWorker — the ONE routing
+// brain, lib/prepare/route-suggestion.ts). The old client-side keyword match is deleted (W2).
 
 
 
@@ -144,7 +139,6 @@ export function ItemRail({ kind, id, view, onDraft }: {
   }, [roomKey]);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
-  const [workers, setWorkers] = useState<Coworker[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -153,11 +147,37 @@ export function ItemRail({ kind, id, view, onDraft }: {
   const [founding, setFounding] = useState(false);
   const [foundName, setFoundName] = useState('');
 
-  useEffect(() => { fetchCoworkers().then(setWorkers); }, []);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [turns, busy]);
 
   const otherThreads = sib.threads.filter((t) => !t.current);
-  const suggested = ent?.nextMove ? coworkerForMove(ent.nextMove, workers) : null;
+  const suggested = ent?.suggestedWorker ?? null; // the ONE routing brain's served verdict (W2)
+
+  // W3: a narration turn's tappable offer. 'prepare' fires THE ONE preparation engine (the grounded
+  // result is narrated; 'aug:prepared' tells the room to refresh its board); 'say' rides the one
+  // conversation core (hand-offs go through the existing steer path).
+  const runAction = async (a: TurnAction) => {
+    if (busy) return;
+    if (a.act === 'say') { await send(a.text); return; }
+    setBusy(true);
+    try {
+      const res = await fetch('/api/items/prepare-now', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: a.itemKind, id: a.itemId }),
+      });
+      const d = await res.json().catch(() => ({}));
+      const by = d.worker ? String(d.worker).split(' ')[0] : null; // O3: the work always has a name
+      const say = !res.ok ? (d.error || "I couldn't prepare that just now.")
+        : d.did === 'draft' ? `${by ? `${by} drafted it` : 'Drafted'} — it’s ready below. Send it as-is or tell me what to change.`
+          : d.did === 'nudge' ? `${by ? `${by} drafted the nudge` : 'Nudge drafted'} — it’s on the task.`
+            : d.did === 'docsend' ? `${by ? `${by} found the file and drafted the send` : 'Found the file and drafted the send'} — it’s ready below.`
+              : d.did === 'delegated' ? `${String(d.worker || 'A coworker').split(' ')[0]} is on it — the work lands here when it’s ready.`
+                : (d.reason || 'Nothing to prepare here.');
+      setTurns((prev) => [...prev, { role: 'system', text: say }]);
+      if (res.ok && d.did && d.did !== 'none') { try { window.dispatchEvent(new CustomEvent('aug:prepared', { detail: {} })); } catch { /* SSR-safe */ } }
+    } catch {
+      setTurns((prev) => [...prev, { role: 'system', text: "I couldn't prepare that just now." }]);
+    } finally { setBusy(false); }
+  };
 
   const send = async (raw?: string) => {
     const t = (raw ?? text).trim();
@@ -288,10 +308,12 @@ export function ItemRail({ kind, id, view, onDraft }: {
             door. */}
         {!inRoom && (otherThreads.length > 0 || sib.meetings.length > 0 || sib.commitments.length > 0 || sib.files.length > 0 || ent) && (
           <AssistantRow>
-            <p className="text-[12px] text-neutral-500">{inRoom ? 'In here:' : 'In this project:'}</p>
+            {/* T4 (work-surface): the Accepted boundary holds in presentation — a merely-RECOGNIZED
+                grouping is quiet related context ("Around this"), never project chrome. */}
+            <p className="text-[12px] text-neutral-500">{ent && ent.tracked === false ? 'Around this:' : 'In this project:'}</p>
             {ent && !inRoom && (
               <div className="flex flex-wrap gap-1.5">
-                <Chip label="Open project overview" onClick={() => router.push(`/?view=projects&entity=${ent.id}`)} />
+                <Chip label={ent.tracked === false ? `Related work · ${ent.name}` : 'Open project overview'} onClick={() => router.push(`/?view=projects&entity=${ent.id}`)} />
               </div>
             )}
             {otherThreads.length > 0 && (
@@ -344,9 +366,9 @@ export function ItemRail({ kind, id, view, onDraft }: {
                 disabled={busy}
                 className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50/50 pl-1 pr-2.5 py-0.5 text-[11.5px] font-medium text-indigo-700 hover:bg-indigo-50 transition-colors"
               >
-                {suggested.worker_role && ROLE_AVATARS[suggested.worker_role] ? (
+                {suggested.role && ROLE_AVATARS[suggested.role] ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={ROLE_AVATARS[suggested.worker_role]} alt="" className="w-[18px] h-[18px] rounded-full" />
+                  <img src={ROLE_AVATARS[suggested.role]} alt="" className="w-[18px] h-[18px] rounded-full" />
                 ) : <Initials name={suggested.name} />}
                 {suggested.name.split(' ')[0]} can take this →
               </button>
@@ -362,6 +384,37 @@ export function ItemRail({ kind, id, view, onDraft }: {
         ) : (
           <AssistantRow key={i}>
             <p className="whitespace-pre-wrap">{t.text}</p>
+            {/* O5: the commit line is a DECISION, not buttons. ≥2 routes → the numbered options
+                idiom (the brain's judged route first, "Leave it with me" always last); a single
+                offer stays one calm chip. */}
+            {t.actions && t.actions.length >= 2 && (
+              <div className="rounded-xl border border-neutral-200 overflow-hidden">
+                {t.actions.map((a, j) => (
+                  <button
+                    key={j} onClick={() => runAction(a)} disabled={busy}
+                    className="flex items-center gap-2.5 w-full px-3 py-2 text-left text-[12.5px] text-neutral-700 hover:bg-indigo-50/60 transition-colors disabled:opacity-50 border-b border-neutral-100"
+                  >
+                    <span className="flex-shrink-0 w-5 h-5 rounded-md bg-neutral-100 text-neutral-500 text-[11px] font-semibold flex items-center justify-center">{j + 1}</span>
+                    <span className={j === 0 ? 'font-medium text-neutral-800' : ''}>{a.label}</span>
+                  </button>
+                ))}
+                <button
+                  onClick={() => setTurns((prev) => prev.map((x) => x === t ? { ...x, actions: undefined } : x))} disabled={busy}
+                  className="flex items-center gap-2.5 w-full px-3 py-2 text-left text-[12.5px] text-neutral-400 hover:bg-neutral-50 transition-colors"
+                >
+                  <span className="flex-shrink-0 w-5 h-5 rounded-md bg-neutral-100 text-neutral-400 text-[11px] font-semibold flex items-center justify-center">{t.actions.length + 1}</span>
+                  Leave it with me
+                </button>
+              </div>
+            )}
+            {t.actions && t.actions.length === 1 && (
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  onClick={() => runAction(t.actions![0])} disabled={busy}
+                  className="rounded-full border border-indigo-200 bg-indigo-50/50 px-2.5 py-1 text-[11.5px] font-medium text-indigo-700 hover:bg-indigo-50 transition-colors disabled:opacity-50"
+                >{t.actions[0].label}</button>
+              </div>
+            )}
             {t.refs && t.refs.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {t.refs.map((r, j) => (
