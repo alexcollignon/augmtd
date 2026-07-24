@@ -250,6 +250,57 @@ Two real mistakes, recorded so they don't repeat:
    hairline dividers. The consolidation-metric lesson repeated: optimize what the user SEES, not
    what a gate can grep.
 
-**QUEUED NEXT (before W): the one-line row rewrite + the floored demotion + the cache bust — and
-judge the Home only AFTER deploy + the two re-stamps (prod actively rewrites this account's data
-until then).**
+**CORRECTION SHIPPED (July 24, night — smoke-work-surface 41/41):**
+- **One-line rows for real**: WorkRow's second line is DELETED from the DOM — anything real folds
+  inline muted after the ask; "Action needed" boilerplate dropped at render; items-center single
+  flex line, py-[7px]. Structure, not padding.
+- **The demotion is OWNERSHIP-KEYED** (the reasoned boundary, proven on real data): a notice with
+  `understanding.ownership === 'none'` + a structural notice shape (automated sender OR
+  notification/calendar kind) is not a task — on BOTH paths (the action branch AND the
+  needs_reply/must-respond path, where the idealista class actually lived: an AI-rule needs_reply
+  guess + the July-13 direct-recipient protection). Real obligations survive by the same key
+  (bank/tax alerts = ownership you_owe — language-proof, no keyword list). Legacy no-understanding
+  items fall to the structural floor (automated + not action-worthy). The user's explicit
+  `type_override` is the only authoritative override (rule_type includes AI guesses — the bug).
+- Live-verified on user A's real pool: 11 junk rows demoted (all four "Property inquiry" + the
+  meeting acceptance), 8 real obligations kept (pay-booking, security, billing).
+- **Re-stamps RUN post-deploy** (prod now carries mailKind): heal clean ×4; mail-kind stamped
+  (Rene 120). **home_brief CACHE BUSTED for all 8 profiles** — verified 0 remaining.
+- ⚠️ The ownership-keyed fix renders only after the NEXT deploy (prod serves this morning's
+  kind-keyed H4-v1 until then). NEXT: W.**
+
+
+## THE HOME, CLOSED (July 24, late night — user-locked keep/change split)
+
+The final simplification, and the Home is DONE (focus moves to W and the substance):
+- **Bundles RETIRED from the deck** — the bundle card was project-grouping nested inside the time
+  lens, competing with the By-project toggle (double grouping = the "feels off"). Now: ONE row
+  species, flattened from every entry kind (bundle members inherit the bundle name as their project
+  chip; slipping deals are rows too). Grouping is the user's toggle alone.
+- **One container per group** (hairline dividers) — not N bordered cards. `WorkRow flat` mode; the
+  emphasis row is an accent + CTA inside the container, not a different species.
+- **Consistent right-meta order on every row: project chip · prepared · due.**
+- **KEPT ours deliberately (user call)**: the type icon (NOT a checkbox — rows aren't all
+  completable; ✓/✕ on hover completes), the synthesized ask leading, time groups + judged order
+  within, prepared tokens, Start-here + CTA, no per-row status dropdowns/priority dots (the room
+  owns those).
+- Composer at the TOP; "No project" language; When-you-can folds past 6; demotion is the
+  ownership-keyed set filtering EVERY pool. smoke-work-surface 43/43.
+
+## HOME — FINAL POLISH ROUND (July 24, late night; user-driven, all verified on the live page)
+
+- **Chat card (final anatomy):** input at the card's FLOOR (standard chat), conversation expands
+  ABOVE it with the one grid transition; smooth hover reveal; scroll is CONTAINER-scoped and pinned
+  to the latest turn (on new turns, while typing, and after the reveal settles). The newest answer
+  TYPES in (typewriter restored; history never re-animates; partial grouped tags never flash raw).
+- **Answer content:** hard limits (summary ≤3 short paragraphs/~100 words, ≤5 tags, one id per
+  bracket placed right after the thing it names); renderer splits real paragraphs and tolerates
+  grouped tags ("[E34, E35, E36]" → chips). Live-verified: 112 words, 3 paragraphs, ends with the
+  one-thing-first recommendation.
+- **The ROW-DENSITY LAW:** one signal per category — structure (text-only project name, capped
+  width) · status (ONE word: "ready" — "drafted" and a coworker's name are the SAME OUTCOME to the
+  user; attribution lives in the deep-dive) · time (overdue/today badge OR the due date — effort +
+  received date moved to the deep-dive). The meta cluster sheds BEFORE the title truncates.
+- **Groups:** Overdue + Due today always open; This week + When you can rest COLLAPSED to
+  header+count, hover-preview + click-pin (persisted `aug-do-pinned`).
+- smoke-work-surface 44/44 · production build clean. THE HOME IS CLOSED. Next: W.

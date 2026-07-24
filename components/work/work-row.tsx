@@ -133,8 +133,11 @@ export const isReadonlyWorkItem = (w: WorkItem): boolean =>
 // THE ROW — one component for everything you owe. A leading TYPE ICON carries the species; the body
 // is one line (who · ask) + an optional second line; controls appear only on hover.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-export function WorkRow({ item, emphasis = false, hideInitiative = false, readonly = false, evidence = false, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment, dismissOverride }: {
+export function WorkRow({ item, emphasis = false, hideInitiative = false, readonly = false, evidence = false, flat = false, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment, dismissOverride }: {
   item: DoItem; emphasis?: boolean; hideInitiative?: boolean;
+  /** flat = the row lives inside a GROUP CONTAINER (hairline dividers own the chrome) — no border,
+   *  no rounding, no shadow of its own. The one-container-per-group anatomy. */
+  flat?: boolean;
   /** Hide the ✓/✕ controls — for rows the viewer can only open (events, deliverables, history). */
   readonly?: boolean;
   /** THE ARBITER (P6a): this member is COVERED by its deal's one next move — render as quiet evidence
@@ -175,35 +178,41 @@ export function WorkRow({ item, emphasis = false, hideInitiative = false, readon
   const badge = item.overdue ? 'Overdue' : item.dueToday ? 'Today' : (isCommit && item.dueDate) ? fmtDue(item.dueDate) : null;
   const busy = acting || commit.acting;
   return (
-    // H1 (work-surface): a DENSE list row — one line of real estate per task (the whole curated
-    // pool fits one screen), hairline card, small type icon. The anatomy is unchanged; only the fat.
-    <div onMouseEnter={prefetch} onFocus={prefetch} className={`group rounded-lg border bg-white transition-all duration-300 ease-out hover:shadow-[0_2px_12px_-4px_rgba(0,0,0,0.07)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/60 hover:border-neutral-300'}`}>
+    // ONE LINE PER ROW (work-surface correction — the real list-wise anatomy, not padding): the
+    // SECOND LINE IS DEAD. Everything a row says fits one truncating line — [icon] primary · ask
+    // · muted-second — with the meta pinned right. The whole curated pool fits one screen.
+    <div onMouseEnter={prefetch} onFocus={prefetch} className={flat
+      ? `group bg-white transition-all duration-300 ease-out hover:bg-neutral-50/70 ${exiting ? 'opacity-0' : 'opacity-100'} ${emphasis ? 'bg-indigo-50/40' : ''}`
+      : `group rounded-lg border bg-white transition-all duration-300 ease-out hover:shadow-[0_2px_12px_-4px_rgba(0,0,0,0.07)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/60 hover:border-neutral-300'}`}>
       <div role="button" tabIndex={0} onClick={open}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
-        className="w-full flex items-start gap-2.5 px-3 py-2 text-left cursor-pointer">
-        <span className={`flex-shrink-0 mt-[3px] inline-flex items-center justify-center w-5 h-5 rounded-md ${evidence ? 'bg-neutral-50 text-neutral-400' : `${ring} ${iconTone}`}`}><Icon className="w-3 h-3" /></span>
-        <div className="min-w-0 flex-1">
-          {emphasis && <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-500 mb-1">Start here</p>}
-          <div className="flex items-baseline gap-2">
-            <p className={`${emphasis ? 'text-[14.5px]' : 'text-[13.5px]'} ${evidence ? 'font-normal text-neutral-500' : 'font-semibold text-neutral-900'} leading-snug min-w-0 truncate`}>
+        className="w-full flex items-center gap-2.5 px-3 py-[7px] text-left cursor-pointer">
+        <span className={`flex-shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-md ${evidence ? 'bg-neutral-50 text-neutral-400' : `${ring} ${iconTone}`}`}><Icon className="w-3 h-3" /></span>
+        <div className="min-w-0 flex-1 flex items-baseline gap-2">
+            {emphasis && <span className="flex-shrink-0 text-[10px] font-semibold uppercase tracking-wide text-indigo-500">Start here</span>}
+            <p className={`${emphasis ? 'text-[14px]' : 'text-[13px]'} ${evidence ? 'font-normal text-neutral-500' : 'font-medium text-neutral-900'} leading-snug min-w-0 truncate`}>
               {item.primary && <span className={evidence ? 'text-neutral-500' : 'text-neutral-800'}>{item.primary}</span>}
-              {/* ONE quiet relationship cue (Person Brain) — a muted tag right after the name: who they are to
-                  you ("partner") or the time signal ("quiet 3w"). Short + snappy; only meaningful stakes show. */}
-              {item.relCue && <span className={`ml-1 text-[11px] font-medium ${item.relCue.tone === 'amber' ? 'text-amber-600' : 'text-neutral-400'}`}>{item.relCue.label}</span>}
               {item.primary && item.ask && <span className="font-normal text-neutral-400"> · </span>}
-              {item.ask && <span className={evidence ? 'font-normal text-neutral-500' : 'font-semibold text-neutral-800'}>{item.ask}</span>}
+              {item.ask && <span className={evidence ? 'font-normal text-neutral-500' : 'font-medium text-neutral-800'}>{item.ask}</span>}
+              {/* The old second line, folded INLINE and muted — never a second row, only real info
+                  (boilerplate like "Action needed" is dropped at the source). */}
+              {item.second && item.second !== 'Action needed' && <span className="font-normal text-neutral-400 text-[12px]"> · {item.second}</span>}
             </p>
             <span className="flex-shrink-0 ml-auto flex items-center gap-2">
-              {/* PREPARED — the work already arrived: "drafted" (in-house) or the coworker's name. */}
-              {item.prepared && <span className="text-[11px] font-medium text-indigo-500">{item.prepared === 'draft' ? 'drafted' : item.prepared.split(' ')[0]}</span>}
-              {badge && <span className={`text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 ${item.overdue ? 'bg-rose-50 text-rose-600' : item.dueToday ? 'bg-amber-50 text-amber-600' : 'bg-neutral-100 text-neutral-500'}`}>{badge}</span>}
-              {!badge && <EffortDate effort={item.effort} dueDate={item.dueDate} overdue={!!item.dueDate && item.dueDate < new Date().toISOString().slice(0, 10)} />}
-              {/* Inside a bundle already named by this initiative, the per-row tag is redundant — hide it. */}
-              {!hideInitiative && <InitiativeTag initiative={item.initiative} total={item.initiativeTotal} />}
-              {item.when && <span className="text-[11px] text-neutral-300 tabular-nums">{item.when}</span>}
+              {/* ONE signal per category (the row-density law): structure · status · time. The ask
+                  is the payload — meta sheds before the title loses a character. Effort + received
+                  date live in the deep-dive, not here. "drafted" and a coworker's name are the SAME
+                  OUTCOME to the user → one word: ready. */}
+              {!hideInitiative && item.initiative && (
+                <span className="text-[10.5px] font-medium text-indigo-400 truncate max-w-[110px]" title={`Part of ${item.initiative}`}>{item.initiative}</span>
+              )}
+              {item.prepared && <span className="text-[11px] font-medium text-indigo-500">ready</span>}
+              {badge
+                ? <span className={`text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 ${item.overdue ? 'bg-rose-50 text-rose-600' : item.dueToday ? 'bg-amber-50 text-amber-600' : 'bg-neutral-100 text-neutral-500'}`}>{badge}</span>
+                : item.dueDate
+                  ? <span className={`text-[11px] font-medium ${item.dueDate < new Date().toISOString().slice(0, 10) ? 'text-rose-500' : 'text-neutral-400'}`}>{new Date(`${item.dueDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                  : null}
             </span>
-          </div>
-          {item.second && <p className={`${emphasis ? 'text-[12.5px]' : 'text-[11.5px]'} text-neutral-400 mt-0 leading-snug line-clamp-1`}>{item.second}</p>}
         </div>
         {/* Controls appear ONLY on hover — at rest every row is a pure line. Identical set, identical
             position, every species and every surface. */}

@@ -437,6 +437,9 @@ export async function GET() {
     const u = getUnderstanding({ source_data: sd });
     return u?.initiative ?? (typeof sd.initiative === 'string' ? sd.initiative : null);
   };
+  // H4: ids demoted as ownership-none notices — EVERY deck-feeding pool filters by this set, so a
+  // demoted notice can never re-enter through a side door (priorities / keep-an-eye-on were one).
+  const demotedNoticeIds = new Set<string>();
   for (const { it, posture } of emailCandidates) {
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
     const tid = sd.thread_id as string | undefined;
@@ -455,12 +458,23 @@ export async function GET() {
     // ONE relevance → ONE home (no overlap). Items lacking understanding fall back to today's behavior
     // (the automated re-posture below). No keyword/sender heuristic drives the split — relevance encodes it.
     const u = getUnderstanding(it);
-    // H4 (work-surface): a CALENDAR acceptance/update or a plain NOTIFICATION judged merely "action"
-    // is not a task — it leaves the deck (the digest keeps it) UNLESS a user rule explicitly said
-    // needs_reply/to_do (rules are authoritative) or a real stated deadline makes it an obligation.
-    const kindDemoted = !!u && (u.mailKind === 'calendar' || u.mailKind === 'notification')
-      && it.rule_type !== 'needs_reply' && it.rule_type !== 'to_do' && !u.deadline;
-    if (u && u.relevance === 'action' && !kindDemoted) {
+    // H4 (work-surface, OWNERSHIP-KEYED): a notice nobody owes a move on is NOT a task, whatever an
+    // AI rule guessed. Verified against real data: junk (portal responses, calendar acceptances) =
+    // ownership 'none' + kind notification/calendar; real obligations (bank data update, tax
+    // discrepancy) = ownership 'you_owe' — protected by the same key, language-proof (no keyword
+    // list). Legacy items with NO understanding fall to the structural floor (automated sender +
+    // not action-worthy). The user's explicit type_override is the only authoritative override
+    // here — rule_type includes AI-rule guesses, which is exactly what this corrects.
+    const noticeSubj = ((sd.subject as string) || it.work_title || null);
+    const structuralNotice = isAutomatedSender(fromEmailOf(sd), (sd.from_name as string) || null, noticeSubj)
+      || (!!u && (u.mailKind === 'notification' || u.mailKind === 'calendar'));
+    const noticeDemoted = it.type_override !== 'needs_reply' && it.type_override !== 'to_do' && (
+      (!!u && u.ownership === 'none' && structuralNotice)
+      || (!u && isAutomatedSender(fromEmailOf(sd), (sd.from_name as string) || null, noticeSubj)
+          && !isActionWorthyAutomated((it.work_state as string) || null, (sd.from_name as string) || null, noticeSubj))
+    );
+    if (noticeDemoted) demotedNoticeIds.add(it.id); // filters EVERY downstream pool (priorities, keep-an-eye-on, …)
+    if (u && u.relevance === 'action' && !noticeDemoted) {
       // An action-notice: its own section, never a reply card, never a needs-you priority. We DON'T push
       // it into `priorities` (so it can't count as needs-you) or `mustRespondRaw`; we still feed
       // emailSeeds so per-person context stays complete, then skip the reply/priority wiring.
@@ -542,6 +556,11 @@ export async function GET() {
       // direct → surface — err toward showing the reply.)
       const ccOnlyBystander = (sd.is_cc_only === true);
       if (understoodAwareness && ccOnlyBystander) continue;
+      // H4: an automated notice NOBODY owes a move on (ownership 'none' + structural notice) never
+      // owes a reply either — whatever the AI rule matched. The July-13 protection guards REAL
+      // small-team asks (a person's thread never has ownership none + an automated/notification
+      // shape); the user's explicit type_override still wins above.
+      if (noticeDemoted) continue;
       mustRespondRaw.push({
         itemId: it.id,
         from: (sd.from_name as string) || (sd.from as string) || 'Someone',
@@ -635,6 +654,9 @@ export async function GET() {
   // Overdue → reply → to-do → finished meetings last (a past meeting is context, not "do this now").
   const rank = (p: Priority) => (p.overdue ? 0 : p.source === 'meeting' ? 4 : p.posture === 'needs_reply' ? 1 : p.posture === 'to_do' ? 2 : 3);
   priorities.sort((a, b) => rank(a) - rank(b));
+  for (let i = priorities.length - 1; i >= 0; i--) {
+    if (priorities[i].itemId && demotedNoticeIds.has(priorities[i].itemId!)) priorities.splice(i, 1); // H4
+  }
   const cappedPriorities = priorities.slice(0, MAX_PRIORITIES);
 
   // ── FYI-by-topic: group the awareness emails by sender; the AI digests each group below. ──
@@ -1093,7 +1115,7 @@ export async function GET() {
   // reply must never ALSO appear in keep-an-eye-on. Must-respond wins.
   const mustItemIds = new Set((mustRespondOut?.items ?? []).map((r) => r.itemId).filter(Boolean));
   const keepAnEyeOnOut = keepAnEyeOn
-    ? { items: keepAnEyeOn.items.filter((k) => (!k.itemId || pendingItemIds.has(k.itemId) || awarenessRaw.has(k.itemId)) && !mustItemIds.has(k.itemId)) }
+    ? { items: keepAnEyeOn.items.filter((k) => (!k.itemId || pendingItemIds.has(k.itemId) || awarenessRaw.has(k.itemId)) && !mustItemIds.has(k.itemId) && !demotedNoticeIds.has(k.itemId)) } // H4: demoted notices filtered
     : keepAnEyeOn;
 
   // ── "For your awareness" — REAL correspondence you're only informed on (understanding-driven). ──

@@ -1055,10 +1055,10 @@ function BundleGroup({ title, why, items, state, emphasis = false, onDismissInbo
     : <>{lead.primary ? <>{lead.primary}<span className="text-neutral-400"> · </span></> : null}{lead.ask}</>;
   return (
     <div className={`rounded-xl border bg-white transition-all duration-300 ease-out ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/70'}`}>
-      <button onClick={() => setOpen((v) => !v)} className="w-full flex items-start gap-3 p-4 text-left">
+      <button onClick={() => setOpen((v) => !v)} className="w-full flex items-start gap-2.5 px-3 py-2 text-left">
         {m
-          ? <span className={`flex-shrink-0 mt-1.5 w-2.5 h-2.5 rounded-full ${m.dot}`} title={m.label} />
-          : <span className="flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-50 text-indigo-500"><FolderIcon className="w-4 h-4" /></span>}
+          ? <span className={`flex-shrink-0 mt-[7px] w-2 h-2 rounded-full ${m.dot}`} title={m.label} />
+          : <span className="flex-shrink-0 mt-px inline-flex items-center justify-center w-5 h-5 rounded-md bg-indigo-50 text-indigo-500"><FolderIcon className="w-3 h-3" /></span>}
         <div className="min-w-0 flex-1">
           {emphasis && <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-500 mb-1">Start here</p>}
           <div className="flex items-baseline gap-2">
@@ -1074,7 +1074,7 @@ function BundleGroup({ title, why, items, state, emphasis = false, onDismissInbo
         <ChevronRightIcon className={`w-4 h-4 flex-shrink-0 text-neutral-300 mt-0.5 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
       </button>
       {state?.nextMove && (
-        <div className="px-4 pb-3 -mt-1 pl-[2.4rem]">
+        <div className="px-3 pb-2.5 -mt-0.5 pl-[2.35rem]">
           <button
             onClick={(e) => { e.stopPropagation(); if (moveHref) router.push(moveHref); else setOpen(true); }}
             onMouseEnter={() => prefetchItem(moveHref)}
@@ -1301,6 +1301,15 @@ export function HomeView() {
   // H2 — the deck's grouping lens (time = default; project mirrors the power-user view). Persisted;
   // hydrated in an effect (the SSR'd-route rule).
   const [doGroupMode, setDoGroupMode] = useState<'time' | 'project'>('time');
+  // Calm groups rest collapsed; hover previews, CLICK PINS (persisted; effect-hydrated — SSR rule).
+  const [pinnedGroups, setPinnedGroups] = useState<Set<string>>(new Set());
+  const [hoverGroup, setHoverGroup] = useState<string | null>(null);
+  useEffect(() => { try { const v = JSON.parse(localStorage.getItem('aug-do-pinned') || '[]'); if (Array.isArray(v)) setPinnedGroups(new Set(v)); } catch { /* ssr */ } }, []);
+  const togglePinnedGroup = (k: string) => setPinnedGroups((prev) => {
+    const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k);
+    try { localStorage.setItem('aug-do-pinned', JSON.stringify([...n])); } catch { /* ssr */ }
+    return n;
+  });
   useEffect(() => { try { const v = localStorage.getItem('aug-do-group'); if (v === 'project') setDoGroupMode('project'); } catch { /* ssr */ } }, []);
   useEffect(() => { try { localStorage.setItem('aug-do-group', doGroupMode); } catch { /* ssr */ } }, [doGroupMode]); // proactive slipping-deal keys dismissed ("not now") this session
   const dismissDeal = useCallback((key: string) => setDismissedDeals((prev) => new Set(prev).add(key)), []);
@@ -2026,49 +2035,53 @@ export function HomeView() {
                 hero + peeks with rich inline actions. The ledger (L1/L2) stays the substrate underneath;
                 the raw-inventory report presentation was tried and REVERTED (137 flat lines scared work
                 away — curation + cards ARE the product). */}
+            {/* ── THE ASK ZONE — the entry to the brain, AT THE TOP (the user's call: talk to your
+                work first, the list follows — the chat is never buried under it). The conversation
+                grows downward in place. ── */}
+            <div className="mb-6">
+              <HomeAsk
+                suggestions={(() => {
+                  const s: string[] = ['Add a task…', 'Plan my week', "What's slipping?"];
+                  if ((b?.schedule?.length ?? 0) > 0) s.push('Prep my next meeting');
+                  else s.push('What did I miss?');
+                  return s;
+                })()}
+              />
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-6 items-start">
             <div className="min-w-0">
             {(hasBody || hadActionNotices || (b?.commitments?.length ?? 0) > 0) && (() => {
               const ordered = agenda.entries;
-              const renderFull = (e: DeckEntry, emphasis: boolean) =>
-                e.kind === 'bundle'
-                  ? <BundleGroup title={e.title} why={e.why} items={e.items} state={e.state} emphasis={emphasis} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />
-                  : e.kind === 'single'
-                    ? <DoRow item={e.item} emphasis={emphasis} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />
-                    : e.kind === 'deal'
-                      ? <DoRow item={dealToItem(e.deal)} emphasis={emphasis} dismissOverride={() => dismissDeal(e.deal.key)} />
-                      : <DoRow item={priorityToItem(e.p)} emphasis={emphasis} onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />;
-              // THE TIME-GROUPED LIST (the deck's 4th and final presentation — the lesson across the
-              // reverted report/carousel/deck: curation decides WHAT (the judged pool, unchanged),
-              // TIME decides the visible grouping (legible, verifiable), ONE row anatomy decides HOW.
-              // Judged priority still orders WITHIN each group (a date-frame over the reasoned order
-              // is presentation — plumbing).
+              // ONE ROW SPECIES (the final Home simplification — user-locked): BUNDLES RETIRE from
+              // the deck. Grouping is the user's toggle (Tasks=time | By project) — one mechanism,
+              // never a card nested inside a group. Every entry FLATTENS to the one row anatomy;
+              // the project chip carries the deal; a bundle member inherits its bundle's name as
+              // its chip. Curation (the judged pool) and judged order within groups are unchanged.
+              type FlatRow = { item: DoItem; dealKey?: string };
+              const flat: FlatRow[] = [];
+              for (const e of ordered) {
+                if (e.kind === 'bundle') for (const it of e.items) flat.push({ item: { ...it, initiative: it.initiative ?? e.title } });
+                else if (e.kind === 'single') flat.push({ item: e.item });
+                else if (e.kind === 'priority') flat.push({ item: priorityToItem(e.p) });
+                else flat.push({ item: dealToItem(e.deal), dealKey: e.deal.key });
+              }
               const todayISO = new Date().toISOString().slice(0, 10);
               const weekISO = new Date(Date.now() + 6 * 86_400_000).toISOString().slice(0, 10);
-              // H2 (work-surface): the second lens — the SAME entries regrouped by project. Time stays
-              // the default (legible); By-project mirrors the power-user's view. Persisted.
-              const projKeyOf = (e: DeckEntry): string =>
-                e.kind === 'bundle' ? e.title
-                  : e.kind === 'deal' ? e.deal.label
-                    : e.kind === 'single' ? (e.item.initiative ?? 'Loose')
-                      : 'Loose';
-              const dueOf = (e: DeckEntry): string | null =>
-                e.kind === 'single' ? (e.item.dueDate ?? null)
-                  : e.kind === 'bundle' ? ((e.items.map((i) => i.dueDate).filter(Boolean) as string[]).sort()[0] ?? null)
-                    : e.kind === 'priority' ? (e.p.dueDate ?? null) : null;
               const groups = [
-                { key: 'overdue', label: 'Overdue', rows: ordered.filter((e) => { const dd = dueOf(e); return !!dd && dd < todayISO; }) },
-                { key: 'today', label: 'Due today', rows: ordered.filter((e) => dueOf(e) === todayISO) },
-                { key: 'week', label: 'This week', rows: ordered.filter((e) => { const dd = dueOf(e); return !!dd && dd > todayISO && dd <= weekISO; }) },
-                { key: 'rest', label: 'When you can', rows: ordered.filter((e) => { const dd = dueOf(e); return !dd || dd > weekISO; }) },
+                { key: 'overdue', label: 'Overdue', rows: flat.filter((r) => !!r.item.dueDate && r.item.dueDate < todayISO) },
+                { key: 'today', label: 'Due today', rows: flat.filter((r) => r.item.dueDate === todayISO) },
+                { key: 'week', label: 'This week', rows: flat.filter((r) => !!r.item.dueDate && r.item.dueDate > todayISO && r.item.dueDate <= weekISO) },
+                { key: 'rest', label: 'When you can', rows: flat.filter((r) => !r.item.dueDate || r.item.dueDate > weekISO) },
               ].filter((g) => g.rows.length > 0);
+              const totalRows = flat.length;
               let firstRow = true;
               return (
               <RiseIn delay={60}>
                 <section>
                   <div className="flex items-center justify-between gap-3">
-                    <Label count={agenda.rows} icon={BoltIcon}>What needs you</Label>
-                    {agenda.rows > 0 && (
+                    <Label count={totalRows} icon={BoltIcon}>What needs you</Label>
+                    {totalRows > 0 && (
                       <div className="flex items-center rounded-lg border border-neutral-200 p-0.5">
                         {(['time', 'project'] as const).map((m) => (
                           <button key={m} onClick={() => setDoGroupMode(m)}
@@ -2078,27 +2091,53 @@ export function HomeView() {
                       </div>
                     )}
                   </div>
-                  {agenda.rows === 0 ? (
+                  {totalRows === 0 ? (
                     <SectionCleared line="All handled — nothing else needs you." />
                   ) : (
                     <div className="space-y-4 mt-1">
                       {(doGroupMode === 'project'
                         ? (() => {
-                            const by = new Map<string, DeckEntry[]>();
-                            for (const e of ordered) { const k = projKeyOf(e); (by.get(k) ?? by.set(k, []).get(k)!).push(e); }
+                            const by = new Map<string, FlatRow[]>();
+                            for (const r of flat) { const k = r.item.initiative ?? 'No project'; (by.get(k) ?? by.set(k, []).get(k)!).push(r); }
                             return [...by.entries()]
-                              .sort((a, b) => (a[0] === 'Loose' ? 1 : 0) - (b[0] === 'Loose' ? 1 : 0))
+                              .sort((a, b) => (a[0] === 'No project' ? 1 : 0) - (b[0] === 'No project' ? 1 : 0))
                               .map(([k, rows]) => ({ key: `p-${k}`, label: k, rows }));
                           })()
                         : groups
-                      ).map((g) => (
-                        <div key={g.key}>
-                          <p className={`text-[10.5px] font-semibold uppercase tracking-wide mb-1.5 ${g.key === 'overdue' ? 'text-rose-500' : g.key === 'today' ? 'text-amber-500' : 'text-neutral-400'}`}>{g.label} · {g.rows.length}</p>
-                          <div className="space-y-1.5">
-                            {g.rows.map((e) => { const em = firstRow; firstRow = false; return <div key={e.key}>{renderFull(e, em)}</div>; })}
+                      ).map((g) => {
+                        // URGENT groups (Overdue · Due today) are always open — they're why the
+                        // section exists. The CALM groups (This week · When you can · project
+                        // groups) rest COLLAPSED to header + count, expand smoothly on hover
+                        // (the one grid transition), and CLICK PINS them open (persisted — hover
+                        // alone is fragile and touch needs the tap).
+                        const alwaysOpen = g.key === 'overdue' || g.key === 'today';
+                        const isOpen = alwaysOpen || pinnedGroups.has(g.key) || hoverGroup === g.key;
+                        return (
+                        <div key={g.key}
+                          onMouseEnter={() => { if (!alwaysOpen) setHoverGroup(g.key); }}
+                          onMouseLeave={() => setHoverGroup((h) => (h === g.key ? null : h))}>
+                          <button
+                            onClick={() => { if (!alwaysOpen) togglePinnedGroup(g.key); }}
+                            className={`flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wide mb-1.5 ${g.key === 'overdue' ? 'text-rose-500' : g.key === 'today' ? 'text-amber-500' : 'text-neutral-400 hover:text-neutral-600'} transition-colors`}
+                          >
+                            {g.label} · {g.rows.length}
+                            {!alwaysOpen && <ChevronRightIcon className={`w-3 h-3 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`} />}
+                          </button>
+                          <div className={`grid transition-all duration-300 ease-out ${isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+                            <div className="overflow-hidden min-h-0">
+                              {/* ONE container per group — rows separated by hairlines. */}
+                              <div className="rounded-xl border border-neutral-200/70 bg-white divide-y divide-neutral-100 overflow-hidden">
+                                {g.rows.map((r) => { const em = firstRow; firstRow = false; return (
+                                  <DoRow key={r.item.key} item={r.item} flat emphasis={em}
+                                    dismissOverride={r.dealKey ? () => dismissDeal(r.dealKey!) : undefined}
+                                    onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />
+                                ); })}
+                              </div>
+                            </div>
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </section>
@@ -2116,24 +2155,6 @@ export function HomeView() {
                 only the ones that are progressing but need nothing from you, so the Home reads as ONE
                 initiative-aware list, not two competing rollups. Renders nothing until states populate. */}
             {!b?.briefing?.pulse && <RiseIn><MovingTier exclude={new Set(b?.deckEntityIds ?? [])} /></RiseIn>}
-
-            {/* ── THE ASK ZONE — the entry to the brain, below the cards. The reasoned brief is its opening
-                message; a grounded conversation grows in place; the composer OWNS the bottom (fills the
-                remaining height so it anchors cleanly, then stays sticky as the conversation scrolls). No
-                RiseIn here — its transform would scope the composer's sticky, and this zone is meant to feel
-                fixed, not to lift in. No label — the system's own voice. */}
-            <div className="flex-1 flex flex-col min-h-0">
-              <HomeAsk
-                suggestions={(() => {
-                  // B3a — the composer INVITES work, not just questions (the converse core already
-                  // executes task creation + planning turns; this is framing).
-                  const s: string[] = ['Add a task…', 'Plan my week', "What's slipping?"];
-                  if ((b?.schedule?.length ?? 0) > 0) s.push('Prep my next meeting');
-                  else s.push('What did I miss?');
-                  return s;
-                })()}
-              />
-            </div>
 
             </div>{/* ── end ACTION content ── */}
           </div>

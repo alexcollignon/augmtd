@@ -101,9 +101,9 @@ export async function answerHomeQuestion(
     `THEIR QUESTION: ${question}\n\n` +
     `Rules:\n` +
     `- Answer ONLY from the context. If it doesn't cover the question, say so plainly ("I don't have anything on that yet") — NEVER invent people, dates, or facts.\n` +
-    `- Be brief and specific — a couple of sentences, the way a colleague would say it out loud. Lead with the answer.\n` +
-    `- PLAIN PROSE ONLY: no markdown (no **bold**, no headers, no tables, no bullet lists). Never place two refs back-to-back — connect them with words.\n` +
-    `- Reference the items you used by their tag ([E#]/[C#]/[R#]/[F#]) inline where natural — the app turns them into links.\n` +
+    `- HARD LIMITS (exceeding them is a failed answer): a simple question = 1-3 sentences. A summary question ("what did I miss", "plan my week") = at most 3 short paragraphs and 100 words TOTAL, separated by blank lines. Pick the 3-4 things that matter MOST and STOP — never inventory; the deck below the chat already lists everything. End a summary with the one thing you'd do first.\n` +
+    `- PLAIN PROSE ONLY: no markdown (no **bold**, no headers, no tables, no bullet lists). Whenever the answer runs past two sentences, break it into short paragraphs separated by a BLANK LINE — never one solid block. Never place two refs back-to-back — connect them with words.\n` +
+    `- HARD LIMIT: at most 5 tags total, ONE id per bracket ([E7] — NEVER [E7, E8]), placed immediately AFTER the thing it names (\"the Soboplac pilot [E10]\"), never dangling at a sentence end. The app turns each into a link.\n` +
     `- Reason across items when useful (connect a deal to its commitments / its meeting / who owes what).\n` +
     `Return ONLY JSON: {"answer":"<the answer, with [E#]/[C#]/[R#]/[F#] tags>","refs":["E1","C2","F1",...]}`;
 
@@ -112,7 +112,7 @@ export async function answerHomeQuestion(
   // become ~5-8x cheaper with no visible loss on the easy majority.
   const deep = /miss|summar|priorit|plan\b|why\b|should|think|advice|catch me up|overview|strategy|recommend/i.test(question) || question.length > 120;
   const res = await aiCall<{ answer?: string; refs?: string[] }>({
-    userId, supabase, shape: deep ? { output: 'json', reasoning: 'deep' } : { output: 'json' }, prompt, maxTokens: 700, temperature: 0.2, source: 'brain_synthesis',
+    userId, supabase, shape: deep ? { output: 'json', reasoning: 'deep' } : { output: 'json' }, prompt, maxTokens: 450, temperature: 0.2, source: 'brain_synthesis',
   });
   const answer = String(res.json?.answer || '').trim() || "I don't have anything on that yet.";
   const used = (res.json?.refs ?? []).map((t) => refs.get(t)).filter((r): r is AskRef => !!r);

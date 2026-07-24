@@ -166,19 +166,55 @@ const src = (p: string) => readFileSync(p, 'utf8');
   }
   check('M live · mailKind present on live pending items (≥1 account; prod-skew caveat above)', anyKinds > 0, `${anyKinds} total`);
 
-  // ── H STRUCTURAL — the compact Home ──
+  // ── H STRUCTURAL — the compact Home (corrected: STRUCTURE, not padding) ──
   const hv = src('components/home/home-view.tsx');
   const wr = src('components/work/work-row.tsx');
-  check('H1: the row is DENSE (px-3 py-2, small icon — the list-wise density)',
-    wr.includes('px-3 py-2 text-left cursor-pointer') && wr.includes('w-5 h-5 rounded-md'));
+  check('H1: ONE line per row — the second line is DEAD (folded inline, boilerplate dropped)',
+    wr.includes('SECOND LINE IS DEAD') && !wr.includes('line-clamp-1`}>{item.second}</p>') &&
+    wr.includes("item.second !== 'Action needed'"));
   check('H2: Tasks | By project lens on the deck (same entries, regrouped; persisted; effect-hydrated)',
-    hv.includes("'aug-do-group'") && hv.includes('projKeyOf') && hv.includes('By project') &&
+    hv.includes("'aug-do-group'") && hv.includes("r.item.initiative ?? 'No project'") && hv.includes('By project') &&
     !hv.includes("useState<'time' | 'project'>(() =>"));
-  check('H4: calendar/notification kinds leave the deck unless a rule or a real deadline says otherwise',
-    src('app/api/home/brief/route.ts').includes('kindDemoted') &&
-    src('app/api/home/brief/route.ts').includes("u.mailKind === 'calendar' || u.mailKind === 'notification'"));
+  // The final Home simplification: ONE row species — bundles retired from the deck, groups own the
+  // chrome (one container, hairline dividers), the row is flat inside it.
+  check('H6: bundles are RETIRED from the deck (flat rows only, one container per group)',
+    !hv.includes('<BundleGroup') && hv.includes('divide-y divide-neutral-100') && hv.includes('flat.push'));
+  check('H6: WorkRow flat mode + the row-density law (one signal per category; prepared = one word: ready)',
+    wr.includes('flat = false') && wr.includes('ONE signal per category') && wr.includes('>ready</span>'));
+  check('H7: calm groups collapse (hover-preview + click-pin, persisted); urgent groups always open',
+    hv.includes("g.key === 'overdue' || g.key === 'today'") && hv.includes("'aug-do-pinned'") && hv.includes('hoverGroup === g.key'));
+  const brief = src('app/api/home/brief/route.ts');
+  check('H4: the demotion is OWNERSHIP-KEYED with a structural floor, on BOTH paths, override-guarded',
+    brief.includes("u.ownership === 'none' && structuralNotice") &&
+    brief.includes('if (noticeDemoted) continue;') &&
+    (brief.match(/type_override !== 'needs_reply'/g) ?? []).length >= 1 &&
+    !brief.includes('kindDemoted'));
   check('H5: the This-week rail matches the dense scale (slim, sticky)',
     hv.includes('slim, calm agenda rail'));
+
+  // ── H LIVE — the demotion on user A's REAL pool: the junk class goes, real obligations stay ──
+  {
+    const { data: pool } = await sb.from('inbox_items').select('id, work_title, rule_type, type_override, work_state, source_data')
+      .eq('user_id', A).eq('source', 'email').eq('status', 'pending')
+      .or('work_state.in.(work_prepared,decision_required,action_required),rule_type.in.(needs_reply,to_do,waiting_on)').limit(60);
+    const { isAutomatedSender: autoFn } = await import('../lib/inbox/automated');
+    let junkShown = 0, obligationsKept = 0;
+    for (const it of (pool ?? []) as Array<{ work_title: string | null; type_override?: string | null; source_data: Record<string, unknown> }>) {
+      const sd = it.source_data ?? {};
+      const u = (sd.understanding ?? null) as { ownership?: string; mailKind?: string } | null;
+      const subj = (sd.subject as string) || it.work_title || null;
+      const auto = autoFn((sd.from_address as string) ?? null, (sd.from_name as string) ?? null, subj);
+      const structuralNotice = auto || (!!u && (u.mailKind === 'notification' || u.mailKind === 'calendar'));
+      const nd = it.type_override !== 'needs_reply' && it.type_override !== 'to_do'
+        && ((!!u && u.ownership === 'none' && structuralNotice) || (!u && auto));
+      const isJunk = /property inquiry|response on .* apartment|meeting acceptance|response notification/i.test(String(it.work_title ?? ''));
+      const isObligation = /pay for your booking|security|alerta de segurança|prepaid billing/i.test(String(it.work_title ?? ''));
+      if (isJunk && !nd) junkShown++;
+      if (isObligation && !nd) obligationsKept++;
+    }
+    check('H live · the screenshot junk class is DEMOTED on the real pool', junkShown === 0, `${junkShown} junk rows would still show`);
+    check('H live · real obligations (pay/security/billing) are KEPT', obligationsKept > 0, `${obligationsKept} kept`);
+  }
 
   console.log('\n════ THE WORK SURFACE GATES ════');
   let pass = 0;
