@@ -7,12 +7,12 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getUnderstanding } from '@/lib/inbox/item-understanding';
-import { isAutomatedSender } from '@/lib/inbox/automated';
+import { isAutomatedSender, isAutomatedWho } from '@/lib/inbox/automated';
 import { buildInitiativeMap } from '@/lib/projects/initiative-resolver';
-import { normalizeInitiative } from '@/lib/inbox/item-understanding';
 import { computeEventUnderstanding } from '@/lib/calendar/event-understanding';
 import { resolveOutboundAwaiting } from '@/lib/outbound/resolve';
 import { reconcileRepliedItems } from '@/lib/inbox/reconcile-replied';
+import { isDupOfVisible, visibleObligationsFromItems } from '@/lib/home/dedupe-deck';
 import { inferBucket, type TimeBucket } from './timeframe';
 
 // 'event' = a scheduled calendar meeting — a dated CONTEXT point, never an action (no done/dismiss). It
@@ -43,10 +43,44 @@ export type WorkItem = {
                               // groups items into projects deterministically. null = one-off.
   effort: 'quick' | 'medium' | 'deep' | null; // rough effort to handle (from the understanding) — powers
                               // a "feels doable" cue on the Home. null = unknown.
+  // ── LEDGER task-ness (Living-Home L1, docs/living-home-plan.md) — the fields the daily report needs,
+  // enriched in ONE batched pass at the end of buildWorkItems (entity_links → work_entities join): ──
+  entity: { id: string; name: string } | null; // the ONE-BRAIN body of work this belongs to (identity,
+                              // not the label-era `initiative` string) — the report's inline anchor.
+  priority: number;           // reasoned+deterministic 0-100: the entity's judged weight (the ONE priority
+                              // authority) boosted by real dates (overdue/today/soon) — see priorityOf.
+  blockedOn: string | null;   // STRUCTURAL dependency: who this waits on (the awaiting counterparty) —
+                              // "blocked on <person>". Only ever a real name from the row; reasoned later.
+  triage: boolean;            // NEW & UNSORTED cue: its entity was founded in the last ~7 days (a fresh
+                              // body of work that hasn't been engaged yet) — the report's triage lane.
+  /** A USER-DECLARED task (manual commitment) — the declaration IS the engagement; never triage. */
+  declared?: boolean;
 };
 
 const CONTENT_RULE = new Set(['needs_reply', 'to_do', 'waiting_on']);
 const ACTION_WS = new Set(['work_prepared', 'decision_required', 'action_required']);
+
+// LEDGER defaults — every item starts unenriched; the ONE batched pass at the end of buildWorkItems
+// (entity_links → work_entities) fills entity/priority/blockedOn/triage.
+const LEDGER_DEFAULTS = { entity: null as { id: string; name: string } | null, priority: 20, blockedOn: null as string | null, triage: false };
+
+/** The ledger's deterministic priority: the entity's judged weight (the ONE reasoned authority) boosted by
+ *  REAL dates only — overdue +40, due today +25, due ≤3 days +10; waiting-on-them dampened −10 (their
+ *  court); an automated notice never gains an overdue boost (locked: automated can't be "overdue"). */
+export function priorityOf(args: { entityWeight: number | null; explicit: string | null; state: WorkItemState; automated: boolean; todayStr: string }): number {
+  const base = args.entityWeight ?? 20;
+  let boost = 0;
+  if (args.explicit && (args.state === 'todo' || args.state === 'waiting') && !args.automated) {
+    if (args.explicit < args.todayStr) boost = 40;
+    else if (args.explicit === args.todayStr) boost = 25;
+    else {
+      const days = Math.round((Date.parse(args.explicit) - Date.parse(args.todayStr)) / 86_400_000);
+      if (days <= 3) boost = 10;
+    }
+  }
+  if (args.state === 'waiting') boost -= 10;
+  return Math.max(0, Math.min(100, base + boost));
+}
 
 function ageDaysOf(iso: string | null, todayMs: number): number {
   if (!iso) return 0;
@@ -91,12 +125,12 @@ export async function buildWorkItems(
   const [{ data: commits }, { data: inbox }, { data: threads }] = await Promise.all([
     supabase.from('commitments')
       // Active commitments use status 'open' (some legacy 'pending'); resolved = done/dismissed.
-      .select('id, description, counterparty, direction, source, source_id, due_date, status, resolved_at, created_at, resolved_reason, project_id, initiative')
+      .select('id, description, counterparty, direction, source, source_id, thread_id, due_date, status, resolved_at, created_at, resolved_reason, project_id, initiative')
       .eq('user_id', userId)
       .or(`status.in.(open,pending),and(status.in.(done,dismissed),resolved_at.gte.${doneSince})`)
       .limit(500),
     supabase.from('inbox_items')
-      .select('id, work_title, work_state, rule_type, type_override, source, source_data, status, created_at, last_activity_at, project_id')
+      .select('id, work_title, work_state, rule_type, type_override, source, source_id, source_meeting_transcript_id, source_data, status, created_at, last_activity_at, project_id')
       .eq('user_id', userId)
       .or(`and(status.eq.pending,or(work_state.in.(work_prepared,decision_required,action_required),rule_type.in.(needs_reply,to_do,waiting_on),source.eq.meeting)),and(status.in.(completed,dismissed),source_data->>resolved_at.gte.${doneSince})`)
       .limit(800),
@@ -111,8 +145,20 @@ export async function buildWorkItems(
       .limit(60),
   ]);
 
+  // CROSS-TYPE DEDUP (P2): an OPEN commitment extracted from an email/meeting that the ledger ALSO
+  // carries as a pending actionable item is the same obligation twice — the item is the resolving
+  // surface, the commitment folds (same rule as the Home deck, so the Timeline agrees with it).
+  const pendingVisible = visibleObligationsFromItems(
+    ((inbox ?? []) as Array<Record<string, unknown>>).filter((it) => String(it.status || 'pending') === 'pending'),
+  );
+  const dedupedCommits = ((commits ?? []) as Array<Record<string, unknown>>).filter((c) => {
+    const open = ['open', 'pending'].includes(String(c.status || 'pending'));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return !open || !isDupOfVisible(c as any, pendingVisible);
+  });
+
   // Commitments → work items.
-  for (const c of (commits ?? []) as Array<Record<string, unknown>>) {
+  for (const c of dedupedCommits) {
     const status = String(c.status || 'pending');
     const dir = String(c.direction || 'you_owe');
     const waiting = dir === 'awaiting';
@@ -126,6 +172,8 @@ export async function buildWorkItems(
       actor: 'you', state,
       when: { explicit, bucket: inferBucket({ explicit, waiting, ageDays: ageDaysOf((c.created_at as string) || null, todayMs), todayStr }) },
       source: 'commitment', href: '/', at, startAt: ((c.created_at as string) || at).slice(0, 10), projectId: (c.project_id as string) || null, automated: false, initiative: (c.initiative as string) || null, effort: null,
+      declared: c.source === 'manual', // the user wrote it — the declaration IS the engagement
+      ...LEDGER_DEFAULTS,
     });
   }
 
@@ -161,6 +209,7 @@ export async function buildWorkItems(
       startAt: String((sd.received_at as string) || (it.created_at as string) || activity).slice(0, 10),
       projectId: (it.project_id as string) || null, automated, initiative: (u?.initiative as string) || null,
       effort: (u?.effort as 'quick' | 'medium' | 'deep') || null,
+      ...LEDGER_DEFAULTS,
     });
   }
 
@@ -179,6 +228,7 @@ export async function buildWorkItems(
         when: { explicit: null, bucket: inferBucket({ explicit: null, waiting: false, ageDays: ageDaysOf(at, todayMs), todayStr }) },
         source: 'deliverable', href: t.agent_id ? `/workers?worker=${t.agent_id}` : '/workers',
         at, startAt: String(at).slice(0, 10), projectId: (t.project_id as string) || null, automated: false, initiative: null, effort: null,
+        ...LEDGER_DEFAULTS,
       });
     }
   }
@@ -228,6 +278,7 @@ export async function buildWorkItems(
         at: startIso || todayStr,
         startAt: startDate,
         projectId: null, automated: false, initiative: u.initiative, effort: null,
+        ...LEDGER_DEFAULTS,
       });
     }
   }
@@ -247,12 +298,65 @@ export async function buildWorkItems(
           when: { explicit: null, bucket: inferBucket({ explicit: null, waiting: true, ageDays: o.ageDays, todayStr }) },
           source: 'email', href: '/inbox', at: o.lastSentAt, startAt: String(o.lastSentAt).slice(0, 10),
           projectId: null, automated: false, initiative: o.initiative, effort: null,
+          ...LEDGER_DEFAULTS,
         });
       }
     } catch (e) {
       console.warn('[spine] outbound skipped:', (e as Error).message);
     }
   }
+
+  // ── LEDGER enrichment (Living-Home L1) — ONE batched pass joining the ONE-BRAIN registry: each item's
+  // entity (identity anchor), its reasoned priority (entity weight + real-date boost), its structural
+  // blocked-on (the awaiting counterparty), and the triage cue (entity founded in the last ~7 days).
+  // Non-fatal: a failed join leaves the defaults (entity null, priority 20). ──
+  try {
+    // The user's OWN identities (login + connected mailboxes + name) — a wait can never be blocked on
+    // YOURSELF (the observed self-block bug: "blocked on <own address>" from a mis-captured counterparty).
+    const [{ data: selfProf }, { data: selfConns }] = await Promise.all([
+      supabase.from('profiles').select('email, full_name').eq('id', userId).maybeSingle(),
+      supabase.from('connections').select('metadata, provider_account_id').eq('user_id', userId),
+    ]);
+    const selfIds = new Set<string>();
+    const addSelf = (s: string | null | undefined) => { const t = String(s || '').toLowerCase().trim(); if (t) selfIds.add(t); };
+    addSelf(selfProf?.email); addSelf(selfProf?.full_name);
+    for (const c of (selfConns ?? []) as Array<Record<string, unknown>>) addSelf(((c.metadata as { email?: string } | null)?.email) || (c.provider_account_id as string));
+    const isSelf = (who: string): boolean => { const w = who.toLowerCase(); return [...selfIds].some((s) => w === s || w.includes(s) || (s.includes('@') && w.includes(s.split('@')[0] + '@'))); };
+
+    const inboxIds = items.filter((w) => w.id.startsWith('inbox:')).map((w) => w.entityId);
+    const commitIds = items.filter((w) => w.id.startsWith('commit:')).map((w) => w.entityId);
+    const linkRows: Array<{ item_id: string; entity_id: string }> = [];
+    for (const [kind, ids] of [['inbox_item', inboxIds], ['commitment', commitIds]] as const) {
+      for (let k = 0; k < ids.length; k += 300) {
+        const { data } = await supabase.from('entity_links').select('item_id, entity_id')
+          .eq('user_id', userId).eq('item_kind', kind).in('item_id', ids.slice(k, k + 300)).not('entity_id', 'is', null);
+        linkRows.push(...((data ?? []) as Array<{ item_id: string; entity_id: string }>));
+      }
+    }
+    const entIds = [...new Set(linkRows.map((l) => l.entity_id))];
+    const entById = new Map<string, { name: string; weight: number | null; createdAt: string }>();
+    for (let k = 0; k < entIds.length; k += 300) {
+      const { data } = await supabase.from('work_entities').select('id, name, priority, created_at').in('id', entIds.slice(k, k + 300));
+      for (const e of (data ?? []) as Array<Record<string, unknown>>) {
+        entById.set(e.id as string, { name: String(e.name || ''), weight: Number((e.priority as { weight?: number } | null)?.weight ?? NaN) || null, createdAt: String(e.created_at || '') });
+      }
+    }
+    const linkByItem = new Map(linkRows.map((l) => [l.item_id, l.entity_id]));
+    const triageFloorMs = todayMs - 7 * 86_400_000;
+    for (const w of items) {
+      const eid = linkByItem.get(w.entityId);
+      const e = eid ? entById.get(eid) : undefined;
+      if (eid && e?.name) {
+        w.entity = { id: eid, name: e.name };
+        w.triage = !w.declared && !!e.createdAt && Date.parse(e.createdAt) >= triageFloorMs;
+      }
+      w.priority = priorityOf({ entityWeight: e?.weight ?? null, explicit: w.when.explicit, state: w.state, automated: w.automated, todayStr });
+      // Structural blocked-on: a waiting item is blocked on its counterparty — a real name from the row,
+      // never invented, NEVER the user themself (self-block guard), and NEVER an automated sender
+      // (no-reply/bounce/notification addresses are not people you can be blocked on).
+      if (w.state === 'waiting' && w.who && !isSelf(w.who) && !isAutomatedWho(w.who)) w.blockedOn = w.who;
+    }
+  } catch { /* non-fatal — ledger fields stay at defaults */ }
 
   return items;
 }

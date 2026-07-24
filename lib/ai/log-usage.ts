@@ -17,7 +17,8 @@ export type AIUsageSource =
   | 'team_briefing'
   | 'alignment_synthesis'
   | 'brain_synthesis'        // initiative/person brain state synthesis (lib/initiatives/brain.ts, lib/people/brain.ts)
-  | 'bundle_naming';         // Home deck bundle naming (lib/home/name-bundles.ts)
+  | 'bundle_naming'          // Home deck bundle naming (lib/home/name-bundles.ts)
+  | 'task_preparation';      // the Preparation Pass over tasks (lib/prepare/pass.ts — shapes + doc-send judges)
 
 export interface LogAIUsageParams {
   userId: string;

@@ -4,6 +4,7 @@ import { loadUserRules } from '@/lib/inbox/rules/load';
 import { setInboxRules, classifyItem, shouldDraftReply, type ItemType } from '@/lib/inbox/classify-item';
 import { LABEL_TO_TYPE } from '@/lib/inbox/rules/types';
 import { generateReplyDraft } from '@/lib/inbox/draft-reply';
+import { runPreparationPass } from '@/lib/prepare/pass';
 
 export const maxDuration = 300;
 
@@ -70,6 +71,33 @@ export async function GET(request: NextRequest) {
       } catch { /* skip this item */ }
     }
     if (any) usersTouched++;
+    // THE PREPARATION PASS (Phase C slice 1) — beyond rule-covered drafts: the deck's TOP items get
+    // reply drafts + waiting-on nudges ambiently (idempotent, drafts only — nothing ever sends).
+    try { await runPreparationPass(sb, p.id); } catch { /* non-fatal per user */ }
+    // ONE BRAIN catch-all (P0): the sig-gated entity-state sweep lives HERE (2-hourly), not in the
+    // Home brief's after() tail — per-entity refresh already fires where ledgers actually change
+    // (noteItemAction, reconcileEntities, the sync/insights hooks); this sweep only catches strays.
+    try {
+      const { refreshEntityStates } = await import('@/lib/entities/state');
+      await refreshEntityStates(sb, p.id);
+    } catch { /* non-fatal per user */ }
+    // ONE BRAIN memory MAINTENANCE (P1.5a — the anti-fragmentation cadence). Order matters:
+    //   1. fingerprints — recompute people tokens (multi-form: name + email + @domain) so recall and
+    //      reflection see identity, not just whichever form happened to arrive first;
+    //   2. calendar — recognize new/upcoming events (idempotent; the sync tail also fires this, this
+    //      is the guarantee when calendar changes arrive without an email sync);
+    //   3. reflection — merge entities remembered twice (sig-gated pair memory keeps it cheap; the
+    //      conservative judge + 'separate' verdicts protect distinct deals);
+    //   4. orphans — archive long-empty untracked entities (ghost founders).
+    try {
+      const { refreshPeopleFingerprints, archiveOrphanEntities } = await import('@/lib/entities/reconcile');
+      const { shadowRecognizeCalendar } = await import('@/lib/entities/hooks');
+      const { reflectEntities } = await import('@/lib/entities/reflect');
+      await refreshPeopleFingerprints(sb, p.id).catch(() => {});
+      await shadowRecognizeCalendar(sb, p.id).catch(() => null);
+      await reflectEntities(sb, p.id, { commit: true }).catch(() => []);
+      await archiveOrphanEntities(sb, p.id).catch(() => 0);
+    } catch { /* non-fatal per user */ }
   }
 
   return NextResponse.json({ drafted, usersTouched });

@@ -97,6 +97,9 @@ WORKER_DEFS = [
 
 def build_workers(db) -> list[Agent]:
     """Construct the 4 workers as Agno agents sharing the given session db."""
+    from mcp_mount import build_mcp_tools  # Phase 5D — [] unless AGENTOS_MCP_SERVERS is set
+
+    mcp_tools = build_mcp_tools()
     return [
         Agent(
             id=w["id"],
@@ -104,7 +107,7 @@ def build_workers(db) -> list[Agent]:
             description=w["description"],
             model=model_for_task("conversation"),  # Bedrock Sonnet EU
             db=db,
-            tools=[*TASK_TOOLS, *DATA_TOOLS, *INTEGRATION_TOOLS],  # task + data/web + integrations — HTTP to Next.js
+            tools=[*TASK_TOOLS, *DATA_TOOLS, *INTEGRATION_TOOLS, *mcp_tools],  # + self-hosted MCP servers (5D; [] when flag off)
             telemetry=False,  # privacy: no per-run pings to Agno
             instructions=w["instructions"],
             add_history_to_context=True,  # multi-turn conversation memory

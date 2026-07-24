@@ -46,14 +46,52 @@ export type RecogEntity = {
 };
 
 // ── People identity helpers — the primary separator for a same-domain portfolio (many deals share a
-// topic; the PEOPLE distinguish them). Normalize so "Rita Oliveira" / "rita.oliveira@galp.com" collapse. ──
+// topic; the PEOPLE distinguish them). A person is identified by EVERY form they arrive in — display
+// name, full email address, and their company DOMAIN — because real correspondence mixes forms freely
+// (the trust bug this fixes: a deal remembered under a colleague's NAME form never recalled when a NEW
+// teammate emailed from the same company; the fragment became a duplicate entity). Agnostic: domains
+// derive from each item's own addresses; free providers are excluded; rarity-weighting (below) makes an
+// internal always-everywhere domain non-distinctive automatically.
+// Canonical free-provider list for the entity layer (a shared consumer domain is NOT a company signal).
+export const FREE_EMAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'yahoo.com',
+  'icloud.com', 'me.com', 'mac.com', 'aol.com', 'proton.me', 'protonmail.com', 'gmx.com', 'gmx.de',
+  'mail.com', 'yandex.com', 'zoho.com', 'pm.me', 'fastmail.com', 'hey.com', 'sapo.pt', 'web.de',
+]);
+// Diacritics FOLD (é→e), never strip — "Chloé" must normalize to "chloe", not the useless "chlo".
+const foldDiacritics = (s: string): string => s.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+
 export const normPerson = (s: string): string => {
-  const t = String(s || '').toLowerCase().trim();
-  const local = t.includes('@') ? t.split('@')[0].replace(/[._-]+/g, ' ') : t;
-  return local.replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+  const t = foldDiacritics(String(s || '').toLowerCase()).trim();
+  const local = t.includes('@') ? t.split('@')[0] : t;
+  return local.replace(/[._\-]+/g, ' ').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
 };
+
+/** Era-proof set-membership key: spaces stripped, so "jean marie lambert" ≡ "jeanmarie lambert"
+ *  (older fingerprints normalized hyphens differently — matching must not care). */
+export const personKey = (s: string): string => s.replace(/\s+/g, '');
+
+/** ALL identity tokens for ONE raw participant string ("Name <email>" / bare email / bare name):
+ *  the name form, the full email, and the company "@domain" token (external-company signal). */
+export function personForms(raw: string): string[] {
+  const t = foldDiacritics(String(raw || '').toLowerCase()).trim();
+  if (!t) return [];
+  const out = new Set<string>();
+  const email = t.match(/[^\s<>"',;]+@[^\s<>"',;]+/)?.[0] ?? null;
+  if (email) {
+    out.add(email);                                             // exact identity — a bare address matches forever
+    const domain = email.split('@')[1] ?? '';
+    if (domain && !FREE_EMAIL_DOMAINS.has(domain)) out.add(`@${domain}`); // the company token
+    const local = normPerson(email.split('@')[0]);
+    if (local.length >= 2) out.add(local);                      // "jean.marie" → "jean marie"
+  }
+  const nameOnly = normPerson(t.replace(/<[^>]*>/g, ' ').replace(/[^\s]+@[^\s]+/g, ' '));
+  if (nameOnly.length >= 2) out.add(nameOnly);
+  return [...out];
+}
+
 export const itemPeople = (it: RecogItem): string[] =>
-  [...new Set([it.from, ...(it.participants ?? [])].filter(Boolean).map((p) => normPerson(p as string)).filter((p) => p.length >= 2))];
+  [...new Set([it.from, ...(it.participants ?? [])].filter(Boolean).flatMap((p) => personForms(p as string)))];
 
 export type RecogDecision =
   | { decision: 'existing'; entityId: string; reason: string }
@@ -82,26 +120,35 @@ export const entityEmbedText = (name: string, summary: string | null, people: st
  *  colleague) is not. Topic breaks ties and generates candidates when people are unknown. Any entity that
  *  shares a distinctive person is ALWAYS a candidate (so the judge sees it even if the topic is lukewarm). */
 export function recallCandidates(itemEmb: number[], entities: RecogEntity[], k = 5, people: string[] = []): RecogEntity[] {
-  const want = new Set(people);
-  // Person rarity: how many entities contain each person (a person on many entities is not distinctive).
+  // Era-proof matching: tokens compare on personKey (spaces stripped), so fingerprints written under an
+  // older normalization ("jeanmarie lambert") still match today's forms ("jean marie lambert"). The same
+  // set carries name forms, full emails, AND "@domain" company tokens — one mechanism, rarity-weighted:
+  // an internal domain that appears on everything scores ~0 rarity and is never distinctive, while an
+  // external client's domain is rare → a NEW person from that company still force-recalls the deal
+  // (the fragmentation fix: same company ⇒ the deal is at least a CANDIDATE the judge must see).
+  const want = new Set(people.map(personKey));
+  // Token rarity: how many entities contain each token (a token on many entities is not distinctive).
   const freq = new Map<string, number>();
-  for (const e of entities) for (const p of new Set(e.people)) freq.set(p, (freq.get(p) ?? 0) + 1);
+  for (const e of entities) for (const p of new Set(e.people.map(personKey))) freq.set(p, (freq.get(p) ?? 0) + 1);
   const total = Math.max(1, entities.length);
   const scored = entities
     .filter((e) => e.embedding && e.embedding.length)
     .map((e) => {
       const topic = cosine(itemEmb, e.embedding!);
       let personScore = 0; let distinctiveShare = false;
-      for (const p of new Set(e.people)) {
+      for (const p of new Set(e.people.map(personKey))) {
         if (!want.has(p)) continue;
         const rarity = 1 - (freq.get(p) ?? total) / total; // 0 = on everything, →1 = unique to few
-        personScore += 0.4 + 0.6 * rarity;                 // any share helps; a rare share helps a lot
-        if (rarity >= 0.7) distinctiveShare = true;         // a distinctive shared person → force-candidate
+        const isDomain = p.startsWith('@');
+        // A shared person is the strongest signal; a shared company domain is strong but slightly
+        // weaker (one company can hold sibling deals — the judge separates those by content).
+        personScore += (isDomain ? 0.3 : 0.4) + 0.6 * rarity;
+        if (rarity >= 0.7) distinctiveShare = true;         // distinctive shared identity → force-candidate
       }
       return { e, score: topic + personScore, distinctiveShare };
     });
   const top = scored.sort((a, b) => b.score - a.score).slice(0, k);
-  // Guarantee: every entity sharing a DISTINCTIVE person is in the candidate set (identity beats topic rank).
+  // Guarantee: every entity sharing a DISTINCTIVE token is in the candidate set (identity beats topic rank).
   for (const s of scored) if (s.distinctiveShare && !top.some((t) => t.e.id === s.e.id)) top.push(s);
   return top.map((x) => x.e);
 }
@@ -127,7 +174,11 @@ export async function judgeRecognition(
     `certainly a DIFFERENT body of work — do NOT merge on topic alone.\n` +
     `- A person can be in several bodies of work, so a shared person is strong evidence, not proof; but ` +
     `DISjoint people is strong evidence AGAINST merging. When in doubt between two topically-similar ` +
-    `candidates, pick the one whose PEOPLE overlap; if none overlap, prefer "new".\n\n` +
+    `candidates, pick the one whose PEOPLE overlap; if none overlap, prefer "new".\n` +
+    `- COMPANY DOMAINS: a token like "@acme.com" in a people list is that body of work's company. A NEW ` +
+    `person writing from the SAME company domain as a candidate's people is usually a teammate joining ` +
+    `that SAME body of work (teams grow, threads fork) — prefer "existing" unless the content is clearly ` +
+    `a genuinely different deal at that company.\n\n` +
     `NEW ITEM (${item.kind}):\n` +
     `title: ${item.title}\n` +
     (item.from ? `person: ${item.from}\n` : '') +
@@ -266,7 +317,7 @@ async function writeLink(supabase: SupabaseClient, userId: string, entityId: str
     try {
       const { data: e } = await supabase.from('work_entities').select('people').eq('id', entityId).eq('user_id', userId).maybeSingle();
       const cur = Array.isArray(e?.people) ? (e!.people as string[]) : [];
-      const merged = [...new Set([...cur, ...add])].slice(0, 24);
+      const merged = [...new Set([...cur, ...add])].slice(0, 40);
       if (merged.length !== cur.length) await supabase.from('work_entities').update({ people: merged }).eq('id', entityId).eq('user_id', userId);
     } catch { /* pre-migration / non-fatal */ }
   }

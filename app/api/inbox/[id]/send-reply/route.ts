@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse, after } from 'next/server';
+import { noteItemAction } from '@/lib/entities/on-action';
 import { createHash } from 'crypto';
 import { createClient } from '@/lib/supabase/server';
 import { sendGmailReply, EmailAttachment } from '@/lib/google/gmail';
@@ -162,6 +163,20 @@ export async function POST(
     // blocks the send response. We have the connection + thread id already, but reconcileItemLabel
     // re-resolves them cheaply from the item for a single code path.
     after(async () => {
+      // L2 ACTION EVENT — the brain hears this send (entity re-synthesis + brief-cache bust).
+      await noteItemAction(supabase, user.id, { kind: 'inbox_item', id }).catch(() => {});
+      // PLAN COHERENCE (just-works P1): the send IS the reply step resolving — mark it done in the
+      // cached plan SERVER-side (the deep-dive no longer shows steps, so no client hook does this).
+      // Non-fatal; only reply-like steps flip, real remaining actions stay open.
+      try {
+        const { isReplyLikeStep } = await import('@/lib/home/item-plan');
+        const { data: planRow } = await supabase.from('item_plans').select('tasks').eq('user_id', user.id).eq('kind', 'email').eq('entity_id', id).maybeSingle();
+        if (Array.isArray(planRow?.tasks)) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const tasks = (planRow!.tasks as any[]).map((t) => (t && !t.done && isReplyLikeStep(t) ? { ...t, done: true, status: 'done' } : t));
+          await supabase.from('item_plans').update({ tasks, updated_at: new Date().toISOString() }).eq('user_id', user.id).eq('kind', 'email').eq('entity_id', id);
+        }
+      } catch { /* non-fatal */ }
       const { reconcileItemLabel } = await import('@/lib/inbox/reconcile-item-label');
       await reconcileItemLabel({ userId: user.id, itemId: id, item, targetLabel: 'done', client: supabase });
       // LIVE Initiative Brain (S5) — you just sent on this thread → refresh its initiative's state (whoOwes

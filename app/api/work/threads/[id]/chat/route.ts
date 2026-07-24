@@ -1601,7 +1601,10 @@ async function executeChatTool(
         maxTotalChars: 8000,
         scopeFileIds: ctx.agentFileIds,
       });
-      const result = kbCtx.context || 'No relevant documents found in your knowledge base.';
+      // SINGLE-SOURCE #2: the connected drives ride the same search — one helper, no new tool.
+      const { driveSupplementLine } = await import('@/lib/knowledge/resolve');
+      const driveLine = await driveSupplementLine(ctx.adminClient, ctx.userId, query);
+      const result = (kbCtx.context || 'No relevant documents found in your knowledge base.') + driveLine;
       const filenames = kbCtx.filenames ?? [];
       const summary = filenames.length > 0 ? `Found ${filenames.length} relevant document${filenames.length > 1 ? 's' : ''}` : 'No relevant documents found';
       // Accumulate real file data for enriching request_clarification sources

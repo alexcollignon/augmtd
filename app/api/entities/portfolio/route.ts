@@ -20,9 +20,12 @@ export type PortfolioEntity = {
   weight: number; lastEventAt: string | null; quietDays: number | null;
   itemCount: number;
   closureCandidate: boolean;
-  events: Array<{ at: string; kind: string; label: string }>;
+  events: Array<{ at: string; kind: string; label: string; id: string }>;
   goals: string[]; rules: string[];
   prominent: boolean; category: string | null; // reasoned-alive OR user-pinned (the portfolio leads with these)
+  /** PROJECTHOOD (projecthood-plan P1) — the judged scope; null until the entity's first v4 synthesis.
+   *  Consumers: tracked always renders as project (the pin outranks the judgment). */
+  scope: 'project' | 'errand' | 'background' | null;
 };
 
 export async function GET() {
@@ -55,19 +58,19 @@ export async function GET() {
     for (const l of (links ?? []) as Array<{ entity_id: string; item_kind: string; item_id: string }>) {
       (byKind.get(l.item_kind) ?? byKind.set(l.item_kind, []).get(l.item_kind)!).push({ entityId: l.entity_id, itemId: l.item_id });
     }
-    const events = new Map<string, Array<{ at: string; kind: string; label: string }>>();
+    const events = new Map<string, Array<{ at: string; kind: string; label: string; id: string }>>();
     const counts = new Map<string, number>();
-    const push = (entityId: string, at: string | null, kind: string, label: string) => {
+    const push = (entityId: string, at: string | null, kind: string, label: string, itemId: string) => {
       counts.set(entityId, (counts.get(entityId) ?? 0) + 1);
       if (!at) return;
-      (events.get(entityId) ?? events.set(entityId, []).get(entityId)!).push({ at, kind, label: label.slice(0, 80) });
+      (events.get(entityId) ?? events.set(entityId, []).get(entityId)!).push({ at, kind, label: label.slice(0, 80), id: itemId });
     };
     const fetchKind = async (kind: string, table: string, select: string, at: (r: Record<string, unknown>) => string | null, label: (r: Record<string, unknown>) => string) => {
       const ls = byKind.get(kind) ?? [];
       if (!ls.length) return;
       const { data } = await supabase.from(table).select(select).in('id', ls.map((l) => l.itemId).slice(0, 400));
       const byId = new Map(((data ?? []) as unknown as Array<Record<string, unknown>>).map((r) => [String(r.id), r]));
-      for (const l of ls) { const r = byId.get(l.itemId); if (r) push(l.entityId, at(r), kind, label(r)); }
+      for (const l of ls) { const r = byId.get(l.itemId); if (r) push(l.entityId, at(r), kind, label(r), l.itemId); }
     };
     await Promise.all([
       fetchKind('inbox_item', 'inbox_items', 'id, work_title, source_data, created_at',
@@ -80,7 +83,7 @@ export async function GET() {
 
     const nowMs = Date.now();
     const entities: PortfolioEntity[] = rows.map((r) => {
-      const state = (r.state ?? {}) as { summary?: string; momentum?: string; category?: string; stage?: string | null; whoOwes?: { you?: string[]; them?: string[] } };
+      const state = (r.state ?? {}) as { summary?: string; momentum?: string; category?: string; scope?: string; stage?: string | null; whoOwes?: { you?: string[]; them?: string[] } };
       const nm = (r.next_move ?? null) as { title?: string; entityRef?: string | null } | null;
       const lastEventAt = (r.last_event_at as string) ?? null;
       const quietDays = lastEventAt ? Math.max(0, Math.floor((nowMs - new Date(lastEventAt).getTime()) / 86400000)) : null;
@@ -94,17 +97,15 @@ export async function GET() {
         && (quietDays ?? 0) >= 14;
       const evs = (events.get(id) ?? []).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 12);
       const weight = Number((r.priority as { weight?: number } | null)?.weight ?? 0);
-      // REASONED PROMINENCE (not a manual pin from empty): a body of work is prominent because the brain
-      // judges it ALIVE — real weight, active/needs-you momentum, or something owed & recently touched.
-      // The `tracked` FLAG is now only a human OVERRIDE (pin to force-keep-up / the star), never the driver.
-      const engaged = weight >= 40
-        || momentum === 'needs_you'
-        || (momentum === 'active' && (quietDays ?? 99) <= 10)
-        || (owes.you.length > 0 && (quietDays ?? 99) <= 21);
-      const prominent = !!r.tracked || engaged;
+      // PROMINENCE = the REASONED priority alone (Phase 3 F6, the doctrine): the fold is a
+      // presentation cutoff over the judged weight — plumbing. The old momentum/quiet-days clauses
+      // re-derived judgment the synthesis already makes; deleted.
+      const prominent = weight >= 40;
       return {
         id, name: r.name as string, tracked: !!r.tracked, prominent, status: r.status as string,
-        momentum, category: state.category ?? null, summary: state.summary ?? null, stage: state.stage ?? null, whoOwes: { you: owes.you, them: owes.them },
+        momentum, category: state.category ?? null,
+        scope: (['project', 'errand', 'background'].includes(state.scope as string) ? state.scope : null) as PortfolioEntity['scope'],
+        summary: state.summary ?? null, stage: state.stage ?? null, whoOwes: { you: owes.you, them: owes.them },
         nextMove: nm?.title ? { title: nm.title, entityRef: nm.entityRef ?? null } : null,
         weight,
         lastEventAt, quietDays, itemCount: counts.get(id) ?? 0, closureCandidate, events: evs,

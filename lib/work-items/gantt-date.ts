@@ -20,9 +20,11 @@ export function ganttDateOf(w: GanttItemShape, todayStr: string): string {
 // DEADLINES?". Not a duration. Resolves each item to ONE meaningful point + its type:
 //   • done  → the date it was completed (a past event)
 //   • due   → its real deadline (a future/overdue event) — only when the item actually states one
-//   • open  → no done-date and no deadline yet → placed at when it ARRIVED (a neutral "came in" point)
+//   • undated → no done-date and no deadline → NOT plotted (projecthood-plan P3: an undated item can
+//     never claim a date; the arrival-dot fallback painted walls of same-day dots that read as fake
+//     schedule). Consumers fold undated items into their group as a count.
 // `arrival` rides along so a due item can draw a faint runway (arrival → deadline).
-export type GanttMarker = 'done' | 'due' | 'open';
+export type GanttMarker = 'done' | 'due' | 'undated';
 export function ganttMarkerOf(
   w: GanttItemShape & { startAt?: string },
   todayStr: string,
@@ -30,5 +32,5 @@ export function ganttMarkerOf(
   const arrival = (w.startAt || w.at || todayStr).slice(0, 10);
   if (w.state === 'done' || w.state === 'dismissed') return { marker: 'done', date: (w.at || todayStr).slice(0, 10), arrival, overdue: false };
   if (w.when.explicit) return { marker: 'due', date: w.when.explicit, arrival, overdue: w.when.explicit < todayStr };
-  return { marker: 'open', date: arrival, arrival, overdue: false };
+  return { marker: 'undated', date: arrival, arrival, overdue: false };
 }

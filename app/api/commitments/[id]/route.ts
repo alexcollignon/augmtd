@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logActivity } from '@/lib/activity/log';
+import { after } from 'next/server';
+import { noteItemAction } from '@/lib/entities/on-action';
 
 // GET /api/commitments/[id] — one commitment + its SOURCE CONTEXT, RLS-safe (cookie client). Powers
 // the Home commitment deep-dive: the description / counterparty / due date, plus enough of what it
@@ -87,7 +89,28 @@ export async function PATCH(
     if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { id } = await params;
-    const { status } = await request.json();
+    const body = await request.json() as { status?: string; description?: string; due_date?: string | null };
+    const { status } = body;
+
+    // ── EDIT path (Phase 4 R3a): description / due_date — a task is WRITABLE. due_date must be
+    // absolute-or-null (never invented); edits log activity + bust the brief. No status change here.
+    if (status === undefined) {
+      const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (typeof body.description === 'string' && body.description.trim()) patch.description = body.description.trim().slice(0, 500);
+      if ('due_date' in body) {
+        const { validDate } = await import('@/lib/commitments/extract');
+        patch.due_date = validDate(body.due_date);
+      }
+      if (Object.keys(patch).length === 1) return NextResponse.json({ error: 'nothing to update' }, { status: 400 });
+      const { error: uerr } = await supabase.from('commitments').update(patch).eq('id', id).eq('user_id', user.id);
+      if (uerr) return NextResponse.json({ error: uerr.message }, { status: 500 });
+      import('@/lib/home/bust-brief').then(({ softBustBrief }) => softBustBrief(supabase, user.id)).catch(() => {});
+      after(async () => {
+        try { await logActivity(supabase, user.id, { type: 'task_edited', title: `Edited: ${String(patch.description ?? 'task due date').slice(0, 60)}`, entityType: 'commitment', entityId: id, metadata: {} }); } catch { /* non-fatal */ }
+      });
+      return NextResponse.json({ ok: true });
+    }
+
     if (status !== 'done' && status !== 'dismissed') {
       return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
     }
@@ -130,6 +153,8 @@ export async function PATCH(
       entityId: id,
     });
 
+    // L2 ACTION EVENT — the brain hears this action (entity re-synthesis + brief-cache bust).
+    after(async () => { await noteItemAction(supabase, user.id, { kind: 'commitment', id }).catch(() => {}); });
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Commitment status update error:', error);

@@ -977,7 +977,10 @@ export async function computeUnderstanding(email: EmailData, supabase: SupabaseC
     `- ownership: from the user's seat — "you_owe" if the user must reply or take an action; "awaiting" if the user is waiting on someone ELSE (a reply/deliverable owed to them); "none" if it's purely informational with no move by anyone.\n` +
     `- effort: rough effort for the USER to handle this — "quick" (a one-line reply / a single click, ~2 min), "medium" (a considered reply or a small task, ~15 min), "deep" (real work, 30+ min). null if genuinely unclear.\n` +
     `- confidence: 0–100, how confident you are in the role + relevance judgment.\n` +
-    `Return ONLY JSON: {"role":"addressed|one_of_many|bystander","relevance":"reply|action|awareness","bulk":true|false,"initiative":"<short label or null>","deadline":"<YYYY-MM-DD or null>","ownership":"you_owe|awaiting|none","effort":"quick|medium|deep|null","confidence":0-100,"language":"<lowercase ISO code, the language of THIS email, e.g. en, pt>"}. Use ONLY the allowed values.`;
+    `- ask: ONLY when relevance is "reply" or "action" — the ONE thing the user must DO, as a short ` +
+    `IMPERATIVE phrase starting with a verb, <=8 words ("Confirm the Thursday slot", "Pay the renewal ` +
+    `invoice", "Send the pricing offer") — a to-do, NEVER a topic or a restated subject line. null otherwise.\n` +
+    `Return ONLY JSON: {"role":"addressed|one_of_many|bystander","relevance":"reply|action|awareness","bulk":true|false,"initiative":"<short label or null>","deadline":"<YYYY-MM-DD or null>","ownership":"you_owe|awaiting|none","effort":"quick|medium|deep|null","confidence":0-100,"ask":"<imperative phrase or null>","language":"<lowercase ISO code, the language of THIS email, e.g. en, pt>"}. Use ONLY the allowed values.`;
   const res = await aiCreate(ai, {
     model, response_format: { type: 'json_object' as const }, max_tokens: 500, temperature: 0,
     messages: [{ role: 'user', content }],

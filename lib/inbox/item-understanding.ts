@@ -41,6 +41,12 @@ export type ItemUnderstanding = {
    */
   bulk?: boolean;
   /**
+   * VERB-FIRST ask (just-works P4): the one thing this item asks the user to DO, as a short imperative
+   * phrase ("Confirm the Thursday slot", "Fix the failing payment") — only for relevance reply/action.
+   * The deck's row leads with a to-do, not a subject line. Absent → consumers fall back to the subject.
+   */
+  ask?: string | null;
+  /**
    * The specific deal / client / project / initiative this item is about — a short proper-noun label
    * (a client/company or a named project/deal), or null for a one-off / automated mail. Used to
    * group items into PROJECTS deterministically (same label → same project) so distinct clients never
@@ -106,6 +112,11 @@ export function coerceUnderstanding(raw: unknown): ItemUnderstanding | null {
   // → left undefined so consumers fall back to the header/sender bulk backstop (legacy items).
   if (typeof r.bulk === 'boolean') out.bulk = r.bulk;
   else if (r.bulk === 'true' || r.bulk === 'false') out.bulk = r.bulk === 'true';
+  // ask: a short imperative to-do phrase (reply/action items only). Guard the model's null-strings.
+  const askRaw = typeof r.ask === 'string' ? r.ask.trim() : '';
+  if (askRaw && !/^(null|none|n\/a)$/i.test(askRaw) && (relevance === 'reply' || relevance === 'action')) {
+    out.ask = askRaw.replace(/\.+$/, '').slice(0, 90);
+  }
   // initiative: a proper-noun deal/client label, or null for a one-off. Guard against the model
   // stringifying "null"/"none"/generic filler. Only set when there's a real label.
   const initRaw = typeof r.initiative === 'string' ? r.initiative.trim() : '';

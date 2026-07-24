@@ -1,12 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowUturnLeftIcon, BoltIcon, ClockIcon, CalendarDaysIcon, FlagIcon, SparklesIcon,
   CheckCircleIcon, FolderIcon,
 } from '@heroicons/react/24/outline';
 import type { WorkItem, WorkItemKind } from '@/lib/work-items/model';
+import { WorkRow, workItemToRow } from '@/components/work/work-row';
+import { useLiveRefresh } from '@/hooks/use-live-refresh';
 import { BUCKET_ORDER, BUCKET_LABELS, type TimeBucket } from '@/lib/work-items/timeframe';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 
@@ -99,17 +101,24 @@ function Station({ bucket, label, items, muted, index, projectMap }: { bucket: T
           <span className="text-[11px] font-medium text-neutral-300">{items.length} {items.length === 1 ? 'item' : 'items'}</span>
         </div>
       </div>
-      <div className={`min-w-0 flex-1 grid grid-cols-1 ${bucket === 'today' ? 'xl:grid-cols-2' : 'xl:grid-cols-3'} gap-2`}>
+      <div className="min-w-0 flex-1 space-y-2">
         {items.length === 0 ? (
           <p className="text-[11.5px] text-neutral-300 px-1 py-2">Nothing here.</p>
         ) : (
-          visibleItems.map((w, i) => <TimelineCard key={w.id} w={w} index={i} projectMap={projectMap} />)
+          visibleItems.map((w, i) =>
+            // ACTIONABLE work renders the SAME shared row the Home deck uses (one grammar, one action
+            // system — ✓/✕ live here too); context records (events, meeting notes, team deliverables,
+            // history) keep the compact card, since they're opened, not acted on.
+            (w.kind === 'reply' || w.kind === 'action' || w.kind === 'commitment' || w.kind === 'followup') && w.state !== 'done' && w.state !== 'dismissed'
+              ? <WorkRow key={w.id} item={workItemToRow(w)} />
+              : <div key={w.id} className={`grid grid-cols-1 ${bucket === 'today' ? 'xl:grid-cols-2' : 'xl:grid-cols-3'} gap-2`}><TimelineCard w={w} index={i} projectMap={projectMap} /></div>,
+          )
         )}
         {hiddenCount > 0 && (
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
-            className="xl:col-span-full w-full text-left px-1 py-1 text-[11.5px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors"
+            className="w-full text-left px-1 py-1 text-[11.5px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors"
           >
             {expanded ? 'Show less' : `Show ${hiddenCount} more`}
           </button>
@@ -124,18 +133,26 @@ export default function TimelineView() {
   const [projectMap, setProjectMap] = useState<ProjectMap>({});
   const [err, setErr] = useState(false);
 
+  // Stable handle so the shared live-refresh hook can fire the latest load() closure.
+  const loadRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     let alive = true;
     // INSTANT: hydrate the last-known timeline from localStorage (no skeleton on reload), then refresh in
     // the background. The timeline spine (buildWorkItems) is expensive, so this matters most here.
     const cached = loadLS<{ items: WorkItem[]; entityTags: ProjectMap }>('aug-timeline-v2');
     if (cached?.items) { setItems(cached.items); setProjectMap(cached.entityTags ?? {}); }
-    fetch('/api/home/timeline')
+    const load = () => fetch('/api/home/timeline')
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((d) => { if (alive) { setItems(d.items ?? []); setProjectMap(d.entityTags ?? {}); saveLS('aug-timeline-v2', { items: d.items ?? [], entityTags: d.entityTags ?? {} }); } })
       .catch(() => { if (alive && !cached?.items) setErr(true); });
+    load();
+    // LIVE (Living-Home): the timeline reflects actions as they happen — refetch on focus/visibility +
+    // (Focus/visibility/interval refresh is the shared useLiveRefresh below.)
+    loadRef.current = load;
     return () => { alive = false; };
   }, []);
+  // The ONE live-refresh idiom (focus + visibility + 90s while visible) — hooks/use-live-refresh.
+  useLiveRefresh(() => loadRef.current?.());
 
   if (err) return <div className="mt-10 text-[13px] text-neutral-400">Couldn&apos;t load your timeline.</div>;
   if (!items) {

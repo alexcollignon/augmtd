@@ -65,8 +65,14 @@ export async function GET() {
     let ganttGroups: Array<{ id: string; name: string; statusDot: string; items: Array<{ title: string; who: string | null; state: string; marker: string; date: string; arrival: string; overdue: boolean; href: string | null }> }> = [];
     try {
       const { data: wents } = await supabase.from('work_entities')
-        .select('id, name, state').eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null).limit(400);
-      const entMeta = new Map((wents ?? []).map((e) => [e.id as string, { name: e.name as string, dot: MOM_DOT[((e.state ?? {}) as { momentum?: string }).momentum ?? 'active'] ?? MOM_DOT.active }]));
+        .select('id, name, tracked, state').eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null).limit(400);
+      // CURATED (Phase 3 F3): swimlanes = ACCEPTED projects (tracked); a user who accepted nothing
+      // yet sees the brain's judged projects (never an empty pre-acceptance timeline).
+      const rowsAll = (wents ?? []) as Array<Record<string, unknown>>;
+      const acceptedRows = rowsAll.filter((e) => !!e.tracked);
+      const judgedRows = rowsAll.filter((e) => ((e.state ?? {}) as { scope?: string }).scope === 'project');
+      const laneRows = acceptedRows.length ? acceptedRows : judgedRows;
+      const entMeta = new Map(laneRows.map((e) => [e.id as string, { name: e.name as string, dot: MOM_DOT[((e.state ?? {}) as { momentum?: string }).momentum ?? 'active'] ?? MOM_DOT.active }]));
       // raw id → entity (only for inbox/commitment work items).
       const rawToEntity = new Map<string, string>();
       const { data: gl } = await supabase.from('entity_links').select('item_id, entity_id')
@@ -75,6 +81,7 @@ export async function GET() {
       const byEntity = new Map<string, Array<Record<string, unknown>>>();
       for (const w of items) {
         if (w.state === 'dismissed') continue;
+        if (w.automated) continue; // a notification is context, never a task row (P3)
         if (!(w.id.startsWith('inbox:') || w.id.startsWith('commit:'))) continue;
         const eid = rawToEntity.get(w.entityId);
         if (!eid || !entMeta.has(eid)) continue;

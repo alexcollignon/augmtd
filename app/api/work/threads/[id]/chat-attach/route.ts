@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { extractTextFromAttachment } from '@/lib/attachments/text-extractor';
 import { indexUploadedFile } from '@/lib/knowledge/indexer';
+import { stampFileMeta } from '@/lib/knowledge/ingest';
 
 export const maxDuration = 60;
 
@@ -149,7 +150,10 @@ export async function POST(
         mimeType: cf.mimeType,
         userId: user.id,
         storagePathInBucket: storagePath,
-      }, adminClient).catch(() => {});
+      }, adminClient)
+        // FILE SPINE (A2): the KB row carries where it came from — a /work chat upload on this thread.
+        .then((fid) => stampFileMeta(adminClient, fid, { kind: 'chat', ref: threadId }))
+        .catch(() => {});
 
       return {
         chatAttachId: id,

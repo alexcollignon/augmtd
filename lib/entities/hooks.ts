@@ -8,7 +8,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { recognizeItem } from './recognize';
-import { itemFromInbox, itemFromCommitment, itemFromMeeting } from './sources';
+import { itemFromInbox, itemFromCommitment, itemFromMeeting, itemFromCalendar } from './sources';
 
 const MAX_PER_SYNC = 8;
 
@@ -52,6 +52,15 @@ export async function shadowRecognizeTouched(supabase: SupabaseClient, userId: s
       await recognizeItem(supabase, userId, item).catch(() => {});
       ran++;
     }
+    // FILE SPINE (Prepared-Work A3): ingest the touched items' email attachments into the KB — runs
+    // AFTER recognition so the file inherits the item's fresh entity link. Idempotent (content-hash),
+    // noise-filtered, capped, non-fatal.
+    try {
+      const { ingestItemAttachments } = await import('@/lib/knowledge/ingest');
+      const withAtts = ((touched ?? []) as Array<Record<string, any>>)
+        .filter((it) => Array.isArray(it.source_data?.attachments) && it.source_data.attachments.length).slice(0, 6);
+      for (const it of withAtts) await ingestItemAttachments(supabase, userId, { id: it.id, source_data: it.source_data }).catch(() => {});
+    } catch { /* non-fatal */ }
     return { ran };
   } catch { return null; }
 }
@@ -80,6 +89,40 @@ export async function bootstrapMemory(supabase: SupabaseClient, userId: string, 
     let ran = 0;
     for (const it of todo) {
       await recognizeItem(supabase, userId, itemFromInbox(it)).catch(() => {});
+      ran++;
+    }
+    return { ran };
+  } catch { return null; }
+}
+
+// A calendar-CANCELLATION event whose title is the raw provider string is not a meeting to remember.
+const isCancelledTitle = (t: string): boolean =>
+  /^(canceled|cancelled)( event)?:/i.test(String(t || '').trimStart());
+
+/** Shadow-recognize recent + upcoming CALENDAR EVENTS into the memory (the gap that made a scheduled
+ *  meeting invisible to its deal: only email sync and meeting insights had live hooks — a NEW calendar
+ *  event was never recognized after the one-time bootstrap). Idempotent (links + refusals persist);
+ *  only events with real attendees (an identity signal) are judged; solo blocks are skipped. Called
+ *  from the sync tail + the 2-hourly cron so coverage never depends on one path. */
+export async function shadowRecognizeCalendar(supabase: SupabaseClient, userId: string, cap = 6): Promise<{ ran: number } | null> {
+  try {
+    if (!(await memoryExists(supabase, userId))) return null;
+    const now = Date.now();
+    const { data: evs } = await supabase.from('calendar_events')
+      .select('id, title, attendees, start_time, created_at')
+      .eq('user_id', userId).eq('status', 'confirmed')
+      .gte('start_time', new Date(now - 4 * 86_400_000).toISOString())
+      .lte('start_time', new Date(now + 21 * 86_400_000).toISOString())
+      .order('start_time', { ascending: true }).limit(80);
+    const cands = ((evs ?? []) as Array<Record<string, any>>).filter((e) =>
+      !isCancelledTitle(e.title) && Array.isArray(e.attendees) && e.attendees.length >= 2);
+    if (!cands.length) return { ran: 0 };
+    const { data: links } = await supabase.from('entity_links')
+      .select('item_id').eq('user_id', userId).eq('item_kind', 'calendar_event').in('item_id', cands.map((c) => c.id));
+    const seen = new Set((links ?? []).map((l) => l.item_id as string));
+    let ran = 0;
+    for (const ev of cands.filter((c) => !seen.has(c.id as string)).slice(0, cap)) {
+      await recognizeItem(supabase, userId, itemFromCalendar(ev)).catch(() => {});
       ran++;
     }
     return { ran };

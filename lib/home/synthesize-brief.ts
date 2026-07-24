@@ -289,7 +289,7 @@ Return ONLY JSON in this exact shape:
   },
   "mustRespond": {
     "teaser": "one short line",
-    "items": [{"r": <the [Rn] index kept>, "who": "sender or topic", "ask": "what they're asking (one line)", "angle": "recommended reply gist (one line)"}]
+    "items": [{"r": <the [Rn] index kept>, "who": "sender or topic", "ask": "the thing to DO — a short IMPERATIVE phrase starting with a verb ('Confirm the dates', 'Send the revised offer'), never a topic or subject line", "angle": "recommended reply gist (one line)"}]
   },
   "droppedReplies": [<the [Rn] indexes you DROPPED as superseded/stale, with none invented>],
   "commitmentPlacements": [{"c": <the [Cn] index>, "placement": "on_your_plate|ball_in_court|informational"}],

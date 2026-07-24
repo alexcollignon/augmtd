@@ -38,7 +38,7 @@ const FIRST_PERSON_PROMISE = /\b(i'?ll|i will|i'?m going to|i am going to|i shal
 // machine — commitments + calendar bridging). Same agnostic logic, one definition.
 import { norm, emailLocalpart, nameTokens, emailDenotesName, sameAttendee } from '@/lib/projects/identity';
 
-function validDate(d: unknown): string | null {
+export function validDate(d: unknown): string | null {
   if (typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
   return d;
 }
@@ -61,7 +61,7 @@ function contentTokens(s: string): Set<string> {
 }
 // Jaccard-style overlap over content tokens. ≥ threshold ⇒ the same obligation. A high default (0.6)
 // keeps this conservative — it merges obvious restatements, never distinct tasks that share a noun.
-function isNearDuplicate(a: string, b: string, threshold = 0.6): boolean {
+export function isNearDuplicate(a: string, b: string, threshold = 0.6): boolean {
   const na = norm(a), nb = norm(b);
   if (na === nb) return true;
   if (na.includes(nb) || nb.includes(na)) return true; // one description is a substring of the other
@@ -83,12 +83,14 @@ function parseJson(text: string): any {
   throw new Error('no json');
 }
 
-// Insert new commitments for a source, skipping ones already captured. Dedup is at TWO levels, both
+// Insert new commitments for a source, skipping ones already captured. Dedup is at THREE levels, all
 // general (token-overlap, no text special-casing): (1) against commitments already stored for this
-// source, and (2) WITHIN the incoming batch — so a single source can never produce two rows for the
-// same obligation (the near-duplicate blowup). The first occurrence wins; later restatements are
-// dropped. due_date is written ONLY when it survives validDate (an absolute YYYY-MM-DD) — a
-// fabricated / unparseable date collapses to null rather than a made-up deadline.
+// source, (2) WITHIN the incoming batch (first occurrence wins), and (3) CROSS-SOURCE against the
+// user's OPEN commitments in the SAME context — same counterparty or same initiative (projecthood-plan
+// P5: a recurring meeting re-stating "secure the pilot project" must not mint a sibling every week —
+// the wall of near-dupes). The context guard keeps generic phrasings ("send the proposal") from
+// folding across unrelated deals. due_date is written ONLY when it survives validDate (an absolute
+// YYYY-MM-DD) — a fabricated / unparseable date collapses to null rather than a made-up deadline.
 export async function writeCommitments(
   userId: string,
   list: ExtractedCommitment[],
@@ -101,15 +103,29 @@ export async function writeCommitments(
   const { data: existing } = await client.from('commitments')
     .select('description').eq('user_id', userId).eq('source_id', meta.sourceId);
   const existingDescs = (existing ?? []).map((e: { description: string }) => e.description || '');
+  // The user's OPEN commitments from OTHER sources — the cross-meeting restatement pool.
+  const { data: openOther } = await client.from('commitments')
+    .select('description, counterparty, initiative').eq('user_id', userId).eq('status', 'open')
+    .neq('source_id', meta.sourceId).order('created_at', { ascending: false }).limit(400);
+  const openRows = (openOther ?? []) as Array<{ description: string; counterparty: string | null; initiative: string | null }>;
 
   const accepted: ExtractedCommitment[] = [];
   for (const c of clean) {
     const desc = c.description.trim();
+    const cp = (c.counterparty || meta.counterparty || '').toString();
+    const init = (c.initiative || '').toString().toLowerCase().trim();
     // Drop if it restates something already stored for this source, or one we've already accepted
     // from this same batch (first occurrence wins).
     const dupExisting = existingDescs.some((d: string) => isNearDuplicate(desc, d));
     const dupBatch = accepted.some((a) => isNearDuplicate(desc, a.description));
-    if (dupExisting || dupBatch) continue;
+    // Cross-source: near-identical text (0.5) + a shared context anchor (counterparty or initiative).
+    const dupCross = openRows.some((d) => {
+      if (!isNearDuplicate(desc, d.description, 0.5)) return false;
+      const sameParty = !!cp && !!d.counterparty && sameAttendee(cp, d.counterparty);
+      const sameInit = !!init && !!d.initiative && d.initiative.toLowerCase().trim() === init;
+      return sameParty || sameInit;
+    });
+    if (dupExisting || dupBatch || dupCross) continue;
     accepted.push(c);
   }
 

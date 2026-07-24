@@ -85,7 +85,8 @@ export async function readPool(
 }
 
 export interface WriteDeliverableInput {
-  kind: ItemPlanKind;
+  /** The pool scope — an item plan kind, or 'entity' for a file dropped on the deal itself (P7c). */
+  kind: ItemPlanKind | 'entity';
   entityId: string;
   taskId?: string | null;   // the step that produced it — dedup key (a re-run REPLACES its prior entry)
   type: DeliverableType;

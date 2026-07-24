@@ -25,7 +25,15 @@ export default function MeetingProjectControl({ transcriptId }: { transcriptId: 
   useEffect(() => {
     let alive = true;
     fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => {
-      if (alive && d?.entities) setEntities((d.entities as Ent[]).filter((e) => e.status === 'active').sort((a, b) => b.weight - a.weight));
+      if (alive && d?.entities) {
+        // CURATED (projecthood Phase 3): the picker lists ACCEPTED projects (tracked) — the same
+        // definition the Projects lens uses, ONE source. A user who accepted nothing yet sees the
+        // brain's judged projects (the pre-acceptance experience is never empty).
+        const act = (d.entities as Ent[]).filter((e) => e.status === 'active');
+        const accepted = act.filter((e) => (e as unknown as { tracked?: boolean }).tracked);
+        const judged = act.filter((e) => (e as unknown as { scope?: string | null }).scope === 'project');
+        setEntities((accepted.length ? accepted : judged).sort((a, b) => b.weight - a.weight));
+      }
     }).catch(() => {});
     fetch(`/api/items/entity?kind=meeting&id=${transcriptId}`).then((r) => r.json()).then((m) => {
       if (alive) { setEntId(m.entityId ?? null); setEntName(m.entityName ?? null); setMomentum(m.momentum ?? null); }

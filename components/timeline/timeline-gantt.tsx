@@ -4,15 +4,16 @@
 // THE TIMELINE — as a PROJECT-CLUSTERED GANTT (the Projects-page event chart, on the Home Timeline).
 // Each swimlane is a body of work; its member items are dated events. Clicking a project name → opens
 // the project (Overview); clicking an item → opens the project on its Work tab. Self-contained: holds
-// the open-detail state and renders EntityDetail, so no cross-lens plumbing. Falls back to the flat
+// the open-detail state and renders the entity ROOM (P7c), so no cross-lens plumbing. Falls back to the flat
 // station TimelineView for anything not clustered under a project (the "everything else" toggle).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import GanttChart, { type GanttGroup } from '@/components/entities/gantt-chart';
-import EntityDetail from '@/components/entities/entity-detail';
+import EntityRoom from '@/components/entities/entity-room';
 import TimelineView from '@/components/timeline/timeline-view';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { useLiveRefresh } from '@/hooks/use-live-refresh';
 
 type Data = { ganttGroups: GanttGroup[]; todayStr: string };
 
@@ -22,22 +23,30 @@ export default function TimelineGantt({ onDetailChange }: { onDetailChange?: (op
   const [selected, setSelected] = useState<{ id: string; tab: 'overview' | 'work' } | null>(null);
   const [err, setErr] = useState(false);
 
+  // Stable handle so the shared live-refresh hook can fire the latest load() closure.
+  const loadRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     let alive = true;
-    fetch('/api/home/timeline').then((r) => (r.ok ? r.json() : Promise.reject())).then((d) => {
+    const load = () => fetch('/api/home/timeline').then((r) => (r.ok ? r.json() : Promise.reject())).then((d) => {
       if (!alive) return;
       const next = { ganttGroups: (d.ganttGroups ?? []) as GanttGroup[], todayStr: d.todayStr as string };
       setData(next); saveLS('aug-timeline-gantt-v1', next);
     }).catch(() => { if (alive && !data) setErr(true); });
+    load();
+    // LIVE (Living-Home): refetch on focus/visibility + a gentle interval — actions taken anywhere
+    // (done/dismiss/prepared work) show up here without a manual reload.
+    loadRef.current = load;
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // The ONE live-refresh idiom — hooks/use-live-refresh.
+  useLiveRefresh(() => loadRef.current?.());
 
   const open = (id: string, tab: 'overview' | 'work' = 'overview') => { setSelected({ id, tab }); onDetailChange?.(true); };
   const close = () => { setSelected(null); onDetailChange?.(false); };
   useEffect(() => () => onDetailChange?.(false), [onDetailChange]);
 
-  if (selected) return <EntityDetail entityId={selected.id} initialTab={selected.tab} onBack={close} />;
+  if (selected) return <EntityRoom entityId={selected.id} initialTab={selected.tab} onBack={close} />;
   if (err) return <div className="mt-10 text-[13px] text-neutral-400">Couldn&apos;t load your timeline.</div>;
 
   const groups = data?.ganttGroups ?? [];

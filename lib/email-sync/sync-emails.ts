@@ -865,13 +865,37 @@ export async function syncEmailsForConnection(
             continue;
           }
 
-          // Process-class: queue the stored email for full AI processing (skip attachment re-fetch)
+          // Process-class: queue the stored email for full AI processing. Attachments MUST be
+          // processed here too — this recovery branch is where every push-stored email (Outlook
+          // stores the `emails` row before the sync builds the item) gets its inbox item, so an
+          // empty processedAttachments meant push-delivered attachments were PERMANENTLY lost
+          // (the catalogue-PDF class). One-time cost: this branch only runs when no item exists yet.
+          let recoveredAttachments: ProcessedAttachment[] = [];
+          let recoveredCalendarInvite = false;
+          const recoverHasAtt = ((parsed as any).attachments?.length > 0) || ((parsed as any).hasAttachments === true);
+          if (recoverHasAtt) {
+            try {
+              const attResult = await processAttachmentsForEmail({
+                emailId: existingEmail.id,
+                userId: connection.user_id,
+                provider: connection.provider as 'gmail' | 'outlook',
+                encryptedTokens,
+                parsedEmail: parsed,
+                outlookInternalId: (parsed as any).outlookInternalId,
+                adminSupabase,
+              });
+              recoveredAttachments = attResult.attachments;
+              recoveredCalendarInvite = attResult.hasCalendarInvite ?? false;
+            } catch (attErr) {
+              console.error(`[Attachments] Recovery-path processing failed for ${existingEmail.id}:`, attErr);
+            }
+          }
           processQueue.push({
             parsed,
             storedEmail: existingEmail,
-            processedAttachments: [],
+            processedAttachments: recoveredAttachments,
             calendarEventId: null,
-            hasCalendarInvite: false,
+            hasCalendarInvite: recoveredCalendarInvite,
             isForwarded,
             ruleLabel: ruleMap.get(String(_msgIdx)) ?? null,
           });
@@ -1035,9 +1059,9 @@ export async function syncEmailsForConnection(
               threadEmails: (threadMsgs ?? []) as { is_from_user: boolean; received_at: string | null }[],
               repliedAt: storedEmail.received_at || null,
               client: adminSupabase,
-              bustBriefCache: async () => {
-                await adminSupabase.from('profiles').update({ home_brief: null }).eq('id', connection.user_id);
-              },
+              // P0 perf: no null-bust — a resolution changes the pending counts, which changes the
+              // brief's sig naturally; nulling the blob destroyed last-good serving (cold every load).
+              bustBriefCache: async () => {},
             }).catch(() => {});
           }
 
@@ -1926,8 +1950,11 @@ export async function syncEmailsForConnection(
       // ONE BRAIN shadow (Phase B) — recognize this sync's work items into the entity memory. SELF-GATING
       // (no-op unless the user's memory exists — the backfilled evaluation users); non-fatal; capped.
       try {
-        const { shadowRecognizeTouched } = await import('@/lib/entities/hooks');
+        const { shadowRecognizeTouched, shadowRecognizeCalendar } = await import('@/lib/entities/hooks');
         await shadowRecognizeTouched(adminSupabase, connection.user_id, syncStartedAt);
+        // Calendar events too (idempotent, capped) — a scheduled meeting joins its deal's ledger the
+        // day it appears, not only if it happens to get recorded.
+        await shadowRecognizeCalendar(adminSupabase, connection.user_id).catch(() => {});
       } catch { /* non-fatal */ }
     } catch { /* non-fatal — Home-load hook backstops */ }
 

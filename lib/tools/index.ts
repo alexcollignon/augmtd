@@ -35,6 +35,13 @@ export {
 export {
   composeEmailDefinition, executeComposeEmail, sendCoworkerEmail, getUserEmailIdentities, isEmailEnabledForAgent,
 } from './coworker-email';
+// P6b — the item-action doables (complete/dismiss/resolve/find/remember): ONE executor each, consumed
+// by the API routes AND the conversation core AND (by exposure) any agent. Irreversible sends are NOT
+// here as committing executors — approve-before-commit is structural.
+export {
+  resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition,
+  executeResolveInboxItem, executeResolveCommitment, executeFindFile, executeRememberFact, inboxItemTitle,
+} from './item-actions';
 export type { EmailDraft } from './coworker-email';
 
 // OpenAI function-calling format converter — used by chat route

@@ -1,12 +1,16 @@
 'use client';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// ONE BRAIN — THE PORTFOLIO (Projects lens over the entity registry). The memory fills it in; reasoned
-// priority orders it; the quiet tail folds; the system proposes closure; YOUR verbs are final:
-//   Tracked (pinned) → Active (by priority) → "N quieter" fold → Done/Archived/Muted behind a filter.
-// Row: momentum dot · name · summary · the ONE next-move chip (the through-line) · closure chip ·
-// ⋯ verbs (Track/Done/Archive/Mute/Rename/Forget). No acceptance-flows — nothing to "accept"; the
-// registry already knows. Falls back to the label-era ProjectsView when the user has no entity memory.
+// ONE BRAIN — THE PORTFOLIO (Projects lens over the entity registry). PROJECTHOOD IS A JUDGMENT
+// (projecthood-plan P2): the registry remembers everything, the portfolio shows judged PROJECTS.
+// Three strata on the Active tab:
+//   PROJECTS (scope=project OR pinned) — full rows; prominence leads, the quiet rest folds.
+//   "Becoming a project?" — borderline errands with growth (≥2 kinds / real mass) as one-tap
+//     suggestions (Track / Not a project) — the Suggested tier, reborn.
+//   SMALLER THINGS (errands) — folded plain rows (✓ Done / ✕), no project chrome. Background hidden
+//     (still in the brain; search finds everything).
+// Row header click OPENS the room; the chevron expands a preview whose ONE primary action is the
+// next-move pill; verbs = Done · Not a project inline, the rest behind ⋯.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -14,14 +18,17 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import {
   ChevronRightIcon, CheckIcon, XMarkIcon, ArrowRightIcon, StarIcon,
-  ArchiveBoxIcon, PencilIcon, TrashIcon, ArrowUturnLeftIcon, BellSlashIcon, MagnifyingGlassIcon, PlusIcon,
+  ArchiveBoxIcon, PencilIcon, TrashIcon, ArrowUturnLeftIcon, BellSlashIcon, MagnifyingGlassIcon, PlusIcon, ArrowsPointingInIcon,
+  EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon,
 } from '@heroicons/react/24/outline';
-import { StarIcon as StarSolid } from '@heroicons/react/24/solid';
 import { toast } from 'sonner';
 import { broadcastProjectsUpdated } from '@/lib/projects/broadcast';
 import { RiseIn } from '@/components/home/rise-in';
-import EntityDetail from '@/components/entities/entity-detail';
+import EntityRoom from '@/components/entities/entity-room';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { AddItemPicker, type LooseItem } from '@/components/entities/add-item-picker';
+import { useLiveRefresh } from '@/hooks/use-live-refresh';
+import { MOMENTUM as MOMENTUM_TOKENS } from '@/lib/work-items/states';
 
 type Entity = {
   id: string; name: string; tracked: boolean; status: string;
@@ -29,18 +36,14 @@ type Entity = {
   whoOwes: { you: string[]; them: string[] };
   nextMove: { title: string; entityRef: string | null } | null;
   weight: number; quietDays: number | null; itemCount: number; closureCandidate: boolean; prominent: boolean; category: string | null;
-  events: Array<{ at: string; kind: string; label: string }>;
+  scope: 'project' | 'errand' | 'background' | null;
+  events: Array<{ at: string; kind: string; label: string; id: string }>;
   goals?: string[]; rules?: string[];
 };
 type Portfolio = { hasMemory: boolean; entities: Entity[] };
 
-const MOM: Record<string, { dot: string; label: string; text: string }> = {
-  needs_you:  { dot: 'bg-rose-500',    label: 'Needs you',  text: 'text-rose-600' },
-  gone_quiet: { dot: 'bg-amber-500',   label: 'Gone quiet', text: 'text-amber-600' },
-  stalled:    { dot: 'bg-amber-500',   label: 'Stalled',    text: 'text-amber-600' },
-  waiting:    { dot: 'bg-blue-400',    label: 'Waiting',    text: 'text-blue-600' },
-  active:     { dot: 'bg-emerald-500', label: 'Active',     text: 'text-emerald-600' },
-};
+// The ONE momentum vocabulary — lib/work-items/states.ts.
+const MOM: Record<string, { dot: string; label: string; text: string }> = MOMENTUM_TOKENS;
 const refHref = (ref: string | null): string | null => {
   if (!ref) return null;
   const [k, i] = ref.split(':');
@@ -74,10 +77,12 @@ function IntentList({ label, values, onCommit }: { label: string; values: string
   );
 }
 
-function Row({ e, onAction, onOpen }: { e: Entity; onAction: (id: string, action: string, name?: string) => void; onOpen: (id: string) => void }) {
+function Row({ e, onAction, onOpen, others = [] }: { e: Entity; onAction: (id: string, action: string, name?: string) => void; onOpen: (id: string) => void; others?: Array<{ id: string; name: string }> }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const [more, setMore] = useState(false); // the ⋯ overflow (Archive / Rename / Merge / Forget)
+  const [merging, setMerging] = useState(false); // ⋯ morphed into the merge-target list
   const [draft, setDraft] = useState(e.name);
   const menuRef = useRef<HTMLDivElement>(null);
   const m = MOM[e.momentum] ?? MOM.active;
@@ -89,7 +94,7 @@ function Row({ e, onAction, onOpen }: { e: Entity; onAction: (id: string, action
       {/* COLLAPSED — competitor restraint: one dot · name · pin · chevron. One muted subline for scent. */}
       <div className="flex items-center gap-3 px-4 py-3">
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${m.dot}`} title={`${m.label}${e.momentum === 'gone_quiet' && e.quietDays ? ` · ${e.quietDays}d quiet` : ''}`} />
-        <button onClick={() => { if (!renaming) setOpen((v) => !v); }} className="min-w-0 flex-1 text-left">
+        <button onClick={() => { if (!renaming) onOpen(e.id); }} className="min-w-0 flex-1 text-left" title="Open">
           {renaming ? (
             <input
               autoFocus value={draft} onChange={(ev) => setDraft(ev.target.value)}
@@ -109,14 +114,6 @@ function Row({ e, onAction, onOpen }: { e: Entity; onAction: (id: string, action
               Mark done?
             </button>
           )}
-          {/* PIN — a one-tap override (solid when pinned; hover-revealed otherwise). Not buried in a menu. */}
-          {e.status === 'active' && (
-            <button onClick={(ev) => { ev.stopPropagation(); onAction(e.id, e.tracked ? 'untrack' : 'track'); }}
-              className={`transition-all duration-150 ${e.tracked ? 'text-indigo-400 hover:text-indigo-600' : 'text-neutral-300 hover:text-indigo-500 opacity-0 group-hover:opacity-100'}`}
-              title={e.tracked ? 'Pinned — click to unpin' : 'Pin to keep at top'}>
-              {e.tracked ? <StarSolid className="w-4 h-4" /> : <StarIcon className="w-4 h-4" />}
-            </button>
-          )}
           <ChevronRightIcon onClick={() => setOpen((v) => !v)} className={`w-4 h-4 text-neutral-300 cursor-pointer transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
         </span>
       </div>
@@ -124,9 +121,6 @@ function Row({ e, onAction, onOpen }: { e: Entity; onAction: (id: string, action
       <div className={`grid transition-all duration-300 ease-out ${open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
         <div className="overflow-hidden min-h-0">
           <div className="border-t border-neutral-100 px-4 py-3 pl-[2.25rem] space-y-2.5">
-            <button onClick={() => onOpen(e.id)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-indigo-600 hover:text-indigo-800 transition-colors">
-              Open project<ArrowRightIcon className="w-3.5 h-3.5" />
-            </button>
             {e.nextMove && e.status === 'active' && (
               <button onClick={() => { if (moveHref) router.push(moveHref); }} className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 text-[12px] font-medium text-indigo-700 transition-colors max-w-full">
                 <span className="truncate">{e.nextMove.title}</span><ArrowRightIcon className="w-3.5 h-3.5 flex-shrink-0" />
@@ -146,19 +140,52 @@ function Row({ e, onAction, onOpen }: { e: Entity; onAction: (id: string, action
                 <p key={i} className="truncate text-neutral-400"><span className="text-neutral-300 tabular-nums">{ev.at.slice(0, 10)}</span> · {ev.label}</p>
               ))}
             </div>
-            {/* Verbs footer — plain text buttons, not a hidden ⋯ menu. */}
+            {/* Verbs — TWO clear choices inline (this is finished · this doesn't belong in my head);
+                the rarely-used rest behind ⋯. Five undifferentiated dismiss verbs was the confusion. */}
             <div ref={menuRef} className="flex items-center gap-4 pt-1">
               {e.status === 'active' ? (
                 <>
                   <button onClick={() => onAction(e.id, 'done')} className={verb}><CheckIcon className="w-3.5 h-3.5" />Done</button>
-                  <button onClick={() => onAction(e.id, 'archive')} className={verb}><ArchiveBoxIcon className="w-3.5 h-3.5" />Archive</button>
-                  <button onClick={() => onAction(e.id, 'mute')} className={verb}><BellSlashIcon className="w-3.5 h-3.5" />Not relevant</button>
-                  <button onClick={() => setRenaming(true)} className={verb}><PencilIcon className="w-3.5 h-3.5" />Rename</button>
+                  <button onClick={() => onAction(e.id, 'mute')} className={verb} title="Hide from your projects — its items stay on the Home"><BellSlashIcon className="w-3.5 h-3.5" />Not a project</button>
                 </>
               ) : (
                 <button onClick={() => onAction(e.id, 'reopen')} className={verb}><ArrowUturnLeftIcon className="w-3.5 h-3.5" />Reopen</button>
               )}
-              <button onClick={() => onAction(e.id, 'forget')} className={`${verb} hover:!text-rose-600`}><TrashIcon className="w-3.5 h-3.5" />Forget</button>
+              <div className="relative">
+                <button onClick={() => setMore((v) => !v)} className={verb} title="More">⋯</button>
+                {more && (
+                  <div className="absolute left-0 bottom-full mb-1 z-20 rounded-lg border border-neutral-200 bg-white shadow-lg py-1 min-w-[150px]" onMouseLeave={() => { setMore(false); setMerging(false); }}>
+                    {merging ? (
+                      // The menu morphs into the merge-target list (S5) — same list idiom, one level.
+                      <div className="max-h-[220px] overflow-y-auto">
+                        <p className="px-3 py-1 text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400">Merge into…</p>
+                        {others.filter((o) => o.id !== e.id).slice(0, 20).map((o) => (
+                          <button key={o.id} onClick={() => { setMore(false); setMerging(false); onAction(e.id, 'merge', o.id); }} className="block w-full text-left px-3 py-1.5 text-[12px] text-neutral-600 hover:bg-neutral-50 truncate">{o.name}</button>
+                        ))}
+                        {others.filter((o) => o.id !== e.id).length === 0 && <p className="px-3 py-1.5 text-[12px] text-neutral-300">No other projects.</p>}
+                      </div>
+                    ) : (
+                      <>
+                        {e.status === 'active' && (
+                          <>
+                            <button onClick={() => { setMore(false); onAction(e.id, 'archive'); }} className="flex items-center gap-2 w-full px-3 py-1.5 text-[12px] text-neutral-600 hover:bg-neutral-50"><ArchiveBoxIcon className="w-3.5 h-3.5" />Archive</button>
+                            <button onClick={() => { setMore(false); setRenaming(true); }} className="flex items-center gap-2 w-full px-3 py-1.5 text-[12px] text-neutral-600 hover:bg-neutral-50"><PencilIcon className="w-3.5 h-3.5" />Rename</button>
+                            <button onClick={() => setMerging(true)} className="flex items-center gap-2 w-full px-3 py-1.5 text-[12px] text-neutral-600 hover:bg-neutral-50"><ArrowsPointingInIcon className="w-3.5 h-3.5" />Merge into…</button>
+                        <div className="my-1 border-t border-neutral-100" />
+                        {(['client', 'internal', 'personal', 'admin'] as const).map((c) => (
+                          <button key={c} onClick={() => { setMore(false); onAction(e.id, 'category', c); }} className={`flex items-center gap-2 w-full px-3 py-1 text-[12px] hover:bg-neutral-50 ${e.category === c ? 'text-indigo-600 font-medium' : 'text-neutral-500'}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${c === 'client' ? 'bg-emerald-500' : c === 'internal' ? 'bg-indigo-500' : c === 'personal' ? 'bg-violet-500' : 'bg-neutral-400'}`} />
+                            {c[0].toUpperCase() + c.slice(1)}
+                          </button>
+                        ))}
+                          </>
+                        )}
+                        <button onClick={() => { setMore(false); onAction(e.id, 'forget'); }} className="flex items-center gap-2 w-full px-3 py-1.5 text-[12px] text-rose-500 hover:bg-rose-50"><TrashIcon className="w-3.5 h-3.5" />Forget</button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -167,23 +194,123 @@ function Row({ e, onAction, onOpen }: { e: Entity; onAction: (id: string, action
   );
 }
 
+// "Becoming a project?" — the Suggested tier: a borderline errand with real mass, one-tap Track /
+// Not a project. Auto only when evidence is strong; suggest when borderline; never silently promote.
+// The membership kind /api/items/entity accepts for an event row (calendar events aren't detachable here).
+const detachKindOf = (k: string): 'inbox_item' | 'commitment' | 'meeting' | null =>
+  k === 'inbox_item' || k === 'commitment' || k === 'meeting' ? k : null;
+
+function SuggestRow({ e, onAction, onOpen, onChanged }: { e: Entity; onAction: (id: string, action: string) => void; onOpen: (id: string) => void; onChanged?: () => void }) {
+  // The suggestion IS the judge's verdict — the row shows only FACTS (count) beside the name.
+  // EXPANDABLE (R1): see the members the brain grouped, ✕ the wrong ones BEFORE accepting.
+  const [open, setOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [pruned, setPruned] = useState<Set<string>>(new Set());
+  const members = e.events.filter((ev) => !pruned.has(ev.id));
+  // SHAPE THE GROUP BOTH WAYS before accepting (July-24): the ONE shared picker + the ONE sticky
+  // membership write — identical mechanics to the room's "+ Add existing".
+  const addItem = (it: LooseItem) => {
+    setAdding(false);
+    fetch('/api/items/entity', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: it.kind, id: it.id, entityId: e.id }) })
+      .then(() => onChanged?.()).catch(() => {});
+  };
+  const prune = (ev: { id: string; kind: string }) => {
+    const k = detachKindOf(ev.kind);
+    if (!k) return;
+    setPruned((prev) => new Set(prev).add(ev.id));
+    fetch('/api/items/entity', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: k, id: ev.id, entityId: null }) }).catch(() => {});
+  };
+  const why = `${e.itemCount} item${e.itemCount === 1 ? '' : 's'}`;
+  return (
+    <div className="rounded-xl border border-dashed border-indigo-200/70 bg-indigo-50/30">
+      <div className="flex items-center gap-3 px-4 py-2.5">
+        <span className="w-2 h-2 rounded-full bg-indigo-300 flex-shrink-0" />
+        <button onClick={() => setOpen((v) => !v)} className="min-w-0 flex-1 text-left">
+          <span className="text-[13px] font-medium text-neutral-800 truncate">{e.name}</span>
+          <span className="text-[12px] text-neutral-400 ml-2">{why}</span>
+        </button>
+        <button onClick={() => onAction(e.id, 'track')} className="flex-shrink-0 rounded-lg bg-indigo-600 hover:bg-indigo-700 px-2.5 py-1 text-[11.5px] font-medium text-white transition-colors">Accept</button>
+        <button onClick={() => onAction(e.id, 'mute')} className="flex-shrink-0 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-600 transition-colors">Not a project</button>
+        <ChevronRightIcon onClick={() => setOpen((v) => !v)} className={`w-3.5 h-3.5 flex-shrink-0 text-neutral-300 cursor-pointer transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
+      </div>
+      {open && (
+        <div className="border-t border-indigo-100/70 px-4 py-2 space-y-1">
+          {members.slice(0, 8).map((ev) => {
+            const Icon = ev.kind === 'inbox_item' ? EnvelopeIcon : ev.kind === 'commitment' ? CheckCircleIcon : CalendarDaysIcon;
+            return (
+              <div key={ev.id} className="flex items-center gap-2 text-[12px] text-neutral-600">
+                <Icon className="w-3.5 h-3.5 text-neutral-300 flex-shrink-0" />
+                <span className="text-neutral-300 tabular-nums flex-shrink-0">{ev.at.slice(0, 10)}</span>
+                <span className="min-w-0 flex-1 truncate">{ev.label}</span>
+                {detachKindOf(ev.kind) && (
+                  <button onClick={() => prune(ev)} className="text-neutral-300 hover:text-rose-500 transition-colors flex-shrink-0" title="Doesn't belong — remove before accepting">
+                    <XMarkIcon className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {members.length === 0 && <p className="text-[12px] text-neutral-300 py-1">Nothing left — dismiss the suggestion.</p>}
+          <div className="relative pt-0.5">
+            <button onClick={() => setAdding((v) => !v)} className="text-[12px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors">+ Add an item</button>
+            {adding && <AddItemPicker align="left" onClose={() => setAdding(false)} onPick={addItem} />}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// SMALLER THINGS — an errand is a plain row: dot · title · next action · ✓ / ✕. No Stage, no Goals,
+// no project chrome — real work, not a slot in the user's head.
+function SmallRow({ e, onAction, onOpen }: { e: Entity; onAction: (id: string, action: string) => void; onOpen: (id: string) => void }) {
+  const m = MOM[e.momentum] ?? MOM.active;
+  return (
+    <div className="group flex items-center gap-3 rounded-lg border border-neutral-200/60 bg-white px-3.5 py-2 hover:border-neutral-300 transition-all">
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${m.dot}`} />
+      <button onClick={() => onOpen(e.id)} className="min-w-0 flex-1 text-left">
+        <span className="text-[12.5px] text-neutral-700 truncate">{e.name}</span>
+        {(e.nextMove?.title || e.summary) && <span className="text-[11.5px] text-neutral-400 ml-2 truncate">{e.nextMove?.title || e.summary}</span>}
+      </button>
+      <span className="flex-shrink-0 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button onClick={() => onAction(e.id, 'track')} className="text-neutral-300 hover:text-indigo-500 transition-colors" title="Make it a project (pin)"><StarIcon className="w-4 h-4" /></button>
+        <button onClick={() => onAction(e.id, 'done')} className="text-neutral-300 hover:text-emerald-600 transition-colors" title="Done"><CheckIcon className="w-4 h-4" /></button>
+        <button onClick={() => onAction(e.id, 'mute')} className="text-neutral-300 hover:text-neutral-600 transition-colors" title="Not relevant"><XMarkIcon className="w-4 h-4" /></button>
+      </span>
+    </div>
+  );
+}
+
 export default function PortfolioView({ onDetailChange }: { onDetailChange?: (open: boolean) => void } = {}) {
   const [data, setData] = useState<Portfolio | null>(() => loadLS<Portfolio>('aug-portfolio-v1'));
   const [statusTab, setStatusTab] = useState<'active' | 'done' | 'archived' | 'muted'>('active');
   const [tailOpen, setTailOpen] = useState(false);
+  const [smallOpen, setSmallOpen] = useState(false);
   const [hidden, setHidden] = useState<Set<string>>(new Set()); // optimistic removals this session
   const [selected, setSelected] = useState<string | null>(null); // the open entity detail
+  // Deep-link door (P7c): /?view=projects&entity=<id> opens straight into this deal's overview —
+  // the rail's "Open project overview" chip and any surface can route here.
+  useEffect(() => {
+    try {
+      const id = new URLSearchParams(window.location.search).get('entity');
+      if (id) { setSelected(id); onDetailChange?.(true); }
+    } catch { /* non-fatal */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [query, setQuery] = useState('');
-  const [cats, setCats] = useState<Set<string>>(new Set()); // multiselect category filter (empty = all)
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  const [newItems, setNewItems] = useState<LooseItem[]>([]); // work chosen at creation (the one picker)
+  const [newPicking, setNewPicking] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(() => {
     fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => { setData(d); saveLS('aug-portfolio-v1', d); }).catch(() => {});
   }, []);
   useEffect(() => { load(); }, [load]);
+  // 2-WAY LIVE (F5): a meeting-side attach / room change / chat command shows here without a reload.
+  useLiveRefresh(load);
   // Hide the Home greeting while a detail is open (like the item deep-dive). Refresh the list on close.
   const openDetail = useCallback((id: string) => { setSelected(id); onDetailChange?.(true); }, [onDetailChange]);
   // Create a project by hand — founds a TRACKED entity (same endpoint + registry the meetings sidebar uses;
@@ -196,12 +323,17 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
       const res = await fetch('/api/entities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: n, description: newDesc.trim() || undefined }) });
       if (!res.ok) throw new Error();
       const { id } = await res.json();
+      // Attach the chosen work — the ONE sticky membership write per item (locked, cascaded, reconciled).
+      if (id && newItems.length) {
+        await Promise.all(newItems.map((it) =>
+          fetch('/api/items/entity', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: it.kind, id: it.id, entityId: id }) }).catch(() => {})));
+      }
       broadcastProjectsUpdated({ reason: 'create' });
-      setCreating(false); setNewName(''); setNewDesc('');
+      setCreating(false); setNewName(''); setNewDesc(''); setNewItems([]); setNewPicking(false);
       load();
       if (id) openDetail(id);
     } catch { toast.error('Could not create the project'); } finally { setSaving(false); }
-  }, [newName, newDesc, saving, load, openDetail]);
+  }, [newName, newDesc, newItems, saving, load, openDetail]);
   const closeDetail = useCallback(() => { setSelected(null); onDetailChange?.(false); load(); }, [onDetailChange, load]);
   useEffect(() => () => onDetailChange?.(false), [onDetailChange]);
   // Lock body scroll while the modal is open (stops the page jumping / scrolling behind the overlay).
@@ -212,7 +344,20 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
     return () => { document.body.style.overflow = prev; };
   }, [creating]);
 
+  // ACCEPT is INSTANT (5A.2): flip tracked locally (the row moves to "Your projects" in the same
+  // render), fire the PATCH behind, restore + toast on failure. A silent reconcile load follows.
+  const acceptOptimistic = useCallback((id: string) => {
+    setData((prev) => (prev ? { ...prev, entities: prev.entities.map((e) => (e.id === id ? { ...e, tracked: true } : e)) } : prev));
+    fetch(`/api/entities/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'track' }) })
+      .then((r) => { if (!r.ok) throw new Error(); load(); })
+      .catch(() => {
+        setData((prev) => (prev ? { ...prev, entities: prev.entities.map((e) => (e.id === id ? { ...e, tracked: false } : e)) } : prev));
+        toast.error("Couldn't accept — try again");
+      });
+  }, [load]);
+
   const onAction = useCallback(async (id: string, action: string, name?: string) => {
+    if (action === 'track') { acceptOptimistic(id); return; }
     if (action.startsWith('intent-')) {
       const vals = JSON.parse(name || '[]') as string[];
       const body = action === 'intent-goals' ? { action: 'intent', goals: vals } : { action: 'intent', rules: vals };
@@ -220,12 +365,13 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
       load();
       return;
     }
-    if (action !== 'rename' && action !== 'track' && action !== 'untrack') setHidden((p) => new Set(p).add(id));
-    await fetch(`/api/entities/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, name }) }).catch(() => {});
+    if (!['rename', 'track', 'untrack', 'category'].includes(action)) setHidden((p) => new Set(p).add(id));
+    const payload = action === 'merge' ? { action, targetId: name } : action === 'category' ? { action, category: name } : { action, name };
+    await fetch(`/api/entities/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => {});
     load();
-  }, [load]);
+  }, [load, acceptOptimistic]);
 
-  if (selected) return <EntityDetail entityId={selected} onBack={closeDetail} />;
+  if (selected) return <EntityRoom entityId={selected} onBack={closeDetail} />;
 
   // A brand-new user converges via bootstrapMemory (a few Home loads) — until then, an honest empty state.
   if (data && !data.hasMemory) {
@@ -264,32 +410,37 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
       ...e.whoOwes.you, ...e.whoOwes.them, ...e.events.map((ev) => ev.label)].join('  ').toLowerCase();
     return hay.includes(q);
   };
-  const filterOk = (e: Entity) => cats.size === 0 || (e.category !== null && cats.has(e.category));
   const searching = q.length > 0;
-  const inTab = live.filter((e) => e.status === statusTab && matches(e) && filterOk(e)).sort((a, b) => b.weight - a.weight);
-  // PROMINENCE-LED (reasoned): the alive/pinned work leads; the quiet rest folds into one calm tail. While
-  // searching or filtering, show a flat list (no prominence split — the user is looking for something).
-  const flat = searching || cats.size > 0 || statusTab !== 'active';
-  const main = flat ? inTab : inTab.filter((e) => e.prominent);
-  const tail = flat ? [] : inTab.filter((e) => !e.prominent);
+  const inTab = live.filter((e) => e.status === statusTab && matches(e)).sort((a, b) => b.weight - a.weight);
+  // ── THE CURATED PORTFOLIO (Phase 3 F3): "Your projects" = ACCEPTED only (created or accepted —
+  // the tracked flag); the brain NEVER silently places. "Suggested" = the JUDGE's scope='project'
+  // verdict awaiting your one-tap acceptance (no growth heuristics — suggestion is the judge's
+  // verdict, acceptance is yours). Errands + not-yet-judged fold as Smaller things; background
+  // hidden. While searching/filtering: flat list of EVERYTHING — search must always find things.
+  const flat = searching || statusTab !== 'active';
+  const projects = flat ? inTab : inTab.filter((e) => e.tracked);
+  const suggested = flat ? [] : inTab.filter((e) => !e.tracked && e.scope === 'project');
+  const smaller = flat ? [] : inTab.filter((e) => !e.tracked && (e.scope === 'errand' || e.scope === null));
+  // Within accepted projects: the reasoned priority leads; the rest folds (a presentation cutoff
+  // over the judged weight — plumbing, per the doctrine).
+  const main = flat ? projects : projects.filter((e) => e.prominent);
+  const tail = flat ? [] : projects.filter((e) => !e.prominent);
+  const acceptAll = () => {
+    const ids = suggested.map((e) => e.id);
+    setData((prev) => (prev ? { ...prev, entities: prev.entities.map((e) => (ids.includes(e.id) ? { ...e, tracked: true } : e)) } : prev));
+    Promise.all(ids.map((id) => fetch(`/api/entities/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'track' }) }).catch(() => {})))
+      .then(() => load());
+  };
+  // Merge targets: every ACTIVE project (the ⋯ "Merge into…" list).
+  const mergeTargets = live.filter((e) => e.status === 'active' && (e.tracked || e.scope === 'project' || e.scope === null)).map((e) => ({ id: e.id, name: e.name }));
   const counts = { active: live.filter((e) => e.status === 'active').length, done: live.filter((e) => e.status === 'done').length, archived: live.filter((e) => e.status === 'archived').length, muted: live.filter((e) => e.status === 'muted').length };
-  // Category chips (multiselect) with live counts — only categories that exist appear.
-  const catCounts: Record<string, number> = {};
-  for (const e of live.filter((e) => e.status === statusTab)) if (e.category) catCounts[e.category] = (catCounts[e.category] ?? 0) + 1;
-  const CATS: Array<{ id: string; label: string; dot: string }> = [
-    { id: 'client', label: 'Client', dot: 'bg-emerald-500' },
-    { id: 'internal', label: 'Internal', dot: 'bg-indigo-500' },
-    { id: 'personal', label: 'Personal', dot: 'bg-violet-500' },
-    { id: 'admin', label: 'Admin', dot: 'bg-neutral-400' },
-  ].filter((c) => catCounts[c.id] > 0);
-  const toggleCat = (id: string) => setCats((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   return (
     <div className="mt-7">
       <div className="mb-4 flex items-start justify-between gap-4">
         <div>
           <h2 className="text-[18px] font-semibold tracking-tight text-neutral-900">Your work</h2>
-          <p className="text-[13px] text-neutral-400 mt-0.5">What&apos;s alive leads; the quiet rest folds below. Pin anything to keep it up top.</p>
+          <p className="text-[13px] text-neutral-400 mt-0.5">Yours to curate — accept suggestions or create your own. Everything else stays on the Home.</p>
         </div>
         <button onClick={() => setCreating(true)} className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors">
           <PlusIcon className="w-4 h-4" />New project
@@ -316,6 +467,24 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
                 placeholder="Description (optional)"
                 className="w-full resize-none rounded-lg border border-neutral-200 bg-white px-3 py-2 text-[13px] text-neutral-700 outline-none focus:border-indigo-300 transition-colors"
               />
+              {/* Found it WITH work in it (July-24) — the ONE shared picker; chips are removable. */}
+              <div>
+                {newItems.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-1.5">
+                    {newItems.map((it) => (
+                      <span key={`${it.kind}-${it.id}`} className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[11.5px] text-neutral-600 max-w-[220px]">
+                        <span className="truncate">{it.label}</span>
+                        <button onClick={() => setNewItems((prev) => prev.filter((x) => x.id !== it.id))} className="text-neutral-300 hover:text-rose-500 transition-colors"><XMarkIcon className="w-3 h-3" /></button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="relative inline-block">
+                  <button onClick={() => setNewPicking((v) => !v)} className="text-[12.5px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors">+ Add work</button>
+                  {newPicking && <AddItemPicker align="left" onClose={() => setNewPicking(false)}
+                    onPick={(it) => { setNewPicking(false); setNewItems((prev) => (prev.some((x) => x.id === it.id) ? prev : [...prev, it])); }} />}
+                </div>
+              </div>
             </div>
             <div className="mt-4 flex items-center justify-end gap-2">
               <button onClick={() => setCreating(false)} disabled={saving} className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-neutral-500 hover:text-neutral-800 transition-colors">Cancel</button>
@@ -338,14 +507,6 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
           />
           {query && <button onClick={() => setQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-300 hover:text-neutral-500"><XMarkIcon className="w-3.5 h-3.5" /></button>}
         </div>
-        <div className="flex items-center gap-1">
-          {CATS.map((c) => (
-            <button key={c.id} onClick={() => toggleCat(c.id)} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium transition-all duration-150 ${cats.has(c.id) ? 'bg-indigo-50 text-indigo-700' : 'text-neutral-400 hover:text-neutral-600'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />{c.label}<span className="text-neutral-300">{catCounts[c.id]}</span>
-            </button>
-          ))}
-          {cats.size > 0 && <button onClick={() => setCats(new Set())} className="text-[11px] text-neutral-400 hover:text-neutral-600 ml-1">clear</button>}
-        </div>
         <div className="flex items-center gap-1 ml-auto">
           {(['done', 'archived', 'muted'] as const).map((t) => (
             counts[t] > 0 && (
@@ -357,16 +518,40 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
         </div>
       </div>
       <div className="space-y-2">
-        <RiseIn><div className="space-y-2">{main.map((e) => <Row key={e.id} e={e} onAction={onAction} onOpen={openDetail} />)}</div></RiseIn>
+        <RiseIn><div className="space-y-2">{main.map((e) => <Row key={e.id} e={e} onAction={onAction} onOpen={openDetail} others={mergeTargets} />)}</div></RiseIn>
         {main.length === 0 && inTab.length > 0 && <p className="text-[12.5px] text-neutral-400 py-2">Nothing needs attention — everything is quietly moving.</p>}
         {searching && inTab.length === 0 && <p className="text-[13px] text-neutral-400 py-8 text-center">No work matches &ldquo;{query}&rdquo;.</p>}
+        {suggested.length > 0 && (
+          <div className={`${projects.length === 0 ? '' : 'pt-3'} space-y-2`}>
+            <div className="flex items-center justify-between">
+              <p className="text-[11.5px] font-semibold uppercase tracking-wide text-neutral-400">
+                {projects.length === 0 ? 'These look like your projects' : 'Suggested'}
+              </p>
+              {suggested.length > 1 && (
+                <button onClick={acceptAll} className="text-[12px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors">
+                  Accept all {suggested.length}
+                </button>
+              )}
+            </div>
+            {suggested.map((e) => <SuggestRow key={e.id} e={e} onAction={onAction} onOpen={openDetail} onChanged={load} />)}
+          </div>
+        )}
         {tail.length > 0 && (
           <>
             <button onClick={() => setTailOpen((v) => !v)} className="inline-flex items-center gap-1 text-[12px] font-medium text-neutral-400 hover:text-neutral-600 transition-colors pt-1">
-              {tail.length} quieter item{tail.length === 1 ? '' : 's'}
+              {tail.length} quieter project{tail.length === 1 ? '' : 's'}
               <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${tailOpen ? 'rotate-90' : ''}`} />
             </button>
-            {tailOpen && <div className="space-y-2 pt-1">{tail.map((e) => <Row key={e.id} e={e} onAction={onAction} onOpen={openDetail} />)}</div>}
+            {tailOpen && <div className="space-y-2 pt-1">{tail.map((e) => <Row key={e.id} e={e} onAction={onAction} onOpen={openDetail} others={mergeTargets} />)}</div>}
+          </>
+        )}
+        {smaller.length > 0 && (
+          <>
+            <button onClick={() => setSmallOpen((v) => !v)} className="inline-flex items-center gap-1 text-[12px] font-medium text-neutral-400 hover:text-neutral-600 transition-colors pt-1">
+              {smaller.length} smaller thing{smaller.length === 1 ? '' : 's'}
+              <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${smallOpen ? 'rotate-90' : ''}`} />
+            </button>
+            {smallOpen && <div className="space-y-1.5 pt-1">{smaller.map((e) => <SmallRow key={e.id} e={e} onAction={onAction} onOpen={openDetail} />)}</div>}
           </>
         )}
         {inTab.length === 0 && <p className="text-[13px] text-neutral-400 py-8 text-center">Nothing here.</p>}

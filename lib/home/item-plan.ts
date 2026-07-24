@@ -49,10 +49,9 @@ export type ItemPlanTask = {
   status?: PlanTaskStatus;   // transient runtime state (working / awaiting_approval / done); absent = ready
   done?: boolean;
   dismissed?: boolean;       // the user removed this step from the workflow (persisted)
-  // ── The PROPOSED coworker owner — set when the user picks a coworker in the deep-dive OwnerMenu.
-  // ASSIGNMENT ONLY: the step's owner reads as this coworker, but nothing runs until Run dispatches it
-  // (/api/items/delegate). Distinct from `handedTo` (which means the coworker already ran it). Persisted
-  // in the schemaless jsonb (no migration).
+  // ── LEGACY: the proposed coworker owner the retired step-panel's owner menu set. Kept in the type
+  // so existing item_plans rows still parse; delegation now routes through the steer channel / the
+  // preparation pass. Distinct from `handedTo` (a coworker actually ran it).
   proposedAgent?: { id: string; name: string; workerRole?: string | null };
   handedTo?: HandedTo;       // a coworker executed this step (stage 3b delegation)
   result?: string;           // AUGMTD's own returned output when it ran the step directly ("Hand to AUGMTD")
@@ -74,11 +73,9 @@ export type ItemPlanTask = {
     prompt: string;          // what to upload, e.g. "Upload the pitch deck"
     fulfilledRef?: string;   // item_deliverables.id once the user provides the file
   };
-  // ── task-workflows S4: the CACHED file-resolution snapshot (lib/home/resolve-file-step.ts). Persisted
-  // on first-engage so a reload / re-render never re-runs the reasoned pick. Keyed by `key` (step text +
-  // pool signature) — a change in either invalidates it and forces a fresh resolve. Back-compatible
-  // (optional, schemaless jsonb). `have_it` is never stored here — the pool-first short-circuit re-derives
-  // it for free from the live pool every time.
+  // ── LEGACY (task-workflows S4): the cached file-resolution snapshot the retired step-panel wrote. Kept
+  // in the type so existing item_plans rows still parse; nothing writes it anymore (the deep-dive is
+  // outcome-first — file finding runs through the universal resolver in the preparation pass).
   resolvedFile?: {
     key: string;
     status: 'found_one' | 'found_many' | 'none';
@@ -94,13 +91,10 @@ export type ItemPlanTask = {
 // [You] step (never a system step), only when the verb+object read as a document to provide — NOT every
 // you-step (a "call the client" or "make a decision" step stays a plain checkbox).
 //
-// This is a HEURISTIC (the PRIMARY reasoning lives in resolve-file-step.ts's reasoned pick, step 2 of
-// S4 — that's what actually FINDS the file, robust to any phrasing). This detector only decides whether
-// to render the upload affordance in the first place, so it's broadened rather than made an AI call: a
-// wide provide-verb set + a wide (but non-exhaustive) doc-noun set OR a generic "provide/share the X"
-// shape (a provide-verb + a bare noun object, when the step isn't a communicate/decide/call action).
-// It intentionally over-recognizes slightly (a false attachment-request just shows an upload row the
-// user can ignore); the resolver's `none`/found logic is the honest backstop.
+// This is a deterministic gate (the universal resolver — lib/knowledge/resolve.ts — is what actually
+// FINDS files); it only decides whether a step counts as a document hand-over at all. Tight by design
+// (just-works P1): a false attachment-request used to demand uploads on steps that never consume a
+// document, so both the leading verb and a NAMED document noun are required.
 const PROVIDE_VERBS = /\b(upload|attach|provide|share|send over|hand over|drop in|supply|locate and (?:send|attach|share)|locate|find and (?:send|attach|share)|forward|include|enclose|submit)\b/i;
 // A broad (not fixed-vocabulary-complete) doc-noun set — the common document words in any phrasing.
 const DOC_NOUNS = /\b(file|files|document|documents|doc|docs|deck|slides?|slide deck|pitch\s?deck|pdf|contract|agreement|nda|invoice|report|spreadsheet|attachment|attachments|proposal|statement|receipt|form|paperwork|materials?|deliverable|presentation|resume|cv|brief|briefing|one[-\s]?pager|summary|exec(?:utive)? summary|spec|specs|specification|memo|write[-\s]?up|overview|dossier|packet|letter|template|sheet|worksheet|manual|guide|policy|notes?|writeup|whitepaper|white paper|handout|attachment)\b/i;
@@ -108,25 +102,25 @@ const DOC_NOUNS = /\b(file|files|document|documents|doc|docs|deck|slides?|slide 
 // the generic "provide/share the X" shape from firing on "share your thoughts", "send a reply", etc.
 const NON_FILE_OBJECTS = /\b(reply|response|message|email|thought|thoughts|feedback|opinion|update|note to|call|meeting|decision|answer|question|comment|availability|time|date|introduction|intro)\b/i;
 
+// A step whose ACTION is to note/record/inform/decide can mention a document without CONSUMING one —
+// the just-works P1 grader rule: file-request grading applies ONLY to steps that genuinely hand over a
+// document (the "Note someone's preference → Upload a file" misfire was this gate being too loose).
+const NON_CONSUMING_LEAD = /^(note|record|log|remember|inform|tell|update|review|read|consider|decide|discuss|mention|check)\b/i;
+
 export function detectAttachmentRequest(task: Pick<ItemPlanTask, 'actor' | 'text' | 'detail'>): string | null {
   if (task.actor !== 'you') return null;
+  // The step's TITLE is its action. A note/record/inform/decide step never consumes a document — its
+  // detail may reference files without the step being a hand-over.
+  if (NON_CONSUMING_LEAD.test((task.text || '').trim())) return null;
   const hay = `${task.text || ''} ${task.detail || ''}`;
   if (!PROVIDE_VERBS.test(hay)) return null;
+  if (NON_FILE_OBJECTS.test(task.text || '')) return null; // "send a reply/update" is a message, not a file
 
-  // Path A — a recognized document noun is named. High confidence it's a file hand-over.
+  // A recognized document noun must be NAMED — the generic "provide/share the X" shape was the
+  // over-recognizer behind upload asks on steps that never consume a document (P1 grader fix). The
+  // universal resolver (lib/knowledge/resolve.ts) remains the honest path for finding the actual file.
   const nounMatch = hay.match(DOC_NOUNS);
-
-  // Path B — the GENERIC "provide/share the X" shape: a provide-verb naming a definite object ("the …",
-  // "your …") that isn't a communicate/decide/call action. Catches document words the fixed set misses
-  // ("provide the AHK briefing" is covered by DOC_NOUNS now, but "share the Zeiss deliverable v2" or a
-  // novel doc-ish noun still reads as a file). Instance-honest guard: skip if it looks like a message/
-  // decision/call. The resolver's `none` is the backstop if it turns out no file exists.
-  const genericShape =
-    !nounMatch &&
-    !NON_FILE_OBJECTS.test(hay) &&
-    /\b(?:upload|attach|provide|share|send over|hand over|supply|locate|forward|include|enclose|submit)\s+(?:the|your|our|a|an|that|this|his|her|their|its|signed|final|latest|updated|attached)\b/i.test(hay);
-
-  if (!nounMatch && !genericShape) return null;
+  if (!nounMatch) return null;
 
   // Build a short imperative prompt for the ask. Prefer the step's own title if it already reads as an
   // upload ask; else synthesize "Upload …" from the object it names (or a generic "the file").

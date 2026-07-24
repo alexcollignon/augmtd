@@ -59,3 +59,30 @@ ssh root@46.224.176.245 "docker logs augmtd_agentos --tail 20 && curl -s localho
 
 `AGENTOS_DB_URL` must be added to `/root/augmtd/.env` (Supabase direct
 connection string) before first boot for Postgres session storage.
+
+## MCP rail (Phase 5D)
+
+Self-hosted MCP servers mount as coworker tools via `AGENTOS_MCP_SERVERS` (JSON list; unset = off,
+zero behavior change). Servers run as docker siblings ON THIS BOX and call SaaS APIs directly with
+tokens from our Nango — nothing transits a third party.
+
+**Adoption checklist (per server, mandatory):**
+1. Security review the server code (it executes with real tokens) — pin the exact version/commit.
+2. Tenant-safety: AgentOS is one process for many users/companies. The server must take the acting
+   user/company as a TOOL ARGUMENT and fetch tokens from Nango per call (auth-shim), or be
+   credential-free. A server that only accepts startup credentials is NOT mountable — wrap or skip.
+3. Least-scope tokens in Nango for whatever it touches.
+4. Run it: `docker run -d --name mcp-<name> --restart unless-stopped -p 127.0.0.1:<port>:<port> <pinned-image>`
+   (bind to localhost — only AgentOS reaches it).
+5. Add to `/root/augmtd/agentos.env`: extend `AGENTOS_MCP_SERVERS`.
+6. Rebuild/replace AgentOS with the manual docker sequence (same ContainerConfig caveat as the bot).
+7. Add the capability-registry row (`lib/home/capability-map.ts`, `mcp: {server, tool}`) — without a
+   row the tool does not exist in the product.
+
+**Shortlist (decided July 2026, adopt strictly one at a time):**
+1. Google Drive/Docs WRITE — coworker deliverables become real shareable docs (needs the auth-shim +
+   a Drive scope on the Google connect; the biggest value unlock).
+2. Dropbox — file read/search/write for Dropbox-based teams; also feeds the universal file resolver
+   (lib/knowledge/resolve.ts already reserves 'dropbox' as a source key — "find the deck" reaches it).
+(HubSpot / Xero / QuickBooks deliberately parked — user call, July 2026.)
+Core capabilities (email send, calendar, drafting, Slack) stay FIRST-PARTY — trust and voice live there.

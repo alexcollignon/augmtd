@@ -13,7 +13,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { refreshEntityState } from '@/lib/entities/state';
-import { normPerson } from '@/lib/entities/recognize';
+import { personForms } from '@/lib/entities/recognize';
 
 const FREE = new Set(['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com', 'live.com', 'proton.me', 'protonmail.com', 'aol.com']);
 const domainOf = (e: string) => (e.includes('@') ? e.split('@')[1].toLowerCase() : '');
@@ -35,21 +35,70 @@ async function ownDomains(supabase: SupabaseClient, userId: string): Promise<Set
   return out;
 }
 
-/** Gather an entity's people (+ their domains) from its CURRENT links — the identity signal. */
+/** Gather an entity's people (+ their domains) from its CURRENT links — the identity signal. Tokens
+ *  carry EVERY form (name + full email + "@domain" via personForms) so recall matches whichever form a
+ *  later item arrives in — the fragmentation fix's fingerprint half. */
 async function peopleOf(supabase: SupabaseClient, userId: string, entityId: string): Promise<{ people: string[]; domains: Set<string>; linkCount: number }> {
   const people = new Set<string>(); const domains = new Set<string>();
   const { data: links } = await supabase.from('entity_links').select('item_kind, item_id')
     .eq('user_id', userId).eq('entity_id', entityId).neq('item_kind', 'email_thread');
   const rows = (links ?? []) as Array<{ item_kind: string; item_id: string }>;
   const by = (k: string) => rows.filter((l) => l.item_kind === k).map((l) => l.item_id);
-  const add = (p?: string | null) => { if (!p) return; const n = normPerson(p); if (n.length >= 2) people.add(n); };
+  const add = (p?: string | null) => { if (!p) return; for (const f of personForms(p)) people.add(f); };
   const inbox = by('inbox_item');
-  if (inbox.length) { const { data } = await supabase.from('inbox_items').select('id, source_data').in('id', inbox.slice(0, 400)); for (const r of (data ?? []) as Array<{ source_data?: { from_name?: string; from_address?: string } }>) { add(r.source_data?.from_name || r.source_data?.from_address); const d = domainOf(r.source_data?.from_address || ''); if (d) domains.add(d); } }
+  if (inbox.length) { const { data } = await supabase.from('inbox_items').select('id, source_data').in('id', inbox.slice(0, 400)); for (const r of (data ?? []) as Array<{ source_data?: { from_name?: string; from_address?: string } }>) { const nm = r.source_data?.from_name || ''; const ad = r.source_data?.from_address || ''; add(nm && ad ? `${nm} <${ad}>` : (nm || ad)); const d = domainOf(ad); if (d) domains.add(d); } }
   const commits = by('commitment');
   if (commits.length) { const { data } = await supabase.from('commitments').select('id, counterparty').in('id', commits.slice(0, 400)); for (const r of (data ?? []) as Array<{ counterparty?: string }>) add(r.counterparty); }
   const mtgs = by('meeting');
-  if (mtgs.length) { const { data } = await supabase.from('meeting_transcripts').select('id, attendees').in('id', mtgs.slice(0, 100)); for (const r of (data ?? []) as Array<{ attendees?: unknown }>) { const att = Array.isArray(r.attendees) ? r.attendees : []; for (const a of att.slice(0, 8)) add(typeof a === 'string' ? a : ((a as { name?: string; email?: string })?.name || (a as { email?: string })?.email)); } }
-  return { people: [...people].slice(0, 24), domains, linkCount: rows.length };
+  if (mtgs.length) { const { data } = await supabase.from('meeting_transcripts').select('id, attendees').in('id', mtgs.slice(0, 100)); for (const r of (data ?? []) as Array<{ attendees?: unknown }>) { const att = Array.isArray(r.attendees) ? r.attendees : []; for (const a of att.slice(0, 8)) { const o = a as { name?: string; email?: string }; add(typeof a === 'string' ? a : (o?.name && o?.email ? `${o.name} <${o.email}>` : (o?.name || o?.email))); } } }
+  const cals = by('calendar_event');
+  if (cals.length) { const { data } = await supabase.from('calendar_events').select('id, attendees').in('id', cals.slice(0, 100)); for (const r of (data ?? []) as Array<{ attendees?: unknown }>) { const att = Array.isArray(r.attendees) ? r.attendees : []; for (const a of att.slice(0, 8)) { const o = a as { name?: string; email?: string }; add(typeof a === 'string' ? a : (o?.name && o?.email ? `${o.name} <${o.email}>` : (o?.name || o?.email))); } } }
+  return { people: [...people].slice(0, 40), domains, linkCount: rows.length };
+}
+
+/** LIGHT fingerprint refresh (no AI): recompute every active initiative's people tokens from its current
+ *  links. Cron-called so pre-existing fingerprints (name-form-only, old normalization) converge to the
+ *  multi-form tokens recall now matches on. Capped + non-fatal per entity. */
+export async function refreshPeopleFingerprints(supabase: SupabaseClient, userId: string, cap = 150): Promise<number> {
+  let updated = 0;
+  try {
+    const { data: ents } = await supabase.from('work_entities').select('id, people')
+      .eq('user_id', userId).eq('kind', 'initiative').eq('status', 'active').limit(cap);
+    for (const e of (ents ?? []) as Array<{ id: string; people?: unknown }>) {
+      try {
+        const { people, linkCount } = await peopleOf(supabase, userId, e.id);
+        if (!linkCount) continue; // orphan — the archive sweep handles it
+        const cur = Array.isArray(e.people) ? (e.people as string[]) : [];
+        if (people.length && (people.length !== cur.length || people.some((p) => !cur.includes(p)))) {
+          await supabase.from('work_entities').update({ people }).eq('id', e.id).eq('user_id', userId);
+          updated++;
+        }
+      } catch { /* per-entity non-fatal */ }
+    }
+  } catch { /* non-fatal */ }
+  return updated;
+}
+
+/** ORPHAN sweep: an ACTIVE initiative with zero links that has sat empty for days is a ghost (founded
+ *  and never joined, or emptied outside the reconcile path) — archive it (reversible). A user-pinned
+ *  (tracked) entity is never touched: pinning is a human decision that outranks the machine. */
+export async function archiveOrphanEntities(supabase: SupabaseClient, userId: string, olderThanDays = 3): Promise<number> {
+  let archived = 0;
+  try {
+    const cutoff = new Date(Date.now() - olderThanDays * 86_400_000).toISOString();
+    const { data: ents } = await supabase.from('work_entities').select('id, tracked, created_at')
+      .eq('user_id', userId).eq('kind', 'initiative').eq('status', 'active').lt('created_at', cutoff).limit(300);
+    for (const e of (ents ?? []) as Array<{ id: string; tracked?: boolean }>) {
+      if (e.tracked) continue;
+      const { count } = await supabase.from('entity_links').select('item_id', { count: 'exact', head: true })
+        .eq('user_id', userId).eq('entity_id', e.id);
+      if ((count ?? 0) === 0) {
+        await supabase.from('work_entities').update({ status: 'archived', updated_at: new Date().toISOString() }).eq('id', e.id).eq('user_id', userId);
+        archived++;
+      }
+    }
+  } catch { /* non-fatal */ }
+  return archived;
 }
 
 /** Grounded category (fact constrains judgment): an external-company person ⇒ NOT internal. */

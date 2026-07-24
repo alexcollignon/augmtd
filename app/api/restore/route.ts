@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { after } from 'next/server';
+import { noteItemAction } from '@/lib/entities/on-action';
 import { createClient } from '@/lib/supabase/server';
 import { logActivity } from '@/lib/activity/log';
 
@@ -28,9 +30,14 @@ export async function POST(request: NextRequest) {
     // regen isn't in that cache, so un-hiding it client-side does nothing until the brief is fresh.
     // Undo is infrequent → a regen on next load is fine. Non-fatal: ignore any error.
     const bustBriefCache = async () => {
-      try { await supabase.from('profiles').update({ home_brief: null }).eq('id', user.id); } catch { /* non-fatal */ }
+      const { softBustBrief } = await import('@/lib/home/bust-brief');
+      await softBustBrief(supabase, user.id); // sig-only bust: forces a stale recompute, keeps last-good + sibling caches
     };
 
+    // L2 ACTION EVENT — a restore is an action too: the entity re-reasons with the item OPEN again.
+    if (entityType === 'inbox_item' || entityType === 'commitment') {
+      after(async () => { await noteItemAction(supabase, user.id, { kind: entityType as 'inbox_item' | 'commitment', id: entityId }).catch(() => {}); });
+    }
     if (entityType === 'inbox_item') {
       // Flip the item back to pending so classifyItem surfaces it again on the Home. Also CLEAR
       // source_data.resolved_at/resolved_reason — a reopened item is no longer "cleared today", so it
@@ -143,6 +150,29 @@ export async function POST(request: NextRequest) {
         title: `Restored: ${row?.label || 'an initiative'}`,
         entityType: 'initiative',
         entityId,
+      });
+      await bustBriefCache();
+      return NextResponse.json({ success: true });
+    }
+
+    if (entityType === 'membership') {
+      // Undo a membership move (S6): entityId = '<kind>:<itemId>'; the LATEST membership_move row for
+      // it carries where the item came from (metadata.from) — move it back through THE ONE write.
+      const sep = entityId.indexOf(':');
+      const kind = entityId.slice(0, sep) as 'meeting' | 'inbox_item' | 'commitment';
+      const itemId = entityId.slice(sep + 1);
+      if (!['meeting', 'inbox_item', 'commitment'].includes(kind) || !itemId) return NextResponse.json({ error: 'bad membership id' }, { status: 400 });
+      const { data: ev } = await supabase.from('activity_events').select('metadata')
+        .eq('user_id', user.id).eq('type', 'membership_move').eq('entity_id', entityId)
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      const from = ((ev?.metadata ?? {}) as { from?: string | null }).from ?? null;
+      const { setItemMembership } = await import('@/lib/entities/membership');
+      const r = await setItemMembership(supabase, user.id, { kind, id: itemId, entityId: from }, { inline: false });
+      if (!r.ok) return NextResponse.json({ error: r.error ?? 'restore failed' }, { status: 500 });
+      if (r.runTails) after(r.runTails);
+      await logActivity(supabase, user.id, {
+        type: 'restored', title: r.destName ? `Moved back to ${r.destName}` : 'Moved back (no project)',
+        entityType: 'membership', entityId,
       });
       await bustBriefCache();
       return NextResponse.json({ success: true });
