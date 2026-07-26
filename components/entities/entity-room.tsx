@@ -16,6 +16,7 @@ import { useRouter } from 'next/navigation';
 import { ChevronLeftIcon, ChevronRightIcon, ArrowRightIcon, CheckIcon, XMarkIcon, ArchiveBoxIcon, BellSlashIcon, ArrowUturnLeftIcon, EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
 import { ItemRail, type RailView } from '@/components/home/item-rail';
 import { ItemDetail } from '@/components/home/item-detail';
+import { RoomShell } from '@/components/room/room-shell';
 import { pushDealTurn } from '@/components/home/item-rail';
 import { AddItemPicker } from '@/components/entities/add-item-picker';
 import GanttChart from '@/components/entities/gantt-chart';
@@ -732,11 +733,13 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
     } catch { toast('The hand-off didn\u2019t go through — try again.'); } finally { setHanding(false); }
   };
 
-  // THE DEEP-DIVE SHELL — full viewport, neutral-50 gutter, two full-height cards (main + rail).
+  // ONE-ROOM R2 — THE INVERSION via THE ONE shared shell (components/room/room-shell.tsx): the
+  // CONVERSATION is the center of the room; the focused artifact / the LAUNCHER is the stage.
   return (
-    <div className="w-full h-[100dvh] min-h-0 flex flex-row bg-neutral-50 p-2 gap-2">
-      {/* ── MAIN CARD — the focused artifact. Owns the deal's STATE (the rail never repeats it). ── */}
-      <div className="flex-1 min-w-0 flex flex-col h-full min-h-0 rounded-2xl bg-white shadow-sm overflow-hidden">
+    <RoomShell
+      full
+      conversation={rail ? <ItemRail kind="entity" id={entityId} view={rail} /> : null}
+      stage={<div className="flex-1 min-w-0 flex flex-col h-full min-h-0 overflow-hidden">
         {!e ? (
           <div className="p-6 space-y-3">{[0, 1, 2].map((i) => <div key={i} className="h-24 rounded-2xl bg-gradient-to-br from-neutral-100 to-neutral-50 animate-pulse" />)}</div>
         ) : focused ? (
@@ -991,19 +994,9 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
             </div>
           </div>
         )}
-      </div>
-
-      {preview && <FilePreviewModal name={preview.name} refv={preview.ref} onClose={() => setPreview(null)} />}
-      {statusShare && e && <StatusUpdateModal entityId={entityId} dealName={e.name} onClose={() => setStatusShare(false)} />}
-
-      {/* ── THE RAIL — pure conversation (the artifact owns the state; the rail never repeats it). ── */}
-      <aside className="hidden lg:flex w-[380px] flex-shrink-0 flex-col h-full min-h-0">
-        {rail ? (
-          <ItemRail kind="entity" id={entityId} view={rail} />
-        ) : (
-          <div className="flex-1 rounded-2xl bg-white shadow-sm animate-pulse" />
-        )}
-      </aside>
-    </div>
+        {preview && <FilePreviewModal name={preview.name} refv={preview.ref} onClose={() => setPreview(null)} />}
+        {statusShare && e && <StatusUpdateModal entityId={entityId} dealName={e.name} onClose={() => setStatusShare(false)} />}
+      </div>}
+    />
   );
 }

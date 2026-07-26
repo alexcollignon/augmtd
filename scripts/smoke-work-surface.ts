@@ -71,8 +71,8 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('T4: an untracked entity renders as quiet context with Track (membership chip)',
     src('components/entities/add-to-work-control.tsx').includes('connects to') &&
     src('components/entities/add-to-work-control.tsx').includes("action: 'track'"));
-  check('T4: the rail frames untracked as "Around this", never project chrome',
-    src('components/home/item-rail.tsx').includes("'Around this:'") &&
+  check('T4: untracked framed as quiet related context ("Connects to"), never project chrome (one-room R3: the strip)',
+    src('components/room/context-strip.tsx').includes("tracked === false ? 'Connects to' : 'In'") &&
     src('lib/entities/room-view.ts').includes('tracked: !!ent.tracked'));
   check('T4: the items/entity GET serves tracked', src('app/api/items/entity/route.ts').includes('tracked: !!(ent as'));
 
@@ -184,8 +184,10 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('H7: calm groups collapse (hover-preview + click-pin, persisted); urgent groups always open',
     hv.includes("g.key === 'overdue' || g.key === 'today'") && hv.includes("'aug-do-pinned'") && hv.includes('hoverGroup === g.key'));
   const brief = src('app/api/home/brief/route.ts');
-  check('H4: the demotion is OWNERSHIP-KEYED with a structural floor, on BOTH paths, override-guarded',
-    brief.includes("u.ownership === 'none' && structuralNotice") &&
+  // J1 moved the law into lib/inbox/notice-demotion.ts (ONE module, shared with judgeWork).
+  check('H4: the demotion is OWNERSHIP-KEYED (the ONE shared law), on BOTH paths, override-guarded',
+    src('lib/inbox/notice-demotion.ts').includes("u.ownership === 'none' && structuralNotice") &&
+    brief.includes('isNoMoveNotice({ u,') &&
     brief.includes('if (noticeDemoted) continue;') &&
     (brief.match(/type_override !== 'needs_reply'/g) ?? []).length >= 1 &&
     !brief.includes('kindDemoted'));

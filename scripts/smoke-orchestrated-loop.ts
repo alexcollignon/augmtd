@@ -146,8 +146,19 @@ const MARKER = 'ZZ-smoke self-resolution probe';
   const { prepareOneItem } = await import('../lib/prepare/pass');
   const { preparedBadge } = await import('../lib/prepare/read');
   const itemsA = await buildWorkItems(sb, A, { todayStr, skipReconcile: true });
-  const replyItem = itemsA.find((x) => x.kind === 'reply' && x.id.startsWith('inbox:') && x.state === 'todo');
-  if (!replyItem) { check('O3 live · attribution (vacuous — no open reply items)', true); }
+  // Fixture must be a HUMAN sender — a no-reply notification is correctly REFUSED by the T3
+  // structural floor ("a reply would reach no one"), which is the engine working, not a failure.
+  const { isAutomatedSenderStrong } = await import('../lib/inbox/notice-demotion');
+  let replyItem: (typeof itemsA)[number] | undefined;
+  for (const cand of itemsA.filter((x) => x.kind === 'reply' && x.id.startsWith('inbox:') && x.state === 'todo').slice(0, 8)) {
+    const { data: row } = await sb.from('inbox_items').select('source_data').eq('id', cand.entityId).maybeSingle();
+    const csd = (row?.source_data ?? {}) as Record<string, unknown>;
+    if (isAutomatedSenderStrong((csd.from_address as string) ?? null, (csd.from_name as string) ?? null, (csd.subject as string) ?? null)) continue;
+    const u = (csd.understanding ?? null) as { mailKind?: string } | null;
+    if (u?.mailKind === 'notification' || u?.mailKind === 'calendar') continue;
+    replyItem = cand; break;
+  }
+  if (!replyItem) { check('O3 live · attribution (vacuous — no open human reply items)', true); }
   else {
     const { data: it } = await sb.from('inbox_items').select('id, source_data').eq('id', replyItem.entityId).maybeSingle();
     const sd0 = (it?.source_data ?? {}) as Record<string, unknown>;

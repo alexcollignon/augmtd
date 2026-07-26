@@ -72,19 +72,59 @@ export async function prepareOneItem(
   opts?: { route?: TaskRoute },
 ): Promise<PrepareOneResult> {
   try {
+    const done = (r: PrepareOneResult) => narratePrepare(admin, userId, w, r);
     // A reply you owe → a voice draft on the thread.
-    if (w.kind === 'reply' && w.id.startsWith('inbox:')) return await prepareReplyDraft(admin, userId, w);
+    if (w.kind === 'reply' && w.id.startsWith('inbox:')) return await done(await prepareReplyDraft(admin, userId, w));
     // Waiting on a NAMED person → a nudge draft.
-    if (w.state === 'waiting' && w.blockedOn) return await prepareNudge(admin, userId, w);
+    if (w.state === 'waiting' && w.blockedOn) return await done(await prepareNudge(admin, userId, w));
     if (w.automated) return { did: 'none', reason: 'automated notice — nothing to prepare' };
     if (!w.id.startsWith('inbox:') && !w.id.startsWith('commit:')) return { did: 'none', reason: 'not a preparable item' };
 
-    // The ROSTER JUDGE (O2) — who prepares this, with the team in view (or the caller's batch verdict).
-    const route = opts?.route ?? (await routeTasks(admin, userId, [w.title]))[0] ?? { worker: null, sendDoc: false };
-    if (route.sendDoc) return await prepareDocSend(admin, userId, w);
-    if (!route.worker) return { did: 'none', reason: 'this one needs you — no preparation applies' };
-    return await delegatePrepare(admin, userId, w, { id: route.worker.id, name: route.worker.name, worker_role: route.worker.role, is_worker: true });
+    // J4 (judged room): the pass prepares FROM THE ONE WORK JUDGMENT — the same cached verdict the
+    // surface mounts, so ambient work and the room can never disagree about what an item needs.
+    // (opts.route remains a caller-supplied override for batch flows.)
+    if (opts?.route) {
+      if (opts.route.sendDoc) return await done(await prepareDocSend(admin, userId, w));
+      if (!opts.route.worker) return { did: 'none', reason: 'this one needs you — no preparation applies' };
+      return await done(await delegatePrepare(admin, userId, w, { id: opts.route.worker.id, name: opts.route.worker.name, worker_role: opts.route.worker.role, is_worker: true }));
+    }
+    const { judgeWork } = await import('@/lib/work/judge');
+    const verdict = await judgeWork(admin, userId, { kind: w.id.startsWith('commit:') ? 'commitment' : 'inbox', id: w.entityId });
+    if (verdict.work === 'send_file') return await done(await prepareDocSend(admin, userId, w));
+    if (verdict.work === 'chase' && w.who) return await done(await prepareNudge(admin, userId, { ...w, blockedOn: w.blockedOn ?? w.who }));
+    if (verdict.work === 'produce' && verdict.executor.kind === 'coworker' && verdict.executor.id) {
+      return await done(await delegatePrepare(admin, userId, w, { id: verdict.executor.id, name: verdict.executor.name ?? 'Coworker', worker_role: null, is_worker: true }));
+    }
+    if (verdict.work === 'reply') return await done(await prepareReplyDraft(admin, userId, w));
+    return { did: 'none', reason: verdict.reason || 'this one needs you — no preparation applies' };
   } catch { return { did: 'none', reason: 'preparation failed — try again' }; }
+}
+
+// ── R1 (one-room): THE ENGINE NARRATES — a successful ambient prepare writes a durable turn into
+// the item's room, so opening it shows what happened while the user was away (a colleague's thread
+// that moved, not a silent badge). Authored when a coworker did the work; deduped per item so
+// repeated sweeps re-surface one line instead of stuttering. Non-fatal, zero AI. ──
+async function narratePrepare(
+  admin: SupabaseClient, userId: string, w: WorkItem, r: PrepareOneResult,
+): Promise<PrepareOneResult> {
+  if (r.did === 'none') return r;
+  try {
+    const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
+    const itemKind = w.id.startsWith('commit:') ? 'commitment' as const : 'inbox' as const;
+    const roomKey = await roomKeyForItem(admin, userId, itemKind, w.entityId);
+    const first = r.worker ? r.worker.split(' ')[0] : null;
+    const text =
+      r.did === 'draft' ? `${first ?? 'I'} drafted the reply on "${w.title.slice(0, 80)}" — it's ready to review.` :
+      r.did === 'nudge' ? `${first ?? 'I'} drafted the follow-up nudge on "${w.title.slice(0, 80)}".` :
+      r.did === 'docsend' ? `${first ?? 'I'} found the file and drafted the send on "${w.title.slice(0, 80)}".` :
+      `${first ?? 'A coworker'} is on "${w.title.slice(0, 80)}" — the work lands here when it's ready.`;
+    await writeRoomTurn(admin, userId, roomKey, {
+      role: 'system', text,
+      author: r.worker ? { kind: 'coworker', name: r.worker } : null,
+      dedupeKey: `prep:${w.id}`,
+    });
+  } catch { /* narration is an enhancement — the prepared work already landed */ }
+  return r;
 }
 
 // ── The reply-draft branch (slice 1). ──

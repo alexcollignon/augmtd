@@ -213,5 +213,22 @@ export async function runDelegation(args: {
     }) ?? undefined;
   }
 
+  // ── R1 (one-room): THE ENGINE NARRATES — the coworker's report-back ALSO lands as an authored
+  // turn in the item's room (the group-channel model: contributors report where the work lives,
+  // not only in their own chat tab). Deduped per delegated step so a re-run replaces. Non-fatal. ──
+  if (poolScope) {
+    try {
+      const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
+      const itemKind = poolScope.kind === 'commitment' || poolScope.kind === 'followup' ? 'commitment' as const
+        : poolScope.kind === 'meeting' ? 'meeting' as const : 'inbox' as const;
+      const roomKey = await roomKeyForItem(supabase, userId, itemKind, poolScope.entityId);
+      await writeRoomTurn(supabase, userId, roomKey, {
+        role: 'system', text: reportText,
+        author: { kind: 'coworker', id: worker.id, name: worker.name, role: worker.worker_role },
+        dedupeKey: `delegate:${poolScope.entityId}:${poolScope.taskId ?? 'item'}`,
+      });
+    } catch { /* narration is an enhancement — the delegation already landed */ }
+  }
+
   return { output, agentName: worker.name, threadId, reportText, deliverable, poolSize: pool.length };
 }
