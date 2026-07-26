@@ -83,55 +83,9 @@ function relationshipCue(relationship?: string | null, momentum?: string | null,
   return null;
 }
 
-function isAutomatedSender(fromEmail: string | null, fromName: string | null, subject: string | null): boolean {
-  const email = (fromEmail || '').toLowerCase();
-  const localpart = email.split('@')[0] || '';
-  // Address localpart patterns — the classic "do not reply to this mailbox" senders.
-  const addrPatterns = [
-    'no-reply', 'noreply', 'no_reply', 'donotreply', 'do-not-reply', 'do_not_reply',
-    'notifications', 'notification', 'notify', 'mailer', 'mailer-daemon', 'bounce', 'bounces',
-    'postmaster', 'automated', 'auto-confirm', 'alerts', 'alert', 'billing', 'invoices', 'receipts',
-    'support+', 'updates', 'newsletter', 'news', 'digest',
-  ];
-  if (addrPatterns.some((p) => localpart.includes(p))) return true;
-  // Full-address contains (covers e.g. "team@notifications.stripe.com" style subdomains).
-  if (/(^|[.@])(no-?reply|donotreply|notifications?|mailer|bounce|postmaster)([.@])/.test(email)) return true;
-  // Display-name + subject signals — transactional / security / dunning mail from a real-looking
-  // localpart. Kept tight (well-known phrasings) so we don't nuke genuine human replies.
-  const text = `${(fromName || '').toLowerCase()} ${(subject || '').toLowerCase()}`;
-  const phrasePatterns = [
-    'payment failed', 'payment unsuccessful', 'payment declined', 'account suspended',
-    'account restricted', 'account has been', 'your subscription', 'subscription renew',
-    'verify your', 'confirm your email', 'confirm your account', 'security alert', 'security notice',
-    'unusual sign', 'sign-in attempt', 'password reset', 'invoice is', 'your receipt', 'order confirmation',
-  ];
-  if (phrasePatterns.some((p) => text.includes(p))) return true;
-  return false;
-}
-
-// Bug C — "can't reply" ≠ "no action needed". An automated / no-reply item you cannot reply to can
-// still DEMAND action: a payment failed, an account suspended/restricted, a security alert, a "verify
-// your…", something expiring. These are ACTION-WORTHY: they must NOT be buried in the FYI digest
-// (nobody sees them), but they're also NOT a reply (no human is waiting) — so they belong in the
-// ACTION lane (a to-do priority card), not must-respond. This tells them apart from informational
-// automated mail (newsletters, receipts, "order shipped", digests) which stays FYI.
-//   • work_state ∈ (action_required | decision_required) — the classifier already flagged it needs a
-//     decision/action (e.g. iCloud full, Google security alert land here), OR
-//   • the subject/name carries an unmistakable action signal (dunning / suspension / security /
-//     verification / expiry). Kept tight so marketing "act now!" copy doesn't trip it.
-function isActionWorthyAutomated(workState: string | null, fromName: string | null, subject: string | null): boolean {
-  if (workState === 'action_required' || workState === 'decision_required') return true;
-  const text = `${(fromName || '').toLowerCase()} ${(subject || '').toLowerCase()}`;
-  const actionPhrases = [
-    'payment failed', 'payment unsuccessful', 'payment declined', 'payment could not',
-    'account suspended', 'account restricted', 'account limited', 'account locked', 'account disabled',
-    'account has been suspended', 'has been restricted', 'has been limited', 'has been locked',
-    'security alert', 'security notice', 'unusual sign', 'suspicious', 'verify your', 'confirm your account',
-    'action required', 'action needed', 'immediate action', 'expiring', 'expires', 'will expire',
-    'storage is full', 'storage full', 'past due', 'overdue', 'update your payment', 'billing problem',
-  ];
-  return actionPhrases.some((p) => text.includes(p));
-}
+// H4/J1 — the ownership-keyed notice law + the strong automated-sender read live in ONE module
+// (lib/inbox/notice-demotion.ts) shared with judgeWork. Local aliases keep call sites unchanged.
+import { isAutomatedSenderStrong as isAutomatedSender, isActionWorthyAutomated, isNoMoveNotice } from '@/lib/inbox/notice-demotion';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function attendeeEmails(ev: any): string[] {
@@ -466,13 +420,8 @@ export async function GET() {
     // not action-worthy). The user's explicit type_override is the only authoritative override
     // here — rule_type includes AI-rule guesses, which is exactly what this corrects.
     const noticeSubj = ((sd.subject as string) || it.work_title || null);
-    const structuralNotice = isAutomatedSender(fromEmailOf(sd), (sd.from_name as string) || null, noticeSubj)
-      || (!!u && (u.mailKind === 'notification' || u.mailKind === 'calendar'));
-    const noticeDemoted = it.type_override !== 'needs_reply' && it.type_override !== 'to_do' && (
-      (!!u && u.ownership === 'none' && structuralNotice)
-      || (!u && isAutomatedSender(fromEmailOf(sd), (sd.from_name as string) || null, noticeSubj)
-          && !isActionWorthyAutomated((it.work_state as string) || null, (sd.from_name as string) || null, noticeSubj))
-    );
+    const noticeDemoted = it.type_override !== 'needs_reply' && it.type_override !== 'to_do'
+      && isNoMoveNotice({ u, fromEmail: fromEmailOf(sd), fromName: (sd.from_name as string) || null, subject: noticeSubj, workState: (it.work_state as string) || null });
     if (noticeDemoted) demotedNoticeIds.add(it.id); // filters EVERY downstream pool (priorities, keep-an-eye-on, …)
     if (u && u.relevance === 'action' && !noticeDemoted) {
       // An action-notice: its own section, never a reply card, never a needs-you priority. We DON'T push

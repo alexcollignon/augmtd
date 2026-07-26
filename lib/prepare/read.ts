@@ -68,7 +68,10 @@ export async function getPrepared(
       .order('created_at', { ascending: false }).limit(8);
     for (const d of (dels ?? []) as Array<Record<string, unknown>>) {
       if (!d.content) continue;
-      const meta = (d.metadata ?? {}) as { agentName?: string; worker?: string; attachment?: { fileId: string; filename: string; source?: string }; provenance?: Record<string, string> };
+      const meta = (d.metadata ?? {}) as { agentName?: string; worker?: string; attachment?: { fileId: string; filename: string; source?: string }; provenance?: Record<string, string>; version_of?: string };
+      // J3 — version-history rows (a steer rework's retained prior/current copies) are the ledger,
+      // not the surface: the composer serves the current pointer; showing versions here duplicates.
+      if (meta.version_of) continue;
       out.push({
         kind: 'deliverable', title: (d.title as string) ?? null, content: String(d.content),
         by: meta.agentName ?? meta.worker ?? null, at: (d.created_at as string) ?? null,
