@@ -23,8 +23,13 @@ const CAP = 120; // per user
       .order('created_at', { ascending: false }).limit(300);
     const rows = ((items ?? []) as Array<{ id: string; source_data: Record<string, unknown>; connection_id: string | null }>)
       .filter((it) => {
-        const u = coerceUnderstanding(it.source_data?.understanding);
-        return u && !u.mailKind; // has an understanding, lacks the kind (legacy)
+        // Any pending item lacking a kind — including fast-pathed mail with NO understanding at
+        // all. Writing `{ mailKind }` alone is ROUTING-INERT by construction: every routing
+        // consumer goes through coerceUnderstanding, which returns null without role+relevance;
+        // only the label resolver (resolveKind) reads the raw field. Home-neutral holds.
+        const raw = (it.source_data?.understanding ?? null) as { mailKind?: string } | null;
+        void coerceUnderstanding; // (kept import — the routing-inert argument above depends on it)
+        return !raw?.mailKind;
       }).slice(0, CAP);
     if (!rows.length) continue;
 

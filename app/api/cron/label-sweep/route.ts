@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { writeBackLabel, GmailLabelCache, mapWorkStateToLabel } from '@/lib/inbox/rules/write-back';
+import { writeBackLabels, GmailLabelCache } from '@/lib/inbox/rules/write-back';
 
 export const maxDuration = 300;
 
@@ -17,16 +17,6 @@ export async function GET(request: NextRequest) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { autoRefreshToken: false, persistSession: false } },
   );
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const labelFor = (it: any): string => {
-    if (it.rule_type && it.rule_type !== 'none') return it.rule_type;
-    const sd = it.source_data ?? {};
-    if ((sd.gmail_labels ?? []).includes('CATEGORY_PROMOTIONS') || sd.has_unsubscribe) return 'marketing';
-    if (it.work_state === 'noise') return 'notifications';
-    if (it.work_state === 'noted') return 'fyi';
-    return mapWorkStateToLabel(it.work_state) || 'fyi';
-  };
 
   const since = new Date(Date.now() - 3 * 86_400_000).toISOString();
   const { data: profs } = await sb.from('profiles').select('id, email_settings');
@@ -55,12 +45,19 @@ export async function GET(request: NextRequest) {
       const provider = sd.provider as string | undefined;
       const tokens = provider ? tokensByProvider.get(provider) : undefined;
       if (!tokens) continue;
-      const label = labelFor(it);
-      if (label === 'done') continue;
-      const ok = await writeBackLabel({
+      // THE LABEL FLIP: the pair (kind + posture) via the ONE resolver. The sweep runs with the
+      // FULL source_data, so it's the completeness backstop — the reasoned kind lands here even
+      // when the sync fast-path only had header signals.
+      const ruleType = it.rule_type && it.rule_type !== 'none' ? (it.rule_type as string) : null;
+      if (ruleType === 'done') continue;
+      const bulk = ((sd.gmail_labels ?? []) as string[]).includes('CATEGORY_PROMOTIONS') || sd.has_unsubscribe === true;
+      const ok = await writeBackLabels({
         provider: provider as 'gmail' | 'outlook',
         encryptedTokens: tokens,
-        label: label as never,
+        sd,
+        ruleType,
+        workState: it.work_state as string | null,
+        hints: { bulk, noise: it.work_state === 'noise' },
         gmailThreadId: sd.thread_id,
         gmailCache,
         outlookMessageId: sd.outlook_id ?? sd.message_id,

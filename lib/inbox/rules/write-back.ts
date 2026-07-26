@@ -1,6 +1,18 @@
-// Triage label write-back. Mirrors the item's type into Gmail (nested labels under "Augmtd/") or
-// Outlook (categories prefixed "Augmtd: "). Purely ADDITIVE — never archives, moves, or touches
-// the user's own labels — and reversible (delete the Augmtd labels to undo). Gated on auto_label.
+// Label write-back — THE LABEL FLIP (work-surface M + one-room era). An email carries up to TWO
+// labels, two orthogonal dimensions:
+//   KIND    — what the mail IS (Receipt · Newsletter · Notification · Calendar · Cold outreach ·
+//             Customer · Team · Personal). Stable for the thread's life; the reasoned
+//             `understanding.mailKind` is the source, a user/rule `kind_override` outranks it,
+//             cheap structural signals are the fallback. The PRIMARY identity label.
+//   POSTURE — what it needs from YOU (Needs reply · To do · Waiting on → Done). The lifecycle
+//             label: applied only while alive, swapped by the reconciler as the thread resolves/
+//             reactivates. FYI/bulk mail gets NO posture label — identity is the kind's job now
+//             (the old FYI/Notifications/Marketing posture labels are RETIRED; the reconciler
+//             still strips them from old threads).
+// Precedence everywhere: user override → reasoned kind → structural fallback. Rules keep posture
+// authority (set_type) and gain `set_kind` (types.ts) as the override channel.
+// Purely ADDITIVE in the mailbox — never archives, moves, or touches the user's own labels —
+// and reversible (delete the AUGMTD labels to undo). Gated on auto_label.
 
 import type { RuleLabel } from './types';
 
@@ -15,11 +27,68 @@ const LABEL_DISPLAY: Record<RuleLabel, string> = {
   done: 'AUGMTD/Done',
 };
 
+// ── THE KIND LABEL SET (the Scape-style identity vocabulary, mailbox form). ──
+export type MailKindKey = 'receipt' | 'newsletter' | 'notification' | 'calendar' | 'cold_outreach' | 'customer' | 'team' | 'personal';
+const KIND_DISPLAY: Record<MailKindKey, string> = {
+  receipt: 'AUGMTD/Receipt',
+  newsletter: 'AUGMTD/Newsletter',
+  notification: 'AUGMTD/Notification',
+  calendar: 'AUGMTD/Calendar',
+  cold_outreach: 'AUGMTD/Cold outreach',
+  customer: 'AUGMTD/Customer',
+  team: 'AUGMTD/Team',
+  personal: 'AUGMTD/Personal',
+};
+const KIND_KEYS: ReadonlySet<string> = new Set(Object.keys(KIND_DISPLAY));
+
 export function mapWorkStateToLabel(ws?: string | null): RuleLabel {
   if (ws === 'work_prepared' || ws === 'decision_required') return 'needs_reply';
   if (ws === 'action_required') return 'to_do';
   if (ws === 'waiting') return 'waiting_on';
   return 'fyi';
+}
+
+/** THE KIND RESOLVER — one precedence chain, never per-surface:
+ *  user/rule override (`source_data.kind_override`) → the reasoned `understanding.mailKind` →
+ *  structural fallback (legacy rule taxonomy + bulk/noise header signals) → null (no kind label). */
+export function resolveKind(
+  sd: Record<string, unknown> | null | undefined,
+  ruleType?: string | null,
+  hints?: { bulk?: boolean; noise?: boolean },
+): MailKindKey | null {
+  const o = String((sd as Record<string, unknown> | null)?.kind_override ?? '').toLowerCase();
+  if (KIND_KEYS.has(o)) return o as MailKindKey;
+  const u = (sd?.understanding ?? null) as { mailKind?: string } | null;
+  const mk = String(u?.mailKind ?? '').toLowerCase();
+  if (KIND_KEYS.has(mk)) return mk as MailKindKey;
+  // Structural fallback — the legacy taxonomy + header signals, so old/unstamped mail still gets
+  // an honest identity where the signal is unambiguous. Conservative: no signal → no kind label.
+  if (ruleType === 'marketing') return 'newsletter';
+  if (ruleType === 'notifications') return 'notification';
+  if (ruleType === 'meeting') return 'calendar';
+  if (sd?.has_unsubscribe === true || hints?.bulk) return 'newsletter';
+  if (hints?.noise) return 'notification';
+  return null;
+}
+
+/** THE POSTURE LABEL — lifecycle only: a label exists while the thread needs the user (or is
+ *  freshly Done); FYI/bulk postures get NO label (the kind carries identity now). */
+export function postureFor(ruleType?: string | null, workState?: string | null): RuleLabel | null {
+  if (ruleType === 'needs_reply' || ruleType === 'to_do' || ruleType === 'waiting_on' || ruleType === 'done') return ruleType;
+  if (ruleType === 'fyi' || ruleType === 'notifications' || ruleType === 'marketing' || ruleType === 'meeting') return null;
+  const ws = mapWorkStateToLabel(workState);
+  return ws === 'fyi' ? null : ws;
+}
+
+/** The pair of display names an item should carry (either may be null — grounded-or-absent). */
+export function labelNamesFor(
+  sd: Record<string, unknown> | null | undefined,
+  ruleType?: string | null, workState?: string | null,
+  hints?: { bulk?: boolean; noise?: boolean },
+): { kindName: string | null; postureName: string | null } {
+  const kind = resolveKind(sd, ruleType, hints);
+  const posture = postureFor(ruleType, workState);
+  return { kindName: kind ? KIND_DISPLAY[kind] : null, postureName: posture ? LABEL_DISPLAY[posture] : null };
 }
 
 // Per-connection Gmail label cache: list once, create namespaced labels on demand, cache ids.
@@ -57,8 +126,10 @@ export class GmailLabelCache {
   }
 }
 
-// All AUGMTD state-label display names (Gmail form). The reconciler strips any of these that are
-// present before adding the target, so a thread never carries two conflicting AUGMTD/* state labels.
+// All AUGMTD POSTURE-label display names (Gmail form; includes the retired FYI/Notifications/
+// Marketing so old threads clean up). The reconciler strips any of these before adding the target —
+// and by construction NEVER touches a KIND label (kinds live in KIND_DISPLAY, not this list):
+// posture is the lifecycle dimension, kind is stable identity.
 const ALL_STATE_LABELS = Object.values(LABEL_DISPLAY);
 
 /**
@@ -148,5 +219,52 @@ export async function writeBackLabel(opts: {
     return false;
   } catch {
     return false; // transient/permanent failure — caller decides whether to retry
+  }
+}
+
+/**
+ * THE LABEL FLIP's applier — write the item's PAIR (kind + posture) in one call. Adds only (the
+ * reconciler owns posture swaps; kind never needs one). Returns true when every label the pair
+ * called for actually landed — a partial/failed apply stays unmarked so the sweep retries.
+ * NEVER throws.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function writeBackLabels(opts: {
+  provider: string;
+  encryptedTokens: string;
+  sd?: Record<string, unknown> | null;
+  ruleType?: string | null;
+  workState?: string | null;
+  hints?: { bulk?: boolean; noise?: boolean };
+  gmailThreadId?: string | null;
+  gmailCache?: GmailLabelCache;
+  outlookMessageId?: string | null;
+  onTokenRefresh?: any;
+}): Promise<boolean> {
+  const { kindName, postureName } = labelNamesFor(opts.sd, opts.ruleType, opts.workState, opts.hints);
+  const names = [kindName, postureName].filter(Boolean) as string[];
+  if (!names.length) return true; // honestly nothing to label (no kind signal, no live posture)
+  let allOk = true;
+  try {
+    if (opts.provider === 'gmail' && opts.gmailThreadId) {
+      const cache = opts.gmailCache ?? new GmailLabelCache(opts.encryptedTokens);
+      const { addGmailThreadLabel } = await import('@/lib/google/gmail');
+      for (const name of names) {
+        const id = await cache.ensure(name);
+        if (!id) { allOk = false; continue; }
+        try { await addGmailThreadLabel(opts.encryptedTokens, opts.gmailThreadId, id); } catch { allOk = false; }
+      }
+      return allOk;
+    } else if (opts.provider === 'outlook' && opts.outlookMessageId) {
+      const { addOutlookCategory } = await import('@/lib/microsoft/outlook');
+      for (const name of names) {
+        try { await addOutlookCategory(opts.encryptedTokens, opts.outlookMessageId, name.replace('/', ': '), opts.onTokenRefresh); }
+        catch { allOk = false; }
+      }
+      return allOk;
+    }
+    return false;
+  } catch {
+    return false;
   }
 }

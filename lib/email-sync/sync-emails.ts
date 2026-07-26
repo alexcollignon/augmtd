@@ -1314,12 +1314,17 @@ export async function syncEmailsForConnection(
           // the inbox showed unlabelled). Derive a label from the email's own bulk signals. Non-fatal.
           if (emailSettings.auto_label) {
             const _bulk = ((parsed as any).labels ?? []).includes('CATEGORY_PROMOTIONS') || !!(parsed as any).has_unsubscribe;
-            const _label: 'marketing' | 'notifications' | 'fyi' = _bulk ? 'marketing' : (emailClass === 'noise' ? 'notifications' : 'fyi');
-            void import('@/lib/inbox/rules/write-back').then(async ({ writeBackLabel }) => {
-              const ok = await writeBackLabel({
+            // THE LABEL FLIP: the pair (kind + posture) via the ONE resolver — the reasoned kind
+            // when the understanding carries it, the bulk/noise header signals as the fallback.
+            // Fast-pathed mail has no live posture, so this lands the KIND identity label.
+            void import('@/lib/inbox/rules/write-back').then(async ({ writeBackLabels }) => {
+              const ok = await writeBackLabels({
                 provider: connection.provider,
                 encryptedTokens: connection.metadata?.tokens,
-                label: _label,
+                sd: fastSourceData as Record<string, unknown>,
+                ruleType: null,
+                workState: null,
+                hints: { bulk: _bulk, noise: emailClass === 'noise' },
                 gmailThreadId: storedEmail.thread_id,
                 gmailCache: gmailLabelCache,
                 outlookMessageId: (storedEmail as any).metadata?.outlook_id ?? storedEmail.message_id,
@@ -1693,11 +1698,15 @@ export async function syncEmailsForConnection(
               // otherwise the label derived from its work_state — so labels aren't limited to
               // AI-matched mail. Non-fatal.
               if (emailSettings.auto_label) {
-                void import('@/lib/inbox/rules/write-back').then(({ writeBackLabel, mapWorkStateToLabel }) =>
-                  writeBackLabel({
+                // THE LABEL FLIP: kind + posture via the ONE resolver (rule posture authoritative;
+                // bulk header as the kind fallback — the sweep tops up once the understanding lands).
+                void import('@/lib/inbox/rules/write-back').then(({ writeBackLabels }) =>
+                  writeBackLabels({
                     provider: connection.provider,
                     encryptedTokens: connection.metadata?.tokens,
-                    label: qItem.ruleLabel ?? mapWorkStateToLabel(recipient.inferredWorkState),
+                    sd: { has_unsubscribe: !!(qItem.parsed as any)?.has_unsubscribe },
+                    ruleType: qItem.ruleLabel ?? null,
+                    workState: recipient.inferredWorkState,
                     gmailThreadId: qItem.storedEmail.thread_id,
                     gmailCache: gmailLabelCache,
                     outlookMessageId: qItem.storedEmail.metadata?.outlook_id ?? qItem.storedEmail.message_id,
