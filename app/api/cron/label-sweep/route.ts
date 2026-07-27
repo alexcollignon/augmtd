@@ -20,7 +20,8 @@ export async function GET(request: NextRequest) {
 
   const since = new Date(Date.now() - 3 * 86_400_000).toISOString();
   const { data: profs } = await sb.from('profiles').select('id, email_settings');
-  let labeled = 0;
+  let labeled = 0, kindsCompleted = 0;
+  const KIND_COMPUTE_CAP = 40; // per user per sweep — the ambient kind-completer stays cheap
 
   for (const p of profs ?? []) {
     const settings = (p.email_settings ?? {}) as { auto_label?: boolean };
@@ -37,6 +38,8 @@ export async function GET(request: NextRequest) {
       .eq('user_id', p.id).eq('status', 'pending').eq('source', 'email')
       .gte('created_at', since).limit(150);
 
+    let kindBudget = KIND_COMPUTE_CAP;
+    let addrs: string[] | null = null; // lazily resolved once per user
     for (const it of items ?? []) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sd = (it.source_data ?? {}) as any;
@@ -50,6 +53,19 @@ export async function GET(request: NextRequest) {
       // when the sync fast-path only had header signals.
       const ruleType = it.rule_type && it.rule_type !== 'none' ? (it.rule_type as string) : null;
       if (ruleType === 'done') continue;
+      // THE KIND COMPLETER (the cause-fix for permanently-unlabeled mail): fast-pathed
+      // transactional mail has NO understanding and NO bulk headers — nothing for resolveKind.
+      // The sweep MAKES the reasoned kind land (merge-only-mailKind, routing-inert) before
+      // applying, instead of waiting for an understanding nothing else computes.
+      let kindComputed = false;
+      if (!sd.understanding?.mailKind && !sd.kind_override && kindBudget > 0) {
+        kindBudget--;
+        const { ensureMailKind, userAddresses } = await import('@/lib/inbox/ensure-mail-kind');
+        if (!addrs) addrs = await userAddresses(sb, p.id);
+        const kind = await ensureMailKind(sb, p.id, { id: it.id as string, source_data: sd }, addrs);
+        kindComputed = true;
+        if (kind) kindsCompleted++;
+      }
       const bulk = ((sd.gmail_labels ?? []) as string[]).includes('CATEGORY_PROMOTIONS') || sd.has_unsubscribe === true;
       const ok = await writeBackLabels({
         provider: provider as 'gmail' | 'outlook',
@@ -62,15 +78,16 @@ export async function GET(request: NextRequest) {
         gmailCache,
         outlookMessageId: sd.outlook_id ?? sd.message_id,
       });
-      // Only record "labeled" when it ACTUALLY landed — a transient failure stays unmarked and is
-      // retried next sweep (the old code marked labeled even when the apply silently failed).
-      if (ok) {
+      // Bookkeeping by HONEST outcome: 'applied' → stamp. 'noop' AFTER a kind compute → stamp too
+      // (the reasoned kind was judged and still nothing to label — final, stop revisiting).
+      // 'noop' without a compute (budget exhausted) → left for the next sweep. 'failed' → retry.
+      if (ok === 'applied' || (ok === 'noop' && kindComputed)) {
         await sb.from('inbox_items').update({ source_data: { ...sd, labeled: true } }).eq('id', it.id);
-        labeled++;
+        if (ok === 'applied') labeled++;
       }
       await new Promise((r) => setTimeout(r, 60)); // gentle throttle — avoid Gmail rate-limit bursts
     }
   }
 
-  return NextResponse.json({ labeled });
+  return NextResponse.json({ labeled, kindsCompleted });
 }

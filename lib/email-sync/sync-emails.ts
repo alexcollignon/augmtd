@@ -1329,8 +1329,10 @@ export async function syncEmailsForConnection(
                 gmailCache: gmailLabelCache,
                 outlookMessageId: (storedEmail as any).metadata?.outlook_id ?? storedEmail.message_id,
               });
-              // Record success so the label-sweep skips it; a failure stays unmarked → sweep retries.
-              if (ok) await adminSupabase.from('inbox_items')
+              // Stamp ONLY on 'applied' — a 'noop' (no kind resolvable yet: transactional mail with
+              // no understanding and no bulk headers) stays unstamped so the sweep completes the
+              // kind and labels it; a 'failed' stays unmarked → sweep retries.
+              if (ok === 'applied') await adminSupabase.from('inbox_items')
                 .update({ source_data: withPreservedUnderstanding({ ...(fastSourceData as Record<string, unknown>), labeled: true }, fastExisting) })
                 .eq('source_id', storedEmail.id).eq('user_id', connection.user_id);
             }).catch(() => {});

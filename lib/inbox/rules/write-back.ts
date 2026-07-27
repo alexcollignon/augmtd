@@ -124,6 +124,19 @@ export class GmailLabelCache {
       return null;
     }
   }
+
+  /** Lookup WITHOUT creating — for reconcile removals (a label the mailbox never had must not be
+   *  created just to be removed). */
+  async peek(name: string): Promise<string | null> {
+    try {
+      const { listGmailLabels } = await import('@/lib/google/gmail');
+      if (!this.loaded) {
+        for (const l of await listGmailLabels(this.encryptedTokens)) this.map.set(l.name, l.id);
+        this.loaded = true;
+      }
+      return this.map.get(name) ?? null;
+    } catch { return null; }
+  }
 }
 
 // All AUGMTD POSTURE-label display names (Gmail form; includes the retired FYI/Notifications/
@@ -229,6 +242,14 @@ export async function writeBackLabel(opts: {
  * NEVER throws.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+/** The pair-applier's HONEST outcome — the caller's bookkeeping depends on the distinction:
+ *  'applied' = labels landed (stamp `labeled`) · 'noop' = nothing to apply YET (no kind resolved,
+ *  no live posture — do NOT stamp; the sweep completes the kind and revisits) · 'failed' =
+ *  transient apply failure (do not stamp; retried next sweep). The old boolean recorded 'noop' as
+ *  success, which poisoned the sweep's work-list — fresh transactional mail with no understanding
+ *  and no bulk headers was stamped "labeled" with zero labels and never revisited. */
+export type WriteBackOutcome = 'applied' | 'noop' | 'failed';
+
 export async function writeBackLabels(opts: {
   provider: string;
   encryptedTokens: string;
@@ -240,31 +261,42 @@ export async function writeBackLabels(opts: {
   gmailCache?: GmailLabelCache;
   outlookMessageId?: string | null;
   onTokenRefresh?: any;
-}): Promise<boolean> {
+}): Promise<WriteBackOutcome> {
   const { kindName, postureName } = labelNamesFor(opts.sd, opts.ruleType, opts.workState, opts.hints);
   const names = [kindName, postureName].filter(Boolean) as string[];
-  if (!names.length) return true; // honestly nothing to label (no kind signal, no live posture)
+  if (!names.length) return 'noop'; // nothing to label YET — the sweep completes the kind first
   let allOk = true;
   try {
     if (opts.provider === 'gmail' && opts.gmailThreadId) {
       const cache = opts.gmailCache ?? new GmailLabelCache(opts.encryptedTokens);
-      const { addGmailThreadLabel } = await import('@/lib/google/gmail');
+      const { addGmailThreadLabel, removeGmailThreadLabel } = await import('@/lib/google/gmail');
       for (const name of names) {
         const id = await cache.ensure(name);
         if (!id) { allOk = false; continue; }
         try { await addGmailThreadLabel(opts.encryptedTokens, opts.gmailThreadId, id); } catch { allOk = false; }
       }
-      return allOk;
+      // THREAD-SCOPED RECONCILE (the stacked-labels fix): Gmail's thread row shows the UNION of
+      // every message's labels, so stale postures from earlier eras (incl. the retired FYI/
+      // Notifications/Marketing) sit next to the current pair forever. Strip every OTHER state
+      // label from the thread — only ones that already EXIST in the mailbox (peek, never create).
+      try {
+        for (const stale of ALL_STATE_LABELS) {
+          if (stale === postureName) continue;
+          const staleId = await cache.peek(stale);
+          if (staleId) await removeGmailThreadLabel(opts.encryptedTokens, opts.gmailThreadId, staleId).catch(() => {});
+        }
+      } catch { /* reconcile is best-effort — the applied pair stands */ }
+      return allOk ? 'applied' : 'failed';
     } else if (opts.provider === 'outlook' && opts.outlookMessageId) {
       const { addOutlookCategory } = await import('@/lib/microsoft/outlook');
       for (const name of names) {
         try { await addOutlookCategory(opts.encryptedTokens, opts.outlookMessageId, name.replace('/', ': '), opts.onTokenRefresh); }
         catch { allOk = false; }
       }
-      return allOk;
+      return allOk ? 'applied' : 'failed';
     }
-    return false;
+    return 'failed';
   } catch {
-    return false;
+    return 'failed';
   }
 }
