@@ -4,6 +4,12 @@ import { getTokenFromCode } from '@/lib/microsoft/oauth';
 import { Client } from '@microsoft/microsoft-graph-client';
 import { registerOutlookSubscription } from '@/lib/microsoft/outlook-subscriptions';
 
+// The server-side INITIAL SYNC runs in this route's after() — the function budget must cover a
+// full first sync (fetch + classify + AI phase 2 ≈ 60–150s). Without this, the default budget
+// KILLED the sync partway on real signups: mail stored newest-first then silently truncated (and
+// the single-flight claim then blocks the client's retry until the 10-min stale release).
+export const maxDuration = 300;
+
 export async function GET(request: NextRequest) {
   try {
     const origin = request.nextUrl.origin;

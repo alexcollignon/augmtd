@@ -564,6 +564,10 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   check('P19 · connecting fires a SERVER-SIDE initial sync (never depends on which page the browser lands on)',
     src('app/api/auth/gmail/callback/route.ts').includes('syncEmailsForConnection(newConnection') &&
     src('app/api/auth/outlook/callback/route.ts').includes('syncEmailsForConnection(newConnection'));
+  check('P19 · the callback routes have the BUDGET for a full first sync (maxDuration 300 — the default budget KILLED a real signup\'s sync partway: newest-first storage, silently truncated)',
+    src('app/api/auth/gmail/callback/route.ts').includes('export const maxDuration = 300') &&
+    src('app/api/auth/outlook/callback/route.ts').includes('export const maxDuration = 300') &&
+    src('app/api/connections/sync/route.ts').includes('maxDuration = 300'));
   check('P19 · the first sync completing triggers the ONE-TIME bootstrap chain (atomically claimed: team → memory → judged+prepared deck → fresh brief)',
     src('lib/email-sync/sync-emails.ts').includes('wasFirstSync') &&
     src('lib/home/first-look.ts').includes("filter('metadata->>first_look_at', 'is', null)") &&
