@@ -11,15 +11,119 @@
 // instead of owning private copies.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import {
-  EnvelopeIcon, BellAlertIcon, CheckCircleIcon, FolderIcon, ArrowRightIcon,
+  EnvelopeIcon, BellAlertIcon, CheckCircleIcon, FolderIcon, ArrowRightIcon, PlusIcon,
 } from '@heroicons/react/24/outline';
 import type { DoItem, DoSource } from '@/lib/home/agenda';
 import type { WorkItem } from '@/lib/work-items/model';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { fmtMonthDay } from '@/lib/utils/format-date';
+
+// ── A row control that SAYS what it does on hover — icon at rest, label slides out smoothly
+// (per-button `group/act`, so only the hovered control expands). One idiom for ✓ / ✕ / folder. ──
+function RowAction({ label, onClick, disabled, hoverTone, children }: {
+  label: string; onClick: (e: React.MouseEvent) => void; disabled?: boolean;
+  hoverTone: string; children: React.ReactNode;
+}) {
+  return (
+    <button onClick={onClick} disabled={disabled} title={label}
+      className={`group/act flex items-center text-neutral-300 ${hoverTone} transition-colors disabled:opacity-50`}>
+      <span className="text-[13px] leading-none flex items-center">{children}</span>
+      <span className="max-w-0 overflow-hidden group-hover/act:max-w-[110px] group-hover/act:ml-1 transition-all duration-200 ease-out whitespace-nowrap text-[11px] font-medium">{label}</span>
+    </button>
+  );
+}
+
+// ── ADD TO PROJECT from the row (the deck is a triage surface — filing belongs here too). The
+// SAME picker grammar as the deep-dive's: search leads, "Start a new project…" on top (the query
+// pre-fills), tracked projects first. Lazy: entities hydrate from the portfolio cache instantly,
+// refresh on first open. Select → the ONE sticky membership PATCH; create → found + attach. ──
+type PickEnt = { id: string; name: string; status: string; weight: number; tracked?: boolean };
+function RowProjectPicker({ itemKind, itemId }: { itemKind: 'inbox_item' | 'commitment'; itemId: string }) {
+  const [open, setOpen] = useState(false);
+  const [ents, setEnts] = useState<PickEnt[]>([]);
+  const [query, setQuery] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const boxRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) { setQuery(''); setCreating(false); setNewName(''); return; }
+    setEnts(((loadLS<{ entities?: PickEnt[] }>('aug-portfolio-v1')?.entities ?? []) as PickEnt[]).filter((e) => e.status === 'active')
+      .sort((a, b) => (b.tracked ? 1 : 0) - (a.tracked ? 1 : 0) || b.weight - a.weight));
+    fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => {
+      if (d?.entities) setEnts((d.entities as PickEnt[]).filter((e) => e.status === 'active')
+        .sort((a, b) => (b.tracked ? 1 : 0) - (a.tracked ? 1 : 0) || b.weight - a.weight));
+    }).catch(() => {});
+    const onClick = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [open]);
+  const q = query.trim().toLowerCase();
+  const filtered = q ? ents.filter((e) => e.name.toLowerCase().includes(q)) : ents;
+  const attach = async (entityId: string, name: string) => {
+    setBusy(true); setOpen(false);
+    try {
+      const res = await fetch('/api/items/entity', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: itemKind, id: itemId, entityId }) });
+      if (!res.ok) throw new Error();
+      toast.success(`Added to ${name}`);
+      try { window.dispatchEvent(new CustomEvent('aug:membership-changed', { detail: { kind: itemKind, id: itemId } })); } catch { /* SSR-safe */ }
+    } catch { toast.error('Could not add'); } finally { setBusy(false); }
+  };
+  const createAndAttach = async () => {
+    const n = newName.trim();
+    if (!n || busy) return;
+    setBusy(true); setOpen(false);
+    try {
+      const res = await fetch('/api/entities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: n }) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.id) throw new Error();
+      await attach(d.id, n);
+      toast.success(`Started ${n} — added`);
+    } catch { toast.error('Could not create the project'); } finally { setBusy(false); }
+  };
+  return (
+    <span ref={boxRef} className="relative inline-flex" onClick={(e) => e.stopPropagation()}>
+      <RowAction label="Add to project" hoverTone="hover:text-indigo-600" disabled={busy}
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}>
+        <FolderIcon className="w-3.5 h-3.5" />
+      </RowAction>
+      {open && (
+        <div className="absolute top-full right-0 mt-1.5 z-40 w-60 rounded-xl border border-neutral-200 bg-white shadow-lg p-1 cursor-default" onClick={(e) => e.stopPropagation()}>
+          {creating ? (
+            <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') createAndAttach(); if (e.key === 'Escape') { setCreating(false); setNewName(''); } }}
+              placeholder="New project name…"
+              className="w-full rounded-lg border border-indigo-200 px-2 py-1.5 text-[12.5px] text-neutral-800 outline-none" />
+          ) : (
+            <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') setOpen(false); if (e.key === 'Enter' && filtered.length === 1) attach(filtered[0].id, filtered[0].name); }}
+              placeholder="Search projects…"
+              className="w-full rounded-lg border border-neutral-200 px-2 py-1.5 text-[12.5px] text-neutral-800 outline-none focus:border-indigo-300" />
+          )}
+          {!creating && (
+            <button onClick={() => { setNewName(query.trim()); setCreating(true); }}
+              className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 mt-1 text-left text-[12.5px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors">
+              <PlusIcon className="w-3 h-3 flex-shrink-0" />{q && filtered.length === 0 ? `Start "${query.trim()}"…` : 'Start a new project…'}
+            </button>
+          )}
+          <div className="max-h-52 overflow-y-auto border-t border-neutral-100 mt-1 pt-1">
+            {filtered.map((e) => (
+              <button key={e.id} onClick={() => attach(e.id, e.name)}
+                className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-neutral-700 hover:bg-indigo-50 transition-colors">
+                <FolderIcon className="w-3 h-3 flex-shrink-0 text-neutral-400" /><span className="min-w-0 flex-1 truncate">{e.name}</span>
+              </button>
+            ))}
+            {filtered.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">{q ? 'No match — start it above.' : 'Nothing yet.'}</p>}
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
 
 // ── The row's type-icon map — reply / notice / commitment / deal, one glance. ──
 export const DO_META: Record<DoSource, { Icon: React.ElementType; ring: string; text: string }> = {
@@ -215,11 +319,15 @@ export function WorkRow({ item, emphasis = false, hideInitiative = false, readon
             </span>
         </div>
         {/* Controls appear ONLY on hover — at rest every row is a pure line. Identical set, identical
-            position, every species and every surface. */}
+            position, every species and every surface. Each control SAYS what it does on its own
+            hover (Mark done · Dismiss · Add to project — the folder replaces the old arrow; the
+            row itself is the open affordance). */}
         <span className="flex-shrink-0 flex items-center gap-2.5 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-          {!readonly && !isDeal && <button onClick={done} disabled={busy} title="Mark done" className="text-neutral-300 hover:text-emerald-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✓</button>}
-          {!readonly && <button onClick={drop} disabled={busy} title="Dismiss — won't show again" className="text-neutral-300 hover:text-rose-600 transition-colors disabled:opacity-50 text-[13px] leading-none">✕</button>}
-          <ArrowRightIcon className="w-3.5 h-3.5 text-neutral-200 group-hover:text-indigo-400 transition-colors" />
+          {!readonly && !isDeal && <RowAction label="Mark done" hoverTone="hover:text-emerald-600" disabled={busy} onClick={done}>✓</RowAction>}
+          {!readonly && <RowAction label="Dismiss" hoverTone="hover:text-rose-600" disabled={busy} onClick={drop}>✕</RowAction>}
+          {!readonly && !isDeal && item.entityId && (
+            <RowProjectPicker itemKind={isCommit ? 'commitment' : 'inbox_item'} itemId={item.entityId} />
+          )}
         </span>
       </div>
       {/* CTA only when EARNED by a preparation, NAMED by it ("Review draft" / "See Max's work").
