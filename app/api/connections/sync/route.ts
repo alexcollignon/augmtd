@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServerClient } from '@supabase/supabase-js';
-import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
+import { syncEmailsForConnection, claimSync } from '@/lib/email-sync/sync-emails';
 import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
 import { processMeetingsForUser } from '@/lib/calendar/meeting-processor';
 import { analyzeCalendarPatterns } from '@/lib/calendar/pattern-analyzer';
@@ -75,18 +75,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Immediately mark all connections as syncing so the inbox polling
-    // loop sees 'syncing' status from the very first poll, regardless of
-    // how long calendar sync and bot creation take before emails start.
-    const connectionIds = connections.map((c) => c.id);
-    await adminSupabase
-      .from('connections')
-      .update({ sync_status: 'syncing', sync_started_at: new Date().toISOString() })
-      .in('id', connectionIds);
-    console.log(`[Sync] Marked ${connectionIds.length} connection(s) as syncing upfront`);
+    // SINGLE-FLIGHT: the upfront "mark as syncing" IS the claim — one atomic conditional UPDATE
+    // per connection (claimSync). A connection already mid-sync (the connect callback's server-
+    // side initial sync, a concurrent manual click, the cron) is SKIPPED gracefully instead of
+    // racing it — the running sync covers the same window. The claim sets sync_status='syncing'
+    // immediately, so the inbox polling loop still sees it from the very first poll.
+    const claimedConnections = [] as typeof connections;
+    for (const c of connections) {
+      if (await claimSync(adminSupabase, c.id)) claimedConnections.push(c);
+      else console.log(`[Sync] Skipped ${c.provider} (${c.id}) — sync already in flight`);
+    }
+    console.log(`[Sync] Claimed ${claimedConnections.length}/${connections.length} connection(s)`);
 
-    // Process all connections in parallel — within each, calendar → bots → emails order is preserved
-    const results = await Promise.all(connections.map(async (connection) => {
+    // Process all claimed connections in parallel — within each, calendar → bots → emails order is preserved
+    const results = await Promise.all(claimedConnections.map(async (connection) => {
       try {
         console.log(`Syncing ${connection.provider} calendar + emails for user ${user.id}...`);
 
@@ -106,7 +108,7 @@ export async function POST(request: NextRequest) {
         }
 
         console.log(`[Sync Order] 3/3: Syncing emails for ${connection.provider}...`);
-        const emailResult = await syncEmailsForConnection(connection, adminSupabase);
+        const emailResult = await syncEmailsForConnection(connection, adminSupabase, { claimed: true });
         if (emailResult.emailsFetched > 0) {
           console.log(`[Sync Order] ✓ Emails synced: ${emailResult.emailsFetched} emails`);
         }

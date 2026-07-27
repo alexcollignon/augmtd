@@ -458,7 +458,7 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     const { evaluateDeliverable } = await import('../lib/prepare/evaluate');
     // The Max monologue-ask class, verbatim shape: a polite list of things only the principal has.
     const review = await evaluateDeliverable(sb, PERSONAL, {
-      content: 'Thanks for handing this over. To build the outreach list properly, I need a few things from you before I can start:\n' +
+      content: 'Thanks for handing this over. I can\'t start on this at all yet — the work is impossible without a few things only you can provide:\n' +
         '1. The target account list (or the criteria you want me to use)\n' +
         '2. Access to the latest pricing sheet\n' +
         '3. Your call on tone — formal or conversational?\n' +
@@ -582,6 +582,58 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       `workers=${after19.data?.length ?? 0} seeded=${r.seeded}`);
   } catch (e) {
     check('P19 live · worker seeding is IDEMPOTENT (an already-seeded team is untouched)', false, String(e).slice(0, 80));
+  }
+
+  // ═══ P20 · SYNC SINGLE-FLIGHT + THE NOTICE-LAW REFINEMENT (the new-user race + the deck miss) ═══
+  {
+    // Live: two concurrent claims on one connection — EXACTLY one wins (the recognition-duplication
+    // race: parallel first syncs founded the same entities twice before either link landed).
+    const { claimSync } = await import('../lib/email-sync/sync-emails');
+    const { data: probeConn } = await sb.from('connections').insert({
+      user_id: PERSONAL, provider: 'gmail', provider_account_id: 'probe-claim@augmtd-internal.test',
+      status: 'inactive', metadata: {}, last_sync: null, sync_status: 'pending',
+    }).select('id').maybeSingle();
+    if (!probeConn?.id) check('P20 live · claim probe insert failed', false);
+    else {
+      const [a, b2] = await Promise.all([claimSync(sb, probeConn.id as string), claimSync(sb, probeConn.id as string)]);
+      check('P20 live · the single-flight claim admits EXACTLY ONE of two concurrent syncs',
+        (a ? 1 : 0) + (b2 ? 1 : 0) === 1, `first=${a} second=${b2}`);
+      await sb.from('connections').delete().eq('id', probeConn.id);
+    }
+  }
+  check('P20 · every sync door funnels through the ONE claim (route claims upfront + passes claimed; direct callers claim internally; stale >10min self-releases)',
+    src('lib/email-sync/sync-emails.ts').includes('export async function claimSync') &&
+    src('lib/email-sync/sync-emails.ts').includes('!options.claimed && !(await claimSync') &&
+    src('app/api/connections/sync/route.ts').includes('claimSync(adminSupabase, c.id)') &&
+    src('app/api/connections/sync/route.ts').includes('{ claimed: true }'));
+  {
+    // Live: an action-worthy notice from a no-reply sender (the Workspace-security-alert miss) —
+    // the deterministic noise tier must NOT file it as awareness when the brain says YOU OWE.
+    const { classifyItem } = await import('../lib/inbox/classify-item');
+    const t = classifyItem({
+      id: 'probe', status: 'pending', source: 'email', work_state: 'decision_required',
+      rule_type: null, type_override: null,
+      source_data: {
+        subject: 'Unresolved security risks in your Admin Console',
+        from_address: 'workspace-noreply@example.com', from_name: 'Workspace Team',
+        body: 'Security risks need review in your admin console.',
+        understanding: { _v: 1, role: 'addressed', relevance: 'action', ownership: 'you_owe', mailKind: 'notification', language: 'en' },
+      },
+    } as never, null);
+    check('P20 live · a you_owe action notice from a no-reply sender classifies ACTIONABLE (the notice law refines the noise tier — never silently awareness)',
+      t === 'to_do' || t === 'needs_reply', `classified=${t}`);
+    const t2 = classifyItem({
+      id: 'probe2', status: 'pending', source: 'email', work_state: 'noted',
+      rule_type: null, type_override: null,
+      source_data: {
+        subject: 'Your weekly product digest',
+        from_address: 'no-reply@example.com', from_name: 'Product News',
+        body: 'Here is what shipped this week.', has_unsubscribe: true,
+        understanding: { _v: 1, role: 'one_of_many', relevance: 'awareness', ownership: 'none', mailKind: 'newsletter', language: 'en' },
+      },
+    } as never, null);
+    check('P20 live · genuine noise STAYS demoted (ownership none + notice shape → fyi)',
+      t2 === 'fyi', `classified=${t2}`);
   }
 
   console.log('\n═══ THE PROMISE GATES ═══');
