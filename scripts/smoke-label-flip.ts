@@ -58,6 +58,31 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check(`unit truth-table — ${cases.length}/${cases.length} required`, failed.length === 0,
     failed.length ? `FAILED: ${failed.map(([n]) => n).join(' · ')}` : 'all hold');
 
+  // ── LABEL TRUTH (the Canva-invoice bug): "nothing to apply YET" must never be recorded as
+  // "labeled" — the sweep is the kind-completer, and its work-list depends on honest bookkeeping. ──
+  {
+    const { writeBackLabels } = await import('../lib/inbox/rules/write-back');
+    // A fresh transactional email: no understanding, no bulk headers, no rule → nothing resolvable.
+    const outcome = await writeBackLabels({
+      provider: 'gmail', encryptedTokens: 'x', sd: { subject: 'Your invoice' },
+      ruleType: null, workState: 'noted', gmailThreadId: 'fake-thread',
+    });
+    check('truth live · an empty label set returns NOOP, never success (the poisoned-stamp bug)',
+      outcome === 'noop', `outcome=${outcome}`);
+  }
+  check('truth · the sync stamps `labeled` ONLY on applied (noop stays unstamped for the sweep)',
+    src('lib/email-sync/sync-emails.ts').includes("ok === 'applied'") &&
+    !src('lib/email-sync/sync-emails.ts').includes('if (ok) await adminSupabase'));
+  check('truth · the sweep COMPLETES the missing kind (ensureMailKind, capped) before applying — the cause-fix, not a backfill',
+    src('app/api/cron/label-sweep/route.ts').includes('ensureMailKind') &&
+    src('app/api/cron/label-sweep/route.ts').includes('KIND_COMPUTE_CAP') &&
+    src('lib/inbox/ensure-mail-kind.ts').includes('ROUTING-INERT'));
+  check('truth · a computed-but-null kind stamps FINAL (terminates) while budget-exhausted noop is revisited',
+    src('app/api/cron/label-sweep/route.ts').includes("ok === 'noop' && kindComputed"));
+  check('truth · thread-scoped reconcile — applying the pair strips every OTHER state label from the thread (peek, never create)',
+    src('lib/inbox/rules/write-back.ts').includes('THREAD-SCOPED RECONCILE') &&
+    src('lib/inbox/rules/write-back.ts').includes('async peek('));
+
   // ── SIM 1 — the real-data label diff (per user; deterministic, zero AI) ──
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oldLabelFor = (it: any): string => { // the pre-flip sweep logic, verbatim
