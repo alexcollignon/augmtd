@@ -575,3 +575,48 @@ Battery: promise 42/42 · label-flip 15/15 · one-room 52/52 · judged-room 34/3
   to the new design truth (Add-work/smaller-things assertions retired WITH the features).
 - **Known-until-next-deploy:** prod still runs yesterday's cron (ungated legacy loop) — P1
   offenders regenerate every ~2h until this batch ships; stripped again locally.
+
+## PROGRESS — July 27 pm · THE DELIVERABLE RESOLUTION (deployed main 684b606 + row filing, uncommitted tail)
+
+- **THE DELIVERABLE INVENTORY rides the ONE verdict** (`WorkVerdict.requires`, JUDGE_VERSION 6):
+  the concrete artifacts the work must include, reasoned from the item's own words (an email asking
+  for three reports → three entries), coerced only on reply/send_file/produce. Never inferred
+  nice-to-haves.
+- **`lib/prepare/requirements.ts` `resolveRequirements` — ONE resolution law:** per-label retrieval
+  through the universal resolver (pool → KB → drives) + ONE conservative reasoned batch pick
+  ("related" ≠ "is"); haves STAGE as pool rows (`task_id require:<label>`; first KB-held one rides
+  `draft.attachment`); missing → the room's `input_checklist` ask (`dedupeKey requires:<itemId>`,
+  CoS-voiced); `artifactTruth` constrains every drafter/producer — claim/attach/build on ONLY
+  what's staged. The ingest funnel clears the ask + marks the draft stale (re-draft with the
+  artifact in hand).
+- **One law, every door:** pass reply + doc-send + PRODUCE branches (produce was the silent gap —
+  the EGBANK class; the truth now rides the delegation envelope), the on-demand draft route, the
+  judge SERVING EDGE (`/api/items/judge` after(), settled-guarded — zero AI on repeat opens), and
+  the legacy cron loop DEFERS inventory-carrying verdicts to the pass.
+- **Group-channel ask rules:** ONE ask per item — a coworker's attempted-work ask SUPERSEDES the
+  engine's provisional one (both directions); asks NEVER BLOCK — the work-with-what-you-have
+  contract (delegation prompt + evaluator: a partial deliverable with honest gaps is a deliverable,
+  never needs_input) + the checklist's one-tap "Go ahead with what's available →" (routes
+  `Have <First> go ahead…` through the one conversation core → re-delegates with the pool).
+- **Judgment-quality fixes the gates caught:** "answered" ≠ able-to-act (having the means to act is
+  not having acted — the forward-request case); the stickiness prior anchors SAME-JUDGE-VERSION
+  only (an old-law prior must not entrench what a version bump exists to correct).
+- **Room truth/legibility:** turn dedupe UPDATES IN PLACE (story order is part of its truth — no
+  announcement-after-report scrambles); DM-style coworker turns (avatar column + name header; CoS
+  stays the unlabeled anchor voice); the item chip hides in the item's OWN room (kept in deal
+  rooms); the composer never defaults open on unknown relevance (verdict-first, P8); meeting cards
+  open `/item/<tid>?kind=meeting`, never the meetings list.
+- **Row filing (uncommitted tail):** the ONE WorkRow's hover controls SAY what they do
+  (Mark done · Dismiss · Add to project — expanding labels, per-control `group/act`); the folder
+  REPLACES the arrow (the row itself is the open affordance) and opens the same picker grammar
+  (search → Start-new-on-top with query pre-fill → tracked-first list) → the sticky membership
+  PATCH. Deal rows and read-only surfaces excluded.
+- **Sweeps/tooling:** `retitle-commitments.ts` (reasoned, chunked ≤30/call — big batches truncate
+  JSON to silent zero) applied across users; `sweep-ask-deliverables.ts` (re-review stored
+  delegation deliverables with the CURRENT evaluator — the old prompt allowed honest-question
+  deliverables, the "Prepared by Max" ask-card class) + `sweep-stale-attribution.ts`;
+  `reset-account-surface.ts` → `run-prepare-pass.ts` = the clean-test two-step.
+- Gates: **P18** (live: inventory → room ask → truth-constrained draft; + supersession both-ways,
+  never-blocks, self-chip, one-law-every-door, in-place dedupe, meeting href) → **promise 66/66** ·
+  judged-room 34/34 · one-room 52/52 · work-surface 45/45 · label-flip 15/15 · build clean.
+  EGBANK verified live end-to-end (engine ask + Max's richer worker-informed ask → superseded to one).
