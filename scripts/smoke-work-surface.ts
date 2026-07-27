@@ -55,11 +55,11 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('app/api/inbox/[id]/draft/route.ts').includes("skipped: 'automated_sender'"));
   const noReply = await evaluateDeliverable(sb, A, {
     content: 'Hi, thanks for the reset link — done!', task: 'Reset the password',
-    recipient: 'Zaask <info@zaask.pt>', kind: 'reply',
+    recipient: 'Acme Portal <info@acme-portal-example.com>', kind: 'reply',
   });
   // info@ is a real address — the evaluator's structural check targets no-reply forms:
   const noReply2 = await evaluateDeliverable(sb, A, {
-    content: 'Hi, thanks!', task: 'Reset the password', recipient: 'no-reply@zaask.pt', kind: 'reply',
+    content: 'Hi, thanks!', task: 'Reset the password', recipient: 'no-reply@acme-portal-example.com', kind: 'reply',
   });
   check('T3 live · evaluator structurally rejects a no-reply recipient',
     noReply2.verdict === 'revise' && /no one|no-reply/i.test(noReply2.objection ?? ''), `verdict=${noReply2.verdict}`);
@@ -173,7 +173,7 @@ const src = (p: string) => readFileSync(p, 'utf8');
     wr.includes('SECOND LINE IS DEAD') && !wr.includes('line-clamp-1`}>{item.second}</p>') &&
     wr.includes("item.second !== 'Action needed'"));
   check('H2: Tasks | By project lens on the deck (same entries, regrouped; persisted; effect-hydrated)',
-    hv.includes("'aug-do-group'") && hv.includes("r.item.initiative ?? 'No project'") && hv.includes('By project') &&
+    hv.includes("'aug-do-group'") && hv.includes('trackedLookup') && hv.includes('By project') &&
     !hv.includes("useState<'time' | 'project'>(() =>"));
   // The final Home simplification: ONE row species — bundles retired from the deck, groups own the
   // chrome (one container, hairline dividers), the row is flat inside it.

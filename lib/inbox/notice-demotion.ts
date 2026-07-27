@@ -50,17 +50,41 @@ export function isActionWorthyAutomated(workState: string | null, fromName: stri
 }
 
 /** THE LAW: is this a no-move notice (nobody owes anything on it)? The caller applies its own
- *  authoritative-override guard (the user's explicit type_override) around this core. */
+ *  authoritative-override guard (the user's explicit type_override) around this core.
+ *
+ *  THREE tiers, most-reasoned first:
+ *  1. FULL understanding → the ownership key decides (a bank alert with ownership 'you_owe' is
+ *     protected; a portal notice with 'none' demotes) — language-proof.
+ *  2. KIND-ONLY understanding (the backfill class — a REASONED mailKind judged from content, but
+ *     no role/relevance so coercion nulls it) → the kind itself is the brain's verdict that this
+ *     is bulk/automated mail; demote unless the action-worthy re-posture protects it. This is the
+ *     reasoned signal REPLACING the sender-pattern heuristic — the portal-notice class (an info@ sender the
+ *     patterns miss, kind says notification, Clara must never draft for it).
+ *  3. NO understanding at all → the legacy structural floor (sender patterns + action-worthy).
+ *
+ *  `rawKind` = the UNCOERCED understanding.mailKind (callers read it off source_data directly —
+ *  kind is kind regardless of whether the rest of the understanding exists). */
 export function isNoMoveNotice(args: {
   u: ItemUnderstanding | null;
+  rawKind?: string | null;
   fromEmail: string | null; fromName: string | null; subject: string | null;
   workState: string | null;
 }): boolean {
-  const { u, fromEmail, fromName, subject, workState } = args;
+  const { u, rawKind, fromEmail, fromName, subject, workState } = args;
   const auto = isAutomatedSenderStrong(fromEmail, fromName, subject);
-  const structuralNotice = auto || (!!u && (u.mailKind === 'notification' || u.mailKind === 'calendar'));
+  const kind = (u?.mailKind ?? rawKind ?? '').toLowerCase();
+  const noticeKind = kind === 'notification' || kind === 'calendar' || kind === 'receipt' || kind === 'newsletter';
+  const structuralNotice = auto || noticeKind;
   return (
     (!!u && u.ownership === 'none' && structuralNotice)
-    || (!u && auto && !isActionWorthyAutomated(workState, fromName, subject))
+    || (!u && structuralNotice && !isActionWorthyAutomated(workState, fromName, subject))
   );
+}
+
+/** The raw mailKind straight off source_data — usable even when the full understanding fails
+ *  coercion (the kind-only backfill class). ONE reader, so callers never re-derive. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function rawMailKindOf(sd: any): string | null {
+  const mk = sd?.understanding?.mailKind;
+  return typeof mk === 'string' && mk ? mk.toLowerCase() : null;
 }

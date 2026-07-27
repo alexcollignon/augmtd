@@ -537,3 +537,41 @@ that contaminates judgments — a real find). JUDGE_VERSION → 4.
 Battery: promise 42/42 · label-flip 15/15 · one-room 52/52 · judged-room 34/34 · work-loop 42/44→
 (fixtures judge-gated) · work-surface 45/45 · workbench 39/39 · orchestrated-loop 39/39 · tasks
 72/72 · room 15/15 · build clean.
+
+## PROGRESS (July 27) — THE FIRST SYNC + USER-CREATED-ONLY EVERYWHERE + HISTORY (promise 50/50)
+
+- **CREATION-TIME RECOGNITION → THE FOUNDING PROPOSAL (the "first sync" — in the room, never a
+  popup).** The iScore lesson: creation adopted only on EXACT name match, so "iScore" founded an
+  empty shell while the brain held "iScore AI Training Program". Now `proposeFoundingAdoptions`
+  (lib/entities/founding.ts) runs deterministic name/alias token-subset recognition over existing
+  entities (company-token guarded), counting members across BOTH memories (entity links + the
+  label-era `initiative` strings — pre-backfill entities carry state with zero links); the
+  proposal lands as a DURABLE confirmable turn (`founding-proposal` component payload → the rail's
+  numbered idiom) and `/api/entities/adopt` confirms: THE ONE absorb mechanic + label-era members
+  linked (never stolen from another entity) + the turn updates/deletes as options are taken. The
+  New-project modal slimmed to name+description ("+ Add work" removed — seeding lives in the room
+  + chat). Chat-drivable throughout.
+- **USER-CREATED ONLY, EVERY SURFACE (locked harder than R4):** the portfolio renders TRACKED only
+  (smaller-things fold REMOVED — untracked entities are invisible as projects everywhere;
+  recognition keeps running; discovery = the item strip + the founding proposal); the deck's
+  By-project groups only under tracked names (brief serves `trackedProjects`; label-era initiative
+  strings fold to "No project"); Timeline item tags + lanes tracked-only (+ stale client cache
+  keys bumped: aug-timeline-v3, aug-timeline-gantt-v2). `scripts/merge-duplicate-entities.ts`
+  folds near-name untracked twins INTO tracked projects (aliases transfer → future recognition
+  lands right); applied for user A's iScore shells.
+- **CONVERSATION HISTORY (Claude-style):** migration `20260727c_room_turns_archived.sql`
+  (⚠️ APPLY MANUALLY — pre-migration Clear degrades to delete, History lists empty). "Clear" =
+  ARCHIVE (a session boundary, never a deletion); History ⌄ lists sessions (date · count · first
+  line); selecting one is read-only with "Back to current"; the composer hides while viewing.
+- **THE ONE GATE closed for real:** the legacy rule-based auto-draft loop in the draft-sweep CRON
+  called `generateReplyDraft` directly (the "Emeritus reminder re-drafts itself" recurrence — NOT
+  prod-skew; an ungated path in current code) — now judge-gated; the on-open commitment nudge
+  route judge-gated too (chase only). Found+fixed: `entity_links` has NO `id` column (selects
+  silently errored → zero counts). P10 heals-then-asserts via THE consequence module (a
+  fixture-judged verdict was never SERVED).
+- Gates: P13 (user-created-only on every surface) + P14 (founding proposes known work — live
+  probe; durable confirmable turn; adoption mechanics; history) → **promise 50/50** · one-room
+  52/52 · work-surface 45/45 · tasks 72/72 · full battery green · build clean. Five gates updated
+  to the new design truth (Add-work/smaller-things assertions retired WITH the features).
+- **Known-until-next-deploy:** prod still runs yesterday's cron (ungated legacy loop) — P1
+  offenders regenerate every ~2h until this batch ships; stripped again locally.

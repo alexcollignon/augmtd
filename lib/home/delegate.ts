@@ -88,6 +88,9 @@ export interface DelegateResult {
   reportText: string;
   deliverable?: Deliverable;   // the coworker's output written to the per-item pool (S2)
   poolSize?: number;           // pool entries the coworker saw as context (for logging / smoke test)
+  /** FIX 3 — the evaluator judged the output a genuine ASK for principal-only inputs; these are the
+   *  concrete things requested. The output was routed as a room checklist, NOT stored as a deliverable. */
+  needsInput?: string[];
 }
 
 /**
@@ -151,6 +154,11 @@ export async function runDelegation(args: {
   // as prepared work and the report-back says so honestly. Non-fatal: an evaluator error → pass. ──
   let deliverableOk = true;
   let evalObjection: string | null = null;
+  // FIX 3 (the Max monologue-ask class): when the evaluator's REASONED read is "this output is
+  // fundamentally an ASK for things only the principal can supply", the work routes as a REQUEST —
+  // an attributed room turn + input checklist — and is NEVER stored as prepared work. No retry:
+  // a genuine missing-inputs ask can't be regenerated away.
+  let needsInput: string[] | null = null;
   try {
     const { evaluateDeliverable } = await import('@/lib/prepare/evaluate');
     let review = await evaluateDeliverable(supabase, userId, { content: output, task: itemLabel, recipient: null, entityId: null, kind: 'deliverable' });
@@ -164,7 +172,8 @@ export async function runDelegation(args: {
         if (review.verdict !== 'revise') output = retry;
       }
     }
-    if (review.verdict === 'revise') { deliverableOk = false; evalObjection = review.objection; }
+    if (review.verdict === 'needs_input') { deliverableOk = false; needsInput = review.missing ?? []; }
+    else if (review.verdict === 'revise') { deliverableOk = false; evalObjection = review.objection; }
   } catch { /* review is an enhancement */ }
 
   // ── Report-back (DM from the coworker) — reuse the scheduled-task report writer. A rejected
@@ -175,7 +184,9 @@ export async function runDelegation(args: {
     taskName: itemLabel,
     home: 'message',
     deliverableGist: deliverableOk ? output : undefined,
-    problem: deliverableOk ? undefined : (evalObjection ?? "the attempt didn't produce a usable deliverable"),
+    problem: deliverableOk ? undefined
+      : needsInput ? `I need from you before I can finish: ${needsInput.join('; ')}`
+      : (evalObjection ?? "the attempt didn't produce a usable deliverable"),
   };
   let reportText: string;
   try {
@@ -252,9 +263,14 @@ export async function runDelegation(args: {
         refs: [{ label: itemLabel.slice(0, 60), href: itemKind === 'commitment' ? `/item/${poolScope.entityId}?kind=commitment` : itemKind === 'meeting' ? `/item/${poolScope.entityId}?kind=meeting` : `/item/${poolScope.entityId}` }],
         author: { kind: 'coworker', id: worker.id, name: worker.name, role: worker.worker_role },
         dedupeKey: `delegate:${poolScope.entityId}:${poolScope.taskId ?? 'item'}`,
+        // FIX 3 — the coworker's ASK is a durable inline CHECKLIST in the room (the group-channel
+        // model: a teammate asking for inputs is a conversation event with affordances, never a
+        // "Prepared by" card). Rows wire to the rail's ingest funnel (attach → the pool → every
+        // reader sees it). Re-render on every load until satisfied; a re-run REPLACES (dedupeKey).
+        ...(needsInput?.length ? { component: { key: 'input_checklist', state: { items: needsInput, taskId: poolScope.taskId ?? null } } } : {}),
       });
     } catch { /* narration is an enhancement — the delegation already landed */ }
   }
 
-  return { output, agentName: worker.name, threadId, reportText, deliverable, poolSize: pool.length };
+  return { output, agentName: worker.name, threadId, reportText, deliverable, poolSize: pool.length, ...(needsInput?.length ? { needsInput } : {}) };
 }

@@ -85,7 +85,7 @@ function relationshipCue(relationship?: string | null, momentum?: string | null,
 
 // H4/J1 — the ownership-keyed notice law + the strong automated-sender read live in ONE module
 // (lib/inbox/notice-demotion.ts) shared with judgeWork. Local aliases keep call sites unchanged.
-import { isAutomatedSenderStrong as isAutomatedSender, isActionWorthyAutomated, isNoMoveNotice } from '@/lib/inbox/notice-demotion';
+import { isAutomatedSenderStrong as isAutomatedSender, isActionWorthyAutomated, isNoMoveNotice, rawMailKindOf } from '@/lib/inbox/notice-demotion';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function attendeeEmails(ev: any): string[] {
@@ -185,10 +185,32 @@ export async function GET() {
     });
   }
   mark('clusters');
+  // USER-CREATED ONLY (every surface): a row's project tag may only name a TRACKED project —
+  // recognition keeps running underneath, but an untracked entity is invisible AS a project.
+  // Loaded here (before clusterTag) so the ONE tag-derivation point gates every serving site
+  // (mustRespond, priorities, commitments, waitingOn, outbound) at once; the same list is served
+  // to the client for By-project grouping.
+  let trackedProjects: Array<{ name: string; aliases: string[] }> = [];
+  try {
+    const { data: tps } = await supabase.from('work_entities').select('name, aliases')
+      .eq('user_id', user.id).eq('kind', 'initiative').eq('tracked', true).eq('status', 'active').limit(100);
+    trackedProjects = ((tps ?? []) as Array<{ name: string; aliases: unknown }>).map((t) => ({
+      name: String(t.name), aliases: Array.isArray(t.aliases) ? (t.aliases as string[]) : [],
+    }));
+  } catch { /* non-fatal */ }
+  const trackedTagLookup = new Map<string, string>();
+  for (const t of trackedProjects) {
+    trackedTagLookup.set(t.name.toLowerCase(), t.name);
+    for (const a of t.aliases) trackedTagLookup.set(String(a).toLowerCase(), t.name);
+  }
   const clusterTag = (init: string | null | undefined): { initiative: string; initiativeTotal: number } | null => {
     const k = init ? (normalizeInitiative(init)?.replace(/\s+/g, '') || null) : null;
     const c = k ? clusters.get(k) : null;
-    return c ? { initiative: c.label, initiativeTotal: c.total } : null;
+    if (!c) return null;
+    // Gate on the tracked set — the tag shows the tracked project's CANONICAL name (the same name
+    // the client's By-project group header uses), or nothing.
+    const canonical = trackedTagLookup.get(c.label.toLowerCase()) ?? (init ? trackedTagLookup.get(init.toLowerCase()) : undefined);
+    return canonical ? { initiative: canonical, initiativeTotal: c.total } : null;
   };
 
   // Home must use the same persisted deterministic rules as Inbox. Passing them explicitly avoids
@@ -394,6 +416,25 @@ export async function GET() {
   // H4: ids demoted as ownership-none notices — EVERY deck-feeding pool filters by this set, so a
   // demoted notice can never re-enter through a side door (priorities / keep-an-eye-on were one).
   const demotedNoticeIds = new Set<string>();
+  // ── THE DECK CONSULTS THE ONE JUDGMENT (cached only — zero AI at read). An item whose CACHED
+  // verdict is a plain NONE ("nothing to do here") must not sit on the deck as an actionable/
+  // overdue row — the flip-flop exposure class (a daily re-judgment occasionally mis-fires on an
+  // ambiguous item precisely BECAUSE it kept being presented as work). Joins the SAME demotion set
+  // every pool already filters by; un-judged items are untouched; the user's explicit
+  // type_override stays authoritative (guarded below like every demotion). Dispositioned nones
+  // (expired/answered) are handled harder by apply-verdict — this covers the plain ones. ──
+  const judgedNoneIds = new Set<string>();
+  try {
+    const candIds = emailCandidates.map((c) => `inbox:${c.it.id}`);
+    if (candIds.length) {
+      const { data: js } = await supabase.from('item_plans').select('entity_id, tasks')
+        .eq('user_id', user.id).eq('kind', 'judgment').in('entity_id', candIds.slice(0, 300));
+      for (const j of (js ?? []) as Array<{ entity_id: string; tasks: { verdict?: { work?: string; resolution?: string } } }>) {
+        const v = j.tasks?.verdict;
+        if (v?.work === 'none' && !v.resolution) judgedNoneIds.add(j.entity_id.replace(/^inbox:/, ''));
+      }
+    }
+  } catch { /* the judge consult is an enhancement — the notice law below still holds */ }
   for (const { it, posture } of emailCandidates) {
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
     const tid = sd.thread_id as string | undefined;
@@ -421,7 +462,8 @@ export async function GET() {
     // here — rule_type includes AI-rule guesses, which is exactly what this corrects.
     const noticeSubj = ((sd.subject as string) || it.work_title || null);
     const noticeDemoted = it.type_override !== 'needs_reply' && it.type_override !== 'to_do'
-      && isNoMoveNotice({ u, fromEmail: fromEmailOf(sd), fromName: (sd.from_name as string) || null, subject: noticeSubj, workState: (it.work_state as string) || null });
+      && (isNoMoveNotice({ u, rawKind: rawMailKindOf(sd), fromEmail: fromEmailOf(sd), fromName: (sd.from_name as string) || null, subject: noticeSubj, workState: (it.work_state as string) || null })
+        || judgedNoneIds.has(it.id)); // the ONE judgment said "nothing to do" — the deck listens
     if (noticeDemoted) demotedNoticeIds.add(it.id); // filters EVERY downstream pool (priorities, keep-an-eye-on, …)
     if (u && u.relevance === 'action' && !noticeDemoted) {
       // An action-notice: its own section, never a reply card, never a needs-you priority. We DON'T push
@@ -1223,7 +1265,7 @@ export async function GET() {
   let alinksRows: Array<{ item_id: string; entity_id: string }> = [];
   try {
     const { data: wents } = await supabase.from('work_entities')
-      .select('id, name, status, state, next_move, priority, last_event_at')
+      .select('id, name, status, state, next_move, priority, last_event_at, tracked')
       .eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null).limit(400);
     wentsRows = (wents ?? []) as Array<Record<string, unknown>>;
     const atomIds = bundleAtoms.map((a) => a.id);
@@ -1265,7 +1307,9 @@ export async function GET() {
       // Slipping = quiet/stalled with something open ON YOU. Quiet with NO open loops is the OPPOSITE
       // signal (a closure candidate — the portfolio proposes "mark done?"), never a proactive deck card.
       const slipping = (st.momentum === 'gone_quiet' || st.momentum === 'stalled') && (st.whoOwes?.you?.length ?? 0) > 0;
-      if (!slipping || !st.summary || deckEntityIds.has(e.id as string)) continue;
+      // USER-CREATED ONLY: a slipping card names an entity AS a project (and opens its room) —
+      // only a TRACKED project may surface this way; recognition keeps judging underneath.
+      if (!slipping || !st.summary || !e.tracked || deckEntityIds.has(e.id as string)) continue;
       const nm = (e.next_move ?? null) as { title?: string; entityRef?: string | null } | null;
       slippingDeals.push({
         key: e.id as string, label: e.name as string, momentum: st.momentum || 'stalled', summary: st.summary,
@@ -1502,5 +1546,6 @@ export async function GET() {
   mark('assemble');
   const totalMs = Date.now() - t0;
   if (totalMs > 2500) console.log(`[home/brief] slow ${totalMs}ms — ${marks.map(([l, m]) => `${l}:${m}ms`).join(' · ')}`);
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => ({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null })), mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, briefing: cachedBriefing });
+  // trackedProjects was loaded early (before clusterTag) — served for By-project grouping.
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => ({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null })), mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, briefing: cachedBriefing, trackedProjects });
 }

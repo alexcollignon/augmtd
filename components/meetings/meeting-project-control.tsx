@@ -20,7 +20,10 @@ export default function MeetingProjectControl({ transcriptId }: { transcriptId: 
   const [momentum, setMomentum] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState('');
   const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (!open) setQuery(''); }, [open]);
+  const filtered = query.trim() ? entities.filter((e) => e.name.toLowerCase().includes(query.trim().toLowerCase())) : entities;
 
   useEffect(() => {
     let alive = true;
@@ -68,17 +71,29 @@ export default function MeetingProjectControl({ transcriptId }: { transcriptId: 
         </span>
       ) : (
         <button onClick={() => setOpen((v) => !v)} disabled={busy} className="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-2 py-0.5 text-[12px] font-medium text-neutral-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors">
-          <PlusIcon className="w-3.5 h-3.5" />Link to work
+          <PlusIcon className="w-3.5 h-3.5" />Add to project
         </button>
       )}
       {open && (
-        <div className="absolute top-full left-0 mt-1 z-30 w-64 max-h-64 overflow-y-auto rounded-xl border border-neutral-200 bg-white shadow-lg p-1">
-          {entities.map((e) => (
-            <button key={e.id} onClick={() => setEntity(e.id)} className={`w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-indigo-50 ${e.id === entId ? 'text-indigo-600 font-medium' : 'text-neutral-700'}`}>
-              <FolderIcon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-400" /><span className="min-w-0 flex-1 truncate">{e.name}</span>
-            </button>
-          ))}
-          {entities.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">Nothing to link yet.</p>}
+        <div className="absolute top-full left-0 mt-1 z-30 w-64 rounded-xl border border-neutral-200 bg-white shadow-lg p-1">
+          {/* Same picker grammar as the deep-dive's AddToWorkControl: search leads. */}
+          <input
+            autoFocus value={query} onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setOpen(false);
+              if (e.key === 'Enter' && filtered.length === 1) setEntity(filtered[0].id);
+            }}
+            placeholder="Search projects…"
+            className="w-full rounded-lg border border-neutral-200 px-2 py-1.5 text-[12.5px] text-neutral-800 outline-none focus:border-indigo-300"
+          />
+          <div className="max-h-56 overflow-y-auto mt-1">
+            {filtered.map((e) => (
+              <button key={e.id} onClick={() => setEntity(e.id)} className={`w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-indigo-50 ${e.id === entId ? 'text-indigo-600 font-medium' : 'text-neutral-700'}`}>
+                <FolderIcon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-400" /><span className="min-w-0 flex-1 truncate">{e.name}</span>
+              </button>
+            ))}
+            {filtered.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">{query.trim() ? 'No match.' : 'Nothing to link yet.'}</p>}
+          </div>
         </div>
       )}
     </div>

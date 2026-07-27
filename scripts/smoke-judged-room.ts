@@ -205,7 +205,7 @@ const src = (p: string) => readFileSync(p, 'utf8');
   for (const [uid, label] of [[A, 'user A'], [B, 'user B']] as const) {
     const [tracked, loose, proposed, multi] = await Promise.all([
       sb.from('work_entities').select('id', { count: 'exact', head: true }).eq('user_id', uid).eq('kind', 'initiative').eq('tracked', true).eq('status', 'active'),
-      sb.from('entity_links').select('id', { count: 'exact', head: true }).eq('user_id', uid).is('entity_id', null),
+      sb.from('entity_links').select('item_id', { count: 'exact', head: true }).eq('user_id', uid).is('entity_id', null),
       sb.from('commitments').select('id', { count: 'exact', head: true }).eq('user_id', uid).eq('status', 'suggested'),
       sb.from('item_plans').select('id', { count: 'exact', head: true }).eq('user_id', uid).eq('kind', 'commitment'),
     ]);

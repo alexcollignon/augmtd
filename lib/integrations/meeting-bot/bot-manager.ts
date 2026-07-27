@@ -599,7 +599,7 @@ Rules for the document field:
 
 Rules for other fields:
 - decisions: concrete things agreed or decided (not tasks). Max 8. Must be grounded in the transcript.
-- actionItems: only SPECIFIC obligations a participant explicitly took on (or is explicitly owed) — NOT every idea, sub-step, or suggestion discussed. Merge related sub-tasks of one obligation into a single item. Be selective: prefer fewer, real commitments (typically 0–6). Max 10. category: "todo" | "waiting_for" | "project". isUserTask=true if assignee matches user or is unassigned. dueDate: only when a deadline was explicitly stated — otherwise null (never invent one).
+- actionItems: only SPECIFIC obligations a participant explicitly took on (or is explicitly owed) — NOT every idea, sub-step, or suggestion discussed. Merge related sub-tasks of one obligation into a single item. Be selective: prefer fewer, real commitments (typically 0–6). Max 10. Each action's text is a short IMPERATIVE TITLE (at most ~9 words, starts with a verb, names the deliverable — "Send the revised proposal to Acme") — NEVER meeting-notes narration ("Discussed the need to…", "It was agreed that…"); write it the way it would sit on a to-do list. category: "todo" | "waiting_for" | "project". isUserTask=true if assignee matches user or is unassigned. dueDate: only when a deadline was explicitly stated — otherwise null (never invent one).
 - risks: blockers or concerns raised explicitly or implicitly. Max 6. severity: "high" | "medium" | "low".
 - keyMoments: up to 6 notable segments. type: "decision" | "risk" | "commitment". segmentIndex must be a real [N] from the transcript.
 - Return ONLY the JSON object, no other text.`;
@@ -784,7 +784,7 @@ related sub-tasks of one obligation into a single item; a recurring meeting RE-S
 obligation is not a new item. Be selective: prefer fewer, real commitments (typically 0-6). Return ONLY a JSON array:
 [
   {
-    "action": "Brief description of what needs to be done",
+    "action": "Short imperative title, at most ~9 words, starts with a verb, names the deliverable — e.g. 'Send the revised proposal to Acme'. Never notes narration ('Discussed…', 'It was agreed…')",
     "assignee": "Name or null if unclear",
     "priority": 75,
     "context": "Brief explanation of why this matters",

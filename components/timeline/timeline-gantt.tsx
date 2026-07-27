@@ -8,7 +8,7 @@
 // station TimelineView for anything not clustered under a project (the "everything else" toggle).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import GanttChart, { type GanttGroup } from '@/components/entities/gantt-chart';
 import EntityRoom from '@/components/entities/entity-room';
 import TimelineView from '@/components/timeline/timeline-view';
@@ -18,7 +18,10 @@ import { useLiveRefresh } from '@/hooks/use-live-refresh';
 type Data = { ganttGroups: GanttGroup[]; todayStr: string };
 
 export default function TimelineGantt({ onDetailChange }: { onDetailChange?: (open: boolean) => void } = {}) {
-  const [data, setData] = useState<Data | null>(() => loadLS<Data>('aug-timeline-gantt-v1'));
+  // SSR'd-route rule: initializer COLD; cache hydrates pre-paint. Key v2: lanes became
+  // TRACKED-only server-side — a stale v1 blob would keep showing untracked project lanes.
+  const [data, setData] = useState<Data | null>(null);
+  useLayoutEffect(() => { const c = loadLS<Data>('aug-timeline-gantt-v2'); if (c) setData((prev) => prev ?? c); }, []);
   const [mode, setMode] = useState<'gantt' | 'list'>('gantt');
   const [selected, setSelected] = useState<{ id: string; tab: 'overview' | 'work' } | null>(null);
   const [err, setErr] = useState(false);
@@ -30,7 +33,7 @@ export default function TimelineGantt({ onDetailChange }: { onDetailChange?: (op
     const load = () => fetch('/api/home/timeline').then((r) => (r.ok ? r.json() : Promise.reject())).then((d) => {
       if (!alive) return;
       const next = { ganttGroups: (d.ganttGroups ?? []) as GanttGroup[], todayStr: d.todayStr as string };
-      setData(next); saveLS('aug-timeline-gantt-v1', next);
+      setData(next); saveLS('aug-timeline-gantt-v2', next);
     }).catch(() => { if (alive && !data) setErr(true); });
     load();
     // LIVE (Living-Home): refetch on focus/visibility + a gentle interval — actions taken anywhere

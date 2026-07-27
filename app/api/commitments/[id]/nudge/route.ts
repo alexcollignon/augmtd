@@ -39,6 +39,13 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     const preparedArts = await getPrepared(supabase, user.id, { kind: 'commitment', id });
     const freshDraft = preparedArts.find((a) => a.at && (Date.now() - Date.parse(a.at)) < 24 * 3_600_000);
     if (freshDraft) return NextResponse.json({ draft: freshDraft.content, prepared: true });
+    // THE ONE GATE: an on-open nudge generation is ambient work — the judged verdict must say the
+    // work is a chase (an expired/answered commitment gets no nudge). Cached — a read on repeats.
+    try {
+      const { judgeWork } = await import('@/lib/work/judge');
+      const v = await judgeWork(supabase, user.id, { kind: 'commitment', id });
+      if (v.work !== 'chase') return NextResponse.json({ draft: '', skipped: 'judged_' + v.work });
+    } catch { /* judge unavailable -> generate (the composer is user-facing) */ }
     const ageDays = commitment.created_at ? Math.floor((Date.now() - new Date(commitment.created_at).getTime()) / 86_400_000) : undefined;
     const draft = await generateNudgeDraft(user.id, {
       counterparty: commitment.counterparty ?? null,

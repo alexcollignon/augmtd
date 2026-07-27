@@ -244,6 +244,15 @@ async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkIte
   const { data: prior } = await admin.from('item_deliverables').select('id')
     .eq('user_id', userId).eq('kind', poolKind).eq('entity_id', w.entityId).eq('task_id', 'prepare-pass').limit(1).maybeSingle();
   if (prior) return { did: 'none', reason: `${worker.name.split(' ')[0]} already prepared this`, worker: worker.name };
+  // FIX 3 — an OUTSTANDING ask blocks re-delegation: while the coworker's input checklist sits
+  // unanswered in the room, re-running would only re-ask. The rail's ingest funnel CLEARS the
+  // checklist turn when inputs land, which re-opens this path (with the new pool in view).
+  try {
+    const { data: ask } = await admin.from('room_turns').select('id')
+      .eq('user_id', userId).eq('dedupe_key', `delegate:${w.entityId}:prepare-pass`)
+      .filter('component->>key', 'eq', 'input_checklist').is('archived_at', null).limit(1).maybeSingle();
+    if (ask) return { did: 'none', reason: `${worker.name.split(' ')[0]} is waiting on input from you`, worker: worker.name };
+  } catch { /* pre-migration or column absent — proceed */ }
   const { buildDelegationPrompt, runDelegation } = await import('@/lib/home/delegate');
   // O3b: THE DELEGATION ENVELOPE — the brain briefs the coworker like a real chief of staff: the
   // deal's state + goals/rules AND the counterparty's person-brain ride every hand-off. Non-fatal.
@@ -280,11 +289,22 @@ async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkIte
     step: { text: w.title.slice(0, 120), detail: 'Produce the prepared deliverable your craft yields for this, ready for my review.' },
     brainContext: brainContext || undefined,
   });
-  await runDelegation({
+  const dres = await runDelegation({
     supabase: admin, userId, worker, prompt, itemLabel: w.title.slice(0, 80),
     pool: { kind: poolKind, entityId: w.entityId, taskId: 'prepare-pass' },
     provenance: { item: w.title.slice(0, 100), ...(w.entity ? { entity: w.entity.name } : {}), ...(w.who ? { who: w.who } : {}), ...(w.when.explicit ? { due: w.when.explicit } : {}) },
   });
+  // FIX 3 — a needs_input outcome is an ASK, not prepared work: no "Prepared by" attribution (there
+  // is nothing prepared), no activity claiming preparation. The ask already landed as a room
+  // checklist turn inside runDelegation; the pass reports it honestly and moves on.
+  if (dres.needsInput?.length) {
+    await logActivity(admin, userId, {
+      type: 'delegated_prepared', title: `${worker.name} needs input on: ${w.title.slice(0, 70)}`,
+      entityType: w.id.startsWith('commit:') ? 'commitment' : 'inbox_item', entityId: w.entityId,
+      metadata: { via: 'preparation_pass', worker: worker.name, role: worker.worker_role, needs_input: dres.needsInput },
+    }).catch(() => {});
+    return { did: 'none', reason: `${worker.name.split(' ')[0]} needs input from you: ${dres.needsInput.join('; ')}`, worker: worker.name };
+  }
   // ATTRIBUTION — the card/deep-dive reads who prepared it (the jaws-drop is arrival + attribution).
   if (w.id.startsWith('inbox:')) {
     const { data: it } = await admin.from('inbox_items').select('source_data').eq('id', w.entityId).maybeSingle();

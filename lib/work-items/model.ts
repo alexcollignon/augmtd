@@ -8,7 +8,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getUnderstanding } from '@/lib/inbox/item-understanding';
 import { isAutomatedSender, isAutomatedWho } from '@/lib/inbox/automated';
-import { isNoMoveNotice } from '@/lib/inbox/notice-demotion';
+import { isNoMoveNotice, rawMailKindOf } from '@/lib/inbox/notice-demotion';
 import { buildInitiativeMap } from '@/lib/projects/initiative-resolver';
 import { computeEventUnderstanding } from '@/lib/calendar/event-understanding';
 import { resolveOutboundAwaiting } from '@/lib/outbound/resolve';
@@ -208,7 +208,7 @@ export async function buildWorkItems(
     const overrideActionable = override === 'needs_reply' || override === 'to_do' || override === 'waiting_on';
     const automated = isMeeting ? false : (!overrideActionable && (
       isAutomatedSender(fromEmail, (sd.from_name as string) || null, subj) || u?.bulk === true ||
-      isNoMoveNotice({ u, fromEmail, fromName: (sd.from_name as string) || null, subject: subj, workState: ws })
+      isNoMoveNotice({ u, rawKind: rawMailKindOf(sd), fromEmail, fromName: (sd.from_name as string) || null, subject: subj, workState: ws })
     ));
     items.push({
       id: `inbox:${it.id}`, entityId: String(it.id), kind,

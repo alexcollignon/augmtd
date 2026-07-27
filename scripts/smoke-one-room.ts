@@ -146,9 +146,9 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('app/api/entities/route.ts').includes('tracked: true') &&
     src('lib/tools/project-actions.ts').includes('tracked: true'));
   const pv = src('components/entities/portfolio-view.tsx');
-  check('R4: the portfolio pushes NO project suggestions — untracked folds quietly into "smaller things"',
-    !pv.includes('SuggestRow') && !pv.includes('Accept all') &&
-    pv.includes('inTab.filter((e) => !e.tracked)') && pv.includes('never invents projects'));
+  check('R4: the portfolio is USER-CREATED ONLY — no suggestions, no untracked rows at all (smaller-things removed)',
+    !pv.includes('SuggestRow') && !pv.includes('Accept all') && !pv.includes('smaller thing') &&
+    pv.includes('!hidden.has(e.id) && e.tracked') && pv.includes('never invents projects'));
   check('R4: creation/tracking NARRATES the member proposal (one founding module, three callers)',
     src('lib/entities/founding.ts').includes('export async function narrateFounding') &&
     src('app/api/entities/route.ts').includes('narrateFounding') &&

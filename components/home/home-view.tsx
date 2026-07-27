@@ -84,6 +84,8 @@ type Brief = {
   schedule: { id: string; time: string; localTime?: string; title: string; attendees: number; prep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null }[];
   handled?: { triaged: number; filtered: number; summarised: number; tracked: number; resolved: number };
   bundles?: Record<string, { key: string; label: string }>; // server-side "what needs you" bundling (atomId → bundle)
+  /** USER-CREATED ONLY: tracked project names+aliases — the ONLY names By-project may group under. */
+  trackedProjects?: Array<{ name: string; aliases: string[] }>;
   bundleNames?: Record<string, { name: string; why?: string }>; // reasoned name + grounded "why" per bundle key
   personCues?: Record<string, { label: string; tone: 'neutral' | 'amber' }>; // itemId → one quiet Person-Brain cue
   itemWeights?: Record<string, number>; // itemId → verdict weight (lib/brains/verdict.ts) — the "Important" order
@@ -109,7 +111,7 @@ function greeting() {
 }
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 // Relative due words — "overdue 3d" / "due today" / "due tomorrow" / "due Wed" (readable at a glance,
-// zero width — the Madalena line grammar).
+// zero width — the task-first line grammar).
 function relDue(iso?: string | null): { label: string; overdue: boolean } | null {
   if (!iso) return null;
   const today = new Date().toISOString().slice(0, 10);
@@ -901,10 +903,10 @@ type HorizonRow = { id: string; title: string; start: string; attendees: number;
 function ThisWeekCard() {
   const [h, setH] = useState<{ thisWeek: HorizonRow[] } | null>(null);
   useEffect(() => {
-    const cached = loadLS<{ thisWeek: HorizonRow[] }>('aug-home-horizon-v2');
+    const cached = loadLS<{ thisWeek: HorizonRow[] }>('aug-home-horizon-v3');
     if (cached) setH(cached);
     fetch('/api/home/horizon').then((r) => r.json())
-      .then((d) => { if (Array.isArray(d.thisWeek)) { setH({ thisWeek: d.thisWeek }); saveLS('aug-home-horizon-v2', { thisWeek: d.thisWeek }); } })
+      .then((d) => { if (Array.isArray(d.thisWeek)) { setH({ thisWeek: d.thisWeek }); saveLS('aug-home-horizon-v3', { thisWeek: d.thisWeek }); } })
       .catch(() => {});
   }, []);
   const rows = h?.thisWeek ?? [];
@@ -979,7 +981,7 @@ function peekOf(e: DeckEntry): PeekDesc {
   }
   if (e.kind === 'single') {
     const m = DO_META[e.item.source];
-    // TASK-FIRST (the Madalena grammar): the ask IS the line; the sender is the quiet hint; the subject
+    // TASK-FIRST (the one line grammar): the ask IS the line; the sender is the quiet hint; the subject
     // waits for the expand. Without an ask, the subject stands in.
     const title = e.item.ask || e.item.second || e.item.primary || '';
     const hint = e.item.ask ? (e.item.primary || null) : (e.item.ask === e.item.second ? null : e.item.primary);
@@ -2037,9 +2039,18 @@ export function HomeView() {
               // the project chip carries the deal; a bundle member inherits its bundle's name as
               // its chip. Curation (the judged pool) and judged order within groups are unchanged.
               type FlatRow = { item: DoItem; dealKey?: string };
+              // USER-CREATED ONLY: a row may only wear a TRACKED project's name as its chip
+              // (name or alias, case-insensitive). The server already gates the per-item tag;
+              // this same lookup gates the bundle-title fallback AND the By-project grouping —
+              // an untracked recognition label never surfaces as a project.
+              const trackedLookup = new Map<string, string>();
+              for (const t of brief?.trackedProjects ?? []) {
+                trackedLookup.set(t.name.toLowerCase(), t.name);
+                for (const a of t.aliases) trackedLookup.set(String(a).toLowerCase(), t.name);
+              }
               const flat: FlatRow[] = [];
               for (const e of ordered) {
-                if (e.kind === 'bundle') for (const it of e.items) flat.push({ item: { ...it, initiative: it.initiative ?? e.title } });
+                if (e.kind === 'bundle') for (const it of e.items) flat.push({ item: { ...it, initiative: it.initiative ?? trackedLookup.get(e.title.toLowerCase()) ?? null } });
                 else if (e.kind === 'single') flat.push({ item: e.item });
                 else if (e.kind === 'priority') flat.push({ item: priorityToItem(e.p) });
                 else flat.push({ item: dealToItem(e.deal), dealKey: e.deal.key });
@@ -2076,7 +2087,13 @@ export function HomeView() {
                       {(doGroupMode === 'project'
                         ? (() => {
                             const by = new Map<string, FlatRow[]>();
-                            for (const r of flat) { const k = r.item.initiative ?? 'No project'; (by.get(k) ?? by.set(k, []).get(k)!).push(r); }
+                            // trackedLookup hoisted above (shared with the bundle-title fallback);
+                            // untracked labels fold under "No project".
+                            for (const r of flat) {
+                              const raw = r.item.initiative ?? null;
+                              const k = raw ? (trackedLookup.get(raw.toLowerCase()) ?? 'No project') : 'No project';
+                              (by.get(k) ?? by.set(k, []).get(k)!).push(r);
+                            }
                             return [...by.entries()]
                               .sort((a, b) => (a[0] === 'No project' ? 1 : 0) - (b[0] === 'No project' ? 1 : 0))
                               .map(([k, rows]) => ({ key: `p-${k}`, label: k, rows }));
