@@ -355,6 +355,8 @@ Body:
 ${text.slice(0, 2500)}
 """
 
+description — THE TITLE LAW: a short IMPERATIVE, at most ~9 words, starting with a verb and naming the deliverable ("Send the Q3 proposal", "Review the contract by Friday"). NEVER notes/narration phrasing ("Discussed the possibility of…", "It was agreed that…", "X mentioned…", "Follow up regarding the conversation about…") and never a sentence describing the conversation — the title is the TASK, written the way it would sit on a to-do list.
+
 Return ONLY JSON. Empty array if there are no real commitments:
 {"commitments":[{"direction":"you_owe|awaiting","description":"short imperative, e.g. 'Send the Q3 proposal'","due_date":"YYYY-MM-DD or null","counterparty":"name/email or null","initiative":"short label or null","steps":["short sub-part", "..."]}]}`;
 

@@ -257,18 +257,26 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     const { data: js } = await sb.from('item_plans').select('entity_id, tasks')
       .eq('user_id', uid).eq('kind', 'judgment').limit(500);
     let disagree = 0;
+    const { applyVerdictConsequences: applyCons } = await import('../lib/work/apply-verdict');
     for (const j of (js ?? []) as Array<{ entity_id: string; tasks: { verdict?: { work?: string; resolution?: string } } }>) {
       const v = j.tasks?.verdict;
       if (!v || v.work !== 'none' || !v.resolution) continue;
       const m = /^(inbox|commitment):(.+)$/.exec(j.entity_id);
       if (!m) continue;
-      if (m[1] === 'inbox') {
-        const { data: it } = await sb.from('inbox_items').select('status').eq('id', m[2]).maybeSingle();
-        if (it?.status === 'pending') disagree++;
-      } else {
+      const stillOpen = async (): Promise<boolean> => {
+        if (m[1] === 'inbox') {
+          const { data: it } = await sb.from('inbox_items').select('status').eq('id', m[2]).maybeSingle();
+          return it?.status === 'pending';
+        }
         const { data: c } = await sb.from('commitments').select('status').eq('id', m[2]).maybeSingle();
-        if (c && ['open', 'pending', 'in_progress'].includes(String(c.status))) disagree++;
-      }
+        return !!c && ['open', 'pending', 'in_progress'].includes(String(c.status));
+      };
+      if (!(await stillOpen())) continue;
+      // A verdict can be JUDGED (a fixture, a cold cache write) without ever being SERVED — the
+      // consequence module is the mover, so the gate applies it (the same ONE module) and asserts.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await applyCons(sb, uid, { kind: m[1] as any, id: m[2] }, j.tasks.verdict as any);
+      if (await stillOpen()) disagree++;
     }
     check(`P10 ${label} · zero pending items whose verdict says settled (the judgment moved the posture)`,
       disagree === 0, disagree ? `${disagree} disagreement(s)` : 'in agreement');
@@ -300,9 +308,9 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   }
 
   // ═══ P12 · ONE LAW, EVERY SURFACE — the notice law lives in the spine too ═══
-  check('P12 · the spine applies the SAME notice law as the deck (isNoMoveNotice folded into no-move)',
+  check('P12 · the spine applies the SAME notice law as the deck (isNoMoveNotice, incl. the RAW kind tier)',
     src('lib/work-items/model.ts').includes("from '@/lib/inbox/notice-demotion'") &&
-    src('lib/work-items/model.ts').includes('isNoMoveNotice({ u, fromEmail'));
+    src('lib/work-items/model.ts').includes('isNoMoveNotice({ u, rawKind: rawMailKindOf(sd), fromEmail'));
   {
     const { buildWorkItems } = await import('../lib/work-items/model');
     const { isNoMoveNotice } = await import('../lib/inbox/notice-demotion');
@@ -336,13 +344,136 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   check('structural · the correction CASCADES (membership re-homes the item\'s engine turns) + a room reset exists',
     src('lib/entities/membership.ts').includes("from('room_turns').update({ room_key: newRoomKey })") &&
     src('app/api/room/turns/route.ts').includes('export async function DELETE') &&
-    src('components/home/item-rail.tsx').includes('Clear this conversation'));
+    src('components/home/item-rail.tsx').includes('Archive this conversation'));
   check('structural · membership changes broadcast; every reader refetches (chip↔rail coherence)',
     src('components/entities/add-to-work-control.tsx').includes('aug:membership-changed') &&
     src('components/home/item-detail.tsx').includes("addEventListener('aug:membership-changed'"));
   check('structural · the nudge mirrors the counterparty\'s CONCRETE words; delegation narrations carry WHY',
     src('lib/inbox/draft-reply.ts').includes('mirrorText') && src('lib/prepare/pass.ts').includes('mirrorText') &&
     src('lib/prepare/pass.ts').includes('Nothing goes out without you.'));
+
+  // ═══ P13 · PROJECTS ARE USER-CREATED ONLY, ON EVERY SURFACE ═══
+  check('P13 · the portfolio renders TRACKED only (no smaller-things fold, no untracked rows anywhere)',
+    src('components/entities/portfolio-view.tsx').includes('!hidden.has(e.id) && e.tracked') &&
+    !src('components/entities/portfolio-view.tsx').includes('smaller thing'));
+  check('P13 · the deck\'s By-project groups only under TRACKED names (label-era initiatives fold to "No project")',
+    src('app/api/home/brief/route.ts').includes('trackedProjects') &&
+    src('components/home/home-view.tsx').includes('trackedLookup'));
+  check('P13 · Timeline item tags + lanes carry TRACKED names only (+ stale-cache keys bumped)',
+    src('app/api/home/timeline/route.ts').includes('if (!e.tracked) continue;') &&
+    src('components/timeline/timeline-view.tsx').includes('aug-timeline-v3') &&
+    src('components/timeline/timeline-gantt.tsx').includes('aug-timeline-gantt-v2'));
+  check('P13 · the New-project modal is name+description only (seeding lives in the room)',
+    !src('components/entities/portfolio-view.tsx').includes('+ Add work'));
+
+  // ═══ P14 · FOUNDING RECOGNIZES WHAT THE BRAIN ALREADY KNOWS (the near-name lesson, live) ═══
+  {
+    const { proposeFoundingAdoptions, narrateFounding } = await import('../lib/entities/founding');
+    // A known near-name entity WITH a member → founding must propose it.
+    const { data: known } = await sb.from('work_entities').insert({
+      user_id: PERSONAL, kind: 'initiative', name: 'ZZ Widget Alpha Rollout', aliases: ['ZZ Widget Alpha Rollout'],
+      tracked: false, status: 'active',
+    }).select('id').maybeSingle();
+    const { data: fresh } = await sb.from('work_entities').insert({
+      user_id: PERSONAL, kind: 'initiative', name: 'Widget Alpha', aliases: ['Widget Alpha'],
+      tracked: true, status: 'active',
+    }).select('id').maybeSingle();
+    if (!known?.id || !fresh?.id) check('P14 live · probe inserts failed', false);
+    else {
+      await sb.from('entity_links').insert({ user_id: PERSONAL, item_kind: 'inbox_item', item_id: '00000000-0000-0000-0000-0000000000b1', entity_id: known.id, via: 'user', reason: 'smoke' });
+      const props = await proposeFoundingAdoptions(sb, PERSONAL, fresh.id as string, 'Widget Alpha');
+      check('P14 live · founding a near-name project PROPOSES the known body of work (never silent, never missed)',
+        props.some((x) => x.id === known.id && x.count > 0), JSON.stringify(props.map((x) => `${x.name}:${x.count}`)));
+      await narrateFounding(sb, PERSONAL, fresh.id as string, 'Widget Alpha', 'started');
+      const { data: turn } = await sb.from('room_turns').select('text, component')
+        .eq('user_id', PERSONAL).eq('room_key', fresh.id as string).eq('dedupe_key', 'founding-proposal').maybeSingle();
+      const comp = (turn?.component ?? null) as { key?: string; state?: { options?: unknown[] } } | null;
+      check('P14 live · the proposal is a DURABLE confirmable turn (component payload, adopt options)',
+        !!turn && comp?.key === 'founding_proposal' && (comp.state?.options?.length ?? 0) >= 1,
+        String(turn?.text ?? '').slice(0, 80));
+      await sb.from('room_turns').delete().eq('user_id', PERSONAL).eq('room_key', fresh.id as string);
+      await sb.from('entity_links').delete().eq('user_id', PERSONAL).in('entity_id', [known.id, fresh.id]);
+      await sb.from('work_entities').delete().in('id', [known.id, fresh.id]);
+    }
+  }
+  check('P14 · adoption is the ONE absorb mechanic + label-era members link on confirm',
+    src('app/api/entities/adopt/route.ts').includes('absorbEntity') &&
+    src('app/api/entities/adopt/route.ts').includes('adopted with') &&
+    src('components/home/item-rail.tsx').includes("act: 'adopt'"));
+  check('P14 · conversation HISTORY: Clear archives (a session boundary, never a deletion); sessions listable',
+    src('lib/room/turns.ts').includes('archiveRoomTurns') && src('lib/room/turns.ts').includes('listRoomSessions') &&
+    src('app/api/room/turns/route.ts').includes('archiveRoomTurns(') &&
+    src('components/home/item-rail.tsx').includes('Back to current'));
+
+  // ═══ P15 · A DECK ROW NEVER WEARS AN UNTRACKED PROJECT'S NAME (row tags, slipping, bundle fallback) ═══
+  check('P15 · row tags gate at the ONE derivation point (clusterTag → tracked canonical; slipping tracked-only; bundle-title fallback gated)',
+    src('app/api/home/brief/route.ts').includes('trackedTagLookup') &&
+    src('app/api/home/brief/route.ts').includes('!st.summary || !e.tracked') &&
+    src('components/home/home-view.tsx').includes('trackedLookup.get(e.title.toLowerCase())'));
+
+  // ═══ P16 · THE ZAASK CLASS, END TO END — a kind-only notification judges none WITHOUT AI and the
+  // deck's demotion source (the cached verdict) picks it up. The floor reads the RAW kind (the
+  // brain's own judgment of the mail), not sender patterns. ═══
+  {
+    const { judgeWork } = await import('../lib/work/judge');
+    const { data: probe } = await sb.from('inbox_items').insert({
+      user_id: PERSONAL, source: 'email', status: 'pending', work_state: 'work_prepared',
+      work_title: 'A new update is available in your client portal',
+      source_data: {
+        subject: 'A new update is available in your client portal',
+        body: 'There is a new update waiting for you in your client portal. Log in to view it.',
+        from_name: 'Acme Portal', from_address: 'info@acme-portal-example.com', received_at: new Date().toISOString(),
+        // KIND-ONLY understanding — the backfill class: a reasoned mailKind, no role/relevance
+        // (coercion nulls the full understanding; the raw kind must still carry the demotion).
+        understanding: { mailKind: 'notification' },
+      },
+    }).select('id').maybeSingle();
+    if (!probe?.id) check('P16 live · probe insert failed', false);
+    else {
+      const v = await judgeWork(sb, PERSONAL, { kind: 'inbox', id: String(probe.id) });
+      check('P16 live · a kind-only notification from an unpatterned sender (info@) judges none at the floor',
+        v.work === 'none' && !v.resolution, `${v.work} · "${v.reason.slice(0, 60)}"`);
+      const { data: plan } = await sb.from('item_plans').select('tasks')
+        .eq('user_id', PERSONAL).eq('kind', 'judgment').eq('entity_id', `inbox:${probe.id}`).maybeSingle();
+      const pv = ((plan?.tasks ?? {}) as { verdict?: { work?: string; resolution?: string } }).verdict;
+      check('P16 live · the cached plain-none verdict exists — the deck\'s judgedNoneIds source demotes this row',
+        pv?.work === 'none' && !pv?.resolution && src('app/api/home/brief/route.ts').includes('judgedNoneIds'),
+        `cached=${pv?.work ?? 'missing'}`);
+      await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('entity_id', `inbox:${probe.id}`);
+      await sb.from('inbox_items').delete().eq('id', probe.id);
+    }
+  }
+  check('P16 · verdict STICKINESS is reasoned, never a lock (the prior verdict anchors the re-judgment prompt)',
+    src('lib/work/judge.ts').includes('PRIOR JUDGMENT') &&
+    src('lib/work/judge.ts').includes('hit: WorkVerdict | null; prior: WorkVerdict | null'));
+
+  // ═══ P17 · A COWORKER'S ASK IS A CONVERSATION EVENT, NEVER A DELIVERABLE — the evaluator judges
+  // the shape (needs_input, reasoned), delegation routes it as a room checklist, the pass never
+  // stamps "Prepared by" on an ask, and an attach clears it. ═══
+  {
+    const { evaluateDeliverable } = await import('../lib/prepare/evaluate');
+    // The Max monologue-ask class, verbatim shape: a polite list of things only the principal has.
+    const review = await evaluateDeliverable(sb, PERSONAL, {
+      content: 'Thanks for handing this over. To build the outreach list properly, I need a few things from you before I can start:\n' +
+        '1. The target account list (or the criteria you want me to use)\n' +
+        '2. Access to the latest pricing sheet\n' +
+        '3. Your call on tone — formal or conversational?\n' +
+        'Once I have these, I will get the first draft to you within the day.',
+      task: 'Build the outbound prospect list', recipient: null, entityId: null, kind: 'deliverable',
+    });
+    check('P17 live · the evaluator judges a monologue-ask as needs_input with the concrete missing things',
+      review.verdict === 'needs_input' && (review.missing?.length ?? 0) >= 2,
+      `${review.verdict} · missing=${JSON.stringify((review.missing ?? []).slice(0, 3))}`);
+  }
+  check('P17 · a needs_input delegation is routed as a room CHECKLIST turn, never stored as prepared work',
+    src('lib/home/delegate.ts').includes("key: 'input_checklist'") &&
+    src('lib/home/delegate.ts').includes('needsInput') &&
+    src('lib/prepare/pass.ts').includes('needs input') &&
+    src('lib/prepare/pass.ts').includes('is waiting on input from you'));
+  check('P17 · the loop closes — an attach CLEARS the ask (component strips, text stays) and re-opens the pass; the rail renders rows wired to ingest',
+    src('app/api/items/ingest/route.ts').includes('input_checklist') &&
+    src('components/home/item-rail.tsx').includes('input_checklist') &&
+    src('components/home/item-rail.tsx').includes('t.checklist'));
 
   console.log('\n═══ THE PROMISE GATES ═══');
   let pass = 0;

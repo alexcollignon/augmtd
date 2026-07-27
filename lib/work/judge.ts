@@ -16,7 +16,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { coerceUnderstanding, type ItemUnderstanding } from '@/lib/inbox/item-understanding';
-import { isNoMoveNotice, isAutomatedSenderStrong } from '@/lib/inbox/notice-demotion';
+import { isNoMoveNotice, isAutomatedSenderStrong, rawMailKindOf } from '@/lib/inbox/notice-demotion';
 import { computeThreadReplyState, type ThreadMessage } from '@/lib/inbox/thread-resolution';
 import { getPrepared, type PreparedArtifact } from '@/lib/prepare/read';
 import { loadRoster, type RosterEntry } from '@/lib/prepare/route-suggestion';
@@ -83,13 +83,19 @@ function coerceVerdict(raw: unknown, roster: RosterEntry[]): WorkVerdict | null 
 
 /** The judgment cache rides item_plans (kind 'judgment', entity_id = `${kind}:${id}` — free TEXT,
  *  zero-migration, owner-RLS). tasks jsonb holds { verdict, sig }. */
-async function readCache(client: SupabaseClient, userId: string, input: JudgeInput, sig: string): Promise<WorkVerdict | null> {
+async function readCache(
+  client: SupabaseClient, userId: string, input: JudgeInput, sig: string,
+): Promise<{ hit: WorkVerdict | null; prior: WorkVerdict | null }> {
   const { data } = await client.from('item_plans').select('tasks')
     .eq('user_id', userId).eq('kind', 'judgment').eq('entity_id', `${input.kind}:${input.id}`).maybeSingle();
   const t = (data?.tasks ?? null) as { verdict?: unknown; sig?: string } | null;
-  if (!t || t.sig !== sig) return null;
-  const v = t.verdict as WorkVerdict | undefined;
-  return v && WORKS.has(v.work) && COMPONENT_KEYS.has(v.component) ? v : null;
+  const v = (t?.verdict ?? null) as WorkVerdict | null;
+  const valid = !!v && WORKS.has(v.work) && COMPONENT_KEYS.has(v.component);
+  if (!valid) return { hit: null, prior: null };
+  // A stale-sig verdict is still the judge's OWN PRIOR JUDGMENT — fed back into the re-judgment
+  // as self-consistency context (stickiness through reasoning, never a lock): an ambiguous item
+  // must not flip verdicts on a daily re-check unless something material actually changed.
+  return t!.sig === sig ? { hit: v, prior: v } : { hit: null, prior: v };
 }
 
 async function writeCache(client: SupabaseClient, userId: string, input: JudgeInput, sig: string, verdict: WorkVerdict): Promise<void> {
@@ -103,7 +109,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
   try {
     // ── Load the item + its brain neighborhood. ──
     let title = '', body = '', who: string | null = null, whoEmail: string | null = null;
-    let u: ItemUnderstanding | null = null, activityAt = '', workState: string | null = null;
+    let u: ItemUnderstanding | null = null, activityAt = '', workState: string | null = null, rawKind: string | null = null;
     let threadMsgs: ThreadMessage[] = [];
     if (input.kind === 'inbox') {
       const { data: it } = await client.from('inbox_items')
@@ -116,6 +122,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       who = (sd.from_name as string) || (sd.from_address as string) || null;
       whoEmail = (sd.from_address as string) || null;
       u = coerceUnderstanding(sd.understanding);
+      rawKind = rawMailKindOf(sd);
       workState = (it.work_state as string) || null;
       activityAt = String(it.last_activity_at || it.created_at || '');
       const tid = (sd.thread_id as string) || null;
@@ -144,7 +151,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     // The day rides the sig: with time-awareness a verdict is a function of TODAY (what's live now
     // can be moot tomorrow) — at most one re-judgment per item per day.
     const sig = `${JUDGE_VERSION}:${new Date().toISOString().slice(0, 10)}:${activityAt}:${pool.length}:${pool[0]?.at ?? ''}`;
-    const cached = await readCache(client, userId, input, sig);
+    const { hit: cached, prior } = await readCache(client, userId, input, sig);
     if (cached) return cached;
 
     // ── STRUCTURAL FLOORS (no AI): answered → none · the ownership notice law → none. ──
@@ -156,7 +163,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         return v;
       }
     }
-    if (input.kind === 'inbox' && isNoMoveNotice({ u, fromEmail: whoEmail, fromName: who, subject: title, workState })) {
+    if (input.kind === 'inbox' && isNoMoveNotice({ u, rawKind, fromEmail: whoEmail, fromName: who, subject: title, workState })) {
       const v = fallbackVerdict('an automated notice nobody owes a move on');
       await writeCache(client, userId, input, sig, v);
       return v;
@@ -204,6 +211,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         `THE ITEM${who ? ` (from ${who})` : ''}: ${title.slice(0, 140)}\n${body ? `${body.slice(0, 1200)}\n` : ''}\n` +
         `THE TEAM (for executor "coworker"):\n${roster.map((w) => `- ${w.name} — ${w.role.replace(/_/g, ' ')}: ${w.description}`).join('\n') || '(none)'}\n\n` +
         `COMPONENTS (pick exactly one — what the work surface should mount):\n${renderComponentOptions()}\n\n` +
+        (prior ? `YOUR PRIOR JUDGMENT on this item: work=${prior.work}${prior.resolution ? ` resolution=${prior.resolution}` : ''} — "${prior.reason.slice(0, 120)}". BE CONSISTENT with it unless something in the item MATERIALLY changed since; do not flip an ambiguous call on a re-read.\n\n` : '') +
         `Rules:\n` +
         `- work: reply|decide|produce|send_file|schedule|chase|none. CONSERVATIVE: unsure → "none"/"message_only" — a wrong mount costs trust, none costs nothing.\n` +
         `- A commitment with direction "awaiting" means the COUNTERPARTY owes the user — the natural work is "chase" (nudge what you're owed) unless it's moot or the item clearly says otherwise.\n` +

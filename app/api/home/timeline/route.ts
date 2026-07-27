@@ -32,11 +32,14 @@ export async function GET() {
     const entityTags: Record<string, { name: string }> = {};
     try {
       const nowMs = Date.now();
+      // USER-CREATED ONLY: an item's project TAG (and a project lane) may only carry a TRACKED
+      // name — an untracked entity is invisible as a project on every surface.
       const { data: wents } = await supabase.from('work_entities')
-        .select('id, name, state, last_event_at').eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null).limit(400);
+        .select('id, name, tracked, state, last_event_at').eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null).limit(400);
       const slipById = new Map<string, boolean>();
       const nameById = new Map<string, string>();
-      for (const e of (wents ?? []) as Array<{ id: string; name: string; state: { momentum?: string; whoOwes?: { you?: string[] } } | null; last_event_at: string | null }>) {
+      for (const e of (wents ?? []) as Array<{ id: string; name: string; tracked?: boolean; state: { momentum?: string; whoOwes?: { you?: string[] } } | null; last_event_at: string | null }>) {
+        if (!e.tracked) continue;
         const st = e.state ?? {};
         const quiet = e.last_event_at ? (nowMs - new Date(e.last_event_at).getTime()) / 86400000 : 0;
         slipById.set(e.id, (st.momentum === 'gone_quiet' || st.momentum === 'stalled') && ((st.whoOwes?.you?.length ?? 0) > 0 || quiet >= 14));

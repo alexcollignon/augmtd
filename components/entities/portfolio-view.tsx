@@ -13,7 +13,7 @@
 // next-move pill; verbs = Done · Not a project inline, the rest behind ⋯.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import {
@@ -26,7 +26,6 @@ import { broadcastProjectsUpdated } from '@/lib/projects/broadcast';
 import { RiseIn } from '@/components/home/rise-in';
 import EntityRoom from '@/components/entities/entity-room';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
-import { AddItemPicker, type LooseItem } from '@/components/entities/add-item-picker';
 import { useLiveRefresh } from '@/hooks/use-live-refresh';
 import { MOMENTUM as MOMENTUM_TOKENS } from '@/lib/work-items/states';
 
@@ -202,31 +201,12 @@ function Row({ e, onAction, onOpen, others = [] }: { e: Entity; onAction: (id: s
   );
 }
 
-// SMALLER THINGS// SMALLER THINGS — an errand is a plain row: dot · title · next action · ✓ / ✕. No Stage, no Goals,
-// no project chrome — real work, not a slot in the user's head.
-function SmallRow({ e, onAction, onOpen }: { e: Entity; onAction: (id: string, action: string) => void; onOpen: (id: string) => void }) {
-  const m = MOM[e.momentum] ?? MOM.active;
-  return (
-    <div className="group flex items-center gap-3 rounded-lg border border-neutral-200/60 bg-white px-3.5 py-2 hover:border-neutral-300 transition-all">
-      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${m.dot}`} />
-      <button onClick={() => onOpen(e.id)} className="min-w-0 flex-1 text-left">
-        <span className="text-[12.5px] text-neutral-700 truncate">{e.name}</span>
-        {(e.nextMove?.title || e.summary) && <span className="text-[11.5px] text-neutral-400 ml-2 truncate">{e.nextMove?.title || e.summary}</span>}
-      </button>
-      <span className="flex-shrink-0 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button onClick={() => onAction(e.id, 'track')} className="text-neutral-300 hover:text-indigo-500 transition-colors" title="Make it a project (pin)"><StarIcon className="w-4 h-4" /></button>
-        <button onClick={() => onAction(e.id, 'done')} className="text-neutral-300 hover:text-emerald-600 transition-colors" title="Done"><CheckIcon className="w-4 h-4" /></button>
-        <button onClick={() => onAction(e.id, 'mute')} className="text-neutral-300 hover:text-neutral-600 transition-colors" title="Not relevant"><XMarkIcon className="w-4 h-4" /></button>
-      </span>
-    </div>
-  );
-}
-
 export default function PortfolioView({ onDetailChange }: { onDetailChange?: (open: boolean) => void } = {}) {
-  const [data, setData] = useState<Portfolio | null>(() => loadLS<Portfolio>('aug-portfolio-v1'));
+  // SSR'd-route rule: initializer COLD; the cache hydrates pre-paint in a layout effect.
+  const [data, setData] = useState<Portfolio | null>(null);
+  useLayoutEffect(() => { const c = loadLS<Portfolio>('aug-portfolio-v1'); if (c) setData((prev) => prev ?? c); }, []);
   const [statusTab, setStatusTab] = useState<'active' | 'done' | 'archived' | 'muted'>('active');
   const [tailOpen, setTailOpen] = useState(false);
-  const [smallOpen, setSmallOpen] = useState(false);
   const [hidden, setHidden] = useState<Set<string>>(new Set()); // optimistic removals this session
   const [selected, setSelected] = useState<string | null>(null); // the open entity detail
   // Deep-link door (P7c): /?view=projects&entity=<id> opens straight into this deal's overview —
@@ -242,8 +222,6 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
-  const [newItems, setNewItems] = useState<LooseItem[]>([]); // work chosen at creation (the one picker)
-  const [newPicking, setNewPicking] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(() => {
@@ -265,16 +243,12 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
       if (!res.ok) throw new Error();
       const { id } = await res.json();
       // Attach the chosen work — the ONE sticky membership write per item (locked, cascaded, reconciled).
-      if (id && newItems.length) {
-        await Promise.all(newItems.map((it) =>
-          fetch('/api/items/entity', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: it.kind, id: it.id, entityId: id }) }).catch(() => {})));
-      }
       broadcastProjectsUpdated({ reason: 'create' });
-      setCreating(false); setNewName(''); setNewDesc(''); setNewItems([]); setNewPicking(false);
+      setCreating(false); setNewName(''); setNewDesc('');
       load();
       if (id) openDetail(id);
     } catch { toast.error('Could not create the project'); } finally { setSaving(false); }
-  }, [newName, newDesc, newItems, saving, load, openDetail]);
+  }, [newName, newDesc, saving, load, openDetail]);
   const closeDetail = useCallback(() => { setSelected(null); onDetailChange?.(false); load(); }, [onDetailChange, load]);
   useEffect(() => () => onDetailChange?.(false), [onDetailChange]);
   // Lock body scroll while the modal is open (stops the page jumping / scrolling behind the overlay).
@@ -341,7 +315,11 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
     );
   }
 
-  const live = data.entities.filter((e) => !hidden.has(e.id));
+  // USER-CREATED ONLY (locked): the portfolio renders TRACKED projects exclusively — an
+  // untracked entity never appears as a row here, in search, or in any status tab. Recognition
+  // keeps working underneath; discovery lives on the item ("connects to X · Track") and in the
+  // founding proposal at creation.
+  const live = data.entities.filter((e) => !hidden.has(e.id) && e.tracked);
   // Instant SEARCH — spans everything the memory holds about a body of work: name, where it stands, the
   // next move, who owes whom (people), and its event stream (topics/content/to-dos). Client-side, instant.
   const q = query.trim().toLowerCase();
@@ -361,9 +339,8 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
   const flat = searching || statusTab !== 'active';
   const projects = flat ? inTab : inTab.filter((e) => e.tracked);
   // R4 (one-room) — projects are HUMAN-CREATED only: the brain never pushes containers. Everything
-  // untracked (whatever its judged scope) folds quietly into "smaller things"; the discovery path
+  // (smaller-things fold removed — see the tracked-only filter above); the discovery path
   // is the item's context strip ("Connects to X · Track"), never a suggestion card here.
-  const smaller = flat ? [] : inTab.filter((e) => !e.tracked);
   // Within accepted projects: the reasoned priority leads; the rest folds (a presentation cutoff
   // over the judged weight — plumbing, per the doctrine).
   const main = flat ? projects : projects.filter((e) => e.prominent);
@@ -404,24 +381,6 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
                 placeholder="Description (optional)"
                 className="w-full resize-none rounded-lg border border-neutral-200 bg-white px-3 py-2 text-[13px] text-neutral-700 outline-none focus:border-indigo-300 transition-colors"
               />
-              {/* Found it WITH work in it (July-24) — the ONE shared picker; chips are removable. */}
-              <div>
-                {newItems.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mb-1.5">
-                    {newItems.map((it) => (
-                      <span key={`${it.kind}-${it.id}`} className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[11.5px] text-neutral-600 max-w-[220px]">
-                        <span className="truncate">{it.label}</span>
-                        <button onClick={() => setNewItems((prev) => prev.filter((x) => x.id !== it.id))} className="text-neutral-300 hover:text-rose-500 transition-colors"><XMarkIcon className="w-3 h-3" /></button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <div className="relative inline-block">
-                  <button onClick={() => setNewPicking((v) => !v)} className="text-[12.5px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors">+ Add work</button>
-                  {newPicking && <AddItemPicker align="left" onClose={() => setNewPicking(false)}
-                    onPick={(it) => { setNewPicking(false); setNewItems((prev) => (prev.some((x) => x.id === it.id) ? prev : [...prev, it])); }} />}
-                </div>
-              </div>
             </div>
             <div className="mt-4 flex items-center justify-end gap-2">
               <button onClick={() => setCreating(false)} disabled={saving} className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-neutral-500 hover:text-neutral-800 transition-colors">Cancel</button>
@@ -465,15 +424,6 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
               <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${tailOpen ? 'rotate-90' : ''}`} />
             </button>
             {tailOpen && <div className="space-y-2 pt-1">{tail.map((e) => <Row key={e.id} e={e} onAction={onAction} onOpen={openDetail} others={mergeTargets} />)}</div>}
-          </>
-        )}
-        {smaller.length > 0 && (
-          <>
-            <button onClick={() => setSmallOpen((v) => !v)} className="inline-flex items-center gap-1 text-[12px] font-medium text-neutral-400 hover:text-neutral-600 transition-colors pt-1">
-              {smaller.length} smaller thing{smaller.length === 1 ? '' : 's'}
-              <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${smallOpen ? 'rotate-90' : ''}`} />
-            </button>
-            {smallOpen && <div className="space-y-1.5 pt-1">{smaller.map((e) => <SmallRow key={e.id} e={e} onAction={onAction} onOpen={openDetail} />)}</div>}
           </>
         )}
         {inTab.length === 0 && <p className="text-[13px] text-neutral-400 py-8 text-center">Nothing here.</p>}

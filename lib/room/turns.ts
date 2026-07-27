@@ -65,24 +65,78 @@ export async function writeRoomTurn(
   } catch { /* non-fatal — the in-memory store still renders this session */ }
 }
 
-/** The room's conversation, oldest→newest (last `limit` turns). Empty pre-migration/on failure. */
+const mapRows = (rows: Array<Record<string, unknown>>): RoomTurn[] =>
+  rows.map((r) => ({
+    id: r.id as string,
+    role: r.role as 'user' | 'system',
+    text: String(r.text ?? ''),
+    refs: (r.refs as RoomTurn['refs']) ?? undefined,
+    component: (r.component as RoomTurn['component']) ?? undefined,
+    author: (r.author as RoomTurnAuthor | null) ?? undefined,
+    createdAt: (r.created_at as string) ?? undefined,
+  }));
+
+/** The room's LIVE conversation, oldest→newest (last `limit` turns; archived sessions excluded).
+ *  Pre-migration (no archived_at column) the filtered query fails → retry unfiltered. */
 export async function readRoomTurns(
   client: SupabaseClient, userId: string, roomKey: string, limit = 50,
 ): Promise<RoomTurn[]> {
   try {
+    let { data, error } = await client.from('room_turns')
+      .select('id, role, text, refs, component, author, created_at')
+      .eq('user_id', userId).eq('room_key', roomKey).is('archived_at', null)
+      .order('created_at', { ascending: false }).limit(limit);
+    if (error) {
+      ({ data, error } = await client.from('room_turns')
+        .select('id, role, text, refs, component, author, created_at')
+        .eq('user_id', userId).eq('room_key', roomKey)
+        .order('created_at', { ascending: false }).limit(limit));
+    }
+    if (error || !data) return [];
+    return mapRows((data as Array<Record<string, unknown>>).reverse());
+  } catch { return []; }
+}
+
+/** ARCHIVE the live conversation ("Clear" = a session boundary, never a deletion). Pre-migration
+ *  degrades to the old delete so Clear always works. */
+export async function archiveRoomTurns(client: SupabaseClient, userId: string, roomKey: string): Promise<void> {
+  try {
+    const { error } = await client.from('room_turns')
+      .update({ archived_at: new Date().toISOString() })
+      .eq('user_id', userId).eq('room_key', roomKey).is('archived_at', null);
+    if (error) await client.from('room_turns').delete().eq('user_id', userId).eq('room_key', roomKey);
+  } catch { /* non-fatal */ }
+}
+
+export type RoomSession = { at: string; count: number; firstText: string };
+
+/** The room's archived SESSIONS (History ⌄), newest first — turns sharing an archived_at batch. */
+export async function listRoomSessions(client: SupabaseClient, userId: string, roomKey: string): Promise<RoomSession[]> {
+  try {
+    const { data, error } = await client.from('room_turns')
+      .select('archived_at, text, created_at')
+      .eq('user_id', userId).eq('room_key', roomKey).not('archived_at', 'is', null)
+      .order('created_at', { ascending: true }).limit(1000);
+    if (error || !data) return [];
+    const by = new Map<string, { count: number; firstText: string }>();
+    for (const r of data as Array<{ archived_at: string; text: string }>) {
+      const k = r.archived_at;
+      const e = by.get(k);
+      if (e) e.count++;
+      else by.set(k, { count: 1, firstText: String(r.text ?? '').slice(0, 80) });
+    }
+    return [...by.entries()].map(([at, v]) => ({ at, ...v })).sort((a, b) => b.at.localeCompare(a.at));
+  } catch { return []; }
+}
+
+/** One archived session's turns, oldest→newest. */
+export async function readRoomSession(client: SupabaseClient, userId: string, roomKey: string, at: string): Promise<RoomTurn[]> {
+  try {
     const { data, error } = await client.from('room_turns')
       .select('id, role, text, refs, component, author, created_at')
-      .eq('user_id', userId).eq('room_key', roomKey)
-      .order('created_at', { ascending: false }).limit(limit);
+      .eq('user_id', userId).eq('room_key', roomKey).eq('archived_at', at)
+      .order('created_at', { ascending: true }).limit(200);
     if (error || !data) return [];
-    return (data as Array<Record<string, unknown>>).reverse().map((r) => ({
-      id: r.id as string,
-      role: r.role as 'user' | 'system',
-      text: String(r.text ?? ''),
-      refs: (r.refs as RoomTurn['refs']) ?? undefined,
-      component: (r.component as RoomTurn['component']) ?? undefined,
-      author: (r.author as RoomTurnAuthor | null) ?? undefined,
-      createdAt: (r.created_at as string) ?? undefined,
-    }));
+    return mapRows(data as Array<Record<string, unknown>>);
   } catch { return []; }
 }

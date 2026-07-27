@@ -61,6 +61,12 @@ export async function GET(request: NextRequest) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       if (!draftTypes.has(classifyItem(it as any))) continue;
       try {
+        // THE ONE GATE (promise law — this legacy rule loop was the LAST ungated path to a draft;
+        // the "vendor reminder re-drafted itself" class): the judged verdict must say the work
+        // is a reply. Cached on the item — a read on repeat sweeps.
+        const { judgeWork } = await import('@/lib/work/judge');
+        const verdict = await judgeWork(sb, p.id, { kind: 'inbox', id: it.id as string });
+        if (verdict.work !== 'reply' && verdict.work !== 'send_file') continue;
         const body = await generateReplyDraft(p.id, sd, sb, instructions);
         if (body) {
           await sb.from('inbox_items')

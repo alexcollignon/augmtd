@@ -48,11 +48,15 @@ export type RailView = {
  *  one conversation core (hand-offs ride the existing steer path). */
 export type TurnAction = { label: string } & (
   | { act: 'prepare'; itemKind: 'inbox' | 'commitment'; itemId: string }
-  | { act: 'say'; text: string });
+  | { act: 'say'; text: string }
+  | { act: 'adopt'; targetId: string; sourceId: string });
 
 type Turn =
   | { role: 'user'; text: string }
-  | { role: 'system'; text: string; key?: string; actions?: TurnAction[]; refs?: Array<{ label: string; href: string | null }>; files?: Array<{ id: string; filename: string; source: string }>; author?: { name: string; role?: string | null } };
+  | { role: 'system'; text: string; key?: string; actions?: TurnAction[]; refs?: Array<{ label: string; href: string | null }>; files?: Array<{ id: string; filename: string; source: string }>; author?: { name: string; role?: string | null };
+      /** FIX 3 — a coworker's ASK renders as an inline checklist (input_checklist component): the
+       *  concrete things they need from the principal. Rows wire to the 📎 ingest funnel. */
+      checklist?: string[] };
 
 // THE ROOM (P7c-c1 → one-room R1): the conversation is PER-DEAL, not per-item — navigating between
 // a deal's artifacts keeps the chat. The module store is now only the LIVE RENDER CACHE; the durable
@@ -181,8 +185,23 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!alive || !Array.isArray(d?.turns)) return;
-        const server: Turn[] = (d.turns as Array<{ role: 'user' | 'system'; text: string; refs?: Array<{ label: string; href: string | null }>; author?: { name: string; role?: string | null } | null }>)
-          .map((t) => ({ role: t.role, text: t.text, refs: t.refs ?? undefined, author: t.author ?? undefined } as Turn));
+        const server: Turn[] = (d.turns as Array<{ role: 'user' | 'system'; text: string; refs?: Array<{ label: string; href: string | null }>; author?: { name: string; role?: string | null } | null; component?: { key?: string; state?: { targetId?: string; options?: Array<{ label: string; sourceId: string }>; items?: string[] } } | null }>)
+          .map((t) => {
+            const turn: Turn = { role: t.role, text: t.text, refs: t.refs ?? undefined, author: t.author ?? undefined } as Turn;
+            // Durable inline components: the founding proposal's options re-render as actions on
+            // every load until taken (the adopt endpoint updates/deletes the stored turn).
+            if (turn.role === 'system' && t.component?.key === 'founding_proposal' && t.component.state?.targetId) {
+              const tid = t.component.state.targetId;
+              turn.actions = (t.component.state.options ?? []).map((o) => ({ label: o.label, act: 'adopt' as const, targetId: tid, sourceId: o.sourceId }));
+              turn.key = 'founding-proposal';
+            }
+            // FIX 3 — a coworker's ASK: the input checklist re-renders on every load until an
+            // ingest clears it (the ingest route strips the component; the text stays as history).
+            if (turn.role === 'system' && t.component?.key === 'input_checklist' && Array.isArray(t.component.state?.items)) {
+              turn.checklist = t.component.state.items.map((m) => String(m)).filter(Boolean);
+            }
+            return turn;
+          });
         setTurnsRaw((local) => {
           if (local.length > server.length) return local;
           _dealTurns.set(roomKey, server);
@@ -199,6 +218,10 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
   }, [roomKey]);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  // History (Claude-style): archived sessions of THIS room; viewing one is read-only.
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [sessions, setSessions] = useState<Array<{ at: string; count: number; firstText: string }> | null>(null);
+  const [viewingSession, setViewingSession] = useState<{ at: string; turns: Turn[] } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -217,6 +240,31 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
   const runAction = async (a: TurnAction) => {
     if (busy) return;
     if (a.act === 'say') { await send(a.text); return; }
+    if (a.act === 'adopt') {
+      setBusy(true);
+      try {
+        const res = await fetch('/api/entities/adopt', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetId: a.targetId, sourceId: a.sourceId }),
+        });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) setTurns((prev) => [...prev, { role: 'system', text: d.error || "I couldn't bring that in just now." }]);
+        else {
+          // The server rewrote the durable proposal + narrated the result — re-read the room.
+          const r = await fetch(`/api/room/turns?key=${encodeURIComponent(roomKey)}`).then((x) => (x.ok ? x.json() : null)).catch(() => null);
+          if (Array.isArray(r?.turns)) { /* the hydrate effect path re-maps on next event; do it inline */ }
+          try { window.dispatchEvent(new CustomEvent('aug:prepared', { detail: {} })); } catch { /* SSR-safe */ }
+          try { window.dispatchEvent(new CustomEvent('aug:deal-turn', { detail: { entityId: roomKey } })); } catch { /* SSR-safe */ }
+          setTurns((prev) => prev.map((t) => (t.role === 'system' && t.key === 'founding-proposal'
+            ? { ...t, actions: t.actions?.filter((x) => !(x.act === 'adopt' && x.sourceId === a.sourceId)) }
+            : t)));
+          setTurns((prev) => [...prev, { role: 'system', text: `Brought it in — ${d.total ?? ''} items now on ${d.keptName ?? 'this project'}.` }]);
+        }
+      } catch {
+        setTurns((prev) => [...prev, { role: 'system', text: "I couldn't bring that in just now." }]);
+      } finally { setBusy(false); }
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch('/api/items/prepare-now', {
@@ -295,23 +343,78 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
 
   return (
     <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden min-h-0">
-      {/* Header — the shared chat-sidebar idiom: h-10, panel icon + title. "Clear" wipes the
-          room's TURNS only (narration, not memory) — the reset the wrong-grouping flow needs. */}
+      {/* Header — the shared chat-sidebar idiom. HISTORY ⌄ lists archived sessions ("Clear" =
+          archive, a session boundary — never a deletion; the brain's memory is untouched). */}
       <div className="h-10 flex items-center gap-2 px-3 border-b border-neutral-100 flex-shrink-0">
         <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
         <span className="text-[12px] font-semibold text-neutral-700 truncate">{inRoom ? 'Chat' : ent ? ent.name : 'About this'}</span>
-        {turns.length > 0 && (
+        <div className="ml-auto flex items-center gap-2.5 relative">
           <button
-            onClick={() => {
-              _dealTurns.set(roomKey, []);
-              setTurnsRaw([]);
-              fetch(`/api/room/turns?key=${encodeURIComponent(roomKey)}`, { method: 'DELETE' }).catch(() => {});
+            onClick={async () => {
+              if (historyOpen) { setHistoryOpen(false); return; }
+              setHistoryOpen(true);
+              try {
+                const d = await fetch(`/api/room/turns?key=${encodeURIComponent(roomKey)}&sessions=1`).then((r) => (r.ok ? r.json() : null));
+                setSessions(Array.isArray(d?.sessions) ? d.sessions : []);
+              } catch { setSessions([]); }
             }}
-            className="ml-auto text-[11px] font-medium text-neutral-300 hover:text-neutral-500 transition-colors"
-            title="Clear this conversation (the brain's memory is untouched)"
-          >Clear</button>
-        )}
+            className="text-[11px] font-medium text-neutral-300 hover:text-neutral-500 transition-colors"
+            title="Past conversations on this work"
+          >History</button>
+          {turns.length > 0 && !viewingSession && (
+            <button
+              onClick={() => {
+                _dealTurns.set(roomKey, []);
+                setTurnsRaw([]);
+                fetch(`/api/room/turns?key=${encodeURIComponent(roomKey)}`, { method: 'DELETE' }).catch(() => {});
+              }}
+              className="text-[11px] font-medium text-neutral-300 hover:text-neutral-500 transition-colors"
+              title="Archive this conversation (find it again under History; the brain's memory is untouched)"
+            >Clear</button>
+          )}
+          {historyOpen && (
+            <div className="absolute top-6 right-0 z-30 w-60 max-h-64 overflow-y-auto rounded-xl border border-neutral-200 bg-white shadow-lg p-1">
+              {sessions === null ? (
+                <p className="px-2 py-1.5 text-[12px] text-neutral-400">Loading…</p>
+              ) : sessions.length === 0 ? (
+                <p className="px-2 py-1.5 text-[12px] text-neutral-400">No past conversations yet.</p>
+              ) : sessions.map((sn) => (
+                <button
+                  key={sn.at}
+                  onClick={async () => {
+                    setHistoryOpen(false);
+                    try {
+                      const d = await fetch(`/api/room/turns?key=${encodeURIComponent(roomKey)}&session=${encodeURIComponent(sn.at)}`).then((r) => (r.ok ? r.json() : null));
+                      if (Array.isArray(d?.turns)) {
+                        setViewingSession({
+                          at: sn.at,
+                          turns: (d.turns as Array<{ role: 'user' | 'system'; text: string; refs?: Array<{ label: string; href: string | null }>; author?: { name: string; role?: string | null } | null }>)
+                            .map((t) => ({ role: t.role, text: t.text, refs: t.refs ?? undefined, author: t.author ?? undefined } as Turn)),
+                        });
+                      }
+                    } catch { /* non-fatal */ }
+                  }}
+                  className="w-full rounded-lg px-2 py-1.5 text-left hover:bg-indigo-50 transition-colors"
+                >
+                  <span className="block text-[12px] font-medium text-neutral-700">
+                    {new Date(sn.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · {sn.count} message{sn.count === 1 ? '' : 's'}
+                  </span>
+                  <span className="block text-[11px] text-neutral-400 truncate">{sn.firstText}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
+      {/* Viewing a past session — read-only banner; the live conversation is one tap back. */}
+      {viewingSession && (
+        <div className="flex-shrink-0 flex items-center gap-2 px-3 py-1.5 bg-amber-50/60 border-b border-amber-100">
+          <span className="text-[11.5px] text-amber-800/90 min-w-0 truncate">
+            Past conversation · {new Date(viewingSession.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+          </span>
+          <button onClick={() => setViewingSession(null)} className="ml-auto text-[11.5px] font-medium text-amber-700 hover:text-amber-900">Back to current</button>
+        </div>
+      )}
 
       {/* Messages — narration first, then the conversation. */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-4 min-h-0">
@@ -319,12 +422,12 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
             deterministically from the anchor (grounded-or-absent per part); then the deal's judged
             state as ONE line. Who-owes folds to a single line, and disappears entirely when the
             next-move below already carries the actionable. */}
-        {inRoom && turns.length === 0 && (
+        {!viewingSession && inRoom && turns.length === 0 && (
           <AssistantRow>
             <p className="text-[12.5px] text-neutral-500">This is the room for {ent?.name ?? 'this work'} — ask anything, correct me, or hand work off. I hold everything on it.</p>
           </AssistantRow>
         )}
-        {!inRoom && <AssistantRow>
+        {!viewingSession && !inRoom && <AssistantRow>
           {(() => {
             const a = view.anchor;
             const who = a?.who ? a.who.replace(/<[^>]*>/g, '').trim().split(/\s+/)[0] : null;
@@ -347,7 +450,7 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
             proposals, chat); navigation/inventory is spatial, never repeated here. */}
 
         {/* The gap — one plain ask, same channel (never a step list). */}
-        {view.gap && (
+        {!viewingSession && view.gap && (
           <AssistantRow>
             <p className="text-amber-800/90">{view.gap}</p>
           </AssistantRow>
@@ -356,7 +459,7 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
         {/* The next move + a matching coworker as a PERSON (avatar + one-tap hand-off).
             Mechanical dedup (J2 rail cleanup): when the deal's next move IS this item's ask (the
             opening line already said it), the echo is noise — skip the line, keep the hand-off. */}
-        {!inRoom && ent?.nextMove && !echoesAnchor(ent.nextMove, view.anchor?.ask ?? null) && (
+        {!viewingSession && !inRoom && ent?.nextMove && !echoesAnchor(ent.nextMove, view.anchor?.ask ?? null) && (
           <AssistantRow>
             <p>Next: {ent.nextMove}</p>
             {suggested && (
@@ -377,7 +480,7 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
 
         {/* One-room R2 — INLINE COMPONENTS in the stream (the registry's surface:'inline' class).
             The judged DECISION renders as a conversation card (numbered routes, decline last). */}
-        {decision && decision.options.length >= 2 && (
+        {!viewingSession && decision && decision.options.length >= 2 && (
           <AssistantRow>
             <DecisionCard
               title={decision.title}
@@ -390,7 +493,7 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
 
         {/* The ARTIFACT CARD — the staged workspace's inline handle: what's ready, who made it,
             open to edit, or commit right here (same gate, same executor as the stage). */}
-        {artifact && (
+        {!viewingSession && artifact && (
           <AssistantRow>
             <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-3 py-2.5 flex items-center gap-2.5">
               <span className="min-w-0 flex-1 text-[12.5px] text-neutral-800">
@@ -413,7 +516,7 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
         )}
 
         {/* The conversation — user bubbles + assistant replies, the shared idiom. */}
-        {turns.map((t, i) => t.role === 'user' ? (
+        {(viewingSession?.turns ?? turns).map((t, i) => t.role === 'user' ? (
           <div key={i} className="flex justify-end">
             <div className="max-w-[80%] px-3 py-2 bg-neutral-100 rounded-2xl rounded-br-sm text-[13px] text-neutral-800 leading-relaxed">{t.text}</div>
           </div>
@@ -431,6 +534,24 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
               </span>
             )}
             <p className="whitespace-pre-wrap">{t.text}</p>
+            {/* FIX 3 — the coworker's ASK as an inline checklist: each row a concrete thing they
+                need. Attach opens the one ingest funnel (the pool); answering in the composer is
+                equally valid — the ask is a conversation event, never a "Prepared by" card. */}
+            {t.checklist && t.checklist.length > 0 && (
+              <div className="mt-1.5 space-y-1">
+                {t.checklist.map((m, j) => (
+                  <div key={j} className="flex items-center gap-2 rounded-lg border border-amber-100 bg-amber-50/40 px-2.5 py-1.5">
+                    <span className="flex-shrink-0 w-3.5 h-3.5 rounded-full border-[1.5px] border-amber-400/70" aria-hidden />
+                    <span className="min-w-0 flex-1 text-[12px] text-neutral-800">{m}</span>
+                    <button
+                      onClick={() => fileRef.current?.click()}
+                      disabled={busy}
+                      className="flex-shrink-0 text-[11.5px] font-medium text-amber-700 hover:text-amber-900 transition-colors disabled:opacity-50"
+                    >Attach →</button>
+                  </div>
+                ))}
+              </div>
+            )}
             {/* O5: the commit line is a DECISION, not buttons. ≥2 routes → the numbered options
                 idiom (the brain's judged route first, "Leave it with me" always last); a single
                 offer stays one calm chip. */}
@@ -481,7 +602,8 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
         {busy && <AssistantRow><TypingDots /></AssistantRow>}
       </div>
 
-      {/* Composer — the shared idiom: rounded-2xl box, auto-growing textarea, round send button. */}
+      {/* Composer — the shared idiom (hidden while viewing a past session — read-only). */}
+      {!viewingSession && (
       <div className="flex-shrink-0 px-3 pb-3 pt-2">
         <div className="flex items-end gap-2 rounded-2xl border border-neutral-200 bg-white shadow-sm px-3 py-2">
           <textarea
@@ -520,6 +642,7 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
           </button>
         </div>
       </div>
+      )}
     </div>
   );
 }

@@ -139,11 +139,11 @@ export default function TimelineView() {
     let alive = true;
     // INSTANT: hydrate the last-known timeline from localStorage (no skeleton on reload), then refresh in
     // the background. The timeline spine (buildWorkItems) is expensive, so this matters most here.
-    const cached = loadLS<{ items: WorkItem[]; entityTags: ProjectMap }>('aug-timeline-v2');
+    const cached = loadLS<{ items: WorkItem[]; entityTags: ProjectMap }>('aug-timeline-v3');
     if (cached?.items) { setItems(cached.items); setProjectMap(cached.entityTags ?? {}); }
     const load = () => fetch('/api/home/timeline')
       .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((d) => { if (alive) { setItems(d.items ?? []); setProjectMap(d.entityTags ?? {}); saveLS('aug-timeline-v2', { items: d.items ?? [], entityTags: d.entityTags ?? {} }); } })
+      .then((d) => { if (alive) { setItems(d.items ?? []); setProjectMap(d.entityTags ?? {}); saveLS('aug-timeline-v3', { items: d.items ?? [], entityTags: d.entityTags ?? {} }); } })
       .catch(() => { if (alive && !cached?.items) setErr(true); });
     load();
     // LIVE (Living-Home): the timeline reflects actions as they happen — refetch on focus/visibility +

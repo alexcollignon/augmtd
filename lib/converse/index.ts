@@ -324,6 +324,9 @@ export async function converse(
           firstName: (prof?.full_name as string | undefined)?.split(' ')[0] ?? null,
           ...(scope.kind === 'item' ? { pool: { kind: scope.itemKind, entityId: scope.itemId }, provenance: { item: verdict.delegate.task.slice(0, 80), steered: true } } : {}),
         });
+        // FIX 3 — a needs_input outcome is an ASK, not work in flight: say so plainly (the
+        // checklist already landed in the room as the coworker's own turn).
+        if (out?.needsInput?.length) return { say: `${String(worker.name).split(' ')[0]} needs something from you first: ${out.needsInput.join('; ')}. It's listed in the room — attach or answer here.`, refs: [], delegated: { agentName: String(worker.name) } };
         if (out) return { say: `${String(worker.name).split(' ')[0]} is on it and will report back.`, refs: [], delegated: { agentName: String(worker.name) } };
       }
       return { say: "I couldn't find that coworker on your team.", refs: [] };

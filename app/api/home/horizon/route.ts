@@ -31,8 +31,10 @@ export async function GET() {
         .eq('user_id', user.id).eq('item_kind', 'calendar_event').in('item_id', rows.map((r) => r.id)).not('entity_id', 'is', null);
       const entIds = [...new Set((links ?? []).map((l) => l.entity_id as string))];
       if (entIds.length) {
-        const { data: ents } = await supabase.from('work_entities').select('id, name').in('id', entIds);
-        const nameById = new Map(((ents ?? []) as Array<{ id: string; name: string }>).map((e) => [e.id, e.name]));
+        // USER-CREATED ONLY (the one law, every surface): an event's project chip may only carry a
+        // TRACKED name — an untracked recognition never shows as project chrome on the schedule.
+        const { data: ents } = await supabase.from('work_entities').select('id, name, tracked').in('id', entIds);
+        const nameById = new Map(((ents ?? []) as Array<{ id: string; name: string; tracked?: boolean }>).filter((e) => !!e.tracked).map((e) => [e.id, e.name]));
         for (const l of (links ?? []) as Array<{ item_id: string; entity_id: string }>) {
           const name = nameById.get(l.entity_id);
           if (name) entityByEvent.set(l.item_id, { id: l.entity_id, name });

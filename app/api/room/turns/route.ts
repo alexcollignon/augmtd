@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { readRoomTurns, writeRoomTurn } from '@/lib/room/turns';
+import { readRoomTurns, writeRoomTurn, archiveRoomTurns, listRoomSessions, readRoomSession } from '@/lib/room/turns';
 
 export const maxDuration = 15;
 
@@ -17,6 +17,14 @@ export async function GET(request: NextRequest) {
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const key = request.nextUrl.searchParams.get('key');
     if (!key) return NextResponse.json({ error: 'key required' }, { status: 400 });
+    // History (Claude-style): ?sessions=1 lists archived sessions; ?session=<iso> reads one.
+    if (request.nextUrl.searchParams.get('sessions')) {
+      return NextResponse.json({ sessions: await listRoomSessions(supabase, user.id, key) });
+    }
+    const session = request.nextUrl.searchParams.get('session');
+    if (session) {
+      return NextResponse.json({ turns: await readRoomSession(supabase, user.id, key, session) });
+    }
     const turns = await readRoomTurns(supabase, user.id, key);
     return NextResponse.json({ turns });
   } catch (e) {
@@ -25,8 +33,9 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// DELETE ?key=<roomKey> — "Clear conversation" (promise fix): wipes the room's TURNS only. The
-// brain's memory (entity state, links, ledger) is untouched — turns are narration, not memory.
+// DELETE ?key=<roomKey> — "Clear conversation": ARCHIVES the live turns (a session boundary
+// History can reopen — never a deletion; pre-migration degrades to the old delete). The brain's
+// memory (entity state, links, ledger) is untouched — turns are narration, not memory.
 export async function DELETE(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -34,7 +43,7 @@ export async function DELETE(request: NextRequest) {
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const key = request.nextUrl.searchParams.get('key');
     if (!key) return NextResponse.json({ error: 'key required' }, { status: 400 });
-    await supabase.from('room_turns').delete().eq('user_id', user.id).eq('room_key', key);
+    await archiveRoomTurns(supabase, user.id, key);
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error('[room/turns DELETE]', e);

@@ -69,6 +69,19 @@ export async function POST(request: NextRequest) {
       }
     } catch { /* non-fatal — the file is in the pool regardless */ }
 
+    // FIX 3 — an input landed: clear any outstanding coworker ASK checklist on this item (the
+    // component strips; the turn's text stays as history — the group-channel story is never erased).
+    // Clearing re-opens the preparation pass, which re-runs WITH the new pool content in view.
+    try {
+      const { data: asks } = await supabase.from('room_turns').select('id')
+        .eq('user_id', user.id).like('dedupe_key', `delegate:${id}:%`)
+        .filter('component->>key', 'eq', 'input_checklist');
+      if (asks?.length) {
+        await supabase.from('room_turns').update({ component: null })
+          .in('id', asks.map((a) => a.id));
+      }
+    } catch { /* non-fatal */ }
+
     return NextResponse.json({ ok: true, filename: file.name, ...(satisfiedStep ? { satisfiedStep } : {}) });
   } catch (err) {
     console.error('[items/ingest] error:', err);
