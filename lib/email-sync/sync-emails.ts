@@ -1934,6 +1934,9 @@ export async function syncEmailsForConnection(
     // it claims "everything up to now is synced", and the cron's incremental window then
     // starts AFTER any earlier emails the push never delivered, dropping them forever.
     const isPreloaded = !!options.preloadedMessages;
+    // FIRST LOOK — detected BEFORE stamping: a full-window sync completing on a connection that
+    // never had a cursor is this user's first sync ever on this mailbox.
+    const wasFirstSync = !isPreloaded && !connection.last_sync;
     await adminSupabase
       .from('connections')
       .update({
@@ -1941,6 +1944,23 @@ export async function syncEmailsForConnection(
         ...(isPreloaded ? {} : { last_sync: syncStartedAt }),
       })
       .eq('id', connection.id);
+
+    // THE FIRST-LOOK BOOTSTRAP (once per connection, atomically claimed inside): seed the team,
+    // recognize the fresh corpus into entity memory, judge + prepare the deck, bust the brief —
+    // so the new user's first real Home paint is the PREPARED product, not a raw inbox. Runs in
+    // the request's after() tail when available (never delays the sync response), else floats.
+    if (wasFirstSync) {
+      const fire = async () => {
+        try {
+          const { runFirstLookBootstrap } = await import('@/lib/home/first-look');
+          await runFirstLookBootstrap(adminSupabase, connection.user_id, connection.id);
+        } catch (e) { console.warn('[first-look] bootstrap failed (non-fatal):', e); }
+      };
+      try {
+        const { after } = await import('next/server');
+        after(fire);
+      } catch { void fire(); }
+    }
 
     // LIVE Initiative Brain (S5) — an email arriving/sent is an event on its initiative, so refresh the
     // state for the initiatives this sync TOUCHED (items written in this window), in the background. Bounded

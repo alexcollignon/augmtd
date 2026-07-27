@@ -620,3 +620,35 @@ Battery: promise 42/42 · label-flip 15/15 · one-room 52/52 · judged-room 34/3
   never-blocks, self-chip, one-law-every-door, in-place dedupe, meeting href) → **promise 66/66** ·
   judged-room 34/34 · one-room 52/52 · work-surface 45/45 · label-flip 15/15 · build clean.
   EGBANK verified live end-to-end (engine ask + Max's richer worker-informed ask → superseded to one).
+
+## PROGRESS — July 27 eve · THE FIRST LOOK (new-user arc)
+
+- **The chat is ALWAYS on the Home** — the ask zone moved out of the has-data gate (a new user can
+  talk/create/found from second one; the less data, the more the chat is the front door).
+- **Truthful empty states** (brief serves `mail {connections, syncing}` — one cheap query, no AI):
+  no mailbox → Connect CTA (`/settings?tab=email&section=connections`); first sync in flight →
+  honest syncing card (7-day look-back stated; the page self-updates); else the EARNED all-clear.
+  The day ring hides in the first two states (a 0-of-0 green ring is a hollow claim).
+- **Connecting fires a SERVER-SIDE initial sync** from both OAuth callbacks (after() the redirect) —
+  never depends on the landing page; the client /inbox trigger stays as a harmless duplicate.
+- **THE FIRST LOOK** (`lib/home/first-look.ts`, fired from sync-emails.ts when a connection's FIRST
+  full-window sync completes; atomically claimed once via `metadata.first_look_at`): ensureWorkers
+  (seeding extracted to `lib/workers/seed.ts`, shared with /api/workers/init) → bootstrapMemory
+  rounds until converged → runPreparationPass → bust home_brief. First real paint = the prepared
+  product.
+- **Judgment bugs the blank-account gates flushed out** (JUDGE_VERSION 7): weekday HALLUCINATED
+  from a bare ISO date ("today is Saturday" on a Monday) → TODAY now states the weekday; relative
+  deadlines anchored BACKWARDS ("by Thursday" read as passed) → resolve FORWARD from the item's own
+  date + expired requires CERTAINTY; "answered" inverted on live asks → answered is ONLY for items
+  that ARE closures; and the reason↔work COHERENCE rule (a reason that says something is owed can
+  never carry work="none"). Verified across classes: scheduling→schedule, either-way→decide+options,
+  closure→answered, deadline-ask→send_file+inventory.
+- **Probe-host hardening**: deleting a personal test account broke 12 suites that hardcoded it as
+  fixture host → ONE shared probe host (`scripts/probe-user.ts`: dedicated auth user + profiles row
+  + parity provisioning), resolved at start by every suite; smoke-tasks self-provisions its fixture
+  entity; two O4 fixtures hardened WITH the evaluator's laws (a draft must DO its task; no
+  unverifiable timing promises).
+- Gates: **P19** (chat-always · truthful empty states · server-side sync on connect · the
+  atomically-claimed first-look chain · idempotent seeding) → promise 71/71 · judged-room 34/34 ·
+  one-room 52/52 · label-flip 15/15 · work-surface 45/45 · tasks 72/72 · work-loop 41/41 ·
+  workbench 38/38 · orchestrated-loop 39/39 · build clean.

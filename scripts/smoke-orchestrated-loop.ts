@@ -10,18 +10,20 @@ import { ensureSelfEntity } from '../lib/entities/self';
 import { getPersonEntities, resolveIdentity } from '../lib/entities/people';
 import { writeCommitments } from '../lib/commitments/extract';
 import { buildWorkItems } from '../lib/work-items/model';
+import { resolveProbeUser } from './probe-user';
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 const A = '08fe4449-e5eb-431d-9156-02e9324e5903';
 const B = 'c723c2f2-e069-4ab8-980e-ac3585028fec';
 const RENE_PREFIX = 'ae306f38';
-const PERSONAL = 'e009a499-41d4-4c44-ad53-53a0e851d143';
+let PERSONAL = ''; // the PROBE HOST — resolved at start (scripts/probe-user.ts)
 const out: Array<[string, boolean, string]> = [];
 const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
 const src = (p: string) => readFileSync(p, 'utf8');
 const MARKER = 'ZZ-smoke self-resolution probe';
 
 (async () => {
+  PERSONAL = await resolveProbeUser(sb);
   // ── O1 STRUCTURAL ──
   check('O1: the self entity module exists + the ambient pass refreshes it',
     src('lib/entities/self.ts').includes('export async function ensureSelfEntity') &&
@@ -196,9 +198,13 @@ const MARKER = 'ZZ-smoke self-resolution probe';
   check('O4 live · the self-addressed nudge is CAUGHT (structural, pre-AI)',
     selfNudge.verdict === 'revise' && !!selfNudge.objection && /themself|counterparty/i.test(selfNudge.objection),
     `verdict=${selfNudge.verdict} · "${(selfNudge.objection ?? '').slice(0, 60)}"`);
+  // Fixture hardened WITH the evaluator's own laws (never weakened): the draft must actually DO
+  // its task (a "kit will follow" note doesn't serve a send-the-kit task — the evaluator rightly
+  // rejects that) and must not promise timing nothing verifies. A sane welcome-reply for a
+  // welcome-reply task is the honest pass case.
   const sane = await evaluateDeliverable(sb, A, {
-    content: 'Hi Spartak,\n\nGreat news on the signed contract — welcome aboard! I\'m putting your onboarding kit together and will send it over today.\n\nBest,\nAlexandre',
-    task: 'Send Spartak the onboarding kit', recipient: 'Spartak Fedotov <spartak.fedotovv@gmail.com>', kind: 'reply',
+    content: 'Hi Spartak,\n\nGreat news on the signed contract — welcome aboard! I\'m putting your onboarding kit together now and will follow up with it in a separate email.\n\nBest,\nAlexandre',
+    task: 'Reply to Spartak — welcome him aboard and confirm the onboarding kit is coming', recipient: 'Spartak Fedotov <spartak.fedotovv@gmail.com>', kind: 'reply',
   });
   check('O4 live · a sane draft for the real recipient PASSES review', sane.verdict === 'pass',
     `verdict=${sane.verdict}${sane.objection ? ` · "${sane.objection.slice(0, 60)}"` : ''}`);

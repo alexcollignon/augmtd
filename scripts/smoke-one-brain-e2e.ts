@@ -6,15 +6,17 @@ import { recognizeItem } from '../lib/entities/recognize';
 import { shadowRecognizeTouched } from '../lib/entities/hooks';
 import { getPersonEntities, findPersonEntity } from '../lib/entities/people';
 import { renderBrainContext, renderWorldContext } from '../lib/context/brain-context';
+import { resolveProbeUser } from './probe-user';
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 const EVAL = '08fe4449-e5eb-431d-9156-02e9324e5903';
 const EVAL2 = 'c723c2f2-e069-4ab8-980e-ac3585028fec';
-const NONEVAL = 'e009a499-41d4-4c44-ad53-53a0e851d143'; // has person entities but NO initiative memory
+let NONEVAL = ''; // the PROBE HOST — resolved at start (scripts/probe-user.ts)
 
 const out: Array<[string, boolean, string]> = [];
 const check = (name: string, ok: boolean, detail = '') => { out.push([name, ok, detail]); };
 
 (async () => {
+  NONEVAL = await resolveProbeUser(sb);
   // ── 1. RECOGNITION idempotency: an already-linked item returns instantly, no AI. ──
   {
     const { data: link } = await sb.from('entity_links').select('item_id, entity_id, via').eq('user_id', EVAL).eq('item_kind', 'inbox_item').not('entity_id', 'is', null).limit(1);

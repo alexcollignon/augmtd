@@ -176,7 +176,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(`${origin}/settings?error=storage_failed`);
     }
 
-    console.log(`✓ Gmail connected for user ${userId}, sync will be triggered by client`);
+    console.log(`✓ Gmail connected for user ${userId}, firing server-side initial sync`);
 
     // Register Gmail push watch (non-blocking — failure must not break OAuth flow)
     try {
@@ -189,6 +189,16 @@ export async function GET(request: NextRequest) {
         .single();
       if (newConnection) {
         await registerGmailWatch(newConnection, adminSupabase);
+        // SERVER-SIDE INITIAL SYNC (after the redirect is sent): the first sync must never depend
+        // on which page the browser lands on — the client's /inbox trigger stays as a belt-and-
+        // braces duplicate (message-id dedup + the first-look claim make the race harmless).
+        const { after } = await import('next/server');
+        after(async () => {
+          try {
+            const { syncEmailsForConnection } = await import('@/lib/email-sync/sync-emails');
+            await syncEmailsForConnection(newConnection, adminSupabase);
+          } catch (e) { console.warn('[GmailCallback] initial sync failed (cron will retry):', e); }
+        });
       }
     } catch (watchErr) {
       console.error('[GmailCallback] Failed to register watch (non-fatal):', watchErr);

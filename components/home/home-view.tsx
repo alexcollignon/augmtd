@@ -86,6 +86,8 @@ type Brief = {
   bundles?: Record<string, { key: string; label: string }>; // server-side "what needs you" bundling (atomId → bundle)
   /** USER-CREATED ONLY: tracked project names+aliases — the ONLY names By-project may group under. */
   trackedProjects?: Array<{ name: string; aliases: string[] }>;
+  /** New-user honesty: active mail connections + whether a first sync is still in flight. */
+  mail?: { connections: number; syncing: boolean };
   bundleNames?: Record<string, { name: string; why?: string }>; // reasoned name + grounded "why" per bundle key
   personCues?: Record<string, { label: string; tone: 'neutral' | 'amber' }>; // itemId → one quiet Person-Brain cue
   itemWeights?: Record<string, number>; // itemId → verdict weight (lib/brains/verdict.ts) — the "Important" order
@@ -1730,7 +1732,9 @@ export function HomeView() {
   const awarenessLive = (b?.forYourAwareness ?? []).filter((a) => !clearedIds.has(a.itemId)).length;
   const hadActionNotices = (b?.actionNotices ?? []).length > 0;
   const ringCleared = (b?.dayProgress?.cleared ?? 0) + sessionCleared;
-  const showRing = !!b?.dayProgress; // non-fatal: hide gracefully if counts are missing
+  // Hide gracefully if counts are missing — and NEVER show "All clear" to a user whose mail isn't
+  // connected or whose first sync is still in flight (a 0-of-0 green ring is a hollow claim).
+  const showRing = !!b?.dayProgress && !(nothing && b?.mail && (b.mail.connections === 0 || b.mail.syncing));
 
   // ── AMBIENT RAIL — the calm "day at a glance" sections. Each is built ONLY when it has content, so
   // an empty lane never renders a bare header. `railNodes` is the ordered, non-empty set; the count
@@ -1986,22 +1990,63 @@ export function HomeView() {
 
         {view === 'dashboard' && (<>
         {/* AMBIENT "also happening" pills removed for now (AmbientStrip kept below for easy restore). */}
+
+        {/* ── THE ASK ZONE — ALWAYS PRESENT (the entry to the brain is the front door; a brand-new
+            user with zero synced data can still talk, create tasks, found projects — the LESS data
+            there is, the MORE the chat is the thing to do). ── */}
+        <div className="mt-9 mb-6">
+          <HomeAsk
+            suggestions={(() => {
+              const s: string[] = ['Add a task…', 'Plan my week', "What's slipping?"];
+              if ((b?.schedule?.length ?? 0) > 0) s.push('Prep my next meeting');
+              else s.push('What did I miss?');
+              return s;
+            })()}
+          />
+        </div>
+
+        {/* THE EMPTY STATE tells the truth — three different situations, three different messages:
+            nothing connected → the connect CTA; first sync in flight → the honest syncing state
+            (the Home's poll + realtime fill it in live); genuinely triaged-empty → all caught up. */}
         {nothing && (
           <RiseIn delay={80}>
-            <div className="mt-10 rounded-2xl border border-dashed border-neutral-200 px-6 py-16 text-center">
-              <div className="w-12 h-12 rounded-full bg-emerald-50 flex items-center justify-center mx-auto mb-3">
-                <CheckCircleIcon className="w-6 h-6 text-emerald-500" />
+            {b?.mail && b.mail.connections === 0 ? (
+              <div className="mt-4 rounded-2xl border border-dashed border-neutral-200 px-6 py-14 text-center">
+                <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center mx-auto mb-3">
+                  <EnvelopeIcon className="w-6 h-6 text-indigo-500" />
+                </div>
+                <p className="text-[14px] font-medium text-neutral-700">Connect your inbox to get started</p>
+                <p className="text-[12.5px] text-neutral-400 mt-0.5 max-w-md mx-auto">Your work lands here — replies drafted, follow-ups tracked, nothing slipping. It starts with your email.</p>
+                <Link href="/settings?tab=email&section=connections"
+                  className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 px-4 py-2 text-[13px] font-medium text-white transition-colors">
+                  Connect your inbox<ArrowRightIcon className="w-3.5 h-3.5" />
+                </Link>
+                <p className="text-[11.5px] text-neutral-300 mt-3">Or record a meeting, or just ask your team something above.</p>
               </div>
-              <p className="text-[14px] font-medium text-neutral-700">You&apos;re all caught up</p>
-              <p className="text-[12.5px] text-neutral-400 mt-0.5">Nothing needs you right now.</p>
-            </div>
+            ) : b?.mail?.syncing ? (
+              <div className="mt-4 rounded-2xl border border-dashed border-neutral-200 px-6 py-14 text-center">
+                <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center mx-auto mb-3">
+                  <span className="w-5 h-5 rounded-full border-2 border-indigo-300 border-t-indigo-600 animate-spin" aria-hidden />
+                </div>
+                <p className="text-[14px] font-medium text-neutral-700">Syncing your inbox</p>
+                <p className="text-[12.5px] text-neutral-400 mt-0.5 max-w-md mx-auto">Pulling in your last 7 days of mail, then judging what actually needs you and preparing first drafts. Your first look is minutes away — this page updates on its own.</p>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-2xl border border-dashed border-neutral-200 px-6 py-16 text-center">
+                <div className="w-12 h-12 rounded-full bg-emerald-50 flex items-center justify-center mx-auto mb-3">
+                  <CheckCircleIcon className="w-6 h-6 text-emerald-500" />
+                </div>
+                <p className="text-[14px] font-medium text-neutral-700">You&apos;re all caught up</p>
+                <p className="text-[12.5px] text-neutral-400 mt-0.5">Nothing needs you right now.</p>
+              </div>
+            )}
           </RiseIn>
         )}
 
         {!nothing && (
-          // SINGLE column: action content flows top→bottom, then the Ask zone fills the rest so the composer
-          // sticks to the bottom. Ambient context now lives compactly under the greeting (AmbientStrip).
-          <div className="mt-9 w-full flex-1 flex flex-col">
+          // SINGLE column: action content flows top→bottom (the Ask zone is above, always present).
+          // Ambient context now lives compactly under the greeting (AmbientStrip).
+          <div className="w-full flex-1 flex flex-col">
 
             {/* ── ACTION content ─────────────────────────────────────────────────────────────── */}
             <div className="min-w-0 gap-10 flex-1 flex flex-col">
@@ -2015,19 +2060,6 @@ export function HomeView() {
                 hero + peeks with rich inline actions. The ledger (L1/L2) stays the substrate underneath;
                 the raw-inventory report presentation was tried and REVERTED (137 flat lines scared work
                 away — curation + cards ARE the product). */}
-            {/* ── THE ASK ZONE — the entry to the brain, AT THE TOP (the user's call: talk to your
-                work first, the list follows — the chat is never buried under it). The conversation
-                grows downward in place. ── */}
-            <div className="mb-6">
-              <HomeAsk
-                suggestions={(() => {
-                  const s: string[] = ['Add a task…', 'Plan my week', "What's slipping?"];
-                  if ((b?.schedule?.length ?? 0) > 0) s.push('Prep my next meeting');
-                  else s.push('What did I miss?');
-                  return s;
-                })()}
-              />
-            </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-6 items-start">
             <div className="min-w-0">

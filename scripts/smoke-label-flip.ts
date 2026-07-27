@@ -6,16 +6,18 @@ import { config } from 'dotenv'; config({ path: '.env.local' });
 import { readFileSync } from 'fs';
 import { createClient } from '@supabase/supabase-js';
 import { resolveKind, postureFor, labelNamesFor, mapWorkStateToLabel } from '../lib/inbox/rules/write-back';
+import { resolveProbeUser } from './probe-user';
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 const A = '08fe4449-e5eb-431d-9156-02e9324e5903';
 const B = 'c723c2f2-e069-4ab8-980e-ac3585028fec';
-const PERSONAL = 'e009a499-41d4-4c44-ad53-53a0e851d143';
+let PERSONAL = ''; // the PROBE HOST — resolved at start (scripts/probe-user.ts)
 const out: Array<[string, boolean, string]> = [];
 const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
 const src = (p: string) => readFileSync(p, 'utf8');
 
 (async () => {
+  PERSONAL = await resolveProbeUser(sb);
   // ── STRUCTURAL ──
   const wb = src('lib/inbox/rules/write-back.ts');
   check('flip: the KIND label set is the Scape vocabulary (8 kinds) + ONE resolver with the precedence chain',

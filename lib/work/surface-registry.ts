@@ -54,4 +54,4 @@ export const renderComponentOptions = (): string =>
   WORK_COMPONENTS.map((c) => `- "${c.key}": ${c.when}`).join('\n');
 
 /** Bump when the verdict schema/prompt changes — cached verdicts self-invalidate. */
-export const JUDGE_VERSION = 6; // 6: `requires` inventory + the tightened "answered ≠ able-to-act" rule
+export const JUDGE_VERSION = 7; // 7: TODAY carries the stated WEEKDAY (never model-derived — real mootness misfires)

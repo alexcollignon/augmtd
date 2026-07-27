@@ -18,7 +18,7 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPAB
 const A = '08fe4449-e5eb-431d-9156-02e9324e5903';
 const B = 'c723c2f2-e069-4ab8-980e-ac3585028fec';
 const RENE_PREFIX = 'ae306f38';
-const PERSONAL = 'e009a499-41d4-4c44-ad53-53a0e851d143'; // errand-only portfolio — no projects
+let PERSONAL = ''; // the PROBE HOST — resolved at start (scripts/probe-user.ts)
 const out: Array<[string, boolean, string]> = [];
 const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
 const MARKER = 'ZZ-smoke chase the pilot paperwork';
@@ -26,6 +26,7 @@ const MARKER = 'ZZ-smoke chase the pilot paperwork';
 // Mirror of the status-update route's compose path (scripts can't auth HTTP) — same modules, same
 // cache contract (item_deliverables kind 'entity' + sig).
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { resolveProbeUser } from './probe-user';
 async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; name: string; sig: string; state: Record<string, unknown>; next_move: { title?: string } | null }): Promise<{ text: string; cached: boolean }> {
   const { data: prior } = await sbc.from('item_deliverables').select('id, content, metadata').eq('user_id', uid)
     .eq('kind', 'entity').eq('entity_id', ent.id).eq('type', 'document').order('created_at', { ascending: false }).limit(1).maybeSingle();
@@ -47,6 +48,17 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
 }
 
 (async () => {
+  PERSONAL = await resolveProbeUser(sb);
+  // The probe host owns no organic portfolio — provision its fixture entity so the errand-account
+  // leg of the loop has a room to create tasks in (idempotent by name; state set so it qualifies).
+  {
+    const { data: ex } = await sb.from('work_entities').select('id').eq('user_id', PERSONAL)
+      .eq('kind', 'initiative').eq('name', 'Probe Errands').maybeSingle();
+    if (!ex) await sb.from('work_entities').insert({
+      user_id: PERSONAL, kind: 'initiative', name: 'Probe Errands', status: 'active',
+      state: { summary: 'fixture errand pool for the smoke probes' }, last_event_at: new Date().toISOString(),
+    });
+  }
   // Resolve Rene's full uid from the prefix (never hardcode a guessed uuid — the earlier lesson).
   const { data: uidRows } = await sb.from('work_entities').select('user_id').eq('kind', 'initiative').limit(1000);
   const RENE = [...new Set((uidRows ?? []).map((r) => r.user_id as string))].find((u) => u.startsWith(RENE_PREFIX))!;
