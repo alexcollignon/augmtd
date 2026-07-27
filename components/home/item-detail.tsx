@@ -1308,9 +1308,11 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
         if (!verdictSeededRef.current) {
           setRelevance(rel);
           if (!composerTouchedRef.current) {
-            // reply / unknown → open; awareness / action → collapsed (lead with Dismiss / the
-            // action). The user reopens it any time via the palette's "Reply".
-            setComposerOpen(rel === null || rel === 'reply');
+            // VERDICT-FIRST (P8): only a known 'reply' relevance opens the composer pre-verdict.
+            // Unknown stays CLOSED — the judge's verdict (cached or fetched) is the authority that
+            // opens it; a kind-only notification must never greet the user with an open reply box.
+            // The user can always open it via the palette's "Reply".
+            setComposerOpen(rel === 'reply');
           }
         }
       })

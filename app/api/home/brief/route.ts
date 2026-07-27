@@ -301,7 +301,8 @@ export async function GET() {
       id: `meeting:${tid}`, source: 'meeting', posture: 'to_do', title: m.title,
       // Past-tense framing — this meeting already happened; these are follow-ups, not a "do this now".
       context: `You had this meeting · ${m.items.length} follow-up${m.items.length > 1 ? 's' : ''} to consider`,
-      href: `/meetings`, items: m.items.slice(0, 6),
+      // Deep-dive IN PLACE (the one nav rule): the meeting's OWN room, never the meetings list.
+      href: `/item/${tid}?kind=meeting`, items: m.items.slice(0, 6),
     });
   }
 

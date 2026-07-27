@@ -67,6 +67,10 @@ export async function GET(request: NextRequest) {
         const { judgeWork } = await import('@/lib/work/judge');
         const verdict = await judgeWork(sb, p.id, { kind: 'inbox', id: it.id as string });
         if (verdict.work !== 'reply' && verdict.work !== 'send_file') continue;
+        // A verdict carrying a deliverable INVENTORY needs the resolution flow (stage/ask/truth) —
+        // that lives in the preparation pass (runs just below); this legacy rule loop must not
+        // produce an unconstrained draft that claims artifacts nobody resolved.
+        if (verdict.requires?.length) continue;
         const body = await generateReplyDraft(p.id, sd, sb, instructions);
         if (body) {
           await sb.from('inbox_items')

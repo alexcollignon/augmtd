@@ -475,6 +475,76 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     src('components/home/item-rail.tsx').includes('input_checklist') &&
     src('components/home/item-rail.tsx').includes('t.checklist'));
 
+  // ═══ P18 · THE DELIVERABLE RESOLUTION — "what does it take / what do I have / what do I need
+  // from you" is part of preparation. A multi-artifact ask: the judge enumerates the inventory,
+  // the pass resolves it, missing artifacts land as the room's ask, and the draft never claims
+  // what isn't staged. ═══
+  {
+    const { judgeWork } = await import('../lib/work/judge');
+    const { prepareOneItem } = await import('../lib/prepare/pass');
+    const { data: probe } = await sb.from('inbox_items').insert({
+      user_id: PERSONAL, source: 'email', status: 'pending', work_state: 'action_required',
+      work_title: 'Send the quarterly compliance pack',
+      source_data: {
+        subject: 'Send the quarterly compliance pack',
+        body: 'Hi Alex, for the audit could you please share: 1) the Q2 vendor risk register, 2) the signed data-processing addendum. The auditors need both by Thursday. Thanks, Sam',
+        from_name: 'Sam Auditor', from_address: 'sam@acme-audit-example.com', received_at: new Date().toISOString(),
+        understanding: { mailKind: 'customer', ownership: 'you_owe', relevance: 'reply', role: 'primary' },
+      },
+    }).select('id').maybeSingle();
+    if (!probe?.id) check('P18 live · probe insert failed', false);
+    else {
+      const pid = String(probe.id);
+      const v = await judgeWork(sb, PERSONAL, { kind: 'inbox', id: pid });
+      check('P18 live · the judge enumerates the artifact INVENTORY from the item\'s own words',
+        (v.work === 'reply' || v.work === 'send_file' || v.work === 'produce') && (v.requires?.length ?? 0) >= 2,
+        `${v.work} · requires=${JSON.stringify((v.requires ?? []).map((r) => r.label))}`);
+      await prepareOneItem(sb, PERSONAL, {
+        id: `inbox:${pid}`, entityId: pid, kind: 'reply', title: 'Send the quarterly compliance pack',
+        who: 'Sam Auditor', actor: 'you', state: 'todo',
+        when: { explicit: null, bucket: 'today' }, source: 'email', href: `/item/${pid}`,
+        at: new Date().toISOString(), startAt: new Date().toISOString().slice(0, 10),
+        projectId: null, automated: false, initiative: null, effort: null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any);
+      const { data: ask } = await sb.from('room_turns').select('text, component')
+        .eq('user_id', PERSONAL).eq('dedupe_key', `requires:${pid}`).maybeSingle();
+      const comp = (ask?.component ?? null) as { key?: string; state?: { items?: unknown[] } } | null;
+      check('P18 live · unfound artifacts become the room\'s input-checklist ASK (what I need from you)',
+        comp?.key === 'input_checklist' && (comp.state?.items?.length ?? 0) >= 2,
+        String(ask?.text ?? 'no ask turn').slice(0, 80));
+      const { data: after } = await sb.from('inbox_items').select('source_data').eq('id', pid).maybeSingle();
+      const dr = ((after?.source_data ?? {}) as { draft?: { body?: string; attachment?: unknown } }).draft;
+      const claimsAttached = /attached (is|are|you.ll find|please find)|i('| ha)ve attached|find attached/i.test(String(dr?.body ?? ''));
+      check('P18 live · the draft NEVER claims an artifact that isn\'t staged (artifact truth)',
+        !dr?.attachment && !claimsAttached, dr?.body ? `draft head: ${String(dr.body).replace(/\s+/g, ' ').slice(0, 70)}` : 'no draft');
+      await sb.from('room_turns').delete().eq('user_id', PERSONAL).like('dedupe_key', `%${pid}%`);
+      await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('entity_id', `inbox:${pid}`);
+      await sb.from('item_deliverables').delete().eq('user_id', PERSONAL).eq('entity_id', pid);
+      await sb.from('inbox_items').delete().eq('id', pid);
+    }
+  }
+  check('P18 · one law, every door (pass reply + doc-send + PRODUCE resolve; the truth rides the delegation envelope; on-demand route resolves; the judge serving edge backfills; the legacy cron loop defers to the pass)',
+    src('lib/prepare/pass.ts').includes('resolveRequirements') &&
+    src('lib/prepare/pass.ts').includes('THE DELIVERABLE RESOLUTION on PRODUCED work') &&
+    src('lib/prepare/pass.ts').includes('if (artifactTruth) brainContext') &&
+    src('app/api/inbox/[id]/draft/route.ts').includes('resolveRequirements') &&
+    src('app/api/items/judge/route.ts').includes('resolveRequirements') &&
+    src('app/api/cron/draft-sweep/route.ts').includes('verdict.requires?.length'));
+  check('P18 · the story\'s ORDER is part of its truth (dedupe updates in place, never delete+reinsert)',
+    src('lib/room/turns.ts').includes('Dedupe UPDATES IN PLACE'));
+  check('P18 · ONE ask per item — the coworker\'s attempted-work ask SUPERSEDES the engine\'s provisional one (both directions)',
+    src('lib/home/delegate.ts').includes('THE COWORKER SUPERSEDES') &&
+    src('lib/prepare/requirements.ts').includes('THE COWORKER SUPERSEDES'));
+  check('P18 · an ask NEVER BLOCKS — the contract says work with what\'s available (delegation prompt + evaluator + a one-tap "go ahead" on the checklist)',
+    src('lib/home/delegate.ts').includes('WORK WITH WHAT YOU HAVE') &&
+    src('lib/prepare/evaluate.ts').includes('incompleteness with honest gaps is a deliverable, not an ask') &&
+    src('components/home/item-rail.tsx').includes("go ahead with what's available"));
+  check('P18 · the item chip hides in the item\'s OWN room (self-referential noise; deal rooms keep it)',
+    src('components/home/item-rail.tsx').includes('inRoom || !r.href?.includes(`/item/${id}`)'));
+  check('P18 · a meeting card opens the meeting\'s OWN room (never the meetings list)',
+    src('app/api/home/brief/route.ts').includes('/item/${tid}?kind=meeting'));
+
   console.log('\n═══ THE PROMISE GATES ═══');
   let pass = 0;
   for (const [n, ok, d] of out) { if (ok) pass++; console.log(` ${ok ? '✓' : '✗'} ${n}${d ? `  → ${d}` : ''}`); }
