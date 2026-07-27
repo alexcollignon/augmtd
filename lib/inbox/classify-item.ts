@@ -4,6 +4,7 @@
 // with something you owe.
 
 import { isNeedsReply, isCcOnlyBystander, type SignalItem } from './needs-reply';
+import { isNoMoveNotice, rawMailKindOf } from './notice-demotion';
 import { getUnderstanding } from './item-understanding';
 import { DEFAULT_RULES } from './rules/defaults';
 import { evaluateDeterministic } from './rules/evaluate';
@@ -42,6 +43,22 @@ function itemToRuleEmail(item: Item): RuleEmail | null {
   };
 }
 
+// THE ONE demotion question, shared with every other surface (the brief's pools, the spine):
+// is this a notice nobody owes a move on? Reasoned ownership first, raw kind tier, structural floor.
+function noMoveConfirmed(item: Item): boolean {
+  try {
+    const sd = (item.source_data ?? {}) as Record<string, unknown>;
+    return isNoMoveNotice({
+      u: getUnderstanding(item),
+      rawKind: rawMailKindOf(sd),
+      fromEmail: (sd.from_address as string) ?? (sd.from as string) ?? null,
+      fromName: (sd.from_name as string) ?? null,
+      subject: (sd.subject as string) ?? null,
+      workState: item.work_state ?? null,
+    });
+  } catch { return true; } // law unavailable → keep the conservative demotion
+}
+
 export function classifyItem(item: Item, rules?: InboxRule[] | null): ItemType {
   // Resolved items never show.
   if (item.status === 'completed' || item.status === 'dismissed' || item.status === 'rejected') return 'hidden';
@@ -57,10 +74,22 @@ export function classifyItem(item: Item, rules?: InboxRule[] | null): ItemType {
 
   // Deterministic rules (the editable noise tier — no-reply/automated/marketing senders) run
   // first, so this junk never leaks into "Needs reply" or "To do". Rule-driven, not hardcoded.
+  // THE NOTICE-LAW REFINEMENT (the Workspace-security-alert miss): a noise-tier match may demote
+  // to awareness ONLY when nobody owes a move — the SAME ownership-keyed law every other surface
+  // applies (isNoMoveNotice: a reasoned `you_owe` protects; action-worthy automated protects).
+  // A no-reply sender whose mail the brain says YOU OWE action on falls THROUGH to the chain
+  // below (→ to_do), instead of being silently filed as FYI by its sender shape. Rules stay
+  // authoritative for their real verdicts (needs_reply/to_do/waiting_on are returned untouched);
+  // only the junk-tier demotion gets the refinement — the precedence-chain law, never an AND.
   const ruleEmail = itemToRuleEmail(item);
   if (ruleEmail) {
     const matched = evaluateDeterministic(ruleEmail, rules ?? cachedRules ?? DEFAULT_RULES);
-    if (matched?.outcome.set_type) return LABEL_TO_TYPE[matched.outcome.set_type];
+    if (matched?.outcome.set_type) {
+      const t = LABEL_TO_TYPE[matched.outcome.set_type];
+      if (t !== 'fyi') return t;
+      if (noMoveConfirmed(item)) return 'fyi';
+      // Somebody owes a move — the noise-tier demotion doesn't apply; continue down the chain.
+    }
   }
 
   // A custom AI-match rule's verdict (computed at process time) — after deterministic, before heuristics.

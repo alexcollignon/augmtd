@@ -232,6 +232,36 @@ export interface SyncOptions {
   syncWindowDays?: number;
   /** Skip fetch step — use these pre-fetched raw messages directly (push webhook path) */
   preloadedMessages?: any[];
+  /** The caller already holds the single-flight claim for this connection (the /api/connections/
+   *  sync route claims upfront so the inbox's polling sees 'syncing' immediately) — skip the
+   *  internal claim instead of losing to our own mark. */
+  claimed?: boolean;
+}
+
+/** THE SINGLE-FLIGHT CLAIM — one atomic conditional UPDATE per connection: matches only when no
+ *  sync is running or the running one is STALE (>10 min — a crashed sync never wedges the
+ *  connection). Every sync entry point funnels through this (directly or via options.claimed). */
+export async function claimSync(adminSupabase: SupabaseClient, connectionId: string): Promise<boolean> {
+  // NB: or() filters on UPDATE error against this table (42703 — verified live), while plain
+  // chained filters work; so the claim is three SEQUENTIAL atomic attempts, each a single
+  // conditional UPDATE (Postgres serializes concurrent updates on the row, so exactly one of two
+  // simultaneous claimants matches the neq/lt condition — the loser sees zero rows).
+  const now = new Date().toISOString();
+  const { data: fresh } = await adminSupabase.from('connections')
+    .update({ sync_status: 'syncing', sync_started_at: now })
+    .eq('id', connectionId).neq('sync_status', 'syncing').select('id');
+  if (fresh?.length) return true;
+  // A sync appears to be running — take over ONLY when it's stale (>10 min: a crashed sync must
+  // never wedge the connection) or has no start stamp at all.
+  const staleBefore = new Date(Date.now() - 10 * 60_000).toISOString();
+  const { data: stale } = await adminSupabase.from('connections')
+    .update({ sync_status: 'syncing', sync_started_at: now })
+    .eq('id', connectionId).eq('sync_status', 'syncing').lt('sync_started_at', staleBefore).select('id');
+  if (stale?.length) return true;
+  const { data: nullStart } = await adminSupabase.from('connections')
+    .update({ sync_status: 'syncing', sync_started_at: now })
+    .eq('id', connectionId).eq('sync_status', 'syncing').is('sync_started_at', null).select('id');
+  return !!nullStart?.length;
 }
 
 /**
@@ -414,11 +444,17 @@ export async function syncEmailsForConnection(
   };
 
   try {
-    // Update sync status
-    await adminSupabase
-      .from('connections')
-      .update({ sync_status: 'syncing', sync_started_at: new Date().toISOString() })
-      .eq('id', connection.id);
+    // ── SINGLE-FLIGHT (per connection): the callback's server-side initial sync, the client's
+    // connect trigger, manual clicks, pushes, and the cron can all arrive concurrently — email
+    // dedup held under that race but RECOGNITION did not (two parallel first syncs founded
+    // duplicate entities/persons on a fresh account). Losing the claim is a graceful skip: the
+    // winner covers the same window, and a skipped push's cursor doesn't advance, so its mail is
+    // re-fetched next delivery (at-least-once holds).
+    if (!options.claimed && !(await claimSync(adminSupabase, connection.id))) {
+      console.log(`[Sync] Skipped — another sync already in flight for connection ${connection.id}`);
+      result.errors.push('skipped: sync already in flight');
+      return result;
+    }
 
     // Fetch emails based on provider (or use preloaded messages from push webhook)
     const encryptedTokens = connection.metadata.tokens;
