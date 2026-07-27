@@ -109,14 +109,16 @@ export async function GET() {
   needsReview.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
   // ── Messages from the team: report-back cards (every run, all homes) ──
-  type TeamMessage = { id: string; workerId: string | null; workerName: string | null; workerRole: string | null; text: string; threadId: string | null; createdAt: string; seen: boolean };
+  // The client groups these by workflowId ("latest + N earlier"), so fetch a
+  // deeper window than the visible cap — grouping collapses them.
+  type TeamMessage = { id: string; workerId: string | null; workerName: string | null; workerRole: string | null; workflowId: string | null; workflowName: string | null; text: string; threadId: string | null; createdAt: string; seen: boolean };
   let messages: TeamMessage[] = [];
   const { data: notifs } = await supabase
     .from('workflow_notifications')
     .select('id, workflow_id, workflow_run_id, summary, seen, created_at')
     .eq('user_id', user.id)
     .order('created_at', { ascending: false })
-    .limit(12);
+    .limit(30);
   if (notifs?.length) {
     const runIds = notifs.map(n => n.workflow_run_id).filter(Boolean);
     const { data: runs2 } = await supabase.from('workflow_runs').select('id, thread_id').in('id', runIds);
@@ -129,6 +131,8 @@ export async function GET() {
         workerId: w?.id ?? null,
         workerName: w?.name ?? null,
         workerRole: (w as { worker_role?: string } | undefined)?.worker_role ?? null,
+        workflowId: (n.workflow_id as string) ?? null,
+        workflowName: wf?.name ?? null,
         text: (n.summary as string) ?? '',
         threadId: (threadByRun.get(n.workflow_run_id) as string) ?? null,
         createdAt: n.created_at as string,

@@ -86,7 +86,11 @@ export async function PATCH(
   }
 
   const update: Record<string, unknown> = { ...body };
+  // Server-owned column — never client-settable (the body spread would pass it through).
+  delete update.auto_paused_at;
   if (nextRunAt !== undefined) update.next_run_at = nextRunAt;
+  // Any resume (manual or otherwise) clears the auto-paused marker.
+  if (body.status === 'active') update.auto_paused_at = null;
 
   // Derive shared_with_company from sharing_mode for backwards compat
   if ('sharing_mode' in body) {

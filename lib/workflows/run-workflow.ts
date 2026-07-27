@@ -197,6 +197,118 @@ async function materialiseOutput(
   return { text: finalText, title };
 }
 
+// One persistent thread per (workflow, runner). Reuse the active one (refreshing
+// title + updated_at — there is no DB trigger, and a stale updated_at would keep
+// the thread buried in the sidebar); otherwise insert, and on a 23505 race
+// (manual + scheduled run slipping past the concurrency guards, backstopped by
+// uq_work_threads_workflow_user_active) re-select the winner. NOTE: not .upsert() —
+// PostgREST can't target a partial unique index.
+async function findOrCreateTaskThread(
+  admin: SupabaseClient,
+  workflow: Workflow,
+  runnerId: string,
+): Promise<{ threadId: string | null; threadErr?: string }> {
+  const agentId = (workflow as Workflow & { agent_id?: string }).agent_id ?? null;
+  const nowIso = new Date().toISOString();
+
+  const findActive = () => admin
+    .from('work_threads')
+    .select('id')
+    .eq('workflow_id', workflow.id)
+    .eq('user_id', runnerId)
+    .eq('status', 'active')
+    .limit(1)
+    .maybeSingle();
+
+  const { data: existing } = await findActive();
+  if (existing?.id) {
+    // Title tracks task renames; updated_at bump surfaces the thread.
+    await admin.from('work_threads')
+      .update({ title: workflow.name, updated_at: nowIso })
+      .eq('id', existing.id);
+    return { threadId: existing.id as string };
+  }
+
+  const { data: created, error: insertErr } = await admin
+    .from('work_threads')
+    .insert({
+      user_id: runnerId,
+      title: workflow.name,
+      workflow_id: workflow.id,
+      agent_id: agentId,
+      status: 'active',
+    })
+    .select('id')
+    .single();
+
+  if (created?.id) return { threadId: created.id as string };
+
+  if (insertErr?.code === '23505') {
+    const { data: winner } = await findActive();
+    if (winner?.id) return { threadId: winner.id as string };
+  }
+  return { threadId: null, threadErr: insertErr?.message ?? 'unknown insert failure' };
+}
+
+// ── Auto-pause: a scheduled task stops itself when nobody reads its output ────
+// After N consecutive unreviewed scheduled runs, flip the workflow to 'paused'
+// (+ auto_paused_at so the tasks tab can label it), tell the user in-character in
+// the task thread, and leave a notification. Reviewing the thread auto-resumes
+// (markWorkflowReviewed in the thread chat GET); the tasks-tab Resume toggle is
+// the explicit backup. Exemptions: email-home tasks (read in the user's inbox —
+// opens invisible to us) and silent tasks (no notifications → nothing to review).
+const UNREVIEWED_PAUSE_THRESHOLD = 3;
+
+async function maybeAutoPause(
+  admin: SupabaseClient,
+  workflow: Workflow,
+  out: NormalizedOutput,
+  runId: string,
+  threadId: string,
+  workerName: string,
+) {
+  if (out.home === 'email' || out.reportMode === 'silent') return;
+
+  // The just-completed run is already 'succeeded' (updated before this check),
+  // so it's one of the N counted here.
+  const { data: recent } = await admin
+    .from('workflow_runs')
+    .select('id, reviewed_at')
+    .eq('workflow_id', workflow.id)
+    .eq('triggered_by', 'schedule')
+    .eq('status', 'succeeded')
+    .order('completed_at', { ascending: false })
+    .limit(UNREVIEWED_PAUSE_THRESHOLD);
+
+  if (!recent || recent.length < UNREVIEWED_PAUSE_THRESHOLD) return;
+  if (recent.some(r => r.reviewed_at)) return;
+
+  // status='active' guard = race-safe + respects a manual pause that landed mid-run.
+  const { data: paused, error } = await admin.from('workflows')
+    .update({ status: 'paused', auto_paused_at: new Date().toISOString(), next_run_at: null })
+    .eq('id', workflow.id)
+    .eq('status', 'active')
+    .select('id');
+  if (error || !paused?.length) return;
+
+  const pauseLine = `I'm pausing "${workflow.name}" for now — my last ${UNREVIEWED_PAUSE_THRESHOLD} reports went unread. Open any of them (or hit Resume on the task) and I'll pick the schedule back up.`;
+  await admin.from('work_messages').insert({
+    thread_id: threadId,
+    role: 'assistant',
+    content: pauseLine,
+  });
+  await admin.from('work_threads')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', threadId);
+  await admin.from('workflow_notifications').insert({
+    workflow_run_id: runId,
+    workflow_id: workflow.id,
+    user_id: workflow.user_id,
+    title: workerName,                            // sender = the coworker (DM feel)
+    summary: pauseLine.slice(0, 280),
+  });
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export interface RunWorkflowOptions {
@@ -261,31 +373,20 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       .eq('id', runId);
   }
 
-  // Create thread for this run
-  const threadTitle = renderTitle(workflow.output_config.title_template, workflow.name, startedAt);
+  // Find-or-create the task's persistent thread — ONE thread per (workflow, runner),
+  // not one per run. Report-backs append to it like a colleague's recurring DM.
+  // The thread title is the stable task name; deliverable titles stay date-stamped
+  // (renderTitle inside materialiseOutput).
+  const { threadId, threadErr } = await findOrCreateTaskThread(admin, workflow, runnerId);
 
-  const { data: threadRow, error: threadErr } = await admin
-    .from('work_threads')
-    .insert({
-      user_id: runnerId,
-      title: threadTitle,
-      workflow_id: workflow.id,
-      agent_id: (workflow as Workflow & { agent_id?: string }).agent_id ?? null,
-      status: 'active',
-    })
-    .select('id')
-    .single();
-
-  if (threadErr || !threadRow) {
+  if (threadErr || !threadId) {
     await admin.from('workflow_runs').update({
       status: 'failed',
-      error: `Thread creation failed: ${threadErr?.message}`,
+      error: `Thread creation failed: ${threadErr}`,
       completed_at: new Date().toISOString(),
     }).eq('id', runId);
-    return { runId, status: 'failed', threadId: null, error: threadErr?.message };
+    return { runId, status: 'failed', threadId: null, error: threadErr ?? 'no thread' };
   }
-
-  const threadId = (threadRow as { id: string }).id;
 
   // Link the run → thread
   await admin.from('workflow_runs').update({ thread_id: threadId }).eq('id', runId);
@@ -339,6 +440,9 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       role: 'assistant',
       content: `Workflow failed.\n\n${debug}`,
     });
+    await admin.from('work_threads')
+      .update({ updated_at: new Date().toISOString() })
+      .eq('id', threadId);
 
     return { runId, status: 'failed', threadId, error: runError };
   }
@@ -473,6 +577,10 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     content: threadMessage,
     metadata: materialised.artifact ? { artifact_ids: [materialised.artifact.id] } : null,
   });
+  // Surface the shared thread (no updated_at trigger exists on work_threads).
+  await admin.from('work_threads')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', threadId);
   if (materialised.artifact) {
     const { data: fresh } = await admin
       .from('work_threads')
@@ -480,8 +588,11 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       .eq('id', threadId)
       .single();
     const existing = ((fresh as { artifacts?: DocumentArtifact[] } | null)?.artifacts) ?? [];
+    // Cap the array — the persistent thread accumulates one artifact per run, and
+    // chat-context injection reads every artifact on the thread.
+    const merged = [...existing, materialised.artifact].slice(-20);
     await admin.from('work_threads')
-      .update({ artifacts: [...existing, materialised.artifact], artifact: materialised.artifact })
+      .update({ artifacts: merged, artifact: materialised.artifact, updated_at: new Date().toISOString() })
       .eq('id', threadId);
 
     // Index into the knowledge base so the generated doc is searchable in Drive
@@ -531,6 +642,12 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       last_run_at: completedAt.toISOString(),
       next_run_at: nextRun ? nextRun.toISOString() : null,
     }).eq('id', workflow.id);
+
+    // ── Auto-pause: don't keep producing output nobody reads ──
+    // Runs AFTER the next_run_at write above so the pause's null isn't overwritten.
+    if (opts.triggerSource === 'schedule') {
+      await maybeAutoPause(admin, workflow, out, runId, threadId, worker.name).catch(() => {});
+    }
   }
 
   // Proactive completion message — post back into the source chat thread if triggered from one
