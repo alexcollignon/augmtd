@@ -18,12 +18,15 @@ import {
   ChevronRightIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
+import { RoomShell } from '@/components/room/room-shell';
+import { ContextStrip } from '@/components/room/context-strip';
 import ReplyEditor from '@/components/inbox/reply-editor';
 import KbFilePicker from '@/components/inbox/kb-file-picker';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { fmtMonthDay, fmtDateTime, fmtWeekdayDate } from '@/lib/utils/format-date';
 import AddToProjectControl from '@/components/entities/add-to-work-control';
-import { ItemRail, type RailView } from '@/components/home/item-rail';
+import { DecisionCard } from '@/components/work/decision-card';
+import { ItemRail, pushDealTurn, type RailView } from '@/components/home/item-rail';
 
 // ── Shared visual language across ALL deep-dive variants (coherence pass #3). One header, one
 // section-label token, one card token — so email / meeting / commitment / follow-up read identically.
@@ -852,16 +855,10 @@ function DeepDiveShell({ children, rail, embedded = false }: { children: React.R
       </div>
     );
   }
-  return (
-    <div className="w-full h-full min-h-0 flex flex-row bg-neutral-50 p-2 gap-2">
-      <div className="flex-1 min-w-0 flex flex-col h-full min-h-0 rounded-2xl bg-white shadow-sm overflow-hidden">
-        {children}
-      </div>
-      <aside className="hidden lg:flex w-[380px] flex-shrink-0 flex-col h-full min-h-0">
-        {rail}
-      </aside>
-    </div>
-  );
+  // ONE-ROOM R2 — THE INVERSION (docs/one-room-plan.md): the CONVERSATION is the center of the
+  // page; the work mounts on the STAGE beside it. Rendered by THE ONE shared shell — the project
+  // room mounts the same component, so the anatomy can never fork again.
+  return <RoomShell conversation={rail} stage={children} />;
 }
 
 // ── The deep-dive's ONE outcome read: /api/items/view (prepared + gap + entity + invite affordance).
@@ -875,6 +872,9 @@ type ItemViewData = {
   }>;
   gap: string | null;
   inviteTaskId: string | null;
+  // J5 (multi-ask motion) — a one-motion commitment's clauses, rendered as the checklist inside
+  // the ONE composer (never N surfaces for one motion). Null unless ≥2 steps exist.
+  steps: Array<{ id: string; text: string; done: boolean }> | null;
   // The rail payload — the entity's judged state + everything else living on the deal.
   entity: RailView['entity'];
   siblings: RailView['siblings'];
@@ -912,6 +912,13 @@ function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'aw
       .catch(() => {});
   }, [kind, id, key]);
   useEffect(() => { refresh(); }, [refresh]);
+  // Coherence (promise fix): a membership correction anywhere (the chip's move/detach/found)
+  // refetches THIS view — the rail's room key, entity context and strip follow the change live.
+  useEffect(() => {
+    const onChange = (ev: Event) => { if ((ev as CustomEvent).detail?.id === id) refresh(); };
+    window.addEventListener('aug:membership-changed', onChange);
+    return () => window.removeEventListener('aug:membership-changed', onChange);
+  }, [id, refresh]);
   return { view, refresh };
 }
 
@@ -1230,10 +1237,54 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
   //   • action    → composer COLLAPSED; the action leads. "Reply" expands it.
   // Non-fatal: relevance null/unknown → composer OPEN (today's behavior). The user can override freely
   // via the "Reply" action, so a mis-judged relevance never boxes them in.
-  const [composerOpen, setComposerOpen] = useState(true);
+  // VERDICT-FIRST MOUNT (promise fix #3): nothing mounts until a seed says so — the composer
+  // starts CLOSED and opens when the (cached-instant or fetched) verdict/relevance seeds it.
+  // Mount-then-remove ("the composer flashed then disappeared") is a trust bug, not a style one.
+  const [composerOpen, setComposerOpen] = useState(false);
   const [relevance, setRelevance] = useState<'reply' | 'action' | 'awareness' | null>(null);
   // Once the user manually toggles the composer, stop auto-seeding from the (late-arriving) relevance.
   const composerTouchedRef = useRef(false);
+  // J2 (judged room): THE ONE WORK JUDGMENT drives the surface — the verdict supersedes raw
+  // relevance for the mount (decide → the DecisionCard; reply → composer open with the draft;
+  // none → message + chat, Dismiss leads). Cached server-side; cheap to fetch.
+  const [verdict, setVerdict] = useState<{ work: string; component: string; executor: { kind: string; name?: string }; options?: Array<{ label: string }>; reason: string } | null>(null);
+  const [decisionCleared, setDecisionCleared] = useState(false);
+  // The verdict OUTRANKS the thread's raw relevance: once it has seeded the surface, a
+  // later-arriving thread load must not overwrite the judged mount (the verdict is cached and
+  // usually lands first; without this guard the slower fetch wins the race).
+  const verdictSeededRef = useRef(false);
+  // Instant, correct mount on reopen: hydrate the last verdict from localStorage (client-only,
+  // pre-paint) so the surface seeds right the FIRST paint; the fetch refreshes it.
+  useLayoutEffect(() => {
+    const cached = loadLS<{ work: string; component: string; executor: { kind: string; name?: string }; options?: Array<{ label: string }>; reason: string }>(`aug-item-verdict-inbox-${id}`);
+    if (!cached || verdictSeededRef.current) return;
+    setVerdict(cached);
+    verdictSeededRef.current = true;
+    if (!composerTouchedRef.current) {
+      setComposerOpen(cached.work === 'reply' || cached.work === 'send_file');
+      setRelevance(cached.work === 'none' ? 'awareness' : (cached.work === 'reply' || cached.work === 'send_file') ? 'reply' : 'action');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/items/judge?kind=inbox&id=${id}`).then((r) => r.json()).then((d) => {
+      if (!alive || !d.verdict) return;
+      setVerdict(d.verdict);
+      saveLS(`aug-item-verdict-inbox-${id}`, d.verdict);
+      verdictSeededRef.current = true;
+      if (!composerTouchedRef.current) {
+        // The verdict's surface: reply/send_file → composer open (send_file mounts its resolved
+        // attachment chip INSIDE the composer); everything else → collapsed (the mounted
+        // component or the message leads). The user can always override via "Reply".
+        setComposerOpen(d.verdict.work === 'reply' || d.verdict.work === 'send_file');
+        if (d.verdict.work === 'none') setRelevance('awareness');
+        else if (d.verdict.work === 'reply' || d.verdict.work === 'send_file') setRelevance('reply');
+        else setRelevance('action');
+      }
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [id]);
 
   // ── Item-level actions from the palette (freedom — always available regardless of section).
   const [itemDismissed, setItemDismissed] = useState(false);
@@ -1250,14 +1301,17 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
         if (!alive) return;
         setThread(d);
         saveLS(`aug-item-thread-${id}`, d);
-        // Seed the primary surface from the understood relevance (only until the user touches the
-        // composer, so a late thread load never yanks the box shut after they opened it).
+        // Seed the primary surface from the understood relevance — but ONLY while the judged
+        // verdict hasn't already seeded it (the verdict outranks raw relevance), and only until
+        // the user touches the composer.
         const rel = d.relevance ?? null;
-        setRelevance(rel);
-        if (!composerTouchedRef.current) {
-          // reply / unknown → open (today's behavior); awareness / action → collapsed (lead with
-          // Dismiss / the action). The user reopens it any time via the palette's "Reply".
-          setComposerOpen(rel === null || rel === 'reply');
+        if (!verdictSeededRef.current) {
+          setRelevance(rel);
+          if (!composerTouchedRef.current) {
+            // reply / unknown → open; awareness / action → collapsed (lead with Dismiss / the
+            // action). The user reopens it any time via the palette's "Reply".
+            setComposerOpen(rel === null || rel === 'reply');
+          }
         }
       })
       .catch(() => { if (alive) setThreadErr(true); });
@@ -1278,6 +1332,20 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
     return () => { alive = false; };
   }, [id]);
 
+  // ── J2 (send_file mount) — a judged doc-send arrives PREFILLED: the resolver's file (stored on
+  // the prepared reply artifact) auto-attaches as the STANDARD composer chip — ✕ removes it like
+  // any attachment, and the one-shot guard means a removal sticks (no re-attach on re-render).
+  // Loads via the same /api/kb/attachment path the KB picker uses; a failed load surfaces the
+  // picker's own error line (the draft still names the file — attach manually as the fallback).
+  const preparedAttachRef = useRef<string | null>(null);
+  const preparedAttachment = view?.prepared?.find((p) => p.kind === 'reply_draft')?.attachment ?? null;
+  useEffect(() => {
+    if (!preparedAttachment || preparedAttachRef.current === preparedAttachment.fileId) return;
+    preparedAttachRef.current = preparedAttachment.fileId;
+    atts.onKbSelect([{ id: preparedAttachment.fileId, filename: preparedAttachment.filename }]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preparedAttachment?.fileId]);
+
   const send = async () => {
     // Send the editor's HTML (fall back to the live ref, then the seeded draft).
     const html = bodyHTML || editorRef.current?.innerHTML || (draft ? draftToHTML(draft) : '');
@@ -1290,6 +1358,15 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
       });
       if (res.ok) {
         setSent(true);
+        // J4 — the delivery reports back INTO the deal's conversation (not just activity): the
+        // room's rail shows "Sent — …" as a keyed turn the next time the deal is open.
+        try {
+          const entId = railView?.entity?.id;
+          if (entId) {
+            const { pushDealTurn } = await import('@/components/home/item-rail');
+            pushDealTurn(entId, `Sent — ${thread?.subject ? `"${String(thread.subject).slice(0, 60)}"` : 'the reply'} on its way.`, { key: `sent:${id}` });
+          }
+        } catch { /* non-fatal */ }
         // (The reply step in the cached plan flips to done SERVER-side in the send-reply route.)
         // Success state, then close back to the Home (its auto-refresh reflects the sent item).
         setTimeout(() => router.back(), 900);
@@ -1344,8 +1421,6 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
         body: thread.body,
       }
     : null;
-
-  const hasThread = !threadErr && (thread?.messages?.length ?? 0) > 1;
 
   // ── The palette's "Reply" — the composer IS the reply task's surface (owner=you). On an awareness/
   // action item the composer was just collapsed, not gone: open it + scroll to it. On a reply item it's
@@ -1435,12 +1510,45 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
   // commit; nothing sends until "Review & forward"). Collapses the composer so there's one send surface.
   const openForward = () => { setForwarding(true); setComposerOpen(false); };
 
-  const railView = view?.entity ? (view as RailView) : null;
+  // ONE-ROOM R2: the conversation exists for LOOSE items too (the rail handles a null entity —
+  // item-anchored narration + the founding chip). The room key falls back to `<kind>:<id>`.
+  const railView = view ? (view as RailView) : null;
   return (
-    // Outcome-first deep-dive: MAIN (header / thread / composer) + the CONVERSATIONAL RAIL when the
-    // item belongs to a remembered body of work. No step panel — the plan engine works invisibly.
+    // ONE-ROOM R2: the CONVERSATION is the center; this component's children are the STAGE (the
+    // message + composer workspace). The judged DECISION and the draft's ARTIFACT CARD render
+    // INLINE in the stream (surface:'inline' per the registry) — the stage holds the workspaces.
     <DeepDiveShell embedded={embedded} rail={railView ? (
-      <ItemRail kind="email" id={id} view={railView} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }} />
+      <ItemRail kind="email" id={id} view={railView} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }}
+        decision={!itemDismissed && !decisionCleared && verdict?.work === 'decide' && (verdict.options?.length ?? 0) >= 2 ? {
+          title: verdict.reason || null,
+          options: verdict.options!,
+          onChoose: async (label: string) => {
+            // The word is the deed — AND THE DEED IS VISIBLE (promise fix #3): the choice lands as
+            // a user turn, the steer's answer as the response turn. Silence after a click is a bug.
+            const roomKey = railView?.entity?.id ?? `inbox:${id}`;
+            pushDealTurn(roomKey, label, { role: 'user' });
+            setDecisionCleared(true);
+            const res = await fetch('/api/items/steer', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ kind: 'email', id, text: label }),
+            }).catch(() => null);
+            const d = res && res.ok ? await res.json().catch(() => ({})) : {};
+            if (d.draft) { setDraft(d.draft); setBodyHTML(''); setDraftV((v) => v + 1); setComposerOpen(true); }
+            pushDealTurn(roomKey,
+              String(d.say || d.answer || (d.draft ? 'On it — the draft is on the right, updated for that.' : (res && res.ok ? 'Done.' : "I couldn't do that just now — try again or tell me more."))),
+              { key: `decide:${id}` });
+          },
+          onDismiss: () => setDecisionCleared(true),
+        } : null}
+        artifact={!itemDismissed && !sent && !!draft && verdict?.work !== 'decide' ? {
+          label: 'Reply drafted — ready to review',
+          by: view?.prepared?.find((p) => p.kind === 'reply_draft')?.by ?? null,
+          commitLabel: 'Send',
+          onOpen: openComposer,
+          onCommit: send,
+          committing: sending,
+        } : null}
+      />
     ) : undefined}>
       {/* 1 — Header: subject + sender + date (fixed at top). T4 (work-surface): the posture badge
           ("For awareness"/"Reply needed") is INTERNAL vocabulary — it drives behavior; the user
@@ -1459,7 +1567,7 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
         }
       />
 
-      {/* 2 — Scrolling thread + angle (the only scroll area; composer stays docked below) */}
+      {/* 2 — The one scroll area, in the Scape order: message card → judged work → one Send. */}
       <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
         {/* ONE ACTION BAR — Reply · Dismiss ▾ · Forward. Nothing else; the composer owns Send. */}
         {!itemDismissed && (
@@ -1473,6 +1581,42 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
             onDismissWithNote={dismissWithNote}
             onForward={openForward}
             dismissing={dismissing}
+          />
+        )}
+
+        {/* THE MESSAGE (J2, the Scape order) — what arrived, as ONE clean height-capped card;
+            every earlier message folds behind "Show N earlier". The work mounts BENEATH it. The
+            full mail client stays the Inbox's job. */}
+        {threadErr ? (
+          <p className="text-[13px] text-neutral-400">Could not load the thread.</p>
+        ) : (
+          <ThreadMessages messages={threadMessages} fallback={fallback} compact />
+        )}
+
+        {/* One-room R2 — the DECISION renders INLINE in the conversation stream (the rail's
+            `decision` prop, surface:'inline' per the registry). The stage keeps it ONLY when no
+            rail carries it: view not yet loaded, or EMBEDDED in the entity room (the room's own
+            rail doesn't receive this item's decision prop). */}
+        {(!railView || embedded) && !itemDismissed && !decisionCleared && verdict?.work === 'decide' && (verdict.options?.length ?? 0) >= 2 && (
+          <DecisionCard
+            title={verdict.reason || null}
+            options={verdict.options!}
+            onChoose={async (label) => {
+              // Promise fix #3 — the choice + the answer are VISIBLE turns in the room conversation.
+              const roomKey = railView?.entity?.id ?? `inbox:${id}`;
+              pushDealTurn(roomKey, label, { role: 'user' });
+              setDecisionCleared(true);
+              const res = await fetch('/api/items/steer', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ kind: 'email', id, text: label }),
+              }).catch(() => null);
+              const d = res && res.ok ? await res.json().catch(() => ({})) : {};
+              if (d.draft) { setDraft(d.draft); setBodyHTML(''); setDraftV((v) => v + 1); setComposerOpen(true); }
+              pushDealTurn(roomKey,
+                String(d.say || d.answer || (d.draft ? 'On it — the draft is updated for that.' : (res && res.ok ? 'Done.' : "I couldn't do that just now."))),
+                { key: `decide:${id}` });
+            }}
+            onDismissCard={() => setDecisionCleared(true)}
           />
         )}
 
@@ -1519,39 +1663,20 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
           />
         )}
 
-        {/* The whole thread, rendered by the SHARED inbox component (avatars + collapse + fold).
-            The relationship context lives in the RAIL now (narrated, not a card). */}
-        <div>
-          {hasThread && (
-            <h2 className={SECTION_LABEL}>Thread</h2>
-          )}
-          {threadErr ? (
-            <p className="text-[13px] text-neutral-400">Could not load the thread.</p>
-          ) : (
-            <>
-              <PreparedLead prepared={view?.prepared ?? null} />
-              <ThreadMessages messages={threadMessages} fallback={fallback} />
-            </>
-          )}
-        </div>
+        {/* Coworker deliverables prepared on this item — work, so it sits with the work. */}
+        <PreparedLead prepared={view?.prepared ?? null} />
 
-
-        {/* Suggested angle (light line) — kept just above the docked composer */}
+        {/* THE REPLY (J2) — the judged work mounts INLINE beneath the message, prefilled from the
+            pool. No bottom dock: message → work → one Send is the whole read. OPEN/COLLAPSED still
+            follows the verdict (reply → open; awareness/action → absent, the palette's "Reply" is
+            the single reveal). */}
+        {composerOpen && (
+      <div ref={composerRef}>
         {angle && (
-          <p className="text-[13px] text-neutral-600 leading-relaxed">
+          <p className="text-[13px] text-neutral-600 leading-relaxed mb-2">
             <span className="font-medium text-neutral-700">Suggested angle:</span> {angle}
           </p>
         )}
-      </div>
-
-      {/* 3 — Docked reply composer: the reply TASK's surface (owner=you). Its OPEN/COLLAPSED state is
-          driven by the item's relevance (reply → open; awareness/action → collapsed, leading with the
-          palette's Dismiss/action) so there is ONE reply surface, never a separate always-open box that
-          could disagree with the Identified-tasks panel. COLLAPSED → the composer is simply absent — the
-          action palette's "Reply" is the SINGLE reply control (no redundant slim "Reply" bar below it,
-          which duplicated the palette's Reply for the same thing). Reveal via the palette. */}
-      {!composerOpen ? null : (
-      <div ref={composerRef} className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4 max-h-[45vh] overflow-y-auto">
         <h2 className={SECTION_LABEL}>
           Your reply
           {/* Byline — attribution when the draft was prepared; a quiet "drafting…" while it's coming. */}
@@ -1607,6 +1732,11 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
         )}
       </div>
       )}
+
+      {/* R3 — THE CONTEXT STRIP: what this connects to (project door, siblings, founding), spatial
+          not conversational. Hidden when embedded — the room IS the project context. */}
+      {!embedded && railView && <ContextStrip kind="email" id={id} view={railView} />}
+      </div>
 
       {/* KB file picker modal (shared with the inbox) — "From knowledge base" attach path. */}
       {atts.kbPickerOpen && (
@@ -1669,7 +1799,9 @@ function MeetingDetail({ id, embedded = false }: { id: string; embedded?: boolea
   // The ONE outcome read — rail context + the gap line + a contextual prepared invite.
   const { view } = useItemView('meeting', id);
   const [inviteOpen, setInviteOpen] = useState(false);
-  const railView = view?.entity ? (view as RailView) : null;
+  // ONE-ROOM R2: the conversation exists for LOOSE items too (the rail handles a null entity —
+  // item-anchored narration + the founding chip). The room key falls back to `<kind>:<id>`.
+  const railView = view ? (view as RailView) : null;
 
   useEffect(() => {
     let alive = true;
@@ -1896,7 +2028,29 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   // The ONE outcome read — rail context + gap + prepared deliverables + a contextual invite.
   const { view } = useItemView('commitment', id);
   const [inviteOpen, setInviteOpen] = useState(false);
-  const railView = view?.entity ? (view as RailView) : null;
+  // ONE-ROOM R2: the conversation exists for LOOSE items too (the rail handles a null entity —
+  // item-anchored narration + the founding chip). The room key falls back to `<kind>:<id>`.
+  const railView = view ? (view as RailView) : null;
+
+  // J2 (judged room): THE ONE WORK JUDGMENT mounts the surface — a chase/reply verdict opens the
+  // composer directly (the message is the work; no "Draft email →" button gate). The user's own
+  // toggle always wins after first touch.
+  const composingTouchedRef = useRef(false);
+  const [verdict, setVerdict] = useState<{ work: string; reason: string } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/items/judge?kind=commitment&id=${id}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!alive || !d?.verdict) return;
+        setVerdict(d.verdict);
+        if (!composingTouchedRef.current && (d.verdict.work === 'chase' || d.verdict.work === 'reply')) {
+          setComposing(true);
+        }
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [id]);
 
   useEffect(() => {
     let alive = true;
@@ -1954,14 +2108,24 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
           </div>
         ) : (
           <>
-            {/* One action bar — Draft email. The compose panel is the only writing surface. */}
+            {/* One action bar — the compose panel is the only writing surface. When the judge says
+                chase/reply the composer MOUNTS on its own (below); the bar is then just the toggle. */}
             <ActionBar
               primaryLabel={composing ? 'Hide draft' : (data.counterparty ? `Draft email → ${data.counterparty.replace(/<[^>]*>/g, '').trim()}` : 'Draft email →')}
               primaryActive={!composing}
-              onPrimary={() => setComposing((v) => !v)}
+              onPrimary={() => { composingTouchedRef.current = true; setComposing((v) => !v); }}
             />
             {composing && (
               <div>
+                {/* The judge's one-line reason — why this is the move (grounded, never generic). */}
+                {verdict?.reason && (verdict.work === 'chase' || verdict.work === 'reply') && (
+                  <p className="mb-2 text-[12.5px] text-neutral-500 leading-relaxed">{verdict.reason}</p>
+                )}
+                {/* J5 — the multi-ask motion's checklist INSIDE the one composer: the clauses of
+                    this single obligation, ticked as the message covers them. */}
+                {(view?.steps?.length ?? 0) >= 2 && (
+                  <MotionChecklist steps={view!.steps!} commitmentId={id} />
+                )}
                 <ComposePanel kind="commitment" entityId={id} onSent={() => setEmailed(true)} />
                 {emailed && !done && (
                   <button
@@ -1991,6 +2155,9 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
 
             {/* THE STEER INPUT — inline only when there's no rail (the rail's composer owns it). */}
             {!railView && <SteerRow kind="commitment" id={id} />}
+
+            {/* R3 — the context strip (spatial, never in the conversation). */}
+            {!embedded && railView && <ContextStrip kind="commitment" id={id} view={railView} />}
 
             {src ? (
               <section>
@@ -2074,7 +2241,9 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
   const [inviteOpen, setInviteOpen] = useState(false);
   const [draftV, setDraftV] = useState(0);        // bumps to re-seed the editor (steer rework / late draft)
   const userTypedRef = useRef(false);             // the user's words always win over a late-arriving draft
-  const railView = view?.entity ? (view as RailView) : null;
+  // ONE-ROOM R2: the conversation exists for LOOSE items too (the rail handles a null entity —
+  // item-anchored narration + the founding chip). The room key falls back to `<kind>:<id>`.
+  const railView = view ? (view as RailView) : null;
   const atts = useReplyAttachments();             // shared inbox-style attach surface (base64 → nudge PATCH)
   const editorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null); // the docked nudge composer
@@ -2168,26 +2337,21 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
         meta={who ? <span>Waiting on {who}</span> : undefined}
       />
 
-      {/* Scrolling thread — relationship context lives in the RAIL now (narrated, not a card). */}
+      {/* The one scroll area, in the Scape order: message card → the follow-up composer. */}
       <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
         <div>
-          {hasMessages && (
-            <h2 className={SECTION_LABEL}>Conversation</h2>
-          )}
           {threadErr ? (
             <p className="text-[13px] text-neutral-400">Could not load the conversation.</p>
           ) : !hasMessages && thread ? (
             <p className="text-[13px] text-neutral-400 leading-relaxed">No linked email thread — write a follow-up below.</p>
           ) : (
-            <>
-              <PreparedLead prepared={view?.prepared ?? null} />
-              <ThreadMessages messages={threadMessages} fallback={null} />
-            </>
+            <ThreadMessages messages={threadMessages} fallback={null} compact />
           )}
         </div>
 
         {/* THE GAP LINE — in the rail when one exists; inline only for a rail-less item. */}
         {!railView && <GapLine text={view?.gap} />}
+        <PreparedLead prepared={view?.prepared ?? null} />
 
         {/* Contextual prepared INVITE — only when the plan holds an unblocked invite step. */}
         {view?.inviteTaskId && !inviteOpen && (
@@ -2201,10 +2365,9 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
         {inviteOpen && view?.inviteTaskId && (
           <InvitePreviewCard kind="followup" entityId={id} taskId={view.inviteTaskId} onSent={() => setInviteOpen(false)} onCancel={() => setInviteOpen(false)} />
         )}
-      </div>
 
-      {/* Docked nudge composer */}
-      <div ref={composerRef} className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4 max-h-[45vh] overflow-y-auto">
+      {/* The follow-up composer — INLINE beneath the message (J2), prefilled with the nudge draft. */}
+      <div ref={composerRef}>
         <h2 className={SECTION_LABEL}>
           Your follow-up
           {draft ? <DraftByline by={view?.prepared?.find((p) => p.kind === 'nudge_draft' || p.kind === 'deliverable')?.by ?? null} />
@@ -2256,6 +2419,10 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
         )}
       </div>
 
+      {/* R3 — the context strip (spatial, never in the conversation). */}
+      {!embedded && railView && <ContextStrip kind="followup" id={id} view={railView} />}
+      </div>
+
       {/* KB file picker modal (shared with the inbox) — "From knowledge base" attach path. */}
       {atts.kbPickerOpen && (
         <KbFilePicker onSelect={atts.onKbSelect} onClose={() => atts.setKbPickerOpen(false)} />
@@ -2271,6 +2438,35 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
 // worker attribution when a coworker made it), each expandable to its full content. Grounded-or-absent:
 // renders nothing when the pool has no prepared work. Read-only — acting stays with the composer/plan.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
+// J5 (multi-ask motion) — ONE commitment extracted as one motion renders its clauses as a small
+// checklist above the ONE composer. Ticking persists on the plan (PATCH /api/items/plan) so the
+// room's board and this surface read the same state. Never N surfaces for one motion.
+function MotionChecklist({ steps, commitmentId }: { steps: Array<{ id: string; text: string; done: boolean }>; commitmentId: string }) {
+  const [local, setLocal] = useState(steps);
+  useEffect(() => { setLocal(steps); }, [steps]);
+  const toggle = async (sid: string) => {
+    const next = local.map((s) => (s.id === sid ? { ...s, done: !s.done } : s));
+    setLocal(next);
+    fetch('/api/items/plan', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'commitment', entityId: commitmentId, taskId: sid, done: next.find((s) => s.id === sid)?.done }),
+    }).catch(() => {});
+  };
+  return (
+    <div className="mb-2.5 rounded-xl border border-neutral-200 bg-neutral-50/60 px-3.5 py-2.5">
+      <p className="text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1.5">This message should cover</p>
+      {local.map((s) => (
+        <button key={s.id} onClick={() => toggle(s.id)} className="flex items-start gap-2 w-full py-1 text-left group">
+          <span className={`mt-0.5 flex-shrink-0 w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors ${s.done ? 'bg-indigo-600 border-indigo-600' : 'border-neutral-300 group-hover:border-indigo-400'}`}>
+            {s.done && <CheckIcon className="w-2.5 h-2.5 text-white" />}
+          </span>
+          <span className={`text-[12.5px] leading-snug ${s.done ? 'text-neutral-400 line-through' : 'text-neutral-700'}`}>{s.text}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function PreparedLead({ prepared }: { prepared: ItemViewData['prepared'] | null }) {
   const [openId, setOpenId] = useState<string | null>(null);
   // Coworker deliverables only — the composer owns reply/nudge drafts (showing them twice duplicates).

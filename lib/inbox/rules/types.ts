@@ -19,6 +19,12 @@ export type Condition = { field: ConditionField; value: string };
 
 export type RuleOutcome = {
   set_type?: RuleLabel;
+  /** THE LABEL FLIP: a rule's KIND OVERRIDE — the user's durable correction of what mail from
+   *  this match IS ("this sender is never marketing", "this domain is a customer"). Applied as
+   *  `source_data.kind_override`, which outranks the reasoned `understanding.mailKind` in the
+   *  ONE resolver (lib/inbox/rules/write-back.ts `resolveKind`). Rules stay posture-authoritative
+   *  via set_type; set_kind is the correction channel, never the default classifier. */
+  set_kind?: 'receipt' | 'newsletter' | 'notification' | 'calendar' | 'cold_outreach' | 'customer' | 'team' | 'personal';
   auto_draft?: { enabled: boolean; instructions?: string };
   mark_read?: boolean;
   archive?: boolean;

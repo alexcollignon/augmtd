@@ -61,6 +61,12 @@ export async function executeCreateProject(
     const r = await setItemMembership(client, userId, { kind: args.attach.linkKind, id: args.attach.itemId, entityId }, { inline: true });
     attached = r.ok;
   }
+  // R4 — creation proposes members: narrate the entity's existing links into its room (after the
+  // optional attach, so the count includes it). Non-fatal, zero AI.
+  try {
+    const { narrateFounding } = await import('@/lib/entities/founding');
+    await narrateFounding(client, userId, entityId, existing?.name as string ?? name, existed ? 'tracking' : 'started');
+  } catch { /* narration is an enhancement */ }
   return {
     ok: true, entityId,
     message: `${existed ? `${name} already existed — it's tracked again` : `Started ${name}`}${attached ? ', with this in it. New mail about it will attach as it arrives' : ''}.`,

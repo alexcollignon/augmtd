@@ -131,7 +131,7 @@ export async function GET(
   const [threadResult, messagesResult] = await Promise.all([
     supabase
       .from('work_threads')
-      .select('id, title, artifacts, updated_at')
+      .select('id, title, artifacts, updated_at, workflow_id')
       .eq('id', threadId)
       .eq('user_id', user.id)
       .single(),
@@ -146,6 +146,15 @@ export async function GET(
     return NextResponse.json({ error: 'Thread not found' }, { status: 404 });
   }
 
+  // Opening a task's thread IS reviewing its output — stamp the runs, clear the
+  // notifications, and auto-resume the task if it had paused itself waiting for
+  // review. Fire-and-forget (admin client — workflow_runs has no user UPDATE
+  // policy); never blocks or fails the thread load.
+  const workflowId = (threadResult.data as { workflow_id?: string | null }).workflow_id;
+  if (workflowId) {
+    markWorkflowReviewed(workflowId, user.id, threadId).catch(() => {});
+  }
+
   const messages = (messagesResult.data || []).map((m: Record<string, unknown>) => {
     const meta = m.metadata as Record<string, unknown> | null;
     return {
@@ -157,6 +166,59 @@ export async function GET(
   return NextResponse.json({
     thread: threadResult.data,
     messages,
+  });
+}
+
+// ── Review receipt + auto-resume (the pause loop's other half) ───────────────
+// "Reviewed" = the user opened the task's shared thread. Stamps reviewed_at on
+// the workflow's unreviewed succeeded runs, marks its notifications seen, and —
+// if the task auto-paused itself for lack of review — resumes it on the spot
+// (catch-up IS the resume gesture; the explicit Resume toggle is the backup).
+async function markWorkflowReviewed(workflowId: string, userId: string, threadId: string) {
+  const admin = getAdminClient();
+
+  await Promise.all([
+    admin.from('workflow_runs')
+      .update({ reviewed_at: new Date().toISOString() })
+      .eq('workflow_id', workflowId)
+      .eq('user_id', userId)
+      .eq('status', 'succeeded')
+      .is('reviewed_at', null),
+    admin.from('workflow_notifications')
+      .update({ seen: true })
+      .eq('workflow_id', workflowId)
+      .eq('user_id', userId)
+      .eq('seen', false),
+  ]);
+
+  // Auto-resume — only the auto-paused state (a deliberate manual pause stays put),
+  // and only for the owner (scheduled runs execute as the owner, so the pause loop
+  // is owner-scoped by construction).
+  const { data: wf } = await admin
+    .from('workflows')
+    .select('id, user_id, trigger, status, auto_paused_at')
+    .eq('id', workflowId)
+    .single();
+  if (!wf?.auto_paused_at || wf.status !== 'paused' || wf.user_id !== userId) return;
+
+  const { nextRunFromTrigger } = await import('@/lib/workflows/schedule');
+  const nextRun = nextRunFromTrigger(wf.trigger as { type: string; cron?: string; timezone?: string }, new Date());
+  const { error } = await admin.from('workflows')
+    .update({
+      status: 'active',
+      auto_paused_at: null,
+      next_run_at: nextRun ? nextRun.toISOString() : null,
+    })
+    .eq('id', workflowId)
+    .eq('status', 'paused')
+    .not('auto_paused_at', 'is', null); // race-safe: only flip the auto-paused state
+  if (error) return;
+
+  // A one-line in-character note so the state flip is visible in the thread.
+  await admin.from('work_messages').insert({
+    thread_id: threadId,
+    role: 'assistant',
+    content: `Picking this back up — I'll run it as scheduled.`,
   });
 }
 

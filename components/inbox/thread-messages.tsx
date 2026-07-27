@@ -74,6 +74,42 @@ export function IframeEmailBody({ html, plain }: { html: string | null; plain: s
   return <div ref={hostRef} className="w-full px-4 py-2" />;
 }
 
+// Compact mode's height-capped latest body (judged room): renders the message clamped, and only
+// when the content ACTUALLY overflows the cap does the fade + "Show full message" appear — a short
+// note never grows a pointless unfold control. Measured post-render (shadow-DOM images may land
+// late, so re-check on resize).
+function CappedBody({ html, plain, onExpand }: { html: string | null; plain: string | null; onExpand: () => void }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [overflows, setOverflows] = useState(false);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const check = () => setOverflows(el.scrollHeight > el.clientHeight + 8);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [html, plain]);
+  return (
+    <div className="relative">
+      <div ref={boxRef} className="max-h-[300px] overflow-hidden">
+        <IframeEmailBody html={html} plain={plain} />
+      </div>
+      {overflows && (
+        <>
+          <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-white to-transparent pointer-events-none" />
+          <button
+            onClick={onExpand}
+            className="absolute inset-x-0 bottom-0 pb-1.5 pt-3 text-[11.5px] font-medium text-neutral-500 hover:text-indigo-600 transition-colors"
+          >
+            Show full message
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 // Avatar helpers — deterministic soft-tint initial chip per sender name.
 const AVATAR_COLORS = [
   'bg-indigo-100 text-indigo-700', 'bg-violet-100 text-violet-700',
@@ -99,13 +135,19 @@ function parseName(addr: string): string {
 export function ThreadMessages({
   messages,
   fallback,
+  compact = false,
 }: {
   messages: ThreadMessage[] | null;  // null = loading
   fallback?: ThreadFallback | null;
+  /** Judged-room mode (J2): the message is CONTEXT, not the workspace — the latest renders as ONE
+   *  clean height-capped card ("Show full message" to unfold) and ALL earlier messages sit behind
+   *  the "Show N earlier" fold. The full mail client stays the inbox's job (compact=false). */
+  compact?: boolean;
 }) {
   const [expandedEmails, setExpandedEmails] = useState<Record<number, boolean>>({});
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [showAllRecipients, setShowAllRecipients] = useState(false);
+  const [showFullLatest, setShowFullLatest] = useState(false);
 
   const handleExpandMsg = (idx: number) =>
     setExpandedEmails(prev => ({ ...prev, [idx]: !prev[idx] }));
@@ -127,7 +169,8 @@ export function ThreadMessages({
   const latest = messages[messages.length - 1];
   const older = messages.slice(0, -1);
 
-  const ALWAYS_VISIBLE = 2;
+  // Compact (judged room): EVERYTHING earlier folds — one clean card is the whole first paint.
+  const ALWAYS_VISIBLE = compact ? 0 : 2;
   const hidden = older.length > ALWAYS_VISIBLE ? older.slice(0, older.length - ALWAYS_VISIBLE) : [];
   const visible = older.length > ALWAYS_VISIBLE ? older.slice(older.length - ALWAYS_VISIBLE) : older;
 
@@ -248,10 +291,18 @@ export function ThreadMessages({
               </span>
             )}
           </div>
-          <IframeEmailBody
-            html={latest?.html_body ?? (sd.html_body as string | null)}
-            plain={latest?.body ?? (sd.body as string | null)}
-          />
+          {compact && !showFullLatest ? (
+            <CappedBody
+              html={latest?.html_body ?? (sd.html_body as string | null)}
+              plain={latest?.body ?? (sd.body as string | null)}
+              onExpand={() => setShowFullLatest(true)}
+            />
+          ) : (
+            <IframeEmailBody
+              html={latest?.html_body ?? (sd.html_body as string | null)}
+              plain={latest?.body ?? (sd.body as string | null)}
+            />
+          )}
         </div>
       )}
     </div>

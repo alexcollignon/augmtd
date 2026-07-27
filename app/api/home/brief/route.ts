@@ -83,55 +83,9 @@ function relationshipCue(relationship?: string | null, momentum?: string | null,
   return null;
 }
 
-function isAutomatedSender(fromEmail: string | null, fromName: string | null, subject: string | null): boolean {
-  const email = (fromEmail || '').toLowerCase();
-  const localpart = email.split('@')[0] || '';
-  // Address localpart patterns — the classic "do not reply to this mailbox" senders.
-  const addrPatterns = [
-    'no-reply', 'noreply', 'no_reply', 'donotreply', 'do-not-reply', 'do_not_reply',
-    'notifications', 'notification', 'notify', 'mailer', 'mailer-daemon', 'bounce', 'bounces',
-    'postmaster', 'automated', 'auto-confirm', 'alerts', 'alert', 'billing', 'invoices', 'receipts',
-    'support+', 'updates', 'newsletter', 'news', 'digest',
-  ];
-  if (addrPatterns.some((p) => localpart.includes(p))) return true;
-  // Full-address contains (covers e.g. "team@notifications.stripe.com" style subdomains).
-  if (/(^|[.@])(no-?reply|donotreply|notifications?|mailer|bounce|postmaster)([.@])/.test(email)) return true;
-  // Display-name + subject signals — transactional / security / dunning mail from a real-looking
-  // localpart. Kept tight (well-known phrasings) so we don't nuke genuine human replies.
-  const text = `${(fromName || '').toLowerCase()} ${(subject || '').toLowerCase()}`;
-  const phrasePatterns = [
-    'payment failed', 'payment unsuccessful', 'payment declined', 'account suspended',
-    'account restricted', 'account has been', 'your subscription', 'subscription renew',
-    'verify your', 'confirm your email', 'confirm your account', 'security alert', 'security notice',
-    'unusual sign', 'sign-in attempt', 'password reset', 'invoice is', 'your receipt', 'order confirmation',
-  ];
-  if (phrasePatterns.some((p) => text.includes(p))) return true;
-  return false;
-}
-
-// Bug C — "can't reply" ≠ "no action needed". An automated / no-reply item you cannot reply to can
-// still DEMAND action: a payment failed, an account suspended/restricted, a security alert, a "verify
-// your…", something expiring. These are ACTION-WORTHY: they must NOT be buried in the FYI digest
-// (nobody sees them), but they're also NOT a reply (no human is waiting) — so they belong in the
-// ACTION lane (a to-do priority card), not must-respond. This tells them apart from informational
-// automated mail (newsletters, receipts, "order shipped", digests) which stays FYI.
-//   • work_state ∈ (action_required | decision_required) — the classifier already flagged it needs a
-//     decision/action (e.g. iCloud full, Google security alert land here), OR
-//   • the subject/name carries an unmistakable action signal (dunning / suspension / security /
-//     verification / expiry). Kept tight so marketing "act now!" copy doesn't trip it.
-function isActionWorthyAutomated(workState: string | null, fromName: string | null, subject: string | null): boolean {
-  if (workState === 'action_required' || workState === 'decision_required') return true;
-  const text = `${(fromName || '').toLowerCase()} ${(subject || '').toLowerCase()}`;
-  const actionPhrases = [
-    'payment failed', 'payment unsuccessful', 'payment declined', 'payment could not',
-    'account suspended', 'account restricted', 'account limited', 'account locked', 'account disabled',
-    'account has been suspended', 'has been restricted', 'has been limited', 'has been locked',
-    'security alert', 'security notice', 'unusual sign', 'suspicious', 'verify your', 'confirm your account',
-    'action required', 'action needed', 'immediate action', 'expiring', 'expires', 'will expire',
-    'storage is full', 'storage full', 'past due', 'overdue', 'update your payment', 'billing problem',
-  ];
-  return actionPhrases.some((p) => text.includes(p));
-}
+// H4/J1 — the ownership-keyed notice law + the strong automated-sender read live in ONE module
+// (lib/inbox/notice-demotion.ts) shared with judgeWork. Local aliases keep call sites unchanged.
+import { isAutomatedSenderStrong as isAutomatedSender, isActionWorthyAutomated, isNoMoveNotice } from '@/lib/inbox/notice-demotion';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function attendeeEmails(ev: any): string[] {
@@ -437,6 +391,9 @@ export async function GET() {
     const u = getUnderstanding({ source_data: sd });
     return u?.initiative ?? (typeof sd.initiative === 'string' ? sd.initiative : null);
   };
+  // H4: ids demoted as ownership-none notices — EVERY deck-feeding pool filters by this set, so a
+  // demoted notice can never re-enter through a side door (priorities / keep-an-eye-on were one).
+  const demotedNoticeIds = new Set<string>();
   for (const { it, posture } of emailCandidates) {
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
     const tid = sd.thread_id as string | undefined;
@@ -455,12 +412,18 @@ export async function GET() {
     // ONE relevance → ONE home (no overlap). Items lacking understanding fall back to today's behavior
     // (the automated re-posture below). No keyword/sender heuristic drives the split — relevance encodes it.
     const u = getUnderstanding(it);
-    // H4 (work-surface): a CALENDAR acceptance/update or a plain NOTIFICATION judged merely "action"
-    // is not a task — it leaves the deck (the digest keeps it) UNLESS a user rule explicitly said
-    // needs_reply/to_do (rules are authoritative) or a real stated deadline makes it an obligation.
-    const kindDemoted = !!u && (u.mailKind === 'calendar' || u.mailKind === 'notification')
-      && it.rule_type !== 'needs_reply' && it.rule_type !== 'to_do' && !u.deadline;
-    if (u && u.relevance === 'action' && !kindDemoted) {
+    // H4 (work-surface, OWNERSHIP-KEYED): a notice nobody owes a move on is NOT a task, whatever an
+    // AI rule guessed. Verified against real data: junk (portal responses, calendar acceptances) =
+    // ownership 'none' + kind notification/calendar; real obligations (bank data update, tax
+    // discrepancy) = ownership 'you_owe' — protected by the same key, language-proof (no keyword
+    // list). Legacy items with NO understanding fall to the structural floor (automated sender +
+    // not action-worthy). The user's explicit type_override is the only authoritative override
+    // here — rule_type includes AI-rule guesses, which is exactly what this corrects.
+    const noticeSubj = ((sd.subject as string) || it.work_title || null);
+    const noticeDemoted = it.type_override !== 'needs_reply' && it.type_override !== 'to_do'
+      && isNoMoveNotice({ u, fromEmail: fromEmailOf(sd), fromName: (sd.from_name as string) || null, subject: noticeSubj, workState: (it.work_state as string) || null });
+    if (noticeDemoted) demotedNoticeIds.add(it.id); // filters EVERY downstream pool (priorities, keep-an-eye-on, …)
+    if (u && u.relevance === 'action' && !noticeDemoted) {
       // An action-notice: its own section, never a reply card, never a needs-you priority. We DON'T push
       // it into `priorities` (so it can't count as needs-you) or `mustRespondRaw`; we still feed
       // emailSeeds so per-person context stays complete, then skip the reply/priority wiring.
@@ -542,6 +505,11 @@ export async function GET() {
       // direct → surface — err toward showing the reply.)
       const ccOnlyBystander = (sd.is_cc_only === true);
       if (understoodAwareness && ccOnlyBystander) continue;
+      // H4: an automated notice NOBODY owes a move on (ownership 'none' + structural notice) never
+      // owes a reply either — whatever the AI rule matched. The July-13 protection guards REAL
+      // small-team asks (a person's thread never has ownership none + an automated/notification
+      // shape); the user's explicit type_override still wins above.
+      if (noticeDemoted) continue;
       mustRespondRaw.push({
         itemId: it.id,
         from: (sd.from_name as string) || (sd.from as string) || 'Someone',
@@ -594,6 +562,9 @@ export async function GET() {
     }
     return null;
   };
+  // ONE OBLIGATION = ONE TASK: `commits` was already folded against the visible actionable rows
+  // at load (the shared dedupe-deck module, line ~248) — the promise fix lowered its STRUCTURAL
+  // floor so an extractor rephrase can't produce two rows for one ask.
   const commitmentCands = commits
     .map((c) => ({
       id: c.id as string,
@@ -635,6 +606,9 @@ export async function GET() {
   // Overdue → reply → to-do → finished meetings last (a past meeting is context, not "do this now").
   const rank = (p: Priority) => (p.overdue ? 0 : p.source === 'meeting' ? 4 : p.posture === 'needs_reply' ? 1 : p.posture === 'to_do' ? 2 : 3);
   priorities.sort((a, b) => rank(a) - rank(b));
+  for (let i = priorities.length - 1; i >= 0; i--) {
+    if (priorities[i].itemId && demotedNoticeIds.has(priorities[i].itemId!)) priorities.splice(i, 1); // H4
+  }
   const cappedPriorities = priorities.slice(0, MAX_PRIORITIES);
 
   // ── FYI-by-topic: group the awareness emails by sender; the AI digests each group below. ──
@@ -1093,7 +1067,7 @@ export async function GET() {
   // reply must never ALSO appear in keep-an-eye-on. Must-respond wins.
   const mustItemIds = new Set((mustRespondOut?.items ?? []).map((r) => r.itemId).filter(Boolean));
   const keepAnEyeOnOut = keepAnEyeOn
-    ? { items: keepAnEyeOn.items.filter((k) => (!k.itemId || pendingItemIds.has(k.itemId) || awarenessRaw.has(k.itemId)) && !mustItemIds.has(k.itemId)) }
+    ? { items: keepAnEyeOn.items.filter((k) => (!k.itemId || pendingItemIds.has(k.itemId) || awarenessRaw.has(k.itemId)) && !mustItemIds.has(k.itemId) && !demotedNoticeIds.has(k.itemId)) } // H4: demoted notices filtered
     : keepAnEyeOn;
 
   // ── "For your awareness" — REAL correspondence you're only informed on (understanding-driven). ──

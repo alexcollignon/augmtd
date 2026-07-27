@@ -8,6 +8,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getUnderstanding } from '@/lib/inbox/item-understanding';
 import { isAutomatedSender, isAutomatedWho } from '@/lib/inbox/automated';
+import { isNoMoveNotice } from '@/lib/inbox/notice-demotion';
 import { buildInitiativeMap } from '@/lib/projects/initiative-resolver';
 import { computeEventUnderstanding } from '@/lib/calendar/event-understanding';
 import { resolveOutboundAwaiting } from '@/lib/outbound/resolve';
@@ -199,7 +200,16 @@ export async function buildWorkItems(
     const explicit = (u?.deadline as string) || null;
     const subj = String(it.work_title || sd.subject || '');
     const fromEmail = String((sd.from_address as string) || (sd.from as string) || '').toLowerCase().match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || null;
-    const automated = isMeeting ? false : (isAutomatedSender(fromEmail, (sd.from_name as string) || null, subj) || u?.bulk === true);
+    // ONE LAW, EVERY SURFACE (promise fix): `automated` here means "no move is owed" — the sender-
+    // automated/bulk signals PLUS the ownership-keyed notice law (the SAME module the Home deck
+    // uses). Without this, an ownership-none calendar invite is demoted from the deck but sits as
+    // an overdue task on the Timeline — two surfaces disagreeing about whether something is work.
+    // The user's explicit actionable type_override outranks the law (same precedence as the deck).
+    const overrideActionable = override === 'needs_reply' || override === 'to_do' || override === 'waiting_on';
+    const automated = isMeeting ? false : (!overrideActionable && (
+      isAutomatedSender(fromEmail, (sd.from_name as string) || null, subj) || u?.bulk === true ||
+      isNoMoveNotice({ u, fromEmail, fromName: (sd.from_name as string) || null, subject: subj, workState: ws })
+    ));
     items.push({
       id: `inbox:${it.id}`, entityId: String(it.id), kind,
       title: String(it.work_title || sd.subject || 'Email'),

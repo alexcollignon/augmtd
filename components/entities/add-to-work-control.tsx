@@ -37,6 +37,28 @@ export default function AddToWorkControl({ kind, id, compact }: { kind: string; 
     return () => document.removeEventListener('mousedown', onClick);
   }, [open]);
 
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+
+  // Found + attach in one motion (the "this is actually EG Bank" correction). Human creation (R4);
+  // the server narrates existing members into the new project's room; the attach is locked.
+  const createAndAttach = async () => {
+    const n = newName.trim();
+    if (!n || busy) return;
+    setBusy(true); setCreating(false); setNewName(''); setOpen(false);
+    try {
+      const res = await fetch('/api/entities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: n }) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.id) throw new Error();
+      const att = await fetch('/api/items/entity', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: itemKind, id, entityId: d.id }) });
+      if (!att.ok) throw new Error();
+      setEntId(d.id); setEntName(n); setEntTracked(true);
+      toast.success(`Started ${n} — moved here`);
+      try { window.dispatchEvent(new CustomEvent('aug:membership-changed', { detail: { kind: itemKind, id } })); } catch { /* SSR-safe */ }
+      setEntities((prev) => [{ id: d.id, name: n, status: 'active', weight: 100 }, ...prev.filter((e) => e.id !== d.id)]);
+    } catch { toast.error('Could not create the project'); } finally { setBusy(false); }
+  };
+
   const setEntity = async (nid: string | null) => {
     setBusy(true); setOpen(false);
     const prev = { entId, entName };
@@ -45,6 +67,10 @@ export default function AddToWorkControl({ kind, id, compact }: { kind: string; 
       const res = await fetch('/api/items/entity', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: itemKind, id, entityId: nid }) });
       if (!res.ok) throw new Error();
       toast.success(nid ? 'Linked' : 'Unlinked');
+      // Coherence (promise fix): ONE membership change → every reader of this item refetches
+      // (the deep-dive view, the rail's conversation, the strip) — the chip and the room can
+      // never disagree after a correction.
+      try { window.dispatchEvent(new CustomEvent('aug:membership-changed', { detail: { kind: itemKind, id } })); } catch { /* SSR-safe */ }
     } catch { setEntId(prev.entId); setEntName(prev.entName); toast.error('Could not update'); } finally { setBusy(false); }
   };
 
@@ -72,6 +98,9 @@ export default function AddToWorkControl({ kind, id, compact }: { kind: string; 
             }}
             disabled={busy} className="font-medium text-indigo-500 hover:text-indigo-700 transition-colors"
           >Track</button>
+          {/* Promise fix #4 — CORRECTION is one tap even on a merely-recognized grouping: "not
+              this" writes the locked refusal, so recognition never re-files it here. */}
+          <button onClick={() => setEntity(null)} disabled={busy} title="Wrong — this doesn't belong here" className="text-neutral-300 hover:text-rose-500 transition-colors"><XMarkIcon className="w-3 h-3" /></button>
         </span>
       ) : (
         <button onClick={() => setOpen((v) => !v)} disabled={busy} className={`inline-flex items-center gap-1 rounded-full border border-neutral-200 px-2 py-0.5 font-medium text-neutral-400 hover:border-indigo-300 hover:text-indigo-600 transition-colors ${compact ? 'text-[11px]' : 'text-[12px]'}`}>
@@ -79,13 +108,29 @@ export default function AddToWorkControl({ kind, id, compact }: { kind: string; 
         </button>
       )}
       {open && (
-        <div className="absolute top-full right-0 mt-1 z-30 w-60 max-h-60 overflow-y-auto rounded-xl border border-neutral-200 bg-white shadow-lg p-1">
+        <div className="absolute top-full right-0 mt-1 z-30 w-60 max-h-72 overflow-y-auto rounded-xl border border-neutral-200 bg-white shadow-lg p-1">
           {entities.map((e) => (
             <button key={e.id} onClick={() => setEntity(e.id)} className={`w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] transition-colors hover:bg-indigo-50 ${e.id === entId ? 'text-indigo-600 font-medium' : 'text-neutral-700'}`}>
               <FolderIcon className="w-3 h-3 flex-shrink-0 text-neutral-400" /><span className="min-w-0 flex-1 truncate">{e.name}</span>
             </button>
           ))}
           {entities.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">Nothing to link yet.</p>}
+          {/* Promise fix #4 — the correction often needs a project that doesn't exist yet ("this is
+              actually EG Bank"): found it right here — create (human, R4) + attach (locked) in one go. */}
+          <div className="border-t border-neutral-100 mt-1 pt-1">
+            {creating ? (
+              <input
+                autoFocus value={newName} onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') createAndAttach(); if (e.key === 'Escape') { setCreating(false); setNewName(''); } }}
+                placeholder="New project name…"
+                className="w-full rounded-lg border border-indigo-200 px-2 py-1.5 text-[12.5px] text-neutral-800 outline-none"
+              />
+            ) : (
+              <button onClick={() => setCreating(true)} className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors">
+                <PlusIcon className="w-3 h-3 flex-shrink-0" />Start a new project…
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>

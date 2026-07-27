@@ -72,12 +72,14 @@ export async function generateReplyDraft(
     if (prof?.full_name) userName = String(prof.full_name);
   } catch { /* keep default */ }
 
-  // The LANGUAGE the reply should be written in. PRIMARY signal: the unified `understanding.language`
-  // — reasoned over the full thread in the classification pass, so it's decisive even on short text
-  // (where the stopword detector fell back to the user's PT-heavy voice → the A2 wrong-language bug).
-  // `detectLanguage` is now only the FALLBACK when there's no understanding (legacy items). The voice
-  // block governs TONE only — never the language. (`understanding` is coerced up-front, above.)
-  const detected = languageName(understanding?.language) || detectLanguage(`${subject}\n${body}`);
+  // The LANGUAGE the reply should be written in — mirror the CONCRETE text being replied to.
+  // Promise fix #6: the stored `understanding.language` can be STALE or wrong for the message at
+  // hand (a thread that switched language; a mis-judged pass → an English ask drafted in
+  // Portuguese). Precedence: detect on the ACTUAL body first (stopword detection on real prose is
+  // reliable; it returns null on short/ambiguous text rather than guessing) → the stored
+  // understanding fills that null (the A2 lesson — short text must never fall through to the
+  // user's PT-heavy voice). The voice block governs TONE only — never the language.
+  const detected = detectLanguage(`${subject}\n${body}`) || languageName(understanding?.language);
   const langRule = detected
     ? `IMPORTANT — LANGUAGE: The email you are replying to is written in ${detected}. Write your ENTIRE ` +
       `reply in ${detected}, and ONLY in ${detected}. The example emails above are for STYLE only ` +
@@ -125,7 +127,10 @@ export async function generateReplyDraft(
 export async function generateNudgeDraft(
   userId: string,
   // `instructions` — optional extra guidance folded into the nudge (the steer channel's regenerate path).
-  opts: { counterparty: string | null; description: string; ageDays?: number; instructions?: string | null },
+  opts: { counterparty: string | null; description: string; ageDays?: number; instructions?: string | null;
+    /** The counterparty's OWN latest message text — the CONCRETE language signal (promise fix:
+     *  mirror the correspondent's actual words, never the user's voice-block language). */
+    mirrorText?: string | null },
   client: DBClient,
 ): Promise<string> {
   const recipientEmail = (opts.counterparty || '').match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || null;
@@ -143,6 +148,7 @@ export async function generateNudgeDraft(
   } catch { /* keep default */ }
 
   const who = opts.counterparty || 'the recipient';
+  const mirrorLang = opts.mirrorText ? detectLanguage(opts.mirrorText) : null;
   const aged = typeof opts.ageDays === 'number' && opts.ageDays > 0 ? ` It has been about ${opts.ageDays} day${opts.ageDays === 1 ? '' : 's'} without a response.` : '';
   const { client: ai, model } = await getAIClient(userId, 'conversation', client);
   const res = await aiCreate(ai, {
@@ -153,10 +159,13 @@ export async function generateNudgeDraft(
       `something ${userName} is waiting on them for: "${opts.description}".${aged} Keep it warm, low-pressure, ` +
       `and short — a gentle check-in, not a demand. Address ${who} and sign as ${userName} — NEVER sign as ` +
       `the recipient. ` +
-      // Match the correspondent's language, not the user's default: if the description/recipient makes
-      // the language they communicate in evident, write the nudge in THAT language; otherwise English.
-      `Write it in the language the recipient communicates in (infer from the recipient and the ` +
-      `description above); if unclear, use English. ` +
+      // THE LANGUAGE MIRROR (same precedence as the reply drafter): detect on the counterparty's
+      // CONCRETE words first; only when there is no text signal, infer — and never let the voice
+      // block's language leak in.
+      (mirrorLang
+        ? `IMPORTANT — LANGUAGE: ${who} writes in ${mirrorLang}. Write the ENTIRE nudge in ${mirrorLang}, and ONLY ${mirrorLang} — the style examples above are for tone, never language. `
+        : `Write it in the language the recipient communicates in (infer from the recipient and the ` +
+          `description above); if unclear, use English. The style examples above are for tone, never language. `) +
       (opts.instructions ? `\n${opts.instructions}\n` : '') +
       `Return ONLY the message body — no subject line, no preamble, no surrounding quotes.` }],
   });

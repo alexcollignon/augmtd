@@ -16,9 +16,9 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { EnvelopeIcon, CalendarDaysIcon, DocumentIcon, PaperAirplaneIcon, PaperClipIcon, ChatBubbleLeftRightIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
+import { DocumentIcon, PaperAirplaneIcon, PaperClipIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import { ROLE_AVATARS } from '@/lib/workers/roles';
-import { fmtMonthDay } from '@/lib/utils/format-date';
+import { DecisionCard } from '@/components/work/decision-card';
 
 // 'entity' = the PROJECT DOOR (P7c-c2): the same rail inside the project room — id is the entity
 // id, steer/ingest run in entity scope, the Overview chip hides (you're already there).
@@ -52,23 +52,42 @@ export type TurnAction = { label: string } & (
 
 type Turn =
   | { role: 'user'; text: string }
-  | { role: 'system'; text: string; key?: string; actions?: TurnAction[]; refs?: Array<{ label: string; href: string | null }>; files?: Array<{ id: string; filename: string; source: string }> };
+  | { role: 'system'; text: string; key?: string; actions?: TurnAction[]; refs?: Array<{ label: string; href: string | null }>; files?: Array<{ id: string; filename: string; source: string }>; author?: { name: string; role?: string | null } };
 
-// THE ROOM (P7c-c1): the conversation is PER-DEAL, not per-item — navigating between a deal's
-// artifacts keeps the chat (module-level store, keyed by entity id; a reload releases it). A loose
-// item (no deal) keys by its own id.
+// THE ROOM (P7c-c1 → one-room R1): the conversation is PER-DEAL, not per-item — navigating between
+// a deal's artifacts keeps the chat. The module store is now only the LIVE RENDER CACHE; the durable
+// record is `room_turns` (every write POSTs, mounts hydrate from GET — a reload keeps the story).
 const _dealTurns = new Map<string, Turn[]>();
 
+// R1 — fire-and-forget persistence to the ONE turns table (non-fatal; the in-memory store still
+// renders this session if the write fails or the migration isn't applied yet).
+function persistTurn(roomKey: string, t: Turn): void {
+  try {
+    fetch('/api/room/turns', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomKey, role: t.role, text: t.text,
+        refs: t.role === 'system' ? t.refs : undefined,
+        dedupeKey: t.role === 'system' ? t.key : undefined,
+      }),
+    }).catch(() => {});
+  } catch { /* SSR-safe */ }
+}
+
 /** Push a narration turn into a deal's conversation from OUTSIDE the rail (5A.5 — the room's
- *  CTA-focus continuation). Writes the module store + notifies any mounted rail via a window event
- *  (the rail re-reads its roomKey store on it). Deterministic — no AI.
+ *  CTA-focus continuation). Writes the module store + the DURABLE room_turns row + notifies any
+ *  mounted rail via a window event (the rail re-reads its roomKey store on it). Deterministic — no AI.
  *  W3: an opts.key DEDUPES — any prior turn with the same key is dropped before appending, so a
  *  re-clicked CTA re-surfaces its one line instead of stuttering duplicates. opts.actions render
  *  as tappable offers ("Draft it now" / "Hand to …"). */
-export function pushDealTurn(entityId: string, text: string, opts?: { key?: string; actions?: TurnAction[] }): void {
+export function pushDealTurn(entityId: string, text: string, opts?: { key?: string; actions?: TurnAction[]; role?: 'user' | 'system' }): void {
   const turns = _dealTurns.get(entityId) ?? [];
   const kept = opts?.key ? turns.filter((t) => t.role !== 'system' || t.key !== opts.key) : turns;
-  _dealTurns.set(entityId, [...kept, { role: 'system', text, key: opts?.key, actions: opts?.actions }]);
+  const turn: Turn = opts?.role === 'user'
+    ? { role: 'user', text }
+    : { role: 'system', text, key: opts?.key, actions: opts?.actions };
+  _dealTurns.set(entityId, [...kept, turn]);
+  persistTurn(entityId, turn);
   try { window.dispatchEvent(new CustomEvent('aug:deal-turn', { detail: { entityId } })); } catch { /* SSR-safe */ }
 }
 
@@ -76,6 +95,18 @@ export function pushDealTurn(entityId: string, text: string, opts?: { key?: stri
 // brain, lib/prepare/route-suggestion.ts). The old client-side keyword match is deleted (W2).
 
 
+
+// Mechanical dedup — plumbing, not judgment: two phrasings of the same move share most of their
+// distinctive words. Normalized content-token overlap ≥ 0.6 (against the shorter set) = an echo.
+function echoesAnchor(nextMove: string, ask: string | null): boolean {
+  if (!ask) return false;
+  const toks = (s: string) => new Set(s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter((w) => w.length > 3));
+  const a = toks(nextMove); const b = toks(ask);
+  if (!a.size || !b.size) return false;
+  let shared = 0;
+  for (const w of a) if (b.has(w)) shared++;
+  return shared / Math.min(a.size, b.size) >= 0.6;
+}
 
 function Initials({ name }: { name: string }) {
   const parts = name.replace(/<[^>]*>/g, '').trim().split(/\s+/);
@@ -117,14 +148,23 @@ function TypingDots() {
   );
 }
 
-export function ItemRail({ kind, id, view, onDraft }: {
+export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
   kind: RailKind; id: string; view: RailView; onDraft?: (draft: string) => void;
+  /** One-room R2 — the judged DECISION mounts INLINE in the stream (surface:'inline' per the
+   *  registry). The caller wires onChoose through steer; "Leave it with me" clears. */
+  decision?: { title: string | null; options: Array<{ label: string }>; onChoose: (label: string) => void | Promise<void>; onDismiss: () => void } | null;
+  /** One-room R2 — the ARTIFACT CARD: a staged workspace's inline handle ("Draft ready — open ·
+   *  Send"), commit line right on it. onOpen focuses the stage; onCommit fires the same gate. */
+  artifact?: { label: string; by?: string | null; commitLabel?: string; onOpen: () => void; onCommit?: () => void | Promise<void>; committing?: boolean } | null;
 }) {
   const router = useRouter();
   const ent = view.entity;
   const sib = view.siblings;
   const inRoom = kind === 'entity';
-  const roomKey = ent?.id ?? `item-${id}`;
+  // R1 — the ONE room-key convention: the entity id for deal rooms; `<kind>:<id>` for loose
+  // anchors (inbox | commitment | meeting — matches lib/room/turns.ts `looseRoomKey`).
+  const roomKey = ent?.id ?? (kind === 'entity' ? id
+    : `${kind === 'commitment' || kind === 'followup' ? 'commitment' : kind === 'meeting' ? 'meeting' : 'inbox'}:${id}`);
   const [turns, setTurnsRaw] = useState<Turn[]>(() => _dealTurns.get(roomKey) ?? []);
   const setTurns = (updater: (prev: Turn[]) => Turn[]) => {
     setTurnsRaw((prev) => { const next = updater(prev); _dealTurns.set(roomKey, next); return next; });
@@ -132,6 +172,26 @@ export function ItemRail({ kind, id, view, onDraft }: {
   // Same-deal navigation remounts the rail — restore the deal's conversation. External pushes
   // (pushDealTurn) land live via the window event.
   useEffect(() => { setTurnsRaw(_dealTurns.get(roomKey) ?? []); }, [roomKey]);
+  // R1 — HYDRATE from the durable record: the server's turns are the story (engine narrations
+  // wrote there while this tab was closed). The in-memory cache wins only when it's AHEAD of the
+  // server (turns added this session whose fire-and-forget write may still be in flight).
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/room/turns?key=${encodeURIComponent(roomKey)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!alive || !Array.isArray(d?.turns)) return;
+        const server: Turn[] = (d.turns as Array<{ role: 'user' | 'system'; text: string; refs?: Array<{ label: string; href: string | null }>; author?: { name: string; role?: string | null } | null }>)
+          .map((t) => ({ role: t.role, text: t.text, refs: t.refs ?? undefined, author: t.author ?? undefined } as Turn));
+        setTurnsRaw((local) => {
+          if (local.length > server.length) return local;
+          _dealTurns.set(roomKey, server);
+          return server;
+        });
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [roomKey]);
   useEffect(() => {
     const onTurn = (ev: Event) => { if ((ev as CustomEvent).detail?.entityId === roomKey) setTurnsRaw(_dealTurns.get(roomKey) ?? []); };
     window.addEventListener('aug:deal-turn', onTurn);
@@ -143,14 +203,13 @@ export function ItemRail({ kind, id, view, onDraft }: {
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
-  // S1 (projecthood): founding a project FROM this item — chip → inline name input → create+attach.
-  const [founding, setFounding] = useState(false);
-  const [foundName, setFoundName] = useState('');
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [turns, busy]);
 
-  const otherThreads = sib.threads.filter((t) => !t.current);
   const suggested = ent?.suggestedWorker ?? null; // the ONE routing brain's served verdict (W2)
+
+  // R1 — every conversational write goes through here: render + durable persist in one motion.
+  const addTurn = (t: Turn) => { setTurns((prev) => [...prev, t]); persistTurn(roomKey, t); };
 
   // W3: a narration turn's tappable offer. 'prepare' fires THE ONE preparation engine (the grounded
   // result is narrated; 'aug:prepared' tells the room to refresh its board); 'say' rides the one
@@ -172,10 +231,10 @@ export function ItemRail({ kind, id, view, onDraft }: {
             : d.did === 'docsend' ? `${by ? `${by} found the file and drafted the send` : 'Found the file and drafted the send'} — it’s ready below.`
               : d.did === 'delegated' ? `${String(d.worker || 'A coworker').split(' ')[0]} is on it — the work lands here when it’s ready.`
                 : (d.reason || 'Nothing to prepare here.');
-      setTurns((prev) => [...prev, { role: 'system', text: say }]);
+      addTurn({ role: 'system', text: say });
       if (res.ok && d.did && d.did !== 'none') { try { window.dispatchEvent(new CustomEvent('aug:prepared', { detail: {} })); } catch { /* SSR-safe */ } }
     } catch {
-      setTurns((prev) => [...prev, { role: 'system', text: "I couldn't prepare that just now." }]);
+      addTurn({ role: 'system', text: "I couldn't prepare that just now." });
     } finally { setBusy(false); }
   };
 
@@ -184,7 +243,7 @@ export function ItemRail({ kind, id, view, onDraft }: {
     if (!t || busy) return;
     setText('');
     if (inputRef.current) inputRef.current.style.height = 'auto';
-    setTurns((prev) => [...prev, { role: 'user', text: t }]);
+    addTurn({ role: 'user', text: t });
     setBusy(true);
     try {
       const res = await fetch('/api/items/steer', {
@@ -193,7 +252,7 @@ export function ItemRail({ kind, id, view, onDraft }: {
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setTurns((prev) => [...prev, { role: 'system', text: d.error || "I couldn't do that just now." }]);
+        addTurn({ role: 'system', text: d.error || "I couldn't do that just now." });
       } else {
         // The ONE conversation core's uniform turn: `say` is the reply; refs/files are chips; a
         // reworked draft re-seeds the composer. (P6b — the rail owns zero logic.)
@@ -207,24 +266,7 @@ export function ItemRail({ kind, id, view, onDraft }: {
         }]);
       }
     } catch {
-      setTurns((prev) => [...prev, { role: 'system', text: "I couldn't do that just now." }]);
-    } finally { setBusy(false); }
-  };
-
-  // Found a project from this item (S1) — the SAME create+attach the chat's create_project runs.
-  const linkKind = kind === 'commitment' || kind === 'followup' ? 'commitment' : kind === 'meeting' ? 'meeting' : 'inbox_item';
-  const foundProject = async () => {
-    const n = foundName.trim();
-    if (!n || busy) return;
-    setFounding(false); setFoundName(''); setBusy(true);
-    try {
-      const res = await fetch('/api/entities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: n }) });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok || !d.id) throw new Error();
-      await fetch('/api/items/entity', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: linkKind, id, entityId: d.id }) });
-      setTurns((prev) => [...prev, { role: 'system', text: `Started ${n} — this is in it now. New mail about it will attach as it arrives.` }]);
-    } catch {
-      setTurns((prev) => [...prev, { role: 'system', text: "I couldn't create that project just now." }]);
+      addTurn({ role: 'system', text: "I couldn't do that just now." });
     } finally { setBusy(false); }
   };
 
@@ -232,14 +274,14 @@ export function ItemRail({ kind, id, view, onDraft }: {
   // — steps, coworkers, find_file — sees it); the rail only narrates what happened.
   const attach = async (f: File) => {
     if (busy) return;
-    setTurns((prev) => [...prev, { role: 'user', text: `Attached: ${f.name}` }]);
+    addTurn({ role: 'user', text: `Attached: ${f.name}` });
     setBusy(true);
     try {
       const fd = new FormData();
       fd.append('file', f); fd.append('kind', kind); fd.append('id', id);
       const res = await fetch('/api/items/ingest', { method: 'POST', body: fd });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) setTurns((prev) => [...prev, { role: 'system', text: d.error || "I couldn't read that file." }]);
+      if (!res.ok) addTurn({ role: 'system', text: d.error || "I couldn't read that file." });
       else setTurns((prev) => [...prev, {
         role: 'system',
         text: d.satisfiedStep
@@ -247,16 +289,28 @@ export function ItemRail({ kind, id, view, onDraft }: {
           : `Got it — I've folded ${d.filename} into this work. Anything running here can read it now.`,
       }]);
     } catch {
-      setTurns((prev) => [...prev, { role: 'system', text: "I couldn't read that file." }]);
+      addTurn({ role: 'system', text: "I couldn't read that file." });
     } finally { setBusy(false); if (fileRef.current) fileRef.current.value = ''; }
   };
 
   return (
     <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden min-h-0">
-      {/* Header — the shared chat-sidebar idiom: h-10, panel icon + title. */}
+      {/* Header — the shared chat-sidebar idiom: h-10, panel icon + title. "Clear" wipes the
+          room's TURNS only (narration, not memory) — the reset the wrong-grouping flow needs. */}
       <div className="h-10 flex items-center gap-2 px-3 border-b border-neutral-100 flex-shrink-0">
         <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
         <span className="text-[12px] font-semibold text-neutral-700 truncate">{inRoom ? 'Chat' : ent ? ent.name : 'About this'}</span>
+        {turns.length > 0 && (
+          <button
+            onClick={() => {
+              _dealTurns.set(roomKey, []);
+              setTurnsRaw([]);
+              fetch(`/api/room/turns?key=${encodeURIComponent(roomKey)}`, { method: 'DELETE' }).catch(() => {});
+            }}
+            className="ml-auto text-[11px] font-medium text-neutral-300 hover:text-neutral-500 transition-colors"
+            title="Clear this conversation (the brain's memory is untouched)"
+          >Clear</button>
+        )}
       </div>
 
       {/* Messages — narration first, then the conversation. */}
@@ -284,70 +338,13 @@ export function ItemRail({ kind, id, view, onDraft }: {
           {ent?.summary
             ? <p className={view.anchor?.ask || view.anchor?.prepared ? 'text-[12px] text-neutral-500' : undefined}>{ent.summary}</p>
             : (!view.anchor?.ask && <p>This isn&apos;t tied to a bigger body of work yet — I&apos;ll keep it standalone.</p>)}
-          {!ent && !inRoom && (
-            founding ? (
-              <input
-                autoFocus value={foundName} onChange={(e) => setFoundName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') foundProject(); if (e.key === 'Escape') { setFounding(false); setFoundName(''); } }}
-                onBlur={() => { if (foundName.trim()) foundProject(); else setFounding(false); }}
-                placeholder="Project name…"
-                className="w-full max-w-[240px] text-[12px] border-b border-indigo-300 outline-none bg-transparent py-0.5"
-              />
-            ) : (
-              <div className="flex flex-wrap gap-1.5">
-                <Chip label="Start a project from this" onClick={() => setFounding(true)} />
-              </div>
-            )
-          )}
           {!ent?.nextMove && ent?.whoOwesThem[0] && <p className="text-[12px] text-neutral-500">They owe: {ent.whoOwesThem[0]}</p>}
           {!ent?.nextMove && ent?.whoOwesYou[0] && <p className="text-[12px] text-neutral-500">You owe: {ent.whoOwesYou[0]}</p>}
         </AssistantRow>}
 
-        {/* THE ROOM INDEX (P7c-c1) — everything in this deal, grouped; clicking swaps the left
-            artifact while the conversation persists (per-deal store above). Overview = the project
-            door. */}
-        {!inRoom && (otherThreads.length > 0 || sib.meetings.length > 0 || sib.commitments.length > 0 || sib.files.length > 0 || ent) && (
-          <AssistantRow>
-            {/* T4 (work-surface): the Accepted boundary holds in presentation — a merely-RECOGNIZED
-                grouping is quiet related context ("Around this"), never project chrome. */}
-            <p className="text-[12px] text-neutral-500">{ent && ent.tracked === false ? 'Around this:' : 'In this project:'}</p>
-            {ent && !inRoom && (
-              <div className="flex flex-wrap gap-1.5">
-                <Chip label={ent.tracked === false ? `Related work · ${ent.name}` : 'Open project overview'} onClick={() => router.push(`/?view=projects&entity=${ent.id}`)} />
-              </div>
-            )}
-            {otherThreads.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {otherThreads.slice(0, 3).map((t) => (
-                  <Chip key={t.id} icon={<EnvelopeIcon className="w-3 h-3 flex-shrink-0" />}
-                    label={`${t.who ? `${t.who.split(' ')[0]} · ` : ''}${t.subject}`}
-                    onClick={() => router.push(`/item/${t.id}`)} />
-                ))}
-              </div>
-            )}
-            {(sib.meetings.length > 0 || sib.commitments.length > 0) && (
-              <div className="flex flex-wrap gap-1.5">
-                {sib.meetings.slice(0, 2).map((m) => (
-                  <Chip key={m.id} icon={<CalendarDaysIcon className="w-3 h-3 flex-shrink-0" />}
-                    label={`${m.title}${m.at ? ` · ${fmtMonthDay(m.at)}` : ''}`}
-                    onClick={() => router.push(`/item/${m.id}?kind=meeting`)} />
-                ))}
-                {sib.commitments.slice(0, 3).map((c) => (
-                  <Chip key={c.id} icon={<CheckCircleIcon className="w-3 h-3 flex-shrink-0" />}
-                    label={c.description}
-                    onClick={() => router.push(`/item/${c.id}?kind=commitment`)} />
-                ))}
-              </div>
-            )}
-            {sib.files.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {sib.files.slice(0, 3).map((f) => (
-                  <Chip key={f.id} icon={<DocumentIcon className="w-3 h-3 flex-shrink-0" />} label={f.filename} />
-                ))}
-              </div>
-            )}
-          </AssistantRow>
-        )}
+        {/* R3 — the ROOM INDEX + founding moved to THE CONTEXT STRIP on the stage
+            (components/room/context-strip.tsx): the conversation stays narrative (events,
+            proposals, chat); navigation/inventory is spatial, never repeated here. */}
 
         {/* The gap — one plain ask, same channel (never a step list). */}
         {view.gap && (
@@ -356,8 +353,10 @@ export function ItemRail({ kind, id, view, onDraft }: {
           </AssistantRow>
         )}
 
-        {/* The next move + a matching coworker as a PERSON (avatar + one-tap hand-off). */}
-        {!inRoom && ent?.nextMove && (
+        {/* The next move + a matching coworker as a PERSON (avatar + one-tap hand-off).
+            Mechanical dedup (J2 rail cleanup): when the deal's next move IS this item's ask (the
+            opening line already said it), the echo is noise — skip the line, keep the hand-off. */}
+        {!inRoom && ent?.nextMove && !echoesAnchor(ent.nextMove, view.anchor?.ask ?? null) && (
           <AssistantRow>
             <p>Next: {ent.nextMove}</p>
             {suggested && (
@@ -376,6 +375,43 @@ export function ItemRail({ kind, id, view, onDraft }: {
           </AssistantRow>
         )}
 
+        {/* One-room R2 — INLINE COMPONENTS in the stream (the registry's surface:'inline' class).
+            The judged DECISION renders as a conversation card (numbered routes, decline last). */}
+        {decision && decision.options.length >= 2 && (
+          <AssistantRow>
+            <DecisionCard
+              title={decision.title}
+              options={decision.options}
+              onChoose={decision.onChoose}
+              onDismissCard={decision.onDismiss}
+            />
+          </AssistantRow>
+        )}
+
+        {/* The ARTIFACT CARD — the staged workspace's inline handle: what's ready, who made it,
+            open to edit, or commit right here (same gate, same executor as the stage). */}
+        {artifact && (
+          <AssistantRow>
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-3 py-2.5 flex items-center gap-2.5">
+              <span className="min-w-0 flex-1 text-[12.5px] text-neutral-800">
+                <span className="font-medium">{artifact.label}</span>
+                {artifact.by && <span className="text-[11px] text-indigo-500 font-semibold ml-1.5">by {artifact.by.split(' ')[0]}</span>}
+              </span>
+              <button
+                onClick={artifact.onOpen}
+                className="flex-shrink-0 text-[12px] font-medium text-neutral-600 hover:text-indigo-600 transition-colors"
+              >Open</button>
+              {artifact.onCommit && (
+                <button
+                  onClick={() => artifact.onCommit?.()}
+                  disabled={!!artifact.committing}
+                  className="flex-shrink-0 rounded-lg bg-indigo-600 hover:bg-indigo-700 px-3 py-1 text-[12px] font-medium text-white transition-colors disabled:opacity-60"
+                >{artifact.committing ? 'Sending…' : (artifact.commitLabel ?? 'Send')}</button>
+              )}
+            </div>
+          </AssistantRow>
+        )}
+
         {/* The conversation — user bubbles + assistant replies, the shared idiom. */}
         {turns.map((t, i) => t.role === 'user' ? (
           <div key={i} className="flex justify-end">
@@ -383,6 +419,17 @@ export function ItemRail({ kind, id, view, onDraft }: {
           </div>
         ) : (
           <AssistantRow key={i}>
+            {/* R1 — coworker attribution: the group-channel model, turns carry WHO. Absent = the
+                chief of staff (the anchor voice stays unlabeled). */}
+            {t.author?.name && (
+              <span className="flex items-center gap-1.5 text-[11px] font-semibold text-indigo-600">
+                {t.author.role && ROLE_AVATARS[t.author.role] ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={ROLE_AVATARS[t.author.role]} alt="" className="w-[16px] h-[16px] rounded-full" />
+                ) : <Initials name={t.author.name} />}
+                {t.author.name.split(' ')[0]}
+              </span>
+            )}
             <p className="whitespace-pre-wrap">{t.text}</p>
             {/* O5: the commit line is a DECISION, not buttons. ≥2 routes → the numbered options
                 idiom (the brain's judged route first, "Leave it with me" always last); a single

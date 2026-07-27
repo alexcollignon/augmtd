@@ -130,6 +130,12 @@ export async function GET(request: NextRequest) {
       : { entity: null, siblings: emptySiblings() };
     const entity = room.entity;
     const siblings = room.siblings;
+    // J5 (multi-ask motion) — a commitment extracted as ONE motion carries its clauses as plan
+    // steps; the deep-dive renders them as the checklist INSIDE the one composer (never N surfaces).
+    const steps = kind === 'commitment' && tasks.length >= 2
+      ? tasks.map((t) => ({ id: t.id, text: t.text, done: !!t.done }))
+      : null;
+
     return NextResponse.json({
       prepared: preparedArts.map((a, i) => ({
         id: `${a.kind}-${i}`, kind: a.kind, title: a.title, content: a.content,
@@ -138,6 +144,7 @@ export async function GET(request: NextRequest) {
       anchor,
       gap,
       inviteTaskId,
+      steps,
       entity,
       siblings,
     });

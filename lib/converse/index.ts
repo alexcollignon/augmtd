@@ -101,6 +101,7 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
     `- "question" = the note primarily ASKS (status/info/advice). A correction/instruction is NOT a question.\n` +
     `- "facts" = durable constraints/preferences/numbers to remember; a one-off phrasing tweak is NOT one.\n` +
     `- "delegate" ONLY when a named coworker/assistant is explicitly asked.\n` +
+    (inItem ? `- A DRAFT INSTRUCTION (rewrite/shorten/soften/add something to the reply or follow-up being drafted here) is a CORRECTION, not open — return command:null, question:false, open:false; the draft is reworked on that path.\n` : '') +
     `- "open" = true when the note needs COMPOSITION (several actions, or an action the registry doesn't list).\n` +
     `THE NOTE: ${text}`;
   try {
@@ -376,7 +377,29 @@ export async function converse(
             (turn.learned?.length ? `\nDURABLE FACTS on this work: ${turn.learned.join(' · ')}` : '');
           const body = await generateReplyDraft(userId, sd, client, instr);
           if (body) {
-            await client.from('inbox_items').update({ source_data: { ...sd, draft: { ...(sd.draft ?? {}), body, generated_at: new Date().toISOString(), steered: true } } }).eq('id', scope.itemId);
+            // J3 — a rework is a NEW VERSION, never a mutation: the prior draft is RETAINED in the
+            // pool (version_of rows are ledger-only; the reader skips them), the new body lands as
+            // the next version, and only then does the serving pointer (sd.draft) move.
+            if (sd.draft?.body) {
+              await client.from('item_deliverables').insert({
+                user_id: userId, kind: 'email', entity_id: scope.itemId, type: 'draft',
+                title: 'Reply draft — prior version', content: String(sd.draft.body), ref: null,
+                metadata: { version_of: 'reply_draft', superseded: true },
+              }).then(() => {}, () => {});
+            }
+            await client.from('item_deliverables').insert({
+              user_id: userId, kind: 'email', entity_id: scope.itemId, type: 'draft',
+              title: 'Reply draft — steered', content: body, ref: null,
+              metadata: { version_of: 'reply_draft', steered: true },
+            }).then(() => {}, () => {});
+            // J3 — the evaluator reviews reworks like ambient work (same reviewer, same annotations).
+            const { evaluateDeliverable } = await import('@/lib/prepare/evaluate');
+            const review = await evaluateDeliverable(client, userId, {
+              content: body, task: `Reply to ${String(sd.from_name ?? sd.from ?? sd.from_address ?? '')} re: ${String(sd.subject ?? '')}`,
+              recipient: String(sd.from ?? sd.from_address ?? '') || null,
+              entityId: await entityOfScope(client, userId, scope), kind: 'reply',
+            }).catch(() => ({ verdict: 'pass' as const, objection: null }));
+            await client.from('inbox_items').update({ source_data: { ...sd, draft: { ...(sd.draft ?? {}), body, generated_at: new Date().toISOString(), steered: true, ...(review.verdict !== 'pass' ? { review } : {}) } } }).eq('id', scope.itemId);
             turn.draft = body;
           }
         }
@@ -388,10 +411,18 @@ export async function converse(
             (turn.learned?.length ? `\nDURABLE FACTS on this work: ${turn.learned.join(' · ')}` : '');
           const body = await generateNudgeDraft(userId, { counterparty: (c.counterparty as string) ?? null, description: String(c.description), ageDays: 0, instructions: instr }, client);
           if (body) {
+            // J3 — the evaluator reviews reworks like ambient work; the pool append IS the version
+            // history (prior nudge rows are never touched).
+            const { evaluateDeliverable } = await import('@/lib/prepare/evaluate');
+            const review = await evaluateDeliverable(client, userId, {
+              content: body, task: `Nudge about: ${String(c.description)}`,
+              recipient: (c.counterparty as string) ?? null,
+              entityId: await entityOfScope(client, userId, scope), kind: 'nudge',
+            }).catch(() => ({ verdict: 'pass' as const, objection: null }));
             await client.from('item_deliverables').insert({
               user_id: userId, kind: 'commitment', entity_id: scope.itemId, type: 'draft',
               title: `Nudge — ${String(c.counterparty ?? '').split('<')[0].trim() || 'follow-up'}`.slice(0, 100),
-              content: body, ref: null, metadata: { steered: true },
+              content: body, ref: null, metadata: { steered: true, ...(review.verdict !== 'pass' ? { review } : {}) },
             }).then(() => {}, () => {});
             turn.draft = body;
           }

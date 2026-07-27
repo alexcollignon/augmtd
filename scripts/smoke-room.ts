@@ -30,8 +30,8 @@ const src = (p: string) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
   check('c2: the room renders THE ONE rail in entity scope', /ItemRail\s+kind="entity"/.test(src('components/entities/entity-room.tsx')));
   check('c2: steer accepts the entity door', src('app/api/items/steer/route.ts').includes("'entity'"));
   check('c2: ingest accepts the entity door', src('app/api/items/ingest/route.ts').includes("'entity'"));
-  check('c2: the rail chat keys by ENTITY (one conversation, both doors)',
-    src('components/home/item-rail.tsx').includes('ent?.id ?? `item-${id}`'));
+  check('c2: the rail chat keys by ENTITY (one conversation, both doors; loose falls back to <kind>:<id>)',
+    src('components/home/item-rail.tsx').includes('const roomKey = ent?.id ??'));
   check('c2: Projects + Timeline route into the room',
     src('components/entities/portfolio-view.tsx').includes('EntityRoom') &&
     src('components/timeline/timeline-gantt.tsx').includes('EntityRoom'));

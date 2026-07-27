@@ -45,6 +45,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!shouldDraftReply(item as any)) {
     return NextResponse.json({ draft: '', skipped: 'not_a_reply' });
   }
+  // THE ONE GATE (promise fix #1): drafting — even on-demand from the deep-dive — happens only
+  // when THE judged verdict says the work is a reply. Cached on the item, so this costs a read.
+  try {
+    const { judgeWork } = await import('@/lib/work/judge');
+    const verdict = await judgeWork(supabase, user.id, { kind: 'inbox', id });
+    if (verdict.work !== 'reply' && verdict.work !== 'send_file') {
+      return NextResponse.json({ draft: '', skipped: 'judged_none' });
+    }
+  } catch { /* judge unavailable → the gates above still hold */ }
 
   // Serve a previously-generated draft (sweep or earlier open) unless a fresh one is requested — only
   // reached for items that genuinely owe a reply (gated above).

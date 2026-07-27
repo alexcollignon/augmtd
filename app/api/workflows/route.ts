@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
   // RLS returns own workflows + shared company workflows automatically
   let query = supabase
     .from('workflows')
-    .select('id, user_id, name, description, icon, color, status, trigger, steps, output_config, last_run_at, next_run_at, created_at, updated_at, shared_with_company, sharing_mode, company_id, pinned, agent_id, worker_instructions, skill_ids')
+    .select('id, user_id, name, description, icon, color, status, trigger, steps, output_config, last_run_at, next_run_at, auto_paused_at, created_at, updated_at, shared_with_company, sharing_mode, company_id, pinned, agent_id, worker_instructions, skill_ids')
     .order('updated_at', { ascending: false });
 
   if (companyTasks) {

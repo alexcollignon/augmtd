@@ -93,6 +93,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       if (action === 'mute') patch.status = 'muted';
       if (action === 'reopen') patch.status = 'active';
       await supabase.from('work_entities').update(patch).eq('id', id).eq('user_id', user.id);
+      if (action === 'track') {
+        // R4 — tracking IS founding the visible project: narrate the entity's existing links as
+        // the member proposal into its room (zero AI — recognition already stored them).
+        const { narrateFounding } = await import('@/lib/entities/founding');
+        await narrateFounding(supabase, user.id, id, ent.name as string, 'tracking');
+      }
     }
 
     // Curation feeds the brain + the audit trail; entity status feeds deck weights → bust the brief cache.

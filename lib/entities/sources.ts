@@ -7,6 +7,8 @@
 // ZERO AI. A MEETING/CALENDAR event has no thread; content + attendees carry the judgment.
 
 import type { RecogItem } from './recognize';
+import { resolveKind } from '@/lib/inbox/rules/write-back';
+import { isAutomatedSender } from '@/lib/inbox/automated';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = Record<string, any>;
@@ -28,11 +30,18 @@ export function itemFromInbox(it: Row): RecogItem {
   const sd = it.source_data ?? {};
   const name = (sd.from_name as string) || '';
   const addr = (sd.from_address as string) || '';
+  const subject = String(it.work_title || sd.subject || '');
+  // Promise fix #5 — the noise signal, via the ONE kind resolver + the automated-sender check:
+  // noise mail may JOIN an existing entity, but never FOUNDS one (see recognize.ts).
+  const k = resolveKind(sd as Record<string, unknown>, (it.rule_type as string) ?? null);
+  const noise = k === 'receipt' || k === 'newsletter' || k === 'notification'
+    || isAutomatedSender(addr || null, name || null, subject);
   return {
-    kind: 'inbox_item', id: String(it.id), title: String(it.work_title || sd.subject || ''),
+    kind: 'inbox_item', id: String(it.id), title: subject,
     body: typeof sd.body === 'string' ? sd.body : null,
     from: name && addr ? `${name} <${addr}>` : (name || addr || null),
     at: (sd.received_at as string) ?? (it.created_at as string), threadId: (sd.thread_id as string) ?? null,
+    noise,
   };
 }
 

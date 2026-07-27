@@ -202,74 +202,7 @@ function Row({ e, onAction, onOpen, others = [] }: { e: Entity; onAction: (id: s
   );
 }
 
-// "Becoming a project?" — the Suggested tier: a borderline errand with real mass, one-tap Track /
-// Not a project. Auto only when evidence is strong; suggest when borderline; never silently promote.
-// The membership kind /api/items/entity accepts for an event row (calendar events aren't detachable here).
-const detachKindOf = (k: string): 'inbox_item' | 'commitment' | 'meeting' | null =>
-  k === 'inbox_item' || k === 'commitment' || k === 'meeting' ? k : null;
-
-function SuggestRow({ e, onAction, onOpen, onChanged }: { e: Entity; onAction: (id: string, action: string) => void; onOpen: (id: string) => void; onChanged?: () => void }) {
-  // The suggestion IS the judge's verdict — the row shows only FACTS (count) beside the name.
-  // EXPANDABLE (R1): see the members the brain grouped, ✕ the wrong ones BEFORE accepting.
-  const [open, setOpen] = useState(false);
-  const [adding, setAdding] = useState(false);
-  const [pruned, setPruned] = useState<Set<string>>(new Set());
-  const members = e.events.filter((ev) => !pruned.has(ev.id));
-  // SHAPE THE GROUP BOTH WAYS before accepting (July-24): the ONE shared picker + the ONE sticky
-  // membership write — identical mechanics to the room's "+ Add existing".
-  const addItem = (it: LooseItem) => {
-    setAdding(false);
-    fetch('/api/items/entity', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: it.kind, id: it.id, entityId: e.id }) })
-      .then(() => onChanged?.()).catch(() => {});
-  };
-  const prune = (ev: { id: string; kind: string }) => {
-    const k = detachKindOf(ev.kind);
-    if (!k) return;
-    setPruned((prev) => new Set(prev).add(ev.id));
-    fetch('/api/items/entity', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: k, id: ev.id, entityId: null }) }).catch(() => {});
-  };
-  const why = `${e.itemCount} item${e.itemCount === 1 ? '' : 's'}`;
-  return (
-    <div className="rounded-xl border border-dashed border-indigo-200/70 bg-indigo-50/30">
-      <div className="flex items-center gap-3 px-4 py-2.5">
-        <span className="w-2 h-2 rounded-full bg-indigo-300 flex-shrink-0" />
-        <button onClick={() => setOpen((v) => !v)} className="min-w-0 flex-1 text-left">
-          <span className="text-[13px] font-medium text-neutral-800 truncate">{e.name}</span>
-          <span className="text-[12px] text-neutral-400 ml-2">{why}</span>
-        </button>
-        <button onClick={() => onAction(e.id, 'track')} className="flex-shrink-0 rounded-lg bg-indigo-600 hover:bg-indigo-700 px-2.5 py-1 text-[11.5px] font-medium text-white transition-colors">Accept</button>
-        <button onClick={() => onAction(e.id, 'mute')} className="flex-shrink-0 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-600 transition-colors">Not a project</button>
-        <ChevronRightIcon onClick={() => setOpen((v) => !v)} className={`w-3.5 h-3.5 flex-shrink-0 text-neutral-300 cursor-pointer transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
-      </div>
-      {open && (
-        <div className="border-t border-indigo-100/70 px-4 py-2 space-y-1">
-          {members.slice(0, 8).map((ev) => {
-            const Icon = ev.kind === 'inbox_item' ? EnvelopeIcon : ev.kind === 'commitment' ? CheckCircleIcon : CalendarDaysIcon;
-            return (
-              <div key={ev.id} className="flex items-center gap-2 text-[12px] text-neutral-600">
-                <Icon className="w-3.5 h-3.5 text-neutral-300 flex-shrink-0" />
-                <span className="text-neutral-300 tabular-nums flex-shrink-0">{ev.at.slice(0, 10)}</span>
-                <span className="min-w-0 flex-1 truncate">{ev.label}</span>
-                {detachKindOf(ev.kind) && (
-                  <button onClick={() => prune(ev)} className="text-neutral-300 hover:text-rose-500 transition-colors flex-shrink-0" title="Doesn't belong — remove before accepting">
-                    <XMarkIcon className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-            );
-          })}
-          {members.length === 0 && <p className="text-[12px] text-neutral-300 py-1">Nothing left — dismiss the suggestion.</p>}
-          <div className="relative pt-0.5">
-            <button onClick={() => setAdding((v) => !v)} className="text-[12px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors">+ Add an item</button>
-            {adding && <AddItemPicker align="left" onClose={() => setAdding(false)} onPick={addItem} />}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// SMALLER THINGS — an errand is a plain row: dot · title · next action · ✓ / ✕. No Stage, no Goals,
+// SMALLER THINGS// SMALLER THINGS — an errand is a plain row: dot · title · next action · ✓ / ✕. No Stage, no Goals,
 // no project chrome — real work, not a slot in the user's head.
 function SmallRow({ e, onAction, onOpen }: { e: Entity; onAction: (id: string, action: string) => void; onOpen: (id: string) => void }) {
   const m = MOM[e.momentum] ?? MOM.active;
@@ -427,18 +360,14 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
   // hidden. While searching/filtering: flat list of EVERYTHING — search must always find things.
   const flat = searching || statusTab !== 'active';
   const projects = flat ? inTab : inTab.filter((e) => e.tracked);
-  const suggested = flat ? [] : inTab.filter((e) => !e.tracked && e.scope === 'project');
-  const smaller = flat ? [] : inTab.filter((e) => !e.tracked && (e.scope === 'errand' || e.scope === null));
+  // R4 (one-room) — projects are HUMAN-CREATED only: the brain never pushes containers. Everything
+  // untracked (whatever its judged scope) folds quietly into "smaller things"; the discovery path
+  // is the item's context strip ("Connects to X · Track"), never a suggestion card here.
+  const smaller = flat ? [] : inTab.filter((e) => !e.tracked);
   // Within accepted projects: the reasoned priority leads; the rest folds (a presentation cutoff
   // over the judged weight — plumbing, per the doctrine).
   const main = flat ? projects : projects.filter((e) => e.prominent);
   const tail = flat ? [] : projects.filter((e) => !e.prominent);
-  const acceptAll = () => {
-    const ids = suggested.map((e) => e.id);
-    setData((prev) => (prev ? { ...prev, entities: prev.entities.map((e) => (ids.includes(e.id) ? { ...e, tracked: true } : e)) } : prev));
-    Promise.all(ids.map((id) => fetch(`/api/entities/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'track' }) }).catch(() => {})))
-      .then(() => load());
-  };
   // Merge targets: every ACTIVE project (the ⋯ "Merge into…" list).
   const mergeTargets = live.filter((e) => e.status === 'active' && (e.tracked || e.scope === 'project' || e.scope === null)).map((e) => ({ id: e.id, name: e.name }));
   const counts = { active: live.filter((e) => e.status === 'active').length, done: live.filter((e) => e.status === 'done').length, archived: live.filter((e) => e.status === 'archived').length, muted: live.filter((e) => e.status === 'muted').length };
@@ -448,7 +377,7 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
       <div className="mb-4 flex items-start justify-between gap-4">
         <div>
           <h2 className="text-[18px] font-semibold tracking-tight text-neutral-900">Your work</h2>
-          <p className="text-[13px] text-neutral-400 mt-0.5">Yours to curate — accept suggestions or create your own. Everything else stays on the Home.</p>
+          <p className="text-[13px] text-neutral-400 mt-0.5">Yours to create and curate — the brain attaches the work; it never invents projects.</p>
         </div>
         <button onClick={() => setCreating(true)} className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors">
           <PlusIcon className="w-4 h-4" />New project
@@ -529,21 +458,6 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
         <RiseIn><div className="space-y-2">{main.map((e) => <Row key={e.id} e={e} onAction={onAction} onOpen={openDetail} others={mergeTargets} />)}</div></RiseIn>
         {main.length === 0 && inTab.length > 0 && <p className="text-[12.5px] text-neutral-400 py-2">Nothing needs attention — everything is quietly moving.</p>}
         {searching && inTab.length === 0 && <p className="text-[13px] text-neutral-400 py-8 text-center">No work matches &ldquo;{query}&rdquo;.</p>}
-        {suggested.length > 0 && (
-          <div className={`${projects.length === 0 ? '' : 'pt-3'} space-y-2`}>
-            <div className="flex items-center justify-between">
-              <p className="text-[11.5px] font-semibold uppercase tracking-wide text-neutral-400">
-                {projects.length === 0 ? 'These look like your projects' : 'Suggested'}
-              </p>
-              {suggested.length > 1 && (
-                <button onClick={acceptAll} className="text-[12px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors">
-                  Accept all {suggested.length}
-                </button>
-              )}
-            </div>
-            {suggested.map((e) => <SuggestRow key={e.id} e={e} onAction={onAction} onOpen={openDetail} onChanged={load} />)}
-          </div>
-        )}
         {tail.length > 0 && (
           <>
             <button onClick={() => setTailOpen((v) => !v)} className="inline-flex items-center gap-1 text-[12px] font-medium text-neutral-400 hover:text-neutral-600 transition-colors pt-1">

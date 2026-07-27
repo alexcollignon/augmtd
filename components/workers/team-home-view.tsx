@@ -1,19 +1,26 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   DocumentTextIcon, TableCellsIcon, PresentationChartBarIcon, EnvelopeIcon,
   CheckCircleIcon, XCircleIcon, ClockIcon, ArrowRightIcon, ChatBubbleLeftRightIcon,
 } from '@heroicons/react/24/outline';
 import { ROLE_AVATARS, ROLE_LABELS } from '@/lib/workers/roles';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { ExpandableRows } from '@/components/home/expandable-rows';
 
 interface WorkerLite { id: string; name: string; worker_role: string | null }
 interface Review { artifactId: string; title: string; type: string; workerId: string | null; workerName: string | null; threadId: string; createdAt: string }
 interface Activity { runId: string; workflowName: string; workerId: string | null; workerName: string | null; workerRole: string | null; status: string; triggeredBy: string; completedAt: string | null }
 interface Upcoming { workflowName: string; workerId: string | null; workerName: string | null; nextRunAt: string }
-interface TeamMessage { id: string; workerId: string | null; workerName: string | null; workerRole: string | null; text: string; threadId: string | null; createdAt: string; seen: boolean }
+interface TeamMessage { id: string; workerId: string | null; workerName: string | null; workerRole: string | null; workflowId: string | null; workflowName: string | null; text: string; threadId: string | null; createdAt: string; seen: boolean }
 interface HomeData { workers: WorkerLite[]; needsReview: Review[]; recentActivity: Activity[]; upcoming: Upcoming[]; messages: TeamMessage[] }
+
+// One card per TASK, not per run — the latest report-back plus a "+N earlier" count.
+interface MessageGroup { key: string; workflowId: string | null; workflowName: string | null; latest: TeamMessage; earlierCount: number; unseen: boolean }
+
+// v2: messages gained workflowId/workflowName (grouped feed) — old blobs are shape-incompatible.
+const HOME_CACHE_KEY = 'aug-workers-home-v2';
 
 interface TeamHomeViewProps {
   userFirstName?: string;
@@ -69,7 +76,7 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
 
   // Hydrate the cached review desk + last briefing after mount (client-only; runs before the fetch effect).
   useLayoutEffect(() => {
-    const cd = loadLS<HomeData>('aug-workers-home-v1');
+    const cd = loadLS<HomeData>(HOME_CACHE_KEY);
     if (cd) setData(cd);
     const cb = loadLS<string>('aug-workers-briefing-v1') ?? '';
     cachedBriefingRef.current = cb;
@@ -90,10 +97,10 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
       .then(async (d: HomeData | null) => {
         if (!mountedRef.current || !d) { setBriefingDone(true); return; }
         setData(d);
-        saveLS('aug-workers-home-v1', d); // cache the review desk for instant hydration next visit
-        // Mark report-back messages seen in the DB — the unseen dots stay for this
-        // render (we keep the fetched state) and clear on the next visit.
-        if (d.messages?.length) fetch('/api/notifications/workflows/read', { method: 'POST' }).catch(() => {});
+        saveLS(HOME_CACHE_KEY, d); // cache the review desk for instant hydration next visit
+        // NOTE: deliberately no bulk mark-seen here — a message is marked seen only
+        // when its card is actually opened (openMessageGroup), so unread-first works
+        // and the auto-pause review signal stays honest.
 
         const res = await fetch('/api/workers/team-briefing', {
           method: 'POST',
@@ -128,6 +135,52 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
       })
       .catch(() => { if (mountedRef.current) setBriefingDone(true); });
   }, []);
+
+  // Group the report-back feed by task — one card per task showing the latest
+  // message, unseen groups first. Messages arrive newest-first from the API, so
+  // the first message per key is the group's latest.
+  const messageGroups = useMemo<MessageGroup[]>(() => {
+    const map = new Map<string, TeamMessage[]>();
+    for (const m of data?.messages ?? []) {
+      const key = m.workflowId ?? `msg:${m.id}`;
+      const arr = map.get(key);
+      if (arr) arr.push(m); else map.set(key, [m]);
+    }
+    const groups = [...map.values()].map((msgs): MessageGroup => ({
+      key: msgs[0].workflowId ?? `msg:${msgs[0].id}`,
+      workflowId: msgs[0].workflowId,
+      workflowName: msgs[0].workflowName,
+      latest: msgs[0],
+      earlierCount: msgs.length - 1,
+      unseen: msgs.some(m => !m.seen),
+    }));
+    groups.sort((a, b) =>
+      (Number(b.unseen) - Number(a.unseen)) ||
+      (a.latest.createdAt < b.latest.createdAt ? 1 : -1));
+    return groups;
+  }, [data?.messages]);
+
+  // Open a task's message card: mark ITS notifications seen (scoped — never bulk),
+  // flip local state optimistically, then jump into the shared task thread.
+  const openMessageGroup = (g: MessageGroup) => {
+    const body = g.workflowId ? { workflow_id: g.workflowId } : { ids: [g.latest.id] };
+    fetch('/api/notifications/workflows/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).catch(() => {});
+    setData(prev => {
+      if (!prev) return prev;
+      const next = {
+        ...prev,
+        messages: prev.messages.map(m =>
+          (g.workflowId ? m.workflowId === g.workflowId : m.id === g.latest.id) ? { ...m, seen: true } : m),
+      };
+      saveLS(HOME_CACHE_KEY, next);
+      return next;
+    });
+    if (g.latest.workerId) onSelectWorker(g.latest.workerId, g.latest.threadId ?? undefined);
+  };
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
@@ -177,44 +230,17 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
           )}
         </div>
 
-        {/* From your team — report-back messages, styled like DMs from a colleague */}
-        {data?.messages?.length ? (
-          <div className="mt-10">
-            <SectionLabel>From your team</SectionLabel>
-            <div className="mt-3 space-y-2 rise-in-stagger">
-              {data.messages.map(m => (
-                <button
-                  key={m.id}
-                  onClick={() => m.workerId && onSelectWorker(m.workerId, m.threadId ?? undefined)}
-                  className="group w-full text-left flex items-start gap-3 p-3.5 rounded-2xl border border-neutral-200 bg-white hover:border-indigo-200 hover:shadow-[0_2px_12px_rgba(0,0,0,0.04)] transition-all"
-                >
-                  <Avatar role={m.workerRole} name={m.workerName} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[13px] font-semibold text-neutral-800">{m.workerName ?? 'A coworker'}</span>
-                      <span className="text-[11px] text-neutral-400">{relTime(m.createdAt)}</span>
-                      {!m.seen && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />}
-                    </div>
-                    <p className="text-[13px] text-neutral-600 leading-snug mt-0.5 line-clamp-2">{stripMarkdown(m.text)}</p>
-                  </div>
-                  <ChatBubbleLeftRightIcon className="w-4 h-4 text-neutral-300 group-hover:text-indigo-400 transition-colors flex-shrink-0 mt-0.5" />
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {/* Ready for you — card grid */}
+        {/* Ready for you — the actionable section leads */}
         {data?.needsReview?.length ? (
           <div className="mt-10">
             <SectionLabel>Ready for you</SectionLabel>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3 rise-in-stagger">
-              {data.needsReview.map(r => {
+              <ExpandableRows items={data.needsReview} limit={6} render={(r) => {
                 const Icon = TYPE_ICON[r.type] ?? DocumentTextIcon;
                 return (
                   <button
                     key={r.artifactId}
-                    onClick={() => r.workerId && onSelectWorker(r.workerId)}
+                    onClick={() => r.workerId && onSelectWorker(r.workerId, r.threadId)}
                     className="group text-left p-4 rounded-2xl border border-neutral-200 bg-white hover:border-indigo-200 hover:shadow-[0_2px_12px_rgba(0,0,0,0.04)] transition-all"
                   >
                     <div className="flex items-center justify-between">
@@ -230,19 +256,50 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
                     </div>
                   </button>
                 );
-              })}
+              }} />
             </div>
           </div>
         ) : null}
 
-        {/* Recently + Coming up — two columns */}
+        {/* From your team — one card per TASK (latest report-back + N earlier), unread first */}
+        {messageGroups.length ? (
+          <div className="mt-10">
+            <SectionLabel>From your team</SectionLabel>
+            <div className="mt-3 space-y-2 rise-in-stagger">
+              <ExpandableRows items={messageGroups} limit={5} render={(g) => (
+                <button
+                  key={g.key}
+                  onClick={() => openMessageGroup(g)}
+                  className="group w-full text-left flex items-start gap-3 p-3.5 rounded-2xl border border-neutral-200 bg-white hover:border-indigo-200 hover:shadow-[0_2px_12px_rgba(0,0,0,0.04)] transition-all"
+                >
+                  <Avatar role={g.latest.workerRole} name={g.latest.workerName} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[13px] font-semibold text-neutral-800">{g.latest.workerName ?? 'A coworker'}</span>
+                      {g.workflowName && <span className="text-[11px] text-neutral-400 truncate">· {g.workflowName}</span>}
+                      <span className="text-[11px] text-neutral-400 flex-shrink-0">{relTime(g.latest.createdAt)}</span>
+                      {g.unseen && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0" />}
+                    </div>
+                    <p className="text-[13px] text-neutral-600 leading-snug mt-0.5 line-clamp-2">{stripMarkdown(g.latest.text)}</p>
+                    {g.earlierCount > 0 && (
+                      <p className="text-[11px] text-neutral-400 mt-1">+{g.earlierCount} earlier {g.earlierCount === 1 ? 'update' : 'updates'} in this thread</p>
+                    )}
+                  </div>
+                  <ChatBubbleLeftRightIcon className="w-4 h-4 text-neutral-300 group-hover:text-indigo-400 transition-colors flex-shrink-0 mt-0.5" />
+                </button>
+              )} />
+            </div>
+          </div>
+        ) : null}
+
+        {/* Recently + Coming up — two compact columns */}
         <div className="mt-10 grid grid-cols-1 lg:grid-cols-2 gap-x-10 gap-y-10">
 
           {data?.recentActivity?.length ? (
             <div>
               <SectionLabel>Recently</SectionLabel>
               <div className="mt-2 space-y-0.5 rise-in-stagger">
-                {data.recentActivity.map(a => (
+                <ExpandableRows items={data.recentActivity} limit={4} render={(a) => (
                   <button
                     key={a.runId}
                     onClick={() => a.workerId && onSelectWorker(a.workerId)}
@@ -263,7 +320,7 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
                       ? <CheckCircleIcon className="w-4 h-4 text-emerald-400 flex-shrink-0" />
                       : <XCircleIcon className="w-4 h-4 text-rose-300 flex-shrink-0" />}
                   </button>
-                ))}
+                )} />
               </div>
             </div>
           ) : null}
@@ -272,7 +329,7 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
             <div>
               <SectionLabel>Coming up</SectionLabel>
               <div className="mt-2 space-y-0.5 rise-in-stagger">
-                {data.upcoming.map((u, i) => (
+                <ExpandableRows items={data.upcoming} limit={4} render={(u, i) => (
                   <button
                     key={i}
                     onClick={() => u.workerId && onSelectWorker(u.workerId)}
@@ -287,32 +344,27 @@ export function TeamHomeView({ userFirstName, onSelectWorker }: TeamHomeViewProp
                     </div>
                     <ClockIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
                   </button>
-                ))}
+                )} />
               </div>
             </div>
           ) : null}
 
         </div>
 
-        {/* Your team — quick-launch into any coworker's chat (also fills the
-            page when there's little activity yet). */}
+        {/* Your team — compact quick-launch row (the left roster already lists everyone) */}
         {data?.workers?.length ? (
           <div className="mt-10">
             <SectionLabel>Your team</SectionLabel>
-            <p className="text-[12.5px] text-neutral-400 mt-1 mb-3">Jump into a conversation with any coworker.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 rise-in-stagger">
+            <div className="mt-3 flex flex-wrap gap-2 rise-in-stagger">
               {data.workers.map(w => (
                 <button
                   key={w.id}
                   onClick={() => onSelectWorker(w.id)}
-                  className="group flex items-center gap-3 p-4 rounded-2xl border border-neutral-200 bg-white hover:border-indigo-200 hover:shadow-[0_2px_12px_rgba(0,0,0,0.04)] transition-all text-left"
+                  className="group flex items-center gap-2 pl-1.5 pr-3 py-1.5 rounded-xl border border-neutral-200 bg-white hover:border-indigo-200 hover:bg-indigo-50/40 transition-all"
                 >
-                  <Avatar role={w.worker_role} name={w.name} />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[13.5px] font-medium text-neutral-800 truncate">{w.name}</p>
-                    <p className="text-[11.5px] text-neutral-400 truncate">{ROLE_LABELS[w.worker_role ?? ''] ?? 'Coworker'}</p>
-                  </div>
-                  <ChatBubbleLeftRightIcon className="w-4 h-4 text-neutral-300 group-hover:text-indigo-400 transition-colors flex-shrink-0" />
+                  <Avatar role={w.worker_role} name={w.name} size="sm" />
+                  <span className="text-[12.5px] font-medium text-neutral-700 group-hover:text-indigo-700 transition-colors">{w.name}</span>
+                  <span className="text-[11px] text-neutral-400 hidden sm:inline">{ROLE_LABELS[w.worker_role ?? ''] ?? 'Coworker'}</span>
                 </button>
               ))}
             </div>

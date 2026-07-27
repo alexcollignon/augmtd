@@ -138,20 +138,44 @@ export async function runDelegation(args: {
 
   // ── Run the coworker through the ONE worker entry point (flag-agnostic). ──
   const step: AgentStep = { type: 'agent', id: 'delegate', label: 'Delegated work', agent_id: worker.id, prompt };
-  const output = (await executeAgentStep(step, {
+  let output = (await executeAgentStep(step, {
     userId,
     supabase,
     previousOutputs,
     workflowName: `Delegation: ${itemLabel}`.slice(0, 120),
   })).trim();
 
-  // ── Report-back (DM from the coworker) — reuse the scheduled-task report writer. ──
+  // ── THE EVALUATOR REVIEWS DELEGATED OUTPUT like every other artifact (promise fix): the same
+  // `evaluateDeliverable` (incl. the deliverable-shape rule — deliberation/meta-monologue is not
+  // a deliverable). One capped retry with the objection; still failing → the output is NOT stored
+  // as prepared work and the report-back says so honestly. Non-fatal: an evaluator error → pass. ──
+  let deliverableOk = true;
+  let evalObjection: string | null = null;
+  try {
+    const { evaluateDeliverable } = await import('@/lib/prepare/evaluate');
+    let review = await evaluateDeliverable(supabase, userId, { content: output, task: itemLabel, recipient: null, entityId: null, kind: 'deliverable' });
+    if (review.verdict === 'revise' && review.objection) {
+      const retry = (await executeAgentStep(
+        { ...step, prompt: `${prompt}\n\nA REVIEWER REJECTED YOUR FIRST ATTEMPT:\n"${review.objection}"\nProduce the actual finished deliverable now — the thing itself, not commentary about it.` },
+        { userId, supabase, previousOutputs, workflowName: `Delegation (retry): ${itemLabel}`.slice(0, 120) },
+      ).catch(() => '')).trim();
+      if (retry) {
+        review = await evaluateDeliverable(supabase, userId, { content: retry, task: itemLabel, recipient: null, entityId: null, kind: 'deliverable' });
+        if (review.verdict !== 'revise') output = retry;
+      }
+    }
+    if (review.verdict === 'revise') { deliverableOk = false; evalObjection = review.objection; }
+  } catch { /* review is an enhancement */ }
+
+  // ── Report-back (DM from the coworker) — reuse the scheduled-task report writer. A rejected
+  // deliverable reports the PROBLEM honestly instead of pretending work exists. ──
   const facts: ReportFacts = {
     worker: { name: worker.name },
     firstName: firstName || undefined,
     taskName: itemLabel,
     home: 'message',
-    deliverableGist: output,
+    deliverableGist: deliverableOk ? output : undefined,
+    problem: deliverableOk ? undefined : (evalObjection ?? "the attempt didn't produce a usable deliverable"),
   };
   let reportText: string;
   try {
@@ -199,7 +223,7 @@ export async function runDelegation(args: {
   // its `ref` + type `document` — but the native/AgentOS text path returns text, so `text` is correct
   // here. Dedup on `task_id` (a re-run REPLACES). Non-fatal: a pool-write failure never loses the run.
   let deliverable: Deliverable | undefined;
-  if (poolScope) {
+  if (poolScope && deliverableOk) {
     const gist = output.replace(/\s+/g, ' ').slice(0, 140);
     deliverable = await writeDeliverable(supabase, userId, {
       kind: poolScope.kind,
@@ -211,6 +235,25 @@ export async function runDelegation(args: {
       gist,
       metadata: { source: 'delegation', agentId: worker.id, agentName: worker.name, ...(args.provenance ? { provenance: args.provenance } : {}) },
     }) ?? undefined;
+  }
+
+  // ── R1 (one-room): THE ENGINE NARRATES — the coworker's report-back ALSO lands as an authored
+  // turn in the item's room (the group-channel model: contributors report where the work lives,
+  // not only in their own chat tab). Deduped per delegated step so a re-run replaces. Non-fatal. ──
+  if (poolScope) {
+    try {
+      const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
+      const itemKind = poolScope.kind === 'commitment' || poolScope.kind === 'followup' ? 'commitment' as const
+        : poolScope.kind === 'meeting' ? 'meeting' as const : 'inbox' as const;
+      const roomKey = await roomKeyForItem(supabase, userId, itemKind, poolScope.entityId);
+      await writeRoomTurn(supabase, userId, roomKey, {
+        role: 'system', text: reportText,
+        // Promise fix #6b — the report-back names its item (a shared deal room is never ambiguous).
+        refs: [{ label: itemLabel.slice(0, 60), href: itemKind === 'commitment' ? `/item/${poolScope.entityId}?kind=commitment` : itemKind === 'meeting' ? `/item/${poolScope.entityId}?kind=meeting` : `/item/${poolScope.entityId}` }],
+        author: { kind: 'coworker', id: worker.id, name: worker.name, role: worker.worker_role },
+        dedupeKey: `delegate:${poolScope.entityId}:${poolScope.taskId ?? 'item'}`,
+      });
+    } catch { /* narration is an enhancement — the delegation already landed */ }
   }
 
   return { output, agentName: worker.name, threadId, reportText, deliverable, poolSize: pool.length };

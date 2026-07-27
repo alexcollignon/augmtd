@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   DocumentTextIcon,
   ArrowDownTrayIcon,
-  ChevronDownIcon,
   ChevronRightIcon,
   ArrowPathIcon,
   TrashIcon,
@@ -278,17 +277,6 @@ export function WorkerDocumentsTab({ workerId, workerName, onOpenInChat, onNewVe
                       >
                         <ArrowDownTrayIcon className="w-3.5 h-3.5" />
                       </button>
-                      {olderVersions.length > 0 && (
-                        <button
-                          onClick={e => { e.stopPropagation(); toggleGroup(key); }}
-                          title={isExpanded ? 'Hide older versions' : `Show ${olderVersions.length} older version${olderVersions.length > 1 ? 's' : ''}`}
-                          className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors"
-                        >
-                          {isExpanded
-                            ? <ChevronDownIcon className="w-3.5 h-3.5" />
-                            : <ChevronRightIcon className="w-3.5 h-3.5" />}
-                        </button>
-                      )}
                     </div>
                   </div>
 
@@ -326,6 +314,18 @@ export function WorkerDocumentsTab({ workerId, workerName, onOpenInChat, onNewVe
                         </div>
                       ))}
                     </div>
+                  )}
+
+                  {/* Explicit expander — the standard "N more / See less" idiom. The row
+                      above is a real item (click = open); this is the only expand control. */}
+                  {olderVersions.length > 0 && (
+                    <button
+                      onClick={() => toggleGroup(key)}
+                      className="w-full flex items-center justify-center gap-1 px-4 py-2 border-t border-neutral-100 text-[12px] font-medium text-indigo-600 hover:text-indigo-700 hover:bg-neutral-50 transition-colors"
+                    >
+                      {isExpanded ? 'See less' : `${olderVersions.length} older version${olderVersions.length > 1 ? 's' : ''}`}
+                      <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? '-rotate-90' : 'rotate-90'}`} />
+                    </button>
                   )}
                 </div>
               );

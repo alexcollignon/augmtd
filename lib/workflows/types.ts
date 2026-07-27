@@ -170,6 +170,8 @@ export interface Workflow {
   output_config: OutputConfig;
   last_run_at: string | null;
   next_run_at: string | null;
+  /** Set when the task paused ITSELF after consecutive unreviewed runs (vs a manual pause). Cleared on any resume. */
+  auto_paused_at?: string | null;
   created_at: string;
   updated_at: string;
   pinned?: boolean;

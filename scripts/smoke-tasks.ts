@@ -111,8 +111,8 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
   const pv = readFileSync('components/entities/portfolio-view.tsx', 'utf8');
   const er = readFileSync('components/entities/entity-room.tsx', 'utf8');
   const li = readFileSync('app/api/entities/loose-items/route.ts', 'utf8');
-  check('R1 · category pills gone; suggestion rows expandable; star gone',
-    !pv.includes('toggleCat') && pv.includes('prune(') && !pv.includes('StarSolid'));
+  check('R1 · category pills gone; star gone; NO suggestion rows (one-room R4 — projects are human-created)',
+    !pv.includes('toggleCat') && !pv.includes('SuggestRow') && !pv.includes('StarSolid'));
   check('R1 · loose picker filters automated/bulk', li.includes('isAutomatedSender') && li.includes('bulk'));
   check('R1 · category picker + lock (route + backfill)',
     readFileSync('app/api/entities/[id]/route.ts', 'utf8').includes('categoryLocked') &&
@@ -151,8 +151,8 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
     const dt2 = readFileSync('app/api/entities/[id]/detail/route.ts', 'utf8');
     const id2 = readFileSync('components/home/item-detail.tsx', 'utf8');
     const { existsSync } = await import('fs');
-    check('5A.1 · member type icons + ALWAYS-visible prune ✕',
-      /EnvelopeIcon : ev.kind === 'commitment'/.test(pv2) && !/group\/m:opacity-100/.test(pv2));
+    check('5A.1 · shaping moved to creation (one-room R4): the New-project modal seeds work via the ONE picker',
+      pv2.includes('+ Add work') && !pv2.includes('SuggestRow'));
     check('5A.2 · Accept is optimistic (local flip, write behind, restore on fail)',
       pv2.includes('acceptOptimistic') && pv2.includes("Couldn't accept"));
     check('5A.3 · files fold by filename + preview refs + modal + endpoint',
@@ -243,8 +243,8 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
     const vs = readFileSync('components/home/view-switcher.tsx', 'utf8');
     check('J24 · ONE AddItemPicker shared (extracted; no local copy in the room)',
       existsSync('components/entities/add-item-picker.tsx') && !er5.includes('function AddItemPicker') && er5.includes("from '@/components/entities/add-item-picker'"));
-    check('J24 · suggestion expansion can ADD (same picker, same sticky write)',
-      pv3.includes('+ Add an item') && pv3.includes('AddItemPicker align="left"'));
+    check('J24 · the ONE picker survives R4 (create-with-work path; suggestion expansion removed by design)',
+      pv3.includes('AddItemPicker align="left"') && !pv3.includes('+ Add an item'));
     check('J24 · create-with-work (picker chips → membership writes on create)',
       pv3.includes('newItems.map((it) =>') && pv3.includes('+ Add work'));
     check('J24 · today-strip renders the HUMAN time (localTime, one formatter)',

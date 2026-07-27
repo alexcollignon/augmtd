@@ -36,6 +36,7 @@ interface Task {
   };
   last_run_at: string | null;
   next_run_at: string | null;
+  auto_paused_at?: string | null;   // set when the task paused ITSELF (unreviewed runs)
   agent_id: string | null;
   sharing_mode: string | null;
   is_owned_by_me?: boolean;
@@ -224,7 +225,10 @@ export function WorkerTasksTab({ workerId, workerName, isActive, onOpenInChat }:
   async function handleToggle(task: Task) {
     if (togglingId) return;
     const next = task.status === 'active' ? 'paused' : 'active';
-    setMyTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: next } : t));
+    // Resuming also clears the auto-paused marker (the PATCH route does the same server-side).
+    setMyTasks(prev => prev.map(t => t.id === task.id
+      ? { ...t, status: next, ...(next === 'active' ? { auto_paused_at: null } : {}) }
+      : t));
     setTogglingId(task.id);
     try {
       await fetch(`/api/workflows/${task.id}`, {
@@ -505,6 +509,9 @@ function TaskRow({ task, isToggling, isOpening, isRunning, isDuplicating, isShar
             <span className="text-[11px] text-neutral-400">{upcomingTime(task.next_run_at)}</span>
           )}
           {isDraft && <Badge tone="neutral">Draft</Badge>}
+          {task.auto_paused_at && task.status === 'paused' && (
+            <Badge tone="amber">Paused — awaiting review</Badge>
+          )}
         </div>
       </button>
 
