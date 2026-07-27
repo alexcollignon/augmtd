@@ -10,11 +10,14 @@ import { readFileSync } from 'fs';
 import { createClient } from '@supabase/supabase-js';
 import { resolveKind, postureFor, labelNamesFor } from '../lib/inbox/rules/write-back';
 import { isAutomatedSender } from '../lib/inbox/automated';
+import { resolveProbeUser } from './probe-user';
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 const A = '08fe4449-e5eb-431d-9156-02e9324e5903';
 const B = 'c723c2f2-e069-4ab8-980e-ac3585028fec';
-const PERSONAL = 'e009a499-41d4-4c44-ad53-53a0e851d143';
+// The PROBE HOST — a dedicated real auth user the live probes insert into (FK-safe, no human's
+// data at risk, survives any personal account being deleted). Shared: scripts/probe-user.ts.
+let PERSONAL = '';
 const out: Array<[string, boolean, string]> = [];
 const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
 const src = (p: string) => readFileSync(p, 'utf8');
@@ -27,6 +30,7 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
 };
 
 (async () => {
+  PERSONAL = await resolveProbeUser(sb);
   const { data: uidRows } = await sb.from('work_entities').select('user_id').limit(2000);
   const rene = [...new Set(((uidRows ?? []) as Array<{ user_id: string }>).map((r) => r.user_id))].find((u) => u.startsWith('ae306f38')) ?? null;
   const USERS: Array<[string, string]> = [[A, 'user A'], [B, 'user B'], ...(rene ? [[rene, 'user C'] as [string, string]] : []), [PERSONAL, 'personal']];
@@ -544,6 +548,41 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     src('components/home/item-rail.tsx').includes('inRoom || !r.href?.includes(`/item/${id}`)'));
   check('P18 · a meeting card opens the meeting\'s OWN room (never the meetings list)',
     src('app/api/home/brief/route.ts').includes('/item/${tid}?kind=meeting'));
+
+  // ═══ P19 · THE FIRST LOOK — a new user is never lied to and never left waiting: the empty Home
+  // tells the truth (connect CTA / honest syncing state / earned all-clear), the chat is ALWAYS
+  // there, connecting fires a server-side sync, and the first sync completing triggers the one-time
+  // bootstrap chain (team → memory → judged+prepared deck) so the first real paint is the product. ═══
+  check('P19 · the chat is ALWAYS on the Home (the front door never hides behind data)',
+    src('components/home/home-view.tsx').includes('ALWAYS PRESENT'));
+  check('P19 · the empty Home tells the truth (connect CTA → settings · honest first-sync state · earned all-clear; no hollow ring)',
+    src('components/home/home-view.tsx').includes('Connect your inbox to get started') &&
+    src('components/home/home-view.tsx').includes('Syncing your inbox') &&
+    src('components/home/home-view.tsx').includes('/settings?tab=email&section=connections') &&
+    src('components/home/home-view.tsx').includes('b.mail.connections === 0 || b.mail.syncing') &&
+    src('app/api/home/brief/route.ts').includes('mail = { connections:'));
+  check('P19 · connecting fires a SERVER-SIDE initial sync (never depends on which page the browser lands on)',
+    src('app/api/auth/gmail/callback/route.ts').includes('syncEmailsForConnection(newConnection') &&
+    src('app/api/auth/outlook/callback/route.ts').includes('syncEmailsForConnection(newConnection'));
+  check('P19 · the first sync completing triggers the ONE-TIME bootstrap chain (atomically claimed: team → memory → judged+prepared deck → fresh brief)',
+    src('lib/email-sync/sync-emails.ts').includes('wasFirstSync') &&
+    src('lib/home/first-look.ts').includes("filter('metadata->>first_look_at', 'is', null)") &&
+    src('lib/home/first-look.ts').includes('ensureWorkers') &&
+    src('lib/home/first-look.ts').includes('bootstrapMemory') &&
+    src('lib/home/first-look.ts').includes('runPreparationPass'));
+  try {
+    // On user A (a REAL auth account — PERSONAL is a fixture id with no auth.users row, so the
+    // custom_agents FK rightly rejects it): an already-seeded team must be untouched.
+    const { ensureWorkers } = await import('../lib/workers/seed');
+    const before = await sb.from('custom_agents').select('id').eq('user_id', A).eq('is_worker', true);
+    const r = await ensureWorkers(sb, A);
+    const after19 = await sb.from('custom_agents').select('id').eq('user_id', A).eq('is_worker', true);
+    check('P19 live · worker seeding is IDEMPOTENT (an already-seeded team is untouched)',
+      (before.data?.length ?? 0) === (after19.data?.length ?? 0) && !r.seeded,
+      `workers=${after19.data?.length ?? 0} seeded=${r.seeded}`);
+  } catch (e) {
+    check('P19 live · worker seeding is IDEMPOTENT (an already-seeded team is untouched)', false, String(e).slice(0, 80));
+  }
 
   console.log('\n═══ THE PROMISE GATES ═══');
   let pass = 0;

@@ -184,7 +184,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(`${origin}/settings?error=storage_failed`);
     }
 
-    console.log(`✓ Outlook connected for user ${userId}, sync will be triggered by client`);
+    console.log(`✓ Outlook connected for user ${userId}, firing server-side initial sync`);
 
     // Register Outlook push subscription (non-blocking — failure must not break OAuth flow)
     try {
@@ -197,6 +197,16 @@ export async function GET(request: NextRequest) {
         .single();
       if (newConnection) {
         await registerOutlookSubscription(newConnection, adminSupabase);
+        // SERVER-SIDE INITIAL SYNC (after the redirect is sent) — same rule as the Gmail callback:
+        // the first sync never depends on which page the browser lands on. The client's /inbox
+        // trigger stays as a harmless duplicate (dedup + the first-look claim).
+        const { after } = await import('next/server');
+        after(async () => {
+          try {
+            const { syncEmailsForConnection } = await import('@/lib/email-sync/sync-emails');
+            await syncEmailsForConnection(newConnection, adminSupabase);
+          } catch (e) { console.warn('[OutlookCallback] initial sync failed (cron will retry):', e); }
+        });
       }
     } catch (subErr) {
       console.error('[OutlookCallback] Failed to register subscription (non-fatal):', subErr);

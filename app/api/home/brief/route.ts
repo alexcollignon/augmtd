@@ -1548,5 +1548,13 @@ export async function GET() {
   const totalMs = Date.now() - t0;
   if (totalMs > 2500) console.log(`[home/brief] slow ${totalMs}ms — ${marks.map(([l, m]) => `${l}:${m}ms`).join(' · ')}`);
   // trackedProjects was loaded early (before clusterTag) — served for By-project grouping.
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => ({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null })), mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, briefing: cachedBriefing, trackedProjects });
+  // MAIL STATE (new-user honesty): the Home's empty state must distinguish "nothing connected" /
+  // "first sync in flight" / "genuinely all clear" — one cheap query, no AI.
+  let mail = { connections: 0, syncing: false };
+  try {
+    const { data: conns } = await supabase.from('connections').select('id, last_sync')
+      .eq('user_id', user.id).in('provider', ['gmail', 'outlook']).eq('status', 'active');
+    mail = { connections: conns?.length ?? 0, syncing: (conns ?? []).some((c) => !c.last_sync) };
+  } catch { /* non-fatal */ }
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => ({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null })), mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, briefing: cachedBriefing, trackedProjects, mail });
 }

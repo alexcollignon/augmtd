@@ -4,14 +4,16 @@
 // learns an alias → mute → reopen → done → forget deletes entity+links, never items).
 import { config } from 'dotenv'; config({ path: '.env.local' });
 import { createClient } from '@supabase/supabase-js';
+import { resolveProbeUser } from './probe-user';
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 const EVAL = ['08fe4449-e5eb-431d-9156-02e9324e5903', 'c723c2f2-e069-4ab8-980e-ac3585028fec'];
-const NONEVAL = 'e009a499-41d4-4c44-ad53-53a0e851d143';
+let NONEVAL = ''; // the PROBE HOST — resolved at start (scripts/probe-user.ts)
 
 const out: Array<[string, boolean, string]> = [];
 const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
 
 (async () => {
+  NONEVAL = await resolveProbeUser(sb);
   // ── 1. Portfolio data per eval user. ──
   for (const uid of EVAL) {
     const { data: ents } = await sb.from('work_entities').select('id, name, status, state, next_move, priority, last_event_at').eq('user_id', uid).eq('kind', 'initiative');

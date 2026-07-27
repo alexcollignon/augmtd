@@ -8,17 +8,19 @@ import { createClient } from '@supabase/supabase-js';
 import { buildWorkItems } from '../lib/work-items/model';
 import { suggestWorkerForMove } from '../lib/prepare/route-suggestion';
 import { prepareOneItem } from '../lib/prepare/pass';
+import { resolveProbeUser } from './probe-user';
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 const A = '08fe4449-e5eb-431d-9156-02e9324e5903';
 const B = 'c723c2f2-e069-4ab8-980e-ac3585028fec';
 const RENE_PREFIX = 'ae306f38';
-const PERSONAL = 'e009a499-41d4-4c44-ad53-53a0e851d143';
+let PERSONAL = ''; // the PROBE HOST — resolved at start (scripts/probe-user.ts)
 const out: Array<[string, boolean, string]> = [];
 const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
 const src = (p: string) => readFileSync(p, 'utf8');
 
 (async () => {
+  PERSONAL = await resolveProbeUser(sb);
   // ── W1 STRUCTURAL ──
   const model = src('lib/work-items/model.ts');
   check('W1: the spine flips a self-waiting item to todo (before priority reads state)',
