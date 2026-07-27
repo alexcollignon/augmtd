@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useSearchParams, useRouter } from 'next/navigation';
 import EmailListChronological from '@/components/inbox/email-list-chronological';
@@ -195,15 +195,22 @@ export function InboxPageClient({
   const [meetings, setMeetings] = useState<CalendarEvent[]>([]);
   const [meetingsLoading, setMeetingsLoading] = useState(true);
   const [density, setDensity] = useState<Density>('normal');
-  const [folderSidebarCollapsed, setFolderSidebarCollapsed] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return localStorage.getItem('inbox_folder_sidebar_collapsed') === 'true';
-  });
+  // SSR'd-route rule (the documented hydration law): initializers start COLD — identical to the
+  // server render — and the localStorage cache hydrates in a LAYOUT EFFECT (client-only, pre-paint,
+  // after hydration reconciles). Reading storage in a useState initializer here made a warm
+  // client's first paint diverge from the server (collapsed rail / cached folder tree) → the
+  // hydration-mismatch error and a full client re-render.
+  const [folderSidebarCollapsed, setFolderSidebarCollapsed] = useState(false);
   const [foldersLoading, setFoldersLoading] = useState(false);
   // Instant-load: folders now fetch client-side (SSR no longer blocks on the folder APIs). Hydrate the
   // last-known folder tree from localStorage so a revisit shows it immediately (no flash), then
   // `fetchFolders` refreshes in the background. The default-connection effect picks the first connection.
-  const [folderSections, setFolderSections] = useState<ConnectionFolders[] | null>(initialFolderSections ?? loadLS<ConnectionFolders[]>('aug-inbox-folders-v1') ?? null);
+  const [folderSections, setFolderSections] = useState<ConnectionFolders[] | null>(initialFolderSections ?? null);
+  useLayoutEffect(() => {
+    if (localStorage.getItem('inbox_folder_sidebar_collapsed') === 'true') setFolderSidebarCollapsed(true);
+    setFolderSections((prev) => prev ?? loadLS<ConnectionFolders[]>('aug-inbox-folders-v1') ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [selectedFolder, setSelectedFolder] = useState<SelectedFolder | null>(null);
   const [folderEmails, setFolderEmails] = useState<FolderEmailSummary[]>([]);
   const [folderEmailsLoading, setFolderEmailsLoading] = useState(false);
