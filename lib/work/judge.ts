@@ -36,6 +36,12 @@ export type WorkVerdict = {
    *  (lib/work/apply-verdict.ts) turns this into a resolution — the verdict MOVES the posture,
    *  it never just decorates the room. */
   resolution?: 'expired' | 'answered' | null;
+  /** THE DELIVERABLE INVENTORY (the "what does it take" half of the judgment): the concrete
+   *  attachable artifacts this work must INCLUDE, in the item's own words ("could you share the
+   *  org report, individual report and ALP sheet" → 3 entries). ONLY what the item explicitly
+   *  asks for or the work objectively cannot go out without — never inferred nice-to-haves.
+   *  The preparation pass resolves each (have it / need it from the user) before drafting. */
+  requires?: Array<{ label: string }>;
   reason: string;
 };
 
@@ -78,6 +84,13 @@ function coerceVerdict(raw: unknown, roster: RosterEntry[]): WorkVerdict | null 
       .map((o) => ({ label: String((o as Record<string, unknown>)?.label ?? o ?? '').slice(0, 80) }))
       .filter((o) => o.label);
   }
+  // The deliverable inventory is only meaningful on outbound work (a none/chase carries nothing).
+  if ((work === 'reply' || work === 'send_file' || work === 'produce') && Array.isArray(r.requires)) {
+    const reqs = (r.requires as unknown[]).slice(0, 5)
+      .map((o) => ({ label: String((o as Record<string, unknown>)?.label ?? o ?? '').trim().slice(0, 90) }))
+      .filter((o) => o.label);
+    if (reqs.length) out.requires = reqs;
+  }
   return out;
 }
 
@@ -95,7 +108,11 @@ async function readCache(
   // A stale-sig verdict is still the judge's OWN PRIOR JUDGMENT — fed back into the re-judgment
   // as self-consistency context (stickiness through reasoning, never a lock): an ambiguous item
   // must not flip verdicts on a daily re-check unless something material actually changed.
-  return t!.sig === sig ? { hit: v, prior: v } : { hit: null, prior: v };
+  // SAME-VERSION ONLY: a prior made under an older JUDGE_VERSION was judged under different laws —
+  // anchoring on it would entrench exactly the calls a version bump exists to correct.
+  const sameVersion = String(t!.sig ?? '').split(':')[0] === String(JUDGE_VERSION);
+  if (t!.sig === sig) return { hit: v, prior: v };
+  return { hit: null, prior: sameVersion ? v : null };
 }
 
 async function writeCache(client: SupabaseClient, userId: string, input: JudgeInput, sig: string, verdict: WorkVerdict): Promise<void> {
@@ -215,11 +232,12 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         `Rules:\n` +
         `- work: reply|decide|produce|send_file|schedule|chase|none. CONSERVATIVE: unsure → "none"/"message_only" — a wrong mount costs trust, none costs nothing.\n` +
         `- A commitment with direction "awaiting" means the COUNTERPARTY owes the user — the natural work is "chase" (nudge what you're owed) unless it's moot or the item clearly says otherwise.\n` +
-        `- TIME: if the thing this asks about has ALREADY HAPPENED or its window has passed such that acting now is pointless (a meeting that took place, access for a past event, a "tomorrow" that has gone), work="none" with resolution="expired". If the ask is already settled/confirmed in the item itself (a closure, a confirmation of something now locked), work="none" with resolution="answered". NOT every passed date is expired — an unpaid invoice or an unanswered substantive ask still needs the work; when acting late still has value, judge the work normally.\n` +
+        `- TIME: if the thing this asks about has ALREADY HAPPENED or its window has passed such that acting now is pointless (a meeting that took place, access for a past event, a "tomorrow" that has gone), work="none" with resolution="expired". If the ask is already settled/confirmed in the item itself (a closure, a confirmation of something now locked), work="none" with resolution="answered" — but "answered" means the ASK ITSELF is settled, NOT that the user merely has everything needed to act: an unfulfilled request ("please forward this", "please send X") still owes the doing even when the material to do it is right there in the message. NOT every passed date is expired — an unpaid invoice or an unanswered substantive ask still needs the work; when acting late still has value, judge the work normally.\n` +
         `- decide ONLY when the real move is a choice between 2-3 CONCRETE routes stated in the item (accept/decline/redirect) — then give options (short labels, ≤4; do NOT include a decline, the surface adds it).\n` +
         `- executor: "coworker" (name one from THE TEAM — only when producing something is genuinely their craft) · "user" (replying, deciding, personal/admin) · "system" (an atomic mechanical act: send an existing file, book the stated invite).\n` +
+        `- requires: for reply/send_file/produce ONLY — the concrete attachable artifacts this work must INCLUDE, each as a short noun phrase in the item's OWN words (an email asking for "the organizational report, the individual report and the allocation sheet" requires those 3). ONLY what the item explicitly asks for or the work objectively cannot go out without; a plain conversational reply requires []. Never invent.\n` +
         `- Respect the deal's rules; never invent people, files, or dates.\n\n` +
-        `JSON only: {"work":"…","component":"…","executor":{"kind":"coworker|user|system","name":"<team name if coworker>"},"options":[{"label":"…"}],"resolution":"expired|answered|null","reason":"<one sentence>"}`,
+        `JSON only: {"work":"…","component":"…","executor":{"kind":"coworker|user|system","name":"<team name if coworker>"},"options":[{"label":"…"}],"requires":[{"label":"…"}],"resolution":"expired|answered|null","reason":"<one sentence>"}`,
     });
     const verdict = coerceVerdict(res.json, roster) ?? fallbackVerdict('could not judge — showing the message');
     await writeCache(client, userId, input, sig, verdict);

@@ -18,7 +18,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { data: item } = await supabase.from('inbox_items')
-    .select('source_data, work_state, rule_type, type_override, status, source')
+    .select('source_data, work_title, work_state, rule_type, type_override, status, source')
     .eq('id', id).eq('user_id', user.id).single();
   if (!item) return NextResponse.json({ error: 'not found' }, { status: 404 });
 
@@ -47,11 +47,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   // THE ONE GATE (promise fix #1): drafting — even on-demand from the deep-dive — happens only
   // when THE judged verdict says the work is a reply. Cached on the item, so this costs a read.
+  let artifactTruth: string | null = null;
   try {
     const { judgeWork } = await import('@/lib/work/judge');
     const verdict = await judgeWork(supabase, user.id, { kind: 'inbox', id });
     if (verdict.work !== 'reply' && verdict.work !== 'send_file') {
       return NextResponse.json({ draft: '', skipped: 'judged_none' });
+    }
+    // THE DELIVERABLE RESOLUTION (one law, every drafting door): a verdict carrying an artifact
+    // inventory resolves it first — found items stage, missing ones become the room's ask, and the
+    // fresh draft below is constrained to the ARTIFACT TRUTH (never claims what isn't in hand).
+    if (verdict.requires?.length) {
+      const { resolveRequirements } = await import('@/lib/prepare/requirements');
+      const { data: linkRow } = await supabase.from('entity_links').select('entity_id')
+        .eq('user_id', user.id).eq('item_kind', 'inbox_item').eq('item_id', id).not('entity_id', 'is', null).maybeSingle();
+      const reqs = await resolveRequirements(supabase, user.id, {
+        itemKind: 'inbox', itemId: id, itemTitle: String(item.work_title ?? sd.subject ?? ''),
+        entityId: (linkRow?.entity_id as string) ?? null, requires: verdict.requires,
+      });
+      artifactTruth = reqs.artifactTruth || null;
     }
   } catch { /* judge unavailable → the gates above still hold */ }
 
@@ -64,7 +78,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // narrates one story with the plan (references an invite the plan sends; a "I'll send X" promise is
     // the same commitment as its task, not a duplicate). The inbox-item deep-dive plans under kind 'email'.
     const planSteps = await loadPlanStepSummaries(supabase, user.id, 'email', id).catch(() => []);
-    const draft = await generateReplyDraft(user.id, sd, supabase, null, planSteps);
+    const draft = await generateReplyDraft(user.id, sd, supabase, artifactTruth, planSteps);
     await supabase.from('inbox_items')
       .update({ source_data: { ...sd, draft: { body: draft, generated_at: new Date().toISOString() } } })
       .eq('id', id).eq('user_id', user.id);

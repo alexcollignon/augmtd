@@ -97,13 +97,33 @@ export async function prepareOneItem(
     const { applyVerdictConsequences } = await import('@/lib/work/apply-verdict');
     const cons = await applyVerdictConsequences(admin, userId, { kind: w.id.startsWith('commit:') ? 'commitment' : 'inbox', id: w.entityId }, verdict);
     if (cons.resolved) return { did: 'none', reason: `resolved by the verdict (${verdict.resolution}): ${verdict.reason}` };
-    if (verdict.work === 'send_file') return await done(await prepareDocSend(admin, userId, w));
+    if (verdict.work === 'send_file') return await done(await prepareDocSend(admin, userId, w, verdict));
     if (verdict.work === 'chase' && (w.who || w.blockedOn)) return await done(await prepareNudge(admin, userId, { ...w, blockedOn: w.blockedOn ?? w.who ?? null }));
-    if (verdict.work === 'produce' && verdict.executor.kind === 'coworker' && verdict.executor.id) {
-      const dr = await delegatePrepare(admin, userId, w, { id: verdict.executor.id, name: verdict.executor.name ?? 'Coworker', worker_role: null, is_worker: true });
-      return await done({ ...dr, why: verdict.reason });
+    if (verdict.work === 'produce') {
+      // THE DELIVERABLE RESOLUTION on PRODUCED work — the class where "what does it take / what do
+      // I have / what do I need from you" matters most (make-the-reports asks). Resolve the judged
+      // inventory FIRST: found artifacts stage into the pool; missing ones land as the room's
+      // input-checklist ASK. The truth then rides the delegation envelope (a coworker builds from
+      // what's staged and never fabricates the rest), and a user-executor item is never silent —
+      // the ask IS the preparation.
+      let artifactTruth = '';
+      if (verdict.requires?.length) {
+        const { resolveRequirements } = await import('@/lib/prepare/requirements');
+        const reqs = await resolveRequirements(admin, userId, {
+          itemKind: w.id.startsWith('commit:') ? 'commitment' : 'inbox', itemId: w.entityId,
+          itemTitle: w.title, entityId: w.entity?.id ?? null, requires: verdict.requires,
+        });
+        artifactTruth = reqs.artifactTruth;
+        if (verdict.executor.kind !== 'coworker' && reqs.missing.length) {
+          return { did: 'none', reason: `needs ${reqs.missing.length} input(s) from you — asked in the room` };
+        }
+      }
+      if (verdict.executor.kind === 'coworker' && verdict.executor.id) {
+        const dr = await delegatePrepare(admin, userId, w, { id: verdict.executor.id, name: verdict.executor.name ?? 'Coworker', worker_role: null, is_worker: true }, artifactTruth || undefined);
+        return await done({ ...dr, why: verdict.reason });
+      }
     }
-    if (verdict.work === 'reply') return await done(await prepareReplyDraft(admin, userId, w));
+    if (verdict.work === 'reply') return await done(await prepareReplyDraft(admin, userId, w, verdict));
     return { did: 'none', reason: verdict.reason || 'this one needs you — no preparation applies' };
   } catch { return { did: 'none', reason: 'preparation failed — try again' }; }
 }
@@ -141,7 +161,7 @@ async function narratePrepare(
 }
 
 // ── The reply-draft branch (slice 1). ──
-async function prepareReplyDraft(admin: SupabaseClient, userId: string, w: WorkItem): Promise<PrepareOneResult> {
+async function prepareReplyDraft(admin: SupabaseClient, userId: string, w: WorkItem, verdict?: import('@/lib/work/judge').WorkVerdict): Promise<PrepareOneResult> {
   const { data: it } = await admin.from('inbox_items').select('id, source_data, last_activity_at, status, rule_type')
     .eq('id', w.entityId).eq('user_id', userId).maybeSingle();
   if (!it || it.status !== 'pending') return { did: 'none', reason: 'no longer open' };
@@ -165,17 +185,36 @@ async function prepareReplyDraft(admin: SupabaseClient, userId: string, w: WorkI
     || (Date.now() - Date.parse(existing.generated_at || '0')) > FRESH_HOURS * 3_600_000
     || (!!it.last_activity_at && Date.parse(it.last_activity_at as string) > Date.parse(existing.generated_at || '0'));
   if (!stale) return { did: 'none', reason: 'a fresh draft is already on it' };
-  const raw = await generateReplyDraft(userId, sd as Record<string, never>, admin, null);
+  // ── THE DELIVERABLE RESOLUTION (what's available / what's needed): the judge's inventory is
+  // resolved BEFORE drafting — found artifacts stage into the pool (+ the first sendable one rides
+  // the draft as its attachment), missing ones become the room's input-checklist ask, and the
+  // drafter is constrained to the ARTIFACT TRUTH (it may only claim what's staged). ──
+  let artifactTruth = '';
+  let stagedAttachment: { fileId: string; filename: string; source?: string } | null = null;
+  if (verdict?.requires?.length) {
+    const { resolveRequirements } = await import('@/lib/prepare/requirements');
+    const reqs = await resolveRequirements(admin, userId, {
+      itemKind: 'inbox', itemId: String(it.id), itemTitle: w.title,
+      entityId: w.entity?.id ?? null, requires: verdict.requires,
+    });
+    artifactTruth = reqs.artifactTruth;
+    // Only KB-held bytes are attachable from the composer (the doc-send rule); drive-catalog and
+    // pool-text haves stay staged context, never a phantom attachment.
+    const kbHave = reqs.have.find((h) => h.file?.source === 'kb');
+    if (kbHave?.file) stagedAttachment = { fileId: kbHave.file.id, filename: kbHave.file.filename, source: kbHave.file.source };
+  }
+  const truthInstruction = artifactTruth ? `\n${artifactTruth}` : null;
+  const raw = await generateReplyDraft(userId, sd as Record<string, never>, admin, truthInstruction);
   if (!raw) return { did: 'none', reason: 'could not draft this' };
   // O4: the CoS review before it reaches the desk (one capped revision on a substantive objection).
   const sender = [String(sd.from_name || ''), sd.from_address ? `<${sd.from_address}>` : ''].filter(Boolean).join(' ') || String(sd.from || '') || null;
   const { body, review } = await reviewAndRevise(admin, userId,
     { body: raw, task: w.title, recipient: sender, entityId: w.entity?.id ?? null, kind: 'reply' },
-    (objection) => generateReplyDraft(userId, sd as Record<string, never>, admin, `REVIEWER'S OBJECTION — fix this in the reply: ${objection}`));
+    (objection) => generateReplyDraft(userId, sd as Record<string, never>, admin, `${truthInstruction ?? ''}\nREVIEWER'S OBJECTION — fix this in the reply: ${objection}`));
   // O3a: ambient work is ATTRIBUTED — the assistant coworker drafted this (her skills shaped it).
   const pa = await getDraftingAssistant(admin, userId);
   await admin.from('inbox_items')
-    .update({ source_data: { ...sd, draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) } })
+    .update({ source_data: { ...sd, draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', ...(stagedAttachment ? { attachment: stagedAttachment } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) } })
     .eq('id', it.id);
   return { did: 'draft', worker: pa?.name };
 }
@@ -239,7 +278,7 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem):
 // ── C2 · the COWORKER branch — judgment shapes are prepared by the right coworker, with the item's
 // grounding + the deliverable pool (runDelegation reads+writes it). Idempotent per item. Nothing
 // sends — prompt-level prepare-and-hand-back guardrail lives in buildDelegationPrompt. ──
-async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkItem, worker: WorkerRow): Promise<PrepareOneResult> {
+async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkItem, worker: WorkerRow, artifactTruth?: string): Promise<PrepareOneResult> {
   const poolKind = w.id.startsWith('commit:') ? 'commitment' : 'email';
   const { data: prior } = await admin.from('item_deliverables').select('id')
     .eq('user_id', userId).eq('kind', poolKind).eq('entity_id', w.entityId).eq('task_id', 'prepare-pass').limit(1).maybeSingle();
@@ -282,6 +321,10 @@ async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkIte
     }
     brainContext = bits.join('\n\n');
   } catch { /* the envelope is an enhancement — the hand-off still carries the item context */ }
+  // THE ARTIFACT TRUTH rides the envelope: the coworker builds FROM what's staged in the pool (it
+  // reads the pool as previousOutputs) and must never fabricate the missing pieces — the principal
+  // has already been asked for those in the room.
+  if (artifactTruth) brainContext = [brainContext, artifactTruth].filter(Boolean).join('\n\n');
   const prompt = buildDelegationPrompt({
     kind: poolKind,
     itemContext: `TASK: ${w.title}\n` + (w.who ? `Counterparty: ${w.who}\n` : '') +
@@ -339,7 +382,7 @@ async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkIte
 // ── C3 · the DOC-SEND branch — a send-an-existing-file task gets the FILE RESOLVED (universal
 // registry: pool → KB → drives) and a ready draft with the attachment reference. The approve-gate
 // holds: nothing sends; the deep-dive leads with the prepared draft + file. ──
-async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem): Promise<PrepareOneResult> {
+async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem, verdict?: import('@/lib/work/judge').WorkVerdict): Promise<PrepareOneResult> {
   if (w.id.startsWith('commit:')) {
     const { data: prior } = await admin.from('item_deliverables').select('id, metadata, created_at')
       .eq('user_id', userId).eq('kind', 'commitment').eq('entity_id', w.entityId).eq('type', 'draft')
@@ -371,6 +414,33 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
   const sd = (it.source_data ?? {}) as Record<string, unknown>;
   const existingDraft = (sd.draft ?? null) as { body?: string; attachment?: unknown } | null;
   if (existingDraft?.attachment) return { did: 'none', reason: 'already prepared with the file' };
+  // ── THE DELIVERABLE RESOLUTION (multi-artifact sends — "share these three reports"): when the
+  // judge's inventory names the artifacts, resolve THEM (not the item title): staged haves ride the
+  // pool + the draft's attachment; missing ones become the room's input-checklist ask; the reply is
+  // drafted under the ARTIFACT TRUTH so it never claims what isn't in hand. The single-file path
+  // below stays for inventory-less sends. ──
+  if (verdict?.requires?.length) {
+    const { resolveRequirements } = await import('@/lib/prepare/requirements');
+    const reqs = await resolveRequirements(admin, userId, {
+      itemKind: 'inbox', itemId: String(it.id), itemTitle: w.title,
+      entityId: w.entity?.id ?? null, requires: verdict.requires,
+    });
+    const kbHave = reqs.have.find((h) => h.file?.source === 'kb');
+    const body2 = await generateReplyDraft(userId, sd as Record<string, never>, admin,
+      `${reqs.artifactTruth || ''}\nThe reply responds to this request${kbHave ? `; the document "${kbHave.file!.filename}" will be attached` : ''}.`).catch(() => null);
+    if (body2) {
+      const { review } = await reviewAndRevise(admin, userId,
+        { body: body2, task: w.title, recipient: (sd.from_name as string) ?? (sd.from_address as string) ?? null, entityId: w.entity?.id ?? null, kind: 'reply' },
+        async () => body2);
+      const pa2 = await getDraftingAssistant(admin, userId);
+      await admin.from('inbox_items').update({
+        source_data: { ...sd, draft: { body: body2, generated_at: new Date().toISOString(), prepared: 'pass', ...(kbHave?.file ? { attachment: { fileId: kbHave.file.id, filename: kbHave.file.filename, source: kbHave.file.source } } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa2 ? { prepared_by: { worker: pa2.name, at: new Date().toISOString() } } : {}) },
+      }).eq('id', it.id);
+      return { did: reqs.have.length ? 'docsend' : 'draft', worker: pa2?.name };
+    }
+    // Could not draft — the checklist ask (written by resolveRequirements) still stands in the room.
+    return { did: 'none', reason: reqs.missing.length ? `waiting on ${reqs.missing.length} artifact(s) from you` : 'could not draft the send' };
+  }
   const cands = await resolveFileUniversal(admin, { userId, entityId: w.entity?.id ?? null }, w.title, 4).catch(() => []);
   // Only attach on a CONFIDENT KB hit (bytes we hold → previewable + attachable); drive-catalog
   // candidates surface in the deep-dive picker instead of silently auto-attaching.

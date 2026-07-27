@@ -69,16 +69,28 @@ export async function POST(request: NextRequest) {
       }
     } catch { /* non-fatal — the file is in the pool regardless */ }
 
-    // FIX 3 — an input landed: clear any outstanding coworker ASK checklist on this item (the
-    // component strips; the turn's text stays as history — the group-channel story is never erased).
-    // Clearing re-opens the preparation pass, which re-runs WITH the new pool content in view.
+    // FIX 3 — an input landed: clear any outstanding ASK checklist on this item — a coworker's
+    // (delegate:*) or the engine's own requirements ask (requires:*). The component strips; the
+    // turn's text stays as history — the group-channel story is never erased. Clearing re-opens
+    // the preparation pass, which re-resolves WITH the new pool content in view.
     try {
       const { data: asks } = await supabase.from('room_turns').select('id')
-        .eq('user_id', user.id).like('dedupe_key', `delegate:${id}:%`)
+        .eq('user_id', user.id)
+        .or(`dedupe_key.like.delegate:${id}:*,dedupe_key.eq.requires:${id}`)
         .filter('component->>key', 'eq', 'input_checklist');
       if (asks?.length) {
         await supabase.from('room_turns').update({ component: null })
           .in('id', asks.map((a) => a.id));
+        // A satisfied requirements-ask makes the current draft stale — the next pass re-drafts
+        // with the artifact staged (dropping generated_at trips the pass's freshness check).
+        if (kind !== 'entity' && kind !== 'meeting') {
+          const { data: itRow } = await supabase.from('inbox_items').select('id, source_data').eq('id', id).eq('user_id', user.id).maybeSingle();
+          const isd = (itRow?.source_data ?? {}) as Record<string, unknown>;
+          const dr = isd.draft as Record<string, unknown> | undefined;
+          if (itRow && dr?.generated_at) {
+            await supabase.from('inbox_items').update({ source_data: { ...isd, draft: { ...dr, generated_at: undefined } } }).eq('id', itRow.id);
+          }
+        }
       }
     } catch { /* non-fatal */ }
 

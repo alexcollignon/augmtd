@@ -52,8 +52,29 @@ export async function writeRoomTurn(
   try {
     if (!turn.text?.trim()) return;
     if (turn.dedupeKey) {
-      await client.from('room_turns').delete()
-        .eq('user_id', userId).eq('room_key', roomKey).eq('dedupe_key', turn.dedupeKey);
+      // Dedupe UPDATES IN PLACE — a re-narrated turn keeps its original position in the story
+      // (delete+reinsert gave it a fresh created_at, so "Sofia is on X" could land AFTER her own
+      // report-back on a re-run — announcement after result). The story's order is part of its truth.
+      let ex: { id?: string } | null = null;
+      const { data: exLive, error: exErr } = await client.from('room_turns').select('id')
+        .eq('user_id', userId).eq('room_key', roomKey).eq('dedupe_key', turn.dedupeKey)
+        .is('archived_at', null).limit(1).maybeSingle();
+      ex = exLive;
+      if (exErr) { // pre-migration (no archived_at column) — match without the filter
+        const { data: exAny } = await client.from('room_turns').select('id')
+          .eq('user_id', userId).eq('room_key', roomKey).eq('dedupe_key', turn.dedupeKey)
+          .limit(1).maybeSingle();
+        ex = exAny;
+      }
+      if (ex?.id) {
+        await client.from('room_turns').update({
+          role: turn.role, text: turn.text,
+          refs: turn.refs?.length ? turn.refs : null,
+          component: turn.component ?? null,
+          author: turn.author ?? null,
+        }).eq('id', ex.id);
+        return;
+      }
     }
     await client.from('room_turns').insert({
       user_id: userId, room_key: roomKey, role: turn.role, text: turn.text,

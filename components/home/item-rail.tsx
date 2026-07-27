@@ -521,17 +521,20 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
             <div className="max-w-[80%] px-3 py-2 bg-neutral-100 rounded-2xl rounded-br-sm text-[13px] text-neutral-800 leading-relaxed">{t.text}</div>
           </div>
         ) : (
-          <AssistantRow key={i}>
-            {/* R1 — coworker attribution: the group-channel model, turns carry WHO. Absent = the
-                chief of staff (the anchor voice stays unlabeled). */}
+          /* R1 — coworker attribution, DM-STYLE: a teammate's turn reads like a message from a
+             person — avatar in its own left column, name header, then the content. The chief of
+             staff (no author) stays the unlabeled anchor voice — WHO is parseable at a glance. */
+          <div key={i} className={t.author?.name ? 'flex items-start gap-2.5' : undefined}>
             {t.author?.name && (
-              <span className="flex items-center gap-1.5 text-[11px] font-semibold text-indigo-600">
-                {t.author.role && ROLE_AVATARS[t.author.role] ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={ROLE_AVATARS[t.author.role]} alt="" className="w-[16px] h-[16px] rounded-full" />
-                ) : <Initials name={t.author.name} />}
-                {t.author.name.split(' ')[0]}
-              </span>
+              t.author.role && ROLE_AVATARS[t.author.role] ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={ROLE_AVATARS[t.author.role]} alt="" className="w-[26px] h-[26px] rounded-full flex-shrink-0 mt-0.5" />
+              ) : <span className="flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-[26px] h-[26px] rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-semibold">{(t.author.name.trim()[0] ?? '?').toUpperCase()}</span>
+            )}
+            <div className={t.author?.name ? 'min-w-0 flex-1' : 'min-w-0 w-full'}>
+          <AssistantRow>
+            {t.author?.name && (
+              <span className="text-[11.5px] font-semibold text-indigo-600">{t.author.name.split(' ')[0]}</span>
             )}
             <p className="whitespace-pre-wrap">{t.text}</p>
             {/* FIX 3 — the coworker's ASK as an inline checklist: each row a concrete thing they
@@ -550,6 +553,17 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
                     >Attach →</button>
                   </div>
                 ))}
+                {/* NEVER BLOCKING: an ask is a request, not a gate — one tap tells the coworker to
+                    proceed with what's shared (routes through the one conversation core, which
+                    re-delegates with the instruction; the work-with-what-you-have contract does
+                    the rest). Answering some rows and tapping this is the natural partial flow. */}
+                {t.author?.name && (
+                  <button
+                    onClick={() => send(`Have ${t.author!.name.split(' ')[0]} go ahead with what's available — work with what I've shared and note any gaps.`)}
+                    disabled={busy}
+                    className="mt-0.5 rounded-full border border-neutral-200 px-2.5 py-1 text-[11.5px] font-medium text-neutral-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors disabled:opacity-50"
+                  >Go ahead with what&apos;s available →</button>
+                )}
               </div>
             )}
             {/* O5: the commit line is a DECISION, not buttons. ≥2 routes → the numbered options
@@ -583,13 +597,18 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
                 >{t.actions[0].label}</button>
               </div>
             )}
-            {t.refs && t.refs.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {t.refs.map((r, j) => (
-                  <Chip key={j} label={r.label} onClick={r.href ? () => router.push(r.href!) : undefined} />
-                ))}
-              </div>
-            )}
+            {(() => {
+              // The item chip disambiguates a SHARED deal room ("about what?"); inside the item's
+              // OWN room it's self-referential noise — hide chips that point at the current anchor.
+              const shownRefs = (t.refs ?? []).filter((r) => inRoom || !r.href?.includes(`/item/${id}`));
+              return shownRefs.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {shownRefs.map((r, j) => (
+                    <Chip key={j} label={r.label} onClick={r.href ? () => router.push(r.href!) : undefined} />
+                  ))}
+                </div>
+              );
+            })()}
             {t.files && t.files.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {t.files.map((f, j) => (
@@ -598,6 +617,8 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
               </div>
             )}
           </AssistantRow>
+            </div>
+          </div>
         ))}
         {busy && <AssistantRow><TypingDots /></AssistantRow>}
       </div>

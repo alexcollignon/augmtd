@@ -76,8 +76,12 @@ export function buildDelegationPrompt(args: {
     `- PREPARE the deliverable and hand it back for review — do NOT send an email, post to Slack, or ` +
       `send a calendar invite on your own here. If the natural next step is a message, DRAFT it (in ` +
       `your voice / the right voice) and include the draft in your answer; the user sends it themselves.`,
+    `- WORK WITH WHAT YOU HAVE: if some inputs are missing but the work can meaningfully proceed on ` +
+      `what's available, DO IT and note the gaps honestly in your hand-back ("built from X; still ` +
+      `needs Y for the final version"). Only stop and ask when the work is genuinely impossible or ` +
+      `meaningless without the missing pieces — a partial deliverable with honest gaps beats a request list.`,
     `- Report back plainly: what you did, what you're handing over, and anything you couldn't do.`,
-    `- If you genuinely can't do the work with what's here, say so honestly — don't invent facts.`,
+    `- Never invent facts to fill a gap — a named gap is honest; a fabricated fact is not.`,
   ].join('\n');
 }
 
@@ -269,6 +273,12 @@ export async function runDelegation(args: {
         // reader sees it). Re-render on every load until satisfied; a re-run REPLACES (dedupeKey).
         ...(needsInput?.length ? { component: { key: 'input_checklist', state: { items: needsInput, taskId: poolScope.taskId ?? null } } } : {}),
       });
+      // THE COWORKER SUPERSEDES: whatever the outcome — a real deliverable OR the coworker's own
+      // ask — the engine's provisional requirements ask is now stale (the worker either did the
+      // work with what existed, or asked for exactly what it needs). One ask per item.
+      await supabase.from('room_turns').delete()
+        .eq('user_id', userId).eq('room_key', roomKey).eq('dedupe_key', `requires:${poolScope.entityId}`)
+        .then(() => {}, () => {});
     } catch { /* narration is an enhancement — the delegation already landed */ }
   }
 
