@@ -66,12 +66,12 @@ export async function GET() {
     try {
       const { data: wents } = await supabase.from('work_entities')
         .select('id, name, tracked, state').eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null).limit(400);
-      // CURATED (Phase 3 F3): swimlanes = ACCEPTED projects (tracked); a user who accepted nothing
-      // yet sees the brain's judged projects (never an empty pre-acceptance timeline).
+      // R4 (one-room, promise fix #5): ONE definition of "project" on every surface — TRACKED
+      // (human-created/accepted) only. The judged-untracked fallback is gone: the brain never
+      // shows a grouping as a project lane the user didn't accept; with zero tracked projects the
+      // flat station view carries the timeline (and creation is one tap away).
       const rowsAll = (wents ?? []) as Array<Record<string, unknown>>;
-      const acceptedRows = rowsAll.filter((e) => !!e.tracked);
-      const judgedRows = rowsAll.filter((e) => ((e.state ?? {}) as { scope?: string }).scope === 'project');
-      const laneRows = acceptedRows.length ? acceptedRows : judgedRows;
+      const laneRows = rowsAll.filter((e) => !!e.tracked);
       const entMeta = new Map(laneRows.map((e) => [e.id as string, { name: e.name as string, dot: MOM_DOT[((e.state ?? {}) as { momentum?: string }).momentum ?? 'active'] ?? MOM_DOT.active }]));
       // raw id → entity (only for inbox/commitment work items).
       const rawToEntity = new Map<string, string>();

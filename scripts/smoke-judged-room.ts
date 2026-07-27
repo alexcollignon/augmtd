@@ -97,9 +97,11 @@ const src = (p: string) => readFileSync(p, 'utf8');
     await sb.from('inbox_items').delete().eq('id', dId);
   } else check('probe · decide insert failed', false);
 
+  // Distinct persona — the shared probe sender accumulates person-state across suites, which can
+  // bias the judgment (a real cross-contamination we hit: "Sam awaits your availability").
   const { data: chaseC } = await sb.from('commitments').insert({
-    user_id: PERSONAL, description: 'ZZ-judge probe — Sam owes the signed venue contract', direction: 'awaiting',
-    counterparty: 'Sam Vendor', source: 'manual', source_id: 'zz-judge-chase', status: 'open',
+    user_id: PERSONAL, description: 'ZZ-judge probe — Vera owes the signed venue contract', direction: 'awaiting',
+    counterparty: 'Vera Contractor', source: 'manual', source_id: 'zz-judge-chase', status: 'open',
   }).select('id').maybeSingle();
   if (chaseC) {
     const vc = await judgeWork(sb, PERSONAL, { kind: 'commitment', id: chaseC.id });
@@ -177,8 +179,8 @@ const src = (p: string) => readFileSync(p, 'utf8');
     'Hi, great meeting you at the fair. Could we set up a 30-minute intro call next week — Tuesday or Wednesday morning both work on our side. Happy to send times. Best, Sam');
   if (schId) {
     const vs = await judgeWork(sb, PERSONAL, { kind: 'inbox', id: schId });
-    check('J5 · a scheduling ask judges SCHEDULE/invite (or reply proposing times — both legal moves)',
-      vs.work === 'schedule' || vs.work === 'reply', `${vs.work}/${vs.component}`);
+    check('J5 · a scheduling ask judges a scheduling-shaped move (schedule, reply-with-times, or the slot DECISION)',
+      vs.work === 'schedule' || vs.work === 'reply' || vs.work === 'decide', `${vs.work}/${vs.component}`);
     await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('kind', 'judgment').eq('entity_id', `inbox:${schId}`);
     await sb.from('inbox_items').delete().eq('id', schId);
   } else check('J5 · schedule probe insert failed', false);

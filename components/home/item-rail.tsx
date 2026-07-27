@@ -80,10 +80,12 @@ function persistTurn(roomKey: string, t: Turn): void {
  *  W3: an opts.key DEDUPES — any prior turn with the same key is dropped before appending, so a
  *  re-clicked CTA re-surfaces its one line instead of stuttering duplicates. opts.actions render
  *  as tappable offers ("Draft it now" / "Hand to …"). */
-export function pushDealTurn(entityId: string, text: string, opts?: { key?: string; actions?: TurnAction[] }): void {
+export function pushDealTurn(entityId: string, text: string, opts?: { key?: string; actions?: TurnAction[]; role?: 'user' | 'system' }): void {
   const turns = _dealTurns.get(entityId) ?? [];
   const kept = opts?.key ? turns.filter((t) => t.role !== 'system' || t.key !== opts.key) : turns;
-  const turn: Turn = { role: 'system', text, key: opts?.key, actions: opts?.actions };
+  const turn: Turn = opts?.role === 'user'
+    ? { role: 'user', text }
+    : { role: 'system', text, key: opts?.key, actions: opts?.actions };
   _dealTurns.set(entityId, [...kept, turn]);
   persistTurn(entityId, turn);
   try { window.dispatchEvent(new CustomEvent('aug:deal-turn', { detail: { entityId } })); } catch { /* SSR-safe */ }
@@ -293,10 +295,22 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
 
   return (
     <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden min-h-0">
-      {/* Header — the shared chat-sidebar idiom: h-10, panel icon + title. */}
+      {/* Header — the shared chat-sidebar idiom: h-10, panel icon + title. "Clear" wipes the
+          room's TURNS only (narration, not memory) — the reset the wrong-grouping flow needs. */}
       <div className="h-10 flex items-center gap-2 px-3 border-b border-neutral-100 flex-shrink-0">
         <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
         <span className="text-[12px] font-semibold text-neutral-700 truncate">{inRoom ? 'Chat' : ent ? ent.name : 'About this'}</span>
+        {turns.length > 0 && (
+          <button
+            onClick={() => {
+              _dealTurns.set(roomKey, []);
+              setTurnsRaw([]);
+              fetch(`/api/room/turns?key=${encodeURIComponent(roomKey)}`, { method: 'DELETE' }).catch(() => {});
+            }}
+            className="ml-auto text-[11px] font-medium text-neutral-300 hover:text-neutral-500 transition-colors"
+            title="Clear this conversation (the brain's memory is untouched)"
+          >Clear</button>
+        )}
       </div>
 
       {/* Messages — narration first, then the conversation. */}

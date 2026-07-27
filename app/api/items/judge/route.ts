@@ -18,7 +18,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'kind (inbox|commitment) and id required' }, { status: 400 });
     }
     const verdict = await judgeWork(supabase, user.id, { kind, id } as JudgeInput);
-    return NextResponse.json({ verdict });
+    // The verdict MOVES the posture (read-time reconcile precedent): an expired/answered none
+    // resolves the item right here — the user opens a moot item and finds it honestly filed,
+    // with the narration + undo in place, instead of a dead task pretending to be work.
+    const { applyVerdictConsequences } = await import('@/lib/work/apply-verdict');
+    const applied = await applyVerdictConsequences(supabase, user.id, { kind, id } as JudgeInput, verdict);
+    return NextResponse.json({ verdict, applied });
   } catch (e) {
     console.error('[items/judge]', e);
     return NextResponse.json({ error: 'failed' }, { status: 500 });

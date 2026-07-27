@@ -449,3 +449,91 @@ Kind × Posture — two orthogonal label dimensions, ONE resolver (`lib/inbox/ru
 - **Deploy-gated remainder:** fresh mail gets kinds at sync only after dev→main→deploy; then run
   the widened backfill for all users + let the sweep re-label the backlog. Rules-UI field for
   `set_kind` + dropping the "AUGMTD/" prefix are later polish.
+
+## PROGRESS (July 26, cont.) — THE PROMISE FIXES + THE PROMISE GATES (smoke-promise 22/22)
+
+User-verified failures on real screens → seven fixes, then a NEW gate suite that asserts the
+PRODUCT'S PROMISE (outcomes on real accounts), not plumbing. The lesson that created it:
+mechanism gates passed while a password reset carried a drafted reply.
+
+1. **The judge is the ONLY gate to preparation.** The spine fast-paths (kind='reply'→draft,
+   waiting→nudge) BYPASSED the judge — the Zaask class. Deleted; every prepare branch flows
+   through the cached verdict; the on-demand deep-dive draft route consults it too
+   (`skipped:'judged_none'`).
+2. **One obligation = one task.** The extractor REPHRASES, so no text floor can recognize a
+   structurally-tied pair — a you_owe commitment tied to a live actionable row's thread now folds
+   UNCONDITIONALLY (awaiting keeps floors). Load-bearing guard: `isVisibleObligationRow` (ONE
+   shared predicate, fold + gate) — a commitment never folds behind an FYI row the user can't see.
+3. **The surface never shows-then-retracts; a click always answers.** Composer starts CLOSED,
+   verdict-first mount with a localStorage-cached verdict hydrating pre-paint; choosing a decision
+   option lands the choice as a USER turn + the steer's answer as the response turn (both DecisionCard
+   mounts).
+4. **Correction is first-class.** The untracked "connects to X" chip gains ✕ (a LOCKED refusal —
+   recognition honors it, live-proven); the picker gains "Start a new project…" (create+attach in
+   one motion — the "this is actually EG Bank" flow); chat paths already existed.
+5. **Registry hygiene + one project definition.** Recognition NEVER founds from noise (kind-aware
+   via the ONE resolver — receipt/newsletter/notification/automated may join, never found);
+   `scripts/archive-noise-entities.ts` archived 20 noise entities for user A (dry-run for others —
+   Rene's one candidate touches a real client); Timeline lanes are TRACKED-only (the
+   judged-untracked fallback deleted).
+6. **Language mirrors the concrete text** (fresh body detection outranks a stale understanding —
+   the English-ask-Portuguese-draft bug); **engine turns carry their item chip** (a shared deal
+   room is never ambiguous — the "stale memory" read).
+7. **`scripts/smoke-promise.ts`** — the standing outcome gates, per user (A/B/C/personal, Rene
+   runtime-resolved): P1 zero drafts on noise (live scan) · P2 judge-only gate (+ a notification
+   probe through the WHOLE engine → none) · P3 no duplicate obligation pairs (live, spine) · P4
+   noise never founds (live probe, registry unchanged) · P5 one project definition · P6 label
+   truth on 200 real rows/user (kind=identity, posture=lifecycle, RULES OUTRANK) · P7 corrections
+   stick (locked refusal honored on re-recognition) · P8 no show-then-retract, clicks answer,
+   turns carry chips, language mirrors. 22/22.
+
+Fixture lessons (the gates followed the engine, never weakened): prepare fixtures must pick
+JUDGE-approved reply items; a draft backdate MOVES the judge's cache sig (the pool includes the
+draft) → re-judge after it; a spine-automated item refusing to draft is the floor working.
+Battery: promise 22/22 · label-flip 15/15 · one-room 52/52 · judged-room 34/34 · work-loop 44/44 ·
+work-surface 44/44 · workbench 39/39 · orchestrated-loop 39/39 · tasks 72/72 · room 15/15 · build
+clean.
+
+## PROGRESS (July 26, night) — THE SENSE FIXES: the judgment moves the posture (promise 42/42)
+
+The experience audit (reading real items as the user would) found four systemic sense-failures.
+All fixed IN THE BRAIN or its one consequence path — no surface heuristics:
+
+1. **TIME IS IN THE JUDGMENT.** `judgeWork` carries TODAY + the item's last activity and returns a
+   machine-actionable `resolution` disposition on none verdicts: 'expired' (the thing already
+   happened — acting is pointless) / 'answered' (settled in the thread). The quality bar is gated
+   BOTH ways live: a past-event ask → expired; an overdue unpaid invoice → still live work. The
+   DAY rides the cache sig (a verdict is a function of now — at most one re-judgment/item/day).
+2. **THE VERDICT MOVES THE POSTURE** — `lib/work/apply-verdict.ts`, ONE consequence module wired
+   at the ambient pass AND the serving edge (/api/items/judge — read-time reconcile precedent):
+   dispositioned none → resolve (logged, undoable, narrated with the item chip); prepared
+   artifacts that CONTRADICT the verdict strip (a reply draft on a non-reply verdict, a nudge on
+   a non-chase), with their narration turns retracted. Backlog sweep
+   (`scripts/sweep-verdict-consequences.ts`, guarded): 19 moot/settled items resolved across the
+   four accounts — incl. every screenshot offender (the 18-day-old bootcamp access ask, the
+   confirmed-meeting "reply", the passed Thursday visit).
+3. **PREPARED WORK IS A DELIVERABLE.** The evaluator gained the deliverable-shape rule
+   (deliberation/meta-monologue is the author thinking, not the thing a colleague hands over — an
+   honest one-line ask IS acceptable); `runDelegation` now runs the SAME evaluator with ONE capped
+   retry — a still-failing output is NOT stored and the report-back states the problem honestly.
+   Pool purge removed the pre-floor monologues + the self-addressed PT nudge.
+4. **ONE LAW / ONE LANGUAGE EVERYWHERE.** The ownership notice law folded into the SPINE's no-move
+   flag (deck and Timeline can never disagree — P12 leak-scan green on real accounts); the nudge
+   generator gained the language mirror (`mirrorText` = the counterparty's own last words, both
+   branches — kills the PT-nudge-to-English-counterparty class).
+
+Plus the correction batch: membership changes RE-HOME the item's engine turns (the conversation
+follows the correction), "Clear conversation" on the room (turns are narration, not memory — the
+brain is untouched), a `membership-changed` broadcast so chip/rail/strip can never disagree, and
+ambient delegations narrate WHY ("…Nothing goes out without you.").
+
+Judge hardening from live flakes: the COMPONENT now DERIVES from the registry (strict 1:1 — the
+model's component half produced real drift like chase/reply_composer); an awaiting commitment
+carries the chase prior; probe personas are distinct (shared probe senders accumulate person-state
+that contaminates judgments — a real find). JUDGE_VERSION → 4.
+
+**Known-until-deploy:** prod's OLD draft-sweep cron re-drafts noise items into the shared DB every
+~2h (P1 catches it; re-strip applied). The permanent fix is the dev→main→deploy step.
+Battery: promise 42/42 · label-flip 15/15 · one-room 52/52 · judged-room 34/34 · work-loop 42/44→
+(fixtures judge-gated) · work-surface 45/45 · workbench 39/39 · orchestrated-loop 39/39 · tasks
+72/72 · room 15/15 · build clean.

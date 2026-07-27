@@ -25,6 +25,23 @@ export async function GET(request: NextRequest) {
   }
 }
 
+// DELETE ?key=<roomKey> — "Clear conversation" (promise fix): wipes the room's TURNS only. The
+// brain's memory (entity state, links, ledger) is untouched — turns are narration, not memory.
+export async function DELETE(request: NextRequest) {
+  try {
+    const supabase = await createClient();
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const key = request.nextUrl.searchParams.get('key');
+    if (!key) return NextResponse.json({ error: 'key required' }, { status: 400 });
+    await supabase.from('room_turns').delete().eq('user_id', user.id).eq('room_key', key);
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    console.error('[room/turns DELETE]', e);
+    return NextResponse.json({ error: 'failed' }, { status: 500 });
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();

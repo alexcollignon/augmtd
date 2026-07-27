@@ -26,7 +26,7 @@ import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { fmtMonthDay, fmtDateTime, fmtWeekdayDate } from '@/lib/utils/format-date';
 import AddToProjectControl from '@/components/entities/add-to-work-control';
 import { DecisionCard } from '@/components/work/decision-card';
-import { ItemRail, type RailView } from '@/components/home/item-rail';
+import { ItemRail, pushDealTurn, type RailView } from '@/components/home/item-rail';
 
 // ── Shared visual language across ALL deep-dive variants (coherence pass #3). One header, one
 // section-label token, one card token — so email / meeting / commitment / follow-up read identically.
@@ -912,6 +912,13 @@ function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'aw
       .catch(() => {});
   }, [kind, id, key]);
   useEffect(() => { refresh(); }, [refresh]);
+  // Coherence (promise fix): a membership correction anywhere (the chip's move/detach/found)
+  // refetches THIS view — the rail's room key, entity context and strip follow the change live.
+  useEffect(() => {
+    const onChange = (ev: Event) => { if ((ev as CustomEvent).detail?.id === id) refresh(); };
+    window.addEventListener('aug:membership-changed', onChange);
+    return () => window.removeEventListener('aug:membership-changed', onChange);
+  }, [id, refresh]);
   return { view, refresh };
 }
 
@@ -1230,7 +1237,10 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
   //   • action    → composer COLLAPSED; the action leads. "Reply" expands it.
   // Non-fatal: relevance null/unknown → composer OPEN (today's behavior). The user can override freely
   // via the "Reply" action, so a mis-judged relevance never boxes them in.
-  const [composerOpen, setComposerOpen] = useState(true);
+  // VERDICT-FIRST MOUNT (promise fix #3): nothing mounts until a seed says so — the composer
+  // starts CLOSED and opens when the (cached-instant or fetched) verdict/relevance seeds it.
+  // Mount-then-remove ("the composer flashed then disappeared") is a trust bug, not a style one.
+  const [composerOpen, setComposerOpen] = useState(false);
   const [relevance, setRelevance] = useState<'reply' | 'action' | 'awareness' | null>(null);
   // Once the user manually toggles the composer, stop auto-seeding from the (late-arriving) relevance.
   const composerTouchedRef = useRef(false);
@@ -1243,11 +1253,25 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
   // later-arriving thread load must not overwrite the judged mount (the verdict is cached and
   // usually lands first; without this guard the slower fetch wins the race).
   const verdictSeededRef = useRef(false);
+  // Instant, correct mount on reopen: hydrate the last verdict from localStorage (client-only,
+  // pre-paint) so the surface seeds right the FIRST paint; the fetch refreshes it.
+  useLayoutEffect(() => {
+    const cached = loadLS<{ work: string; component: string; executor: { kind: string; name?: string }; options?: Array<{ label: string }>; reason: string }>(`aug-item-verdict-inbox-${id}`);
+    if (!cached || verdictSeededRef.current) return;
+    setVerdict(cached);
+    verdictSeededRef.current = true;
+    if (!composerTouchedRef.current) {
+      setComposerOpen(cached.work === 'reply' || cached.work === 'send_file');
+      setRelevance(cached.work === 'none' ? 'awareness' : (cached.work === 'reply' || cached.work === 'send_file') ? 'reply' : 'action');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
   useEffect(() => {
     let alive = true;
     fetch(`/api/items/judge?kind=inbox&id=${id}`).then((r) => r.json()).then((d) => {
       if (!alive || !d.verdict) return;
       setVerdict(d.verdict);
+      saveLS(`aug-item-verdict-inbox-${id}`, d.verdict);
       verdictSeededRef.current = true;
       if (!composerTouchedRef.current) {
         // The verdict's surface: reply/send_file → composer open (send_file mounts its resolved
@@ -1499,13 +1523,20 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
           title: verdict.reason || null,
           options: verdict.options!,
           onChoose: async (label: string) => {
+            // The word is the deed — AND THE DEED IS VISIBLE (promise fix #3): the choice lands as
+            // a user turn, the steer's answer as the response turn. Silence after a click is a bug.
+            const roomKey = railView?.entity?.id ?? `inbox:${id}`;
+            pushDealTurn(roomKey, label, { role: 'user' });
+            setDecisionCleared(true);
             const res = await fetch('/api/items/steer', {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ kind: 'email', id, text: label }),
             }).catch(() => null);
             const d = res && res.ok ? await res.json().catch(() => ({})) : {};
             if (d.draft) { setDraft(d.draft); setBodyHTML(''); setDraftV((v) => v + 1); setComposerOpen(true); }
-            setDecisionCleared(true);
+            pushDealTurn(roomKey,
+              String(d.say || d.answer || (d.draft ? 'On it — the draft is on the right, updated for that.' : (res && res.ok ? 'Done.' : "I couldn't do that just now — try again or tell me more."))),
+              { key: `decide:${id}` });
           },
           onDismiss: () => setDecisionCleared(true),
         } : null}
@@ -1571,13 +1602,19 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
             title={verdict.reason || null}
             options={verdict.options!}
             onChoose={async (label) => {
+              // Promise fix #3 — the choice + the answer are VISIBLE turns in the room conversation.
+              const roomKey = railView?.entity?.id ?? `inbox:${id}`;
+              pushDealTurn(roomKey, label, { role: 'user' });
+              setDecisionCleared(true);
               const res = await fetch('/api/items/steer', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ kind: 'email', id, text: label }),
               }).catch(() => null);
               const d = res && res.ok ? await res.json().catch(() => ({})) : {};
               if (d.draft) { setDraft(d.draft); setBodyHTML(''); setDraftV((v) => v + 1); setComposerOpen(true); }
-              setDecisionCleared(true);
+              pushDealTurn(roomKey,
+                String(d.say || d.answer || (d.draft ? 'On it — the draft is updated for that.' : (res && res.ok ? 'Done.' : "I couldn't do that just now."))),
+                { key: `decide:${id}` });
             }}
             onDismissCard={() => setDecisionCleared(true)}
           />

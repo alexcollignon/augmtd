@@ -149,13 +149,18 @@ const MARKER = 'ZZ-smoke self-resolution probe';
   // Fixture must be a HUMAN sender — a no-reply notification is correctly REFUSED by the T3
   // structural floor ("a reply would reach no one"), which is the engine working, not a failure.
   const { isAutomatedSenderStrong } = await import('../lib/inbox/notice-demotion');
+  const { judgeWork: judgeForFixture } = await import('../lib/work/judge');
   let replyItem: (typeof itemsA)[number] | undefined;
-  for (const cand of itemsA.filter((x) => x.kind === 'reply' && x.id.startsWith('inbox:') && x.state === 'todo').slice(0, 8)) {
+  for (const cand of itemsA.filter((x) => x.kind === 'reply' && x.id.startsWith('inbox:') && x.state === 'todo' && !x.automated).slice(0, 8)) {
     const { data: row } = await sb.from('inbox_items').select('source_data').eq('id', cand.entityId).maybeSingle();
     const csd = (row?.source_data ?? {}) as Record<string, unknown>;
     if (isAutomatedSenderStrong((csd.from_address as string) ?? null, (csd.from_name as string) ?? null, (csd.subject as string) ?? null)) continue;
     const u = (csd.understanding ?? null) as { mailKind?: string } | null;
     if (u?.mailKind === 'notification' || u?.mailKind === 'calendar') continue;
+    // THE ONE GATE: only a JUDGED-reply item drafts (a decide/none verdict yielding no draft is
+    // the promise-fix working). Same judgment the pass reads — cached.
+    const vf = await judgeForFixture(sb, A, { kind: 'inbox', id: cand.entityId });
+    if (vf.work !== 'reply') continue;
     replyItem = cand; break;
   }
   if (!replyItem) { check('O3 live · attribution (vacuous — no open human reply items)', true); }
@@ -166,12 +171,19 @@ const MARKER = 'ZZ-smoke self-resolution probe';
     if (draft0?.generated_at) {
       await sb.from('inbox_items').update({ source_data: { ...sd0, draft: { ...draft0, generated_at: new Date(Date.now() - 48 * 3_600_000).toISOString() } } }).eq('id', replyItem.entityId);
     }
-    const p = await prepareOneItem(sb, A, replyItem);
-    const { data: after } = await sb.from('inbox_items').select('source_data').eq('id', replyItem.entityId).maybeSingle();
-    const badge = preparedBadge((after?.source_data ?? {}) as never);
-    check('O3 live · the prepared draft carries the assistant\'s NAME (engine → item → reader)',
-      p.did === 'draft' && !!p.worker && badge === p.worker,
-      `did=${p.did} · by=${p.worker ?? '—'} · badge=${badge ?? '—'}`);
+    // The backdate moved the judge's cache sig (the pool includes the draft) — re-judge AFTER it
+    // so the pass reads THIS cached verdict; an honest flip off `reply` → vacuous-pass.
+    const vPost = await judgeForFixture(sb, A, { kind: 'inbox', id: replyItem.entityId });
+    if (vPost.work !== 'reply') {
+      check('O3 live · attribution (vacuous — the fixture item re-judged not-reply)', true, `${vPost.work}: ${vPost.reason.slice(0, 50)}`);
+    } else {
+      const p = await prepareOneItem(sb, A, replyItem);
+      const { data: after } = await sb.from('inbox_items').select('source_data').eq('id', replyItem.entityId).maybeSingle();
+      const badge = preparedBadge((after?.source_data ?? {}) as never);
+      check('O3 live · the prepared draft carries the assistant\'s NAME (engine → item → reader)',
+        p.did === 'draft' && !!p.worker && badge === p.worker,
+        `did=${p.did}${p.reason ? ` (${p.reason})` : ''} · by=${p.worker ?? '—'} · badge=${badge ?? '—'}`);
+    }
   }
 
   // ── O4 LIVE — the canonical failure: a nudge addressed to the user himself is caught by the

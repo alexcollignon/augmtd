@@ -34,6 +34,10 @@ export type RecogItem = {
   // independent identity; it IS a fragment of its parent. It inherits the parent's entity structurally,
   // never re-guessed on topic. This is the fix for same-topic cross-deal over-merge.
   parent?: { kind: 'meeting' | 'inbox_item'; id: string } | null;
+  /** Promise fix #5 — KIND-AWARE FOUNDING: noise mail (receipt/newsletter/notification kind, or an
+   *  automated sender) may JOIN an existing real body of work, but can never FOUND a new entity —
+   *  a Binance alert is not an initiative. Set by the source mappers from the ONE kind resolver. */
+  noise?: boolean;
 };
 
 // A remembered entity, as recognition sees it (works for both the DB store and the shadow's in-memory one).
@@ -281,6 +285,16 @@ export async function recognizeItem(
     return { entityId: verdict.entityId, via: 'recognized', founded: false, reason: verdict.reason };
   }
   if (verdict.decision === 'new') {
+    // Promise fix #5 — noise never founds: a receipt/newsletter/notification (or automated sender)
+    // can join an EXISTING entity above, but a NEW entity from it would be registry pollution
+    // (the "82 smaller things" class). Record the refusal instead.
+    if (item.noise) {
+      await supabase.from('entity_links').upsert(
+        { user_id: userId, entity_id: null, item_kind: item.kind, item_id: item.id, via: 'none', reason: 'noise mail — never founds a new body of work' },
+        { onConflict: 'user_id,item_kind,item_id' },
+      ).then(() => {}, () => {});
+      return { entityId: null, via: 'none', founded: false, reason: 'noise mail — never founds a new body of work' };
+    }
     const emb = await embedText(entityEmbedText(verdict.name, verdict.summary, item.from ? [item.from] : []), userId, supabase);
     const { data: created } = await supabase.from('work_entities')
       .insert({ user_id: userId, kind: 'initiative', name: verdict.name, summary: verdict.summary, embedding: emb, last_event_at: item.at ?? new Date().toISOString() })

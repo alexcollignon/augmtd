@@ -65,6 +65,7 @@ export type PrepareOneResult = {
   did: 'draft' | 'nudge' | 'delegated' | 'docsend' | 'none';
   worker?: string;   // the coworker's name when did === 'delegated'
   reason?: string;   // the honest why when did === 'none'
+  why?: string;      // the JUDGE's reason a delegation happened (provenance for the room narration)
 };
 
 export async function prepareOneItem(
@@ -73,10 +74,11 @@ export async function prepareOneItem(
 ): Promise<PrepareOneResult> {
   try {
     const done = (r: PrepareOneResult) => narratePrepare(admin, userId, w, r);
-    // A reply you owe → a voice draft on the thread.
-    if (w.kind === 'reply' && w.id.startsWith('inbox:')) return await done(await prepareReplyDraft(admin, userId, w));
-    // Waiting on a NAMED person → a nudge draft.
-    if (w.state === 'waiting' && w.blockedOn) return await done(await prepareNudge(admin, userId, w));
+    // THE ONE GATE (promise fix #1): NOTHING is prepared except from THE judged verdict. The old
+    // spine fast-paths (kind==='reply' → draft, waiting → nudge) BYPASSED the judge — which is how
+    // a password-reset notification got a drafted reply. The judge is cached and carries the
+    // structural floors (answered thread, ownership-none notice, automated sender); every branch
+    // below flows through it.
     if (w.automated) return { did: 'none', reason: 'automated notice — nothing to prepare' };
     if (!w.id.startsWith('inbox:') && !w.id.startsWith('commit:')) return { did: 'none', reason: 'not a preparable item' };
 
@@ -90,10 +92,16 @@ export async function prepareOneItem(
     }
     const { judgeWork } = await import('@/lib/work/judge');
     const verdict = await judgeWork(admin, userId, { kind: w.id.startsWith('commit:') ? 'commitment' : 'inbox', id: w.entityId });
+    // THE VERDICT MOVES THE POSTURE (one consequence module): an expired/answered none RESOLVES
+    // the item (logged, undoable, narrated); prepared artifacts that contradict the verdict strip.
+    const { applyVerdictConsequences } = await import('@/lib/work/apply-verdict');
+    const cons = await applyVerdictConsequences(admin, userId, { kind: w.id.startsWith('commit:') ? 'commitment' : 'inbox', id: w.entityId }, verdict);
+    if (cons.resolved) return { did: 'none', reason: `resolved by the verdict (${verdict.resolution}): ${verdict.reason}` };
     if (verdict.work === 'send_file') return await done(await prepareDocSend(admin, userId, w));
-    if (verdict.work === 'chase' && w.who) return await done(await prepareNudge(admin, userId, { ...w, blockedOn: w.blockedOn ?? w.who }));
+    if (verdict.work === 'chase' && (w.who || w.blockedOn)) return await done(await prepareNudge(admin, userId, { ...w, blockedOn: w.blockedOn ?? w.who ?? null }));
     if (verdict.work === 'produce' && verdict.executor.kind === 'coworker' && verdict.executor.id) {
-      return await done(await delegatePrepare(admin, userId, w, { id: verdict.executor.id, name: verdict.executor.name ?? 'Coworker', worker_role: null, is_worker: true }));
+      const dr = await delegatePrepare(admin, userId, w, { id: verdict.executor.id, name: verdict.executor.name ?? 'Coworker', worker_role: null, is_worker: true });
+      return await done({ ...dr, why: verdict.reason });
     }
     if (verdict.work === 'reply') return await done(await prepareReplyDraft(admin, userId, w));
     return { did: 'none', reason: verdict.reason || 'this one needs you — no preparation applies' };
@@ -117,9 +125,14 @@ async function narratePrepare(
       r.did === 'draft' ? `${first ?? 'I'} drafted the reply on "${w.title.slice(0, 80)}" — it's ready to review.` :
       r.did === 'nudge' ? `${first ?? 'I'} drafted the follow-up nudge on "${w.title.slice(0, 80)}".` :
       r.did === 'docsend' ? `${first ?? 'I'} found the file and drafted the send on "${w.title.slice(0, 80)}".` :
-      `${first ?? 'A coworker'} is on "${w.title.slice(0, 80)}" — the work lands here when it's ready.`;
+      // PROVENANCE (promise fix): an ambient delegation says WHY it happened — a coworker showing
+      // up in the room is never a surprise, and the commit line stays with the user.
+      `${first ?? 'A coworker'} is on "${w.title.slice(0, 80)}"${r.why ? ` — ${r.why.slice(0, 110)}` : ''} Nothing goes out without you.`;
     await writeRoomTurn(admin, userId, roomKey, {
       role: 'system', text,
+      // Promise fix #6b — a shared DEAL room hears about many items; every engine turn carries
+      // ITS item's chip so the narration is never ambiguous ("about what?" reads as stale memory).
+      refs: [{ label: w.title.slice(0, 60), href: itemKind === 'commitment' ? `/item/${w.entityId}?kind=commitment` : `/item/${w.entityId}` }],
       author: r.worker ? { kind: 'coworker', name: r.worker } : null,
       dedupeKey: `prep:${w.id}`,
     });
@@ -176,11 +189,13 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem):
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
     const existing = (sd.nudge_draft ?? null) as { generated_at?: string } | null;
     if (existing && (Date.now() - Date.parse(existing.generated_at || '0')) < FRESH_HOURS * 3_600_000) return { did: 'none', reason: 'a fresh nudge is already on it' };
-    const raw = await generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays }, admin);
+    // THE LANGUAGE MIRROR: the counterparty's own words are the concrete signal.
+    const mirrorText = String(sd.body || '').slice(0, 1200) || null;
+    const raw = await generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays, mirrorText }, admin);
     if (!raw) return { did: 'none', reason: 'could not draft the nudge' };
     const { body, review } = await reviewAndRevise(admin, userId, // O4 review
       { body: raw, task: w.title, recipient: w.blockedOn, entityId: w.entity?.id ?? null, kind: 'nudge' },
-      (objection) => generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays, instructions: `REVIEWER'S OBJECTION — fix this: ${objection}` }, admin));
+      (objection) => generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays, mirrorText, instructions: `REVIEWER'S OBJECTION — fix this: ${objection}` }, admin));
     const pa = await getDraftingAssistant(admin, userId); // O3a attribution
     await admin.from('inbox_items')
       .update({ source_data: { ...sd, nudge_draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) } })
@@ -194,11 +209,22 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem):
       .eq('user_id', userId).eq('kind', 'commitment').eq('entity_id', w.entityId).eq('type', 'draft')
       .order('created_at', { ascending: false }).limit(1).maybeSingle();
     if (existing && (Date.now() - Date.parse(existing.created_at as string)) < FRESH_HOURS * 3_600_000) return { did: 'none', reason: 'a fresh nudge is already on it' };
-    const raw = await generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays }, admin);
+    // THE LANGUAGE MIRROR: the counterparty's last inbound message on the commitment's thread.
+    let mirrorText: string | null = null;
+    try {
+      const { data: c } = await admin.from('commitments').select('thread_id').eq('id', w.entityId).maybeSingle();
+      if (c?.thread_id) {
+        const { data: last } = await admin.from('emails').select('body, received_at').eq('user_id', userId)
+          .eq('thread_id', c.thread_id as string).eq('is_from_user', false)
+          .order('received_at', { ascending: false }).limit(1).maybeSingle();
+        mirrorText = String(last?.body || '').slice(0, 1200) || null;
+      }
+    } catch { /* non-fatal */ }
+    const raw = await generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays, mirrorText }, admin);
     if (!raw) return { did: 'none', reason: 'could not draft the nudge' };
     const { body, review } = await reviewAndRevise(admin, userId, // O4 review
       { body: raw, task: w.title, recipient: w.blockedOn, entityId: w.entity?.id ?? null, kind: 'nudge' },
-      (objection) => generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays, instructions: `REVIEWER'S OBJECTION — fix this: ${objection}` }, admin));
+      (objection) => generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays, mirrorText, instructions: `REVIEWER'S OBJECTION — fix this: ${objection}` }, admin));
     const pa = await getDraftingAssistant(admin, userId); // O3a attribution
     await admin.from('item_deliverables').insert({
       user_id: userId, kind: 'commitment', entity_id: w.entityId, type: 'draft',

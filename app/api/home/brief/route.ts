@@ -562,6 +562,9 @@ export async function GET() {
     }
     return null;
   };
+  // ONE OBLIGATION = ONE TASK: `commits` was already folded against the visible actionable rows
+  // at load (the shared dedupe-deck module, line ~248) — the promise fix lowered its STRUCTURAL
+  // floor so an extractor rephrase can't produce two rows for one ask.
   const commitmentCands = commits
     .map((c) => ({
       id: c.id as string,

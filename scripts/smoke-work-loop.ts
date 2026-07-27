@@ -133,6 +133,7 @@ const src = (p: string) => readFileSync(p, 'utf8');
       // T3 (work-surface) refuses automated senders — the fixture must be a REAL human reply item.
       const { isAutomatedSender } = await import('../lib/inbox/automated');
       const candidates = items.filter((x) => x.kind === 'reply' && x.id.startsWith('inbox:') && x.state === 'todo' && !x.automated);
+      const { judgeWork } = await import('../lib/work/judge');
       let replyItem: typeof candidates[number] | undefined;
       for (const cand of candidates.slice(0, 6)) {
         const { data: probe } = await sb.from('inbox_items').select('source_data').eq('id', cand.entityId).maybeSingle();
@@ -140,9 +141,13 @@ const src = (p: string) => readFileSync(p, 'utf8');
         const k = ((psd.understanding ?? {}) as { mailKind?: string }).mailKind;
         if (isAutomatedSender((psd.from_address as string) || null, (psd.from_name as string) || null, (psd.subject as string) || '')) continue;
         if (k && ['receipt', 'newsletter', 'notification', 'cold_outreach', 'calendar'].includes(k)) continue;
+        // THE ONE GATE: the pass drafts only what the JUDGE says is a reply — a decide/none item
+        // correctly yields no draft (that's the fix working, not a failure). Same call, cached.
+        const v = await judgeWork(sb, uid, { kind: 'inbox', id: cand.entityId });
+        if (v.work !== 'reply') continue;
         replyItem = cand; break;
       }
-      if (!replyItem) { check(`${label} · prepare-now (vacuous — no open human reply items)`, true); }
+      if (!replyItem) { check(`${label} · prepare-now (vacuous — no open judged-reply items)`, true); }
       else {
         const { data: it } = await sb.from('inbox_items').select('id, source_data').eq('id', replyItem.entityId).maybeSingle();
         const sd = (it?.source_data ?? {}) as Record<string, unknown>;
@@ -150,6 +155,13 @@ const src = (p: string) => readFileSync(p, 'utf8');
         if (draft?.generated_at) {
           await sb.from('inbox_items').update({ source_data: { ...sd, draft: { ...draft, generated_at: new Date(Date.now() - 48 * 3_600_000).toISOString() } } }).eq('id', replyItem.entityId);
         }
+        // The backdate MOVES the judge's cache sig (the pool includes the draft) — re-judge AFTER
+        // it so the pass reads this cached verdict; a fresh judgment that flips off `reply` is the
+        // model's honest call on this item, not a regression → vacuous-pass with the reason.
+        const vPost = await judgeWork(sb, uid, { kind: 'inbox', id: replyItem.entityId });
+        if (vPost.work !== 'reply') {
+          check(`${label} · prepare-now (vacuous — the fixture item re-judged ${vPost.work}, not reply)`, true, vPost.reason.slice(0, 60));
+        } else {
         const p1 = await prepareOneItem(sb, uid, replyItem);
         check(`${label} · prepare-now regenerates a stale draft`, p1.did === 'draft', `did=${p1.did}${p1.reason ? ` (${p1.reason})` : ''}`);
         const p2 = await prepareOneItem(sb, uid, replyItem);
@@ -157,6 +169,7 @@ const src = (p: string) => readFileSync(p, 'utf8');
         const { data: after2 } = await sb.from('inbox_items').select('source_data').eq('id', replyItem.entityId).maybeSingle();
         const d2 = ((after2?.source_data ?? {}) as { draft?: { body?: string; generated_at?: string } }).draft;
         check(`${label} · the fresh draft persisted on the item`, !!d2?.body && (Date.now() - Date.parse(d2.generated_at || '0')) < 600_000);
+        }
       }
     }
   }

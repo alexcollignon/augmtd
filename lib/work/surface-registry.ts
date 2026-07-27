@@ -54,4 +54,4 @@ export const renderComponentOptions = (): string =>
   WORK_COMPONENTS.map((c) => `- "${c.key}": ${c.when}`).join('\n');
 
 /** Bump when the verdict schema/prompt changes — cached verdicts self-invalidate. */
-export const JUDGE_VERSION = 2; // 2: work↔component coherence coercion (componentForWork)
+export const JUDGE_VERSION = 4; // 4: component DERIVES from work (strict registry coherence)

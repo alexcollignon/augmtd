@@ -1,0 +1,352 @@
+// ═══ THE PROMISE GATES ═══
+// These assert the PRODUCT'S PROMISE on real accounts — outcomes, not plumbing. The lesson that
+// created this suite: mechanism gates passed while a password reset carried a drafted reply. Every
+// gate here encodes a sentence of the promise: it never manufactures work, it never loses work,
+// noise never becomes a task, one obligation is one task, corrections stick, one definition of
+// "project" everywhere, labels tell the truth (kind = identity, posture = lifecycle, rules outrank).
+// Run per user. 100% required — a failure is a live trust bug, not a flaky test.
+import { config } from 'dotenv'; config({ path: '.env.local' });
+import { readFileSync } from 'fs';
+import { createClient } from '@supabase/supabase-js';
+import { resolveKind, postureFor, labelNamesFor } from '../lib/inbox/rules/write-back';
+import { isAutomatedSender } from '../lib/inbox/automated';
+
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+const A = '08fe4449-e5eb-431d-9156-02e9324e5903';
+const B = 'c723c2f2-e069-4ab8-980e-ac3585028fec';
+const PERSONAL = 'e009a499-41d4-4c44-ad53-53a0e851d143';
+const out: Array<[string, boolean, string]> = [];
+const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
+const src = (p: string) => readFileSync(p, 'utf8');
+
+const isNoiseRow = (it: Record<string, unknown>): boolean => {
+  const sd = (it.source_data ?? {}) as Record<string, unknown>;
+  const k = resolveKind(sd, (it.rule_type as string) ?? null);
+  return k === 'receipt' || k === 'newsletter' || k === 'notification'
+    || isAutomatedSender((sd.from_address as string) ?? null, (sd.from_name as string) ?? null, String(it.work_title ?? ''));
+};
+
+(async () => {
+  const { data: uidRows } = await sb.from('work_entities').select('user_id').limit(2000);
+  const rene = [...new Set(((uidRows ?? []) as Array<{ user_id: string }>).map((r) => r.user_id))].find((u) => u.startsWith('ae306f38')) ?? null;
+  const USERS: Array<[string, string]> = [[A, 'user A'], [B, 'user B'], ...(rene ? [[rene, 'user C'] as [string, string]] : []), [PERSONAL, 'personal']];
+
+  // ═══ P1 · IT NEVER MANUFACTURES WORK — no noise item carries a prepared draft (live, per user) ═══
+  for (const [uid, label] of USERS) {
+    const { data: items } = await sb.from('inbox_items')
+      .select('id, work_title, rule_type, type_override, source_data')
+      .eq('user_id', uid).eq('status', 'pending').not('source_data->draft', 'is', null).limit(500);
+    const offenders = ((items ?? []) as Array<Record<string, unknown>>)
+      .filter((it) => it.rule_type !== 'needs_reply' && it.type_override !== 'needs_reply')
+      .filter(isNoiseRow);
+    check(`P1 ${label} · zero prepared drafts on noise mail (rules-override excepted)`,
+      offenders.length === 0, offenders.length ? `OFFENDERS: ${offenders.slice(0, 3).map((o) => String(o.work_title).slice(0, 40)).join(' · ')}` : 'clean');
+  }
+
+  // ═══ P2 · THE JUDGE IS THE ONLY GATE TO PREPARATION ═══
+  check('P2 · no preparation path bypasses the judge (fast-paths deleted; on-demand draft route consults it)',
+    !src('lib/prepare/pass.ts').includes("w.kind === 'reply' && w.id.startsWith('inbox:')) return await done(await prepareReplyDraft") &&
+    src('lib/prepare/pass.ts').includes('THE ONE GATE') &&
+    src('app/api/inbox/[id]/draft/route.ts').includes("skipped: 'judged_none'"));
+  // Live probe: a notification through the WHOLE engine → none.
+  {
+    const { data: probe } = await sb.from('inbox_items').insert({
+      user_id: PERSONAL, source: 'email', status: 'pending', work_state: 'work_prepared',
+      work_title: 'Your password was changed',
+      source_data: {
+        subject: 'Your password was changed', body: 'Your account password was changed. If this was not you, secure your account.',
+        from_name: 'Acme Security', from_address: 'no-reply@acme-example.com', received_at: new Date().toISOString(),
+        understanding: { mailKind: 'notification', ownership: 'none', relevance: 'awareness', role: 'primary' },
+      },
+    }).select('id').maybeSingle();
+    if (!probe?.id) check('P2 live · probe insert failed', false);
+    else {
+      const { prepareOneItem } = await import('../lib/prepare/pass');
+      const r = await prepareOneItem(sb, PERSONAL, {
+        id: `inbox:${probe.id}`, entityId: String(probe.id), kind: 'reply', title: 'Your password was changed',
+        who: 'Acme Security', actor: 'you', state: 'todo',
+        when: { explicit: null, bucket: 'today' }, source: 'email', href: `/item/${probe.id}`,
+        at: new Date().toISOString(), startAt: new Date().toISOString().slice(0, 10),
+        projectId: null, automated: false, initiative: null, effort: null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any);
+      const { data: after } = await sb.from('inbox_items').select('source_data').eq('id', probe.id).maybeSingle();
+      const draftless = !((after?.source_data ?? {}) as Record<string, unknown>).draft;
+      check('P2 live · a notification pushed through the ENGINE (even mislabeled kind:reply) yields NO draft',
+        r.did === 'none' && draftless, `did=${r.did} · draftless=${draftless}`);
+      await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('entity_id', `inbox:${probe.id}`);
+      await sb.from('inbox_items').delete().eq('id', probe.id);
+    }
+  }
+
+  // ═══ P3 · ONE OBLIGATION = ONE TASK (live, per user — the spine agrees with itself) ═══
+  {
+    const { buildWorkItems } = await import('../lib/work-items/model');
+    const { isVisibleObligationRow } = await import('../lib/home/dedupe-deck');
+    const todayStr = new Date().toISOString().slice(0, 10);
+    for (const [uid, label] of USERS) {
+      const items = await buildWorkItems(sb, uid, { todayStr, skipReconcile: true });
+      // Only threads whose email row the user actually SEES as a task (the ONE shared visibility
+      // predicate — an FYI row doesn't count; its commitment is then rightly the one visible row).
+      const emailThreads = new Map<string, string>();
+      for (const w of items) {
+        if (w.id.startsWith('inbox:') && (w.kind === 'reply' || w.kind === 'action') && w.state === 'todo') {
+          const { data: it } = await sb.from('inbox_items').select('source_data, rule_type, work_state, type_override').eq('id', w.entityId).maybeSingle();
+          if (!it || !isVisibleObligationRow(it)) continue;
+          const tid = ((it.source_data ?? {}) as Record<string, unknown>).thread_id as string | undefined;
+          if (tid) emailThreads.set(tid, w.title);
+        }
+      }
+      let dupes = 0;
+      for (const w of items) {
+        if (!w.id.startsWith('commit:') || w.state !== 'todo') continue;
+        const { data: c } = await sb.from('commitments').select('thread_id, direction').eq('id', w.entityId).maybeSingle();
+        if (c?.thread_id && c.direction !== 'awaiting' && emailThreads.has(c.thread_id as string)) dupes++;
+      }
+      check(`P3 ${label} · no open commitment duplicates a live email row on the same thread`,
+        dupes === 0, dupes ? `${dupes} duplicate pair(s)` : `threads=${emailThreads.size}`);
+    }
+  }
+
+  // ═══ P4 · NOISE NEVER FOUNDS A BODY OF WORK (structural + live) ═══
+  check('P4 · recognition refuses to found from noise (kind-aware, via the ONE resolver)',
+    src('lib/entities/recognize.ts').includes('noise mail — never founds a new body of work') &&
+    src('lib/entities/sources.ts').includes('resolveKind'));
+  {
+    const { data: probe } = await sb.from('inbox_items').insert({
+      user_id: PERSONAL, source: 'email', status: 'pending', work_state: 'noted',
+      work_title: 'Your ZZ-Widget subscription receipt',
+      source_data: {
+        subject: 'Your ZZ-Widget subscription receipt', body: 'Thanks for your payment of $9.99. This is your monthly receipt.',
+        from_name: 'ZZ-Widget Billing', from_address: 'billing@zz-widget-example.com', received_at: new Date().toISOString(),
+        understanding: { mailKind: 'receipt', ownership: 'none', relevance: 'awareness', role: 'primary' },
+      },
+    }).select('id').maybeSingle();
+    if (!probe?.id) check('P4 live · probe insert failed', false);
+    else {
+      const before = (await sb.from('work_entities').select('id', { count: 'exact', head: true }).eq('user_id', PERSONAL)).count ?? 0;
+      const { recognizeItem } = await import('../lib/entities/recognize');
+      const { itemFromInbox } = await import('../lib/entities/sources');
+      const { data: row } = await sb.from('inbox_items').select('id, work_title, rule_type, source_data, created_at').eq('id', probe.id).maybeSingle();
+      const res = await recognizeItem(sb, PERSONAL, itemFromInbox(row as never));
+      const after = (await sb.from('work_entities').select('id', { count: 'exact', head: true }).eq('user_id', PERSONAL)).count ?? 0;
+      check('P4 live · a subscription receipt does NOT found an entity (refusal recorded, registry unchanged)',
+        res.founded === false && after === before, `via=${res.via} · entities ${before}→${after}`);
+      await sb.from('entity_links').delete().eq('user_id', PERSONAL).eq('item_id', probe.id);
+      await sb.from('inbox_items').delete().eq('id', probe.id);
+    }
+  }
+
+  // ═══ P5 · ONE DEFINITION OF "PROJECT" — tracked, on every surface ═══
+  check('P5 · Timeline lanes are TRACKED-only (the judged-untracked fallback is gone)',
+    !src('app/api/home/timeline/route.ts').includes('judgedRows') &&
+    src('app/api/home/timeline/route.ts').includes('filter((e) => !!e.tracked)'));
+  check('P5 · the portfolio shows tracked as projects; untracked folds; the strip says "connects to"',
+    src('components/entities/portfolio-view.tsx').includes('inTab.filter((e) => e.tracked)') &&
+    src('components/room/context-strip.tsx').includes("'Connects to'"));
+
+  // ═══ P6 · LABELS TELL THE TRUTH — kind=identity, posture=lifecycle, rules outrank (real rows) ═══
+  for (const [uid, label] of [[A, 'user A'], [B, 'user B']] as const) {
+    const { data: items } = await sb.from('inbox_items')
+      .select('work_title, rule_type, work_state, source_data')
+      .eq('user_id', uid).eq('status', 'pending').eq('source', 'email')
+      .order('created_at', { ascending: false }).limit(200);
+    let bad = 0; let kinds = 0; let postures = 0;
+    for (const it of (items ?? []) as Array<Record<string, unknown>>) {
+      const sd = (it.source_data ?? {}) as Record<string, unknown>;
+      const pair = labelNamesFor(sd, it.rule_type as string, it.work_state as string);
+      const u = (sd.understanding ?? null) as { mailKind?: string } | null;
+      if (pair.kindName) kinds++;
+      if (pair.postureName) postures++;
+      // The truth conditions: a known kind always yields its kind label; fyi/bulk never yields a
+      // posture label; a needs_reply rule ALWAYS keeps its posture label (rules outrank kind).
+      if (u?.mailKind && u.mailKind !== 'other' && !pair.kindName) bad++;
+      if ((it.rule_type === 'fyi' || it.rule_type === 'marketing' || it.rule_type === 'notifications') && pair.postureName) bad++;
+      if (it.rule_type === 'needs_reply' && pair.postureName !== 'AUGMTD/Needs reply') bad++;
+    }
+    check(`P6 ${label} · label truth over 200 real rows (kind=identity · posture=lifecycle · rules outrank)`,
+      bad === 0, `kinds=${kinds} postures=${postures}${bad ? ` · VIOLATIONS=${bad}` : ''}`);
+  }
+  check('P6 unit · posture never fires on bulk; rules outrank kind',
+    postureFor('fyi') === null && postureFor('marketing') === null && postureFor('needs_reply') === 'needs_reply' &&
+    resolveKind({ kind_override: 'customer', understanding: { mailKind: 'newsletter' } }) === 'customer');
+
+  // ═══ P7 · CORRECTIONS STICK — a human detach is a durable refusal recognition honors ═══
+  {
+    const { data: probe } = await sb.from('inbox_items').insert({
+      user_id: PERSONAL, source: 'email', status: 'pending', work_state: 'noted',
+      work_title: 'ZZ-correction probe — planning question',
+      source_data: { subject: 'Planning question', body: 'Quick question about the plan for next month.', from_name: 'Sam Vendor', from_address: 'sam@acme-example.com', received_at: new Date().toISOString() },
+    }).select('id').maybeSingle();
+    if (!probe?.id) check('P7 live · probe insert failed', false);
+    else {
+      const { setItemMembership } = await import('../lib/entities/membership');
+      await setItemMembership(sb, PERSONAL, { kind: 'inbox_item', id: probe.id as string, entityId: null }, { inline: true });
+      const { data: link } = await sb.from('entity_links').select('entity_id, via, locked')
+        .eq('user_id', PERSONAL).eq('item_kind', 'inbox_item').eq('item_id', probe.id).maybeSingle();
+      const { recognizeItem } = await import('../lib/entities/recognize');
+      const { itemFromInbox } = await import('../lib/entities/sources');
+      const { data: row } = await sb.from('inbox_items').select('id, work_title, rule_type, source_data, created_at').eq('id', probe.id).maybeSingle();
+      const res = await recognizeItem(sb, PERSONAL, itemFromInbox(row as never));
+      check('P7 live · "not this" writes a LOCKED refusal and recognition honors it (no re-file)',
+        link?.entity_id === null && link?.locked === true && res.entityId === null,
+        `via=${link?.via} locked=${link?.locked} re-recog=${res.via}`);
+      await sb.from('entity_links').delete().eq('user_id', PERSONAL).eq('item_id', probe.id);
+      await sb.from('inbox_items').delete().eq('id', probe.id);
+    }
+  }
+
+  // ═══ P8 · THE SURFACE NEVER SHOWS-THEN-RETRACTS; a click always answers ═══
+  const detail = src('components/home/item-detail.tsx');
+  check('P8 · verdict-first mount (composer starts closed; cached verdict hydrates pre-paint)',
+    detail.includes('const [composerOpen, setComposerOpen] = useState(false)') &&
+    detail.includes('aug-item-verdict-inbox-') && detail.includes('VERDICT-FIRST MOUNT'));
+  check('P8 · choosing a decision option is VISIBLE (the choice + the answer land as room turns)',
+    (detail.match(/pushDealTurn\(roomKey, label, \{ role: 'user' \}\)/g)?.length ?? 0) >= 2);
+  check('P8 · engine turns carry their item chip (a shared deal room is never ambiguous)',
+    src('lib/prepare/pass.ts').includes('refs: [{ label: w.title.slice(0, 60)') &&
+    src('lib/home/delegate.ts').includes('refs: [{ label: itemLabel.slice(0, 60)'));
+  check('P8 · the reply drafter mirrors the CONCRETE text (fresh detection outranks a stale understanding)',
+    src('lib/inbox/draft-reply.ts').includes('const detected = detectLanguage(`${subject}\\n${body}`) || languageName(understanding?.language)'));
+
+  // ═══ P9 · TIME INVALIDATES WORK AND THE JUDGE NOTICES (mootness, live probes) ═══
+  {
+    const { judgeWork } = await import('../lib/work/judge');
+    const past = new Date(Date.now() - 10 * 86_400_000);
+    const pastStr = past.toISOString().slice(0, 10);
+    const mk = async (subject: string, body: string, ownership: string) => {
+      const { data } = await sb.from('inbox_items').insert({
+        user_id: PERSONAL, source: 'email', status: 'pending', work_state: 'work_prepared', work_title: subject,
+        source_data: {
+          subject, body, from_name: 'Sam Vendor', from_address: 'sam@acme-example.com', received_at: past.toISOString(),
+          understanding: { mailKind: 'customer', ownership, relevance: 'reply', role: 'primary' },
+        },
+      }).select('id').maybeSingle();
+      return data?.id as string | undefined;
+    };
+    const mootId = await mk('Confirm the site visit tomorrow at 18:30',
+      `Hi, could you confirm you can make the site visit tomorrow (${pastStr}) at 18:30? We need to lock the slot today.`, 'you_owe');
+    if (mootId) {
+      const v = await judgeWork(sb, PERSONAL, { kind: 'inbox', id: mootId });
+      check('P9 live · an ask about a PAST event judges none+expired (time is in the judgment)',
+        v.work === 'none' && v.resolution === 'expired', `${v.work}/${v.resolution ?? '—'} · "${v.reason.slice(0, 60)}"`);
+      const { applyVerdictConsequences } = await import('../lib/work/apply-verdict');
+      const cons = await applyVerdictConsequences(sb, PERSONAL, { kind: 'inbox', id: mootId }, v);
+      const { data: after } = await sb.from('inbox_items').select('status').eq('id', mootId).maybeSingle();
+      check('P9 live · the verdict MOVES the posture (expired → dismissed, logged, narrated)',
+        cons.resolved && after?.status === 'dismissed', `status=${after?.status}`);
+      await sb.from('room_turns').delete().eq('user_id', PERSONAL).like('dedupe_key', `%${mootId}%`);
+      await sb.from('activity_events').delete().eq('user_id', PERSONAL).eq('entity_id', mootId);
+      await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('entity_id', `inbox:${mootId}`);
+      await sb.from('inbox_items').delete().eq('id', mootId);
+    } else check('P9 · moot probe insert failed', false);
+    // The counter-probe: a passed date where acting LATE still has value must NOT be expired.
+    const lateId = await mk('Invoice #2214 — payment was due last week',
+      `Hi, our invoice #2214 for €1,400 was due on ${pastStr} and remains unpaid. Could you arrange payment or let us know the status?`, 'you_owe');
+    if (lateId) {
+      const v = await judgeWork(sb, PERSONAL, { kind: 'inbox', id: lateId });
+      check('P9 live · a passed-due UNPAID ask is NOT expired (late action still has value)',
+        !(v.work === 'none' && v.resolution === 'expired'), `${v.work}/${v.resolution ?? '—'} · "${v.reason.slice(0, 60)}"`);
+      await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('entity_id', `inbox:${lateId}`);
+      await sb.from('inbox_items').delete().eq('id', lateId);
+    } else check('P9 · late-value probe insert failed', false);
+  }
+
+  // ═══ P10 · VERDICT-POSTURE AGREEMENT — no pending item whose verdict says it's settled ═══
+  for (const [uid, label] of USERS) {
+    const { data: js } = await sb.from('item_plans').select('entity_id, tasks')
+      .eq('user_id', uid).eq('kind', 'judgment').limit(500);
+    let disagree = 0;
+    for (const j of (js ?? []) as Array<{ entity_id: string; tasks: { verdict?: { work?: string; resolution?: string } } }>) {
+      const v = j.tasks?.verdict;
+      if (!v || v.work !== 'none' || !v.resolution) continue;
+      const m = /^(inbox|commitment):(.+)$/.exec(j.entity_id);
+      if (!m) continue;
+      if (m[1] === 'inbox') {
+        const { data: it } = await sb.from('inbox_items').select('status').eq('id', m[2]).maybeSingle();
+        if (it?.status === 'pending') disagree++;
+      } else {
+        const { data: c } = await sb.from('commitments').select('status').eq('id', m[2]).maybeSingle();
+        if (c && ['open', 'pending', 'in_progress'].includes(String(c.status))) disagree++;
+      }
+    }
+    check(`P10 ${label} · zero pending items whose verdict says settled (the judgment moved the posture)`,
+      disagree === 0, disagree ? `${disagree} disagreement(s)` : 'in agreement');
+  }
+
+  // ═══ P11 · PREPARED WORK IS A DELIVERABLE — no monologue, no self-addressed artifacts ═══
+  {
+    const { getPersonEntities, resolveIdentity } = await import('../lib/entities/people');
+    const MONO = /^(i need to|i should|let me|the instruction says|first, i|okay, i)/i;
+    for (const [uid, label] of USERS) {
+      const persons = await getPersonEntities(sb, uid);
+      const { data: dels } = await sb.from('item_deliverables').select('content')
+        .eq('user_id', uid).in('type', ['draft', 'text']).limit(400);
+      let bad = 0;
+      for (const d of (dels ?? []) as Array<{ content: string | null }>) {
+        const c = String(d.content ?? '').trim();
+        if (!c) continue;
+        const first = c.split('\n')[0].trim();
+        if (MONO.test(first)) bad++;
+        const g = /^(hi|hello|dear|bom dia|boa tarde|olá|ola)\s+([^\s,!.]+)/i.exec(first)?.[2];
+        if (g && resolveIdentity(persons, g).isSelf) bad++;
+      }
+      check(`P11 ${label} · pool holds DELIVERABLES only (no monologue, nothing self-addressed)`,
+        bad === 0, bad ? `${bad} violation(s)` : 'clean');
+    }
+    check('P11 · the evaluator carries the deliverable-shape rule; delegation output is reviewed (capped retry, honest refusal)',
+      src('lib/prepare/evaluate.ts').includes('not a DELIVERABLE at all') &&
+      src('lib/home/delegate.ts').includes('deliverableOk') && src('lib/home/delegate.ts').includes('REVIEWER REJECTED'));
+  }
+
+  // ═══ P12 · ONE LAW, EVERY SURFACE — the notice law lives in the spine too ═══
+  check('P12 · the spine applies the SAME notice law as the deck (isNoMoveNotice folded into no-move)',
+    src('lib/work-items/model.ts').includes("from '@/lib/inbox/notice-demotion'") &&
+    src('lib/work-items/model.ts').includes('isNoMoveNotice({ u, fromEmail'));
+  {
+    const { buildWorkItems } = await import('../lib/work-items/model');
+    const { isNoMoveNotice } = await import('../lib/inbox/notice-demotion');
+    const { getUnderstanding } = await import('../lib/inbox/item-understanding');
+    const todayStr = new Date().toISOString().slice(0, 10);
+    for (const [uid, label] of [[A, 'user A'], [B, 'user B']] as const) {
+      const items = await buildWorkItems(sb, uid, { todayStr, skipReconcile: true });
+      let leaks = 0;
+      for (const w of items.filter((x) => x.id.startsWith('inbox:') && x.state === 'todo' && !x.automated).slice(0, 60)) {
+        const { data: it } = await sb.from('inbox_items').select('work_state, rule_type, type_override, source_data').eq('id', w.entityId).maybeSingle();
+        if (!it) continue;
+        const or = String(it.type_override || '');
+        if (or === 'needs_reply' || or === 'to_do' || or === 'waiting_on') continue;
+        const sd = (it.source_data ?? {}) as Record<string, unknown>;
+        const u = getUnderstanding(it as never);
+        const fe = String((sd.from_address as string) || '').toLowerCase() || null;
+        if (isNoMoveNotice({ u, fromEmail: fe, fromName: (sd.from_name as string) ?? null, subject: w.title, workState: (it.work_state as string) ?? null })) leaks++;
+      }
+      check(`P12 ${label} · zero no-move notices leak into the spine as live tasks`, leaks === 0, leaks ? `${leaks} leak(s)` : 'tight');
+    }
+  }
+
+  // ═══ Structural closures for the batch ═══
+  check('P9-12 structural · the judge carries TODAY + a resolution disposition; the day rides the cache sig',
+    src('lib/work/judge.ts').includes('TODAY is ${new Date()') && src('lib/work/judge.ts').includes("resolution?: 'expired' | 'answered'") &&
+    src('lib/work/judge.ts').includes('${new Date().toISOString().slice(0, 10)}:${activityAt}'));
+  check('structural · ONE consequence module, wired at the pass AND the serving edge',
+    src('lib/work/apply-verdict.ts').includes('export async function applyVerdictConsequences') &&
+    src('lib/prepare/pass.ts').includes('applyVerdictConsequences') &&
+    src('app/api/items/judge/route.ts').includes('applyVerdictConsequences'));
+  check('structural · the correction CASCADES (membership re-homes the item\'s engine turns) + a room reset exists',
+    src('lib/entities/membership.ts').includes("from('room_turns').update({ room_key: newRoomKey })") &&
+    src('app/api/room/turns/route.ts').includes('export async function DELETE') &&
+    src('components/home/item-rail.tsx').includes('Clear this conversation'));
+  check('structural · membership changes broadcast; every reader refetches (chip↔rail coherence)',
+    src('components/entities/add-to-work-control.tsx').includes('aug:membership-changed') &&
+    src('components/home/item-detail.tsx').includes("addEventListener('aug:membership-changed'"));
+  check('structural · the nudge mirrors the counterparty\'s CONCRETE words; delegation narrations carry WHY',
+    src('lib/inbox/draft-reply.ts').includes('mirrorText') && src('lib/prepare/pass.ts').includes('mirrorText') &&
+    src('lib/prepare/pass.ts').includes('Nothing goes out without you.'));
+
+  console.log('\n═══ THE PROMISE GATES ═══');
+  let pass = 0;
+  for (const [n, ok, d] of out) { if (ok) pass++; console.log(` ${ok ? '✓' : '✗'} ${n}${d ? `  → ${d}` : ''}`); }
+  console.log(`\n${pass}/${out.length} pass`);
+  process.exit(pass === out.length ? 0 : 1);
+})();

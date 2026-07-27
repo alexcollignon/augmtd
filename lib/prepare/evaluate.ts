@@ -65,6 +65,7 @@ export async function evaluateDeliverable(admin: SupabaseClient, userId: string,
         `Judge it:\n` +
         `- "pass" — it serves the task, fits the recipient, respects the deal's rules. The BAR IS USEFUL, not perfect: style nits are a pass.\n` +
         `- "revise" — a fixable substantive problem (wrong recipient/framing, violates a stated rule, misses the task, invents a fact). State the ONE objection to fix.\n` +
+        `- "revise" ALSO when the artifact is not a DELIVERABLE at all: deliberation, planning talk, meta-commentary about instructions, or "I need to…" process narration is the author thinking out loud, not the finished thing a colleague would hand over. A deliverable that opens with an honest one-line question to the principal ("I'm missing X — where is it?") IS acceptable; a monologue about how to approach the task is not.\n` +
         `- "flag" — you can't verify something material; the principal should see it with a caution. State what to check.\n\n` +
         `JSON only: {"verdict":"pass|revise|flag","objection":"<one sentence, or empty for pass>"}`,
     });
