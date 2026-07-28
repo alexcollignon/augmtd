@@ -135,9 +135,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       waiting: items.filter((w) => w.state === 'waiting').map(slim2),
       done: items.filter((w) => w.state === 'done').map(slim2),
     };
+    // Action badges — the SAME shared builder the Home Timeline uses (what happened on each item).
+    const { ganttEventsFor } = await import('@/lib/work-items/gantt-badges');
+    const eventsByWid = await ganttEventsFor(supabase, user.id, items.map((w) => ({ id: w.id, entityId: w.entityId })));
     const gantt = items.filter((w) => w.state !== 'dismissed' && !w.automated).map((w) => {
       const mk = ganttMarkerOf(w, todayStr);
-      return { title: w.title, who: w.who, state: w.state, marker: mk.marker, date: mk.date, arrival: mk.arrival, overdue: mk.overdue, href: w.href && w.href !== '/' ? w.href : null };
+      return { title: w.title, who: w.who, state: w.state, marker: mk.marker, date: mk.date, arrival: mk.arrival, overdue: mk.overdue, href: w.href && w.href !== '/' ? w.href : null, events: eventsByWid[w.id] ?? [] };
     });
 
     let meetings: Array<{ id: string; title: string; date: string | null }> = [];

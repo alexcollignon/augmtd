@@ -1304,6 +1304,18 @@ export function HomeView() {
   const actedIds = useMemo(() => new Set([...dismissed, ...clearedIds]), [dismissed, clearedIds]);
   const briefNav = useBriefingNavigate((v) => setView(v as HomeViewLens));
   const [sessionCleared, setSessionCleared] = useState(0); // this session's Done/Dismiss/Send → ring `cleared`
+  // LENS PREFETCH (instant-feel): warm the Timeline payload in the background once the dashboard
+  // has settled, so switching lenses hydrates from localStorage instead of a skeleton.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      fetch('/api/home/timeline').then((r) => (r.ok ? r.json() : null)).then((d) => {
+        if (!d) return;
+        saveLS('aug-timeline-gantt-v3', { ganttGroups: d.ganttGroups ?? [], looseGroup: d.looseGroup ?? null, todayStr: d.todayStr });
+      }).catch(() => {});
+    }, 300);
+    return () => clearTimeout(t);
+  }, []);
+
   const [activityOpen, setActivityOpen] = useState(false); // right-side Activity slide-over
   // Initiative Brain state — joined into the deck so a bundle (an initiative) shows WHERE IT STANDS + its ONE
   // next move (the "across your work" data, unified INTO the one list — no separate second list). Keyed by
@@ -1524,7 +1536,7 @@ export function HomeView() {
         // that ~4.5s are caught by the next 90s poll / focus / a later realtime event.
         if (Date.now() - lastActionRef.current < 4500) return;
         load(true);
-      }, 2500);
+      }, 300);
     };
     (async () => {
       try {

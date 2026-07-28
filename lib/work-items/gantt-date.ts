@@ -30,7 +30,12 @@ export function ganttMarkerOf(
   todayStr: string,
 ): { marker: GanttMarker; date: string; arrival: string; overdue: boolean } {
   const arrival = (w.startAt || w.at || todayStr).slice(0, 10);
-  if (w.state === 'done' || w.state === 'dismissed') return { marker: 'done', date: (w.at || todayStr).slice(0, 10), arrival, overdue: false };
+  if (w.state === 'done' || w.state === 'dismissed') {
+    // A done event can NEVER sit in the future — some resolved items carry a future due date in
+    // their activity stamp; clamp to today (it happened by now, by definition).
+    const d = (w.at || todayStr).slice(0, 10);
+    return { marker: 'done', date: d > todayStr ? todayStr : d, arrival: arrival > todayStr ? todayStr : arrival, overdue: false };
+  }
   if (w.when.explicit) return { marker: 'due', date: w.when.explicit, arrival, overdue: w.when.explicit < todayStr };
   return { marker: 'undated', date: arrival, arrival, overdue: false };
 }

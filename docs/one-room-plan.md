@@ -652,3 +652,33 @@ Battery: promise 42/42 · label-flip 15/15 · one-room 52/52 · judged-room 34/3
   atomically-claimed first-look chain · idempotent seeding) → promise 71/71 · judged-room 34/34 ·
   one-room 52/52 · label-flip 15/15 · work-surface 45/45 · tasks 72/72 · work-loop 41/41 ·
   workbench 38/38 · orchestrated-loop 39/39 · build clean.
+
+## PROGRESS — July 28 · THE TIMELINE LENS UNIFIED (event-Gantt everywhere + instant-feel)
+
+- **One visual language, both tabs**: "Everything" is the SAME event-Gantt (not the station list) —
+  tracked project lanes first + ONE "Not in a project" band of every dated loose work item (the
+  projectless/new-user timeline). Smart default lands on the tab WITH content (cache-hydrate too);
+  the By-project empty state is actionable ("Start a project →" into the Projects lens).
+- **TWO-PANE frozen chart** (`components/entities/gantt-chart.tsx`, shared by the Home lens + the
+  deal room): the left task tree is a real fixed pane (ROOT CAUSE of the clipped labels: the
+  collapse wrapper's `overflow:hidden` disables `position:sticky` for descendants — sticky cells
+  silently scrolled away), the axis scrolls in its own pane, and the FULL-HEIGHT border between
+  panes is the drag handle (resize 220–480px, persisted `aug-gantt-label-w`).
+- **THE EVENT TRAIL** — continuity on the axis: each row carries its actions as dated ticks along
+  the track (drafted by X · delegated to Y · done · restored · filed), hover for what/when; built
+  by ONE shared `lib/work-items/gantt-badges.ts` `ganttEventsFor` (activity_events + prepared
+  artifacts, zero AI) called by BOTH serving routes. Inline text badges REJECTED (user call: a
+  status-echo chip on a task row duplicates the dot and can contradict it after reactivation —
+  the dot says where things stand, the ticks say what happened).
+- **Marker honesty**: a done event CLAMPS to today (never a future date — the "done on Aug 4"
+  bug, fixed in the ONE `ganttMarkerOf`); an off-range marker renders as an EDGE CHEVRON with its
+  real year-aware date (the "Aug 26 overdue at the left edge" confusion — it was last year's date
+  clamped into range); "pending" → "waiting" in the roll-up; done rows recede (dim); "today" in
+  the legend is a snap-back button; axis rows are CLICKABLE (item → its room; lane header → the
+  project room; lane items now carry real hrefs).
+- **INSTANT-FEEL, three layers**: (1) the route skips the reply-reconcile (a purely-visual read
+  was paying per-thread email queries the brief/cron already own); (2) SERVER last-good cache —
+  item_plans free-row (kind 'timeline_cache', the judgment-cache idiom), served immediately,
+  after()-recomputed when >45s stale (the multi-second spine walk leaves the request path; only
+  the first-ever request computes synchronously); (3) client: Home prefetches the payload ~300ms
+  after mount + localStorage hydrate paints pre-render (key aug-timeline-gantt-v3).

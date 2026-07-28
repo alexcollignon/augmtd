@@ -366,7 +366,7 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   check('P13 · Timeline item tags + lanes carry TRACKED names only (+ stale-cache keys bumped)',
     src('app/api/home/timeline/route.ts').includes('if (!e.tracked) continue;') &&
     src('components/timeline/timeline-view.tsx').includes('aug-timeline-v3') &&
-    src('components/timeline/timeline-gantt.tsx').includes('aug-timeline-gantt-v2'));
+    src('components/timeline/timeline-gantt.tsx').includes('aug-timeline-gantt-v3'));
   check('P13 · the New-project modal is name+description only (seeding lives in the room)',
     !src('components/entities/portfolio-view.tsx').includes('+ Add work'));
 
