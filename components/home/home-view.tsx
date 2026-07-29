@@ -1787,12 +1787,8 @@ export function HomeView() {
     ambientSections.push({ key, label, count, node });
   };
 
-  // W3 — "Needs your input" leads the ambient bar: open asks are the one ambient class where work
-  // is actively BLOCKED on the user (a colleague standing at your desk outranks the day's agenda).
-  if (openAsks.length > 0) rail('asks', 'Needs your input', openAsks.length, (
-    <WaitingOnYou asks={openAsks} onProceeded={(id) => setOpenAsks((prev) => prev.filter((a) => a.id !== id))} />
-  ));
-
+  // (W3's "Needs your input" renders in the ACTION column above the deck — an ask is blocked work,
+  //  not ambient context; and the ambient pill strip is currently retired anyway.)
   if (hasSchedule) rail('schedule', 'Today’s schedule', b!.schedule.length, (
       <div className="space-y-2">
         {b!.schedule.map(m => (
@@ -2084,6 +2080,23 @@ export function HomeView() {
 
             {/* ── ACTION content ─────────────────────────────────────────────────────────────── */}
             <div className="min-w-0 gap-10 flex-1 flex flex-col">
+
+            {/* 0 · NEEDS YOUR INPUT (W3, the global ask ledger) — an ask is not ambient context, it
+                is BLOCKED WORK: a teammate standing at your desk outranks the day's agenda. Every
+                open input-checklist across every room surfaces HERE, above the deck, with the
+                room's own grammar (items, age, Open →, the never-blocks go-ahead). Renders only
+                when something is genuinely waiting on you. */}
+            {openAsks.length > 0 && (
+              <RiseIn>
+                <section>
+                  <h2 className="flex items-baseline gap-2 text-[11px] font-semibold uppercase tracking-wider text-amber-600/90 mb-2.5">
+                    Needs your input
+                    <span className="tabular-nums text-amber-500/80">{openAsks.length}</span>
+                  </h2>
+                  <WaitingOnYou asks={openAsks} onProceeded={(id) => setOpenAsks((prev) => prev.filter((a) => a.id !== id))} />
+                </section>
+              </RiseIn>
+            )}
 
             {/* 1 · WHAT NEEDS YOU — ONE prioritized list of everything you owe: email replies, action
                 notices, and commitments, all rendered by the same DoRow (a leading TYPE ICON tells them
