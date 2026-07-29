@@ -85,6 +85,13 @@ export function isNoMoveNotice(args: {
  *  coercion (the kind-only backfill class). ONE reader, so callers never re-derive. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function rawMailKindOf(sd: any): string | null {
+  const o = String(sd?.kind_override ?? '').toLowerCase();
+  if (o) return o;
   const mk = sd?.understanding?.mailKind;
-  return typeof mk === 'string' && mk ? mk.toLowerCase() : null;
+  if (typeof mk === 'string' && mk) return mk.toLowerCase();
+  // The STRUCTURAL HEADER TIER (one law with resolveKind's chain): a bulk blast is a newsletter
+  // even when no understanding was ever computed — the unguarded tier that let a has_unsubscribe
+  // admissions blast with NO stored understanding get a judged reply + a drafted letter.
+  if (sd?.has_unsubscribe === true) return 'newsletter';
+  return null;
 }

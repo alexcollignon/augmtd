@@ -429,9 +429,10 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       await sb.from('work_entities').delete().in('id', [known.id, fresh.id]);
     }
   }
-  check('P14 · adoption is the ONE absorb mechanic + label-era members link on confirm',
-    src('app/api/entities/adopt/route.ts').includes('absorbEntity') &&
-    src('app/api/entities/adopt/route.ts').includes('adopted with') &&
+  check('P14 · adoption is the ONE absorb mechanic (lib/entities/adopt.ts — the button route AND a prose answer share the door) + label-era members link on confirm',
+    src('lib/entities/adopt.ts').includes('absorbEntity') &&
+    src('lib/entities/adopt.ts').includes('adopted with') &&
+    src('app/api/entities/adopt/route.ts').includes('adoptEntity') &&
     src('components/home/item-rail.tsx').includes("act: 'adopt'"));
   check('P14 · conversation HISTORY: Clear archives (a session boundary, never a deletion); sessions listable',
     src('lib/room/turns.ts').includes('archiveRoomTurns') && src('lib/room/turns.ts').includes('listRoomSessions') &&
@@ -1179,6 +1180,98 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       check('P29 unit · narration never cuts mid-word (word-boundary clip + ellipsis; short text passes through)',
         c.endsWith('…') && long.startsWith(base) && long[base.length] === ' ' &&
         clip('short', 24) === 'short');
+    }
+  }
+
+  // ═══ P30 · THE MOUTH HAS EARS AND THE WHOLE BRAIN (converse arc — the Omantel lesson, found
+  // live: the engine proposed "bring in 'Omantel AI Bootcamp' (46 items)?", the user typed "only
+  // for the bootcamp", and the conversation core — blind to the room's turns AND to the registry —
+  // answered "I don't see any bootcamp-related work"). The core now reads the dialogue, executes
+  // prose answers to standing interactions through the SAME doors as the buttons, and resolves
+  // names against the whole registry. ═══
+  check('P30 · the dialogue read is structural (transcript + pending interactions in the core · prose adopt runs adoptEntity · prose go-ahead stamps proceeded · registry matches · honesty floor)',
+    src('lib/converse/index.ts').includes('THE DIALOGUE READ') &&
+    src('lib/converse/index.ts').includes('dialogueContext') &&
+    src('lib/converse/index.ts').includes('adoptEntity(client, userId, p.targetId, pick.sourceId)') &&
+    src('lib/converse/index.ts').includes('proceeded: true') &&
+    src('lib/converse/index.ts').includes('registryMatches') &&
+    src('lib/converse/index.ts').includes('never claim something does not exist'));
+  {
+    const { converse } = await import('../lib/converse');
+    const { writeRoomTurn } = await import('../lib/room/turns');
+    // 1 — THE OMANTEL REPLAY: a standing founding proposal + the exact prose answer → the adoption
+    // EXECUTES (same door as the button), and the reply never claims ignorance.
+    const { data: B } = await sb.from('work_entities').insert({
+      user_id: PERSONAL, kind: 'initiative', name: 'ZZ Padel Program', aliases: [], tracked: true, status: 'active',
+    }).select('id').maybeSingle();
+    const { data: A2 } = await sb.from('work_entities').insert({
+      user_id: PERSONAL, kind: 'initiative', name: 'ZZ Padel Bootcamp', aliases: ['ZZ Padel Bootcamp'], tracked: false, status: 'active',
+    }).select('id').maybeSingle();
+    if (!B?.id || !A2?.id) check('P30 live · replay fixtures failed to insert', false);
+    else {
+      await writeRoomTurn(sb, PERSONAL, String(B.id), {
+        role: 'system',
+        text: 'I already know work that looks like ZZ Padel: "ZZ Padel Bootcamp" (5 items). Bring it in?',
+        component: { key: 'founding_proposal', state: { targetId: String(B.id), options: [{ label: 'Bring in "ZZ Padel Bootcamp" — 5 items', sourceId: String(A2.id) }] } },
+        dedupeKey: 'founding-proposal',
+      });
+      const t = await converse(sb, PERSONAL, { kind: 'entity', entityId: String(B.id) }, 'only for the bootcamp');
+      const { data: aAfter } = await sb.from('work_entities').select('id').eq('id', String(A2.id)).maybeSingle();
+      check('P30 live · THE OMANTEL REPLAY: "only for the bootcamp" EXECUTES the standing adoption (absorbed through the one door; never "I don\'t see")',
+        !aAfter && !/don't see|do not see|couldn't find|no .*bootcamp/i.test(t.say) && (t.applied?.some((a) => a.tool === 'adopt_entity') ?? false),
+        `say="${t.say.slice(0, 70)}" · absorbed=${!aAfter}`);
+      await sb.from('room_turns').delete().eq('user_id', PERSONAL).eq('room_key', String(B.id));
+      await sb.from('entity_links').delete().eq('user_id', PERSONAL).eq('entity_id', String(B.id));
+      await sb.from('activity_events').delete().eq('user_id', PERSONAL).eq('entity_id', String(B.id));
+      await sb.from('work_entities').delete().in('id', [String(B.id), String(A2.id)]);
+    }
+    // 2 — PROSE GO-AHEAD: an open engine ask + "go ahead with what you have" → the SAME lifecycle
+    // stamp the button writes (proceeded; never re-asked).
+    const { data: probe30 } = await sb.from('inbox_items').insert({
+      user_id: PERSONAL, source: 'email', status: 'pending', work_state: 'action_required',
+      work_title: 'Assemble the ZZ quarterly pack',
+      source_data: {
+        subject: 'Assemble the ZZ quarterly pack', body: 'Could you assemble the quarterly pack? It needs the register and the addendum.',
+        from_name: 'Sam Vendor', from_address: 'sam@acme-example.com', received_at: new Date().toISOString(),
+        understanding: { mailKind: 'customer', ownership: 'you_owe', relevance: 'reply', role: 'addressed' },
+      },
+    }).select('id').maybeSingle();
+    if (!probe30?.id) check('P30 live · go-ahead probe insert failed', false);
+    else {
+      const pid = String(probe30.id);
+      await writeRoomTurn(sb, PERSONAL, `inbox:${pid}`, {
+        role: 'system', text: 'To finish this I need 2 things I couldn\'t find anywhere — attach below or tell me where to look.',
+        component: { key: 'input_checklist', state: { items: ['ZZ risk register', 'ZZ signed addendum'], taskId: null } },
+        refs: [{ label: 'Assemble the ZZ quarterly pack', href: `/item/${pid}` }],
+        dedupeKey: `requires:${pid}`,
+      });
+      const t = await converse(sb, PERSONAL, { kind: 'item', itemKind: 'email', itemId: pid }, 'go ahead with what you have and note the gaps');
+      const { data: turnAfter } = await sb.from('room_turns').select('component')
+        .eq('user_id', PERSONAL).eq('dedupe_key', `requires:${pid}`).maybeSingle();
+      const stamped = !!((turnAfter?.component as { state?: { proceeded?: boolean } })?.state?.proceeded);
+      check('P30 live · a PROSE go-ahead stamps the same lifecycle the button does (proceeded; the work proceeds)',
+        stamped && /going ahead|go ahead|what's available/i.test(t.say), `stamped=${stamped} · say="${t.say.slice(0, 60)}"`);
+      await sb.from('room_turns').delete().eq('user_id', PERSONAL).like('dedupe_key', `%${pid}%`);
+      await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('entity_id', `inbox:${pid}`);
+      await sb.from('item_deliverables').delete().eq('user_id', PERSONAL).eq('entity_id', pid);
+      await sb.from('inbox_items').delete().eq('id', pid);
+    }
+    // 3 — REGISTRY RECALL: a name mentioned in one room resolves against the WHOLE brain — an
+    // empty new room must never make the memory look amnesiac.
+    const { data: C } = await sb.from('work_entities').insert({
+      user_id: PERSONAL, kind: 'initiative', name: 'ZZ Meridian Rollout', aliases: [], tracked: true, status: 'active',
+    }).select('id').maybeSingle();
+    const { data: D } = await sb.from('work_entities').insert({
+      user_id: PERSONAL, kind: 'initiative', name: 'ZZ Kiteschool Pilot', aliases: ['ZZ Kiteschool Pilot'], tracked: false, status: 'active',
+    }).select('id').maybeSingle();
+    if (!C?.id || !D?.id) check('P30 live · recall fixtures failed to insert', false);
+    else {
+      const t = await converse(sb, PERSONAL, { kind: 'entity', entityId: String(C.id) }, 'what do we have on the kiteschool?');
+      check('P30 live · a name from ELSEWHERE in the registry is recalled, never denied (the whole brain answers, not just the open room)',
+        /kiteschool/i.test(t.say) && !/don't (see|have)|do not (see|have)|couldn't find|no such/i.test(t.say),
+        `say="${t.say.slice(0, 80)}"`);
+      await sb.from('room_turns').delete().eq('user_id', PERSONAL).in('room_key', [String(C.id), String(D.id)]);
+      await sb.from('work_entities').delete().in('id', [String(C.id), String(D.id)]);
     }
   }
 

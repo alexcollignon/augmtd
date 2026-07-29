@@ -202,11 +202,14 @@ async function prepareReplyDraft(admin: SupabaseClient, userId: string, w: WorkI
   }
   // M2 (work-surface): the mailKind refines UNDER the rules — receipts/newsletters/notifications/
   // cold outreach never get an ambient draft UNLESS a rule explicitly classified this needs_reply
-  // (the user's rules are authoritative; the kind only fills where they didn't speak).
-  const { coerceUnderstanding } = await import('@/lib/inbox/item-understanding');
-  const uKind = coerceUnderstanding(sd.understanding)?.mailKind;
-  if (uKind && ['receipt', 'newsletter', 'notification', 'cold_outreach', 'calendar'].includes(uKind) && it.rule_type !== 'needs_reply') {
-    return { did: 'none', reason: `${uKind.replace('_', ' ')} — no reply expected` };
+  // (the user's rules are authoritative; the kind only fills where they didn't speak). ONE
+  // RESOLVER: the same full chain the label system uses (override → understanding → rule → header
+  // signals) — reading understanding.mailKind alone left the header tier unguarded, and a
+  // has_unsubscribe blast with no stored understanding got a drafted reply (the UMPI class).
+  const { resolveKind } = await import('@/lib/inbox/rules/write-back');
+  const kindNow = resolveKind(sd, (it.rule_type as string) ?? null);
+  if (kindNow && ['receipt', 'newsletter', 'notification', 'cold_outreach', 'calendar'].includes(kindNow) && it.rule_type !== 'needs_reply') {
+    return { did: 'none', reason: `${kindNow.replace('_', ' ')} — no reply expected` };
   }
   const existing = (sd.draft ?? null) as { body?: string; generated_at?: string } | null;
   const stale = !existing?.body

@@ -369,6 +369,17 @@ the PROMISE on served accounts, never plumbing, never weakened.
     (single lead action from the verdict; resolve/dismiss demoted to one quiet row) — with the
     left/right reasoning, after this deploys.
 
+- **July 29 (afternoon) — THE HOME ASK SECTION: TRIED AND USER-REJECTED (design law locked).**
+  The W3 ledger surfaced as full-width cards above the deck; the user rejected it on sight, and
+  they were right twice over: (1) **the Home is ONE curated deck** — a stacked ask section is a
+  second competing work-list; (2) every ask's item already IS a deck row, so the section
+  DUPLICATED obligations (the show-twice class P3 forbids). Reverted (892e3a8); P24 pins the
+  rejected section out. **The approved direction: an ask is a STATE OF ITS DECK ROW** — a small
+  "needs your input" chip on the affected row (ranking-aware), the checklist stays in the room;
+  `/api/room/asks` + `WaitingOnYou` remain the data spine. Plus the observed systemic sibling:
+  **artifact-level ask dedup** — three items missing the same presentation must yield ONE ask
+  (the one-obligation law applied to asks). Both queued for part 2, to be built together.
+
 - **NEXT ARCS (user-directed, July 28):**
   - **Who-asks-whom grounding** (from screenshot 3): quoted headers inside forwarded bodies invert
     the counterparty ("Madalena is asking you" when Isabel asked Madalena); ground ask-extraction
