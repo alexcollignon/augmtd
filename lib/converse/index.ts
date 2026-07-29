@@ -115,21 +115,28 @@ async function dialogueContext(
   } catch { return { transcript: '', pending: null, roomKey: null }; }
 }
 
-/** MEMORY MATCHES — names in the user's words resolved against the WHOLE registry (identity
- *  tokens, deterministic; the same distinctive-token idea as the recognition veto). */
+/** MEMORY MATCHES — names in the user's words resolved against the WHOLE registry. THE
+ *  DISTINCTIVE-TOKEN LAW (the same one the recognition veto learned): generic work-words
+ *  ("assessment", "project", …) match every engagement in a specialist portfolio and prove
+ *  nothing — asked about "the STC Bahrain assessment", the generic token once filled the cap
+ *  with three OTHER assessments before "bahrain" was ever reached. Only distinctive tokens
+ *  count; matches rank by how many they hit. */
 async function registryMatches(client: SupabaseClient, userId: string, text: string, excludeEntityId: string | null): Promise<string> {
   try {
-    const tokens = text.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 4);
+    const { GENERIC_WORK_WORDS } = await import('@/lib/entities/recognize');
+    const tokens = [...new Set(text.toLowerCase().split(/[^a-z0-9]+/)
+      .filter((t) => t.length >= 3 && !GENERIC_WORK_WORDS.has(t) && !/^(ai|the|and|for|what|how|who|when|where|why|have|has|had|our|your|about|with|this|that|from|are|was|were|does|did|can|will|would)$/.test(t)))];
     if (!tokens.length) return '';
     const { data } = await client.from('work_entities').select('id, name, aliases, tracked')
       .eq('user_id', userId).eq('kind', 'initiative').eq('status', 'active').limit(400);
-    const hits: string[] = [];
+    const scored: Array<{ label: string; n: number }> = [];
     for (const e of (data ?? []) as Array<{ id: string; name: string; aliases: string[] | null; tracked: boolean }>) {
       if (e.id === excludeEntityId) continue;
       const hay = `${e.name} ${(e.aliases ?? []).join(' ')}`.toLowerCase();
-      if (tokens.some((t) => hay.includes(t))) hits.push(`"${e.name}"${e.tracked ? ' (a tracked project)' : ' (a known body of work)'}`);
-      if (hits.length >= 3) break;
+      const n = tokens.filter((t) => hay.includes(t)).length;
+      if (n > 0) scored.push({ label: `"${e.name}"${e.tracked ? ' (a tracked project)' : ' (a known body of work)'}`, n });
     }
+    const hits = scored.sort((a, b) => b.n - a.n).slice(0, 3).map((s) => s.label);
     return hits.length ? `MEMORY MATCHES elsewhere in the user's registry (they may be referring to these): ${hits.join(' · ')}` : '';
   } catch { return ''; }
 }
