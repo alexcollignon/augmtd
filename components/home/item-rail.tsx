@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE CONVERSATIONAL RAIL (just-works P1.5b) — the deep-dive's right column talks like a colleague,
 // not a data card. The opening narration is the entity's OWN judged state (zero AI at render — the
@@ -56,7 +58,13 @@ type Turn =
   | { role: 'system'; text: string; key?: string; actions?: TurnAction[]; refs?: Array<{ label: string; href: string | null }>; files?: Array<{ id: string; filename: string; source: string }>; author?: { name: string; role?: string | null };
       /** FIX 3 — a coworker's ASK renders as an inline checklist (input_checklist component): the
        *  concrete things they need from the principal. Rows wire to the 📎 ingest funnel. */
-      checklist?: string[] };
+      checklist?: string[];
+      /** W3 — the durable turn's id (the ask-lifecycle actions key on it) + the proceeded stamp
+       *  (the user already said "go ahead" — the button hides, the checklist stays as record). */
+      turnId?: string; proceeded?: boolean;
+      /** UX arc — the turn's dedupe key: the structural handle folding rules key on (a `prep:*`
+       *  narration collapses into the artifact card it narrates; never content-matching). */
+      dkey?: string };
 
 // THE ROOM (P7c-c1 → one-room R1): the conversation is PER-DEAL, not per-item — navigating between
 // a deal's artifacts keeps the chat. The module store is now only the LIVE RENDER CACHE; the durable
@@ -185,9 +193,10 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!alive || !Array.isArray(d?.turns)) return;
-        const server: Turn[] = (d.turns as Array<{ role: 'user' | 'system'; text: string; refs?: Array<{ label: string; href: string | null }>; author?: { name: string; role?: string | null } | null; component?: { key?: string; state?: { targetId?: string; options?: Array<{ label: string; sourceId: string }>; items?: string[] } } | null }>)
+        const server: Turn[] = (d.turns as Array<{ id?: string; key?: string; role: 'user' | 'system'; text: string; refs?: Array<{ label: string; href: string | null }>; author?: { name: string; role?: string | null } | null; component?: { key?: string; state?: { targetId?: string; options?: Array<{ label: string; sourceId: string }>; items?: string[]; proceeded?: boolean } } | null }>)
           .map((t) => {
             const turn: Turn = { role: t.role, text: t.text, refs: t.refs ?? undefined, author: t.author ?? undefined } as Turn;
+            if (turn.role === 'system' && t.key) turn.dkey = t.key;
             // Durable inline components: the founding proposal's options re-render as actions on
             // every load until taken (the adopt endpoint updates/deletes the stored turn).
             if (turn.role === 'system' && t.component?.key === 'founding_proposal' && t.component.state?.targetId) {
@@ -199,6 +208,8 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
             // ingest clears it (the ingest route strips the component; the text stays as history).
             if (turn.role === 'system' && t.component?.key === 'input_checklist' && Array.isArray(t.component.state?.items)) {
               turn.checklist = t.component.state.items.map((m) => String(m)).filter(Boolean);
+              turn.turnId = t.id;
+              turn.proceeded = !!t.component.state?.proceeded;
             }
             return turn;
           });
@@ -500,25 +511,45 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
                 <span className="font-medium">{artifact.label}</span>
                 {artifact.by && <span className="text-[11px] text-indigo-500 font-semibold ml-1.5">by {artifact.by.split(' ')[0]}</span>}
               </span>
+              {/* ONE COMMIT LINE (O5, applied here): the conversation POINTS at the work; the
+                  commit lives on the STAGE's composer — two Send buttons for one artifact was a
+                  real duplicated gate. Open focuses the stage. */}
               <button
                 onClick={artifact.onOpen}
-                className="flex-shrink-0 text-[12px] font-medium text-neutral-600 hover:text-indigo-600 transition-colors"
-              >Open</button>
-              {artifact.onCommit && (
-                <button
-                  onClick={() => artifact.onCommit?.()}
-                  disabled={!!artifact.committing}
-                  className="flex-shrink-0 rounded-lg bg-indigo-600 hover:bg-indigo-700 px-3 py-1 text-[12px] font-medium text-white transition-colors disabled:opacity-60"
-                >{artifact.committing ? 'Sending…' : (artifact.commitLabel ?? 'Send')}</button>
-              )}
+                className="flex-shrink-0 rounded-lg border border-indigo-200 bg-white px-3 py-1 text-[12px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
+              >Open →</button>
             </div>
           </AssistantRow>
         )}
 
-        {/* The conversation — user bubbles + assistant replies, the shared idiom. */}
+        {/* THE CONVERSATION — three grammars, derived STRUCTURALLY from each turn, never styled per
+            call site (the UX-arc law):
+              1. user           → bubble (right-aligned)
+              2. system+author  → coworker bubble (avatar + name — the coworker's own FIRST-PERSON
+                                  speech; the one-narrator law keeps narration out of this class)
+              3. system, no author, no inline affordance → EVENT LINE: the narrator's muted
+                                  one-liner ("Clara drafted…", "filed — undo from Activity") — the
+                                  Slack/Linear grammar: status is visible but never shouts.
+            Component turns (checklists, founding, decisions) keep their prominent renders — they
+            are conversation events WITH affordances (P17). A `prep:*` narration FOLDS entirely
+            when its artifact card is on the rail (one artifact, one live element — the card's
+            byline carries the attribution). */}
         {(viewingSession?.turns ?? turns).map((t, i) => t.role === 'user' ? (
           <div key={i} className="flex justify-end">
             <div className="max-w-[80%] px-3 py-2 bg-neutral-100 rounded-2xl rounded-br-sm text-[13px] text-neutral-800 leading-relaxed">{t.text}</div>
+          </div>
+        ) : (artifact && t.dkey && /^(prep:|meeting-prep:)/.test(t.dkey)) ? null
+        : (!t.author?.name && !t.checklist?.length && !t.actions?.length && t.key !== 'founding-proposal') ? (
+          <div key={i} className="flex items-start gap-1.5 pl-0.5">
+            <span className="flex-shrink-0 text-neutral-300 text-[11px] leading-[1.5]" aria-hidden>·</span>
+            <p className="min-w-0 text-[11.5px] text-neutral-400 leading-snug">
+              {t.text}
+              {t.refs?.filter((r) => inRoom || !r.href?.includes(`/item/${id}`)).map((r, j) => (
+                r.href
+                  ? <Link key={j} href={r.href} className="ml-1.5 text-[10.5px] font-medium text-neutral-400 underline decoration-neutral-200 underline-offset-2 hover:text-indigo-500 transition-colors">{r.label}</Link>
+                  : null
+              ))}
+            </p>
           </div>
         ) : (
           /* R1 — coworker attribution, DM-STYLE: a teammate's turn reads like a message from a
@@ -553,13 +584,33 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
                     >Attach →</button>
                   </div>
                 ))}
-                {/* NEVER BLOCKING: an ask is a request, not a gate — one tap tells the coworker to
-                    proceed with what's shared (routes through the one conversation core, which
-                    re-delegates with the instruction; the work-with-what-you-have contract does
-                    the rest). Answering some rows and tapping this is the natural partial flow. */}
-                {t.author?.name && (
+                {/* NEVER BLOCKING: an ask is a request, not a gate — one tap says proceed with
+                    what's shared. A coworker's ask routes through the one conversation core (it
+                    re-delegates with the instruction); the ENGINE's own ask (W3) stamps the
+                    lifecycle directly (/api/room/asks proceed) and re-runs the one preparation
+                    engine — both land on the work-with-what-you-have contract. Hidden once
+                    proceeded (the decision stands; the checklist stays as the record). */}
+                {!t.proceeded && t.author?.name && (
                   <button
                     onClick={() => send(`Have ${t.author!.name.split(' ')[0]} go ahead with what's available — work with what I've shared and note any gaps.`)}
+                    disabled={busy}
+                    className="mt-0.5 rounded-full border border-neutral-200 px-2.5 py-1 text-[11.5px] font-medium text-neutral-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors disabled:opacity-50"
+                  >Go ahead with what&apos;s available →</button>
+                )}
+                {!t.proceeded && !t.author?.name && t.turnId && (
+                  <button
+                    onClick={async () => {
+                      const tid = t.turnId!;
+                      const res = await fetch('/api/room/asks', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ turnId: tid, action: 'proceed' }),
+                      }).catch(() => null);
+                      // The server writes the visible go-ahead turn (dedupe proceed:<id>) — the
+                      // local flip hides the button now; the turn arrives on the next hydrate.
+                      if (res?.ok) {
+                        setTurns((prev) => prev.map((x) => (x.role === 'system' && x.turnId === tid ? { ...x, proceeded: true } : x)));
+                      }
+                    }}
                     disabled={busy}
                     className="mt-0.5 rounded-full border border-neutral-200 px-2.5 py-1 text-[11.5px] font-medium text-neutral-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors disabled:opacity-50"
                   >Go ahead with what&apos;s available →</button>

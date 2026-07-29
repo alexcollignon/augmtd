@@ -152,6 +152,19 @@ export async function POST(
       ContextService.logDraftEdit(user.id, id, norm(aiDraft), norm(customMessage || '')).catch(() => {});
     }
 
+    // THE OUTCOME LOG (proactive-team R1) — the prepared reply's fate, stamped at its resolution
+    // moment: sent verbatim (accepted) or changed first (edited, with a rough edit share). The raw
+    // evidence the learning arc + the future autonomy ladder need and cannot backfill.
+    if (typeof aiDraft === 'string' && aiDraft.trim()) {
+      const { logPreparedOutcome, estimateEditShare } = await import('@/lib/prepare/outcome');
+      const sentBody = customMessage || aiDraft;
+      const edited = norm(aiDraft) !== norm(sentBody);
+      logPreparedOutcome(supabase, user.id, {
+        outcome: edited ? 'edited' : 'accepted', artifact: 'reply_draft', itemKind: 'inbox', itemId: id,
+        ...(edited ? { editShare: estimateEditShare(aiDraft, sentBody) } : {}),
+      }).catch(() => {});
+    }
+
     // Resolution-on-reply: the loop is closed — clear this item so it leaves "Needs reply"
     // (inbox + Home). Replying ≠ reading; this fires only on an actual sent reply. Stamp
     // source_data.resolved_at — the REAL resolution timestamp the Day-cleared ring counts by.

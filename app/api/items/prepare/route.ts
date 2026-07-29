@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const body = (await request.json()) as { kind: ItemPlanKind; entityId: string; taskId?: string; capability?: string; actionType?: 'forward' };
+    const body = (await request.json()) as { kind: ItemPlanKind; entityId: string; taskId?: string; capability?: string; actionType?: 'forward' | 'calendar_invite' };
     const { kind, entityId, taskId, actionType } = body;
     if (!entityId || !VALID_KINDS.includes(kind)) {
       return NextResponse.json({ error: 'kind and entityId are required' }, { status: 400 });
@@ -53,6 +53,12 @@ export async function POST(request: NextRequest) {
     // item's real email), instead of falling through to the email composer.
     if (!task && actionType === 'forward') {
       task = { capability: 'send', text: 'Forward this email', detail: undefined };
+    }
+    // VERDICT-LEVEL invite (W1) — the judged `schedule` verdict mounts the invite card with no plan
+    // step; the hint synthesizes an invite-shaped task so the router lands on `calendar_invite`
+    // (mirrors the forward hint; the prepared artifact the ambient pass stored then serves first).
+    if (!task && actionType === 'calendar_invite') {
+      task = { capability: 'send', text: 'Send a calendar invite for this meeting', detail: undefined };
     }
     // If the client already sent a capability but the task row wasn't found (edge case), still route.
     if (!task) {

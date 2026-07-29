@@ -83,6 +83,35 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     }
   }
 
+  // P2b — THE FAILED-PAYMENTS CLASS (found LIVE on a real account: a Stripe dunning notice judged
+  // work=reply and drafted a letter to a robot; the localpart "failed-payments" + the "payment to X
+  // was unsuccessful" phrasing dodged both pattern lists). The sender floor is structural now: an
+  // automated sender can NEVER judge reply/chase — while the you_owe ACTION stays deck-visible
+  // (the notice law outranks the judged-none in the demotion chain).
+  {
+    const { judgeWork } = await import('../lib/work/judge');
+    const { data: probe } = await sb.from('inbox_items').insert({
+      user_id: PERSONAL, source: 'email', status: 'pending', work_state: 'work_prepared',
+      work_title: '$45.00 payment to ZZ-Widget was unsuccessful',
+      source_data: {
+        subject: '$45.00 payment to ZZ-Widget was unsuccessful',
+        body: 'Your card on file was declined. Update your payment method to keep your subscription active.',
+        from_name: 'ZZ-Widget', from_address: 'failed-payments+acct_zz123@stripe-example.com', received_at: new Date().toISOString(),
+        understanding: { mailKind: 'notification', ownership: 'you_owe', relevance: 'action', role: 'addressed' },
+      },
+    }).select('id').maybeSingle();
+    if (!probe?.id) check('P2b live · dunning probe insert failed', false);
+    else {
+      const v = await judgeWork(sb, PERSONAL, { kind: 'inbox', id: String(probe.id) });
+      check('P2b live · a dunning notice NEVER judges reply/chase (the sender floor — a letter to a robot reaches no one)',
+        v.work !== 'reply' && v.work !== 'chase', `${v.work} · "${v.reason.slice(0, 60)}"`);
+      check('P2b · the deck demotion respects the notice law (a you_owe action notice outranks a judged-none)',
+        src('app/api/home/brief/route.ts').includes('judgedNoneIds.has(it.id) && !youOweAction'));
+      await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('entity_id', `inbox:${probe.id}`);
+      await sb.from('inbox_items').delete().eq('id', probe.id);
+    }
+  }
+
   // ═══ P3 · ONE OBLIGATION = ONE TASK (live, per user — the spine agrees with itself) ═══
   {
     const { buildWorkItems } = await import('../lib/work-items/model');
@@ -338,9 +367,9 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   }
 
   // ═══ Structural closures for the batch ═══
-  check('P9-12 structural · the judge carries TODAY + a resolution disposition; the day rides the cache sig',
-    src('lib/work/judge.ts').includes('TODAY is ${new Date()') && src('lib/work/judge.ts').includes("resolution?: 'expired' | 'answered'") &&
-    src('lib/work/judge.ts').includes('${new Date().toISOString().slice(0, 10)}:${activityAt}'));
+  check('P9-12 structural · the judge carries the USER-LOCAL now + a resolution disposition; the local day rides the cache sig',
+    src('lib/work/judge.ts').includes('RIGHT NOW for the user it is ${nowL.pretty}') && src('lib/work/judge.ts').includes("resolution?: 'expired' | 'answered'") &&
+    src('lib/work/judge.ts').includes('${JUDGE_VERSION}:${todayStr}:${activityAt}'));
   check('structural · ONE consequence module, wired at the pass AND the serving edge',
     src('lib/work/apply-verdict.ts').includes('export async function applyVerdictConsequences') &&
     src('lib/prepare/pass.ts').includes('applyVerdictConsequences') &&
@@ -528,13 +557,14 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       await sb.from('inbox_items').delete().eq('id', pid);
     }
   }
-  check('P18 · one law, every door (pass reply + doc-send + PRODUCE resolve; the truth rides the delegation envelope; on-demand route resolves; the judge serving edge backfills; the legacy cron loop defers to the pass)',
+  check('P18 · one law, every door (pass reply + doc-send + PRODUCE resolve; the truth rides the delegation envelope; on-demand route resolves; the judge serving edge backfills; the LEGACY cron loop is DELETED — the pass is the only ambient door)',
     src('lib/prepare/pass.ts').includes('resolveRequirements') &&
     src('lib/prepare/pass.ts').includes('THE DELIVERABLE RESOLUTION on PRODUCED work') &&
     src('lib/prepare/pass.ts').includes('if (artifactTruth) brainContext') &&
     src('app/api/inbox/[id]/draft/route.ts').includes('resolveRequirements') &&
     src('app/api/items/judge/route.ts').includes('resolveRequirements') &&
-    src('app/api/cron/draft-sweep/route.ts').includes('verdict.requires?.length'));
+    !src('app/api/cron/draft-sweep/route.ts').includes('generateReplyDraft') &&
+    src('app/api/cron/draft-sweep/route.ts').includes('runPreparationPass'));
   check('P18 · the story\'s ORDER is part of its truth (dedupe updates in place, never delete+reinsert)',
     src('lib/room/turns.ts').includes('Dedupe UPDATES IN PLACE'));
   check('P18 · ONE ask per item — the coworker\'s attempted-work ask SUPERSEDES the engine\'s provisional one (both directions)',
@@ -638,6 +668,514 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     } as never, null);
     check('P20 live · genuine noise STAYS demoted (ownership none + notice shape → fyi)',
       t2 === 'fyi', `classified=${t2}`);
+  }
+
+  // ═══ P21 · EVERY JUDGED VERB HAS HANDS (proactive-team W1) — the registry marriage: a verb the
+  // judge can emit without a preparation path is a BUILD error, never a silent none. Live: a
+  // scheduling ask ambient-prepares a REAL grounded invite; a forward ask ambient-prepares the
+  // forward with ONLY the literal evidenced address. Nothing sends — the commit line holds. ═══
+  {
+    const { registryParity } = await import('../lib/work/surface-registry');
+    const violations = registryParity();
+    check('P21 · registry parity — every verb maps to a component; every gated component binds a built irreversible capability',
+      violations.length === 0, violations.join(' · ') || 'lawful');
+    check('P21 · the pass dispatches EVERY prepared verb (schedule→invite, forward→forward, produce falls through to the assistant, never silent)',
+      src('lib/prepare/pass.ts').includes("verdict.work === 'schedule'") &&
+      src('lib/prepare/pass.ts').includes("verdict.work === 'forward'") &&
+      src('lib/prepare/pass.ts').includes('produced work needs a coworker') &&
+      src('lib/work/judge.ts').includes('new Set<string>(WORK_VERBS)'));
+    // Live: THE SCHEDULING ASK → a judged schedule verdict → an ambient prepared invite (grounded).
+    const mkP21 = async (subject: string, body: string) => {
+      const { data } = await sb.from('inbox_items').insert({
+        user_id: PERSONAL, source: 'email', status: 'pending', work_state: 'work_prepared', work_title: subject,
+        source_data: {
+          subject, body, from_name: 'Sam Vendor', from_address: 'sam@acme-example.com', received_at: new Date().toISOString(),
+          understanding: { mailKind: 'customer', ownership: 'you_owe', relevance: 'reply', role: 'primary' },
+        },
+      }).select('id').maybeSingle();
+      return data?.id as string | undefined;
+    };
+    const cleanP21 = async (pid: string) => {
+      await sb.from('room_turns').delete().eq('user_id', PERSONAL).like('dedupe_key', `%${pid}%`);
+      await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('entity_id', `inbox:${pid}`);
+      await sb.from('learning_signals').delete().eq('user_id', PERSONAL).eq('inbox_item_id', pid);
+      await sb.from('inbox_items').delete().eq('id', pid);
+    };
+    const { judgeWork } = await import('../lib/work/judge');
+    const { prepareOneItem } = await import('../lib/prepare/pass');
+    const asWorkItem = (pid: string, title: string) => ({
+      id: `inbox:${pid}`, entityId: pid, kind: 'action', title,
+      who: 'Sam Vendor', actor: 'you', state: 'todo',
+      when: { explicit: null, bucket: 'today' }, source: 'email', href: `/item/${pid}`,
+      at: new Date().toISOString(), startAt: new Date().toISOString().slice(0, 10),
+      projectId: null, automated: false, initiative: null, effort: null,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    const schedId = await mkP21('Intro call — can you send the invite?',
+      'Hi, great speaking earlier. Could you send me a calendar invite for a 30-minute intro call tomorrow at 10:00? Just put it straight in the calendar — my email is sam@acme-example.com. Thanks, Sam');
+    if (schedId) {
+      const v = await judgeWork(sb, PERSONAL, { kind: 'inbox', id: schedId });
+      check('P21 live · a send-me-the-invite ask judges work=schedule (component invite, gate book)',
+        v.work === 'schedule' && v.component === 'invite' && v.gate === 'book', `${v.work}/${v.component} · "${v.reason.slice(0, 60)}"`);
+      const r = await prepareOneItem(sb, PERSONAL, asWorkItem(schedId, 'Intro call — can you send the invite?'));
+      const { data: after } = await sb.from('inbox_items').select('source_data').eq('id', schedId).maybeSingle();
+      const inv = ((after?.source_data ?? {}) as { prepared_invite?: { attendees?: string[]; startISO?: string; sent_at?: string } }).prepared_invite;
+      const groundedAttendees = (inv?.attendees ?? []).every((a) => a === 'sam@acme-example.com');
+      check('P21 live · the pass ambient-prepares the GROUNDED invite (attendee = the evidenced address only; nothing sent)',
+        r.did === 'invite' && !!inv && groundedAttendees && !inv?.sent_at,
+        `did=${r.did} · attendees=${JSON.stringify(inv?.attendees ?? [])} · start=${inv?.startISO || '(user sets)'}`);
+      await cleanP21(schedId);
+    } else check('P21 live · schedule probe insert failed', false);
+    // Live: THE FORWARD ASK → judged forward → prepared forward carrying ONLY the literal address.
+    const fwdId = await mkP21('Signed contract — please forward to finance',
+      'Hi, the signed contract is attached below in this thread. Please forward it to our finance lead at finance@acme-example.com — they need it for this week\'s payment run. Thanks, Sam');
+    if (fwdId) {
+      const v = await judgeWork(sb, PERSONAL, { kind: 'inbox', id: fwdId });
+      check('P21 live · a pass-this-to-a-named-third-party ask judges work=forward (gate send)',
+        v.work === 'forward' && v.gate === 'send', `${v.work}/${v.component} · "${v.reason.slice(0, 60)}"`);
+      const r = await prepareOneItem(sb, PERSONAL, asWorkItem(fwdId, 'Signed contract — please forward to finance'));
+      const { data: after } = await sb.from('inbox_items').select('source_data').eq('id', fwdId).maybeSingle();
+      const fwd = ((after?.source_data ?? {}) as { prepared_forward?: { to?: string[]; sent_at?: string } }).prepared_forward;
+      check('P21 live · the prepared forward carries ONLY the literal evidenced recipient (never invented; nothing sent)',
+        r.did === 'forward' && !!fwd && (fwd.to ?? []).length === 1 && fwd.to![0] === 'finance@acme-example.com' && !fwd.sent_at,
+        `did=${r.did} · to=${JSON.stringify(fwd?.to ?? [])}`);
+      await cleanP21(fwdId);
+    } else check('P21 live · forward probe insert failed', false);
+  }
+
+  // ═══ P22 · FAILED-TO-JUDGE IS NEVER JUDGED-NONE (proactive-team W2) — an AI outage must not
+  // resolve items, strip real work, or cache a day-long "nothing to do". ═══
+  check('P22 · the judge marks failure and NEVER caches it (an outage retries, it never becomes a verdict)',
+    src('lib/work/judge.ts').includes('failed?: true') &&
+    src('lib/work/judge.ts').includes("{ ...fallbackVerdict('could not judge this yet — it will retry'), failed: true }") &&
+    src('lib/prepare/pass.ts').includes('if (verdict.failed) return') &&
+    src('lib/work/apply-verdict.ts').includes('if (verdict.failed) return out;'));
+  check('P22 · failure honesty at every reasoning edge (resolver failure forbids claiming attachments; reviewer outage flags, never silently passes)',
+    src('lib/prepare/requirements.ts').includes('the artifact resolution FAILED') &&
+    src('lib/prepare/evaluate.ts').includes('The reviewer was unavailable'));
+  {
+    // Live: a FAILED verdict pushed through the consequence module must move NOTHING — the probe
+    // item keeps its draft and stays pending (the exact artifact-destruction path an outage hits).
+    const { data: probe } = await sb.from('inbox_items').insert({
+      user_id: PERSONAL, source: 'email', status: 'pending', work_state: 'work_prepared',
+      work_title: 'P22 probe — live thread with a prepared draft',
+      source_data: {
+        subject: 'Quick question on the proposal', body: 'Could you confirm the timeline section?',
+        from_name: 'Sam Vendor', from_address: 'sam@acme-example.com', received_at: new Date().toISOString(),
+        draft: { body: 'Hi Sam, confirming the timeline …', generated_at: new Date().toISOString(), prepared: 'pass' },
+      },
+    }).select('id').maybeSingle();
+    if (!probe?.id) check('P22 live · probe insert failed', false);
+    else {
+      const { applyVerdictConsequences } = await import('../lib/work/apply-verdict');
+      const failedVerdict = {
+        work: 'none' as const, component: 'message_only' as const, executor: { kind: 'user' as const },
+        gate: null, resolution: 'expired' as const, failed: true as const, reason: 'could not judge this yet — it will retry',
+      };
+      const cons = await applyVerdictConsequences(sb, PERSONAL, { kind: 'inbox', id: String(probe.id) }, failedVerdict);
+      const { data: after } = await sb.from('inbox_items').select('status, source_data').eq('id', probe.id).maybeSingle();
+      const draftIntact = !!((after?.source_data ?? {}) as { draft?: { body?: string } }).draft?.body;
+      check('P22 live · a FAILED verdict moves NOTHING (item stays pending, the prepared draft survives)',
+        !cons.resolved && after?.status === 'pending' && draftIntact, `status=${after?.status} draftIntact=${draftIntact}`);
+      await sb.from('inbox_items').delete().eq('id', probe.id);
+    }
+  }
+
+  // ═══ P23 · NO IRREVERSIBLE ACT WITHOUT THE COMMIT DOOR (proactive-team W5) — one claim per
+  // approved send; a double-approve finds the claim taken and NEVER fires twice. ═══
+  check('P23 · the execute route commits ONLY through the door (claim → fire → record; failure releases; duplicate returns the prior result)',
+    src('app/api/items/execute/route.ts').includes('claimCommit') &&
+    src('app/api/items/execute/route.ts').includes('releaseCommitClaim') &&
+    src('app/api/items/execute/route.ts').includes('alreadyExecuted') &&
+    src('app/api/items/prepare/route.ts').includes('prepare NEVER sends'));
+  {
+    const { claimCommit } = await import('../lib/work/commit-door');
+    const key = `smoke-p23-${PERSONAL.slice(0, 8)}`;
+    await sb.from('action_commits').delete().eq('user_id', PERSONAL).eq('idempotency_key', key).then(() => {}, () => {});
+    const [c1, c2] = await Promise.all([
+      claimCommit(sb, PERSONAL, { idempotencyKey: key, actionType: 'forward', payload: { probe: true } }),
+      claimCommit(sb, PERSONAL, { idempotencyKey: key, actionType: 'forward', payload: { probe: true } }),
+    ]);
+    if (c1.status === 'unavailable' || c2.status === 'unavailable') {
+      // The DOOR code is verified above; the LEDGER needs the manual migration to arm exactly-once.
+      check('P23 live · commit-door ledger present (apply supabase/migrations/20260728_action_commits.sql to arm the live idempotency proof)',
+        false, 'action_commits table missing — pre-migration');
+    } else {
+      const claimed = [c1, c2].filter((c) => c.status === 'claimed').length;
+      check('P23 live · two concurrent commit claims on ONE key admit EXACTLY ONE (a double-approve can never double-send)',
+        claimed === 1, `first=${c1.status} second=${c2.status}`);
+      await sb.from('action_commits').delete().eq('user_id', PERSONAL).eq('idempotency_key', key);
+    }
+  }
+
+  // ═══ P24 · AN ASK IS NEVER ROOM-LOCAL AND NEVER A DEAD END (proactive-team W3) — every open ask
+  // is globally discoverable (the Home's "Needs your input" ledger), the go-ahead escape exists on
+  // ENGINE asks too, and a proceeded ask lifts the block without ever re-asking. ═══
+  check('P24 · the ask ledger + lifecycle are wired (global route · engine go-ahead in the rail · proceeded honored by the resolution + the envelope)',
+    src('app/api/room/asks/route.ts').includes('input_checklist') &&
+    src('app/api/room/asks/route.ts').includes("action:'proceed'") &&
+    src('components/home/item-rail.tsx').includes('!t.proceeded && !t.author?.name && t.turnId') &&
+    src('lib/prepare/requirements.ts').includes('proceeded: true') &&
+    src('lib/prepare/pass.ts').includes('Do NOT ask for the missing inputs again') &&
+    src('components/home/home-view.tsx').includes("'Needs your input'"));
+  {
+    // The LIFECYCLE, driven through the REAL resolution engine (P18 already gates the judged
+    // CREATION of asks; this gate owns what happens to one after): resolveRequirements writes the
+    // ask (no candidates on the probe host → deterministic missing), it is discoverable globally,
+    // PROCEED lifts it, and it is never re-posted.
+    const { resolveRequirements } = await import('../lib/prepare/requirements');
+    const { data: probe } = await sb.from('inbox_items').insert({
+      user_id: PERSONAL, source: 'email', status: 'pending', work_state: 'action_required',
+      work_title: 'Put together the vendor summary pack',
+      source_data: {
+        subject: 'Put together the vendor summary pack',
+        body: 'Hi Alex, could you put together the vendor summary pack for the audit? It needs the risk register and the signed MSA. Thanks, Sam',
+        from_name: 'Sam Auditor', from_address: 'sam@acme-audit-example.com', received_at: new Date().toISOString(),
+        understanding: { mailKind: 'customer', ownership: 'you_owe', relevance: 'reply', role: 'addressed' },
+      },
+    }).select('id').maybeSingle();
+    if (!probe?.id) check('P24 live · probe insert failed', false);
+    else {
+      const pid = String(probe.id);
+      const requires = [{ label: 'ZZ-probe Q3 vendor risk register' }, { label: 'ZZ-probe signed master services agreement' }];
+      const r1 = await resolveRequirements(sb, PERSONAL, {
+        itemKind: 'inbox', itemId: pid, itemTitle: 'Put together the vendor summary pack', entityId: null, requires,
+      });
+      // The GLOBAL discoverability contract the /api/room/asks GET serves: the ask is findable with
+      // NO room_key in hand — component key + live filter alone.
+      const { data: globalAsk } = await sb.from('room_turns').select('id, dedupe_key, component')
+        .eq('user_id', PERSONAL).filter('component->>key', 'eq', 'input_checklist')
+        .is('archived_at', null).eq('dedupe_key', `requires:${pid}`).maybeSingle();
+      check('P24 live · the engine\'s ask is discoverable OUTSIDE its room (the global ledger contract)',
+        r1.missing.length === 2 && !!globalAsk, globalAsk ? `found ${String(globalAsk.dedupe_key)} · missing=${r1.missing.length}` : 'no ask turn found globally');
+      if (globalAsk) {
+        // PROCEED (what the POST stamps) → the next resolution honors the standing decision: it
+        // reports proceeded (the caller works around the gaps) and NEVER re-posts the ask.
+        const comp = (globalAsk.component ?? {}) as { key?: string; state?: Record<string, unknown> };
+        await sb.from('room_turns').update({
+          component: { ...comp, state: { ...(comp.state ?? {}), proceeded: true, proceeded_at: new Date().toISOString() } },
+        }).eq('id', globalAsk.id);
+        const r2 = await resolveRequirements(sb, PERSONAL, {
+          itemKind: 'inbox', itemId: pid, itemTitle: 'Put together the vendor summary pack', entityId: null, requires,
+        });
+        const { data: after24 } = await sb.from('room_turns').select('component')
+          .eq('id', globalAsk.id).maybeSingle();
+        const stillProceeded = !!((after24?.component as { state?: { proceeded?: boolean } })?.state?.proceeded);
+        check('P24 live · GO AHEAD lifts the block (resolution reports proceeded; the truth still names the gaps) and the ask is never re-posted',
+          r2.proceeded === true && stillProceeded && r2.artifactTruth.includes('MISSING'),
+          `proceeded=${r2.proceeded} · stampIntact=${stillProceeded}`);
+      }
+      await sb.from('room_turns').delete().eq('user_id', PERSONAL).like('dedupe_key', `%${pid}%`);
+      await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('entity_id', `inbox:${pid}`);
+      await sb.from('item_deliverables').delete().eq('user_id', PERSONAL).eq('entity_id', pid);
+      await sb.from('learning_signals').delete().eq('user_id', PERSONAL).eq('inbox_item_id', pid);
+      await sb.from('inbox_items').delete().eq('id', pid);
+    }
+  }
+
+  // ═══ P25 · DELIBERATE TIME (proactive-team W4) — "not yet" is a judgment: a stated get-back
+  // date parks the item (deck demotes, cache serves without AI, the room hears why) and it comes
+  // back on the date; live work is NEVER parked. ═══
+  check('P25 · the revisit machinery is lawful (none-only future-LOCAL-date coercion · parked serve · date-arrived fresh re-judge · keyed narration)',
+    src('lib/work/judge.ts').includes('after > ctx.todayStr') &&
+    src('lib/work/judge.ts').includes('W4 PARKED SERVE') &&
+    src('lib/work/judge.ts').includes('THE DATE HAS ARRIVED') &&
+    src('lib/work/apply-verdict.ts').includes('revisit:${input.kind}:${input.id}'));
+  {
+    const { judgeWork } = await import('../lib/work/judge');
+    const { applyVerdictConsequences } = await import('../lib/work/apply-verdict');
+    const boardDate = new Date(Date.now() + 9 * 86_400_000).toISOString().slice(0, 10);
+    const { data: probe } = await sb.from('inbox_items').insert({
+      user_id: PERSONAL, source: 'email', status: 'pending', work_state: 'work_prepared',
+      work_title: 'Pilot scope — reconnect after our board meeting',
+      source_data: {
+        subject: 'Pilot scope — reconnect after our board meeting',
+        body: `Hi Alex, quick heads up: our board meets on ${boardDate} and the pilot budget is on the agenda. Nothing needed from you until then — let's reconnect right after that meeting to finalize the pilot scope. Best, Sam`,
+        from_name: 'Sam Vendor', from_address: 'sam@acme-example.com', received_at: new Date().toISOString(),
+        understanding: { mailKind: 'customer', ownership: 'none', relevance: 'awareness', role: 'addressed' },
+      },
+    }).select('id').maybeSingle();
+    if (!probe?.id) check('P25 live · probe insert failed', false);
+    else {
+      const pid = String(probe.id);
+      const v = await judgeWork(sb, PERSONAL, { kind: 'inbox', id: pid });
+      const parked = v.work === 'none' && !v.resolution && !!v.revisit?.after && v.revisit.after > new Date().toISOString().slice(0, 10);
+      check('P25 live · a stated reconnect-after date judges none+revisit (a FUTURE date, not moot, not live work)',
+        parked, `${v.work}/${v.resolution ?? '—'}/revisit=${v.revisit?.after ?? '—'} · "${v.reason.slice(0, 60)}"`);
+      if (parked) {
+        const cons = await applyVerdictConsequences(sb, PERSONAL, { kind: 'inbox', id: pid }, v);
+        const { data: st } = await sb.from('inbox_items').select('status').eq('id', pid).maybeSingle();
+        const { data: turn } = await sb.from('room_turns').select('text')
+          .eq('user_id', PERSONAL).eq('dedupe_key', `revisit:inbox:${pid}`).maybeSingle();
+        check('P25 live · a park NEVER resolves (item stays pending) and the room hears why (keyed set-aside turn)',
+          !cons.resolved && st?.status === 'pending' && !!turn && String(turn.text).includes(v.revisit!.after),
+          `status=${st?.status} · turn="${String(turn?.text ?? '').slice(0, 60)}"`);
+        // PARKED SERVE — a second judgment on unchanged facts re-serves the parked verdict.
+        const v2 = await judgeWork(sb, PERSONAL, { kind: 'inbox', id: pid });
+        check('P25 live · the parked verdict HOLDS on re-judgment (same revisit, no flip)',
+          v2.work === 'none' && v2.revisit?.after === v.revisit!.after, `re-judge: ${v2.work}/revisit=${v2.revisit?.after ?? '—'}`);
+      }
+      await sb.from('room_turns').delete().eq('user_id', PERSONAL).like('dedupe_key', `%${pid}%`);
+      await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('entity_id', `inbox:${pid}`);
+      await sb.from('inbox_items').delete().eq('id', pid);
+    }
+    // THE STRUCTURAL TIME FLOOR — the brain's extracted deadline outranks the model's date
+    // arithmetic: a FUTURE deadline can never judge "expired" (the for-Friday misfire class, found
+    // live: a weaker model computed this-coming-Friday as past and auto-dismissed real work).
+    check('P25 · the time floor is structural (a today-or-later understanding.deadline strips an expired disposition)',
+      src('lib/work/judge.ts').includes('u.deadline >= todayStr'));
+    {
+      const fri = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+      const { data: floorProbe } = await sb.from('inbox_items').insert({
+        user_id: PERSONAL, source: 'email', status: 'pending', work_state: 'work_prepared',
+        work_title: 'Confirm the workshop agenda for Friday',
+        source_data: {
+          subject: 'Confirm the workshop agenda for Friday',
+          body: 'Hi Alex, could you confirm the workshop agenda for Friday? We need your confirmation before then to book the room.',
+          from_name: 'Sam Vendor', from_address: 'sam@acme-example.com', received_at: new Date().toISOString(),
+          understanding: { mailKind: 'customer', ownership: 'you_owe', relevance: 'reply', role: 'addressed', deadline: fri },
+        },
+      }).select('id').maybeSingle();
+      if (!floorProbe?.id) check('P25 live · time-floor probe insert failed', false);
+      else {
+        const v = await judgeWork(sb, PERSONAL, { kind: 'inbox', id: String(floorProbe.id) });
+        check('P25 live · a FUTURE-deadline ask can NEVER judge expired (the floor holds whatever the model computes)',
+          !(v.work === 'none' && v.resolution === 'expired'), `${v.work}/${v.resolution ?? '—'} · "${v.reason.slice(0, 60)}"`);
+        await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('entity_id', `inbox:${floorProbe.id}`);
+        await sb.from('inbox_items').delete().eq('id', floorProbe.id);
+      }
+    }
+    // The COUNTER-PROBE: live work with a today-deadline must never be parked.
+    const { data: liveProbe } = await sb.from('inbox_items').insert({
+      user_id: PERSONAL, source: 'email', status: 'pending', work_state: 'work_prepared',
+      work_title: 'Signed NDA needed today',
+      source_data: {
+        subject: 'Signed NDA needed today',
+        body: 'Hi Alex, could you send over the signed NDA today? Legal needs it before we can open the data room. Thanks, Sam',
+        from_name: 'Sam Vendor', from_address: 'sam@acme-example.com', received_at: new Date().toISOString(),
+        understanding: { mailKind: 'customer', ownership: 'you_owe', relevance: 'reply', role: 'addressed' },
+      },
+    }).select('id').maybeSingle();
+    if (!liveProbe?.id) check('P25 live · counter-probe insert failed', false);
+    else {
+      const v = await judgeWork(sb, PERSONAL, { kind: 'inbox', id: String(liveProbe.id) });
+      check('P25 live · an ask due TODAY is never parked (revisit requires a stated later basis)',
+        v.work !== 'none' && !v.revisit, `${v.work}/revisit=${v.revisit?.after ?? '—'} · "${v.reason.slice(0, 60)}"`);
+      await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('entity_id', `inbox:${liveProbe.id}`);
+      await sb.from('inbox_items').delete().eq('id', liveProbe.id);
+    }
+  }
+
+  // ═══ P26 · A WRONG FILE IS NEVER STAGED (proactive-team W6 — born from a LIVE wrong-attach: a
+  // cross-client PDF staged as another deal's "Individual Report"). The staging law: provenance
+  // gates candidacy, evidence is quoted and code-checked, one file never satisfies two labels,
+  // truncated deliverables are machine-caught — and the REAL accounts carry zero violations. ═══
+  check('P26 · the staging law is structural (provenance gate · code-checked evidence · one-file-one-label · shared verifier at every attach door · chip dedup · truncation floor)',
+    src('lib/prepare/requirements.ts').includes('THE STAGING LAW') &&
+    src('lib/prepare/requirements.ts').includes('normText(`${cand.filename} ${cand.snippet}`).includes(normText(evidence))') &&
+    src('lib/prepare/requirements.ts').includes('one file, one label') &&
+    (src('lib/prepare/pass.ts').match(/verifyArtifactMatch/g)?.length ?? 0) >= 2 &&
+    src('lib/prepare/read.ts').includes('IDENTICAL artifacts collapse to one') &&
+    src('lib/prepare/evaluate.ts').includes('TRUNCATION FLOOR'));
+  {
+    const { pickArtifacts } = await import('../lib/prepare/requirements');
+    const { evaluateDeliverable } = await import('../lib/prepare/evaluate');
+    // 1 — THE DECOY (the exact shipped bug, deterministic — provenance rejects before any AI):
+    // a topically-adjacent cross-provenance KB file on a LOOSE item must never stage.
+    const decoy = await pickArtifacts(sb, PERSONAL, {
+      itemTitle: 'Generate EGBANK cohort reports and ALP allocation sheet', entityId: null,
+      emailExcerpt: 'Could you please share the Organizational Report, Individual Report, and the ALP group allocation Excel sheet for the attached cohort?',
+      perLabel: [{
+        label: 'Individual Report',
+        candidates: [{ source: 'kb', id: 'decoy-1', filename: 'AIR - Default Assessment Questions Answers (002)_CDobrota edits.pdf', snippet: 'Default assessment questions and answers, edited by C. Dobrota. Assessment material.', entityId: null, originKind: 'upload', score: 0.78 }],
+      }],
+    });
+    check('P26 live · THE DECOY: a cross-provenance topical look-alike on a loose item is NEVER staged (suggestion at most)',
+      decoy[0].candidate === null, `candidate=${decoy[0].candidate?.filename ?? 'null'} · suggestion=${decoy[0].suggestion?.filename?.slice(0, 30) ?? '—'}`);
+    // 2 — the LAWFUL match: same body of work + the file plainly IS the artifact → stages WITH
+    // code-verified evidence.
+    const lawful = await pickArtifacts(sb, PERSONAL, {
+      itemTitle: 'Generate EGBANK cohort reports and ALP allocation sheet', entityId: 'ent-egbank',
+      emailExcerpt: 'Could you please share the Individual Report for the attached cohort?',
+      perLabel: [{
+        label: 'Individual Report',
+        candidates: [{ source: 'kb', id: 'real-1', filename: 'EGBANK Individual Report - Cohort 3.pdf', snippet: 'Individual report for EGBANK cohort 3 participants: per-participant scores and rankings.', entityId: 'ent-egbank', originKind: 'generated', score: 0.82 }],
+      }],
+    });
+    check('P26 live · a SAME-DEAL exact artifact stages WITH code-verified quoted evidence',
+      !!lawful[0].candidate && !!lawful[0].evidence, `evidence="${lawful[0].evidence?.slice(0, 40) ?? '—'}"`);
+    // 3 — ONE FILE, ONE LABEL: the same file offered for two DISTINCT artifacts never satisfies both.
+    const ambiguous = await pickArtifacts(sb, PERSONAL, {
+      itemTitle: 'Share the organizational report and the individual report', entityId: null,
+      perLabel: [
+        { label: 'Organizational Report', candidates: [{ source: 'pool', id: 'pool-1', filename: 'Assessment Pack.pdf', snippet: 'Combined assessment pack with organizational and individual sections.', entityId: null, score: 1 }] },
+        { label: 'Individual Report', candidates: [{ source: 'pool', id: 'pool-1', filename: 'Assessment Pack.pdf', snippet: 'Combined assessment pack with organizational and individual sections.', entityId: null, score: 1 }] },
+      ],
+    });
+    check('P26 live · one file NEVER satisfies two distinct labels (ambiguity is not confidence)',
+      ambiguous.filter((p) => p.candidate).length <= 1,
+      `matched=${ambiguous.filter((p) => p.candidate).length}/2`);
+    // 4 — the truncation floor is mechanical: a mid-word cutoff is caught with zero AI.
+    const cut = await evaluateDeliverable(sb, PERSONAL, {
+      content: ('The STC Bahrain assessment shows strong readiness across departments. '.repeat(8) + 'Section 2 — Gap: Cloud-native da'),
+      task: 'Write the STC Bahrain assessment report', recipient: null, entityId: null, kind: 'deliverable',
+    });
+    check('P26 live · a mid-sentence truncation is CAUGHT mechanically (revise, never handed over)',
+      cut.verdict === 'revise' && /cut off/i.test(cut.objection ?? ''), `${cut.verdict} · "${(cut.objection ?? '').slice(0, 50)}"`);
+  }
+  // 5 — THE REAL ACCOUNTS carry ZERO provenance violations (the outcome, standing): every staged
+  // attachment on a pending draft or requirement row is pool-sourced or same-entity.
+  for (const [uid, label] of USERS) {
+    let violations = 0;
+    const entityOf = async (itemKind: string, itemId: string): Promise<string | null> => {
+      const { data: link } = await sb.from('entity_links').select('entity_id')
+        .eq('user_id', uid).eq('item_kind', itemKind).eq('item_id', itemId).not('entity_id', 'is', null).maybeSingle();
+      return (link?.entity_id as string) ?? null;
+    };
+    const fileEntity = async (fileId: string): Promise<string | null> => {
+      const { data: kf } = await sb.from('knowledge_files').select('entity_id').eq('id', fileId).maybeSingle();
+      return (kf?.entity_id as string | null) ?? null;
+    };
+    const { data: drafts } = await sb.from('inbox_items').select('id, source_data')
+      .eq('user_id', uid).eq('status', 'pending').not('source_data->draft->attachment', 'is', null).limit(300);
+    for (const it of (drafts ?? []) as Array<{ id: string; source_data: Record<string, unknown> }>) {
+      const att = ((it.source_data.draft ?? {}) as { attachment?: { fileId?: string; source?: string } }).attachment;
+      if (!att?.fileId || att.source === 'pool') continue;
+      const ent = await entityOf('inbox_item', it.id);
+      if (!ent || (await fileEntity(att.fileId)) !== ent) violations++;
+    }
+    const { data: rows } = await sb.from('item_deliverables').select('id, kind, entity_id, metadata')
+      .eq('user_id', uid).or('task_id.like.require:*,task_id.eq.prepare-pass-docsend').limit(300);
+    for (const r of (rows ?? []) as Array<{ kind: string; entity_id: string; metadata: Record<string, unknown> | null }>) {
+      const att = (r.metadata?.attachment ?? null) as { fileId?: string; source?: string } | null;
+      if (!att?.fileId || att.source === 'pool') continue;
+      const ent = await entityOf(r.kind === 'commitment' ? 'commitment' : 'inbox_item', r.entity_id);
+      if (!ent || (await fileEntity(att.fileId)) !== ent) violations++;
+    }
+    check(`P26 ${label} · ZERO staged attachments violate provenance on the live account`,
+      violations === 0, violations ? `${violations} violation(s)` : 'clean');
+  }
+
+  // ═══ P27 · THE BRAIN HAS A CLOCK (proactive-team T-class — found LIVE: "be at the meeting room
+  // at 12:30 PM tomorrow" still on the plate at 20:34 the day OF). Stored text never carries
+  // decaying day-words; a same-day timed event is over when its stated time passes on the USER'S
+  // clock (code-verified); a future-timed one is live all day. ═══
+  check('P27 · the clock is structural (user-tz now in the judge · expired_time code-verified in-text · event-boundary sig · deixis law at extraction + in state prose · anchors threaded)',
+    src('lib/work/judge.ts').includes('eventPassed') &&
+    src('lib/work/judge.ts').includes('timesInText(ctx.itemText).includes(hhmm) && ctx.nowHHMM > hhmm') &&
+    src('lib/utils/user-time.ts').includes('export function timesInText') &&
+    src('lib/commitments/extract.ts').includes('THE DEIXIS LAW') &&
+    src('lib/commitments/extract.ts').includes('resolveDeixisInDescriptions') &&
+    (src('lib/email-sync/sync-emails.ts').match(/receivedAt: storedEmail.received_at/g)?.length ?? 0) >= 2 &&
+    src('lib/entities/state.ts').includes(':ev${pastEvents}') &&
+    src('lib/entities/state.ts').includes('never write relative day-words'));
+  {
+    const { judgeWork } = await import('../lib/work/judge');
+    const hhmmOf = (d: Date) => `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+    const today = new Date().toISOString().slice(0, 10);
+    const mkCommit = async (desc: string) => {
+      const { data } = await sb.from('commitments').insert({
+        user_id: PERSONAL, description: desc, direction: 'you_owe', status: 'open',
+        due_date: today, source: 'email', counterparty: 'Sam Vendor',
+      }).select('id').maybeSingle();
+      return data?.id as string | undefined;
+    };
+    // a — a today-event whose stated time PASSED hours ago (probe host has no calendar → UTC clock).
+    const passed = hhmmOf(new Date(Date.now() - 3 * 3_600_000));
+    const pastId = await mkCommit(`Be at the workshop room at ${passed} — ${today}`);
+    if (pastId) {
+      const v = await judgeWork(sb, PERSONAL, { kind: 'commitment', id: pastId });
+      check('P27 live · a same-day attendance whose stated time has PASSED judges expired (over at its hour, not at midnight)',
+        v.work === 'none' && v.resolution === 'expired', `${v.work}/${v.resolution ?? '—'} · "${v.reason.slice(0, 60)}"`);
+      await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('entity_id', `commitment:${pastId}`);
+      await sb.from('commitments').delete().eq('id', pastId);
+    } else check('P27 live · past-time probe insert failed', false);
+    // b — the counter: a today-event whose stated time is still AHEAD is live work, never expired.
+    const ahead = hhmmOf(new Date(Date.now() + 3 * 3_600_000));
+    const futId = await mkCommit(`Be at the workshop room at ${ahead} — ${today}`);
+    if (futId) {
+      const v = await judgeWork(sb, PERSONAL, { kind: 'commitment', id: futId });
+      check('P27 live · a same-day event still AHEAD is never expired (the code checks the arithmetic, not the model)',
+        !(v.work === 'none' && v.resolution === 'expired'), `${v.work}/${v.resolution ?? '—'} · "${v.reason.slice(0, 60)}"`);
+      await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('entity_id', `commitment:${futId}`);
+      await sb.from('commitments').delete().eq('id', futId);
+    } else check('P27 live · future-time probe insert failed', false);
+    // c — the deixis scrubber: a decaying title rewrites absolute against ITS OWN date, code-checked.
+    const { DEICTIC_RE, resolveDeixisInDescriptions } = await import('../lib/commitments/extract');
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+    const [fixed] = await resolveDeixisInDescriptions(sb, PERSONAL,
+      [{ description: 'Be at the meeting room at 12:30 PM tomorrow' }], yesterday);
+    check('P27 live · a deictic title rewrites ABSOLUTE anchored to its source\'s own date (no decaying day-words survive)',
+      !DEICTIC_RE.test(fixed.description) && /12[:.]30/.test(fixed.description),
+      `"${fixed.description.slice(0, 60)}"`);
+  }
+
+  // ═══ P28 · THE BRAIN HAS A CLIENT MAP (proactive-team R-class — found LIVE: an "STC Bahrain"
+  // email filed under "Arcapita AI Assessment": the same partner-org people broker BOTH, so
+  // people-matching merges what must stay separate). Same people ≠ same deal: the item's own named
+  // engagement outranks the people match, checked by CODE against the entity's IDENTITY (name +
+  // aliases — never its contaminated summary), at BOTH doors (the judge and thread inheritance). ═══
+  {
+    const { judgeRecognition, namesOverlap } = await import('../lib/entities/recognize');
+    check('P28 · the named-subject law is structural (judge veto on identity-only text · thread-drift guard · shared extraction · repair sweep)',
+      src('lib/entities/recognize.ts').includes('named-subject veto') &&
+      src('lib/entities/recognize.ts').includes('THREAD-DRIFT GUARD') &&
+      src('lib/entities/recognize.ts').includes('extractNamedEngagement') &&
+      src('lib/entities/recognize.ts').includes('${hit.name} ${(hit.aliases ?? []).join(\' \')}') &&
+      src('scripts/sweep-recognition-subjects.ts').includes('namesOverlap'));
+    check('P28 unit · distinctive-token identity match (generic work-words prove nothing; a proper name decides)',
+      namesOverlap('STC Bahrain', 'Arcapita AI Assessment') === false &&
+      namesOverlap('AI Assessment', 'Arcapita AI Assessment') === true &&   // all-generic → no veto signal
+      namesOverlap('Arcapita launch', 'Arcapita AI Assessment') === true);
+    const broker = [{
+      id: 'e-acme', name: 'Acme AI Assessment', summary: 'AI assessment engagement for Acme, brokered by ZZ-Partner',
+      aliases: ['Acme AI Assessment'], people: ['sam@zz-partner-example.com', 'sam broker', '@zz-partner-example.com'], embedding: null,
+    }];
+    const vNew = await judgeRecognition(PERSONAL, sb, {
+      kind: 'inbox_item', id: 'probe-p28-a', title: 'Beta Corp assessment kickoff — scope confirmation',
+      body: 'Hi, kicking off the Beta Corp AI assessment. Beta Corp leadership wants the scope confirmed this week.',
+      from: 'Sam Broker <sam@zz-partner-example.com>', at: new Date().toISOString(),
+    }, broker);
+    check('P28 live · SAME partner people, DIFFERENT named client → never attaches (founds the named engagement)',
+      vNew.decision !== 'existing' && (vNew.decision !== 'new' || /beta/i.test(vNew.name)),
+      `${vNew.decision}${vNew.decision === 'new' ? `:"${vNew.name.slice(0, 30)}"` : ''} · ${vNew.reason.slice(0, 60)}`);
+    const vSame = await judgeRecognition(PERSONAL, sb, {
+      kind: 'inbox_item', id: 'probe-p28-b', title: 'Acme assessment — next steps after the readout',
+      body: 'Following up on the Acme assessment readout: Acme wants the next steps confirmed.',
+      from: 'Sam Broker <sam@zz-partner-example.com>', at: new Date().toISOString(),
+    }, broker);
+    check('P28 live · the same client\'s mail still attaches (the veto never splits a real engagement)',
+      vSame.decision === 'existing', `${vSame.decision} · ${vSame.reason.slice(0, 60)}`);
+  }
+
+  // ═══ P29 · THE ROOM SPEAKS LIKE A TEAM (UX arc) — one narrator, three grammars, one commit
+  // line, the work under the message. Found live: a coworker bubble speaking about itself in the
+  // third person ("Max is on…"), a mid-word truncation glued to boilerplate, the same artifact
+  // narrated twice, two Send buttons, and the drafted reply buried below a 34-message thread. ═══
+  {
+    const { clip } = await import('../lib/room/turns');
+    check('P29 · THE ONE-NARRATOR LAW at every write site (narration author-less; coworker author = first-person speech only)',
+      src('lib/prepare/pass.ts').includes('ONE-NARRATOR LAW') &&
+      /author: null,\s*\n\s*dedupeKey: `prep:/.test(src('lib/prepare/pass.ts')) &&
+      src('lib/prepare/pass.ts').includes('author: null, // one-narrator law') &&
+      src('lib/home/delegate.ts').includes("author: { kind: 'coworker', id: worker.id"));
+    check('P29 · three grammars derived STRUCTURALLY in the rail (event lines for narration · bubbles for speech · components keep their affordances) + prep narration folds into the artifact card',
+      src('components/home/item-rail.tsx').includes('three grammars, derived STRUCTURALLY') &&
+      src('components/home/item-rail.tsx').includes('/^(prep:|meeting-prep:)/.test(t.dkey)') &&
+      src('lib/room/turns.ts').includes('dedupe_key') && src('lib/room/turns.ts').includes('key: (r.dedupe_key'));
+    check('P29 · ONE commit line per artifact (the rail card points — Open →; the stage composer holds the only Send)',
+      src('components/home/item-rail.tsx').includes('ONE COMMIT LINE') &&
+      !src('components/home/item-rail.tsx').includes('artifact.onCommit?.()'));
+    check('P29 · the Scape order on the stage (message → mounted work → commit; the composer is never buried below the thread\'s siblings)',
+      src('components/home/item-detail.tsx').includes('THE WORK, DIRECTLY BENEATH THE MESSAGE'));
+    {
+      const long = 'The ALP allocation sheet with participant scores included';
+      const c = clip(long, 24);
+      const base = c.replace(/…$/, '');
+      check('P29 unit · narration never cuts mid-word (word-boundary clip + ellipsis; short text passes through)',
+        c.endsWith('…') && long.startsWith(base) && long[base.length] === ' ' &&
+        clip('short', 24) === 'short');
+    }
   }
 
   console.log('\n═══ THE PROMISE GATES ═══');

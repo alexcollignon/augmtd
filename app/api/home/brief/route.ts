@@ -462,9 +462,14 @@ export async function GET() {
     // not action-worthy). The user's explicit type_override is the only authoritative override
     // here — rule_type includes AI-rule guesses, which is exactly what this corrects.
     const noticeSubj = ((sd.subject as string) || it.work_title || null);
+    // W6 — the PRECEDENCE CHAIN holds against the judgment too: a you_owe ACTION notice is never
+    // silently demoted by a judged-none (the sender floor rightly says "no EMAIL work" for an
+    // automated dunning notice — but "no email work" is not "no work"; the action lives outside
+    // the mailbox and the deck must still surface it). Same law as the eb510b1 deck-miss fix.
+    const youOweAction = !!u && u.ownership === 'you_owe' && u.relevance === 'action';
     const noticeDemoted = it.type_override !== 'needs_reply' && it.type_override !== 'to_do'
       && (isNoMoveNotice({ u, rawKind: rawMailKindOf(sd), fromEmail: fromEmailOf(sd), fromName: (sd.from_name as string) || null, subject: noticeSubj, workState: (it.work_state as string) || null })
-        || judgedNoneIds.has(it.id)); // the ONE judgment said "nothing to do" — the deck listens
+        || (judgedNoneIds.has(it.id) && !youOweAction)); // the ONE judgment said "nothing to do" — the deck listens, except where the notice law outranks
     if (noticeDemoted) demotedNoticeIds.add(it.id); // filters EVERY downstream pool (priorities, keep-an-eye-on, …)
     if (u && u.relevance === 'action' && !noticeDemoted) {
       // An action-notice: its own section, never a reply card, never a needs-you priority. We DON'T push

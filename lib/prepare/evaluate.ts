@@ -31,6 +31,19 @@ export async function evaluateDeliverable(admin: SupabaseClient, userId: string,
   kind: 'reply' | 'nudge' | 'deliverable';
 }): Promise<EvalVerdict> {
   try {
+    // ── W6 MECHANICAL TRUNCATION FLOOR (the "Gap: Cloud-native da" class): a deliverable that ends
+    // mid-word/mid-clause is machine-detectable — no AI should be needed to see a cut-off, and a
+    // coworker must never hand the principal their own truncation. Structural, before the review;
+    // the caller's capped revision regenerates it complete (or it surfaces honestly flagged).
+    {
+      const t = args.content.trimEnd();
+      const truncated = t.length > 400
+        && !/[.!?…)"'\]\}»:;]$/.test(t)              // no terminal punctuation/closure
+        && /[a-z0-9,\-–—]$/i.test(t);                // ends inside a word/clause
+      if (truncated) {
+        return { verdict: 'revise', objection: 'The deliverable appears CUT OFF mid-sentence at the end — regenerate it complete; never hand over a truncated document.' };
+      }
+    }
     // ── STRUCTURAL floor: an artifact addressed to the USER THEMSELF is wrong at birth (the
     // self-nudge class) — no AI needed, the registry answers. T3 adds the twin: an AUTOMATED /
     // no-reply recipient can never receive anything (a reply to a password-reset reaches no one). ──
@@ -89,5 +102,9 @@ export async function evaluateDeliverable(admin: SupabaseClient, userId: string,
     }
     if (v === 'revise' || v === 'flag') return { verdict: v, objection: (res.json?.objection || '').slice(0, 300) || null };
     return { verdict: 'pass', objection: null };
-  } catch { return { verdict: 'pass', objection: null }; } // review is an enhancement — never blocks the work
+  } catch {
+    // FAILURE HONESTY (W2): a reviewer outage is not a pass — unreviewed work still surfaces
+    // (never blocks), but wearing the honest caution instead of a silent green light.
+    return { verdict: 'flag', objection: 'The reviewer was unavailable — this went out unreviewed; give it a once-over.' };
+  }
 }

@@ -10,13 +10,14 @@ export function isAutomatedSender(fromEmail: string | null, fromName: string | n
     'no-reply', 'noreply', 'no_reply', 'donotreply', 'do-not-reply', 'do_not_reply', 'naoresponder', 'nao-responder',
     'notifications', 'notification', 'notify', 'mailer', 'mailer-daemon', 'bounce', 'bounces',
     'postmaster', 'automated', 'auto-confirm', 'alerts', 'alert', 'billing', 'invoices', 'receipts',
-    'support+', 'updates', 'newsletter', 'news', 'digest',
+    'support+', 'updates', 'newsletter', 'news', 'digest', 'payments', 'failed-payment',
   ];
   if (addrPatterns.some((p) => localpart.includes(p))) return true;
   if (/(^|[.@])(no-?reply|donotreply|notifications?|mailer|bounce|postmaster)([.@])/.test(email)) return true;
   const text = `${(fromName || '').toLowerCase()} ${(subject || '').toLowerCase()}`;
   const phrasePatterns = [
-    'payment failed', 'payment unsuccessful', 'payment declined', 'account suspended', 'account suspension',
+    // dunning phrasings vary ("payment to X was unsuccessful") — match the verb forms, not one exact bigram
+    'payment failed', 'payment unsuccessful', 'was unsuccessful', 'payment declined', 'account suspended', 'account suspension',
     'account restricted', 'account has been', 'your subscription', 'subscription renew', 'prepaid billing',
     'verify your', 'confirm your email', 'confirm your account', 'security alert', 'security notice',
     'security vulnerabilit', 'alerta de segurança', 'unusual sign', 'sign-in attempt', 'password reset',

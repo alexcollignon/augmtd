@@ -44,12 +44,14 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('W2: ONE routing brain — room-view + detail route both call suggestWorkerForMove',
     src('lib/entities/room-view.ts').includes('suggestWorkerForMove') &&
     src('app/api/entities/[id]/detail/route.ts').includes('suggestWorkerForMove'));
-  // O2 superseded W2's mechanism: the router is now the ROSTER JUDGE (no map at all).
-  check('W2→O2: ONE reasoned router — the roster judge, no SHAPE_TO_ROLE map anywhere',
+  // O2 superseded W2's mechanism (roster judge, no map); proactive-team W1 then superseded the
+  // pass's batch call — the pass prepares from THE ONE WORK JUDGMENT (judgeWork carries the
+  // executor half). routeTasks survives as the chip's single-title engine.
+  check('W2→O2→W1: ONE reasoned router — roster judge for the chip; the pass prepares from judgeWork',
     src('lib/prepare/route-suggestion.ts').includes('export async function routeTasks') &&
     src('lib/prepare/route-suggestion.ts').includes('loadRoster') &&
     !src('lib/prepare/pass.ts').includes('SHAPE_TO_ROLE') &&
-    src('lib/prepare/pass.ts').includes('routeTasks'));
+    src('lib/prepare/pass.ts').includes('judgeWork'));
 
   // ── W3 STRUCTURAL — the CTA narrates FACTS (keyed, deduped, actionable) ──
   const railSrc = src('components/home/item-rail.tsx');
@@ -66,9 +68,13 @@ const src = (p: string) => readFileSync(p, 'utf8');
 
   // ── W4 STRUCTURAL — ONE engine, two callers ──
   const passSrc = src('lib/prepare/pass.ts');
-  check('W4: prepareOneItem is THE engine — the cron walker calls it for every branch',
+  // Proactive-team W2 unified the walker: THREE lanes now flow through ONE prepareOneItem call
+  // site (the budgeted priority walk) — the "one engine" law, held even more tightly.
+  check('W4: prepareOneItem is THE engine — every walker lane flows through it (one call site, one budget)',
     passSrc.includes('export async function prepareOneItem') &&
-    (passSrc.match(/await prepareOneItem\(/g) ?? []).length >= 3);
+    (passSrc.match(/await prepareOneItem\(/g) ?? []).length >= 1 &&
+    passSrc.includes('const lanes: WorkItem[][]') &&
+    passSrc.includes('tally(await prepareOneItem(admin, userId, w))'));
   check('W4: the prepare-now route shares the SAME engine',
     src('app/api/items/prepare-now/route.ts').includes('prepareOneItem'));
   check('W4: the room refreshes on aug:prepared + rows have the Prepare affordance',

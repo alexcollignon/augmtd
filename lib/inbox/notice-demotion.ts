@@ -18,13 +18,13 @@ export function isAutomatedSenderStrong(fromEmail: string | null, fromName: stri
     'no-reply', 'noreply', 'no_reply', 'donotreply', 'do-not-reply', 'do_not_reply',
     'notifications', 'notification', 'notify', 'mailer', 'mailer-daemon', 'bounce', 'bounces',
     'postmaster', 'automated', 'auto-confirm', 'alerts', 'alert', 'billing', 'invoices', 'receipts',
-    'support+', 'updates', 'newsletter', 'news', 'digest',
+    'support+', 'updates', 'newsletter', 'news', 'digest', 'payments', 'failed-payment',
   ];
   if (addrPatterns.some((p) => localpart.includes(p))) return true;
   if (/(^|[.@])(no-?reply|donotreply|notifications?|mailer|bounce|postmaster)([.@])/.test(email)) return true;
   const text = `${(fromName || '').toLowerCase()} ${(subject || '').toLowerCase()}`;
   const phrasePatterns = [
-    'payment failed', 'payment unsuccessful', 'payment declined', 'account suspended',
+    'payment failed', 'payment unsuccessful', 'was unsuccessful', 'payment declined', 'account suspended',
     'account restricted', 'account has been', 'your subscription', 'subscription renew',
     'verify your', 'confirm your email', 'confirm your account', 'security alert', 'security notice',
     'unusual sign', 'sign-in attempt', 'password reset', 'invoice is', 'your receipt', 'order confirmation',

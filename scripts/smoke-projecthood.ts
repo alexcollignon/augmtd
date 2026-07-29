@@ -57,8 +57,11 @@ const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
   check('P2 structural: portfolio route returns scope', readFileSync('app/api/entities/portfolio/route.ts', 'utf8').includes("scope:"));
   {
     const pv = readFileSync('components/entities/portfolio-view.tsx', 'utf8');
-    check('P2/F3 structural: curated strata (accepted-only projects · Suggested + Accept all · smaller fold)',
-      pv.includes('inTab.filter((e) => e.tracked)') && pv.includes('Accept all') && /smaller thing/i.test(pv));
+    // SUPERSEDED by the July-25 arc (promise P13): projects are HUMAN-created only — the portfolio
+    // renders TRACKED rows exclusively; the Suggested/Accept-all strata and the smaller-things fold
+    // are gone (discovery lives on the item + founding narration). The gate asserts the CURRENT law.
+    check('P2/F3→P13 structural: tracked-only portfolio (no Accept-all strata; accept = instant tracked flip)',
+      pv.includes('inTab.filter((e) => e.tracked)') && !pv.includes('Accept all') && pv.includes('tracked: true'));
     check('F3 doctrine: the growth heuristic is dead (suggestion = the judge\'s verdict)',
       !pv.includes('itemCount >= 4') && !pv.includes('kinds >= 2') && pv.includes("e.scope === 'project'"));
   }
@@ -199,13 +202,18 @@ const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
   check('S5 structural: entity route supports action merge + the ⋯ Merge into… list',
     readFileSync('app/api/entities/[id]/route.ts', 'utf8').includes("action === 'merge'") &&
     readFileSync('components/entities/portfolio-view.tsx', 'utf8').includes('Merge into…'));
-  check('S7 structural: a Smaller-things row can be promoted in place (pin star)',
-    /SmallRow[\s\S]*?'track'/.test(readFileSync('components/entities/portfolio-view.tsx', 'utf8')));
+  // SUPERSEDED (P13): the Smaller-things stratum is gone; promotion = TRACK, offered where the
+  // work actually is — the item's context strip ("connects to X · Track") and the portfolio accept.
+  check('S7→P13 structural: promotion is the tracked flip (strip surfaces the untracked relation; accept flips tracked in place)',
+    readFileSync('components/room/context-strip.tsx', 'utf8').includes("'Connects to'") &&
+    readFileSync('components/entities/portfolio-view.tsx', 'utf8').includes('tracked: true'));
   check('S2 structural: the room has + Add and Might belong here',
     readFileSync('components/entities/entity-room.tsx', 'utf8').includes('AddItemPicker') &&
     readFileSync('components/entities/entity-room.tsx', 'utf8').includes('Might belong here'));
-  check('S1 structural: the rail offers Start a project from this',
-    readFileSync('components/home/item-rail.tsx', 'utf8').includes('Start a project from this'));
+  // The founding affordance MOVED to the context strip (the one-room R-era: the strip is the only
+  // per-anchor variance) — the law (every item can found a project) holds, at its current home.
+  check('S1 structural: the room offers Start a project from this (context strip)',
+    readFileSync('components/room/context-strip.tsx', 'utf8').includes('Start a project from this'));
 
   console.log('\n════ PROJECTHOOD GATES (P1–P4 + PHASE 2) ════');
   let pass = 0;

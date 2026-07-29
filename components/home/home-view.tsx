@@ -22,6 +22,7 @@ import { RiseIn } from '@/components/home/rise-in';
 import { ExpandableRows } from '@/components/home/expandable-rows';
 import { useBriefingNavigate, type Briefing as ReasonedBriefing } from '@/components/briefing/briefing-view';
 import HomeAsk from '@/components/home/home-ask';
+import WaitingOnYou, { type OpenAsk } from '@/components/home/waiting-on-you';
 import ViewSwitcher, { type HomeView as HomeViewLens } from '@/components/home/view-switcher';
 import {
   buildAgenda, coveredIds, type Agenda, type DoItem, type DoSource, type DeckEntry,
@@ -1276,6 +1277,21 @@ export function HomeView() {
   const [team, setTeam] = useState<{ messages: TeamMsg[]; needsReview: TeamReview[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
+  // W3 — the GLOBAL ASK LEDGER: every open input-checklist ask across every room (work blocked on
+  // the user is never room-local). Cached-hydrate → background refresh (the instant-load rule:
+  // reads live in an effect, never a useState initializer, on this SSR'd route).
+  const [openAsks, setOpenAsks] = useState<OpenAsk[]>([]);
+  useEffect(() => {
+    const cached = loadLS<{ asks: OpenAsk[] }>('aug-open-asks-v1');
+    if (cached?.asks) setOpenAsks(cached.asks);
+    let alive = true;
+    const loadAsks = () => fetch('/api/room/asks').then((r) => r.json())
+      .then((d) => { if (alive && Array.isArray(d?.asks)) { setOpenAsks(d.asks); saveLS('aug-open-asks-v1', { asks: d.asks }); } })
+      .catch(() => {});
+    loadAsks();
+    const t = setInterval(loadAsks, 120_000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
 
 
   const [dismissed, setDismissed] = useState<Set<string>>(new Set()); // itemIds acted this session → live count + list refill
@@ -1770,6 +1786,12 @@ export function HomeView() {
   const rail = (key: string, label: string, count: number | null, node: React.ReactNode) => {
     ambientSections.push({ key, label, count, node });
   };
+
+  // W3 — "Needs your input" leads the ambient bar: open asks are the one ambient class where work
+  // is actively BLOCKED on the user (a colleague standing at your desk outranks the day's agenda).
+  if (openAsks.length > 0) rail('asks', 'Needs your input', openAsks.length, (
+    <WaitingOnYou asks={openAsks} onProceeded={(id) => setOpenAsks((prev) => prev.filter((a) => a.id !== id))} />
+  ));
 
   if (hasSchedule) rail('schedule', 'Today’s schedule', b!.schedule.length, (
       <div className="space-y-2">

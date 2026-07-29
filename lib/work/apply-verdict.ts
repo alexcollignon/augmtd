@@ -27,6 +27,10 @@ export async function applyVerdictConsequences(
 ): Promise<VerdictConsequence> {
   const out: VerdictConsequence = { resolved: false, stripped: [] };
   try {
+    // ── 0. FAILURE HONESTY (W2): a FAILED judgment moves nothing. It is not a verdict — resolving
+    // an item or stripping a prepared draft on the back of an AI outage would destroy real work.
+    if (verdict.failed) return out;
+
     // ── 1. RESOLUTION from a dispositioned none. ──
     if (verdict.work === 'none' && (verdict.resolution === 'expired' || verdict.resolution === 'answered')) {
       const now = new Date().toISOString();
@@ -62,6 +66,31 @@ export async function applyVerdictConsequences(
       return out; // resolved → no artifact hygiene needed (drafts stripped with the resolve)
     }
 
+    // ── 1b. DELIBERATE TIME (W4) — a revisit verdict PARKS, never resolves: the item stays
+    // pending (it returns on its date via the judge), the deck demotes it as a plain none, and
+    // the room hears WHY it left the desk (a keyed turn, updated in place — never a stutter).
+    if (verdict.work === 'none' && verdict.revisit?.after && !verdict.resolution) {
+      try {
+        const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
+        let title = '';
+        if (input.kind === 'inbox') {
+          const { data: it } = await client.from('inbox_items').select('work_title').eq('id', input.id).eq('user_id', userId).maybeSingle();
+          title = String(it?.work_title ?? '');
+        } else {
+          const { data: c } = await client.from('commitments').select('description').eq('id', input.id).eq('user_id', userId).maybeSingle();
+          title = String(c?.description ?? '');
+        }
+        const roomKey = await roomKeyForItem(client, userId, input.kind === 'inbox' ? 'inbox' : 'commitment', input.id);
+        await writeRoomTurn(client, userId, roomKey, {
+          role: 'system',
+          text: `Set "${title.slice(0, 60)}" aside until ${verdict.revisit.after}${verdict.revisit.reason ? ` — ${verdict.revisit.reason.slice(0, 110)}` : ''}. I'll bring it back then; say the word if you want it now.`,
+          refs: [{ label: title.slice(0, 60), href: input.kind === 'inbox' ? `/item/${input.id}` : `/item/${input.id}?kind=commitment` }],
+          dedupeKey: `revisit:${input.kind}:${input.id}`,
+        });
+      } catch { /* narration is an enhancement */ }
+      // fall through to artifact hygiene — a parked item's stale artifacts strip with the verdict
+    }
+
     // ── 2. ARTIFACT HYGIENE — prepared work must agree with the verdict. ──
     if (input.kind === 'inbox') {
       const { data: it } = await client.from('inbox_items').select('id, source_data')
@@ -71,8 +100,13 @@ export async function applyVerdictConsequences(
       const draftOk = verdict.work === 'reply' || verdict.work === 'send_file';
       if (!draftOk && (sd.draft as Record<string, unknown>)?.body) { delete sd.draft; out.stripped.push('reply_draft'); changed = true; }
       if (verdict.work !== 'chase' && (sd.nudge_draft as Record<string, unknown>)?.body) { delete sd.nudge_draft; out.stripped.push('nudge_draft'); changed = true; }
+      // The W1 verbs' artifacts obey the same law: a prepared invite/forward that no longer matches
+      // the verdict strips (the judged pass regenerates the right kind).
+      if (verdict.work !== 'schedule' && sd.prepared_invite) { delete sd.prepared_invite; out.stripped.push('prepared_invite'); changed = true; }
+      if (verdict.work !== 'forward' && sd.prepared_forward) { delete sd.prepared_forward; out.stripped.push('prepared_forward'); changed = true; }
       if (changed) {
-        if (!(sd.draft as Record<string, unknown>)?.body && !(sd.nudge_draft as Record<string, unknown>)?.body) delete sd.prepared_by;
+        if (!(sd.draft as Record<string, unknown>)?.body && !(sd.nudge_draft as Record<string, unknown>)?.body
+          && !sd.prepared_invite && !sd.prepared_forward) delete sd.prepared_by;
         await client.from('inbox_items').update({ source_data: sd }).eq('id', input.id).eq('user_id', userId);
         // The narration must follow the work it narrated (never a stale "drafted" line).
         await client.from('room_turns').delete().eq('user_id', userId).eq('dedupe_key', `prep:inbox:${input.id}`).then(() => {}, () => {});

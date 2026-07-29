@@ -67,6 +67,21 @@ export async function executeResolveInboxItem(
     metadata: { ...(args.reason ? { reason: args.reason } : {}), resolution_reason: resolvedReason },
   }).catch(() => {});
 
+  // THE OUTCOME LOG (proactive-team R1) — resolving an item that still carried UNSENT prepared work
+  // means the preparation was DISCARDED. One stamp per artifact, at the one resolver every door
+  // (routes + chief-of-staff tool) already calls. Collect now; the learning arc synthesizes later.
+  try {
+    const { logPreparedOutcome } = await import('@/lib/prepare/outcome');
+    const discards: Array<import('@/lib/prepare/outcome').PreparedArtifactKind> = [];
+    if ((sd.draft as { body?: string } | undefined)?.body) discards.push('reply_draft');
+    if ((sd.nudge_draft as { body?: string } | undefined)?.body) discards.push('nudge_draft');
+    if (sd.prepared_invite && !(sd.prepared_invite as { sent_at?: string }).sent_at) discards.push('invite');
+    if (sd.prepared_forward && !(sd.prepared_forward as { sent_at?: string }).sent_at) discards.push('forward');
+    for (const artifact of discards) {
+      await logPreparedOutcome(client, userId, { outcome: 'discarded', artifact, itemKind: 'inbox', itemId });
+    }
+  } catch { /* the outcome log never breaks the action it observes */ }
+
   // Brain + mailbox tails — fire-and-forget (callers may not have after()).
   void (async () => {
     await noteItemAction(client, userId, { kind: 'inbox_item', id: itemId }).catch(() => {});

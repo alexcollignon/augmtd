@@ -49,7 +49,7 @@ if (!userId || !/^[0-9a-f-]{36}$/.test(userId)) { console.error('usage: reset-ac
 
   // 5 — prepared drafts on inbox items (strip draft / nudge_draft / prepared_by from source_data)
   let stripped = 0;
-  for (const key of ['draft', 'nudge_draft', 'prepared_by'] as const) {
+  for (const key of ['draft', 'nudge_draft', 'prepared_by', 'prepared_invite', 'prepared_forward'] as const) {
     const { data } = await sb.from('inbox_items').select('id, source_data')
       .eq('user_id', userId).not(`source_data->${key}`, 'is', null).limit(2000);
     for (const r of (data ?? []) as Array<{ id: string; source_data: Record<string, unknown> }>) {

@@ -264,6 +264,27 @@ export async function prepareForward(
  * the step to a prepared-action type, and builds it. Non-fatal: returns null only when the context
  * can't be built (the caller surfaces a soft error; the deep-dive still works via the compose path).
  */
+// ── W1: the AMBIENT-artifact serving edge — the preparation pass stores judged invites/forwards on
+// the item (`source_data.prepared_invite` / `prepared_forward`); the card's prepare fetch serves the
+// STORED artifact first so ambient work arrives instantly instead of regenerating on open. Fresh =
+// generated within 24h and not already sent; stale/absent falls through to the live builders below.
+const AMBIENT_FRESH_MS = 24 * 3_600_000;
+
+async function readAmbientArtifact(
+  supabase: SupabaseClient, userId: string, kind: ItemPlanKind, entityId: string,
+  which: 'prepared_invite' | 'prepared_forward',
+): Promise<Record<string, unknown> | null> {
+  if (kind !== 'email' && kind !== 'awareness' && kind !== 'followup') return null;
+  try {
+    const { data: it } = await supabase.from('inbox_items').select('source_data')
+      .eq('id', entityId).eq('user_id', userId).maybeSingle();
+    const art = ((it?.source_data ?? {}) as Record<string, unknown>)[which] as Record<string, unknown> | undefined;
+    if (!art || art.sent_at) return null;
+    if (Date.now() - Date.parse(String(art.generated_at || '0')) > AMBIENT_FRESH_MS) return null;
+    return art;
+  } catch { return null; }
+}
+
 export async function prepareAction(
   supabase: SupabaseClient,
   userId: string,
@@ -276,11 +297,34 @@ export async function prepareAction(
   }
 
   if (type === 'forward') {
-    // Grounded in the item's real email — no ItemContext needed (we read subject/body directly).
-    return prepareForward(supabase, userId, input.kind, input.entityId, input.task.text || '');
+    // The ambient prepared forward serves first (the pass grounded to/subject/note already); the
+    // forwarded BODY is re-grounded live (it is the item's own email — never stored twice).
+    const stored = await readAmbientArtifact(supabase, userId, input.kind, input.entityId, 'prepared_forward');
+    const live = await prepareForward(supabase, userId, input.kind, input.entityId, input.task.text || '');
+    if (stored) {
+      return {
+        ...live,
+        to: Array.isArray(stored.to) && (stored.to as string[]).length ? (stored.to as string[]) : live.to,
+        subject: typeof stored.subject === 'string' && stored.subject ? (stored.subject as string) : live.subject,
+        note: typeof stored.note === 'string' ? (stored.note as string) : live.note,
+      };
+    }
+    return live;
   }
 
-  // calendar_invite — needs the grounded item context (participants + item date).
+  // calendar_invite — the ambient prepared invite serves first (grounded by the pass); else build live.
+  const stored = await readAmbientArtifact(supabase, userId, input.kind, input.entityId, 'prepared_invite');
+  if (stored && typeof stored.title === 'string') {
+    return {
+      type: 'calendar_invite',
+      title: String(stored.title),
+      startISO: typeof stored.startISO === 'string' ? stored.startISO : '',
+      endISO: typeof stored.endISO === 'string' ? stored.endISO : '',
+      attendees: Array.isArray(stored.attendees) ? (stored.attendees as string[]).filter((a) => typeof a === 'string') : [],
+      description: typeof stored.description === 'string' ? stored.description : '',
+      timezone: typeof stored.timezone === 'string' && stored.timezone ? stored.timezone : 'UTC',
+    };
+  }
   const ctx = await buildItemContext(supabase, userId, input.kind, input.entityId);
   if (!ctx) return null;
   return prepareCalendarInvite(supabase, userId, input.kind, ctx, input.task.text || '');

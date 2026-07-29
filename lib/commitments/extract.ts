@@ -302,6 +302,46 @@ export async function writeMeetingCommitments(
   await writeCommitments(userId, list, { source: 'meeting', sourceId: meta.transcriptId, threadId: null, status: 'suggested' }, client);
 }
 
+// ── THE DEIXIS SCRUBBER (proactive-team T-class) — stored text must stay true as time passes.
+// Detection is LEXICAL (relative day-words in any of the user's working languages here — extend the
+// list as languages appear); the rewrite is REASONED: one capped call over the offending titles
+// only, anchored to the source's own date. Failure keeps the original (non-fatal, honest). ──
+export const DEICTIC_RE = /\b(tomorrow|today|tonight|yesterday|next week|next month|this week|this (?:mon|tues|wednes|thurs|fri|satur|sun)day|amanh[ãa]|hoje|ontem|pr[óo]xima semana)\b/i;
+
+export async function resolveDeixisInDescriptions<T extends { description: string }>(
+  client: DBClient, userId: string, list: T[], anchorIso: string | null,
+): Promise<T[]> {
+  const offenders = list.map((c, i) => ({ c, i })).filter(({ c }) => DEICTIC_RE.test(c.description));
+  if (!offenders.length) return list;
+  try {
+    const anchor = anchorIso && !isNaN(Date.parse(anchorIso)) ? new Date(anchorIso) : new Date();
+    const anchorPretty = anchor.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const { client: ai, model } = await getAIClient(userId, 'classification', client);
+    const res = await aiCreate(ai, {
+      model, max_tokens: 300, temperature: 0,
+      messages: [{ role: 'user', content:
+        `These task titles contain RELATIVE time words that decay ("tomorrow" stops being true in a day). ` +
+        `The source they came from is dated ${anchorPretty}. Rewrite each title with the relative words ` +
+        `resolved to ABSOLUTE dates forward from THAT date (keep clock times; "tomorrow" → the next day's ` +
+        `"MMM D"). Change NOTHING else about the title.\n\n` +
+        offenders.map(({ c }, n) => `${n}. ${c.description}`).join('\n') +
+        `\n\nJSON only: {"titles":["…", …]} (same order, same count)` }],
+    });
+    const m = (res.choices?.[0]?.message?.content ?? '').match(/\{[\s\S]*\}/);
+    const titles = m ? (JSON.parse(m[0]) as { titles?: string[] }).titles : null;
+    if (Array.isArray(titles) && titles.length === offenders.length) {
+      const out = [...list];
+      offenders.forEach(({ i }, n) => {
+        const t = String(titles[n] ?? '').trim();
+        // Accept only a rewrite that actually removed the deixis — a lazy echo keeps the original.
+        if (t && !DEICTIC_RE.test(t)) out[i] = { ...out[i], description: t.slice(0, 140) };
+      });
+      return out;
+    }
+  } catch { /* the scrubber is a belt — the original title stands */ }
+  return list;
+}
+
 // Extract commitments from one email and persist them. Returns the count written.
 export async function extractEmailCommitments(opts: {
   userId: string;
@@ -313,9 +353,12 @@ export async function extractEmailCommitments(opts: {
   sourceId: string;
   threadId?: string | null;
   instructions?: string;   // user's custom extraction guidance (Email tab → To-do capture)
+  /** The email's OWN date — the deixis anchor ("tomorrow" in a 3-day-old email is 3 days ago's
+   *  tomorrow, never extraction-day's). Falls back to now when absent. */
+  receivedAt?: string | null;
   client: DBClient;
 }): Promise<number> {
-  const { userId, subject, body, isFromUser, userName, counterparty, sourceId, threadId, instructions, client } = opts;
+  const { userId, subject, body, isFromUser, userName, counterparty, sourceId, threadId, instructions, receivedAt, client } = opts;
   const text = (body || '').trim();
   if (text.length < 20 || !COMMITMENT_HINT.test(text)) return 0;
   // Received bulk/newsletter mail never carries a real commitment — skip before the AI call.
@@ -343,7 +386,7 @@ STRICTLY EXCLUDE and return an empty array if the message is a newsletter, promo
 
 ${perspective}
 
-due_date: set it ONLY when THIS email explicitly states a deadline — an absolute date, or an unambiguous relative one ("by Friday", "by EOD", "next Tuesday", "in 3 days"). Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}, so resolve such a stated relative deadline to an absolute YYYY-MM-DD. If no deadline is stated in the email, due_date MUST be null. NEVER guess, infer, or invent a plausible date — a missing deadline is null, not a made-up one.
+due_date: set it ONLY when THIS email explicitly states a deadline — an absolute date, or an unambiguous relative one ("by Friday", "by EOD", "next Tuesday", "in 3 days"). THIS EMAIL IS DATED ${(receivedAt && !isNaN(Date.parse(receivedAt)) ? new Date(receivedAt) : new Date()).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} — resolve every relative time FORWARD FROM THAT DATE (its "tomorrow" is the day after IT was sent, not after today), to an absolute YYYY-MM-DD. If no deadline is stated in the email, due_date MUST be null. NEVER guess, infer, or invent a plausible date — a missing deadline is null, not a made-up one.
 
 counterparty: the specific real person this obligation is with (who owes it, or is owed it), drawn from this email's actual participants — the sender or a named recipient. Use null only when genuinely unidentifiable; never invent a name.
 
@@ -356,6 +399,7 @@ ${text.slice(0, 2500)}
 """
 
 description — THE TITLE LAW: a short IMPERATIVE, at most ~9 words, starting with a verb and naming the deliverable ("Send the Q3 proposal", "Review the contract by Friday"). NEVER notes/narration phrasing ("Discussed the possibility of…", "It was agreed that…", "X mentioned…", "Follow up regarding the conversation about…") and never a sentence describing the conversation — the title is the TASK, written the way it would sit on a to-do list.
+THE DEIXIS LAW: a stored title must stay TRUE as time passes — never write relative time words ("tomorrow", "today", "tonight", "next week", "this Friday") into the description. Resolve them against THIS EMAIL'S OWN DATE above and write the absolute instead: "Be at the meeting room at 12:30 tomorrow" (sent Jul 27) → "Be at the meeting room — Jul 28, 12:30". Clock times stay; day-words become dates.
 
 Return ONLY JSON. Empty array if there are no real commitments:
 {"commitments":[{"direction":"you_owe|awaiting","description":"short imperative, e.g. 'Send the Q3 proposal'","due_date":"YYYY-MM-DD or null","counterparty":"name/email or null","initiative":"short label or null","steps":["short sub-part", "..."]}]}`;
@@ -375,6 +419,10 @@ Return ONLY JSON. Empty array if there are no real commitments:
     if (isFromUser) {
       list = list.map((c) => (c.direction === 'you_owe' && !FIRST_PERSON_PROMISE.test(c.description) ? { ...c, direction: 'awaiting' } : c));
     }
+    // THE DEIXIS LAW, structural belt (T-class): a title carrying a relative time word decays into
+    // a lie ("tomorrow" is only true for a day) — detection is lexical, the REWRITE is reasoned
+    // (one capped call, only for offenders), anchored to the email's own date.
+    list = await resolveDeixisInDescriptions(client, userId, list, receivedAt ?? null);
     await writeCommitments(userId, list, { source: 'email', sourceId, threadId, counterparty }, client);
     return list.length;
   } catch {
