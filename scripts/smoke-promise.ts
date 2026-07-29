@@ -817,7 +817,11 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     src('components/home/item-rail.tsx').includes('!t.proceeded && !t.author?.name && t.turnId') &&
     src('lib/prepare/requirements.ts').includes('proceeded: true') &&
     src('lib/prepare/pass.ts').includes('Do NOT ask for the missing inputs again') &&
-    src('components/home/home-view.tsx').includes("'Needs your input'"));
+    // The ledger renders in the ACTION column above the deck (an ask is BLOCKED WORK, not ambient
+    // context — the ambient pill strip is retired and must never silently swallow it again).
+    src('components/home/home-view.tsx').includes('Needs your input') &&
+    src('components/home/home-view.tsx').includes('openAsks.length > 0 && (') &&
+    src('components/home/home-view.tsx').includes('is BLOCKED WORK'));
   {
     // The LIFECYCLE, driven through the REAL resolution engine (P18 already gates the judged
     // CREATION of asks; this gate owns what happens to one after): resolveRequirements writes the
