@@ -58,6 +58,82 @@ export type ConverseTurn = {
 const linkKindOf = (s: Extract<ConverseScope, { kind: 'item' }>): 'inbox_item' | 'commitment' | 'meeting' =>
   s.itemKind === 'commitment' || s.itemKind === 'followup' ? 'commitment' : s.itemKind === 'meeting' ? 'meeting' : 'inbox_item';
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE DIALOGUE READ (converse arc — the Omantel lesson): the room RENDERS as a conversation, so
+// the responder must SEE the conversation. Found live: the founding engine proposed "bring in
+// 'Omantel AI Bootcamp' (46 items)?", the user typed "only for the bootcamp", and this core —
+// blind to the room's turns — answered "I don't see any bootcamp-related work". Two laws fix the
+// class, not the case:
+//   1. The core reads the room's recent turns (transcript) and its STANDING INTERACTIONS (a
+//      founding proposal, an open ask) as machine-actionable state — a prose answer to a standing
+//      question executes through the SAME door as its button (adoptEntity / the proceed stamp).
+//   2. Names in the user's words resolve against the WHOLE registry (memory matches), not just the
+//      open room — an empty new room must never make the brain look amnesiac.
+// Plus the honesty floor: never assert the absence of something the dialogue or memory names.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+type PendingInteraction =
+  | { type: 'founding_proposal'; turnId: string; targetId: string; options: Array<{ label: string; sourceId: string }> }
+  | { type: 'ask'; turnId: string; dedupeKey: string | null; items: string[] };
+
+async function dialogueContext(
+  client: SupabaseClient, userId: string, scope: ConverseScope,
+): Promise<{ transcript: string; pending: PendingInteraction | null; roomKey: string | null }> {
+  try {
+    const { readRoomTurns, roomKeyForItem } = await import('@/lib/room/turns');
+    const roomKey = scope.kind === 'entity' ? scope.entityId
+      : scope.kind === 'item'
+        ? await roomKeyForItem(client, userId, linkKindOf(scope) === 'inbox_item' ? 'inbox' : linkKindOf(scope) === 'commitment' ? 'commitment' : 'meeting', scope.itemId)
+        : null;
+    if (!roomKey) return { transcript: '', pending: null, roomKey: null };
+    const turns = await readRoomTurns(client, userId, roomKey, 10);
+    if (!turns.length) return { transcript: '', pending: null, roomKey };
+    const lines = turns.map((t) => {
+      const who = t.role === 'user' ? 'user' : t.author?.name ? t.author.name.split(' ')[0] : 'assistant';
+      const comp = t.component?.key === 'founding_proposal'
+        ? ` [STANDING PROPOSAL — options: ${((t.component.state?.options as Array<{ label: string }> | undefined) ?? []).map((o) => `"${o.label}"`).join(', ')}]`
+        : t.component?.key === 'input_checklist'
+          ? ` [OPEN ASK — waiting on: ${((t.component.state?.items as string[] | undefined) ?? []).join('; ')}]`
+          : '';
+      return `[${who}] ${t.text.replace(/\s+/g, ' ').slice(0, 220)}${comp}`;
+    });
+    // The LATEST standing interaction wins (one pending thing at a time — the room's own ask law).
+    let pending: PendingInteraction | null = null;
+    for (let i = turns.length - 1; i >= 0; i--) {
+      const t = turns[i];
+      const st = (t.component?.state ?? {}) as Record<string, unknown>;
+      if (t.component?.key === 'founding_proposal' && Array.isArray(st.options) && (st.options as unknown[]).length) {
+        pending = { type: 'founding_proposal', turnId: String(t.id), targetId: String(st.targetId ?? ''), options: st.options as Array<{ label: string; sourceId: string }> };
+        break;
+      }
+      if (t.component?.key === 'input_checklist' && Array.isArray(st.items) && !st.proceeded) {
+        pending = { type: 'ask', turnId: String(t.id), dedupeKey: t.key ?? null, items: (st.items as string[]).map(String) };
+        break;
+      }
+    }
+    return { transcript: `THE CONVERSATION SO FAR (this room, latest last):\n${lines.join('\n')}`, pending, roomKey };
+  } catch { return { transcript: '', pending: null, roomKey: null }; }
+}
+
+/** MEMORY MATCHES — names in the user's words resolved against the WHOLE registry (identity
+ *  tokens, deterministic; the same distinctive-token idea as the recognition veto). */
+async function registryMatches(client: SupabaseClient, userId: string, text: string, excludeEntityId: string | null): Promise<string> {
+  try {
+    const tokens = text.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 4);
+    if (!tokens.length) return '';
+    const { data } = await client.from('work_entities').select('id, name, aliases, tracked')
+      .eq('user_id', userId).eq('kind', 'initiative').eq('status', 'active').limit(400);
+    const hits: string[] = [];
+    for (const e of (data ?? []) as Array<{ id: string; name: string; aliases: string[] | null; tracked: boolean }>) {
+      if (e.id === excludeEntityId) continue;
+      const hay = `${e.name} ${(e.aliases ?? []).join(' ')}`.toLowerCase();
+      if (tokens.some((t) => hay.includes(t))) hits.push(`"${e.name}"${e.tracked ? ' (a tracked project)' : ' (a known body of work)'}`);
+      if (hits.length >= 3) break;
+    }
+    return hits.length ? `MEMORY MATCHES elsewhere in the user's registry (they may be referring to these): ${hits.join(' · ')}` : '';
+  } catch { return ''; }
+}
+
 /** The item's entity (the deal the conversation is scoped to), when linked. */
 async function entityOfScope(client: SupabaseClient, userId: string, scope: ConverseScope): Promise<string | null> {
   if (scope.kind === 'entity') return scope.entityId;
@@ -76,7 +152,7 @@ type Verdict = {
   open: boolean; // composite / doesn't fit → the agent loop
 };
 
-async function classifyTurn(client: SupabaseClient, userId: string, scope: ConverseScope, text: string): Promise<Verdict> {
+async function classifyTurn(client: SupabaseClient, userId: string, scope: ConverseScope, text: string, transcript = ''): Promise<Verdict> {
   // The command list is DERIVED from the chief-of-staff registry slice — the router can only route to
   // what's registered (adding a capability row updates this prompt automatically; the one-truth law).
   const commands = capabilitiesFor('chief_of_staff')
@@ -84,6 +160,9 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
   const inItem = scope.kind === 'item';
   const prompt =
     `You are the router of a work assistant's chat. The user typed a note${inItem ? ' while viewing ONE work item' : ''}. ` +
+    // THE DIALOGUE READ: the router sees the conversation, so a note referencing "it"/"that"/"the
+    // bootcamp" resolves against what was just said, never against thin air.
+    (transcript ? `${transcript.slice(0, 1200)}\n\n` : '') +
     `Classify it. Available direct COMMANDS (from the capability registry):\n${commands}\n\n` +
     `Return ONLY JSON:\n` +
     `{"command":{"tool":"<registry tool>","args":{...}}|null,` +
@@ -142,7 +221,13 @@ async function dispatchCommand(
   if (tool === 'find_file') {
     const entityId = await entityOfScope(client, userId, scope);
     const r = await executeFindFile(ctx, { query: String(args.query ?? ''), entityId });
-    if (!r.files.length) return { say: "I couldn't find a matching file in the knowledge base, past attachments, or connected drives.", refs: [] };
+    if (!r.files.length) {
+      // THE HONESTY FLOOR at the search door too (the kiteschool class): before claiming nothing,
+      // check whether the NAME resolves in the registry — "no file" is not "never heard of it".
+      const mm = await registryMatches(client, userId, String(args.query ?? ''), scope.kind === 'entity' ? scope.entityId : null);
+      if (mm) return { say: `No matching FILE — but this looks like ${mm.replace(/^MEMORY MATCHES[^:]*: /, '')}. Open that project for its work and documents, or tell me what to pull from it.`, refs: [] };
+      return { say: "I couldn't find a matching file in the knowledge base, past attachments, or connected drives.", refs: [] };
+    }
     return { say: `Found ${r.files.length === 1 ? 'this' : 'these'}:`, refs: [], files: r.files };
   }
   if (tool === 'remember_fact' && scope.kind !== 'global') {
@@ -216,7 +301,11 @@ async function dispatchCommand(
       const { buildKBContext } = await import('@/lib/knowledge/build-kb-context');
       const kb = await buildKBContext(userId, String(args.query ?? ''), client, { fileLimit: 4 });
       const text = typeof kb === 'string' ? kb : ((kb as { context?: string })?.context ?? '');
-      return { say: (text || '').slice(0, 3000) || 'Nothing matching in the knowledge base.', refs: [] };
+      if ((text || '').trim()) return { say: text.slice(0, 3000), refs: [] };
+      // The honesty floor (the kiteschool class): an empty KB result still checks the registry.
+      const mm = await registryMatches(client, userId, String(args.query ?? ''), scope.kind === 'entity' ? scope.entityId : null);
+      if (mm) return { say: `Nothing in the knowledge base — but this looks like ${mm.replace(/^MEMORY MATCHES[^:]*: /, '')}. Its work lives on that project.`, refs: [] };
+      return { say: 'Nothing matching in the knowledge base.', refs: [] };
     } catch { return { say: 'Nothing matching in the knowledge base.', refs: [] }; }
   }
   return null;
@@ -290,8 +379,76 @@ export async function converse(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string,
   opts: { history?: ConverseHistoryTurn[] } = {},
 ): Promise<ConverseTurn> {
-  const verdict = await classifyTurn(client, userId, scope, text);
-  const viewing = await viewingExcerpt(client, userId, scope);
+  const [dlg, viewing] = await Promise.all([
+    dialogueContext(client, userId, scope),
+    viewingExcerpt(client, userId, scope),
+  ]);
+
+  // 0 — A STANDING INTERACTION is pending: first decide whether this note ANSWERS it (the Omantel
+  // law — a person replying under a question is answering the question until proven otherwise).
+  // A yes executes through the SAME door as the button; ambiguity gets ONE clarifier ANCHORED on
+  // the pending thing; a no falls through to the normal flow (which now sees the transcript).
+  if (dlg.pending) {
+    try {
+      const p = dlg.pending;
+      const pendingDesc = p.type === 'founding_proposal'
+        ? `A PROPOSAL is standing: bring existing work into this project. Options:\n${p.options.map((o, i) => `${i}. ${o.label}`).join('\n')}`
+        : `An ASK is standing: the work is waiting on the user for: ${p.items.join('; ')}. (The user can also say "go ahead" to proceed with what's available.)`;
+      const { aiCall } = await import('@/lib/ai/call');
+      const res = await aiCall<{ responds?: boolean; option?: number | null; go_ahead?: boolean; unclear?: string | null }>({
+        userId, supabase: client, shape: { output: 'json' }, temperature: 0, maxTokens: 150, source: 'brain_synthesis',
+        prompt: `${dlg.transcript ? `${dlg.transcript}\n\n` : ''}${pendingDesc}\n\nTHE USER JUST TYPED: "${text}"\n\n` +
+          `Is this note an ANSWER to the standing ${p.type === 'founding_proposal' ? 'proposal' : 'ask'} (accepting, choosing, scoping, or declining it) — or something else entirely?\n` +
+          `JSON only: {"responds":true|false,${p.type === 'founding_proposal' ? '"option":<option number accepted, or null if declined/unclear>,' : '"go_ahead":true|false,'}"unclear":"<ONE short clarifying question anchored on the pending thing, ONLY if responds but you cannot act>"}`,
+      });
+      if (res.json?.responds === true) {
+        if (p.type === 'founding_proposal') {
+          const idx = typeof res.json.option === 'number' ? res.json.option : null;
+          const pick = idx !== null ? p.options[idx] : (p.options.length === 1 ? p.options[0] : null);
+          if (pick && p.targetId) {
+            const { adoptEntity } = await import('@/lib/entities/adopt');
+            const r = await adoptEntity(client, userId, p.targetId, pick.sourceId);
+            if (r.ok) {
+              void import('@/lib/entities/state').then(({ refreshEntityState }) => refreshEntityState(client, userId, p.targetId, { force: true })).catch(() => {});
+              void import('@/lib/home/bust-brief').then(({ softBustBrief }) => softBustBrief(client, userId)).catch(() => {});
+              return { say: `Done — brought "${r.sourceName}" in. ${r.total ?? 0} items now live here.`, refs: [], applied: [{ tool: 'adopt_entity', title: r.sourceName ?? 'adoption' }] };
+            }
+            return { say: `I couldn't complete that merge — try the button on the proposal, and I'll look into why.`, refs: [] };
+          }
+          if (res.json.unclear) return { say: String(res.json.unclear).slice(0, 200), refs: [] };
+        }
+        if (p.type === 'ask' && res.json.go_ahead === true) {
+          // The SAME lifecycle the go-ahead button stamps: proceeded on the turn, the visible
+          // decision, and the engine re-runs with what's available (work-with-what-you-have).
+          const { data: turn } = await client.from('room_turns').select('id, component, dedupe_key').eq('id', p.turnId).eq('user_id', userId).maybeSingle();
+          if (turn) {
+            const comp = (turn.component ?? {}) as { key?: string; state?: Record<string, unknown> };
+            await client.from('room_turns').update({
+              component: { ...comp, state: { ...(comp.state ?? {}), proceeded: true, proceeded_at: new Date().toISOString() } },
+            }).eq('id', turn.id);
+            const m = /^(?:requires|delegate):([^:]+)/.exec(String(turn.dedupe_key ?? ''));
+            if (m) {
+              const itemId = m[1];
+              void (async () => {
+                try {
+                  const { buildWorkItems } = await import('@/lib/work-items/model');
+                  const { prepareOneItem } = await import('@/lib/prepare/pass');
+                  const todayStr = new Date().toISOString().slice(0, 10);
+                  const items = await buildWorkItems(client, userId, { todayStr, skipReconcile: true });
+                  const w = items.find((x) => x.entityId === itemId);
+                  if (w) await prepareOneItem(client, userId, w);
+                } catch { /* the go-ahead already landed */ }
+              })();
+            }
+            return { say: "Going ahead with what's available — I'll work around the gaps and note them honestly.", refs: [], applied: [{ tool: 'proceed_ask', title: 'go-ahead' }] };
+          }
+        }
+        if (res.json.unclear) return { say: String(res.json.unclear).slice(0, 200), refs: [] };
+      }
+    } catch { /* the pending read is a refinement — the normal flow below still sees the transcript */ }
+  }
+
+  const verdict = await classifyTurn(client, userId, scope, text, dlg.transcript);
 
   // 1 — COMMAND fast-path: direct registry dispatch (~1 extra small call total).
   if (verdict.command) {
@@ -334,8 +491,17 @@ export async function converse(
   }
 
   // 3 — QUESTION: grounded answer from the scope's memory — the whole brain (global), the deal's
-  // memory (entity / linked item), or the item's own context. ONE core; the graders stay single-source.
+  // memory (entity / linked item), or the item's own context. ONE core; the graders stay
+  // single-source. The DIALOGUE + registry MEMORY MATCHES ride the grounding, with the honesty
+  // floor: never assert the absence of something they name (the Omantel "I don't see any
+  // bootcamp-related work" class — one turn after the engine itself named 46 items of it).
   if (verdict.question) {
+    const scopeEntity = scope.kind === 'entity' ? scope.entityId : null;
+    const matches = await registryMatches(client, userId, text, scopeEntity);
+    const dialogueBlock = [
+      'RULE: never claim something does not exist or cannot be seen if THE CONVERSATION or MEMORY MATCHES below name it — reference it instead.',
+      dlg.transcript, matches,
+    ].filter(Boolean).join('\n');
     if (scope.kind === 'global') {
       const { answerHomeQuestion } = await import('@/lib/home/ask');
       const { answer, refs } = await answerHomeQuestion(client, userId, text, opts.history ?? []);
@@ -344,7 +510,8 @@ export async function converse(
     const entityId = await entityOfScope(client, userId, scope);
     if (entityId) {
       const { answerEntityQuestion } = await import('@/lib/entities/ask');
-      const { answer, refs } = await answerEntityQuestion(client, userId, entityId, text, opts.history ?? [], { viewing });
+      const { answer, refs } = await answerEntityQuestion(client, userId, entityId, text, opts.history ?? [],
+        { viewing: [dialogueBlock, viewing].filter(Boolean).join('\n\n') });
       return { say: answer, refs };
     }
     if (scope.kind === 'item') {
@@ -353,7 +520,7 @@ export async function converse(
       const { aiCall } = await import('@/lib/ai/call');
       const res = await aiCall<{ answer?: string }>({
         userId, supabase: client, shape: { output: 'json' }, maxTokens: 300, temperature: 0.2, source: 'brain_synthesis',
-        prompt: `Answer STRICTLY from this context — plainly, a couple of sentences; if it doesn't cover the question, say so. PLAIN PROSE.\n${viewing ? `${viewing}\n` : ''}--- CONTEXT ---\n${(ctx?.text || '').slice(0, 3000)}\n--- QUESTION ---\n${text}\nReturn ONLY JSON: {"answer":"..."}`,
+        prompt: `Answer STRICTLY from this context — plainly, a couple of sentences; if it doesn't cover the question, say so. PLAIN PROSE.\n${dialogueBlock ? `${dialogueBlock}\n` : ''}${viewing ? `${viewing}\n` : ''}--- CONTEXT ---\n${(ctx?.text || '').slice(0, 3000)}\n--- QUESTION ---\n${text}\nReturn ONLY JSON: {"answer":"..."}`,
       });
       return { say: String(res.json?.answer || "I don't have enough on that here."), refs: [] };
     }
@@ -458,5 +625,12 @@ export async function converse(
     const { buildBrainSnapshot } = await import('@/lib/home/ask');
     grounding = (await buildBrainSnapshot(client, userId)).text.slice(0, 3500);
   }
-  return agentLoop(client, userId, scope, text, viewing ? `${viewing}\n\n${grounding}` : grounding);
+  // The agent loop sees the conversation + registry matches too (one law, every path), under the
+  // same honesty floor.
+  const matches = await registryMatches(client, userId, text, scope.kind === 'entity' ? scope.entityId : null);
+  const preamble = [
+    'RULE: never claim something does not exist or cannot be seen if THE CONVERSATION or MEMORY MATCHES below name it — reference it instead.',
+    dlg.transcript, matches, viewing,
+  ].filter(Boolean).join('\n\n');
+  return agentLoop(client, userId, scope, text, preamble ? `${preamble}\n\n${grounding}` : grounding);
 }
