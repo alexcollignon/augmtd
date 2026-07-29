@@ -160,8 +160,13 @@ function TypingDots() {
   );
 }
 
-export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
-  kind: RailKind; id: string; view: RailView; onDraft?: (draft: string) => void;
+export function ItemRail({ kind, id, view, pending = false, onDraft, decision, artifact }: {
+  kind: RailKind; id: string; view: RailView;
+  /** THE STRUCTURAL FRAME (UX arc): true while the view is still loading — the rail mounts its
+   *  shell (header, turns, composer) immediately and shows a quiet shimmer instead of anchor
+   *  claims; it must never assert anything (like "isn't tied to a project") it can't know yet. */
+  pending?: boolean;
+  onDraft?: (draft: string) => void;
   /** One-room R2 — the judged DECISION mounts INLINE in the stream (surface:'inline' per the
    *  registry). The caller wires onChoose through steer; "Leave it with me" clears. */
   decision?: { title: string | null; options: Array<{ label: string }>; onChoose: (label: string) => void | Promise<void>; onDismiss: () => void } | null;
@@ -449,9 +454,16 @@ export function ItemRail({ kind, id, view, onDraft, decision, artifact }: {
             if (prep) return <p>{prep}.</p>;
             return null;
           })()}
+          {pending && !ent && !view.anchor?.ask && (
+            // The frame is up before the view — a quiet shimmer, never a claim we can't back yet.
+            <div className="space-y-1.5 py-0.5" aria-hidden>
+              <div className="h-3 w-4/5 rounded bg-neutral-100 animate-pulse" />
+              <div className="h-3 w-3/5 rounded bg-neutral-100 animate-pulse" />
+            </div>
+          )}
           {ent?.summary
             ? <p className={view.anchor?.ask || view.anchor?.prepared ? 'text-[12px] text-neutral-500' : undefined}>{ent.summary}</p>
-            : (!view.anchor?.ask && <p>This isn&apos;t tied to a bigger body of work yet — I&apos;ll keep it standalone.</p>)}
+            : (!view.anchor?.ask && !pending && <p>This isn&apos;t tied to a bigger body of work yet — I&apos;ll keep it standalone.</p>)}
           {!ent?.nextMove && ent?.whoOwesThem[0] && <p className="text-[12px] text-neutral-500">They owe: {ent.whoOwesThem[0]}</p>}
           {!ent?.nextMove && ent?.whoOwesYou[0] && <p className="text-[12px] text-neutral-500">You owe: {ent.whoOwesYou[0]}</p>}
         </AssistantRow>}

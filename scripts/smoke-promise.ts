@@ -1173,6 +1173,13 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       !src('components/home/item-rail.tsx').includes('artifact.onCommit?.()'));
     check('P29 · the Scape order on the stage (message → mounted work → commit; the composer is never buried below the thread\'s siblings)',
       src('components/home/item-detail.tsx').includes('THE WORK, DIRECTLY BENEATH THE MESSAGE'));
+    check('P29 · THE FRAME IS STRUCTURAL — the two-pane room mounts from frame one (rail always present, pending shell while loading; never a bare card that morphs) + the SEED HANDOFF (first paint carries the clicked row\'s own title/sender, never the placeholder word)',
+      src('components/home/item-detail.tsx').includes('THE FRAME IS STRUCTURAL') &&
+      (src('components/home/item-detail.tsx').match(/railView \?\? EMPTY_RAIL/g)?.length ?? 0) >= 4 &&
+      !/rail=\{railView \? \(/.test(src('components/home/item-detail.tsx')) &&
+      src('components/home/item-detail.tsx').includes("seed?.title || 'Email'") &&
+      src('components/work/work-row.tsx').includes('aug-item-seed-') &&
+      src('components/home/item-rail.tsx').includes("never a claim we can't back"));
     {
       const long = 'The ALP allocation sheet with participant scores included';
       const c = clip(long, 24);
