@@ -15,7 +15,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
-  EnvelopeIcon, BellAlertIcon, CheckCircleIcon, FolderIcon, ArrowRightIcon, PlusIcon,
+  EnvelopeIcon, BellAlertIcon, CheckCircleIcon, FolderIcon, PlusIcon,
 } from '@heroicons/react/24/outline';
 import type { DoItem, DoSource } from '@/lib/home/agenda';
 import type { WorkItem } from '@/lib/work-items/model';
@@ -272,8 +272,15 @@ export function WorkRow({ item, emphasis = false, hideInitiative = false, readon
   };
   const done = (e?: React.MouseEvent) => { e?.stopPropagation(); if (isDeal) return; if (isCommit) commit.act('done'); else actInbox('complete', e); };
   const drop = (e?: React.MouseEvent) => { e?.stopPropagation(); if (dismissOverride) { dismissOverride(); return; } if (isCommit) commit.act('dismissed'); else actInbox('dismiss', e); };
-  const open = () => router.push(item.href);
+  const open = () => {
+    // THE SEED HANDOFF (UX arc): the deep-dive's first paint must never know LESS than the row
+    // just clicked — carry the row's own truth (title, who) across the navigation so the shell
+    // opens with the real subject/sender, never a placeholder while the fetch runs.
+    try { saveLS(`aug-item-seed-${item.entityId}`, { title: item.ask ?? null, who: item.primary ?? null }); } catch { /* non-fatal */ }
+    router.push(item.href);
+  };
   // Hover = intent to open → warm the deep-dive cache + the route JS so the click is instant.
+  // Mousedown fires it too — fast clicks and touch get no hover dwell.
   const prefetch = () => { prefetchItem(item.href); router.prefetch?.(item.href); };
 
   if (removed) return null;
@@ -285,7 +292,7 @@ export function WorkRow({ item, emphasis = false, hideInitiative = false, readon
     // ONE LINE PER ROW (work-surface correction — the real list-wise anatomy, not padding): the
     // SECOND LINE IS DEAD. Everything a row says fits one truncating line — [icon] primary · ask
     // · muted-second — with the meta pinned right. The whole curated pool fits one screen.
-    <div onMouseEnter={prefetch} onFocus={prefetch} className={flat
+    <div onMouseEnter={prefetch} onFocus={prefetch} onMouseDown={prefetch} onTouchStart={prefetch} className={flat
       ? `group bg-white transition-all duration-300 ease-out hover:bg-neutral-50/70 ${exiting ? 'opacity-0' : 'opacity-100'} ${emphasis ? 'bg-indigo-50/40' : ''}`
       : `group rounded-lg border bg-white transition-all duration-300 ease-out hover:shadow-[0_2px_12px_-4px_rgba(0,0,0,0.07)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/60 hover:border-neutral-300'}`}>
       <div role="button" tabIndex={0} onClick={open}
@@ -330,20 +337,12 @@ export function WorkRow({ item, emphasis = false, hideInitiative = false, readon
           )}
         </span>
       </div>
-      {/* CTA only when EARNED by a preparation, NAMED by it ("Review draft" / "See Max's work").
-          No preparation → no button; the row click opens the deep-dive (the natural action). */}
-      {emphasis && item.prepared && (
-        <div className="px-3 pb-2.5 -mt-0.5 pl-[2.35rem]">
-          <button
-            onClick={open}
-            onMouseEnter={prefetch}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 text-[12px] font-medium text-indigo-700 transition-colors"
-          >
-            <span>{item.prepared === 'draft' ? (isCommit ? 'Review follow-up' : 'Review draft') : `See ${item.prepared.split(' ')[0]}'s work`}</span>
-            <ArrowRightIcon className="w-3.5 h-3.5 flex-shrink-0" />
-          </button>
-        </div>
-      )}
+      {/* The "See X's work" hero CTA was REMOVED (July 29, user-rejected): it duplicated the row's
+          own click while PROMISING a specific thing the room then had to keep — and when the
+          coworker's outcome was an ASK, "See Max's work" was simply false (an ask is never
+          presented as a deliverable — P17). It also flashed show-then-retract off the stale brief
+          hydrate. The row opens the room; the room shows the truth. The quiet "ready" chip above
+          remains the one prepared signal. */}
     </div>
   );
 }

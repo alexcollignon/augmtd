@@ -28,6 +28,11 @@ import AddToProjectControl from '@/components/entities/add-to-work-control';
 import { DecisionCard } from '@/components/work/decision-card';
 import { ItemRail, pushDealTurn, type RailView } from '@/components/home/item-rail';
 
+// THE STRUCTURAL FRAME (UX arc): the room's two panes mount from frame one — before the view
+// loads, the rail receives this empty shell (+ pending) instead of not existing. Structure never
+// flips on data arrival.
+const EMPTY_RAIL: RailView = { anchor: null, gap: null, entity: null, siblings: { threads: [], meetings: [], commitments: [], files: [] } };
+
 // ── Shared visual language across ALL deep-dive variants (coherence pass #3). One header, one
 // section-label token, one card token — so email / meeting / commitment / follow-up read identically.
 
@@ -1214,6 +1219,10 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
   // re-open), then refresh in the background below. Keyed per item id so each deep-dive restores its own.
   const [thread, setThread] = useState<ThreadData | null>(null);
   useLayoutEffect(() => { const c = loadLS<ThreadData>(`aug-item-thread-${id}`); if (c) setThread((prev) => prev ?? c); }, [id]);
+  // THE SEED HANDOFF (UX arc) — the clicked row's own truth (title, who), read the SSR-safe way
+  // (effect, never a render-body/initializer read — the hydration-mismatch law).
+  const [seed, setSeed] = useState<{ title?: string | null; who?: string | null } | null>(null);
+  useLayoutEffect(() => { setSeed(loadLS(`aug-item-seed-${id}`) ?? null); }, [id]);
   const [threadErr, setThreadErr] = useState(false);
 
   const [draft, setDraft] = useState<string | null>(null);   // the prepared plain-text draft (seed + Copy)
@@ -1395,9 +1404,11 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
     setTimeout(() => setCopied(false), 1500);
   };
 
-  const subject = thread?.subject || 'Email';
+  // THE SEED HANDOFF (UX arc): the row that was clicked already knew the title and sender — the
+  // first paint uses that truth while the thread loads. Never the placeholder word "Email".
+  const subject = thread?.subject || seed?.title || 'Email';
   const senderLine = [thread?.fromName, thread?.fromAddress && `<${thread.fromAddress}>`]
-    .filter(Boolean).join(' ');
+    .filter(Boolean).join(' ') || (thread ? '' : seed?.who ?? '');
 
   // Map the Home thread payload onto the shared inbox <ThreadMessages/> shape (the `emails`-column
   // field names). null while loading → the shared component shows its own skeleton. The `fallback`
@@ -1522,8 +1533,11 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
     // ONE-ROOM R2: the CONVERSATION is the center; this component's children are the STAGE (the
     // message + composer workspace). The judged DECISION and the draft's ARTIFACT CARD render
     // INLINE in the stream (surface:'inline' per the registry) — the stage holds the workspaces.
-    <DeepDiveShell embedded={embedded} rail={railView ? (
-      <ItemRail kind="email" id={id} view={railView} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }}
+    // THE FRAME IS STRUCTURAL (UX arc, user law): the two-pane room mounts IMMEDIATELY — the rail
+    // is always present (a pending shell until the view lands), never a bare single-column card
+    // that later morphs into the room. Structure must not flip on data arrival.
+    <DeepDiveShell embedded={embedded} rail={(
+      <ItemRail kind="email" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }}
         decision={!itemDismissed && !decisionCleared && verdict?.work === 'decide' && (verdict.options?.length ?? 0) >= 2 ? {
           title: verdict.reason || null,
           options: verdict.options!,
@@ -1554,7 +1568,7 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
           committing: sending,
         } : null}
       />
-    ) : undefined}>
+    )}>
       {/* 1 — Header: subject + sender + date (fixed at top). T4 (work-surface): the posture badge
           ("For awareness"/"Reply needed") is INTERNAL vocabulary — it drives behavior; the user
           never reads it. No chip on email deep-dives. */}
@@ -1852,7 +1866,7 @@ function MeetingDetail({ id, embedded = false }: { id: string; embedded?: boolea
   const allCleared = !!data && (data.actionItems.length > 0) && items.length === 0;
 
   return (
-    <DeepDiveShell embedded={embedded} rail={railView ? <ItemRail kind="meeting" id={id} view={railView} /> : undefined}>
+    <DeepDiveShell embedded={embedded} rail={<ItemRail kind="meeting" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} />}>
       {/* Header */}
       <DetailHeader
         chip={embedded ? null : <KindChip tone="violet" icon={CalendarDaysIcon} label="Meeting" />}
@@ -2099,7 +2113,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   const src = data?.sourceContext;
 
   return (
-    <DeepDiveShell embedded={embedded} rail={railView ? <ItemRail kind="commitment" id={id} view={railView} /> : undefined}>
+    <DeepDiveShell embedded={embedded} rail={<ItemRail kind="commitment" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} />}>
       {/* Header */}
       <DetailHeader
         chip={embedded ? null :
@@ -2347,9 +2361,9 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
   const hasMessages = !threadErr && (thread?.messages?.length ?? 0) > 0;
 
   return (
-    <DeepDiveShell embedded={embedded} rail={railView ? (
-      <ItemRail kind="followup" id={id} view={railView} onDraft={(d) => { setDraft(d); setDraftV((v) => v + 1); }} />
-    ) : undefined}>
+    <DeepDiveShell embedded={embedded} rail={
+      <ItemRail kind="followup" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onDraft={(d) => { setDraft(d); setDraftV((v) => v + 1); }} />
+    }>
       {/* Header */}
       <DetailHeader
         chip={embedded ? null : <KindChip tone="amber" icon={ClockIcon} label="Ball in your court" />}
