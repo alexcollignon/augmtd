@@ -22,7 +22,6 @@ import { RiseIn } from '@/components/home/rise-in';
 import { ExpandableRows } from '@/components/home/expandable-rows';
 import { useBriefingNavigate, type Briefing as ReasonedBriefing } from '@/components/briefing/briefing-view';
 import HomeAsk from '@/components/home/home-ask';
-import WaitingOnYou, { type OpenAsk } from '@/components/home/waiting-on-you';
 import ViewSwitcher, { type HomeView as HomeViewLens } from '@/components/home/view-switcher';
 import {
   buildAgenda, coveredIds, type Agenda, type DoItem, type DoSource, type DeckEntry,
@@ -1277,21 +1276,8 @@ export function HomeView() {
   const [team, setTeam] = useState<{ messages: TeamMsg[]; needsReview: TeamReview[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
-  // W3 — the GLOBAL ASK LEDGER: every open input-checklist ask across every room (work blocked on
-  // the user is never room-local). Cached-hydrate → background refresh (the instant-load rule:
-  // reads live in an effect, never a useState initializer, on this SSR'd route).
-  const [openAsks, setOpenAsks] = useState<OpenAsk[]>([]);
-  useEffect(() => {
-    const cached = loadLS<{ asks: OpenAsk[] }>('aug-open-asks-v1');
-    if (cached?.asks) setOpenAsks(cached.asks);
-    let alive = true;
-    const loadAsks = () => fetch('/api/room/asks').then((r) => r.json())
-      .then((d) => { if (alive && Array.isArray(d?.asks)) { setOpenAsks(d.asks); saveLS('aug-open-asks-v1', { asks: d.asks }); } })
-      .catch(() => {});
-    loadAsks();
-    const t = setInterval(loadAsks, 120_000);
-    return () => { alive = false; clearInterval(t); };
-  }, []);
+  // (The global ask ledger's Home surfacing was user-rejected July 29 — see the note above the
+  //  deck. /api/room/asks remains the data spine for the approved row-chip design.)
 
 
   const [dismissed, setDismissed] = useState<Set<string>>(new Set()); // itemIds acted this session → live count + list refill
@@ -2081,22 +2067,12 @@ export function HomeView() {
             {/* ── ACTION content ─────────────────────────────────────────────────────────────── */}
             <div className="min-w-0 gap-10 flex-1 flex flex-col">
 
-            {/* 0 · NEEDS YOUR INPUT (W3, the global ask ledger) — an ask is not ambient context, it
-                is BLOCKED WORK: a teammate standing at your desk outranks the day's agenda. Every
-                open input-checklist across every room surfaces HERE, above the deck, with the
-                room's own grammar (items, age, Open →, the never-blocks go-ahead). Renders only
-                when something is genuinely waiting on you. */}
-            {openAsks.length > 0 && (
-              <RiseIn>
-                <section>
-                  <h2 className="flex items-baseline gap-2 text-[11px] font-semibold uppercase tracking-wider text-amber-600/90 mb-2.5">
-                    Needs your input
-                    <span className="tabular-nums text-amber-500/80">{openAsks.length}</span>
-                  </h2>
-                  <WaitingOnYou asks={openAsks} onProceeded={(id) => setOpenAsks((prev) => prev.filter((a) => a.id !== id))} />
-                </section>
-              </RiseIn>
-            )}
+            {/* (W3's ask ledger does NOT render as a Home section — tried and REVERTED July 29,
+                user-rejected: the Home is ONE curated deck, and a stack of ask cards is a second
+                competing work-list whose items DUPLICATE deck rows (the show-twice class P3
+                forbids). The approved direction: an ask is a STATE OF ITS DECK ROW — a small
+                "needs your input" chip on the affected row, checklist in the room; the global
+                ledger (/api/room/asks + WaitingOnYou) stays as the data spine for that. */}
 
             {/* 1 · WHAT NEEDS YOU — ONE prioritized list of everything you owe: email replies, action
                 notices, and commitments, all rendered by the same DoRow (a leading TYPE ICON tells them
