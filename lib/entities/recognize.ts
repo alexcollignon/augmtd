@@ -244,7 +244,7 @@ export async function judgeRecognition(
 // project, program…) are shared by every engagement in a specialist portfolio and prove nothing —
 // only a distinctive token (a client/deal proper name) counts as a match. Mirrors the July-15
 // suggestion-guard lesson ("the user's own company token is too broad to drive a match").
-const GENERIC_WORK_WORDS = new Set([
+export const GENERIC_WORK_WORDS = new Set([
   'assessment', 'assessments', 'project', 'program', 'programme', 'engagement', 'deal', 'report',
   'reports', 'initiative', 'pilot', 'workshop', 'training', 'launch', 'phase', 'sprint', 'review',
   'analysis', 'audit', 'proposal', 'operations', 'alignment', 'readiness', 'strategy', 'the', 'and',

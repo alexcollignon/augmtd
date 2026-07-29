@@ -1264,14 +1264,21 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     const { data: D } = await sb.from('work_entities').insert({
       user_id: PERSONAL, kind: 'initiative', name: 'ZZ Kiteschool Pilot', aliases: ['ZZ Kiteschool Pilot'], tracked: false, status: 'active',
     }).select('id').maybeSingle();
+    // GENERIC-TOKEN DECOYS (found live: "the STC Bahrain assessment" recalled three OTHER
+    // assessments and never the named one — "assessment" matched everything and filled the cap).
+    const { data: dec } = await sb.from('work_entities').insert([
+      { user_id: PERSONAL, kind: 'initiative', name: 'ZZ Alpha Assessment', aliases: [], tracked: false, status: 'active' },
+      { user_id: PERSONAL, kind: 'initiative', name: 'ZZ Beta Assessment', aliases: [], tracked: false, status: 'active' },
+    ]).select('id');
     if (!C?.id || !D?.id) check('P30 live · recall fixtures failed to insert', false);
     else {
-      const t = await converse(sb, PERSONAL, { kind: 'entity', entityId: String(C.id) }, 'what do we have on the kiteschool?');
-      check('P30 live · a name from ELSEWHERE in the registry is recalled, never denied (the whole brain answers, not just the open room)',
+      const t = await converse(sb, PERSONAL, { kind: 'entity', entityId: String(C.id) }, 'what do we have on the kiteschool assessment?');
+      check('P30 live · the NAMED body of work is recalled past generic-token decoys, never denied (distinctive tokens decide, "assessment" proves nothing)',
         /kiteschool/i.test(t.say) && !/don't (see|have)|do not (see|have)|couldn't find|no such/i.test(t.say),
         `say="${t.say.slice(0, 80)}"`);
-      await sb.from('room_turns').delete().eq('user_id', PERSONAL).in('room_key', [String(C.id), String(D.id)]);
-      await sb.from('work_entities').delete().in('id', [String(C.id), String(D.id)]);
+      const ids = [String(C.id), String(D.id), ...((dec ?? []) as Array<{ id: string }>).map((d) => String(d.id))];
+      await sb.from('room_turns').delete().eq('user_id', PERSONAL).in('room_key', ids);
+      await sb.from('work_entities').delete().in('id', ids);
     }
   }
 
