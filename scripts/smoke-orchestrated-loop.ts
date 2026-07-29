@@ -40,8 +40,12 @@ const MARKER = 'ZZ-smoke self-resolution probe';
   const passSrc = src('lib/prepare/pass.ts');
   check('O2: routing reads the ROSTER (coworkers + skills), not a shape map',
     router.includes('loadRoster') && router.includes('agent_skills') && !passSrc.includes('SHAPE_TO_ROLE'));
-  check('O2: the pass + the chip suggestion share ONE judge (routeTasks)',
-    passSrc.includes('routeTasks(admin, userId') && router.includes('routeTasks(supabase, userId, [title])'));
+  // W1 (proactive-team) SUPERSEDED the batch router: the pass now prepares from THE ONE WORK
+  // JUDGMENT (judgeWork — which carries the executor half), so one judge decides, not two. The
+  // chip suggestion still consults the roster judge for its single-title question.
+  check('O2→W1: ONE judge — the pass prepares from judgeWork (batch router retired; the chip still consults routeTasks)',
+    passSrc.includes('judgeWork') && !passSrc.includes('routeTasks(admin, userId') &&
+    router.includes('routeTasks(supabase, userId, [title])'));
   check('O2: conservative doctrine in the judge prompt (unsure → none; wrong route costs trust)',
     router.includes('Unsure → "none"'));
 
@@ -67,7 +71,11 @@ const MARKER = 'ZZ-smoke self-resolution probe';
     passSrc.includes("review = { verdict: 'flag', objection: review.objection }"));
   check('O4: wired into reply + nudge + delegation (annotate) branches',
     (passSrc.match(/reviewAndRevise\(/g) ?? []).length >= 4 && passSrc.includes("kind: 'deliverable'"));
-  check('O4: the review never blocks the work (failure → pass)', evalSrc.includes("catch { return { verdict: 'pass'"));
+  // W2 (proactive-team) strengthened this law: a reviewer outage still never blocks the work, but
+  // it now FLAGS instead of silently passing — unreviewed work wears its honest caution.
+  check('O4→W2: the review never blocks AND never lies (outage → flag-and-surface, not a silent pass)',
+    evalSrc.includes('The reviewer was unavailable') && evalSrc.includes("verdict: 'flag'") &&
+    !evalSrc.includes("catch { return { verdict: 'pass'"));
 
   // ── O5 STRUCTURAL — the commit line is a DECISION ──
   const railSrc = src('components/home/item-rail.tsx');

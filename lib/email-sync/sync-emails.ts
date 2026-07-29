@@ -1069,6 +1069,7 @@ export async function syncEmailsForConnection(
               sourceId: storedEmail.id,
               threadId: storedEmail.thread_id || null,
               instructions: emailSettings.todo_instructions,
+              receivedAt: storedEmail.received_at || null, // the deixis anchor — the email's own date
               client: adminSupabase,
             }),
           ).catch(() => {});
@@ -1122,6 +1123,7 @@ export async function syncEmailsForConnection(
               sourceId: storedEmail.id,
               threadId: storedEmail.thread_id || null,
               instructions: emailSettings.todo_instructions,
+              receivedAt: storedEmail.received_at || null, // the deixis anchor — the email's own date
               client: adminSupabase,
             }),
           ).catch(() => {});

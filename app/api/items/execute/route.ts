@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { executeSendCalendarInvite } from '@/lib/tools/send-calendar-invite';
 import { executeForwardEmail } from '@/lib/tools/forward-email';
+import { claimCommit, recordCommitResult, releaseCommitClaim } from '@/lib/work/commit-door';
+import { logPreparedOutcome } from '@/lib/prepare/outcome';
 import { logActivity } from '@/lib/activity/log';
 import type { ItemPlanKind, ItemPlanTask } from '@/lib/home/item-plan';
 
@@ -49,13 +52,39 @@ type ForwardAction = {
 
 type ExecuteAction = CalendarInviteAction | ForwardAction;
 
+// ── W5: stamp the AMBIENT prepared artifact as sent + log its OUTCOME (R1 — accepted verbatim vs
+// edited before approve, judged by comparing the approved payload to what the pass prepared).
+// Non-fatal: a sent action is never lost to bookkeeping.
+async function stampAmbientSent(
+  supabase: SupabaseClient, userId: string, kind: ItemPlanKind, entityId: string,
+  which: 'prepared_invite' | 'prepared_forward', approved: Record<string, unknown>, compareKeys: string[],
+): Promise<void> {
+  try {
+    if (kind !== 'email' && kind !== 'awareness' && kind !== 'followup') return;
+    const { data: it } = await supabase.from('inbox_items').select('source_data')
+      .eq('id', entityId).eq('user_id', userId).maybeSingle();
+    const sd = (it?.source_data ?? {}) as Record<string, unknown>;
+    const art = sd[which] as Record<string, unknown> | undefined;
+    if (!art) return;
+    await supabase.from('inbox_items').update({
+      source_data: { ...sd, [which]: { ...art, sent_at: new Date().toISOString() } },
+    }).eq('id', entityId).eq('user_id', userId);
+    const edited = compareKeys.some((k) => JSON.stringify(art[k] ?? '') !== JSON.stringify(approved[k] ?? ''));
+    await logPreparedOutcome(supabase, userId, {
+      outcome: edited ? 'edited' : 'accepted',
+      artifact: which === 'prepared_invite' ? 'invite' : 'forward',
+      itemKind: 'inbox', itemId: entityId,
+    });
+  } catch { /* bookkeeping only */ }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const body = (await request.json()) as { kind: ItemPlanKind; entityId: string; taskId?: string; action: ExecuteAction };
+    const body = (await request.json()) as { kind: ItemPlanKind; entityId: string; taskId?: string; action: ExecuteAction; idempotencyKey?: string };
     const { kind, entityId, taskId, action } = body;
     if (!entityId || !VALID_KINDS.includes(kind)) {
       return NextResponse.json({ error: 'kind and entityId are required' }, { status: 400 });
@@ -64,6 +93,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'unsupported action type' }, { status: 400 });
     }
 
+    // ── W5: THE COMMIT DOOR — one atomic claim per irreversible act. A double-approve or a retried
+    // request finds the claim taken and gets the PRIOR result back: exactly-once at the send edge.
+    // Pre-migration (ledger table absent) the claim reports 'unavailable' and the route proceeds.
+    const idemKey = (body.idempotencyKey || `${action.type}:${kind}:${entityId}`).slice(0, 200);
+    const fireOnce = async (fire: () => Promise<string>): Promise<
+      { dup: true; result: string } | { dup: false; result: string; failed: boolean }
+    > => {
+      const claim = await claimCommit(supabase, user.id, {
+        idempotencyKey: idemKey, actionType: action.type, payload: action as unknown as Record<string, unknown>,
+      });
+      if (claim.status === 'duplicate') return { dup: true, result: claim.priorResult ?? 'Already sent.' };
+      const result = await fire();
+      const failed = /^(Cannot|Failed)\b/.test(result);
+      if (claim.status === 'claimed') {
+        // A failed executor releases the claim (nothing sent — a retry must be able to fire);
+        // a success stamps the result, completing the approval record.
+        if (failed) await releaseCommitClaim(supabase, user.id, idemKey);
+        else await recordCommitResult(supabase, user.id, idemKey, result);
+      }
+      return { dup: false, result, failed };
+    };
+
     // ── FORWARD (S5 send-type) — the same approve-before-commit gate as the invite, a different executor.
     // Only ever reached from an explicit Approve click on the ForwardPreviewCard. Never auto-fired.
     if (action.type === 'forward') {
@@ -71,14 +122,18 @@ export async function POST(request: NextRequest) {
       const cc = Array.isArray(action.cc) ? action.cc.map((a) => String(a).trim()).filter((a) => a.includes('@')) : [];
       if (to.length === 0) return NextResponse.json({ error: 'Add at least one recipient before forwarding.' }, { status: 400 });
 
-      // COMMIT — the real forward (user already approved). Same executor a workflow tool step would use.
-      const result = await executeForwardEmail(
+      // COMMIT — the real forward (user already approved), through the door: claimed exactly once.
+      const fired = await fireOnce(() => executeForwardEmail(
         { threadId: entityId, to, cc, note: action.note || '' },
         user.id,
         supabase,
-      );
-      const failed = /^(Cannot|Failed)\b/.test(result);
-      if (failed) return NextResponse.json({ ok: false, error: result }, { status: 502 });
+      ));
+      if (fired.dup) return NextResponse.json({ ok: true, alreadyExecuted: true, result: fired.result });
+      const result = fired.result;
+      if (fired.failed) return NextResponse.json({ ok: false, error: result }, { status: 502 });
+      // The ambient prepared forward (if the pass made one) is now spent — stamp + outcome (R1).
+      await stampAmbientSent(supabase, user.id, kind, entityId, 'prepared_forward',
+        { to, note: action.note || '' }, ['to', 'note']);
 
       // Mark the step done (best-effort — a sent forward is never lost to a bookkeeping failure).
       if (taskId) {
@@ -124,8 +179,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Add at least one attendee before sending the invite.' }, { status: 400 });
     }
 
-    // ── COMMIT — the ONE real irreversible call (user already approved). Same executor as workflows.
-    const result = await executeSendCalendarInvite(
+    // ── COMMIT — the ONE real irreversible call (user already approved), through the door: claimed
+    // exactly once. Same executor as workflows.
+    const fired = await fireOnce(() => executeSendCalendarInvite(
       {
         title, startISO, endISO, attendees,
         description: action.description || '',
@@ -135,14 +191,18 @@ export async function POST(request: NextRequest) {
       },
       user.id,
       supabase,
-    );
+    ));
+    if (fired.dup) return NextResponse.json({ ok: true, alreadyExecuted: true, result: fired.result });
+    const result = fired.result;
 
     // The executor is non-throwing: a failure comes back as a "Cannot…/Failed…" string. Surface it as
     // an error so the card shows it (and we do NOT mark the step done).
-    const failed = /^(Cannot|Failed)\b/.test(result);
-    if (failed) {
+    if (fired.failed) {
       return NextResponse.json({ ok: false, error: result }, { status: 502 });
     }
+    // The ambient prepared invite (if the pass made one) is now spent — stamp + outcome (R1).
+    await stampAmbientSent(supabase, user.id, kind, entityId, 'prepared_invite',
+      { title, startISO, endISO, attendees }, ['title', 'startISO', 'attendees']);
 
     // ── Mark the step done in the plan (best-effort — a sent invite is never lost to a bookkeeping
     // failure). A [System] step carries `done:true` so the stepper renders a ✓ (this is the first

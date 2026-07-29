@@ -21,9 +21,15 @@ export type RoomTurn = {
   refs?: Array<{ label: string; href: string | null }>;
   /** An inline component carried by the turn (resolved against the work-component registry, R2). */
   component?: { key: string; refId?: string; state?: Record<string, unknown> } | null;
-  /** Coworker attribution; absent = the chief of staff (system) or the user. */
+  /** Coworker attribution — THE ONE-NARRATOR LAW (UX arc): present ONLY when the content is the
+   *  coworker's own FIRST-PERSON speech (a deliverable, an ask, a flag). Orchestration narration
+   *  ("Max is on X", "Clara drafted the reply") is the chief of staff's voice — author ABSENT —
+   *  and renders as a muted event line, never a coworker bubble. */
   author?: RoomTurnAuthor | null;
   createdAt?: string;
+  /** The turn's dedupe key — the structural handle renderers fold on (e.g. a `prep:*` narration
+   *  collapses into the artifact card it narrates). */
+  key?: string;
 };
 
 type LooseItemKind = 'inbox' | 'commitment' | 'meeting';
@@ -95,7 +101,18 @@ const mapRows = (rows: Array<Record<string, unknown>>): RoomTurn[] =>
     component: (r.component as RoomTurn['component']) ?? undefined,
     author: (r.author as RoomTurnAuthor | null) ?? undefined,
     createdAt: (r.created_at as string) ?? undefined,
+    key: (r.dedupe_key as string | null) ?? undefined,
   }));
+
+/** Word-boundary clip — narration NEVER cuts mid-word ("ALP allocation s Nothing goes…" was a real
+ *  turn). Cuts at the last word break under `n`, adds an ellipsis only when something was dropped. */
+export function clip(text: string, n: number): string {
+  const t = String(text ?? '').trim();
+  if (t.length <= n) return t;
+  const cut = t.slice(0, n + 1);
+  const at = cut.lastIndexOf(' ');
+  return `${(at > n * 0.6 ? cut.slice(0, at) : cut.slice(0, n)).replace(/[\s,;:—-]+$/, '')}…`;
+}
 
 /** The room's LIVE conversation, oldest→newest (last `limit` turns; archived sessions excluded).
  *  Pre-migration (no archived_at column) the filtered query fails → retry unfiltered. */
@@ -104,14 +121,14 @@ export async function readRoomTurns(
 ): Promise<RoomTurn[]> {
   try {
     let { data, error } = await client.from('room_turns')
-      .select('id, role, text, refs, component, author, created_at')
+      .select('id, role, text, refs, component, author, created_at, dedupe_key')
       .eq('user_id', userId).eq('room_key', roomKey).is('archived_at', null)
-      .order('created_at', { ascending: false }).limit(limit);
+      .order('created_at', { ascending: false }).order('id', { ascending: false }).limit(limit);
     if (error) {
       ({ data, error } = await client.from('room_turns')
-        .select('id, role, text, refs, component, author, created_at')
+        .select('id, role, text, refs, component, author, created_at, dedupe_key')
         .eq('user_id', userId).eq('room_key', roomKey)
-        .order('created_at', { ascending: false }).limit(limit));
+        .order('created_at', { ascending: false }).order('id', { ascending: false }).limit(limit));
     }
     if (error || !data) return [];
     return mapRows((data as Array<Record<string, unknown>>).reverse());

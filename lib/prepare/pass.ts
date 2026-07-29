@@ -18,7 +18,7 @@ import type { WorkItem } from '@/lib/work-items/model';
 import { buildWorkItems } from '@/lib/work-items/model';
 import { partitionDailyReport } from '@/lib/work-items/report';
 import { generateReplyDraft, generateNudgeDraft, getDraftingAssistant } from '@/lib/inbox/draft-reply';
-import { routeTasks, type TaskRoute } from '@/lib/prepare/route-suggestion';
+import type { TaskRoute } from '@/lib/prepare/route-suggestion';
 import { evaluateDeliverable, type EvalVerdict } from '@/lib/prepare/evaluate';
 import { aiCall } from '@/lib/ai/call';
 
@@ -45,15 +45,16 @@ async function reviewAndRevise(
 import { resolveFileUniversal } from '@/lib/knowledge/resolve';
 import { logActivity } from '@/lib/activity/log';
 
-const TOP_N = 8;          // prepare the working set, not the inventory
 const FRESH_HOURS = 24;   // a draft older than this (or older than new thread activity) re-prepares
 
-export type PrepareResult = { prepared: number; skipped: number; nudges: number; delegated: number };
+// ── W2: THE BUDGETED WALK — fixed caps (TOP_N 8 / 5 nudges / DELEGATE_CAP 2) are gone. The pass
+// works the judged backlog in ENTITY-PRIORITY order until the time budget is spent, and whatever is
+// left behind is COUNTED and logged, never silently truncated (the no-silent-caps doctrine applied
+// to the product: a team that quietly does eight things feels absent; one that says "I got through
+// 14, 6 are queued for the next sweep" is honest). The cron route sizes the budget per user.
+const BUDGET_MS = 90_000;
 
-// ── O2: routing is THE ROSTER JUDGE (lib/prepare/route-suggestion.ts routeTasks) — one reasoned
-// call with the user's actual roster in view. The old hardcoded shape→role map is deleted: a map is
-// not a judgment, and it froze the roster (a new coworker/skill/vertical pack was invisible to routing).
-const DELEGATE_CAP = 2; // coworker runs are the expensive preparation — trickle, don't burst
+export type PrepareResult = { prepared: number; skipped: number; nudges: number; delegated: number; leftBehind: number };
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // prepareOneItem — THE ONE per-item engine (W4). Returns what it did (or the honest reason it
@@ -62,7 +63,7 @@ const DELEGATE_CAP = 2; // coworker runs are the expensive preparation — trick
 
 type WorkerRow = { id: string; name: string; worker_role: string | null; is_worker: boolean | null };
 export type PrepareOneResult = {
-  did: 'draft' | 'nudge' | 'delegated' | 'docsend' | 'none';
+  did: 'draft' | 'nudge' | 'delegated' | 'docsend' | 'invite' | 'forward' | 'none';
   worker?: string;   // the coworker's name when did === 'delegated'
   reason?: string;   // the honest why when did === 'none'
   why?: string;      // the JUDGE's reason a delegation happened (provenance for the room narration)
@@ -92,6 +93,9 @@ export async function prepareOneItem(
     }
     const { judgeWork } = await import('@/lib/work/judge');
     const verdict = await judgeWork(admin, userId, { kind: w.id.startsWith('commit:') ? 'commitment' : 'inbox', id: w.entityId });
+    // FAILURE HONESTY (W2): a failed judgment prepares nothing and moves nothing — "could not
+    // judge" is not "judged none". The verdict wasn't cached, so the next sweep/open retries.
+    if (verdict.failed) return { did: 'none', reason: 'could not judge this yet — it will retry' };
     // THE VERDICT MOVES THE POSTURE (one consequence module): an expired/answered none RESOLVES
     // the item (logged, undoable, narrated); prepared artifacts that contradict the verdict strip.
     const { applyVerdictConsequences } = await import('@/lib/work/apply-verdict');
@@ -99,6 +103,11 @@ export async function prepareOneItem(
     if (cons.resolved) return { did: 'none', reason: `resolved by the verdict (${verdict.resolution}): ${verdict.reason}` };
     if (verdict.work === 'send_file') return await done(await prepareDocSend(admin, userId, w, verdict));
     if (verdict.work === 'chase' && (w.who || w.blockedOn)) return await done(await prepareNudge(admin, userId, { ...w, blockedOn: w.blockedOn ?? w.who ?? null }));
+    // ── W1: THE JUDGE'S NEW HANDS — schedule and forward were judged-but-never-prepared (the
+    // registry mapped them, the pass fell through to none). Both prepare an EDITABLE artifact and
+    // stop at the commit line: the invite books nothing, the forward sends nothing.
+    if (verdict.work === 'schedule') return await done(await prepareInviteDraft(admin, userId, w));
+    if (verdict.work === 'forward') return await done(await prepareForwardDraft(admin, userId, w, verdict));
     if (verdict.work === 'produce') {
       // THE DELIVERABLE RESOLUTION on PRODUCED work — the class where "what does it take / what do
       // I have / what do I need from you" matters most (make-the-reports asks). Resolve the judged
@@ -114,7 +123,9 @@ export async function prepareOneItem(
           itemTitle: w.title, entityId: w.entity?.id ?? null, requires: verdict.requires,
         });
         artifactTruth = reqs.artifactTruth;
-        if (verdict.executor.kind !== 'coworker' && reqs.missing.length) {
+        // W3: a PROCEEDED ask means the user already said "go ahead with what's available" — the
+        // work continues around the gaps instead of waiting on the room.
+        if (verdict.executor.kind !== 'coworker' && reqs.missing.length && !reqs.proceeded) {
           return { did: 'none', reason: `needs ${reqs.missing.length} input(s) from you — asked in the room` };
         }
       }
@@ -122,6 +133,16 @@ export async function prepareOneItem(
         const dr = await delegatePrepare(admin, userId, w, { id: verdict.executor.id, name: verdict.executor.name ?? 'Coworker', worker_role: null, is_worker: true }, artifactTruth || undefined);
         return await done({ ...dr, why: verdict.reason });
       }
+      // W1: a produce verdict WITHOUT a named coworker is no longer a silent none — the drafting
+      // assistant prepares the starting point (same precedent as replies: executor "user" means the
+      // user owns the commit, never that nothing may be prepared). Missing inputs were already asked
+      // for above; with everything in hand the assistant builds from what's staged.
+      const paProduce = await getDraftingAssistant(admin, userId);
+      if (paProduce) {
+        const dr = await delegatePrepare(admin, userId, w, { id: paProduce.id, name: paProduce.name, worker_role: 'personal_assistant', is_worker: true }, artifactTruth || undefined);
+        return await done({ ...dr, why: verdict.reason });
+      }
+      return { did: 'none', reason: 'produced work needs a coworker and none is set up yet' };
     }
     if (verdict.work === 'reply') return await done(await prepareReplyDraft(admin, userId, w, verdict));
     return { did: 'none', reason: verdict.reason || 'this one needs you — no preparation applies' };
@@ -137,23 +158,30 @@ async function narratePrepare(
 ): Promise<PrepareOneResult> {
   if (r.did === 'none') return r;
   try {
-    const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
+    const { writeRoomTurn, roomKeyForItem, clip } = await import('@/lib/room/turns');
     const itemKind = w.id.startsWith('commit:') ? 'commitment' as const : 'inbox' as const;
     const roomKey = await roomKeyForItem(admin, userId, itemKind, w.entityId);
     const first = r.worker ? r.worker.split(' ')[0] : null;
+    const title = clip(w.title, 80);
     const text =
-      r.did === 'draft' ? `${first ?? 'I'} drafted the reply on "${w.title.slice(0, 80)}" — it's ready to review.` :
-      r.did === 'nudge' ? `${first ?? 'I'} drafted the follow-up nudge on "${w.title.slice(0, 80)}".` :
-      r.did === 'docsend' ? `${first ?? 'I'} found the file and drafted the send on "${w.title.slice(0, 80)}".` :
+      r.did === 'draft' ? `${first ?? 'I'} drafted the reply on "${title}" — it's ready to review.` :
+      r.did === 'nudge' ? `${first ?? 'I'} drafted the follow-up nudge on "${title}".` :
+      r.did === 'docsend' ? `${first ?? 'I'} found the file and drafted the send on "${title}".` :
+      r.did === 'invite' ? `${first ?? 'I'} prepared the calendar invite for "${title}" — review it and approve to send.` :
+      r.did === 'forward' ? `${first ?? 'I'} prepared the forward on "${title}" — nothing goes out until you approve it.` :
       // PROVENANCE (promise fix): an ambient delegation says WHY it happened — a coworker showing
       // up in the room is never a surprise, and the commit line stays with the user.
-      `${first ?? 'A coworker'} is on "${w.title.slice(0, 80)}"${r.why ? ` — ${r.why.slice(0, 110)}` : ''} Nothing goes out without you.`;
+      `${first ?? 'A coworker'} is on "${title}"${r.why ? ` — ${clip(r.why, 110)}` : ''}. Nothing goes out without you.`;
     await writeRoomTurn(admin, userId, roomKey, {
       role: 'system', text,
       // Promise fix #6b — a shared DEAL room hears about many items; every engine turn carries
       // ITS item's chip so the narration is never ambiguous ("about what?" reads as stale memory).
       refs: [{ label: w.title.slice(0, 60), href: itemKind === 'commitment' ? `/item/${w.entityId}?kind=commitment` : `/item/${w.entityId}` }],
-      author: r.worker ? { kind: 'coworker', name: r.worker } : null,
+      // THE ONE-NARRATOR LAW (UX arc): this text is the chief of staff narrating ("Clara drafted…",
+      // "Max is on…") — NEVER authored as the coworker it talks about (a coworker bubble speaking
+      // about itself in the third person was a real, jarring turn). Coworker attribution belongs
+      // only to the coworker's own first-person speech (report-backs, asks — delegate.ts).
+      author: null,
       dedupeKey: `prep:${w.id}`,
     });
   } catch { /* narration is an enhancement — the prepared work already landed */ }
@@ -275,6 +303,86 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem):
   return { did: 'none', reason: 'not a preparable item' };
 }
 
+// ── W1 · the INVITE branch — a `schedule` verdict prepares a GROUNDED, editable calendar invite
+// (title/time/attendees extracted from the item's own thread, never invented — the same grounded
+// extractor the deep-dive's on-demand card uses). Stored as the item's prepared artifact; the card
+// serves it instantly and the ONLY commit is the user's approve → /api/items/execute (gate `book`).
+// Idempotent: a fresh prepared invite (newer than thread activity) is never regenerated. ──
+async function prepareInviteDraft(admin: SupabaseClient, userId: string, w: WorkItem): Promise<PrepareOneResult> {
+  const isCommit = w.id.startsWith('commit:');
+  if (isCommit) {
+    // A commitment's invite lands in the pool (commitments have no source_data), same as its nudges.
+    const { data: prior } = await admin.from('item_deliverables').select('id, created_at, metadata')
+      .eq('user_id', userId).eq('kind', 'commitment').eq('entity_id', w.entityId).eq('task_id', 'prepare-pass-invite')
+      .limit(1).maybeSingle();
+    if (prior && (Date.now() - Date.parse(prior.created_at as string)) < FRESH_HOURS * 3_600_000) {
+      return { did: 'none', reason: 'a fresh prepared invite is already on it' };
+    }
+  }
+  const { buildItemContext } = await import('@/lib/home/item-context');
+  const { prepareCalendarInvite } = await import('@/lib/home/prepare-action');
+  const planKind = isCommit ? 'commitment' as const : 'email' as const;
+  const ctx = await buildItemContext(admin, userId, planKind, w.entityId);
+  if (!ctx) return { did: 'none', reason: 'could not ground the invite in the item' };
+  const invite = await prepareCalendarInvite(admin, userId, planKind, ctx, w.title);
+  const pa = await getDraftingAssistant(admin, userId); // O3a attribution
+  if (isCommit) {
+    const { writeDeliverable } = await import('@/lib/home/deliverable-pool');
+    await writeDeliverable(admin, userId, {
+      kind: 'commitment', entityId: w.entityId, taskId: 'prepare-pass-invite', type: 'draft',
+      title: `Invite — ${invite.title}`.slice(0, 100), content: invite.description || invite.title,
+      gist: 'prepared calendar invite (approve to send)',
+      metadata: { invite, ...(pa ? { agentName: pa.name } : {}), provenance: { item: w.title.slice(0, 100) } },
+    }).catch(() => {});
+    return { did: 'invite', worker: pa?.name };
+  }
+  const { data: it } = await admin.from('inbox_items').select('id, source_data, status, last_activity_at').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
+  if (!it || it.status !== 'pending') return { did: 'none', reason: 'no longer open' };
+  const sd = (it.source_data ?? {}) as Record<string, unknown>;
+  const existing = (sd.prepared_invite ?? null) as { generated_at?: string; sent_at?: string } | null;
+  const stale = !existing
+    || (Date.now() - Date.parse(existing.generated_at || '0')) > FRESH_HOURS * 3_600_000
+    || (!!it.last_activity_at && Date.parse(it.last_activity_at as string) > Date.parse(existing.generated_at || '0'));
+  if (existing?.sent_at) return { did: 'none', reason: 'the invite already went out' };
+  if (!stale) return { did: 'none', reason: 'a fresh prepared invite is already on it' };
+  await admin.from('inbox_items').update({
+    source_data: { ...sd, prepared_invite: { ...invite, generated_at: new Date().toISOString(), prepared: 'pass' }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) },
+  }).eq('id', it.id);
+  return { did: 'invite', worker: pa?.name };
+}
+
+// ── W1 · the FORWARD branch — a `forward` verdict prepares the pass-it-on: the item's REAL email as
+// the forwarded content + recipients inferred ONLY from literal addresses in the item/verdict words
+// (never invented — "to finance" leaves `to` empty for the user to fill). Nothing sends: the commit
+// is the user's approve on the ForwardPreviewCard → /api/items/execute (gate `send`). ──
+async function prepareForwardDraft(
+  admin: SupabaseClient, userId: string, w: WorkItem, verdict: import('@/lib/work/judge').WorkVerdict,
+): Promise<PrepareOneResult> {
+  if (!w.id.startsWith('inbox:')) return { did: 'none', reason: 'only an email thread can be forwarded' };
+  const { data: it } = await admin.from('inbox_items').select('id, source_data, status, last_activity_at').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
+  if (!it || it.status !== 'pending') return { did: 'none', reason: 'no longer open' };
+  const sd = (it.source_data ?? {}) as Record<string, unknown>;
+  const existing = (sd.prepared_forward ?? null) as { generated_at?: string; sent_at?: string } | null;
+  if (existing?.sent_at) return { did: 'none', reason: 'the forward already went out' };
+  const stale = !existing
+    || (Date.now() - Date.parse(existing.generated_at || '0')) > FRESH_HOURS * 3_600_000
+    || (!!it.last_activity_at && Date.parse(it.last_activity_at as string) > Date.parse(existing.generated_at || '0'));
+  if (!stale) return { did: 'none', reason: 'a fresh prepared forward is already on it' };
+  const { prepareForward } = await import('@/lib/home/prepare-action');
+  // Recipient inference is literal-email-only; the item's body + the judge's reason are the only
+  // words scanned (an address the counterparty actually wrote — never a guess).
+  const fwd = await prepareForward(admin, userId, 'email', w.entityId,
+    `${w.title} ${verdict.reason} ${String(sd.body || '').slice(0, 800)}`);
+  const pa = await getDraftingAssistant(admin, userId); // O3a attribution
+  // The forwarded BODY is not stored (it IS the item's own email — the serving edge re-grounds it);
+  // the artifact is the judgment: who it goes to + the subject + the lead-in note.
+  const { forwardedBody: _omit, ...fwdSlim } = fwd;
+  await admin.from('inbox_items').update({
+    source_data: { ...sd, prepared_forward: { ...fwdSlim, generated_at: new Date().toISOString(), prepared: 'pass' }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) },
+  }).eq('id', it.id);
+  return { did: 'forward', worker: pa?.name };
+}
+
 // ── C2 · the COWORKER branch — judgment shapes are prepared by the right coworker, with the item's
 // grounding + the deliverable pool (runDelegation reads+writes it). Idempotent per item. Nothing
 // sends — prompt-level prepare-and-hand-back guardrail lives in buildDelegationPrompt. ──
@@ -286,11 +394,16 @@ async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkIte
   // FIX 3 — an OUTSTANDING ask blocks re-delegation: while the coworker's input checklist sits
   // unanswered in the room, re-running would only re-ask. The rail's ingest funnel CLEARS the
   // checklist turn when inputs land, which re-opens this path (with the new pool in view).
+  // W3: a PROCEEDED ask re-opens it too — the user said go ahead; the envelope carries that
+  // standing instruction so the coworker delivers the partial and never asks again.
+  let goAhead = false;
   try {
-    const { data: ask } = await admin.from('room_turns').select('id')
+    const { data: ask } = await admin.from('room_turns').select('id, component')
       .eq('user_id', userId).eq('dedupe_key', `delegate:${w.entityId}:prepare-pass`)
       .filter('component->>key', 'eq', 'input_checklist').is('archived_at', null).limit(1).maybeSingle();
-    if (ask) return { did: 'none', reason: `${worker.name.split(' ')[0]} is waiting on input from you`, worker: worker.name };
+    const proceeded = !!((ask?.component as { state?: { proceeded?: boolean } } | null)?.state?.proceeded);
+    if (ask && !proceeded) return { did: 'none', reason: `${worker.name.split(' ')[0]} is waiting on input from you`, worker: worker.name };
+    goAhead = proceeded;
   } catch { /* pre-migration or column absent — proceed */ }
   const { buildDelegationPrompt, runDelegation } = await import('@/lib/home/delegate');
   // O3b: THE DELEGATION ENVELOPE — the brain briefs the coworker like a real chief of staff: the
@@ -325,6 +438,13 @@ async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkIte
   // reads the pool as previousOutputs) and must never fabricate the missing pieces — the principal
   // has already been asked for those in the room.
   if (artifactTruth) brainContext = [brainContext, artifactTruth].filter(Boolean).join('\n\n');
+  // W3: the principal's standing GO-AHEAD rides too — deliver the partial with honest gaps; a
+  // second ask after "go ahead with what's available" would be insubordination, not diligence.
+  if (goAhead) {
+    brainContext = [brainContext,
+      'THE PRINCIPAL HAS SAID: go ahead with what\'s available. Deliver the best partial deliverable from what you have, noting gaps honestly. Do NOT ask for the missing inputs again.',
+    ].filter(Boolean).join('\n\n');
+  }
   const prompt = buildDelegationPrompt({
     kind: poolKind,
     itemContext: `TASK: ${w.title}\n` + (w.who ? `Counterparty: ${w.who}\n` : '') +
@@ -391,12 +511,11 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
     const cCands = await resolveFileUniversal(admin, { userId, entityId: w.entity?.id ?? null }, w.title, 4).catch(() => []);
     const cTop = cCands.find((c) => c.source === 'kb');
     if (!cTop || cTop.score < 0.7) return { did: 'none', reason: 'could not find the document to send' };
-    const cJudge = await aiCall<{ match?: boolean }>({
-      userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 60, source: 'task_preparation',
-      prompt: `TASK: ${w.title.slice(0, 140)}\nCANDIDATE FILE: "${cTop.filename}"\nSnippet: ${cTop.snippet.slice(0, 200)}\n\n` +
-        `Is this file THE document the task asks to send/share (not merely related)? JSON only: {"match":true|false}`,
-    }).catch(() => ({ json: { match: false } }));
-    if (cJudge.json?.match !== true) return { did: 'none', reason: 'no confident file match' };
+    // W6 — the ONE evidence-quoting verifier (cross-entity rejected structurally; the quote is
+    // code-checked): a wrong attach is worse than none.
+    const { verifyArtifactMatch: verifyC } = await import('@/lib/prepare/requirements');
+    const cJudge = await verifyC(admin, userId, { task: w.title, candidate: cTop, entityId: w.entity?.id ?? null });
+    if (!cJudge.match) return { did: 'none', reason: 'no confident file match' };
     const cBody = await generateNudgeDraft(userId, { counterparty: w.who ?? w.blockedOn ?? null, description: `${w.title} — the document "${cTop.filename}" will be attached.` }, admin).catch(() => null);
     if (!cBody) return { did: 'none', reason: 'could not draft the send' };
     const { writeDeliverable } = await import('@/lib/home/deliverable-pool');
@@ -446,15 +565,16 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
   // candidates surface in the deep-dive picker instead of silently auto-attaching.
   const top = cands.find((c) => c.source === 'kb');
   if (!top || top.score < 0.7) return { did: 'none', reason: 'could not find the document to send' };
-  // THE REASONED PICK (the S4 rule — a score is retrieval, not judgment): one cheap yes/no on
-  // whether this file IS what the task asks to send. Reject → no auto-attach (the deep-dive's
-  // picker offers candidates instead). A wrong attach is worse than none — trust is the product.
-  const judge = await aiCall<{ match?: boolean }>({
-    userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 60, source: 'task_preparation',
-    prompt: `TASK: ${w.title.slice(0, 140)}\nCANDIDATE FILE: "${top.filename}"\nSnippet: ${top.snippet.slice(0, 200)}\n\n` +
-      `Is this file THE document the task asks to send/share (not merely related)? JSON only: {"match":true|false}`,
-  }).catch(() => ({ json: { match: false } }));
-  if (judge.json?.match !== true) return { did: 'none', reason: 'no confident file match' };
+  // THE REASONED PICK (the S4 rule — a score is retrieval, not judgment), upgraded to the W6
+  // evidence law: the verifier quotes the proving phrase (code-checked) and rejects cross-entity
+  // candidates structurally. Reject → no auto-attach (the deep-dive's picker offers candidates
+  // instead). A wrong attach is worse than none — trust is the product.
+  const { verifyArtifactMatch } = await import('@/lib/prepare/requirements');
+  const judge = await verifyArtifactMatch(admin, userId, {
+    task: w.title, candidate: top, entityId: w.entity?.id ?? null,
+    emailExcerpt: String(sd.body || '').slice(0, 400) || null,
+  });
+  if (!judge.match) return { did: 'none', reason: 'no confident file match' };
   const body = existingDraft?.body
     || (await generateReplyDraft(userId, sd as Record<string, never>, admin, `The reply should send the document "${top.filename}" (it will be attached).`).catch(() => null));
   if (!body) return { did: 'none', reason: 'could not draft the send' };
@@ -470,48 +590,63 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
 // per-item preparation goes through prepareOneItem (the one engine the prepare-now route shares).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-export async function runPreparationPass(admin: SupabaseClient, userId: string): Promise<PrepareResult> {
+export async function runPreparationPass(
+  admin: SupabaseClient, userId: string, opts?: { budgetMs?: number },
+): Promise<PrepareResult> {
   // O1a: the user's SELF entity accumulates any newly-observed own-mail identity forms — idempotent,
   // one row at most, and it must land BEFORE the spine derives self-facts from it.
   const { ensureSelfEntity } = await import('@/lib/entities/self');
   await ensureSelfEntity(admin, userId);
+  const deadline = Date.now() + (opts?.budgetMs ?? BUDGET_MS);
   const todayStr = new Date().toISOString().slice(0, 10);
   const items = await buildWorkItems(admin, userId, { todayStr, skipReconcile: true });
   const rep = partitionDailyReport(items, todayStr);
-  let prepared = 0, skipped = 0, nudges = 0, delegated = 0;
+  // The master "Automatically draft replies" switch (formerly the legacy rule loop's gate) silences
+  // the ambient REPLY lane only — nudges/invites/delegations aren't reply auto-drafts, and the
+  // explicit prepare-now click always works.
+  let autoDraft = true;
+  try {
+    const { data: prof } = await admin.from('profiles').select('email_settings').eq('id', userId).maybeSingle();
+    autoDraft = ((prof?.email_settings ?? {}) as { auto_draft?: boolean }).auto_draft !== false;
+  } catch { /* default ON */ }
+  let prepared = 0, skipped = 0, nudges = 0, delegated = 0, leftBehind = 0;
   const tally = (r: PrepareOneResult) => {
-    if (r.did === 'draft' || r.did === 'docsend') prepared++;
+    if (r.did === 'draft' || r.did === 'docsend' || r.did === 'invite' || r.did === 'forward') prepared++;
     else if (r.did === 'nudge') nudges++;
     else if (r.did === 'delegated') delegated++;
     else skipped++;
   };
 
-  // Reply drafts for the top needs-you items.
-  for (const w of rep.needsYou.filter((x) => x.kind === 'reply' && x.id.startsWith('inbox:')).slice(0, TOP_N)) {
-    tally(await prepareOneItem(admin, userId, w));
-  }
-
-  // Nudge drafts for waiting-on-a-NAMED-person (the open questions lane).
-  for (const w of rep.openQuestions.filter((x) => x.blockedOn).slice(0, 5)) {
-    tally(await prepareOneItem(admin, userId, w));
-  }
-
-  // The remaining top items — ONE batch pass of the ROSTER JUDGE (O2), then the engine (the route
-  // passed through so the single-item path never re-judges what the batch already judged).
+  // ── W2: the ENTITY-PRIORITY order — the reasoned weight the brain already synthesizes is the
+  // queue discipline (a hot deal's reply outranks a loose thread's), never a date heuristic.
+  const weights = new Map<string, number>();
   try {
-    const candidates = rep.needsYou
-      .filter((w) => !w.automated && w.kind !== 'reply' && (w.id.startsWith('inbox:') || w.id.startsWith('commit:')))
-      .slice(0, 5);
-    if (candidates.length) {
-      const routes = await routeTasks(admin, userId, candidates.map((w) => w.title));
-      for (let i = 0; i < candidates.length; i++) {
-        const route = routes[i] ?? { worker: null, sendDoc: false };
-        if (route.worker && delegated >= DELEGATE_CAP) { skipped++; continue; }
-        if (!route.worker && !route.sendDoc) { skipped++; continue; }
-        tally(await prepareOneItem(admin, userId, candidates[i], { route }));
-      }
+    const { data: ents } = await admin.from('work_entities').select('id, priority')
+      .eq('user_id', userId).eq('status', 'active').limit(500);
+    for (const e of (ents ?? []) as Array<{ id: string; priority: { weight?: number } | null }>) {
+      weights.set(e.id, Number(e.priority?.weight ?? 0));
     }
-  } catch { /* routing is an enhancement — drafts/nudges already landed */ }
+  } catch { /* unweighted walk */ }
+  const weightOf = (x: WorkItem) => (x.entity?.id ? weights.get(x.entity.id) ?? 0 : 0);
+  const byPriority = (a: WorkItem, b: WorkItem) => weightOf(b) - weightOf(a);
+
+  // The three candidate lanes, each walked in priority order under ONE shared budget. Lane 3 is
+  // judge-driven end to end (W1): the cached work judgment decides chase/produce/schedule/forward/
+  // send_file + the executor — the second batch router is gone (one judge, not two).
+  const lanes: WorkItem[][] = [
+    autoDraft ? rep.needsYou.filter((x) => x.kind === 'reply' && x.id.startsWith('inbox:')).sort(byPriority) : [],
+    rep.openQuestions.filter((x) => x.blockedOn).sort(byPriority),
+    rep.needsYou.filter((w) => !w.automated && w.kind !== 'reply' && (w.id.startsWith('inbox:') || w.id.startsWith('commit:'))).sort(byPriority),
+  ];
+  for (const lane of lanes) {
+    for (const w of lane) {
+      if (Date.now() > deadline) { leftBehind++; continue; }
+      tally(await prepareOneItem(admin, userId, w));
+    }
+  }
+  if (leftBehind > 0) {
+    console.log(`[prepare-pass] budget spent for user ${userId}: ${leftBehind} candidate(s) left for the next sweep`);
+  }
 
   // ── B3c · MEETING PREP (workbench) — an upcoming DEAL-LINKED meeting (next 14 days) gets a prep
   // brief prepared into the deal's pool: assembled facts (state, open tasks, goals/rules) + ONE
@@ -532,7 +667,7 @@ export async function runPreparationPass(admin: SupabaseClient, userId: string):
       const entByEv = new Map(((links ?? []) as Array<{ item_id: string; entity_id: string }>).map((l) => [l.item_id, l.entity_id]));
       let prepped = 0;
       for (const ev of evRows) {
-        if (prepped >= PREP_CAP) break;
+        if (prepped >= PREP_CAP || Date.now() > deadline) break;
         const entId = entByEv.get(ev.id);
         if (!entId) continue;
         const taskId = `meeting-prep-${ev.id}`;
@@ -567,14 +702,28 @@ export async function runPreparationPass(admin: SupabaseClient, userId: string):
         if (!briefText) continue;
         const review = await evaluateDeliverable(admin, userId, { content: briefText, task: `Prep for ${String(ev.title || 'the meeting')}`, entityId: entId, kind: 'deliverable' });
         const pa = await getDraftingAssistant(admin, userId);
-        await admin.from('item_deliverables').insert({
+        const { error: prepErr } = await admin.from('item_deliverables').insert({
           user_id: userId, kind: 'entity', entity_id: entId, task_id: taskId, type: 'document',
           title: `Prep — ${String(ev.title || 'Meeting')}`.slice(0, 100), content: briefText, ref: null,
           metadata: { meetingPrep: true, meetingAt: ev.start_time, ...(pa ? { agentName: pa.name } : {}), ...(review.verdict !== 'pass' ? { review } : {}) },
-        }).then(() => { prepped++; prepared++; }, () => {});
+        });
+        if (!prepErr) {
+          prepped++; prepared++;
+          // W4 — THE ENGINE NARRATES the prep too (briefs live in the deal rooms by design; a brief
+          // nobody is told about is a brief nobody reads). Keyed per meeting — one line, ever.
+          try {
+            const { writeRoomTurn } = await import('@/lib/room/turns');
+            await writeRoomTurn(admin, userId, entId, {
+              role: 'system',
+              text: `${pa?.name?.split(' ')[0] ?? 'I'} prepared the brief for "${String(ev.title || 'the meeting').slice(0, 70)}" (${ev.start_time.slice(0, 10)}) — it's on the stage when you're ready.`,
+              author: null, // one-narrator law: narration is the CoS voice, never a coworker bubble
+              dedupeKey: `meeting-prep:${ev.id}`,
+            });
+          } catch { /* narration is an enhancement */ }
+        }
       }
     }
   } catch { /* prep is an enhancement — the pass's core work already landed */ }
 
-  return { prepared, skipped, nudges, delegated };
+  return { prepared, skipped, nudges, delegated, leftBehind };
 }

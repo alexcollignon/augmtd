@@ -52,12 +52,16 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
   // The probe host owns no organic portfolio — provision its fixture entity so the errand-account
   // leg of the loop has a room to create tasks in (idempotent by name; state set so it qualifies).
   {
-    const { data: ex } = await sb.from('work_entities').select('id').eq('user_id', PERSONAL)
+    const { data: ex } = await sb.from('work_entities').select('id, status').eq('user_id', PERSONAL)
       .eq('kind', 'initiative').eq('name', 'Probe Errands').maybeSingle();
     if (!ex) await sb.from('work_entities').insert({
       user_id: PERSONAL, kind: 'initiative', name: 'Probe Errands', status: 'active',
       state: { summary: 'fixture errand pool for the smoke probes' }, last_event_at: new Date().toISOString(),
     });
+    // The orphan sweep rightly archives this link-less fixture between runs — REVIVE it (the
+    // fixture's job is to exist active at probe time; archiving it is the product being correct).
+    else if (ex.status !== 'active') await sb.from('work_entities')
+      .update({ status: 'active', last_event_at: new Date().toISOString() }).eq('id', ex.id);
   }
   // Resolve Rene's full uid from the prefix (never hardcode a guessed uuid — the earlier lesson).
   const { data: uidRows } = await sb.from('work_entities').select('user_id').eq('kind', 'initiative').limit(1000);
@@ -242,8 +246,8 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
       wk.includes('build_mcp_tools') && wk.includes('*mcp_tools'));
     check('5D · tenant-safety is a REVIEW REQUIREMENT (auth-shim documented)',
       mount.includes('TENANT-SAFE') && readFileSync('infra/agentos/README.md', 'utf8').includes('auth-shim'));
-    check('5D · the registry stays the gate (Capability.mcp field + recipe)',
-      readFileSync('lib/home/capability-map.ts', 'utf8').includes('mcp?: { server: string; tool: string }'));
+    check('5D · the registry stays the gate (Capability.mcp field + recipe — now in the ONE registry module)',
+      readFileSync('lib/work/surface-registry.ts', 'utf8').includes('mcp?: { server: string; tool: string }'));
     check('5D · runbook shipped with the shortlist', existsSync('infra/agentos/README.md') && readFileSync('infra/agentos/README.md', 'utf8').includes('Shortlist'));
   }
 

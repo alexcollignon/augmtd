@@ -45,6 +45,7 @@ export type RecogEntity = {
   id: string;
   name: string;
   summary: string | null;
+  aliases?: string[];            // identity forms — with `name`, the ONLY text the named-subject veto trusts
   people: string[];              // the entity's PEOPLE fingerprint — a primary identity signal
   embedding: number[] | null;
 };
@@ -182,7 +183,13 @@ export async function judgeRecognition(
     `- COMPANY DOMAINS: a token like "@acme.com" in a people list is that body of work's company. A NEW ` +
     `person writing from the SAME company domain as a candidate's people is usually a teammate joining ` +
     `that SAME body of work (teams grow, threads fork) — prefer "existing" unless the content is clearly ` +
-    `a genuinely different deal at that company.\n\n` +
+    `a genuinely different deal at that company.\n` +
+    `- SAME PEOPLE ≠ SAME DEAL (the channel-contact rule): a contact at a PARTNER/vendor/agency org often ` +
+    `brokers SEVERAL separate engagements for different end clients — the same account manager runs the ` +
+    `Acme assessment AND the Beta Corp assessment. When the item itself NAMES its engagement or end client ` +
+    `and that name is NOT the candidate's, it is a DIFFERENT body of work no matter how perfectly the ` +
+    `people match. Report the name you see as "named_engagement" (the proper name THIS item says it is ` +
+    `about — an end client, deal, or program name; null when the item names none).\n\n` +
     `NEW ITEM (${item.kind}):\n` +
     `title: ${item.title}\n` +
     (item.from ? `person: ${item.from}\n` : '') +
@@ -194,12 +201,12 @@ export async function judgeRecognition(
     `recurring 1:1, or a standing sync is a CHANNEL, NOT a body of work: a meeting named after the people in ` +
     `it ("X x Y") is almost always just the channel for a deal — judge it by what it is ABOUT.\n\n` +
     `Return ONLY JSON:\n` +
-    `{"decision":"existing|new|none","entity":"E1|E2|…|null","new_name":"<=5 words, the body of work's natural name (client/deal/program) — NEVER just two people's names, or null","new_summary":"<=20 words, what this body of work IS, or null","reason":"<=15 words citing the deciding PEOPLE or matter"}\n` +
+    `{"decision":"existing|new|none","entity":"E1|E2|…|null","named_engagement":"the proper name THIS item states for its engagement/end client, or null","new_name":"<=5 words, the body of work's natural name (client/deal/program) — NEVER just two people's names, or null","new_summary":"<=20 words, what this body of work IS, or null","reason":"<=15 words citing the deciding PEOPLE or matter"}\n` +
     `- "existing": the same body of work as a candidate — INCLUDING a 1:1/sync that ADVANCES a candidate deal (attach it to that deal, don't spin off a new one).\n` +
     `- "new": a genuinely DISTINCT ongoing body of work no candidate covers. Do NOT found a project named after the people meeting — if there's no distinct deal/program yet, it is not "new".\n` +
     `- "none": not a body of work — a broadcast/newsletter/notification, a personal/status catch-up, or a recurring 1:1/sync that advances no distinct ongoing work.`;
 
-  const res = await aiCall<{ decision?: string; entity?: string | null; new_name?: string | null; new_summary?: string | null; reason?: string }>({
+  const res = await aiCall<{ decision?: string; entity?: string | null; named_engagement?: string | null; new_name?: string | null; new_summary?: string | null; reason?: string }>({
     userId, supabase, shape: { output: 'json' }, prompt, temperature: 0, maxTokens: 300, source: 'brain_synthesis',
   });
   const p = res.json ?? {};
@@ -207,12 +214,66 @@ export async function judgeRecognition(
   if (p.decision === 'existing' && p.entity) {
     const idx = parseInt(String(p.entity).replace(/\D/g, ''), 10) - 1;
     const hit = candidates[idx];
-    if (hit) return { decision: 'existing', entityId: hit.id, reason };
+    if (hit) {
+      // ── THE NAMED-SUBJECT VETO (R-class, code-checked like every consequential claim): when the
+      // model itself reports the item NAMES an engagement, and that name shares no distinctive
+      // token with the chosen entity's IDENTITY — its NAME + ALIASES, deliberately NEVER its
+      // summary: an over-merged entity's summary absorbs the intruder's own words ("engagement
+      // with Arcapita in Bahrain") and would validate the very contamination being vetoed — the
+      // attach is structurally forbidden (the channel-contact over-merge: same partner people
+      // running Acme AND Beta Corp). The verdict converts to founding the named work.
+      const named = String(p.named_engagement ?? '').trim();
+      if (named && !/^(null|none|n\/a)$/i.test(named)
+        && !namesOverlap(named, `${hit.name} ${(hit.aliases ?? []).join(' ')}`)) {
+        return {
+          decision: 'new', name: named.slice(0, 80),
+          summary: String(p.new_summary || '').slice(0, 200) || `Engagement the item names as "${named.slice(0, 60)}"`,
+          reason: `named-subject veto: item is about "${named.slice(0, 40)}", not ${hit.name.slice(0, 40)} (${reason})`.slice(0, 140),
+        };
+      }
+      return { decision: 'existing', entityId: hit.id, reason };
+    }
   }
   if (p.decision === 'new' && p.new_name) {
     return { decision: 'new', name: String(p.new_name).slice(0, 80), summary: String(p.new_summary || '').slice(0, 200), reason };
   }
   return { decision: 'none', reason };
+}
+
+// Distinctive-token overlap for the named-subject veto: generic WORK-TYPE words (assessment,
+// project, program…) are shared by every engagement in a specialist portfolio and prove nothing —
+// only a distinctive token (a client/deal proper name) counts as a match. Mirrors the July-15
+// suggestion-guard lesson ("the user's own company token is too broad to drive a match").
+const GENERIC_WORK_WORDS = new Set([
+  'assessment', 'assessments', 'project', 'program', 'programme', 'engagement', 'deal', 'report',
+  'reports', 'initiative', 'pilot', 'workshop', 'training', 'launch', 'phase', 'sprint', 'review',
+  'analysis', 'audit', 'proposal', 'operations', 'alignment', 'readiness', 'strategy', 'the', 'and',
+  'for', 'with', 'new',
+]);
+/** ONE cheap read: what engagement/end-client does this item say it is about? (The same question
+ *  the recognition judge answers inline — shared by the thread-drift guard + the repair sweep.) */
+export async function extractNamedEngagement(
+  supabase: SupabaseClient, userId: string, title: string, body: string,
+): Promise<string | null> {
+  try {
+    const res = await aiCall<{ named_engagement?: string | null }>({
+      userId, supabase, shape: { output: 'json' }, temperature: 0, maxTokens: 80, source: 'brain_synthesis',
+      prompt: `What engagement/end-client does THIS item say it is about? Return the PROPER NAME the item ` +
+        `itself states (an end client, deal, or program name), or null if it names none.\n` +
+        `title: ${title.slice(0, 140)}\ncontent: ${body.slice(0, 500)}\n` +
+        `JSON only: {"named_engagement":"<proper name or null>"}`,
+    });
+    const named = String(res.json?.named_engagement ?? '').trim();
+    return named && !/^(null|none|n\/a)$/i.test(named) ? named.slice(0, 80) : null;
+  } catch { return null; }
+}
+
+export function namesOverlap(named: string, entityText: string): boolean {
+  const hay = entityText.toLowerCase();
+  const tokens = named.toLowerCase().split(/[^a-z0-9]+/)
+    .filter((t) => t.length >= 3 && !GENERIC_WORK_WORDS.has(t) && !/^(ai|ia|ml)$/.test(t));
+  if (!tokens.length) return true; // the name is all-generic ("AI Assessment") — no veto signal, trust the judge
+  return tokens.some((t) => hay.includes(t));
 }
 
 // ── The DB pipeline (Phase A shadow; consumers attach in Phase C) ────────────────────────────────
@@ -230,13 +291,35 @@ export async function recognizeItem(
     .eq('user_id', userId).eq('item_kind', item.kind).eq('item_id', item.id).maybeSingle();
   if (existing) return { entityId: (existing.entity_id as string) ?? null, via: existing.via as 'structural' | 'recognized' | 'none', founded: false };
 
-  // 1. STRUCTURAL — the thread is already part of an entity → this item is too. No decision exists.
+  // 1. STRUCTURAL — the thread is already part of an entity → this item is too… UNLESS the item
+  // itself names a DIFFERENT engagement (THE THREAD-DRIFT GUARD, R-class): partner/channel threads
+  // get reused and pivoted across end clients, so blind thread inheritance re-imports the
+  // channel-contact over-merge PAST every judge (found live: an "STC Bahrain" email inheriting an
+  // Arcapita thread link). Deterministic fast path first — an item whose own text carries the
+  // entity's identity tokens inherits at zero cost; only a never-mentions-it item pays ONE cheap
+  // named-engagement read. A conflicting name refuses inheritance and falls through to the judged
+  // path, whose named-subject veto places it correctly. A contentless follow-up (names nothing)
+  // still inherits — that is what threads are for.
   if (item.threadId) {
     const { data: threadLink } = await supabase.from('entity_links').select('entity_id')
       .eq('user_id', userId).eq('item_kind', 'email_thread').eq('item_id', item.threadId).maybeSingle();
     if (threadLink) {
-      await writeLink(supabase, userId, threadLink.entity_id as string, item, 'structural', 'same thread');
-      return { entityId: threadLink.entity_id as string, via: 'structural', founded: false };
+      let drifted = false;
+      try {
+        const { data: tEnt } = await supabase.from('work_entities').select('name, aliases')
+          .eq('id', threadLink.entity_id as string).eq('user_id', userId).maybeSingle();
+        const identity = `${tEnt?.name ?? ''} ${(Array.isArray(tEnt?.aliases) ? (tEnt!.aliases as string[]) : []).join(' ')}`.trim();
+        const itemText = `${item.title} ${(item.body || '').slice(0, 600)}`;
+        if (identity && !namesOverlap(identity, itemText)) {
+          const named = await extractNamedEngagement(supabase, userId, item.title, item.body || '');
+          if (named && !namesOverlap(named, identity)) drifted = true;
+        }
+      } catch { /* the guard is a refinement — inheritance stands on failure */ }
+      if (!drifted) {
+        await writeLink(supabase, userId, threadLink.entity_id as string, item, 'structural', 'same thread');
+        return { entityId: threadLink.entity_id as string, via: 'structural', founded: false };
+      }
+      // drifted → no inheritance; the item is judged on its own below.
     }
   }
 
@@ -262,13 +345,14 @@ export async function recognizeItem(
   // 3. RECALL — the user's remembered entities WITH their people fingerprint, scored IDENTITY-first.
   // Resilient to pre-migration (no `people` column): fall back to the fingerprint-less select.
   let rows = (await supabase.from('work_entities')
-    .select('id, name, summary, embedding, people')
+    .select('id, name, summary, aliases, embedding, people')
     .eq('user_id', userId).eq('kind', 'initiative').eq('status', 'active').limit(400)).data as Array<Record<string, unknown>> | null;
   if (!rows) rows = (await supabase.from('work_entities')
     .select('id, name, summary, embedding')
     .eq('user_id', userId).eq('kind', 'initiative').eq('status', 'active').limit(400)).data as Array<Record<string, unknown>> | null;
   const entities: RecogEntity[] = (rows ?? []).map((r) => ({
     id: r.id as string, name: r.name as string, summary: (r.summary as string) ?? null,
+    aliases: Array.isArray(r.aliases) ? (r.aliases as string[]) : [],
     people: Array.isArray(r.people) ? (r.people as string[]) : [],
     embedding: Array.isArray(r.embedding) ? (r.embedding as number[]) : null,
   }));

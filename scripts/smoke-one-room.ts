@@ -111,9 +111,13 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('R2: the DECISION mounts INLINE in the stream (the rail renders the shared DecisionCard)',
     railSrc.includes('decision?:') && railSrc.includes('<DecisionCard') &&
     detail.includes('decision={!itemDismissed && !decisionCleared'));
-  check('R2: the ARTIFACT CARD — a staged workspace\'s inline handle with the commit line on it (Open · Send)',
-    railSrc.includes('artifact?:') && railSrc.includes('artifact.onCommit') &&
-    detail.includes("label: 'Reply drafted — ready to review'") && detail.includes('onCommit: send'));
+  // SUPERSEDED by the UX arc's ONE-COMMIT-LINE law: the card is the conversation's POINTER to the
+  // staged work (Open → focuses the stage composer); the stage holds the ONLY Send. Two commit
+  // buttons for one artifact was a real duplicated gate.
+  check('R2→UX: the ARTIFACT CARD points at the stage (Open →) — ONE commit line, on the composer only',
+    railSrc.includes('artifact?:') && railSrc.includes('ONE COMMIT LINE') &&
+    !railSrc.includes('artifact.onCommit?.()') &&
+    detail.includes("label: 'Reply drafted — ready to review'"));
   check('R2: LOOSE items get the conversation too (railView no longer gated on an entity)',
     detail.includes('const railView = view ? (view as RailView) : null') &&
     !detail.includes('view?.entity ? (view as RailView)'));

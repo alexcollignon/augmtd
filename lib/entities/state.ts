@@ -16,7 +16,7 @@ import { isAutomatedSender } from '@/lib/inbox/automated';
 // VOICE (P5a): bump whenever the synthesis prompt/voice changes — threaded into the stored sig so every
 // cached state regenerates through the existing sig-gated paths (the alignment-cache lesson: a
 // prompt-driven cache must invalidate on the prompt itself, not only on the data).
-export const STATE_PROMPT_VERSION = 4; // 4: P1 projecthood — the reasoned `scope` verdict (project|errand|background)
+export const STATE_PROMPT_VERSION = 5; // 5: THE DEIXIS LAW — no relative day-words in cached prose; pre-today ledger events are the past. 4: the reasoned `scope` verdict.
 
 // The BANNED machinery register — the system describing its own bookkeeping instead of the matter.
 // ONE definition: the synthesis self-checks against it (with a corrective retry) and the voice smoke
@@ -185,8 +185,23 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
       }
       return;
     }
-    const sig = `v${STATE_PROMPT_VERSION}:${ledgerSig}`;
-    if (!opts.force && ent.sig === sig) return; // unchanged ledger + unchanged voice → no AI
+    // T-class EVENT-BOUNDARY invalidation: the ledger hash is content-only — time passing changes
+    // nothing in it, which is how "prep session locked for tomorrow" survived the meeting itself.
+    // The count of this entity's calendar events already in the PAST rides the sig: every time an
+    // event boundary crosses, the state re-synthesizes once (never a daily re-burn for all).
+    let pastEvents = 0;
+    try {
+      const { data: evLinks } = await supabase.from('entity_links').select('item_id')
+        .eq('user_id', userId).eq('entity_id', entityId).eq('item_kind', 'calendar_event').limit(100);
+      const evIds = ((evLinks ?? []) as Array<{ item_id: string }>).map((l) => l.item_id);
+      if (evIds.length) {
+        const { count } = await supabase.from('calendar_events').select('id', { count: 'exact', head: true })
+          .in('id', evIds).lt('start_time', new Date().toISOString());
+        pastEvents = count ?? 0;
+      }
+    } catch { /* boundary detection is an enhancement */ }
+    const sig = `v${STATE_PROMPT_VERSION}:${ledgerSig}:ev${pastEvents}`;
+    if (!opts.force && ent.sig === sig) return; // unchanged ledger + unchanged voice + no event boundary → no AI
 
     const userName = await getUserName(supabase, userId);
     const lines = ledger.map((l, i) => `[#${i + 1}] ${(l.at || '').slice(0, 10)} · ${l.kind}${l.who ? ` · ${l.who}` : ''}: ${l.text.slice(0, 200)}`).join('\n');
@@ -195,6 +210,9 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
       `bounded: a deal, a program, a hire, an operation, a personal matter. No funnel assumptions. From its ` +
       `event ledger, write where it stands, pick the single next move, and judge its priority.\n\n` +
       (userName ? `The owner is ${userName} — address them as "you", never by name.\n` : '') +
+      // THE DEIXIS LAW (T-class): this prose is CACHED and re-read for days — a relative day-word
+      // decays into a lie, and anything already behind today's date is the PAST, not a plan.
+      `TODAY is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}. This text will be read for DAYS — never write relative day-words ("tomorrow", "next week", "later today"): name absolute dates ("Jul 28"). Anything in the ledger dated BEFORE today already HAPPENED — describe it as past ("they met Jul 28"), never as upcoming.\n` +
       `Body of work: ${ent.name}${ent.summary ? ` — ${ent.summary}` : ''}\n` +
       `Days since last real touch: ${quietDays ?? 'unknown'}\n` +
       `STRUCTURAL FACTS (these CONSTRAIN your scope judgment):\n` +

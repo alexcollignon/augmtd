@@ -79,5 +79,14 @@ export async function getPrepared(
       });
     }
   } catch { /* non-fatal — prepared work is an enhancement */ }
-  return out.sort((a, b) => String(b.at ?? '').localeCompare(String(a.at ?? '')));
+  // W6 — IDENTICAL artifacts collapse to one (the triple-chip bug: three requirement labels once
+  // staged the same file as three pool rows). Distinct drafts (different content) always survive.
+  const seen = new Set<string>();
+  const deduped = out.filter((a) => {
+    const k = `${a.kind}:${a.attachment?.fileId ?? ''}:${a.title ?? ''}:${a.content.replace(/\s+/g, ' ').slice(0, 80)}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  return deduped.sort((a, b) => String(b.at ?? '').localeCompare(String(a.at ?? '')));
 }

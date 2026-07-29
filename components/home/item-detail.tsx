@@ -456,10 +456,13 @@ function AttendeeChips({ attendees, onChange }: { attendees: string[]; onChange:
 }
 
 // The prepared invite card — pre-filled from /api/items/prepare, fully editable, approve-to-send.
-function InvitePreviewCard({ kind, entityId, taskId, onSent, onCancel }: {
+function InvitePreviewCard({ kind, entityId, taskId, verdictLevel, onSent, onCancel }: {
   kind: ItemKind;
   entityId: string;
   taskId?: string;
+  /** W1 — the card was mounted by the judged `schedule` VERDICT (no plan step): hint the prepare
+   *  endpoint so it routes to the invite builder and serves the ambient prepared artifact first. */
+  verdictLevel?: boolean;
   onSent?: () => void;
   onCancel?: () => void;
 }) {
@@ -480,7 +483,7 @@ function InvitePreviewCard({ kind, entityId, taskId, onSent, onCancel }: {
     setLoading(true);
     fetch('/api/items/prepare', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind, entityId, taskId }),
+      body: JSON.stringify({ kind, entityId, taskId, ...(verdictLevel ? { actionType: 'calendar_invite' } : {}) }),
     })
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((d: PreparedInvite | { type: string }) => {
@@ -498,7 +501,7 @@ function InvitePreviewCard({ kind, entityId, taskId, onSent, onCancel }: {
       .catch(() => { if (alive) setErr('Could not prepare the invite — fill it in below.'); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [kind, entityId, taskId]);
+  }, [kind, entityId, taskId, verdictLevel]);
 
   // On start change with no/earlier end, default a 30-min end.
   const onStart = (v: string) => {
@@ -1595,83 +1598,10 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
           <ThreadMessages messages={threadMessages} fallback={fallback} compact />
         )}
 
-        {/* One-room R2 — the DECISION renders INLINE in the conversation stream (the rail's
-            `decision` prop, surface:'inline' per the registry). The stage keeps it ONLY when no
-            rail carries it: view not yet loaded, or EMBEDDED in the entity room (the room's own
-            rail doesn't receive this item's decision prop). */}
-        {(!railView || embedded) && !itemDismissed && !decisionCleared && verdict?.work === 'decide' && (verdict.options?.length ?? 0) >= 2 && (
-          <DecisionCard
-            title={verdict.reason || null}
-            options={verdict.options!}
-            onChoose={async (label) => {
-              // Promise fix #3 — the choice + the answer are VISIBLE turns in the room conversation.
-              const roomKey = railView?.entity?.id ?? `inbox:${id}`;
-              pushDealTurn(roomKey, label, { role: 'user' });
-              setDecisionCleared(true);
-              const res = await fetch('/api/items/steer', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ kind: 'email', id, text: label }),
-              }).catch(() => null);
-              const d = res && res.ok ? await res.json().catch(() => ({})) : {};
-              if (d.draft) { setDraft(d.draft); setBodyHTML(''); setDraftV((v) => v + 1); setComposerOpen(true); }
-              pushDealTurn(roomKey,
-                String(d.say || d.answer || (d.draft ? 'On it — the draft is updated for that.' : (res && res.ok ? 'Done.' : "I couldn't do that just now."))),
-                { key: `decide:${id}` });
-            }}
-            onDismissCard={() => setDecisionCleared(true)}
-          />
-        )}
-
-        {/* THE GAP LINE — in the rail when one exists; inline only for a rail-less item. */}
-        {!railView && <GapLine text={view?.gap} />}
-
-        {/* Contextual prepared INVITE — offered only when the plan holds an unblocked calendar-invite
-            step (dependency-honest, server-derived). Approve-gated card; no stepper. */}
-        {!itemDismissed && view?.inviteTaskId && !inviteOpen && (
-          <button
-            onClick={() => setInviteOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/50 px-3.5 py-1.5 text-[12.5px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
-          >
-            <CalendarDaysIcon className="w-3.5 h-3.5" />Review invite
-          </button>
-        )}
-        {inviteOpen && view?.inviteTaskId && (
-          <InvitePreviewCard
-            kind="email"
-            entityId={id}
-            taskId={view.inviteTaskId}
-            onSent={() => setInviteOpen(false)}
-            onCancel={() => setInviteOpen(false)}
-          />
-        )}
-        {itemDismissed && (
-          <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3">
-            <CheckCircleIcon className="w-4 h-4 text-emerald-600" />
-            <p className="text-[13px] font-medium text-emerald-700">
-              {itemResolution === 'done' ? 'Done — already handled.' : itemResolution === 'not_relevant' ? 'Marked not relevant.' : 'Dismissed.'}
-            </p>
-          </div>
-        )}
-
-        {/* Item-level prepared FORWARD card — opened from the palette's "Forward" (whole item, no plan
-            step). Grounded + approve-before-commit; on send it closes back to the Home. */}
-        {forwarding && (
-          <ForwardPreviewCard
-            kind="email"
-            entityId={id}
-            itemLevel
-            onSent={() => { setTimeout(() => router.back(), 700); }}
-            onCancel={() => setForwarding(false)}
-          />
-        )}
-
-        {/* Coworker deliverables prepared on this item — work, so it sits with the work. */}
-        <PreparedLead prepared={view?.prepared ?? null} />
-
-        {/* THE REPLY (J2) — the judged work mounts INLINE beneath the message, prefilled from the
-            pool. No bottom dock: message → work → one Send is the whole read. OPEN/COLLAPSED still
-            follows the verdict (reply → open; awareness/action → absent, the palette's "Reply" is
-            the single reveal). */}
+        {/* THE WORK, DIRECTLY BENEATH THE MESSAGE (the Scape order, finally applied to this stage:
+            message → mounted work → one commit line). The composer used to sit BELOW every other
+            block — a drafted reply the user had to scroll to find is prepared work that reads as
+            missing. The rail's artifact card "Open →" focuses exactly here. */}
         {composerOpen && (
       <div ref={composerRef}>
         {angle && (
@@ -1735,6 +1665,96 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
       </div>
       )}
 
+        {/* One-room R2 — the DECISION renders INLINE in the conversation stream (the rail's
+            `decision` prop, surface:'inline' per the registry). The stage keeps it ONLY when no
+            rail carries it: view not yet loaded, or EMBEDDED in the entity room (the room's own
+            rail doesn't receive this item's decision prop). */}
+        {(!railView || embedded) && !itemDismissed && !decisionCleared && verdict?.work === 'decide' && (verdict.options?.length ?? 0) >= 2 && (
+          <DecisionCard
+            title={verdict.reason || null}
+            options={verdict.options!}
+            onChoose={async (label) => {
+              // Promise fix #3 — the choice + the answer are VISIBLE turns in the room conversation.
+              const roomKey = railView?.entity?.id ?? `inbox:${id}`;
+              pushDealTurn(roomKey, label, { role: 'user' });
+              setDecisionCleared(true);
+              const res = await fetch('/api/items/steer', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ kind: 'email', id, text: label }),
+              }).catch(() => null);
+              const d = res && res.ok ? await res.json().catch(() => ({})) : {};
+              if (d.draft) { setDraft(d.draft); setBodyHTML(''); setDraftV((v) => v + 1); setComposerOpen(true); }
+              pushDealTurn(roomKey,
+                String(d.say || d.answer || (d.draft ? 'On it — the draft is updated for that.' : (res && res.ok ? 'Done.' : "I couldn't do that just now."))),
+                { key: `decide:${id}` });
+            }}
+            onDismissCard={() => setDecisionCleared(true)}
+          />
+        )}
+
+        {/* THE GAP LINE — in the rail when one exists; inline only for a rail-less item. */}
+        {!railView && <GapLine text={view?.gap} />}
+
+        {/* Contextual prepared INVITE — offered when the plan holds an unblocked calendar-invite
+            step OR the judged verdict says the work IS scheduling (W1: the ambient pass prepared the
+            invite; the card serves the stored artifact instantly). Approve-gated card; no stepper. */}
+        {!itemDismissed && (view?.inviteTaskId || verdict?.work === 'schedule') && !inviteOpen && (
+          <button
+            onClick={() => setInviteOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/50 px-3.5 py-1.5 text-[12.5px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
+          >
+            <CalendarDaysIcon className="w-3.5 h-3.5" />Review invite
+          </button>
+        )}
+        {inviteOpen && (view?.inviteTaskId || verdict?.work === 'schedule') && (
+          <InvitePreviewCard
+            kind="email"
+            entityId={id}
+            taskId={view?.inviteTaskId ?? undefined}
+            verdictLevel={!view?.inviteTaskId}
+            onSent={() => setInviteOpen(false)}
+            onCancel={() => setInviteOpen(false)}
+          />
+        )}
+        {/* Verdict-level prepared FORWARD (W1) — the judged `forward` verdict offers the review
+            affordance; the card serves the ambient prepared to/subject/note and the commit stays
+            behind the approve click. */}
+        {!itemDismissed && verdict?.work === 'forward' && !forwarding && (
+          <button
+            onClick={() => setForwarding(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/50 px-3.5 py-1.5 text-[12.5px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
+          >
+            <ArrowUturnRightIcon className="w-3.5 h-3.5" />Review forward
+          </button>
+        )}
+        {itemDismissed && (
+          <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3">
+            <CheckCircleIcon className="w-4 h-4 text-emerald-600" />
+            <p className="text-[13px] font-medium text-emerald-700">
+              {itemResolution === 'done' ? 'Done — already handled.' : itemResolution === 'not_relevant' ? 'Marked not relevant.' : 'Dismissed.'}
+            </p>
+          </div>
+        )}
+
+        {/* Item-level prepared FORWARD card — opened from the palette's "Forward" (whole item, no plan
+            step). Grounded + approve-before-commit; on send it closes back to the Home. */}
+        {forwarding && (
+          <ForwardPreviewCard
+            kind="email"
+            entityId={id}
+            itemLevel
+            onSent={() => { setTimeout(() => router.back(), 700); }}
+            onCancel={() => setForwarding(false)}
+          />
+        )}
+
+        {/* Coworker deliverables prepared on this item — work, so it sits with the work. */}
+        <PreparedLead prepared={view?.prepared ?? null} />
+
+        {/* THE REPLY (J2) — the judged work mounts INLINE beneath the message, prefilled from the
+            pool. No bottom dock: message → work → one Send is the whole read. OPEN/COLLAPSED still
+            follows the verdict (reply → open; awareness/action → absent, the palette's "Reply" is
+            the single reveal). */}
       {/* R3 — THE CONTEXT STRIP: what this connects to (project door, siblings, founding), spatial
           not conversational. Hidden when embedded — the room IS the project context. */}
       {!embedded && railView && <ContextStrip kind="email" id={id} view={railView} />}
