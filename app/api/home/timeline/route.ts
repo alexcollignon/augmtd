@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { buildWorkItems, partitionByTime } from '@/lib/work-items/model';
 import { ganttMarkerOf } from '@/lib/work-items/gantt-date';
 
-const MOM_DOT: Record<string, string> = { needs_you: 'bg-rose-500', gone_quiet: 'bg-amber-500', stalled: 'bg-amber-500', waiting: 'bg-blue-400', active: 'bg-emerald-500' };
+const MOM_DOT: Record<string, string> = { needs_you: 'bg-rose-500', gone_quiet: 'bg-amber-500', stalled: 'bg-amber-500', waiting: 'bg-blue-400', active: 'bg-emerald-500', unknown: 'bg-neutral-300' };
 
 export const maxDuration = 20;
 
@@ -78,7 +78,7 @@ async function computePayload(supabase: any, userId: string) {
       // flat station view carries the timeline (and creation is one tap away).
       const rowsAll = (wents ?? []) as Array<Record<string, unknown>>;
       const laneRows = rowsAll.filter((e) => !!e.tracked);
-      const entMeta = new Map(laneRows.map((e) => [e.id as string, { name: e.name as string, dot: MOM_DOT[((e.state ?? {}) as { momentum?: string }).momentum ?? 'active'] ?? MOM_DOT.active }]));
+      const entMeta = new Map(laneRows.map((e) => [e.id as string, { name: e.name as string, dot: MOM_DOT[((e.state ?? {}) as { momentum?: string }).momentum ?? 'unknown'] ?? MOM_DOT.unknown }]));
       // raw id → entity (only for inbox/commitment work items).
       const rawToEntity = new Map<string, string>();
       const { data: gl } = await supabase.from('entity_links').select('item_id, entity_id')

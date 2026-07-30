@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { FolderIcon, XMarkIcon, PlusIcon } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
 import { loadLS } from '@/lib/utils/local-cache';
+import { AnchoredPopover } from '@/components/ui/anchored-popover';
 
 // ONE BRAIN — the item-level membership chip (deep-dive header, inbox detail). Shows which body of work
 // this item belongs to (its ENTITY LINK) and lets the user attach/detach — via='user' + locked, so the
@@ -34,12 +35,6 @@ export default function AddToWorkControl({ kind, id, compact }: { kind: string; 
     }).catch(() => {});
     return () => { alive = false; };
   }, [itemKind, id]);
-  useEffect(() => {
-    const onClick = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false); };
-    if (open) document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, [open]);
-
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [query, setQuery] = useState('');
@@ -114,8 +109,10 @@ export default function AddToWorkControl({ kind, id, compact }: { kind: string; 
           <PlusIcon className="w-3 h-3" />Add to project
         </button>
       )}
-      {open && (
-        <div className="absolute top-full right-0 mt-1 z-30 w-60 rounded-xl border border-neutral-200 bg-white shadow-lg p-1">
+      {/* PORTALED (the overlay law — components/ui/anchored-popover.tsx): escapes clipped/
+          transformed ancestors so the panel is never cut off or layered under siblings. */}
+      <AnchoredPopover anchorRef={boxRef} open={open} onClose={() => setOpen(false)} align="right" width={240}>
+        <div className="rounded-xl border border-neutral-200 bg-white shadow-lg p-1">
           {/* Search + create lead the picker (create-first: this is where projects are born; the
               query pre-fills the new name so "type it, it doesn't exist, start it" is one motion). */}
           {creating ? (
@@ -150,7 +147,7 @@ export default function AddToWorkControl({ kind, id, compact }: { kind: string; 
             {filtered.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">{q ? 'No match — start it above.' : 'Nothing to link yet.'}</p>}
           </div>
         </div>
-      )}
+      </AnchoredPopover>
     </div>
   );
 }

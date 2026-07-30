@@ -181,7 +181,7 @@ const src = (p: string) => readFileSync(p, 'utf8');
     !hv.includes('<BundleGroup') && hv.includes('divide-y divide-neutral-100') && hv.includes('flat.push'));
   check('H6: WorkRow flat mode + the row-density law (one signal per category; prepared = one word: ready)',
     wr.includes('flat = false') && wr.includes('ONE signal per category') && wr.includes('>ready</span>'));
-  check('H7: calm groups collapse (hover-preview + click-pin, persisted); urgent groups always open',
+  check('H7: calm groups collapse (hover-preview + click-pin, persisted — owner-reinstated July 30); urgent groups always open',
     hv.includes("g.key === 'overdue' || g.key === 'today'") && hv.includes("'aug-do-pinned'") && hv.includes('hoverGroup === g.key'));
   const brief = src('app/api/home/brief/route.ts');
   // J1 moved the law into lib/inbox/notice-demotion.ts (ONE module, shared with judgeWork).

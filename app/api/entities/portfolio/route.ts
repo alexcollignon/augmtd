@@ -97,7 +97,9 @@ export async function GET() {
       const nm = (r.next_move ?? null) as { title?: string; entityRef?: string | null } | null;
       const lastEventAt = (r.last_event_at as string) ?? null;
       const quietDays = lastEventAt ? Math.max(0, Math.floor((nowMs - new Date(lastEventAt).getTime()) / 86400000)) : null;
-      const momentum = state.momentum || 'active';
+      // THE HONEST DEFAULT: no synthesized momentum ≠ "Active". An unjudged entity says so —
+      // the neutral 'unknown' token — never a healthy green verdict it hasn't earned (July 29).
+      const momentum = state.momentum || 'unknown';
       const owes = { you: state.whoOwes?.you ?? [], them: state.whoOwes?.them ?? [] };
       const id = r.id as string;
       // Closure candidate: the memory sees a concluded shape — quiet + stalled/gone_quiet + no open loops.

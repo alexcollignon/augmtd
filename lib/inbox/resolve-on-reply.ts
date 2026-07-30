@@ -120,16 +120,35 @@ export async function resolveThreadOnReply(opts: {
     // commitments — a user reply doesn't complete what someone else owes. ──
     const { data: openCommits } = await client
       .from('commitments')
-      .select('id, created_at, description, direction')
+      .select('id, created_at, description, direction, due_date')
       .eq('user_id', userId)
       .eq('status', 'open')
       .eq('direction', 'you_owe')
       .eq('thread_id', threadId);
 
-    for (const c of (openCommits ?? []) as Array<{ id: string; created_at: string; description: string }>) {
+    for (const c of (openCommits ?? []) as Array<{ id: string; created_at: string; description: string; due_date?: string | null }>) {
       // T1: same floor — a you-owe settles only via a message TO the thread's counterparty.
       const state = computeThreadReplyState(messagesForResolution(messages, threadCp), c.created_at ? new Date(c.created_at) : null);
       if (!state.userReplied) continue;
+
+      // THE FULFILLMENT LAW (July 30): a structural reply settles a REPLY-obligation, but a
+      // commitment can owe a DELIVERABLE — and "I'll send it by Sunday" fulfills nothing. One
+      // reasoned pass over the user's actual sent message decides delivered vs promised; only
+      // delivered closes; a re-promise with a stated new date re-anchors due_date instead.
+      // Unclear / AI failure leaves it open (failure is never fulfillment).
+      try {
+        const { data: sent } = await client.from('emails')
+          .select('id, body, metadata')
+          .eq('user_id', userId).eq('thread_id', threadId).eq('is_from_user', true)
+          .gt('received_at', c.created_at)
+          .order('received_at', { ascending: false }).limit(1).maybeSingle();
+        const { judgeCommitmentFulfillment, applyFulfillmentVerdict } = await import('@/lib/commitments/fulfillment');
+        const meta = (sent?.metadata ?? {}) as { attachments?: unknown[] };
+        const fv = await judgeCommitmentFulfillment(client, userId, c,
+          { id: (sent?.id as string) ?? null, body: String(sent?.body ?? ''), attachmentCount: Array.isArray(meta.attachments) ? meta.attachments.length : 0 }, true);
+        const closed = await applyFulfillmentVerdict(client, userId, c, fv, async () => true);
+        if (!closed) continue; // promised/unclear — the deliverable stays on the plate
+      } catch { continue; } // never close on an error path
 
       const resolvedAt = new Date().toISOString();
       const { error } = await client

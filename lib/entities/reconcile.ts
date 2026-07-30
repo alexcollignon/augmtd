@@ -129,9 +129,15 @@ export async function reconcileEntities(supabase: SupabaseClient, userId: string
     try {
       const { people, domains, linkCount } = await peopleOf(supabase, userId, id);
       // LIFECYCLE — an entity emptied to zero members becomes a ghost; archive it (reversible), skip the rest.
+      // THE PINNING LAW (July 29, found live): a TRACKED entity is a human decision that outranks
+      // the machine — a user-created project awaiting its work is never a ghost. Same guard the
+      // orphan sweep always had; every auto-archive door carries it.
       if (linkCount === 0) {
-        await supabase.from('work_entities').update({ status: 'archived', updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', userId);
-        continue;
+        const { data: pin } = await supabase.from('work_entities').select('tracked').eq('id', id).eq('user_id', userId).maybeSingle();
+        if (!pin?.tracked) {
+          await supabase.from('work_entities').update({ status: 'archived', updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', userId);
+          continue;
+        }
       }
       // IDENTITY — the people fingerprint recognition reads (recomputed from CURRENT links, not additive).
       await supabase.from('work_entities').update({ people }).eq('id', id).eq('user_id', userId).then(() => {}, () => {});

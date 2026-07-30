@@ -20,7 +20,7 @@ import { isNoMoveNotice, isAutomatedSenderStrong, rawMailKindOf } from '@/lib/in
 import { computeThreadReplyState, type ThreadMessage } from '@/lib/inbox/thread-resolution';
 import { getPrepared, type PreparedArtifact } from '@/lib/prepare/read';
 import { loadRoster, type RosterEntry } from '@/lib/prepare/route-suggestion';
-import { userTimezone, localNow, timesInText } from '@/lib/utils/user-time';
+import { userTimezone, localNow, timesInText, dateStatedInText } from '@/lib/utils/user-time';
 import { COMPONENT_KEYS, gateOf, renderComponentOptions, componentForWork, JUDGE_VERSION, WORK_VERBS, type WorkComponentKey, type WorkGate, type WorkVerb } from '@/lib/work/surface-registry';
 
 export type WorkVerdict = {
@@ -107,7 +107,10 @@ function coerceVerdict(raw: unknown, roster: RosterEntry[], ctx: TimeCtx): WorkV
   if (work === 'none' && reso === 'expired') {
     const basis = String(r.expired_on ?? '').trim().slice(0, 10);
     if (/^\d{4}-\d{2}-\d{2}$/.test(basis)) {
-      if (basis < ctx.todayStr) out.resolution = 'expired';
+      // THE STATED-DATE CHECK (P27 hardening): a past basis is only an expiry when the item's OWN
+      // text states that date (any common rendering — dateStatedInText). A fabricated yesterday
+      // no longer defeats the same-day protection; an unverifiable claim keeps the item live.
+      if (basis < ctx.todayStr) { if (dateStatedInText(ctx.itemText, basis)) out.resolution = 'expired'; }
       else if (basis === ctx.todayStr) {
         const t = /^(\d{1,2}):(\d{2})$/.exec(String(r.expired_time ?? '').trim());
         if (t) {
