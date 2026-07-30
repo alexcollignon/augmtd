@@ -27,15 +27,18 @@ export const itemStateOf = (s: string): StateToken => ITEM_STATE[s as ItemStateK
 export const OVERDUE_TONE = { dot: 'bg-rose-500', text: 'text-rose-600', label: 'Overdue' } as const;
 
 // ── PROJECT momentum (judgment) — the entity brain's verdict. ──
-export type MomentumKey = 'active' | 'needs_you' | 'waiting' | 'gone_quiet' | 'stalled';
+export type MomentumKey = 'active' | 'needs_you' | 'waiting' | 'gone_quiet' | 'stalled' | 'unknown';
 export const MOMENTUM: Record<MomentumKey, StateToken> = {
   needs_you:  { dot: 'bg-rose-500',    text: 'text-rose-600',    label: 'Needs you' },
   gone_quiet: { dot: 'bg-amber-500',   text: 'text-amber-600',   label: 'Gone quiet' },
   stalled:    { dot: 'bg-amber-500',   text: 'text-amber-600',   label: 'Stalled' },
   waiting:    { dot: 'bg-blue-400',    text: 'text-blue-600',    label: 'Waiting' },
   active:     { dot: 'bg-emerald-500', text: 'text-emerald-600', label: 'Active' },
+  // THE HONEST DEFAULT: an entity whose state hasn't been synthesized yet is UNKNOWN — never
+  // shown as healthy green. A default must read neutral, not like a verdict (July 29).
+  unknown:    { dot: 'bg-neutral-300', text: 'text-neutral-400', label: 'No signal yet' },
 };
-export const momentumOf = (m: string): StateToken => MOMENTUM[m as MomentumKey] ?? MOMENTUM.active;
+export const momentumOf = (m: string): StateToken => MOMENTUM[m as MomentumKey] ?? MOMENTUM.unknown;
 
 // ── PROJECT lifecycle (a human/lifecycle decision, distinct from momentum). ──
 export type LifecycleKey = 'active' | 'done' | 'archived';

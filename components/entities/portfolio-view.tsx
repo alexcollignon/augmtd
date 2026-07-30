@@ -84,10 +84,15 @@ function Row({ e, onAction, onOpen, others = [] }: { e: Entity; onAction: (id: s
   const [merging, setMerging] = useState(false); // ⋯ morphed into the merge-target list
   const [draft, setDraft] = useState(e.name);
   const menuRef = useRef<HTMLDivElement>(null);
-  const m = MOM[e.momentum] ?? MOM.active;
+  const m = MOM[e.momentum] ?? MOM.unknown;
   const moveHref = refHref(e.nextMove?.entityRef ?? null);
   const verb = 'inline-flex items-center gap-1 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-700 transition-colors';
   const subline = e.nextMove?.title || e.summary; // scent without clutter — one muted line, not six signals
+  // The state in WORDS when it matters (July 29): a bare 8px dot carrying five meanings via a
+  // hover tooltip is undiscoverable (and dead on touch). Healthy/unknown stay quiet; anything
+  // that deviates says so in the subline — the dot reinforces, it never carries alone.
+  const stateWord = e.momentum !== 'active' && e.momentum !== 'unknown'
+    ? `${m.label}${e.momentum === 'gone_quiet' && e.quietDays ? ` · ${e.quietDays}d` : ''}` : null;
   return (
     <div className="group rounded-xl border border-neutral-200/70 bg-white transition-all duration-200 hover:border-neutral-300">
       {/* COLLAPSED — competitor restraint: one dot · name · pin · chevron. One muted subline for scent. */}
@@ -105,7 +110,13 @@ function Row({ e, onAction, onOpen, others = [] }: { e: Entity; onAction: (id: s
           ) : (
             <span className="text-[13.5px] font-semibold text-neutral-800 truncate">{e.name}</span>
           )}
-          {!renaming && subline && <p className="text-[12px] text-neutral-400 leading-snug truncate mt-0.5">{subline}</p>}
+          {!renaming && (stateWord || subline) && (
+            <p className="text-[12px] text-neutral-400 leading-snug truncate mt-0.5">
+              {stateWord && <span className={`font-medium ${m.text}`}>{stateWord}</span>}
+              {stateWord && subline && <span> · </span>}
+              {subline}
+            </p>
+          )}
         </button>
         <span className="flex-shrink-0 flex items-center gap-2">
           {/* B6 — the urgency BADGE: a fact from the deal's own earliest open due date. */}
@@ -224,8 +235,15 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
   const [newDesc, setNewDesc] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const [fresh, setFresh] = useState(false); // a REAL fetch landed this session (empty-state honesty gate)
   const load = useCallback(() => {
-    fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => { setData(d); saveLS('aug-portfolio-v1', d); }).catch(() => {});
+    // LAST-GOOD LAW: only a VALID response replaces state or touches the shared cache — an
+    // error/empty payload must never clobber last-good nor poison aug-portfolio-v1 (the
+    // "Nothing here" flash, July 29).
+    fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => {
+      if (!d || !Array.isArray(d.entities)) return;
+      setData(d); saveLS('aug-portfolio-v1', d); setFresh(true);
+    }).catch(() => {});
   }, []);
   useEffect(() => { load(); }, [load]);
   // 2-WAY LIVE (F5): a meeting-side attach / room change / chat command shows here without a reload.
@@ -342,9 +360,19 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
   // (smaller-things fold removed — see the tracked-only filter above); the discovery path
   // is the item's context strip ("Connects to X · Track"), never a suggestion card here.
   // Within accepted projects: the reasoned priority leads; the rest folds (a presentation cutoff
-  // over the judged weight — plumbing, per the doctrine).
-  const main = flat ? projects : projects.filter((e) => e.prominent);
-  const tail = flat ? [] : projects.filter((e) => !e.prominent);
+  // over the judged weight — plumbing, per the doctrine). TWO LAWS on the fold (July 29):
+  // (1) The fold's word is a CLAIM — "quieter" must be true by construction. A needs-you or
+  //     overdue project can never land in the quiet tail, whatever its weight says (weight and
+  //     momentum are independent judgments; the fold derives from BOTH).
+  // (2) The fold earns its keep only on a LONG tail — hiding a handful of rows costs a click
+  //     and a label to parse for ~nothing. Short portfolios just show their rows.
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const demandsAttention = (e: Entity) => e.momentum === 'needs_you' || (!!e.nextDue && e.nextDue <= todayStr);
+  const lead = projects.filter((e) => e.prominent || demandsAttention(e));
+  const rest = projects.filter((e) => !e.prominent && !demandsAttention(e));
+  const folded = !flat && rest.length > 5;
+  const main = flat ? projects : folded ? lead : projects;
+  const tail = folded ? rest : [];
   // Merge targets: every ACTIVE project (the ⋯ "Merge into…" list).
   const mergeTargets = live.filter((e) => e.status === 'active' && (e.tracked || e.scope === 'project' || e.scope === null)).map((e) => ({ id: e.id, name: e.name }));
   const counts = { active: live.filter((e) => e.status === 'active').length, done: live.filter((e) => e.status === 'done').length, archived: live.filter((e) => e.status === 'archived').length, muted: live.filter((e) => e.status === 'muted').length };
@@ -426,7 +454,16 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
             {tailOpen && <div className="space-y-2 pt-1">{tail.map((e) => <Row key={e.id} e={e} onAction={onAction} onOpen={openDetail} others={mergeTargets} />)}</div>}
           </>
         )}
-        {inTab.length === 0 && <p className="text-[13px] text-neutral-400 py-8 text-center">Nothing here.</p>}
+        {/* "Nothing here" is a CLAIM — only made once a real fetch has confirmed it. Until then
+            (cold cache / hydrating), a quiet pending shell (the frame law, July 29). */}
+        {inTab.length === 0 && !searching && (fresh
+          ? <p className="text-[13px] text-neutral-400 py-8 text-center">Nothing here.</p>
+          : <div className="space-y-2 animate-pulse">{[0, 1].map((i) => (
+              <div key={i} className="flex items-center gap-3 rounded-xl border border-neutral-200/70 bg-white px-4 py-3">
+                <div className="w-2 h-2 rounded-full bg-neutral-200 flex-shrink-0" />
+                <div className="h-3.5 rounded bg-neutral-200/70" style={{ width: `${40 + i * 18}%` }} />
+              </div>
+            ))}</div>)}
       </div>
     </div>
   );

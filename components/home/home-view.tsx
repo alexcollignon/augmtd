@@ -866,7 +866,7 @@ function MovingTier({ exclude }: { exclude?: Set<string> }) {
     <section className="mt-8">
       <button onClick={() => setOpen((v) => !v)} className="group w-full flex items-center gap-2 text-left">
         <span className="inline-flex -space-x-1">
-          {moving.slice(0, 4).map((e) => <span key={e.id} className={`w-2 h-2 rounded-full ring-2 ring-white ${(MOMENTUM[e.momentum as BrainState['momentum']] ?? MOMENTUM.active).dot}`} />)}
+          {moving.slice(0, 4).map((e) => <span key={e.id} className={`w-2 h-2 rounded-full ring-2 ring-white ${(MOMENTUM[e.momentum as BrainState['momentum']] ?? MOMENTUM.unknown).dot}`} />)}
         </span>
         <span className="text-[12px] font-medium text-neutral-500">{moving.length} moving · nothing needed from you</span>
         <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-300 group-hover:text-neutral-500 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
@@ -874,7 +874,7 @@ function MovingTier({ exclude }: { exclude?: Set<string> }) {
       <Collapse open={open}>
         <div className="space-y-1.5 pt-3">
           {moving.map((e) => {
-            const m = MOMENTUM[e.momentum as BrainState['momentum']] ?? MOMENTUM.active;
+            const m = MOMENTUM[e.momentum as BrainState['momentum']] ?? MOMENTUM.unknown;
             const href = e.nextMove ? brainRefHref(e.nextMove.entityRef) : null;
             const go = () => href ? router.push(href) : undefined;
             return (
@@ -905,7 +905,7 @@ type HorizonRow = { id: string; title: string; start: string; attendees: number;
 function ThisWeekCard() {
   const [h, setH] = useState<{ thisWeek: HorizonRow[] } | null>(null);
   useEffect(() => {
-    const cached = loadLS<{ thisWeek: HorizonRow[] }>('aug-home-horizon-v3');
+    const cached = loadLS<{ thisWeek: HorizonRow[] }>('aug-home-horizon-v3', { maxAgeMs: 15 * 60_000 });
     if (cached) setH(cached);
     fetch('/api/home/horizon').then((r) => r.json())
       .then((d) => { if (Array.isArray(d.thisWeek)) { setH({ thisWeek: d.thisWeek }); saveLS('aug-home-horizon-v3', { thisWeek: d.thisWeek }); } })
@@ -1027,7 +1027,7 @@ function BundleGroup({ title, why, items, state, emphasis = false, onDismissInbo
   const todayISO = new Date().toISOString().slice(0, 10);
   const lead = items[0];
   const overdue = items.some((i) => i.overdue || (!!i.dueDate && i.dueDate < todayISO));
-  const m = state ? (MOMENTUM[state.momentum] ?? MOMENTUM.active) : null;
+  const m = state ? (MOMENTUM[state.momentum] ?? MOMENTUM.unknown) : null;
   const moveHref = state?.nextMove ? brainRefHref(state.nextMove.entityRef) : null;
   // GLANCE register (Phase 3 F1): collapsed = the reasoned one-line "why" or the lead atom's
   // who · verb-ask — never the state paragraph. The judged summary (full sentence) renders inside
@@ -1483,7 +1483,10 @@ export function HomeView() {
     if (acted.size) { setDismissed(new Set(acted)); setClearedIds(new Set(acted)); }
     // INSTANT: hydrate the last-known brief + team from localStorage (no skeleton flash on reload), then
     // refresh in the BACKGROUND. First-ever load (no cache) falls back to the normal skeleton load.
-    const cachedBrief = loadLS<Brief>('aug-home-brief-v1');
+    // FRESHNESS FLOOR (July 30): the deck is an ACTION surface — a cache older than 15 minutes may
+    // contain work resolved since (it painted an already-delivered item for seconds on every load,
+    // then retracted it). Too old to trust → the honest skeleton, never a stale claim.
+    const cachedBrief = loadLS<Brief>('aug-home-brief-v1', { maxAgeMs: 15 * 60_000 });
     if (cachedBrief) {
       setBrief(cachedBrief);
       const cachedTeam = loadLS<{ messages: TeamMsg[]; needsReview: TeamReview[] }>('aug-home-team-v1');
@@ -2159,7 +2162,9 @@ export function HomeView() {
                         // section exists. The CALM groups (This week · When you can · project
                         // groups) rest COLLAPSED to header + count, expand smoothly on hover
                         // (the one grid transition), and CLICK PINS them open (persisted — hover
-                        // alone is fragile and touch needs the tap).
+                        // alone is fragile and touch needs the tap). Hover-expand was briefly
+                        // removed July 29 and REINSTATED July 30 by the owner's call: the preview
+                        // is wanted; the "vanishing row" it was blamed for was stale-cache paint.
                         const alwaysOpen = g.key === 'overdue' || g.key === 'today';
                         const isOpen = alwaysOpen || pinnedGroups.has(g.key) || hoverGroup === g.key;
                         return (

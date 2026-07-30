@@ -10,7 +10,7 @@
 // registry — a membership change here shows on the deck/timeline/meetings without any second store.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ChevronLeftIcon, ChevronRightIcon, ArrowRightIcon, CheckIcon, XMarkIcon, ArchiveBoxIcon, BellSlashIcon, ArrowUturnLeftIcon, EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
@@ -640,6 +640,7 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
     } else if (href) router.push(href);
   };
   const [adding, setAdding] = useState(false);
+  const addAnchorRef = useRef<HTMLDivElement>(null); // "+ Add existing" popover anchor (portaled)
   const [menu, setMenu] = useState(false); // the header ⋯ (status + category)
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
@@ -712,7 +713,7 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
   const [handing, setHanding] = useState(false);
 
   const e = d?.entity;
-  const m = e ? (MOM[e.momentum] ?? MOM.active) : MOM.active;
+  const m = e ? (MOM[e.momentum] ?? MOM.unknown) : MOM.active;
   const moveHref = refHref(e?.nextMove?.entityRef ?? null);
   const patch = (p: Partial<Detail['entity']>) => setD((prev) => (prev ? { ...prev, entity: { ...prev.entity, ...p } } : prev));
   const history = d?.history ?? [];
@@ -912,9 +913,9 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
                       </div>
                     </div>
                   )}
-                  <div className="relative flex justify-end mb-1">
+                  <div ref={addAnchorRef} className="relative flex justify-end mb-1">
                     <button onClick={() => setAdding((v) => !v)} className="inline-flex items-center gap-1 text-[12px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors">+ Add existing</button>
-                    {adding && <AddItemPicker onClose={() => setAdding(false)} onPick={(it) => { setAdding(false); setMembership(it.id, it.kind, entityId); }} />}
+                    {adding && <AddItemPicker anchorRef={addAnchorRef} onClose={() => setAdding(false)} onPick={(it) => { setAdding(false); setMembership(it.id, it.kind, entityId); }} />}
                   </div>
                   <TaskList board={d!.board} onRefresh={refresh} onDetach={detachItem} entityId={entityId} onOpen={openHref}
                     onPreviewDeliverable={(name, id) => setFocused({ kind: 'deliverable', id, title: name })} />

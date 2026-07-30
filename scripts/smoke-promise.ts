@@ -1065,9 +1065,10 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   // at 12:30 PM tomorrow" still on the plate at 20:34 the day OF). Stored text never carries
   // decaying day-words; a same-day timed event is over when its stated time passes on the USER'S
   // clock (code-verified); a future-timed one is live all day. ═══
-  check('P27 · the clock is structural (user-tz now in the judge · expired_time code-verified in-text · event-boundary sig · deixis law at extraction + in state prose · anchors threaded)',
+  check('P27 · the clock is structural (user-tz now in the judge · expired_time code-verified in-text · a past expired_on code-verified in-text too, the hallucinated-expiry hole · event-boundary sig · deixis law at extraction + in state prose · anchors threaded)',
     src('lib/work/judge.ts').includes('eventPassed') &&
     src('lib/work/judge.ts').includes('timesInText(ctx.itemText).includes(hhmm) && ctx.nowHHMM > hhmm') &&
+    src('lib/work/judge.ts').includes('dateStatedInText(ctx.itemText, basis)') &&
     src('lib/utils/user-time.ts').includes('export function timesInText') &&
     src('lib/commitments/extract.ts').includes('THE DEIXIS LAW') &&
     src('lib/commitments/extract.ts').includes('resolveDeixisInDescriptions') &&
@@ -1075,9 +1076,30 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     src('lib/entities/state.ts').includes(':ev${pastEvents}') &&
     src('lib/entities/state.ts').includes('never write relative day-words'));
   {
+    // Unit — THE STATED-DATE CHECK (pure): the claimed expiry date must appear in the item's own
+    // text in some common rendering; a fabricated date never verifies; a weekday name grounds a
+    // forward-resolved relative deadline.
+    const { dateStatedInText } = await import('../lib/utils/user-time');
+    check('P27 unit · dateStatedInText — ISO/prose/weekday renderings verify, a fabricated date never does',
+      dateStatedInText('direction: you_owe · due 2026-07-25', '2026-07-25') &&
+      dateStatedInText('the review is on July 25 at noon', '2026-07-25') &&
+      dateStatedInText('please send it by Thursday', '2026-07-30') && // July 30 2026 = Thursday
+      !dateStatedInText('Be at the workshop room at 20:00 — 2026-07-29', '2026-07-28') &&
+      !dateStatedInText('an undated open ask', '2026-07-01'));
+  }
+  {
     const { judgeWork } = await import('../lib/work/judge');
-    const hhmmOf = (d: Date) => `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
-    const today = new Date().toISOString().slice(0, 10);
+    // THE FIXTURE'S CLOCK = THE JUDGE'S CLOCK (July 29 — the flake's root): times were computed
+    // in UTC while the judge runs on the account's calendar-derived timezone (+3 for a Gulf
+    // portfolio), so "3h ahead in UTC" landed AT local now and AI latency tipped it past the
+    // minute. Compute on the SAME resolved clock, clamped inside the local day.
+    const { userTimezone: utz, localNow: ln } = await import('../lib/utils/user-time');
+    const tz = await utz(sb, PERSONAL);
+    const nowLocal = ln(tz);
+    const [lh, lm] = nowLocal.hhmm.split(':').map(Number);
+    const nowMins = lh * 60 + lm;
+    const fmtM = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    const today = nowLocal.dateStr;
     const mkCommit = async (desc: string) => {
       const { data } = await sb.from('commitments').insert({
         user_id: PERSONAL, description: desc, direction: 'you_owe', status: 'open',
@@ -1085,8 +1107,8 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       }).select('id').maybeSingle();
       return data?.id as string | undefined;
     };
-    // a — a today-event whose stated time PASSED hours ago (probe host has no calendar → UTC clock).
-    const passed = hhmmOf(new Date(Date.now() - 3 * 3_600_000));
+    // a — a today-event whose stated time PASSED hours ago (clamped inside the local day).
+    const passed = fmtM(Math.max(1, nowMins - 180));
     const pastId = await mkCommit(`Be at the workshop room at ${passed} — ${today}`);
     if (pastId) {
       const v = await judgeWork(sb, PERSONAL, { kind: 'commitment', id: pastId });
@@ -1096,7 +1118,7 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       await sb.from('commitments').delete().eq('id', pastId);
     } else check('P27 live · past-time probe insert failed', false);
     // b — the counter: a today-event whose stated time is still AHEAD is live work, never expired.
-    const ahead = hhmmOf(new Date(Date.now() + 3 * 3_600_000));
+    const ahead = fmtM(Math.min(23 * 60 + 58, nowMins + 180));
     const futId = await mkCommit(`Be at the workshop room at ${ahead} — ${today}`);
     if (futId) {
       const v = await judgeWork(sb, PERSONAL, { kind: 'commitment', id: futId });
@@ -1188,6 +1210,73 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
         c.endsWith('…') && long.startsWith(base) && long[base.length] === ' ' &&
         clip('short', 24) === 'short');
     }
+  }
+
+  // ═══ P31 · THE PORTFOLIO TELLS THE TRUTH + THE OVERLAY LAW (July 29, both found live). The
+  // fold's word is a CLAIM ("quieter" can never hide a needs-you/overdue project, and a fold
+  // that hides a handful of rows is noise); a DEFAULT is never a VERDICT (no synthesized
+  // momentum renders neutral, never healthy green); an anchored panel ESCAPES its clipping
+  // ancestors (portal to body — z-index never wins across stacking contexts). ═══
+  {
+    const pv = src('components/entities/portfolio-view.tsx');
+    check('P31 · the fold is momentum-aware + count-gated (needs-you/overdue never in the quiet tail; short portfolios show their rows)',
+      pv.includes('demandsAttention') && pv.includes("e.momentum === 'needs_you'") &&
+      pv.includes('rest.length > 5') && pv.includes('true by construction'));
+    check('P31 · the state speaks in WORDS on the row when it deviates (the dot reinforces, never carries alone)',
+      pv.includes('stateWord') && pv.includes('never carries alone'));
+    const st = src('lib/work-items/states.ts');
+    check('P31 · the honest default — unknown momentum is a neutral token, and every display fallback uses it (never green)',
+      st.includes("unknown:    { dot: 'bg-neutral-300'") && st.includes('?? MOMENTUM.unknown') &&
+      src('app/api/entities/portfolio/route.ts').includes("state.momentum || 'unknown'") &&
+      !src('components/home/home-view.tsx').includes('?? MOMENTUM.active') &&
+      !pv.includes('?? MOM.active'));
+    const pop = src('components/ui/anchored-popover.tsx');
+    check('P31 · THE OVERLAY LAW — one portal primitive owns anchored panels (reposition, outside-click, Escape); all four picker doors use it and no in-flow absolute panel remains',
+      pop.includes('createPortal') && pop.includes('THE OVERLAY LAW') &&
+      [['components/work/work-row.tsx'], ['components/entities/add-to-work-control.tsx'], ['components/meetings/meeting-project-control.tsx'], ['components/entities/add-item-picker.tsx']]
+        .every(([f]) => src(f).includes('AnchoredPopover') && !src(f).includes('absolute top-full')));
+    check('P31 · THE PINNING LAW — a tracked (user-created) entity is NEVER auto-archived, at ANY door (state self-heal · reconcile zero-member · registry judge · orphan sweep)',
+      src('lib/entities/state.ts').includes('!count && !ent.tracked') &&
+      src('lib/entities/reconcile.ts').includes('pin?.tracked') &&
+      src('lib/entities/reconcile-registry.ts').includes('!r.tracked') &&
+      src('lib/entities/reconcile.ts').includes('if (e.tracked) continue'));
+    check('P31 · a popover never DISMISSES on mouse-leave (outside-click + Escape only; deck-group hover-preview is the owner\'s deliberate exception, reinstated July 30)',
+      !src('components/entities/add-item-picker.tsx').includes('onMouseLeave={onClose}') &&
+      !src('components/ui/anchored-popover.tsx').includes('onMouseLeave'));
+    check('P31 · THE LAST-GOOD LAW on the shared portfolio cache — only a valid response replaces state or touches aug-portfolio-v1; "Nothing here" is claimed only after a real fetch confirms it',
+      pv.includes('Array.isArray(d.entities)') && pv.includes('fresh') &&
+      src('components/entities/entity-timeline.tsx').includes('Array.isArray(d.entities)'));
+  }
+
+  // ═══ P32 · THE FULFILLMENT LAW (July 30, found live: "I'll close the assessment and share the
+  // report before Sunday" marked the deliver-the-report commitment FULFILLED and the week's most
+  // important deliverable vanished from the Home). A message and a deliverable are different
+  // things: the structural resolvers only NOMINATE; one reasoned pass over the message's own words
+  // decides delivered vs promised; only delivered closes; a re-promise with a stated new date
+  // re-anchors due_date (code-verified in-text); unclear/AI-failure never closes. ═══
+  check('P32 · both resolvers consult the fulfillment judge before closing (only delivered closes · re-anchor code-verified via dateStatedInText · verdicts cached per candidate message · failure never closes)',
+    src('lib/commitments/fulfillment.ts').includes('THE FULFILLMENT LAW') &&
+    src('lib/commitments/fulfillment.ts').includes('dateStatedInText(body, nd)') &&
+    src('lib/commitments/fulfillment.ts').includes("kind: 'fulfillment'") &&
+    src('lib/inbox/resolve-on-reply.ts').includes('judgeCommitmentFulfillment') &&
+    src('app/api/cron/commitments-sweep/route.ts').includes('judgeCommitmentFulfillment') &&
+    src('scripts/sweep-false-fulfillment.ts').includes('judgeCommitmentFulfillment'));
+  check('P32 · the STAMPED cache — an action surface never paints from a cache too old to trust (saveLS stamps __at; the deck + horizon demand freshness; a legacy unstamped blob never satisfies a freshness demand)',
+    src('lib/utils/local-cache.ts').includes('__at') &&
+    src('lib/utils/local-cache.ts').includes("opts?.maxAgeMs ? null : (parsed as T)") &&
+    src('components/home/home-view.tsx').includes("loadLS<Brief>('aug-home-brief-v1', { maxAgeMs"));
+  {
+    const { judgeCommitmentFulfillment } = await import('../lib/commitments/fulfillment');
+    const promise = await judgeCommitmentFulfillment(sb, PERSONAL,
+      { description: 'Send the quarterly numbers report to Sam Vendor' },
+      { body: 'Hi Sam, I will wrap things up and send the report over by Friday. Best, P', attachmentCount: 0 }, true);
+    check('P32 live · a promise ("I will send it by Friday") NEVER reads as delivery',
+      promise.verdict !== 'delivered', `verdict=${promise.verdict} · ${promise.reason.slice(0, 60)}`);
+    const delivered = await judgeCommitmentFulfillment(sb, PERSONAL,
+      { description: 'Send the quarterly numbers report to Sam Vendor' },
+      { body: 'Hi Sam, attached is the quarterly numbers report as promised. Best, P', attachmentCount: 1 }, true);
+    check('P32 live · an actual delivery (report attached) reads as delivered',
+      delivered.verdict === 'delivered', `verdict=${delivered.verdict} · ${delivered.reason.slice(0, 60)}`);
   }
 
   // ═══ P30 · THE MOUTH HAS EARS AND THE WHOLE BRAIN (converse arc — the Omantel lesson, found

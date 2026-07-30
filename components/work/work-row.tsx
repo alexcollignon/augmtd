@@ -21,6 +21,7 @@ import type { DoItem, DoSource } from '@/lib/home/agenda';
 import type { WorkItem } from '@/lib/work-items/model';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { fmtMonthDay } from '@/lib/utils/format-date';
+import { AnchoredPopover } from '@/components/ui/anchored-popover';
 
 // ── A row control that SAYS what it does on hover — icon at rest, label slides out smoothly
 // (per-button `group/act`, so only the hovered control expands). One idiom for ✓ / ✕ / folder. ──
@@ -58,9 +59,6 @@ function RowProjectPicker({ itemKind, itemId }: { itemKind: 'inbox_item' | 'comm
       if (d?.entities) setEnts((d.entities as PickEnt[]).filter((e) => e.status === 'active')
         .sort((a, b) => (b.tracked ? 1 : 0) - (a.tracked ? 1 : 0) || b.weight - a.weight));
     }).catch(() => {});
-    const onClick = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
   }, [open]);
   const q = query.trim().toLowerCase();
   const filtered = q ? ents.filter((e) => e.name.toLowerCase().includes(q)) : ents;
@@ -91,8 +89,11 @@ function RowProjectPicker({ itemKind, itemId }: { itemKind: 'inbox_item' | 'comm
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}>
         <FolderIcon className="w-3.5 h-3.5" />
       </RowAction>
-      {open && (
-        <div className="absolute top-full right-0 mt-1.5 z-40 w-60 rounded-xl border border-neutral-200 bg-white shadow-lg p-1 cursor-default" onClick={(e) => e.stopPropagation()}>
+      {/* PORTALED (the overlay law): deck rows sit inside overflow-hidden collapse wrappers and
+          transform-animated sections — an in-flow absolute panel gets clipped and layered under
+          the right rail. AnchoredPopover escapes to <body>. */}
+      <AnchoredPopover anchorRef={boxRef} open={open} onClose={() => setOpen(false)} align="right" width={240}>
+        <div className="rounded-xl border border-neutral-200 bg-white shadow-lg p-1 cursor-default">
           {creating ? (
             <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') createAndAttach(); if (e.key === 'Escape') { setCreating(false); setNewName(''); } }}
@@ -120,7 +121,7 @@ function RowProjectPicker({ itemKind, itemId }: { itemKind: 'inbox_item' | 'comm
             {filtered.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">{q ? 'No match — start it above.' : 'Nothing yet.'}</p>}
           </div>
         </div>
-      )}
+      </AnchoredPopover>
     </span>
   );
 }

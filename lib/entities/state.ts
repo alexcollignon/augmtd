@@ -170,16 +170,18 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
 export async function refreshEntityState(supabase: SupabaseClient, userId: string, entityId: string, opts: { force?: boolean } = {}): Promise<void> {
   try {
     const { data: ent } = await supabase.from('work_entities')
-      .select('id, name, summary, aliases, sig').eq('id', entityId).eq('user_id', userId).maybeSingle();
+      .select('id, name, summary, aliases, sig, tracked').eq('id', entityId).eq('user_id', userId).maybeSingle();
     if (!ent) return;
     const { ledger, sig: ledgerSig, quietDays, facts } = await assembleLedger(supabase, userId, entityId);
     if (!ledger.length) {
       // SELF-HEAL: an active initiative with NO ledger and NO members is registry pollution — a
       // born-empty row (or one emptied outside reconcile). Archive it here (the same rule reconcile
       // applies on membership moves) so it can't sit in the portfolio/recall/snapshot forever.
+      // THE PINNING LAW (July 29, found live): a TRACKED entity is a human decision — a user-created
+      // project awaiting its work is NOT a ghost. The machine never auto-archives it, at any door.
       const { count } = await supabase.from('entity_links').select('*', { count: 'exact', head: true })
         .eq('user_id', userId).eq('entity_id', entityId);
-      if (!count) {
+      if (!count && !ent.tracked) {
         await supabase.from('work_entities').update({ status: 'archived' }).eq('id', entityId).eq('user_id', userId)
           .then(() => {}, () => {});
       }

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { FolderIcon, XMarkIcon, PlusIcon } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
 import { loadLS } from '@/lib/utils/local-cache';
+import { AnchoredPopover } from '@/components/ui/anchored-popover';
 
 // The meeting's membership control — which body of work this meeting belongs to, managed where you read it.
 // ONE BRAIN: operates on ENTITY LINKS — the same membership every surface reads (recognition placed it;
@@ -11,7 +12,7 @@ import { loadLS } from '@/lib/utils/local-cache';
 // re-links behind your back).
 type Ent = { id: string; name: string; status: string; weight: number };
 
-const MOM_DOT: Record<string, string> = { needs_you: 'bg-rose-500', gone_quiet: 'bg-amber-500', stalled: 'bg-amber-500', waiting: 'bg-blue-400', active: 'bg-emerald-500' };
+const MOM_DOT: Record<string, string> = { needs_you: 'bg-rose-500', gone_quiet: 'bg-amber-500', stalled: 'bg-amber-500', waiting: 'bg-blue-400', active: 'bg-emerald-500', unknown: 'bg-neutral-300' };
 
 export default function MeetingProjectControl({ transcriptId }: { transcriptId: string; projectId?: string | null }) {
   const [entities, setEntities] = useState<Ent[]>(() => (loadLS<{ entities?: Ent[] }>('aug-portfolio-v1')?.entities ?? []).filter((e) => e.status === 'active'));
@@ -43,12 +44,6 @@ export default function MeetingProjectControl({ transcriptId }: { transcriptId: 
     }).catch(() => {});
     return () => { alive = false; };
   }, [transcriptId]);
-  useEffect(() => {
-    const onClick = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false); };
-    if (open) document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, [open]);
-
   const setEntity = async (id: string | null) => {
     setBusy(true); setOpen(false);
     const prev = { entId, entName };
@@ -65,7 +60,7 @@ export default function MeetingProjectControl({ transcriptId }: { transcriptId: 
     <div ref={boxRef} className="relative inline-flex items-center">
       {entId && entName ? (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 border border-indigo-200/70 pl-2 pr-1 py-0.5 text-[12px] font-medium text-indigo-700">
-          {momentum ? <span className={`w-2 h-2 rounded-full flex-shrink-0 ${MOM_DOT[momentum] ?? 'bg-emerald-500'}`} /> : <FolderIcon className="w-3.5 h-3.5 text-indigo-500" />}
+          {momentum ? <span className={`w-2 h-2 rounded-full flex-shrink-0 ${MOM_DOT[momentum] ?? MOM_DOT.unknown}`} /> : <FolderIcon className="w-3.5 h-3.5 text-indigo-500" />}
           <button onClick={() => setOpen((v) => !v)} className="hover:underline max-w-[160px] truncate">{entName}</button>
           <button onClick={() => setEntity(null)} disabled={busy} title="Unlink from this work" className="text-indigo-300 hover:text-rose-500 transition-colors"><XMarkIcon className="w-3.5 h-3.5" /></button>
         </span>
@@ -74,8 +69,9 @@ export default function MeetingProjectControl({ transcriptId }: { transcriptId: 
           <PlusIcon className="w-3.5 h-3.5" />Add to project
         </button>
       )}
-      {open && (
-        <div className="absolute top-full left-0 mt-1 z-30 w-64 rounded-xl border border-neutral-200 bg-white shadow-lg p-1">
+      {/* PORTALED (the overlay law — components/ui/anchored-popover.tsx). */}
+      <AnchoredPopover anchorRef={boxRef} open={open} onClose={() => setOpen(false)} align="left" width={256}>
+        <div className="rounded-xl border border-neutral-200 bg-white shadow-lg p-1">
           {/* Same picker grammar as the deep-dive's AddToWorkControl: search leads. */}
           <input
             autoFocus value={query} onChange={(e) => setQuery(e.target.value)}
@@ -95,7 +91,7 @@ export default function MeetingProjectControl({ transcriptId }: { transcriptId: 
             {filtered.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">{query.trim() ? 'No match.' : 'Nothing to link yet.'}</p>}
           </div>
         </div>
-      )}
+      </AnchoredPopover>
     </div>
   );
 }

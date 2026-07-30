@@ -67,18 +67,34 @@ export async function GET(request: NextRequest) {
     // ring counts by resolved_at, so stamping `now` here would passively fill the ring when the sweep
     // processes a fulfillment that actually happened days ago. Use the email time; fall back to now.
     let resolvedAt: string | null = null;
+    let fulfillingEmailId: string | null = null;
     if (c.thread_id) {
       const { data } = await sb.from('emails').select('id, received_at')
         .eq('user_id', c.user_id).eq('thread_id', c.thread_id).eq('is_from_user', youFulfil)
-        .gt('received_at', c.created_at).limit(1);
-      if (data?.length) { resolved = true; resolvedAt = (data[0].received_at as string) ?? null; }
+        .gt('received_at', c.created_at).order('received_at', { ascending: false }).limit(1);
+      if (data?.length) { resolved = true; resolvedAt = (data[0].received_at as string) ?? null; fulfillingEmailId = (data[0].id as string) ?? null; }
     }
     if (!resolved && cpEmail) {
       const base = sb.from('emails').select('id, received_at').eq('user_id', c.user_id).eq('is_from_user', youFulfil).gt('received_at', c.created_at);
       const { data } = youFulfil
-        ? await base.contains('to_addresses', [cpEmail]).limit(1)   // you sent to them, any thread
-        : await base.ilike('from_address', cpEmail).limit(1);        // they wrote back, any thread
-      if (data?.length) { resolved = true; resolvedAt = (data[0].received_at as string) ?? null; }
+        ? await base.contains('to_addresses', [cpEmail]).order('received_at', { ascending: false }).limit(1)   // you sent to them, any thread
+        : await base.ilike('from_address', cpEmail).order('received_at', { ascending: false }).limit(1);        // they wrote back, any thread
+      if (data?.length) { resolved = true; resolvedAt = (data[0].received_at as string) ?? null; fulfillingEmailId = (data[0].id as string) ?? null; }
+    }
+    // THE FULFILLMENT LAW (July 30): the structural signal only NOMINATES a candidate — whether the
+    // message actually fulfilled the commitment (vs merely promising/acknowledging it) is judged
+    // from the message's own words, both directions. Only `delivered` closes; a re-promise with a
+    // stated new date re-anchors due_date; unclear/AI-failure leaves it open for the next pass.
+    if (resolved && fulfillingEmailId) {
+      try {
+        const { data: em } = await sb.from('emails').select('body, metadata').eq('id', fulfillingEmailId).maybeSingle();
+        const { judgeCommitmentFulfillment, applyFulfillmentVerdict } = await import('@/lib/commitments/fulfillment');
+        const meta = (em?.metadata ?? {}) as { attachments?: unknown[] };
+        const fv = await judgeCommitmentFulfillment(sb, c.user_id, c,
+          { id: fulfillingEmailId, body: String(em?.body ?? ''), attachmentCount: Array.isArray(meta.attachments) ? meta.attachments.length : 0 }, youFulfil);
+        const closes = await applyFulfillmentVerdict(sb, c.user_id, c, fv, async () => true);
+        if (!closes) resolved = false; // promised/unclear — stays open (a re-anchor already landed)
+      } catch { resolved = false; } // never close on an error path
     }
     if (resolved) {
       const nowIso = new Date().toISOString();

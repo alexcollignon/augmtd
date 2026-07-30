@@ -8,7 +8,7 @@
 // disappears. Falls back to the label-era station timeline when the user has no entity memory.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowRightIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
@@ -81,13 +81,16 @@ function EntityRow({ e, nowMs }: { e: Entity; nowMs: number }) {
 }
 
 export default function EntityTimeline() {
-  const [data, setData] = useState<Portfolio | null>(() => loadLS<Portfolio>('aug-portfolio-v1'));
+  // SSR'd-route rule: initializer COLD; the cache hydrates pre-paint in a layout effect.
+  const [data, setData] = useState<Portfolio | null>(null);
+  useLayoutEffect(() => { const c = loadLS<Portfolio>('aug-portfolio-v1'); if (c) setData((prev) => prev ?? c); }, []);
   const [loose, setLoose] = useState<LooseItem[]>([]);
   const [otherOpen, setOtherOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => { if (alive) { setData(d); saveLS('aug-portfolio-v1', d); } }).catch(() => {});
+    // LAST-GOOD LAW: only a valid response replaces state / touches the shared cache.
+    fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => { if (alive && d && Array.isArray(d.entities)) { setData(d); saveLS('aug-portfolio-v1', d); } }).catch(() => {});
     fetch('/api/home/timeline').then((r) => r.json()).then((d) => { if (alive) setLoose((d.items ?? []) as LooseItem[]); }).catch(() => {});
     return () => { alive = false; };
   }, []);

@@ -102,7 +102,7 @@ export async function reconcileRegistry(
   supabase: SupabaseClient, userId: string, opts: { commit?: boolean; limit?: number } = {},
 ): Promise<ReconcileVerdict[]> {
   const { data: rows } = await supabase.from('work_entities')
-    .select('id, name, summary, people, aliases, state, embedding')
+    .select('id, name, summary, people, aliases, state, embedding, tracked')
     .eq('user_id', userId).eq('kind', 'initiative').eq('status', 'active').limit(opts.limit ?? 500);
   // The owner's own name — noise to strip from any title (they're on everything).
   const { data: prof } = await supabase.from('profiles').select('full_name').eq('id', userId).maybeSingle();
@@ -136,10 +136,14 @@ export async function reconcileRegistry(
     out.push({ entityId: e.id, currentName: e.name, renamed, ...v });
 
     if (!opts.commit) continue;
+    // THE PINNING LAW (July 29): a TRACKED entity is a human decision that outranks the machine —
+    // the reasoned judge may rename/re-categorise it, but never auto-archive it.
     if (v.action === 'archive') {
-      await supabase.from('work_entities').update({ status: 'archived', updated_at: new Date().toISOString() })
-        .eq('id', e.id).eq('user_id', userId).then(() => {}, () => {});
-      continue;
+      if (!r.tracked) {
+        await supabase.from('work_entities').update({ status: 'archived', updated_at: new Date().toISOString() })
+          .eq('id', e.id).eq('user_id', userId).then(() => {}, () => {});
+      }
+      continue; // a tracked entity survives an archive verdict untouched (never falls into rename)
     }
     // keep: apply canonical name (+ old name → aliases + re-embed) and/or category.
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };

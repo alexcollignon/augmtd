@@ -71,3 +71,32 @@ export function timesInText(text: string): string[] {
   }
   return [...out];
 }
+
+/** THE STATED-DATE CHECK (P27 hardening, July 29 — the hallucinated-expiry hole): a past
+ *  `expired_on` used to be accepted on the model's word alone, so a fabricated yesterday defeated
+ *  the whole same-day protection. Same grammar as timesInText: render the claimed date in the
+ *  common ways mail states it (ISO · "July 28" · "28 July" · short month · D/M and M/D · its
+ *  weekday name, which covers relative deadlines like "by Thursday") and require ONE to appear in
+ *  the item's own text — the model supplies judgment, the text supplies the fact. A miss keeps
+ *  the item live (wrongly resolving live work costs trust; judging it costs nothing). */
+export function dateStatedInText(text: string, iso: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return false;
+  const t = text.toLowerCase();
+  const d = new Date(`${iso}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return false;
+  const day = Number(m[3]);
+  const mon = Number(m[2]);
+  const monthLong = d.toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' }).toLowerCase();
+  const monthShort = d.toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' }).toLowerCase();
+  const weekday = d.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' }).toLowerCase();
+  const candidates = [
+    iso,
+    `${monthLong} ${day}`, `${day} ${monthLong}`, `${monthShort} ${day}`, `${day} ${monthShort}`,
+    `${day}/${mon}`, `${mon}/${day}`,
+    `${String(day).padStart(2, '0')}/${String(mon).padStart(2, '0')}`,
+    `${String(mon).padStart(2, '0')}/${String(day).padStart(2, '0')}`,
+    weekday,
+  ];
+  return candidates.some((c) => t.includes(c));
+}
