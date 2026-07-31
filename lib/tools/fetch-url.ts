@@ -22,6 +22,57 @@ function stripHtml(html: string): string {
     .trim();
 }
 
+// ── Publication-date detection ────────────────────────────────────────────────
+// A fetched page without a known publication date is a trust hazard downstream:
+// briefing/synthesis steps have presented years-old articles as current news.
+// Every result is therefore stamped with its detected date, or an explicit
+// UNDATED warning; `max_age_days` lets a step drop stale pages entirely.
+
+function toIsoDay(y: number, m: number, d: number): string | null {
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (isNaN(dt.getTime()) || dt.getTime() > Date.now() + 86_400_000) return null;
+  return dt.toISOString().slice(0, 10);
+}
+
+/** News CMS URLs commonly embed the publish date in the path (/2021/06/16/…). */
+function dateFromUrl(url: string): string | null {
+  const m = url.match(/\/(20\d{2})[/-](\d{1,2})(?:[/-](\d{1,2}))?(?=[/-]|$)/);
+  if (!m) return null;
+  const [, y, mo, d] = m;
+  const month = Number(mo);
+  if (month < 1 || month > 12) return null;
+  return toIsoDay(Number(y), month, d ? Number(d) : 1);
+}
+
+/** article:published_time / datePublished meta + JSON-LD, on the raw HTML. */
+function dateFromHtml(html: string): string | null {
+  const head = html.slice(0, 60_000);
+  const patterns = [
+    /<meta[^>]+(?:property|name)=["'](?:article:published_time|og:article:published_time|date|publish-date|publication_date|parsely-pub-date)["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:article:published_time|og:article:published_time|date|publish-date|publication_date|parsely-pub-date)["']/i,
+    /"datePublished"\s*:\s*"([^"]+)"/,
+    /<time[^>]+datetime=["']([^"']+)["']/i,
+  ];
+  for (const re of patterns) {
+    const m = head.match(re);
+    if (!m) continue;
+    const d = new Date(m[1]);
+    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  }
+  return null;
+}
+
+function ageDays(iso: string): number {
+  return Math.floor((Date.now() - new Date(iso + 'T00:00:00Z').getTime()) / 86_400_000);
+}
+
+/** The header line stamped above every result — the downstream AI step reads this. */
+function dateStamp(published: string | null): string {
+  return published
+    ? `Published: ${published}`
+    : 'Publication date: UNKNOWN — treat this content as UNDATED; do NOT present it as current news.';
+}
+
 export const fetchUrlDefinition = {
   name: 'fetch_url',
   description: 'Fetch and read the content of one or more specific web pages. Use when the user provides a URL or asks you to read a specific page.',
@@ -32,6 +83,10 @@ export const fetchUrlDefinition = {
         type: 'array',
         items: { type: 'string' },
         description: 'List of URLs to fetch and read (max 5)',
+      },
+      max_age_days: {
+        type: 'number',
+        description: 'Optional freshness guard: pages whose detected publication date is older than this many days are dropped (replaced by a skip note). Pages with no detectable date are kept but flagged UNDATED.',
       },
     },
     required: ['urls'],
@@ -48,9 +103,20 @@ export async function executeFetchUrl(config: Record<string, unknown>): Promise<
 
   if (urls.length === 0) return '[fetch_url] No valid URLs provided. URLs must be https:// and not point to private networks.';
 
+  const maxAgeDays = typeof config.max_age_days === 'number' && config.max_age_days > 0
+    ? config.max_age_days : null;
+
+  const render = (url: string, content: string, published: string | null): string => {
+    if (published && maxAgeDays !== null && ageDays(published) > maxAgeDays) {
+      return `## ${url}\n${dateStamp(published)}\n[skipped — published ${published}, older than the ${maxAgeDays}-day freshness window]`;
+    }
+    return `## ${url}\n${dateStamp(published)}\n\n${content}`;
+  };
+
   const key = process.env.TAVILY_API_KEY;
 
-  // Try Tavily /extract first — handles JS-rendered pages, returns clean markdown
+  // Try Tavily /extract first — handles JS-rendered pages, returns clean markdown.
+  // Tavily returns no HTML, so date detection here is URL-pattern only.
   if (key) {
     try {
       const res = await fetch('https://api.tavily.com/extract', {
@@ -62,14 +128,14 @@ export async function executeFetchUrl(config: Record<string, unknown>): Promise<
         const data = await res.json() as { results?: Array<{ url: string; raw_content: string }> };
         if (data.results?.length) {
           return data.results.map(r =>
-            `## ${r.url}\n\n${(r.raw_content ?? '(empty)').slice(0, MAX_CONTENT_CHARS)}`
+            render(r.url, (r.raw_content ?? '(empty)').slice(0, MAX_CONTENT_CHARS), dateFromUrl(r.url))
           ).join('\n\n---\n\n');
         }
       }
     } catch { /* fall through */ }
   }
 
-  // Fallback: direct fetch + HTML strip
+  // Fallback: direct fetch + HTML strip (HTML available → meta-tag date detection too)
   const results = await Promise.allSettled(
     urls.map(async url => {
       const res = await fetch(url, {
@@ -78,7 +144,7 @@ export async function executeFetchUrl(config: Record<string, unknown>): Promise<
       });
       const html = await res.text();
       const content = stripHtml(html).slice(0, MAX_CONTENT_CHARS);
-      return `## ${url}\n\n${content}`;
+      return render(url, content, dateFromUrl(url) ?? dateFromHtml(html));
     })
   );
 

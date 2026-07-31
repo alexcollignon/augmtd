@@ -160,10 +160,12 @@ async function researchOneTopic(
     : 'Write your final synthesis in English.';
 
   const systemPrompt =
-    `You are a research assistant. Your task: research the topic below, focusing specifically on "${focus}". ` +
+    `You are a research assistant. Today is ${new Date().toISOString().slice(0, 10)} (UTC). ` +
+    `Your task: research the topic below, focusing specifically on "${focus}". ` +
     `Use the web_search tool to find recent, relevant information. Be systematic: start with a broad query, then follow up with targeted searches based on what you find. ` +
     `After searching, write a concise synthesis of your findings (2–4 paragraphs) that directly addresses the focus area. ` +
     `Include specific facts, numbers, named actors, and dates where available. ` +
+    `DATE DISCIPLINE: search results carry a "Published:" line — anchor every fact to it. Treat results published long before today, or with an unknown date, as historical/unverified: never present them as current developments, and never shift their dates or years toward the present. ` +
     `${langInstruction} ` +
     `Do not pad. If little relevant information exists, say so briefly.`;
 
@@ -267,13 +269,13 @@ async function tavilySearch(query: string): Promise<string> {
     if (!res.ok) return `[web_search error] ${res.status} ${res.statusText}`;
 
     const data = await res.json() as {
-      results?: Array<{ title: string; url: string; content: string; score?: number }>;
+      results?: Array<{ title: string; url: string; content: string; score?: number; published_date?: string }>;
     };
 
     if (!data.results?.length) return `No results for "${query}".`;
 
     return data.results
-      .map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.content?.slice(0, 500) ?? ''}`)
+      .map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.published_date ? `Published: ${r.published_date}` : 'Published: unknown — do not assume this is current'}\n   ${r.content?.slice(0, 500) ?? ''}`)
       .join('\n\n');
   } catch (e) {
     return `[web_search error] ${e instanceof Error ? e.message : String(e)}`;

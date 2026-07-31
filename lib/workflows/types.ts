@@ -44,6 +44,10 @@ export interface AIStep {
   output_format?: 'text' | 'markdown' | 'json';
   model_tier?: 'fast' | 'reasoning'; // maps to summarization vs conversation task type
   kb_file_ids?: string[];          // optional KB files to inject as reference documents
+  /** false = never inject the worker's identity/voice into this step, even as the
+   *  final step. For mechanical passes (verification gates) where a persona would
+   *  fight the instruction — a verifier must preserve the draft, not restyle it. */
+  use_worker_identity?: boolean;
 }
 
 // Agent step — reuses a custom agent's identity, instructions, KB, memory.
