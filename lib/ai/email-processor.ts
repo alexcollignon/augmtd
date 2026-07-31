@@ -927,7 +927,7 @@ Respond ONLY with valid JSON matching the structure above.`;
 // DEFAULT path (promoted from a recovery-only fallback): Kimi flakiness on the main planning pass can
 // never affect the understanding. AGNOSTIC — reasons over the addressing facts + body, never a
 // keyword/header rule.
-export async function computeUnderstanding(email: EmailData, supabase: SupabaseClient, opts: { useEntityContext?: boolean } = {}): Promise<ItemUnderstanding | null> {
+export async function computeUnderstanding(email: EmailData, supabase: SupabaseClient, opts: { useEntityContext?: boolean; facts?: string[] } = {}): Promise<ItemUnderstanding | null> {
   const useEntityContext = opts.useEntityContext !== false; // default ON
   const mine = (email.user_addresses && email.user_addresses.length
     ? email.user_addresses
@@ -964,6 +964,9 @@ export async function computeUnderstanding(email: EmailData, supabase: SupabaseC
   const content =
     (relationshipContext ? `${relationshipContext}\n\n` : '') +
     teamContext +
+    // STRUCTURAL FACTS the caller knows with certainty (e.g. "the sender is the user's own AI
+    // coworker") — facts constrain the judgment, they never replace it (the category-grounding law).
+    (opts.facts?.length ? opts.facts.map((f) => `FACT: ${f}`).join('\n') + '\n\n' : '') +
     `You judge an email from the seat of the user, whose own address(es) are: ${mine.join(', ') || '(unknown)'}${email.user_name ? ` (name: ${email.user_name})` : ''}.\n` +
     `This email — To: ${(email.to_addresses ?? []).join(', ') || '(none)'} ; Cc: ${(email.cc_addresses ?? []).join(', ') || '(none)'}\n` +
     `From: ${email.from_name} <${email.from_address}>\nSubject: ${email.subject}\nBody:\n${truncateText(email.body, 2000)}\n\n` +

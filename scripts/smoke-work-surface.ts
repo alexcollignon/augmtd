@@ -183,6 +183,16 @@ const src = (p: string) => readFileSync(p, 'utf8');
     wr.includes('flat = false') && wr.includes('ONE signal per category') && wr.includes('>ready</span>'));
   check('H7: calm groups collapse (hover-preview + click-pin, persisted — owner-reinstated July 30); urgent groups always open',
     hv.includes("g.key === 'overdue' || g.key === 'today'") && hv.includes("'aug-do-pinned'") && hv.includes('hoverGroup === g.key'));
+  check('H8: membership is visible IMMEDIATELY (July 30) — attach busts the brief server-side, the Home listens for membership-changed, and the row wears an optimistic TRACKED-only tag until the server tag arrives',
+    src('app/api/items/entity/route.ts').includes('softBustBrief') &&
+    hv.includes("addEventListener('aug:membership-changed'") &&
+    wr.includes('onAttached') && wr.includes('if (tracked) setLocalTag(name)') &&
+    wr.includes('item.initiative ?? localTag'));
+  check('H8b: EVERY deck lane derives its row tag from the ENTITY LINK against the tracked registry — on the SERVED payload the client actually builds the deck from (reply + notice + commitment; P15 tracked-only; independent of state synthesis) + the client notice mapping carries it',
+    src('app/api/home/brief/route.ts').includes('tagByAtom = new Map') &&
+    (src('app/api/home/brief/route.ts').match(/tagByAtom\.get\(/g) ?? []).length >= 3 &&
+    src('app/api/home/brief/route.ts').includes('trackedNameById = new Map') &&
+    src('components/home/home-view.tsx').includes('initiative: a.initiative ?? null'));
   const brief = src('app/api/home/brief/route.ts');
   // J1 moved the law into lib/inbox/notice-demotion.ts (ONE module, shared with judgeWork).
   check('H4: the demotion is OWNERSHIP-KEYED (the ONE shared law), on BOTH paths, override-guarded',

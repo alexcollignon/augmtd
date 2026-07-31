@@ -1355,14 +1355,15 @@ export async function syncEmailsForConnection(
             // THE LABEL FLIP: the pair (kind + posture) via the ONE resolver — the reasoned kind
             // when the understanding carries it, the bulk/noise header signals as the fallback.
             // Fast-pathed mail has no live posture, so this lands the KIND identity label.
-            void import('@/lib/inbox/rules/write-back').then(async ({ writeBackLabels }) => {
+            void import('@/lib/inbox/rules/write-back').then(async ({ writeBackLabels, kindTier }) => {
+              const hints = { bulk: _bulk, noise: emailClass === 'noise' };
               const ok = await writeBackLabels({
                 provider: connection.provider,
                 encryptedTokens: connection.metadata?.tokens,
                 sd: fastSourceData as Record<string, unknown>,
                 ruleType: null,
                 workState: null,
-                hints: { bulk: _bulk, noise: emailClass === 'noise' },
+                hints,
                 gmailThreadId: storedEmail.thread_id,
                 gmailCache: gmailLabelCache,
                 outlookMessageId: (storedEmail as any).metadata?.outlook_id ?? storedEmail.message_id,
@@ -1370,9 +1371,16 @@ export async function syncEmailsForConnection(
               // Stamp ONLY on 'applied' — a 'noop' (no kind resolvable yet: transactional mail with
               // no understanding and no bulk headers) stays unstamped so the sweep completes the
               // kind and labels it; a 'failed' stays unmarked → sweep retries.
-              if (ok === 'applied') await adminSupabase.from('inbox_items')
-                .update({ source_data: withPreservedUnderstanding({ ...(fastSourceData as Record<string, unknown>), labeled: true }, fastExisting) })
-                .eq('source_id', storedEmail.id).eq('user_id', connection.user_id);
+              // THE STAMP RECORDS THE TIER (July 31): a kind from the STRUCTURAL FALLBACK is a
+              // placeholder — stamped 'fallback' so the sweep's reasoned completer gets its turn
+              // and upgrades it. Only a reasoned/override kind stamps final. A structural guess
+              // is never a final verdict.
+              if (ok === 'applied') {
+                const tier = kindTier(fastSourceData as Record<string, unknown>, null, hints);
+                await adminSupabase.from('inbox_items')
+                  .update({ source_data: withPreservedUnderstanding({ ...(fastSourceData as Record<string, unknown>), labeled: tier === 'fallback' ? 'fallback' : true }, fastExisting) })
+                  .eq('source_id', storedEmail.id).eq('user_id', connection.user_id);
+              }
             }).catch(() => {});
           }
           continue;

@@ -70,5 +70,14 @@ export async function PATCH(request: NextRequest) {
   const r = await setItemMembership(supabase, user.id, { kind: body.kind as 'meeting' | 'inbox_item' | 'commitment', id: body.id, entityId: body.entityId ?? null }, { inline: false });
   if (!r.ok) return NextResponse.json({ error: r.error ?? 'failed' }, { status: r.error === 'entity not found' ? 404 : 500 });
   if (r.runTails) after(r.runTails); // reconcile both sides + activity log + learning signal, backgrounded
+  // A membership change alters what the brief serves (the row's project tag derives from entity
+  // links) — bust so the Home's next refetch carries the new truth immediately, not at the next sig
+  // change (the invisible-tag-after-attach bug, July 30).
+  after(async () => {
+    try {
+      const { softBustBrief } = await import('@/lib/home/bust-brief');
+      await softBustBrief(supabase, user.id);
+    } catch { /* non-fatal */ }
+  });
   return NextResponse.json({ ok: true, cascaded: r.cascaded });
 }
