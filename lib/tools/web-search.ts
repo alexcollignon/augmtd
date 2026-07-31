@@ -34,10 +34,10 @@ export async function executeWebSearch(config: Record<string, unknown>): Promise
       const body = await res.text().catch(() => '');
       return `[web_search error] ${res.status} ${res.statusText}: ${body.slice(0, 200)}`;
     }
-    const data = await res.json() as { results?: Array<{ title: string; url: string; content: string }> };
+    const data = await res.json() as { results?: Array<{ title: string; url: string; content: string; published_date?: string }> };
     if (!data.results?.length) return `No results found for "${query}".`;
     return data.results.map((r, i) =>
-      `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.content?.slice(0, 400) ?? ''}`
+      `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.published_date ? `Published: ${r.published_date}` : 'Published: unknown — do not assume this is current'}\n   ${r.content?.slice(0, 400) ?? ''}`
     ).join('\n\n');
   } catch (e) {
     return `[web_search error] ${e instanceof Error ? e.message : String(e)}`;

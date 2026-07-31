@@ -27,12 +27,13 @@ function stepId() {
   return `step_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-// ── Shared source credentials ─────────────────────────────────────────────────
-// RSS feeds are publicly accessible — auth stored for fetch_url full-article reads
-const AUTH_HANDELSBLATT = { username: 'monica-goncalves@ccila-portugal.com', password: 'aHK#2025_neu' };
-const AUTH_JDN          = { username: 'monica-goncalves@ccila-portugal.com', password: 'AHK2026#nova' };
-const AUTH_OBSERVADOR   = { username: 'Monica-goncalves@ccila-portugal.com', password: 'AHK2025' };
-// manager magazin: thorsten-koetschau@ccila-portugal.com — password pending
+// ── Sources ──────────────────────────────────────────────────────────────────
+// ⚠️ NO fetch_url on section landing pages (e.g. observador.pt/economia/). A landing
+// page is a date-blind soup of teasers + evergreen/related links of any age — a 2021
+// article entered a 2026 briefing this way and the synthesis redated it as current
+// (real client incident, July 2026). RSS items carry publication dates and a
+// since-last-run cutoff; full-article depth must come from fetching SPECIFIC dated
+// article URLs, never a section front page.
 
 // ── RSS source definitions ─────────────────────────────────────────────────────
 // German sources
@@ -66,9 +67,14 @@ const SRC_JDN = {
   label: 'Jornal de Negócios',
   feeds: ['https://www.negocios.pt/rss'],
 };
+// Observador exposes NO working economy-only feed (/economia/ and /rss/economia
+// redirect to a stale 2021 article; /seccao/economia/feed/ silently serves the
+// site-wide feed) — so: general feed + category filter.
 const SRC_OBSERVADOR = {
-  label: 'Observador',
+  label: 'Observador (Economia)',
   feeds: ['https://observador.pt/feed/'],
+  category_filter: ['Economia', 'Empresas', 'Mercados', 'Energia'],
+  max_items: 20,
 };
 const SRC_JN = {
   label: 'Jornal de Notícias',
@@ -79,7 +85,17 @@ const SRC_DN = {
   feeds: ['https://www.dn.pt/feed/'],
 };
 
-function rssStep(src: { label: string; feeds: string[]; auth?: object }, maxItems = 15) {
+// The canonical freshness contract for every AHK AI step (the live workflows carry the
+// same block — keep them in sync). Born from the redated-2021-article incident.
+const DATE_DISCIPLINE = `DATE DISCIPLINE (HARD RULES — violations destroy client trust):
+- The system message states today's date. Cover ONLY the 7 days up to and including today.
+- Use ONLY facts present in the previous steps' source material. Never supplement from your own background knowledge or memory.
+- Include an item ONLY if its publication date is stated in the source material AND falls inside that window. No stated date, or a date outside the window: EXCLUDE the item entirely.
+- NEVER alter, shift, or modernize any date, year, or figure from the source material to make it fit the current period. Old news does not become this week's news; it gets excluded.
+- Citation dates must be copied exactly from the source material. NEVER infer or invent a publication date.
+- An empty section is honest; a stale or redated item is a defect. When in doubt, leave it out.`;
+
+function rssStep(src: { label: string; feeds: string[]; auth?: object; category_filter?: string[]; max_items?: number }, maxItems = 15) {
   return {
     type: 'tool',
     id: stepId(),
@@ -87,8 +103,9 @@ function rssStep(src: { label: string; feeds: string[]; auth?: object }, maxItem
     tool: 'rss_feed',
     config: {
       feeds: src.feeds,
-      max_items: maxItems,
+      max_items: src.max_items ?? maxItems,
       since: 'last_run',
+      ...(src.category_filter ? { category_filter: src.category_filter } : {}),
       ...(src.auth ? { auth: src.auth } : {}),
     },
   };
@@ -127,7 +144,9 @@ For each selected topic, write:
 - **Key fact or stat**: the single most powerful data point or quote to anchor the post
 - **Source**: publication name and approximate date
 
-Output in English. Be selective — 3 strong topics beat 7 mediocre ones. If fewer than 3 strong topics exist this week, say so and explain.`,
+Output in English. Be selective — 3 strong topics beat 7 mediocre ones. If fewer than 3 strong topics exist this week, say so and explain.
+
+${DATE_DISCIPLINE}`,
     output_format: 'markdown',
     model_tier: 'reasoning',
   },
@@ -171,31 +190,16 @@ const linkedinWorkflow = {
 };
 
 // ── 2. Executive Briefing Workflow ────────────────────────────────────────────
-
-function fetchStep(label: string, urls: string[], auth?: object) {
-  return {
-    type: 'tool',
-    id: stepId(),
-    label,
-    tool: 'fetch_url',
-    config: {
-      urls,
-      ...(auth ? { auth } : {}),
-    },
-  };
-}
+// (Landing-page fetch_url steps removed 2026-07-30 — see the sources note above.)
 
 const briefingSteps = [
   rssStep(SRC_SPIEGEL),
   rssStep(SRC_WIWO),
   rssStep(SRC_FAZ),
   rssStep(SRC_HANDELSBLATT),
-  fetchStep('Handelsblatt — Full articles', ['https://www.handelsblatt.com/wirtschaft/'], AUTH_HANDELSBLATT),
   rssStep(SRC_MANAGER_MAGAZIN),
   rssStep(SRC_JDN),
-  fetchStep('Jornal de Negócios — Full articles', ['https://www.negocios.pt/economia/'], AUTH_JDN),
   rssStep(SRC_OBSERVADOR),
-  fetchStep('Observador — Full articles', ['https://observador.pt/economia/'], AUTH_OBSERVADOR),
   rssStep(SRC_JN),
   rssStep(SRC_DN),
   {
@@ -258,9 +262,32 @@ RULES:
 - Each item: what happened → why it matters for German-Portuguese business → source
 - Strictly factual and neutral — no political opinions, no editorialising
 - If a section has no relevant news this week, write "Keine relevanten Meldungen diese Woche."
-- Prioritise quality over quantity — only include items with clear bilateral relevance`,
+- Prioritise quality over quantity — only include items with clear bilateral relevance
+
+${DATE_DISCIPLINE}`,
     output_format: 'markdown',
     model_tier: 'reasoning',
+  },
+  // The grounding gate — added after a live incident where the synthesis garnished
+  // grounded facts with confident background knowledge (a wrong ownership claim,
+  // invented "scheduled events"). Runs LAST so its output is the deliverable.
+  {
+    type: 'ai',
+    id: stepId(),
+    label: 'Verification gate (grounding check)',
+    prompt: `You are the FINAL VERIFICATION GATE for this briefing. The output of the immediately preceding step is the DRAFT; every step before it is the SOURCE MATERIAL.
+
+Go through the draft claim by claim and verify each against the source material:
+1. GROUNDING: every fact, number, name, ownership claim, and background statement must appear in the source material. Delete or correct anything that does not, no matter how plausible it sounds. Do not add new facts of your own.
+2. DATES: every cited date must appear in the source material; items outside the briefing window are removed. Forward-looking / "next week" entries are kept ONLY if the source material states the event and its date — delete invented calendar entries.
+3. CITATIONS: every citation's outlet, title, date, and URL must match the source material. Fix mismatched URLs; remove citations with no matching source.
+4. STYLE: enforce the draft's own stated style rules (e.g. if the draft's brief forbids em dashes, replace every em dash with a comma, semicolon, or full stop; keep the required language and date format).
+5. STRUCTURE: reproduce the draft's title/header line, sections, section order, and headers EXACTLY as they are — do not rename, merge, add, or drop any section (the sources section stays). Do not rewrite prose that passes verification. This is a surgical pass, not an edit for taste; you are a verifier, not an author. If EVERY entry of a section fails verification, KEEP the section header and put one honest line in the briefing's language (e.g. "Keine relevanten Meldungen diese Woche." / "Sem eventos verificáveis esta semana.") — never drop or renumber a section.
+
+Output ONLY the corrected briefing in full, in the same language and format as the draft. No preamble, no commentary, no list of changes.`,
+    output_format: 'markdown',
+    model_tier: 'reasoning',
+    use_worker_identity: false,
   },
 ];
 

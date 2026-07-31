@@ -79,7 +79,15 @@ function formatPreviousOutputs(outputs: StepOutput[], maxChars?: number): string
     return `[Step ${i + 1} — ${o.label}]\n${body}`;
   });
   const joined = parts.join('\n\n');
-  const content = maxChars && joined.length > maxChars ? joined.slice(0, maxChars) + '\n…[truncated]' : joined;
+  // Over-budget: cut the MIDDLE, never the tail — the latest steps are the most
+  // load-bearing (a verification gate's draft, the freshest tool data). Head-slicing
+  // here silently blinded final AI steps to every step past the cap (real incident:
+  // multi-source briefings shipped without their later sources).
+  const content = maxChars && joined.length > maxChars
+    ? joined.slice(0, Math.floor(maxChars * 0.55)) +
+      '\n\n…[middle of the source material truncated for length — the steps above and below are intact]…\n\n' +
+      joined.slice(-Math.floor(maxChars * 0.45))
+    : joined;
   return `<previous_steps>\n${content}\n</previous_steps>`;
 }
 
@@ -204,10 +212,12 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
   const task = step.model_tier === 'reasoning' ? 'conversation' : 'summarization';
   const resolved = await getAIClient(ctx.userId, task, ctx.supabase);
 
-  // Cap previous outputs when worker context will also be injected (token budget)
+  // Cap previous outputs when worker context will also be injected. 30k chars (~8k
+  // tokens) was far too tight for multi-source pipelines (~110k chars) on models with
+  // 200k-token contexts — later steps silently vanished from the final synthesis.
   const previousBlock = formatPreviousOutputs(
     ctx.previousOutputs,
-    ctx.isLastStep && ctx.workerAgentId ? 30000 : undefined,
+    ctx.isLastStep && ctx.workerAgentId ? 150_000 : undefined,
   );
 
   const formatNote =
@@ -219,14 +229,27 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
     ? ` Write your response in ${getOutputLanguageName(ctx.outputLanguage)}.`
     : '';
 
+  // The clock — workflow AI steps used to run dateless, and a model writing a "this week"
+  // deliverable normalized years-old source material into the present (real client incident:
+  // a 2021 article rewritten as current news with a fabricated citation date).
+  const now = new Date();
+  const dateLine =
+    `Today is ${now.toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' })}, ` +
+    `${now.toISOString().slice(0, 10)} (UTC). Source material carries its own dates — treat anything ` +
+    `meaningfully older than the task's time window as historical: never present it as current, and ` +
+    `never shift dates, years, or figures to fit the present.`;
+
   let systemPrompt =
     `You are executing one step of an automated workflow named "${ctx.workflowName}". ` +
     `Use the previous step outputs below as your source material and produce the requested transformation.` +
-    langInstruction;
+    langInstruction +
+    `\n\n${dateLine}`;
 
   // When this is the final step of a worker-owned workflow, replace the anonymous system prompt
-  // with the worker's full identity: instructions + memory + KB.
-  if (ctx.isLastStep && ctx.workerAgentId) {
+  // with the worker's full identity: instructions + memory + KB. Steps can opt out
+  // (use_worker_identity: false) — a verification gate must stay persona-free, or the
+  // "produce it in your voice" framing overrides its keep-the-draft contract.
+  if (ctx.isLastStep && ctx.workerAgentId && step.use_worker_identity !== false) {
     const { data: agentRow } = await ctx.supabase
       .from('custom_agents')
       .select('name, instructions, memory_text, agent_knowledge_sources(knowledge_file_id)')
@@ -252,6 +275,7 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
           row.instructions?.trim() ?? '',
           `This is a scheduled automated task — produce the requested deliverable directly, in your voice.`,
           langInstruction,
+          dateLine,
         ].filter(Boolean).join('\n\n'),
       ];
 

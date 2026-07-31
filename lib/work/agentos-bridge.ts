@@ -149,6 +149,11 @@ async function buildWorkerRunContext(
   const agent = agentRes?.data as { memory_text: string | null; user_preferences: string | null } | null
   const parts: string[] = []
 
+  // The clock — the AgentOS worker prompts are static (infra/agentos/workers.py), so
+  // today's date rides the per-run context. Without it, a worker asked about "this
+  // week" normalizes old search/fetch material into the present.
+  parts.push(`[TODAY]\nToday is ${new Date().toISOString().slice(0, 10)} (UTC). Search results and fetched pages carry their own dates — treat meaningfully older or undated material as historical/unverified, never as current, and never shift its dates or years toward the present.`)
+
   if (agent?.user_preferences?.trim()) {
     parts.push(`[USER PREFERENCES — set by this user]\n${agent.user_preferences.trim()}`)
   }

@@ -10,7 +10,10 @@ export function detectModelFamily(model: string): ModelFamily {
 }
 
 export function buildChatSystemPrompt(modelFamily: ModelFamily = 'claude'): string {
-  const base = BASE_PROMPT
+  // The clock — without it, models normalize old source material (search results,
+  // fetched pages) into the present when asked about "this week"/"recent" work.
+  const dateLine = `<current_date>\nToday is ${new Date().toISOString().slice(0, 10)} (UTC). Search results and fetched pages carry their own dates — treat meaningfully older or undated material as historical/unverified, never as current, and never shift its dates or years toward the present.\n</current_date>\n\n`
+  const base = dateLine + BASE_PROMPT
   if (modelFamily === 'llama' || modelFamily === 'deepseek' || modelFamily === 'unknown') {
     return base + OSS_RULES
   }

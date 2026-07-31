@@ -52,8 +52,8 @@ AI step — synthesises all previous outputs, always last and always exactly one
 get_emails          — reads the user's inbox. config: { "mode": "recent" }
 get_meeting_context — reads calendar and meetings. config: { "include_upcoming": true }
 web_search          — searches the live web. config: { "query": "targeted query string" }
-fetch_url           — reads full content of a URL. config: { "urls": ["https://..."] }. Supports auth: { "urls": [...], "auth": { "username": "...", "password": "..." } }
-rss_feed            — follows a news or blog feed, new items only. config: { "feeds": ["https://.../feed.xml"], "max_items": 15, "since": "last_run" }
+fetch_url           — reads full content of a SPECIFIC page the user names. config: { "urls": ["https://..."] }. Supports auth: { "urls": [...], "auth": { "username": "...", "password": "..." } }. NEVER point it at a news site's section/landing page for "latest news" — such pages are date-blind (old articles get presented as current); use rss_feed for news monitoring instead.
+rss_feed            — follows a news or blog feed, new items only, each with its publication date. config: { "feeds": ["https://.../feed.xml"], "max_items": 15, "since": "last_run" }. Optional "category_filter": ["Topic", ...] scopes a general site-wide feed to a topic when the outlet has no topic-specific feed.
 deep_research       — multi-source research synthesis. config: { "queries": ["question"], "max_sources": 8 }
 get_pt_tenders      — Portuguese public procurement from Base.gov.pt. config: { "days": 7, "endpoint": "both" }
 read_kb_file        — reads a file from the knowledge base. config: { "file_id": "uuid" } — only if user explicitly mentions a document
@@ -86,7 +86,9 @@ Default to "document" for scheduled reports and "message" for quick output. Use 
 3. For tasks requiring current external data, prefer rss_feed and web_search over relying on the AI step alone.
 4. End with exactly one ai step that synthesises everything from the previous steps.
 5. The ai step prompt must be specific: state the output structure, language, tone, and what to write if input is sparse.
-6. Each step id must be unique: "step_001", "step_002", etc.`;
+6. Each step id must be unique: "step_001", "step_002", etc.
+7. For any news/briefing/report task, the ai step prompt MUST include date discipline: use only facts from the source material, include an item only if its publication date is stated and falls within the task's time window, never shift dates or years to fit the present, copy citation dates exactly from the material (never invent them), and prefer an honest "nothing relevant this period" over a stale item.
+8. For a recurring briefing/report deliverable, ADD a second, final ai step as a verification gate: it treats the preceding step's output as the draft and everything before as source material, deletes or corrects any claim/date/citation not grounded in the sources, enforces the draft's stated style rules, and outputs ONLY the corrected deliverable in full (an exception to rule 4's "exactly one ai step").`;
 
 export async function generateWorkflowConfig(
   description: string,
