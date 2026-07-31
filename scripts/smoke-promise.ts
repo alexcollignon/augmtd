@@ -509,6 +509,16 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     src('components/home/item-rail.tsx').includes('input_checklist') &&
     src('components/home/item-rail.tsx').includes('t.checklist'));
 
+  // THE FIXTURE-CLOCK LAW (July 31, the midnight flake class): live fixtures state ABSOLUTE dates
+  // computed on the JUDGE'S clock (the account's calendar tz) — a relative day-word in a fixture
+  // flips meaning when the account's midnight rolls mid-suite (Gulf +3), probing an edge humans
+  // disagree on instead of the law under test.
+  const { userTimezone: fxTz } = await import('../lib/utils/user-time');
+  const fxZone = await fxTz(sb, PERSONAL);
+  const fxPretty = (d: Date) => d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: fxZone });
+  const fxTomorrow = fxPretty(new Date(Date.now() + 86_400_000));
+  const fxToday = fxPretty(new Date());
+
   // ═══ P18 · THE DELIVERABLE RESOLUTION — "what does it take / what do I have / what do I need
   // from you" is part of preparation. A multi-artifact ask: the judge enumerates the inventory,
   // the pass resolves it, missing artifacts land as the room's ask, and the draft never claims
@@ -521,7 +531,7 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       work_title: 'Send the quarterly compliance pack',
       source_data: {
         subject: 'Send the quarterly compliance pack',
-        body: 'Hi Alex, for the audit could you please share: 1) the Q2 vendor risk register, 2) the signed data-processing addendum. The auditors need both by Thursday. Thanks, Sam',
+        body: `Hi Alex, for the audit could you please share: 1) the Q2 vendor risk register, 2) the signed data-processing addendum. The auditors need both by ${fxTomorrow}. Thanks, Sam`,
         from_name: 'Sam Auditor', from_address: 'sam@acme-audit-example.com', received_at: new Date().toISOString(),
         understanding: { mailKind: 'customer', ownership: 'you_owe', relevance: 'reply', role: 'primary' },
       },
@@ -529,10 +539,14 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     if (!probe?.id) check('P18 live · probe insert failed', false);
     else {
       const pid = String(probe.id);
-      const v = await judgeWork(sb, PERSONAL, { kind: 'inbox', id: pid });
+      let v = await judgeWork(sb, PERSONAL, { kind: 'inbox', id: pid });
+      // W2's own law applied to the gate: a FAILED verdict is an outage, not a judgment (marked,
+      // never cached) — one live retry before the gate reads the verdict. Reason surfaced so a
+      // real miss is diagnosable from the log.
+      if (v.failed) v = await judgeWork(sb, PERSONAL, { kind: 'inbox', id: pid });
       check('P18 live · the judge enumerates the artifact INVENTORY from the item\'s own words',
         (v.work === 'reply' || v.work === 'send_file' || v.work === 'produce') && (v.requires?.length ?? 0) >= 2,
-        `${v.work} · requires=${JSON.stringify((v.requires ?? []).map((r) => r.label))}`);
+        `${v.work}${v.failed ? '/FAILED' : ''} · requires=${JSON.stringify((v.requires ?? []).map((r) => r.label))} · "${String(v.reason ?? '').slice(0, 70)}"`);
       await prepareOneItem(sb, PERSONAL, {
         id: `inbox:${pid}`, entityId: pid, kind: 'reply', title: 'Send the quarterly compliance pack',
         who: 'Sam Auditor', actor: 'you', state: 'todo',
@@ -713,7 +727,7 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any);
     const schedId = await mkP21('Intro call — can you send the invite?',
-      'Hi, great speaking earlier. Could you send me a calendar invite for a 30-minute intro call tomorrow at 10:00? Just put it straight in the calendar — my email is sam@acme-example.com. Thanks, Sam');
+      `Hi, great speaking earlier. Could you send me a calendar invite for a 30-minute intro call on ${fxTomorrow} at 10:00? Just put it straight in the calendar — my email is sam@acme-example.com. Thanks, Sam`);
     if (schedId) {
       const v = await judgeWork(sb, PERSONAL, { kind: 'inbox', id: schedId });
       check('P21 live · a send-me-the-invite ask judges work=schedule (component invite, gate book)',
@@ -956,7 +970,7 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       work_title: 'Signed NDA needed today',
       source_data: {
         subject: 'Signed NDA needed today',
-        body: 'Hi Alex, could you send over the signed NDA today? Legal needs it before we can open the data room. Thanks, Sam',
+        body: `Hi Alex, could you send over the signed NDA today (${fxToday})? Legal needs it before we can open the data room. Thanks, Sam`,
         from_name: 'Sam Vendor', from_address: 'sam@acme-example.com', received_at: new Date().toISOString(),
         understanding: { mailKind: 'customer', ownership: 'you_owe', relevance: 'reply', role: 'addressed' },
       },

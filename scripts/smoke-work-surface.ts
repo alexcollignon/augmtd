@@ -188,6 +188,8 @@ const src = (p: string) => readFileSync(p, 'utf8');
     hv.includes("addEventListener('aug:membership-changed'") &&
     wr.includes('onAttached') && wr.includes('if (tracked) setLocalTag(name)') &&
     wr.includes('item.initiative ?? localTag'));
+  check('H9: a LONG deck group folds past 8 rows behind the ONE expander idiom (ExpandableRows in the group container — nothing hidden, just folded)',
+    hv.includes('<ExpandableRows items={g.rows} limit={8}'));
   check('H8b: EVERY deck lane derives its row tag from the ENTITY LINK against the tracked registry — on the SERVED payload the client actually builds the deck from (reply + notice + commitment; P15 tracked-only; independent of state synthesis) + the client notice mapping carries it',
     src('app/api/home/brief/route.ts').includes('tagByAtom = new Map') &&
     (src('app/api/home/brief/route.ts').match(/tagByAtom\.get\(/g) ?? []).length >= 3 &&
@@ -209,16 +211,16 @@ const src = (p: string) => readFileSync(p, 'utf8');
     const { data: pool } = await sb.from('inbox_items').select('id, work_title, rule_type, type_override, work_state, source_data')
       .eq('user_id', A).eq('source', 'email').eq('status', 'pending')
       .or('work_state.in.(work_prepared,decision_required,action_required),rule_type.in.(needs_reply,to_do,waiting_on)').limit(60);
-    const { isAutomatedSender: autoFn } = await import('../lib/inbox/automated');
+    // ONE LAW, ONE READER: the gate calls the real isNoMoveNotice (never an inline replica that
+    // can drift from the shipped formula — July 31, after exactly that drift).
+    const { isNoMoveNotice, rawMailKindOf } = await import('../lib/inbox/notice-demotion');
+    const { coerceUnderstanding } = await import('../lib/inbox/item-understanding');
     let junkShown = 0, obligationsKept = 0;
-    for (const it of (pool ?? []) as Array<{ work_title: string | null; type_override?: string | null; source_data: Record<string, unknown> }>) {
+    for (const it of (pool ?? []) as Array<{ work_title: string | null; type_override?: string | null; work_state?: string | null; source_data: Record<string, unknown> }>) {
       const sd = it.source_data ?? {};
-      const u = (sd.understanding ?? null) as { ownership?: string; mailKind?: string } | null;
       const subj = (sd.subject as string) || it.work_title || null;
-      const auto = autoFn((sd.from_address as string) ?? null, (sd.from_name as string) ?? null, subj);
-      const structuralNotice = auto || (!!u && (u.mailKind === 'notification' || u.mailKind === 'calendar'));
       const nd = it.type_override !== 'needs_reply' && it.type_override !== 'to_do'
-        && ((!!u && u.ownership === 'none' && structuralNotice) || (!u && auto));
+        && isNoMoveNotice({ u: coerceUnderstanding(sd.understanding), rawKind: rawMailKindOf(sd), fromEmail: (sd.from_address as string) ?? null, fromName: (sd.from_name as string) ?? null, subject: subj, workState: (it.work_state as string) ?? null });
       const isJunk = /property inquiry|response on .* apartment|meeting acceptance|response notification/i.test(String(it.work_title ?? ''));
       const isObligation = /pay for your booking|security|alerta de segurança|prepaid billing/i.test(String(it.work_title ?? ''));
       if (isJunk && !nd) junkShown++;

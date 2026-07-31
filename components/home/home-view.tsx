@@ -2185,13 +2185,16 @@ export function HomeView() {
                           </button>
                           <div className={`grid transition-all duration-300 ease-out ${isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
                             <div className="overflow-hidden min-h-0">
-                              {/* ONE container per group — rows separated by hairlines. */}
+                              {/* ONE container per group — rows separated by hairlines. A LONG group
+                                  folds past 8 rows behind the ONE expander idiom (ExpandableRows —
+                                  "N more ⌄ / See less ⌃"), so a 29-row Overdue never floods the deck;
+                                  nothing hidden, just folded (July 31). */}
                               <div className="rounded-xl border border-neutral-200/70 bg-white divide-y divide-neutral-100 overflow-hidden">
-                                {g.rows.map((r) => { const em = firstRow; firstRow = false; return (
+                                <ExpandableRows items={g.rows} limit={8} render={(r) => { const em = firstRow; firstRow = false; return (
                                   <DoRow key={r.item.key} item={r.item} flat emphasis={em}
                                     dismissOverride={r.dealKey ? () => dismissDeal(r.dealKey!) : undefined}
                                     onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />
-                                ); })}
+                                ); }} />
                               </div>
                             </div>
                           </div>
