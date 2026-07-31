@@ -43,7 +43,12 @@ export async function GET(request: NextRequest) {
     for (const it of items ?? []) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sd = (it.source_data ?? {}) as any;
-      if (sd.labeled === true) continue;                 // already handled
+      if (sd.labeled === true) continue;                 // already handled (final)
+      // THE UPGRADE LAW (July 31): 'fallback' = a structural placeholder awaiting the reasoned
+      // kind. Work it ONLY when the completer has budget to actually reason (else the re-apply
+      // would just re-stamp the same guess as final) — next sweep picks it up otherwise.
+      const needsReasonedKind = !sd.understanding?.mailKind && !sd.kind_override;
+      if (sd.labeled === 'fallback' && needsReasonedKind && kindBudget <= 0) continue;
       if (!sd.thread_id && !sd.message_id) continue;
       const provider = sd.provider as string | undefined;
       const tokens = provider ? tokensByProvider.get(provider) : undefined;
@@ -58,7 +63,7 @@ export async function GET(request: NextRequest) {
       // The sweep MAKES the reasoned kind land (merge-only-mailKind, routing-inert) before
       // applying, instead of waiting for an understanding nothing else computes.
       let kindComputed = false;
-      if (!sd.understanding?.mailKind && !sd.kind_override && kindBudget > 0) {
+      if (needsReasonedKind && kindBudget > 0) {
         kindBudget--;
         const { ensureMailKind, userAddresses } = await import('@/lib/inbox/ensure-mail-kind');
         if (!addrs) addrs = await userAddresses(sb, p.id);

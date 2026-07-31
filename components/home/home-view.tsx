@@ -65,7 +65,7 @@ type ForYourAwareness = { itemId: string; who: string; summary: string }[];
 // NOT a reply-to-a-person (payment failed, security alert, account expiring, storage full, "pay for
 // your booking"). Its OWN home, separate from replies ("What needs you") so notices don't clutter the
 // reply lane. Same row shape as For-your-awareness (sender + grounded one-liner + deep-dive + dismiss).
-type ActionNotices = { itemId: string; who: string; summary: string; preparedBy?: string | null; dueDate?: string | null }[];
+type ActionNotices = { itemId: string; who: string; summary: string; preparedBy?: string | null; dueDate?: string | null; initiative?: string | null }[];
 type Brief = {
   firstName: string | null;
   briefLine: string | null;
@@ -1501,7 +1501,11 @@ export function HomeView() {
     // Instant sync when a project is created/attached/tracked anywhere (meetings sidebar, an item deep-dive,
     // another tab) — In-motion + the Projects lens reflect it without a manual reload.
     const offProjects = onProjectsUpdated(() => load(true));
-    return () => { aliveRef.current = false; offProjects(); };
+    // A membership change (Add to project from a deck row / the room) must reflect on the Home
+    // NOW — the server busts the brief; this refetch serves the row's new project tag immediately.
+    const onMembership = () => load(true);
+    window.addEventListener('aug:membership-changed', onMembership);
+    return () => { aliveRef.current = false; offProjects(); window.removeEventListener('aug:membership-changed', onMembership); };
   }, [load]);
   // Focus + visibility + 90s-while-visible — the shared live-refresh idiom (hooks/use-live-refresh).
   useLiveRefresh(() => load(true));
@@ -1716,6 +1720,7 @@ export function HomeView() {
     source: 'notice', key: `n-${a.itemId}`, entityId: a.itemId, href: `/item/${a.itemId}?kind=email`,
     primary: a.who || null, ask: cleanTitle(a.summary), second: 'Action needed',
     dueDate: a.dueDate ?? null, overdue: !!a.dueDate && a.dueDate < todayISOStr,
+    initiative: a.initiative ?? null,
     prepared: a.preparedBy ?? null,
   }));
   const agendaCommitItems: DoItem[] = looseCommitments.map((c) => ({

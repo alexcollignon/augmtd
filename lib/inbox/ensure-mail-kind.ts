@@ -46,7 +46,15 @@ export async function ensureMailKind(
       from_address: String(sd.from_address || ''), from_name: String(sd.from_name || ''),
       to_addresses: (sd.to as string[]) ?? [], cc_addresses: (sd.cc as string[]) ?? [],
       received_at: (sd.received_at as string) ?? null, user_addresses: addrs, recipient_email: addrs[0] ?? null,
-    } as never, sb, { useEntityContext: true });
+    } as never, sb, {
+      useEntityContext: true,
+      // A REGISTRY FACT, not a heuristic: mail from the platform's own coworker domain is the
+      // user's own AI assistant writing — the reasoned pass judges WITH that certainty (it
+      // should land 'team', not read like third-party automation).
+      facts: String(sd.from_address || '').toLowerCase().endsWith('@team.augmtd.ai')
+        ? ["the sender is one of the user's OWN AI coworkers (this platform's assistant, writing on the user's behalf) — their mail is the user's own team's output, not a third-party service notification"]
+        : undefined,
+    });
     const kind = fresh?.mailKind ?? null;
     if (!kind) return null;
     const stored = (sd.understanding ?? {}) as Record<string, unknown>;

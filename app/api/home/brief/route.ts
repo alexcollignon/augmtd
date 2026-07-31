@@ -191,12 +191,16 @@ export async function GET() {
   // (mustRespond, priorities, commitments, waitingOn, outbound) at once; the same list is served
   // to the client for By-project grouping.
   let trackedProjects: Array<{ name: string; aliases: string[] }> = [];
+  // id → tracked name: the row-tag source for ENTITY-LINKED atoms (independent of state synthesis —
+  // a freshly-filled project has a null state until the pass runs, and its tag must show anyway).
+  const trackedNameById = new Map<string, string>();
   try {
-    const { data: tps } = await supabase.from('work_entities').select('name, aliases')
+    const { data: tps } = await supabase.from('work_entities').select('id, name, aliases')
       .eq('user_id', user.id).eq('kind', 'initiative').eq('tracked', true).eq('status', 'active').limit(100);
-    trackedProjects = ((tps ?? []) as Array<{ name: string; aliases: unknown }>).map((t) => ({
-      name: String(t.name), aliases: Array.isArray(t.aliases) ? (t.aliases as string[]) : [],
-    }));
+    trackedProjects = ((tps ?? []) as Array<{ id: string; name: string; aliases: unknown }>).map((t) => {
+      trackedNameById.set(String(t.id), String(t.name));
+      return { name: String(t.name), aliases: Array.isArray(t.aliases) ? (t.aliases as string[]) : [] };
+    });
   } catch { /* non-fatal */ }
   const trackedTagLookup = new Map<string, string>();
   for (const t of trackedProjects) {
@@ -1477,17 +1481,23 @@ export async function GET() {
     const { buildAgenda, agendaAtomOrder } = await import('@/lib/home/agenda');
     const todayISOStr = todayStr;
     const serverAgenda = buildAgenda({
+      // THE ROW TAG (July 30 — the invisible-EG-Bank bug): EVERY deck row derives its project tag
+      // from its own ENTITY LINK against the tracked registry (P15 tracked-only law) — reply and
+      // notice rows were never given one (only commitments carried a label-era string).
       replyItems: ((mustRespondOut?.items ?? []) as Array<{ itemId: string; who: string; ask: string; dueDate?: string | null }>).map((m) => ({
         source: 'reply' as const, key: `r-${m.itemId}`, entityId: m.itemId, href: `/item/${m.itemId}?kind=email`,
         ask: m.ask, primary: m.who, dueDate: m.dueDate ?? null,
+        initiative: trackedNameById.get(entIdByAtom.get(m.itemId) ?? '') ?? null,
       })),
       noticeItems: actionNotices.map((n) => ({
         source: 'notice' as const, key: `n-${n.itemId}`, entityId: n.itemId, href: `/item/${n.itemId}?kind=email`,
         ask: n.summary, primary: n.who || null, dueDate: n.dueDate ?? null, overdue: !!n.dueDate && n.dueDate < todayISOStr,
+        initiative: trackedNameById.get(entIdByAtom.get(n.itemId) ?? '') ?? null,
       })),
       commitItems: commitments.map((c) => ({
         source: 'commitment' as const, key: `c-${c.id}`, entityId: c.id, href: `/item/${c.id}?kind=commitment`,
-        ask: c.description, overdue: !!c.overdue, dueDate: c.dueDate ?? null, initiative: c.initiative ?? null,
+        ask: c.description, overdue: !!c.overdue, dueDate: c.dueDate ?? null,
+        initiative: trackedNameById.get(entIdByAtom.get(c.id) ?? '') ?? c.initiative ?? null,
       })),
       priorityCards: cappedPriorities.filter((p) => p.posture !== 'needs_reply'),
       deals: slippingDeals,
@@ -1561,5 +1571,14 @@ export async function GET() {
       .eq('user_id', user.id).in('provider', ['gmail', 'outlook']).eq('status', 'active');
     mail = { connections: conns?.length ?? 0, syncing: (conns ?? []).some((c) => !c.last_sync) };
   } catch { /* non-fatal */ }
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => ({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null })), mustRespond: mustRespondOut, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments, waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, briefing: cachedBriefing, trackedProjects, mail });
+  // THE ROW TAG on the SERVED payload (July 30 — the invisible-EG-Bank bug, take 2: the client
+  // builds the deck from THESE lanes, not from the server-side agenda): every deck lane carries its
+  // project tag derived from the item's ENTITY LINK against the tracked registry (P15 tracked-only;
+  // independent of state synthesis). Entity truth outranks the label-era string where both exist.
+  const tagByAtom = new Map<string, string>();
+  for (const l of alinksRows) { const nm = trackedNameById.get(l.entity_id); if (nm) tagByAtom.set(l.item_id, nm); }
+  const taggedMustRespond = mustRespondOut
+    ? { ...mustRespondOut, items: (mustRespondOut.items ?? []).map((m: { itemId: string; initiative?: string | null }) => ({ ...m, initiative: tagByAtom.get(m.itemId) ?? m.initiative ?? null })) }
+    : mustRespondOut;
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => ({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null })), mustRespond: taggedMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments: commitments.map((c) => ({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null })), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, briefing: cachedBriefing, trackedProjects, mail });
 }

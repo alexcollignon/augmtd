@@ -71,6 +71,21 @@ export function resolveKind(
   return null;
 }
 
+/** Which TIER produced the kind resolveKind would return — the stamp's honesty bookkeeping
+ *  (July 31): a 'fallback' kind is a PLACEHOLDER, never a final verdict — the sweep's reasoned
+ *  completer must get its turn and upgrade it (a structural guess is never final). */
+export function kindTier(
+  sd: Record<string, unknown> | null | undefined,
+  ruleType?: string | null,
+  hints?: { bulk?: boolean; noise?: boolean },
+): 'override' | 'reasoned' | 'fallback' | null {
+  const o = String((sd as Record<string, unknown> | null)?.kind_override ?? '').toLowerCase();
+  if (KIND_KEYS.has(o)) return 'override';
+  const u = (sd?.understanding ?? null) as { mailKind?: string } | null;
+  if (KIND_KEYS.has(String(u?.mailKind ?? '').toLowerCase())) return 'reasoned';
+  return resolveKind(sd, ruleType, hints) ? 'fallback' : null;
+}
+
 /** THE POSTURE LABEL — lifecycle only: a label exists while the thread needs the user (or is
  *  freshly Done); FYI/bulk postures get NO label (the kind carries identity now). */
 export function postureFor(ruleType?: string | null, workState?: string | null): RuleLabel | null {
@@ -285,13 +300,30 @@ export async function writeBackLabels(opts: {
           const staleId = await cache.peek(stale);
           if (staleId) await removeGmailThreadLabel(opts.encryptedTokens, opts.gmailThreadId, staleId).catch(() => {});
         }
+        // ONE KIND LABEL (July 31 — the upgrade law's other half): when a kind is applied, every
+        // OTHER kind label leaves the thread — a reasoned Receipt replaces the fallback
+        // Notification instead of stacking beside it. Peek-only, best-effort, same as postures.
+        if (kindName) {
+          for (const staleKind of Object.values(KIND_DISPLAY)) {
+            if (staleKind === kindName) continue;
+            const staleId = await cache.peek(staleKind);
+            if (staleId) await removeGmailThreadLabel(opts.encryptedTokens, opts.gmailThreadId, staleId).catch(() => {});
+          }
+        }
       } catch { /* reconcile is best-effort — the applied pair stands */ }
       return allOk ? 'applied' : 'failed';
     } else if (opts.provider === 'outlook' && opts.outlookMessageId) {
-      const { addOutlookCategory } = await import('@/lib/microsoft/outlook');
+      const { addOutlookCategory, removeOutlookCategory } = await import('@/lib/microsoft/outlook');
       for (const name of names) {
         try { await addOutlookCategory(opts.encryptedTokens, opts.outlookMessageId, name.replace('/', ': '), opts.onTokenRefresh); }
         catch { allOk = false; }
+      }
+      // ONE KIND LABEL — Outlook mirror (categories): drop every other kind category, best-effort.
+      if (kindName) {
+        for (const staleKind of Object.values(KIND_DISPLAY)) {
+          if (staleKind === kindName) continue;
+          await removeOutlookCategory(opts.encryptedTokens, opts.outlookMessageId, staleKind.replace('/', ': '), opts.onTokenRefresh).catch(() => {});
+        }
       }
       return allOk ? 'applied' : 'failed';
     }

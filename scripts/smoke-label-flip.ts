@@ -165,6 +165,68 @@ const src = (p: string) => readFileSync(p, 'utf8');
       `${gated}/${rows.length} (${pct}%) — drafts that would have been junk-directed now never fire`);
   }
 
+  // ═══ THE UPGRADE LAW (July 31 — the fallback-finality flaw, found live: receipts wearing
+  // "Notification"). A structural-fallback kind is a PLACEHOLDER, never a final verdict: the stamp
+  // records the tier ('fallback'), the sweep's reasoned completer gets its turn and upgrades, and
+  // applying a kind strips every other kind label (ONE KIND LABEL, both providers). ═══
+  {
+    const src = (f: string) => readFileSync(f, 'utf8');
+    check('U1 · the stamp records the TIER (sync stamps fallback-kinds upgradeable; kindTier exported; only reasoned/override stamps final)',
+      src('lib/inbox/rules/write-back.ts').includes('export function kindTier') &&
+      src('lib/email-sync/sync-emails.ts').includes("tier === 'fallback' ? 'fallback' : true"));
+    check('U2 · the sweep works fallback-stamped items ONLY with reasoning budget (never re-stamps the same guess as final) + the repair sweep exists',
+      src('app/api/cron/label-sweep/route.ts').includes("sd.labeled === 'fallback' && needsReasonedKind && kindBudget <= 0") &&
+      src('scripts/sweep-kind-upgrade.ts').includes('ensureMailKind'));
+    check('U3 · ONE KIND LABEL — applying a kind strips every other kind label (Gmail thread peek-strip + Outlook category removal)',
+      src('lib/inbox/rules/write-back.ts').includes('ONE KIND LABEL') &&
+      src('lib/inbox/rules/write-back.ts').includes('removeOutlookCategory') &&
+      (src('lib/inbox/rules/write-back.ts').match(/Object\.values\(KIND_DISPLAY\)/g) ?? []).length >= 2);
+    check('U4 · facts constrain the reasoned kind (computeUnderstanding takes facts; the own-coworker registry fact rides ensureMailKind)',
+      src('lib/ai/email-processor.ts').includes('facts?: string[]') &&
+      src('lib/inbox/ensure-mail-kind.ts').includes("endsWith('@team.augmtd.ai')"));
+  }
+  // U-live · the reasoned tier actually separates the classes the fallback conflates — on the
+  // probe host, a receipt-shaped transactional email judges 'receipt' (the fallback said
+  // notification), and the user's own coworker's mail judges 'team'.
+  {
+    const { data: fixture } = await sb.from('inbox_items').insert({
+      user_id: PERSONAL, source: 'email', status: 'pending', work_state: 'noise',
+      work_title: 'Envio do recibo da sua encomenda',
+      source_data: {
+        subject: 'Envio do recibo da sua encomenda', provider: 'gmail',
+        from_address: 'info@billing.acme-telco.example', from_name: 'Acme Telco',
+        body: 'Exmo. cliente, segue em anexo o recibo da sua encomenda n.º 84123, no valor de €39,90, liquidado por débito direto. Obrigado pela sua preferência.',
+        received_at: new Date().toISOString(),
+      },
+    }).select('id, source_data').maybeSingle();
+    if (fixture?.id) {
+      const { ensureMailKind, userAddresses } = await import('../lib/inbox/ensure-mail-kind');
+      const addrs = await userAddresses(sb, PERSONAL);
+      const k1 = await ensureMailKind(sb, PERSONAL, { id: fixture.id, source_data: fixture.source_data as Record<string, unknown> }, addrs);
+      check('U-live · a receipt-shaped transactional email judges RECEIPT (the class the fallback called notification)',
+        k1 === 'receipt', `judged=${k1}`);
+      await sb.from('inbox_items').delete().eq('id', fixture.id);
+    } else check('U-live · receipt fixture insert failed', false);
+    const { data: fx2 } = await sb.from('inbox_items').insert({
+      user_id: PERSONAL, source: 'email', status: 'pending', work_state: 'noise',
+      work_title: 'Weekly briefing — your projects',
+      source_data: {
+        subject: 'Weekly briefing — your projects', provider: 'gmail',
+        from_address: 'max@team.augmtd.ai', from_name: "Max · your assistant",
+        body: 'Here is your weekly briefing: two deals moved, one deliverable is due Friday, and I prepared a follow-up draft for the pending invoice.',
+        received_at: new Date().toISOString(),
+      },
+    }).select('id, source_data').maybeSingle();
+    if (fx2?.id) {
+      const { ensureMailKind, userAddresses } = await import('../lib/inbox/ensure-mail-kind');
+      const addrs = await userAddresses(sb, PERSONAL);
+      const k2 = await ensureMailKind(sb, PERSONAL, { id: fx2.id, source_data: fx2.source_data as Record<string, unknown> }, addrs);
+      check("U-live · the user's OWN coworker's mail judges TEAM (the registry fact constrains the judgment — never third-party notification)",
+        k2 === 'team', `judged=${k2}`);
+      await sb.from('inbox_items').delete().eq('id', fx2.id);
+    } else check('U-live · coworker fixture insert failed', false);
+  }
+
   console.log('\n════ THE LABEL FLIP — GATES + SIMULATIONS ════');
   let pass = 0;
   for (const [n, ok, d] of out) { if (ok) pass++; console.log(` ${ok ? '✓' : '✗'} ${n}${d ? `\n     → ${d}` : ''}`); }
