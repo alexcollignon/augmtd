@@ -77,6 +77,11 @@ export function isNoMoveNotice(args: {
   const structuralNotice = auto || noticeKind;
   return (
     (!!u && u.ownership === 'none' && structuralNotice)
+    // WAITING ON A PORTAL IS NOT WORK (July 31, found by the standing H-live scan): an automated
+    // no-reply notice the brain reads as "awaiting" + mere awareness ("the agent has responded on
+    // the listings portal") owes the user NOTHING — there is no move, no reply possible, nothing
+    // to chase. Ownership 'you_owe' and relevance reply/action stay fully protected.
+    || (!!u && u.ownership === 'awaiting' && u.relevance === 'awareness' && structuralNotice)
     || (!u && structuralNotice && !isActionWorthyAutomated(workState, fromName, subject))
   );
 }
