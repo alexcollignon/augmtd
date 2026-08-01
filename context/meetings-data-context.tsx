@@ -30,8 +30,9 @@ export interface MeetingsDataContextType {
   // Data
   transcripts: Transcript[];
   upcoming: CalendarEvent[];
-  projects: Array<{ id: string; name: string }>;   // unification — the same projects as Home (replaced folders)
+  projects: Array<{ id: string; name: string; tracked?: boolean }>;   // unification — the same projects as Home (replaced folders)
   moveToProject: (transcriptId: string, projectId: string | null) => Promise<void>;
+  createProject: (name: string) => Promise<string | null>; // founds a TRACKED entity (the one create door)
   loading: boolean;
   userEmail: string;
 

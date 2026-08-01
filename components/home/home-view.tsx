@@ -911,6 +911,7 @@ function ThisWeekCard() {
       .then((d) => { if (Array.isArray(d.thisWeek)) { setH({ thisWeek: d.thisWeek }); saveLS('aug-home-horizon-v3', { thisWeek: d.thisWeek }); } })
       .catch(() => {});
   }, []);
+  const router = useRouter();
   const rows = h?.thisWeek ?? [];
   if (!rows.length) return <div className="hidden lg:block" />; // keep the grid stable
   const todayISO = new Date().toISOString().slice(0, 10);
@@ -922,32 +923,54 @@ function ThisWeekCard() {
     return new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { weekday: 'long' });
   };
   const time = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  const days: Array<{ label: string; rows: HorizonRow[] }> = [];
-  for (const r of rows) {
-    const label = dayLabel(r.start);
-    const last = days[days.length - 1];
-    if (last && last.label === label) last.rows.push(r);
-    else days.push({ label, rows: [r] });
-  }
+  // CALENDAR-WEEK SPLIT: the horizon is a rolling 7 days, but "this week" is a CLAIM — a Friday
+  // must not file next Monday under it. Split at Sunday midnight (weeks start Monday).
+  const eow = new Date();
+  eow.setDate(eow.getDate() + (6 - ((eow.getDay() + 6) % 7)));
+  eow.setHours(23, 59, 59, 999);
+  const buildDays = (list: HorizonRow[]) => {
+    const days: Array<{ label: string; rows: HorizonRow[] }> = [];
+    for (const r of list) {
+      const label = dayLabel(r.start);
+      const last = days[days.length - 1];
+      if (last && last.label === label) last.rows.push(r);
+      else days.push({ label, rows: [r] });
+    }
+    return days;
+  };
+  const sections = [
+    { title: 'This week', days: buildDays(rows.filter((r) => new Date(r.start) <= eow)) },
+    { title: 'Next week', days: buildDays(rows.filter((r) => new Date(r.start) > eow)) },
+  ].filter((sec) => sec.days.length > 0);
+  // A meeting row opens ITS OWN page — /meetings/<calendarEventId>, the same door the meetings
+  // surface uses for an upcoming event (prep view + chat context). Never the bare list.
+  const openRow = (r: HorizonRow) => router.push(`/meetings/${r.id}`);
   return (
     <RiseIn delay={100}>
       {/* H5 (work-surface): a slim, calm agenda rail — matches the dense list's type scale. */}
       <div className="rounded-xl border border-neutral-200/60 bg-white p-3.5 lg:sticky lg:top-4">
-        <div className="flex items-center gap-1.5 mb-2.5">
-          <CalendarDaysIcon className="w-3.5 h-3.5 text-neutral-400" />
-          <p className="text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400">This week</p>
-        </div>
-        <div className="space-y-2.5">
-          {days.map((day) => (
-            <div key={day.label}>
-              <p className={`text-[10.5px] font-semibold uppercase tracking-wide mb-1 ${day.label === 'Today' ? 'text-indigo-500' : 'text-neutral-400'}`}>{day.label}</p>
-              <div className="space-y-1">
-                {day.rows.map((r) => (
-                  <div key={r.id} className="flex items-start gap-2">
-                    <span className="flex-shrink-0 text-[10.5px] tabular-nums text-neutral-400 pt-[2px] w-[36px]">{time(r.start)}</span>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[12px] text-neutral-700 leading-snug line-clamp-2">{r.title}</p>
-                      {r.entity && <p className="text-[10.5px] text-indigo-500 truncate">{r.entity.name}</p>}
+        <div className="space-y-3">
+          {sections.map((sec, si) => (
+            <div key={sec.title}>
+              <div className={`flex items-center gap-1.5 mb-2.5 ${si > 0 ? 'pt-1 border-t border-neutral-100 mt-1' : ''}`}>
+                <CalendarDaysIcon className="w-3.5 h-3.5 text-neutral-400" />
+                <p className="text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400">{sec.title}</p>
+              </div>
+              <div className="space-y-2.5">
+                {sec.days.map((day) => (
+                  <div key={day.label}>
+                    <p className={`text-[10.5px] font-semibold uppercase tracking-wide mb-1 ${day.label === 'Today' ? 'text-indigo-500' : 'text-neutral-400'}`}>{day.label}</p>
+                    <div className="space-y-1">
+                      {day.rows.map((r) => (
+                        <button key={r.id} onClick={() => openRow(r)}
+                          className="w-full flex items-start gap-2 text-left rounded-md -mx-1 px-1 py-0.5 hover:bg-neutral-50 transition-colors cursor-pointer">
+                          <span className="flex-shrink-0 text-[10.5px] tabular-nums text-neutral-400 pt-[2px] w-[36px]">{time(r.start)}</span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-[12px] text-neutral-700 leading-snug line-clamp-2">{r.title}</span>
+                            {r.entity && <span className="block text-[10.5px] text-indigo-500 truncate">{r.entity.name}</span>}
+                          </span>
+                        </button>
+                      ))}
                     </div>
                   </div>
                 ))}
@@ -2190,7 +2213,7 @@ export function HomeView() {
                                   "N more ⌄ / See less ⌃"), so a 29-row Overdue never floods the deck;
                                   nothing hidden, just folded (July 31). */}
                               <div className="rounded-xl border border-neutral-200/70 bg-white divide-y divide-neutral-100 overflow-hidden">
-                                <ExpandableRows items={g.rows} limit={8} render={(r) => { const em = firstRow; firstRow = false; return (
+                                <ExpandableRows items={g.rows} limit={8} toggleClass="px-3 py-2 pl-[2.6rem]" render={(r) => { const em = firstRow; firstRow = false; return (
                                   <DoRow key={r.item.key} item={r.item} flat emphasis={em}
                                     dismissOverride={r.dealKey ? () => dismissDeal(r.dealKey!) : undefined}
                                     onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />

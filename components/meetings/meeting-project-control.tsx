@@ -10,7 +10,7 @@ import { AnchoredPopover } from '@/components/ui/anchored-popover';
 // ONE BRAIN: operates on ENTITY LINKS — the same membership every surface reads (recognition placed it;
 // your attach/detach is via='user' + locked = final; a detach is a remembered "none", so recognition never
 // re-links behind your back).
-type Ent = { id: string; name: string; status: string; weight: number };
+type Ent = { id: string; name: string; status: string; weight: number; tracked?: boolean };
 
 const MOM_DOT: Record<string, string> = { needs_you: 'bg-rose-500', gone_quiet: 'bg-amber-500', stalled: 'bg-amber-500', waiting: 'bg-blue-400', active: 'bg-emerald-500', unknown: 'bg-neutral-300' };
 
@@ -83,12 +83,27 @@ export default function MeetingProjectControl({ transcriptId }: { transcriptId: 
             className="w-full rounded-lg border border-neutral-200 px-2 py-1.5 text-[12.5px] text-neutral-800 outline-none focus:border-indigo-300"
           />
           <div className="max-h-56 overflow-y-auto mt-1">
-            {filtered.map((e) => (
-              <button key={e.id} onClick={() => setEntity(e.id)} className={`w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-indigo-50 ${e.id === entId ? 'text-indigo-600 font-medium' : 'text-neutral-700'}`}>
-                <FolderIcon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-400" /><span className="min-w-0 flex-1 truncate">{e.name}</span>
-              </button>
-            ))}
-            {filtered.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">{query.trim() ? 'No match.' : 'Nothing to link yet.'}</p>}
+            {/* ONE PICKER GRAMMAR: your projects lead (name-sorted, stable); untracked below "Suggested". */}
+            {(() => {
+              const byName = (a: Ent, b: Ent) => a.name.localeCompare(b.name);
+              const trackedList = filtered.filter((e) => e.tracked).sort(byName);
+              const suggestedList = filtered.filter((e) => !e.tracked).sort(byName);
+              const row = (e: Ent) => (
+                <button key={e.id} onClick={() => setEntity(e.id)} className={`w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-indigo-50 ${e.id === entId ? 'text-indigo-600 font-medium' : 'text-neutral-700'}`}>
+                  <FolderIcon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-400" /><span className="min-w-0 flex-1 truncate">{e.name}</span>
+                </button>
+              );
+              return (
+                <>
+                  {trackedList.map(row)}
+                  {suggestedList.length > 0 && (
+                    <p className="px-2 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400 border-t border-neutral-100 mt-1">Suggested</p>
+                  )}
+                  {suggestedList.map(row)}
+                  {filtered.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">{query.trim() ? 'No match.' : 'Nothing to link yet.'}</p>}
+                </>
+              );
+            })()}
           </div>
         </div>
       </AnchoredPopover>

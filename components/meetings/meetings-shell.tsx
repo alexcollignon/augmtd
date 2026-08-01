@@ -63,7 +63,7 @@ export default function MeetingsShell({
     const c = loadLS<{ upcoming: CalendarEvent[]; transcripts: Transcript[] }>('aug-meetings-v1');
     if (c) { setUpcoming(c.upcoming ?? []); setRawTranscripts(c.transcripts ?? []); setLoading(false); }
   }, [initialUpcoming]);
-  const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
+  const [projects, setProjects] = useState<Array<{ id: string; name: string; tracked?: boolean }>>([]);
   // Suggested initiatives that HAVE meetings — surfaced in the sidebar so a labeled-but-untracked meeting
   // (e.g. a recorded call the initiative machine tagged) is visible + one-click trackable, mirroring Home.
   type MeetingSuggestion = { key: string; name: string; meetingIds: string[]; items: Array<{ table: string; id: string }> };
@@ -139,8 +139,10 @@ export default function MeetingsShell({
   // work from the portfolio; a meeting files into one via ITS ENTITY LINK (via='user' + locked — recognition
   // never overrides your filing). The label-era suggestions machinery died with the projects table.
   const loadProjects = useCallback(() => {
-    fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => setProjects(((d.entities ?? []) as Array<{ id: string; name: string; status: string; weight: number }>)
-      .filter((e) => e.status === 'active').sort((a, b) => b.weight - a.weight).map((e) => ({ id: e.id, name: e.name })))).catch(() => {});
+    fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => setProjects(((d.entities ?? []) as Array<{ id: string; name: string; status: string; weight: number; tracked?: boolean }>)
+      .filter((e) => e.status === 'active')
+      // Name-sorted (stable across refetches — no reorder flicker); the menu splits tracked/suggested.
+      .sort((a, b) => a.name.localeCompare(b.name)).map((e) => ({ id: e.id, name: e.name, tracked: !!e.tracked })))).catch(() => {});
   }, []);
   useEffect(() => { loadProjects(); }, [loadProjects]);
   useEffect(() => onProjectsUpdated(() => { loadProjects(); fetchAll(); }), [loadProjects, fetchAll]);
@@ -218,7 +220,7 @@ export default function MeetingsShell({
 
   // ── Handlers ─────────────────────────────────────────────────────────────
   // Create a body of work inline — FOUNDS a tracked entity (a user declaring work = a registry row).
-  const handleCreateProject = async (name: string) => {
+  const handleCreateProject = async (name: string): Promise<string | null> => {
     const res = await fetch('/api/entities', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -226,10 +228,12 @@ export default function MeetingsShell({
     });
     if (res.ok) {
       const data = await res.json();
-      if (data?.id) setProjects((prev) => [...prev, { id: data.id, name }]);
+      if (data?.id) setProjects((prev) => [...prev, { id: data.id, name, tracked: true }]);
       loadProjects();
       broadcastProjectsUpdated({ reason: 'create' });
+      return (data?.id as string) ?? null;
     }
+    return null;
   };
 
   // Label-era suggestions died with the projects table (entities appear in the sidebar automatically).
@@ -294,6 +298,7 @@ export default function MeetingsShell({
     transcripts,
     upcoming,
     projects,
+    createProject: handleCreateProject,
     moveToProject,
     loading,
     userEmail,
