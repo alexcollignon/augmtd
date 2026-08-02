@@ -33,7 +33,7 @@ export type RailView = {
   entity: {
     id: string; name: string;
     tracked?: boolean; // T4 — accepted (project) vs merely recognized (quiet context)
-    summary: string | null; momentum: string | null; nextMove: string | null;
+    summary: string | null; momentum: string | null; nextMove: string | null; nextMoveHref?: string | null;
     whoOwesYou: string[]; whoOwesThem: string[];
     suggestedWorker?: { id: string; name: string; role: string } | null;
   } | null;
@@ -232,6 +232,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
     window.addEventListener('aug:deal-turn', onTurn);
     return () => window.removeEventListener('aug:deal-turn', onTurn);
   }, [roomKey]);
+  const [showEarlier, setShowEarlier] = useState(false); // history folds — the room reads ONE thing
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   // History (Claude-style): archived sessions of THIS room; viewing one is read-only.
@@ -438,9 +439,23 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
             deterministically from the anchor (grounded-or-absent per part); then the deal's judged
             state as ONE line. Who-owes folds to a single line, and disappears entirely when the
             next-move below already carries the actionable. */}
-        {!viewingSession && inRoom && turns.length === 0 && (
+        {/* THE LIVING BRIEF, in-room (experience-spec seat: the left panel IS the working
+            conversation — it never opens mute). Position + debts, derived fresh from the entity
+            state each entry; the next move + hand-off follow below (moved here FROM the right
+            pane — one fact, one home). */}
+        {!viewingSession && inRoom && (
           <AssistantRow>
-            <p className="text-[12.5px] text-neutral-500">This is the room for {ent?.name ?? 'this work'} — ask anything, correct me, or hand work off. I hold everything on it.</p>
+            {ent?.summary
+              ? <p>{ent.summary}</p>
+              : turns.length === 0
+                ? <p className="text-[12.5px] text-neutral-500">This is the room for {ent?.name ?? 'this work'} — ask anything, correct me, or hand work off. I hold everything on it.</p>
+                : null}
+            {/* One fact once: the debt line only speaks when it says something the next move
+                doesn't already say (the brief was stating one fact three times — too much text). */}
+            {ent?.whoOwesYou[0] && !(ent.nextMove && echoesAnchor(ent.nextMove, ent.whoOwesYou[0])) && (
+              <p className="text-[12.5px] text-neutral-500">You owe: {ent.whoOwesYou[0]}</p>
+            )}
+            {!ent?.nextMove && ent?.whoOwesThem[0] && <p className="text-[12.5px] text-neutral-500">They owe: {ent.whoOwesThem[0]}</p>}
           </AssistantRow>
         )}
         {!viewingSession && !inRoom && <AssistantRow>
@@ -479,12 +494,66 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           </AssistantRow>
         )}
 
+        {/* THE LIVING BRIEF's ASK (experience-spec laws 1+7): the ENGINE's live ask is part of the
+            room's standing position — lifted OUT of the history stream into the opening block,
+            with the ONE CTA row (Attach · Go ahead). It dies with its work (law 3 settles the
+            component server-side) — never a second copy below. Coworker asks stay in the stream:
+            they are a person's speech, not the room's position. */}
+        {!viewingSession && (() => {
+          const ask = turns.find((t): t is Extract<Turn, { role: 'system' }> => t.role === 'system' && !t.author?.name && !!t.checklist?.length && !!t.turnId);
+          if (!ask) return null;
+          return (
+            <AssistantRow>
+              <p className="whitespace-pre-wrap">{ask.text}</p>
+              <div className="mt-1.5 space-y-1">
+                {ask.checklist!.map((m, j) => (
+                  <div key={j} className="flex items-center gap-2 rounded-lg border border-amber-100 bg-amber-50/40 px-2.5 py-1.5">
+                    <span className="flex-shrink-0 w-3.5 h-3.5 rounded-full border-[1.5px] border-amber-400/70" aria-hidden />
+                    <span className="min-w-0 flex-1 text-[12px] text-neutral-800">{m}</span>
+                    <button
+                      onClick={() => fileRef.current?.click()}
+                      disabled={busy}
+                      className="flex-shrink-0 text-[11.5px] font-medium text-amber-700 hover:text-amber-900 transition-colors disabled:opacity-50"
+                    >Attach →</button>
+                  </div>
+                ))}
+                {!ask.proceeded && (
+                  <button
+                    onClick={async () => {
+                      const tid = ask.turnId!;
+                      const res = await fetch('/api/room/asks', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ turnId: tid, action: 'proceed' }),
+                      }).catch(() => null);
+                      if (res?.ok) setTurns((prev) => prev.map((x) => (x.role === 'system' && x.turnId === tid ? { ...x, proceeded: true } : x)));
+                    }}
+                    disabled={busy}
+                    className="mt-0.5 rounded-full border border-neutral-200 px-2.5 py-1 text-[11.5px] font-medium text-neutral-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors disabled:opacity-50"
+                  >Go ahead with what&apos;s available →</button>
+                )}
+              </div>
+            </AssistantRow>
+          );
+        })()}
+
         {/* The next move + a matching coworker as a PERSON (avatar + one-tap hand-off).
             Mechanical dedup (J2 rail cleanup): when the deal's next move IS this item's ask (the
             opening line already said it), the echo is noise — skip the line, keep the hand-off. */}
-        {!viewingSession && !inRoom && ent?.nextMove && !echoesAnchor(ent.nextMove, view.anchor?.ask ?? null) && (
+        {!viewingSession && ent?.nextMove && !echoesAnchor(ent.nextMove, view.anchor?.ask ?? null) && (
           <AssistantRow>
-            <p>Next: {ent.nextMove}</p>
+            {/* The brief's CTA: the next move OPENS its own anchor (the word is the deed) and the
+                click narrates in the room — the same CTA-focus law the old right-pane card carried. */}
+            {ent.nextMoveHref ? (
+              <button
+                onClick={() => {
+                  pushDealTurn(roomKey, `Opening the next move — ${String(ent.nextMove).slice(0, 70)}.`, { key: `cta:${ent.nextMoveHref}` });
+                  router.push(ent.nextMoveHref!);
+                }}
+                className="text-left text-[13px] text-neutral-800 hover:text-indigo-700 transition-colors"
+              >Next: <span className="underline decoration-neutral-200 underline-offset-2">{ent.nextMove}</span> →</button>
+            ) : (
+              <p>Next: {ent.nextMove}</p>
+            )}
             {suggested && (
               <button
                 onClick={() => send(`Have ${suggested.name.split(' ')[0]} ${ent.nextMove}`)}
@@ -546,19 +615,42 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
             are conversation events WITH affordances (P17). A `prep:*` narration FOLDS entirely
             when its artifact card is on the rail (one artifact, one live element — the card's
             byline carries the attribution). */}
-        {(viewingSession?.turns ?? turns).map((t, i) => t.role === 'user' ? (
+        {(() => {
+          const all = viewingSession?.turns ?? turns;
+          // The lifted engine ask lives in the brief above — never twice on screen (law 1).
+          const liftedAsk = viewingSession ? null : turns.find((t): t is Extract<Turn, { role: 'system' }> => t.role === 'system' && !t.author?.name && !!t.checklist?.length && !!t.turnId);
+          const stream = all.filter((t) => t !== liftedAsk);
+          // A SETTLED ask's remnant ("To finish this I need…" with its checklist stripped) is
+          // history, not news — it folds into "earlier" always, never the default read (law 6).
+          const isDeadAsk = (t: Turn) => t.role === 'system' && !!t.dkey && /^(requires:|delegate:)/.test(t.dkey) && !t.checklist?.length;
+          const fresh = stream.filter((t) => !isDeadAsk(t));
+          // HISTORY FOLDS (law: the user reads ONE thing) — the newest 3 turns show; everything
+          // older waits behind one "earlier" line. Sessions view stays complete (it IS history).
+          const visible = viewingSession || showEarlier ? stream : fresh.slice(-3);
+          const earlier = stream.length - visible.length;
+          return (
+            <>
+              {earlier > 0 && (
+                <button onClick={() => setShowEarlier(true)}
+                  className="flex items-center gap-1.5 pl-0.5 text-[11.5px] text-neutral-400 hover:text-neutral-600 transition-colors">
+                  <span className="text-neutral-300" aria-hidden>·</span>earlier ({earlier}) ⌄
+                </button>
+              )}
+              {visible.map((t, i) => t.role === 'user' ? (
           <div key={i} className="flex justify-end">
             <div className="max-w-[80%] px-3 py-2 bg-neutral-100 rounded-2xl rounded-br-sm text-[13px] text-neutral-800 leading-relaxed">{t.text}</div>
           </div>
         ) : (artifact && t.dkey && /^(prep:|meeting-prep:)/.test(t.dkey)) ? null
         : (!t.author?.name && !t.checklist?.length && !t.actions?.length && t.key !== 'founding-proposal') ? (
           <div key={i} className="flex items-start gap-1.5 pl-0.5">
-            <span className="flex-shrink-0 text-neutral-300 text-[11px] leading-[1.5]" aria-hidden>·</span>
-            <p className="min-w-0 text-[11.5px] text-neutral-400 leading-snug">
+            <span className="flex-shrink-0 text-neutral-300 text-[12px] leading-[1.5]" aria-hidden>·</span>
+            <p className="min-w-0 text-[12px] text-neutral-400 leading-snug">
               {t.text}
-              {t.refs?.filter((r) => inRoom || !r.href?.includes(`/item/${id}`)).map((r, j) => (
+              {/* ONE ref, ONE word — the sentence already says what it's about; a wrapping
+                  full-title link doubled the text (too many sizes, too much text). */}
+              {t.refs?.filter((r) => inRoom || !r.href?.includes(`/item/${id}`)).slice(0, 1).map((r, j) => (
                 r.href
-                  ? <Link key={j} href={r.href} className="ml-1.5 text-[10.5px] font-medium text-neutral-400 underline decoration-neutral-200 underline-offset-2 hover:text-indigo-500 transition-colors">{r.label}</Link>
+                  ? <Link key={j} href={r.href} className="ml-1.5 text-neutral-400 underline decoration-neutral-200 underline-offset-2 hover:text-indigo-500 transition-colors whitespace-nowrap">open →</Link>
                   : null
               ))}
             </p>
@@ -661,15 +753,18 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
               </div>
             )}
             {(() => {
-              // The item chip disambiguates a SHARED deal room ("about what?"); inside the item's
-              // OWN room it's self-referential noise — hide chips that point at the current anchor.
+              // The item ref disambiguates a SHARED deal room ("about what?"); inside the item's
+              // OWN room it's self-referential noise. Rendered as a quiet inline LINK, never a
+              // pill — the word is the deed (law 8); a chip restating the sentence above is noise.
               const shownRefs = (t.refs ?? []).filter((r) => inRoom || !r.href?.includes(`/item/${id}`));
               return shownRefs.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
+                <p className="text-[11px] text-neutral-400">
                   {shownRefs.map((r, j) => (
-                    <Chip key={j} label={r.label} onClick={r.href ? () => router.push(r.href!) : undefined} />
+                    r.href
+                      ? <Link key={j} href={r.href} className="mr-2 underline decoration-neutral-200 underline-offset-2 hover:text-indigo-500 transition-colors">{r.label}</Link>
+                      : <span key={j} className="mr-2">{r.label}</span>
                   ))}
-                </div>
+                </p>
               );
             })()}
             {t.files && t.files.length > 0 && (
@@ -682,7 +777,10 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           </AssistantRow>
             </div>
           </div>
-        ))}
+              ))}
+            </>
+          );
+        })()}
         {busy && <AssistantRow><TypingDots /></AssistantRow>}
       </div>
 

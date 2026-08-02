@@ -35,6 +35,7 @@ export function focusFromHref(href: string | null): FocusItem | null {
   return { kind: k, id: m[1] };
 }
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { TabBar } from '@/components/ui';
 import { MOMENTUM as MOMENTUM_TOKENS } from '@/lib/work-items/states';
 
 type BoardItem = { id: string; title: string; who: string | null; href: string; when: string | null; source?: string | null; origin?: string | null; prepared?: string | null; preparedRef?: string | null; blockedOn?: string | null; priority?: 'high' | 'low' | null };
@@ -641,6 +642,8 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
   };
   const [adding, setAdding] = useState(false);
   const addAnchorRef = useRef<HTMLDivElement>(null); // "+ Add existing" popover anchor (portaled)
+  // The right pane's ONE tab (experience-spec seat: inventory behind tabs, never stacked cards).
+  const [rightTab, setRightTab] = useState<'work' | 'schedule' | 'meetings' | 'conv' | 'files' | 'history'>('work');
   const [menu, setMenu] = useState(false); // the header ⋯ (status + category)
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
@@ -820,32 +823,11 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
 
               {/* ── FIRST PAINT (F4/5A.6): the width works — next move (+ suggestions) LEFT, Goals &
                   Rules RIGHT on wide screens (the disclosure covers narrow). ── */}
-              <div className="mt-5 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_280px] gap-4 items-start">
-              <div className="space-y-4 min-w-0">
-              <div className="rounded-2xl border border-neutral-200/70 bg-white p-5">
-                {e.nextMove ? (
-                  <>
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400 mb-2">The next move</p>
-                    <button onClick={() => openHref(moveHref, true)} className="inline-flex items-center gap-2 rounded-lg bg-indigo-50 hover:bg-indigo-100 px-3 py-2 text-[13.5px] font-medium text-indigo-700 transition-colors max-w-full">
-                      <span className="truncate">{e.nextMove.title}</span><ArrowRightIcon className="w-4 h-4 flex-shrink-0" />
-                    </button>
-                  </>
-                ) : (
-                  <p className="text-[13px] text-neutral-400">Nothing needs you on this right now.</p>
-                )}
-                {e.whoOwes.you.length > 0 && (
-                  <p className="mt-3 text-[12.5px] text-neutral-600"><span className="text-rose-500">You owe · </span>{e.whoOwes.you[0]}{e.whoOwes.you.length > 1 ? ` · +${e.whoOwes.you.length - 1}` : ''}</p>
-                )}
-                {/* ONE suggested hand-off (R3c) — the same coworker match + delegation the rail uses. */}
-                {e.nextMove && suggestedWorker && (
-                  <button
-                    onClick={handOff} disabled={handing}
-                    className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50/50 px-2.5 py-1 text-[11.5px] font-medium text-indigo-700 hover:bg-indigo-50 transition-colors disabled:opacity-50"
-                  >
-                    {suggestedWorker.name.split(' ')[0]} can take this →
-                  </button>
-                )}
-              </div>
+              {/* THE NEXT MOVE lives in the LEFT rail's living brief (experience-spec law 1 —
+                  one fact, one home; the right pane is the filed truth and asks for nothing).
+                  Full-width BANDS below (the old two-column grid emptied when the card left —
+                  a floating half-width intent card in a void was misused space). */}
+              <div className="mt-5 space-y-4 min-w-0">
 
               {/* B1b — the living status brief (key dates · people · deliverables · watch-outs). */}
               {d!.statusBrief && (
@@ -871,18 +853,31 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
                 </div>
               )}
 
-              </div>
-              {/* Goals & Rules beside the state on wide screens. */}
-              <div className="hidden lg:block rounded-2xl border border-neutral-200/70 bg-white p-5 space-y-5">
+              {/* INTENT — one slim full-width band (Goals | Rules), all screens. */}
+              <div className="rounded-2xl border border-neutral-200/70 bg-white p-4 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
                 <EditableIntent entityId={entityId} label="Goals" hint="What this work is trying to achieve." values={e.goals} onSaved={(g) => patch({ goals: g })} />
-                <div className="border-t border-neutral-100" />
                 <EditableIntent entityId={entityId} label="Rules" hint="How to work on it, and what to avoid." values={e.rules} onSaved={(r) => patch({ rules: r })} />
               </div>
               </div>
 
-              {/* ── THE DISCLOSURES — everything else, one calm row each, inline expand. ── */}
-              <div className="mt-4 space-y-2.5">
-                <Disclosure label="Tasks" count={d!.counts.total} open={openSections.has('work')} onToggle={() => toggle('work')}>
+              {/* ── THE INVENTORY behind ONE tab bar (experience-spec seat: the right pane is the
+                  filed truth — it inventories, it never asks). Panels keep their exact content;
+                  only the wrapper changed from stacked disclosures to tabs. ── */}
+              <div className="mt-4 rounded-2xl border border-neutral-200/70 bg-white overflow-hidden">
+                <TabBar
+                  tabs={([
+                    { id: 'work' as const, label: 'Tasks' + (d!.counts.total ? ` · ${d!.counts.total}` : '') },
+                    ...(d!.gantt.length > 0 ? [{ id: 'schedule' as const, label: `Schedule · ${d!.gantt.filter((g) => g.marker !== 'undated').length}` }] : []),
+                    ...(d!.meetings.length > 0 ? [{ id: 'meetings' as const, label: `Meetings · ${d!.meetings.length}` }] : []),
+                    ...((d!.conversations ?? []).length > 0 ? [{ id: 'conv' as const, label: `Conversations · ${(d!.conversations ?? []).length}` }] : []),
+                    ...((d!.files ?? []).length > 0 ? [{ id: 'files' as const, label: `Files · ${(d!.files ?? []).length}` }] : []),
+                    ...(history.length > 0 ? [{ id: 'history' as const, label: `Activity · ${history.length}` }] : []),
+                  ])}
+                  active={rightTab}
+                  onChange={setRightTab}
+                />
+                <div className="p-4">
+                {rightTab === 'work' && (<div>
                   {/* B2 — PROPOSED from the meeting: the review gate. Accept = real work + a learning
                       signal; Reject = dismissed + a learning signal. Never on the board until accepted. */}
                   {(d!.proposed ?? []).length > 0 && (
@@ -919,23 +914,19 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
                   </div>
                   <TaskList board={d!.board} onRefresh={refresh} onDetach={detachItem} entityId={entityId} onOpen={openHref}
                     onPreviewDeliverable={(name, id) => setFocused({ kind: 'deliverable', id, title: name })} />
-                </Disclosure>
+                </div>)}
 
                 {/* B1a — the deal's SCHEDULE: the shared event-Gantt over the served rows (the same
                     component the portfolio/Timeline use — one timeline language everywhere). */}
-                {d!.gantt.length > 0 && (
-                  <Disclosure label="Schedule" count={d!.gantt.filter((g) => g.marker !== 'undated').length}
-                    open={openSections.has('schedule')} onToggle={() => toggle('schedule')}>
+                {d!.gantt.length > 0 && rightTab === 'schedule' && (<div>
                     <GanttChart
                       groups={[{ id: entityId, name: e.name, items: d!.gantt }]}
                       today={new Date().toISOString().slice(0, 10)}
                       emptyLine="Nothing dated on this yet."
                     />
-                  </Disclosure>
-                )}
+                  </div>)}
 
-                {d!.meetings.length > 0 && (
-                  <Disclosure label="Meetings" count={d!.meetings.length} open={openSections.has('meetings')} onToggle={() => toggle('meetings')}>
+                {d!.meetings.length > 0 && rightTab === 'meetings' && (<div>
                     <div className="space-y-1.5">
                       {d!.meetings.map((mt) => (
                         <button key={mt.id} onClick={() => setFocused({ kind: 'meeting', id: mt.id })} className="block w-full text-left rounded-lg border border-neutral-200/60 px-3 py-2 hover:border-neutral-300 hover:bg-neutral-50/60 transition-all">
@@ -944,11 +935,9 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
                         </button>
                       ))}
                     </div>
-                  </Disclosure>
-                )}
+                  </div>)}
 
-                {(d!.conversations ?? []).length > 0 && (
-                  <Disclosure label="Conversations" count={(d!.conversations ?? []).length} open={openSections.has('conv')} onToggle={() => toggle('conv')}>
+                {(d!.conversations ?? []).length > 0 && rightTab === 'conv' && (<div>
                     <div className="space-y-1">
                       {(d!.conversations ?? []).map((c) => (
                         <button key={c.id} onClick={() => setFocused({ kind: 'email', id: c.id })} className="group/c w-full text-left flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-neutral-50/70 transition-colors">
@@ -959,11 +948,9 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
                         </button>
                       ))}
                     </div>
-                  </Disclosure>
-                )}
+                  </div>)}
 
-                {(d!.files ?? []).length > 0 && (
-                  <Disclosure label="Files & docs" count={(d!.files ?? []).length} open={openSections.has('files')} onToggle={() => toggle('files')}>
+                {(d!.files ?? []).length > 0 && rightTab === 'files' && (<div>
                     <div className="space-y-1">
                       {(d!.files ?? []).map((f, i) => (
                         <button key={i} onClick={() => { if (f.ref) setPreview({ name: f.name, ref: f.ref }); }}
@@ -974,23 +961,14 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
                         </button>
                       ))}
                     </div>
-                  </Disclosure>
-                )}
+                  </div>)}
 
-                <div className="lg:hidden">
-                  <Disclosure label="Goals & Rules" count={(e.goals.length + e.rules.length) || null} open={openSections.has('intent')} onToggle={() => toggle('intent')}>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                      <EditableIntent entityId={entityId} label="Goals" hint="What this work is trying to achieve." values={e.goals} onSaved={(g) => patch({ goals: g })} />
-                      <EditableIntent entityId={entityId} label="Rules" hint="How to work on it, and what to avoid." values={e.rules} onSaved={(r) => patch({ rules: r })} />
-                    </div>
-                  </Disclosure>
-                </div>
 
-                {history.length > 0 && (
-                  <Disclosure label="Activity" count={history.length} open={openSections.has('history')} onToggle={() => toggle('history')}>
+
+                {history.length > 0 && rightTab === 'history' && (<div>
                     <HistoryList lines={history} onOpen={openHref} />
-                  </Disclosure>
-                )}
+                  </div>)}
+                </div>
               </div>
             </div>
           </div>

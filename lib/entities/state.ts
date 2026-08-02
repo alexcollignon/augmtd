@@ -16,7 +16,7 @@ import { isAutomatedSender } from '@/lib/inbox/automated';
 // VOICE (P5a): bump whenever the synthesis prompt/voice changes — threaded into the stored sig so every
 // cached state regenerates through the existing sig-gated paths (the alignment-cache lesson: a
 // prompt-driven cache must invalidate on the prompt itself, not only on the data).
-export const STATE_PROMPT_VERSION = 5; // 5: THE DEIXIS LAW — no relative day-words in cached prose; pre-today ledger events are the past. 4: the reasoned `scope` verdict.
+export const STATE_PROMPT_VERSION = 6; // 6: LAW 6 — settled ledger lines speak history-grammar, never open-debt grammar. 5: THE DEIXIS LAW — no relative day-words in cached prose; pre-today ledger events are the past. 4: the reasoned `scope` verdict.
 
 // The BANNED machinery register — the system describing its own bookkeeping instead of the matter.
 // ONE definition: the synthesis self-checks against it (with a corrective retry) and the voice smoke
@@ -155,8 +155,15 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
       const owes = String(c.direction || 'you_owe') === 'awaiting' ? 'they owe' : 'you owe';
       if (c.counterparty) humanCounterparty = true;
       const rr = typeof c.resolved_reason === 'string' && c.resolved_reason.trim() && !MACHINE_REASONS.has(c.resolved_reason.trim()) ? ` — user: "${c.resolved_reason.trim()}"` : '';
-      const settled = c.status === 'done' ? ' (done)' : c.status === 'dismissed' ? ` (dismissed${rr})` : '';
-      ledger.push({ at: c.created_at ?? '', kind: 'commitment', who: c.counterparty ?? null, text: `${owes}${settled}: ${c.description}${c.due_date ? ` (due ${c.due_date})` : ''}`, ref: `commit:${c.id}` });
+      // LAW 6 (experience spec — found live Aug 2): a SETTLED obligation must never speak in
+      // open-debt grammar. "you owe (done): … (due <today>)" led with the debt and a bare
+      // due-today date — the synthesis followed the grammar and re-asserted a delivered report
+      // as owed. Settled lines lead with DONE and put the date in the past tense.
+      const isSettled = c.status === 'done' || c.status === 'dismissed';
+      const text = isSettled
+        ? `DONE — ${c.status === 'dismissed' ? `dismissed${rr}` : 'delivered/handled'}: ${c.description}${c.due_date ? ` (was due ${c.due_date})` : ''}`
+        : `${owes}: ${c.description}${c.due_date ? ` (due ${c.due_date})` : ''}`;
+      ledger.push({ at: c.created_at ?? '', kind: 'commitment', who: c.counterparty ?? null, text, ref: `commit:${c.id}` });
     }
   }
   // COWORKER DELIVERABLES (Prepared-Work C3): what the team produced for this entity's items — the deal's
@@ -247,6 +254,7 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
       // THE DEIXIS LAW (T-class): this prose is CACHED and re-read for days — a relative day-word
       // decays into a lie, and anything already behind today's date is the PAST, not a plan.
       `TODAY is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}. This text will be read for DAYS — never write relative day-words ("tomorrow", "next week", "later today"): name absolute dates ("Jul 28"). Anything in the ledger dated BEFORE today already HAPPENED — describe it as past ("they met Jul 28"), never as upcoming.\n` +
+      `A ledger line marked DONE / (handled) / (dismissed) is HISTORY — the obligation is settled; NEVER present it as owed, due, or pending, whatever its original due date says. If everything is settled, say so plainly (the calm is earned).\n` +
       `Body of work: ${ent.name}${ent.summary ? ` — ${ent.summary}` : ''}\n` +
       `Days since last real touch: ${quietDays ?? 'unknown'}\n` +
       `STRUCTURAL FACTS (these CONSTRAIN your scope judgment):\n` +

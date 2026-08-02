@@ -288,7 +288,40 @@ export async function resolveRequirements(
     if (proceeded) {
       return { resolutions, have, missing, artifactTruth: buildTruth(have, missing), proceeded: true };
     }
+    // ONE ARTIFACT = ONE ASK (experience-spec law 3, Aug 2 — found live: two items asked for the
+    // "STC Bahrain comprehensive assessment report" under word-shuffled labels as two checklists).
+    // Before posting, check the room's OTHER live asks: a missing label already asked-for by a
+    // sibling item's checklist (distinctive-token match — the shared identity primitive) is
+    // COVERED — this item joins that ask's `covers` instead of duplicating it. Only genuinely
+    // new labels get a turn of their own.
+    let uncovered = missing;
     if (missing.length) {
+      try {
+        const { namesOverlap } = await import('@/lib/entities/recognize');
+        const selfRef = `${args.itemKind === 'commitment' ? 'commitment' : 'inbox'}:${args.itemId}`;
+        const { data: siblings } = await admin.from('room_turns').select('id, component, dedupe_key')
+          .eq('user_id', userId).eq('room_key', roomKey)
+          .filter('component->>key', 'eq', 'input_checklist')
+          .neq('dedupe_key', dedupeKey).limit(10);
+        const covered = new Set<string>();
+        for (const sib of (siblings ?? []) as Array<{ id: string; component: { key?: string; state?: Record<string, unknown> } | null }>) {
+          const st = (sib.component?.state ?? {}) as Record<string, unknown>;
+          const sibItems = Array.isArray(st.items) ? (st.items as string[]) : [];
+          const hits = missing.filter((m2) => sibItems.some((si) => namesOverlap(m2.label, si)));
+          if (!hits.length) continue;
+          for (const h of hits) covered.add(h.label);
+          const covers = [...new Set([...(Array.isArray(st.covers) ? (st.covers as string[]) : []), selfRef])];
+          await admin.from('room_turns').update({ component: { ...(sib.component ?? {}), state: { ...st, covers } } }).eq('id', sib.id).then(() => {}, () => {});
+        }
+        uncovered = missing.filter((m2) => !covered.has(m2.label));
+        if (!uncovered.length && missing.length) {
+          // Everything this item needs is already asked-for — no second checklist, and any prior
+          // own-ask turn dies (the sibling's ask carries it via covers).
+          await admin.from('room_turns').delete().eq('user_id', userId).eq('room_key', roomKey).eq('dedupe_key', dedupeKey).then(() => {}, () => {});
+        }
+      } catch { uncovered = missing; /* the merge is best-effort — a duplicate beats a silent drop */ }
+    }
+    if (uncovered.length) {
       // Unstageable-but-plausible hits are NAMED, never silently attached (Prepared → Suggested:
       // the user confirms in the room — "use it" routes through the conversation/attach funnel).
       const suggestLine = suggestions.length
@@ -297,10 +330,10 @@ export async function resolveRequirements(
       await writeRoomTurn(admin, userId, roomKey, {
         role: 'system',
         text: (have.length
-          ? `I have ${have.map((h) => `"${h.file!.filename}"`).join(', ')} ready for this, but I couldn't find ${missing.length === 1 ? 'one thing' : `${missing.length} things`} — attach below or tell me where to look.`
-          : `To finish this I need ${missing.length === 1 ? 'one thing' : `${missing.length} things`} I couldn't find anywhere — attach below or tell me where to look.`) + suggestLine,
+          ? `I have ${have.map((h) => `"${h.file!.filename}"`).join(', ')} ready for this, but I couldn't find ${uncovered.length === 1 ? 'one thing' : `${uncovered.length} things`} — attach below or tell me where to look.`
+          : `To finish this I need ${uncovered.length === 1 ? 'one thing' : `${uncovered.length} things`} I couldn't find anywhere — attach below or tell me where to look.`) + suggestLine,
         refs: [{ label: args.itemTitle.slice(0, 60), href: args.itemKind === 'commitment' ? `/item/${args.itemId}?kind=commitment` : `/item/${args.itemId}` }],
-        component: { key: 'input_checklist', state: { items: missing.map((m2) => m2.label), taskId: null } },
+        component: { key: 'input_checklist', state: { items: uncovered.map((m2) => m2.label), taskId: null } },
         dedupeKey,
       });
     } else {

@@ -14,7 +14,7 @@ import { suggestWorkerForMove, type SuggestedWorker } from '@/lib/prepare/route-
 export type RoomEntity = {
   id: string; name: string;
   tracked: boolean; // T4 — accepted by the user (project) vs merely recognized by memory (context)
-  summary: string | null; momentum: string | null; nextMove: string | null;
+  summary: string | null; momentum: string | null; nextMove: string | null; nextMoveHref?: string | null;
   whoOwesYou: string[]; whoOwesThem: string[];
   suggestedWorker: SuggestedWorker | null; // the ONE routing brain's verdict (W2) — served, never client-matched
 };
@@ -37,13 +37,20 @@ export async function buildRoomView(
   if (!ent) return { entity: null, siblings };
 
   const st = ((ent.state ?? {}) as { summary?: string; momentum?: string; whoOwes?: { you?: string[]; them?: string[] } });
-  const nm = ((ent.next_move ?? null) as { title?: string } | null);
+  const nm = ((ent.next_move ?? null) as { title?: string; entityRef?: string | null } | null);
   const entity: RoomEntity = {
     id: ent.id as string, name: String(ent.name),
     tracked: !!ent.tracked,
     summary: st.summary ?? (ent.summary as string | null) ?? null,
     momentum: st.momentum ?? null,
     nextMove: nm?.title ?? null,
+    // The brief's CTA target — the next move's own anchor item (the word is the deed, law 8).
+    nextMoveHref: (() => {
+      const ref = nm?.entityRef ?? null;
+      if (!ref) return null;
+      const [k, i] = String(ref).split(':');
+      return k === 'inbox' ? `/item/${i}?kind=email` : k === 'commit' ? `/item/${i}?kind=commitment` : k === 'meeting' ? `/item/${i}?kind=meeting` : null;
+    })(),
     whoOwesYou: Array.isArray(st.whoOwes?.you) ? st.whoOwes!.you!.slice(0, 3) : [],
     whoOwesThem: Array.isArray(st.whoOwes?.them) ? st.whoOwes!.them!.slice(0, 3) : [],
     suggestedWorker: await suggestWorkerForMove(supabase, userId, entityId, { next_move: ent.next_move }),

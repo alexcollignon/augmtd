@@ -47,6 +47,10 @@ export async function executeResolveInboxItem(
     .eq('id', itemId).eq('user_id', userId);
   if (updateError) return { ok: false, error: `Failed to ${resolution} item` };
 
+  // Law 3 (experience spec): the resolved item's room asks settle with it (component strips,
+  // text stays as history) — every manual Done/Dismiss flows through this ONE resolver.
+  import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'inbox_item', itemId)).catch(() => {});
+
   // Learning signal (non-fatal) — same shape the routes wrote.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rc = (item as any).recipient_context ?? {};
@@ -108,6 +112,8 @@ export async function executeResolveCommitment(
     .update({ status: args.resolution, resolved_at: nowIso, resolved_reason: args.reason?.trim() ? String(args.reason).trim().slice(0, 200) : 'chat', updated_at: nowIso })
     .eq('id', args.commitmentId).eq('user_id', userId);
   if (error) return { ok: false, error: 'Failed to update commitment' };
+
+  import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'commitment', args.commitmentId)).catch(() => {});
   await logActivity(client, userId, {
     type: args.resolution === 'done' ? 'commitment_done' : 'dismissed',
     title: `${args.resolution === 'done' ? 'Marked done' : 'Dismissed'}: ${String(c.description).slice(0, 80)}`,

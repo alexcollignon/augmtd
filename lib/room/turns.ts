@@ -178,3 +178,46 @@ export async function readRoomSession(client: SupabaseClient, userId: string, ro
     return mapRows(data as Array<Record<string, unknown>>);
   } catch { return []; }
 }
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// ASKS LIVE AND DIE WITH THEIR WORK (experience-spec law 3, Aug 2): an input-checklist ask exists
+// only while the work it serves is open. When the item/commitment RESOLVES — verdict-applied,
+// fulfillment-closed, reply-resolved, or the user's own Done/Dismiss — its ask SETTLES: the
+// component strips (the affordance dies), the text stays as history (the story is never erased —
+// the same mechanic the ingest funnel uses on attach). A MERGED ask (one artifact, many items —
+// component.state.covers) only strips once every covered item has resolved.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+export async function settleAsksForItem(
+  client: SupabaseClient, userId: string,
+  itemKind: 'inbox_item' | 'commitment', itemId: string,
+): Promise<number> {
+  try {
+    const ref = `${itemKind === 'commitment' ? 'commitment' : 'inbox'}:${itemId}`;
+    // Own asks (requires:<id> · delegate:<id>:*) + merged asks in ANY room that cover this item.
+    const { data: own } = await client.from('room_turns').select('id, component')
+      .eq('user_id', userId)
+      .or(`dedupe_key.like.delegate:${itemId}:*,dedupe_key.eq.requires:${itemId}`)
+      .filter('component->>key', 'eq', 'input_checklist');
+    const { data: covering } = await client.from('room_turns').select('id, component')
+      .eq('user_id', userId)
+      .filter('component->>key', 'eq', 'input_checklist')
+      .contains('component->state', { covers: [ref] });
+    const rows = [...(own ?? []), ...(covering ?? [])];
+    const seen = new Set<string>();
+    let settled = 0;
+    for (const t of rows as Array<{ id: string; component: { key?: string; state?: Record<string, unknown> } | null }>) {
+      if (seen.has(t.id)) continue;
+      seen.add(t.id);
+      const state = (t.component?.state ?? {}) as Record<string, unknown>;
+      const covers = Array.isArray(state.covers) ? (state.covers as string[]).filter((c) => c !== ref) : [];
+      if (covers.length > 0) {
+        // Other live work still needs this artifact — the ask stays, minus this beneficiary.
+        await client.from('room_turns').update({ component: { ...(t.component ?? {}), state: { ...state, covers } } }).eq('id', t.id);
+      } else {
+        await client.from('room_turns').update({ component: null }).eq('id', t.id);
+        settled++;
+      }
+    }
+    return settled;
+  } catch { return 0; }
+}

@@ -1262,6 +1262,48 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       src('components/entities/entity-timeline.tsx').includes('Array.isArray(d.entities)'));
   }
 
+  // ═══ P34 · ASKS LIVE AND DIE WITH THEIR WORK (experience-spec law 3, Aug 2 — found live: the
+  // STC room carried two word-shuffled asks for a report delivered days earlier). Resolution
+  // settles the ask at EVERY door (component strips, text stays — the ingest mechanic); one
+  // artifact = one ask across sibling items (covers-merge at posting). ═══
+  {
+    check('P34 · settleAsksForItem wired at every resolution door (verdict ×2 · reply-resolve ×2 · sweep · the ONE manual resolver ×2) + the posting-side covers-merge',
+      (src('lib/work/apply-verdict.ts').match(/settleAsksForItem/g) ?? []).length >= 2 &&
+      (src('lib/inbox/resolve-on-reply.ts').match(/settleAsksForItem/g) ?? []).length >= 2 &&
+      src('app/api/cron/commitments-sweep/route.ts').includes('settleAsksForItem') &&
+      (src('lib/tools/item-actions.ts').match(/settleAsksForItem/g) ?? []).length >= 2 &&
+      src('lib/prepare/requirements.ts').includes('ONE ARTIFACT = ONE ASK') &&
+      src('lib/prepare/requirements.ts').includes('namesOverlap') &&
+      src('scripts/sweep-moot-asks.ts').includes('settleAsksForItem'));
+    // LIVE — settle mechanics: an own-ask strips on resolution; a MERGED ask survives until its
+    // last covered item resolves.
+    const { settleAsksForItem, writeRoomTurn } = await import('../lib/room/turns');
+    const rk = 'inbox_item:zz-p34-probe';
+    await sb.from('room_turns').delete().eq('user_id', PERSONAL).eq('room_key', rk);
+    await writeRoomTurn(sb, PERSONAL, rk, {
+      role: 'system', text: 'To finish this I need one thing — the ZZ quarterly pack.',
+      component: { key: 'input_checklist', state: { items: ['ZZ quarterly pack'], taskId: null } },
+      dedupeKey: 'requires:zz-p34-item',
+    });
+    await settleAsksForItem(sb, PERSONAL, 'inbox_item', 'zz-p34-item');
+    const { data: t1 } = await sb.from('room_turns').select('component, text').eq('user_id', PERSONAL).eq('room_key', rk).eq('dedupe_key', 'requires:zz-p34-item').maybeSingle();
+    check('P34 live · resolution settles the ask (component strips, the text stays as history)',
+      !!t1 && t1.component === null && String(t1.text).includes('ZZ quarterly pack'));
+    await writeRoomTurn(sb, PERSONAL, rk, {
+      role: 'system', text: 'To finish these I need the shared ZZ artifact.',
+      component: { key: 'input_checklist', state: { items: ['ZZ shared artifact'], taskId: null, covers: ['inbox:zz-a', 'commitment:zz-b'] } },
+      dedupeKey: 'requires:zz-a',
+    });
+    await settleAsksForItem(sb, PERSONAL, 'inbox_item', 'zz-a');
+    const { data: t2 } = await sb.from('room_turns').select('component').eq('user_id', PERSONAL).eq('room_key', rk).eq('dedupe_key', 'requires:zz-a').maybeSingle();
+    const midOk = !!(t2?.component as { state?: { covers?: string[] } } | null)?.state && JSON.stringify((t2!.component as { state: { covers: string[] } }).state.covers) === '["commitment:zz-b"]';
+    await settleAsksForItem(sb, PERSONAL, 'commitment', 'zz-b');
+    const { data: t3 } = await sb.from('room_turns').select('component').eq('user_id', PERSONAL).eq('room_key', rk).eq('dedupe_key', 'requires:zz-a').maybeSingle();
+    check('P34 live · a MERGED ask (one artifact, many items) survives until the LAST covered item resolves',
+      midOk && t3?.component === null);
+    await sb.from('room_turns').delete().eq('user_id', PERSONAL).eq('room_key', rk);
+  }
+
   // ═══ P33 · THE BRAIN STAYS CURRENT (Aug 2 — the stale-state trio found live: a delivered
   // report judged "promised" off its own quoted tail + a false zero-attachments fact; a finished
   // investigation still "owed" because the judge read the founding snapshot; a thank-you reply

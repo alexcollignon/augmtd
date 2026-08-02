@@ -196,9 +196,16 @@ const src = (p: string) => readFileSync(p, 'utf8');
   // ═══ R5 — THE PARITY MATRIX + THE NOTHING-IS-LOST INVENTORY (live, all four users) ═══
   // Structural: the project room's stage still serves EVERY content type the old room held —
   // each reachable in ≤2 taps (a disclosure is one tap from the launcher's first paint).
-  check('R5 inventory · the launcher renders every content section (tasks/schedule/conversations/files/activity + goals/rules + status controls)',
-    ['Tasks', 'Schedule', 'Conversations', 'Files & docs', 'Activity'].every((sect) => room2.includes(`label="${sect}"`) || room2.includes(`'${sect}'`) || room2.includes(`"${sect}"`)) &&
+  check('R5 inventory · the launcher renders every content section behind ONE tab bar (experience-spec seat: the right pane inventories, it never asks) + goals/rules + status controls',
+    room2.includes('<TabBar') &&
+    ["'Tasks'", 'Schedule · ', 'Meetings · ', 'Conversations · ', 'Files · ', 'Activity · '].every((t) => room2.includes(t)) &&
     room2.includes('Goals') && room2.includes('Rules') && room2.includes('StatusUpdateModal'));
+  check('R5b · THE LIVING BRIEF (experience-spec laws 1/2/7/8): the room opens with position+debts (never mute), the engine ask is LIFTED into the brief with the one CTA row, history folds past 3 turns, and refs render as inline links — never pills',
+    src('components/home/item-rail.tsx').includes('THE LIVING BRIEF') &&
+    src('components/home/item-rail.tsx').includes('earlier (') &&
+    src('components/home/item-rail.tsx').includes('never twice on screen') &&
+    src('components/home/item-rail.tsx').includes('the word is the deed') &&
+    !src('components/home/item-rail.tsx').includes('<Chip key={j} label={r.label}'));
   check('R5 · Home rows deep-link into the room (the spine builds /item hrefs; the room mounts from the cached verdict)',
     src('lib/work-items/model.ts').includes('/item/') && src('lib/work/judge.ts').includes('readCache'));
 

@@ -104,6 +104,7 @@ export async function resolveThreadOnReply(opts: {
       }
 
       out.resolvedItems++;
+      import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'inbox_item', it.id)).catch(() => {});
       const subject = it.work_title || (it.source_data?.subject as string) || 'a thread';
       // marked_done → reversible via /api/restore (inbox_item → status='pending'), reappears on Home.
       await logActivity(client, userId, {
@@ -170,6 +171,7 @@ export async function resolveThreadOnReply(opts: {
       }
 
       out.resolvedCommitments++;
+      import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'commitment', c.id)).catch(() => {});
       // commitment_done → reversible via /api/restore (commitment → status='open'), reappears on Home.
       await logActivity(client, userId, {
         type: 'commitment_done',
