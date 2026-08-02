@@ -39,6 +39,10 @@ For config-only changes (no Python dependency changes), `docker restart` is suff
 
 ## Architecture
 
+### THE EXPERIENCE SPEC (`docs/experience-spec.md` — Aug 2, THE CONSTITUTION)
+
+Every surface change, engine law, and copy decision must TRACE to a clause of the experience spec — the one sentence ("a team of competent humans with your full context took over; you manage"), the seat table (each surface owns ONE job), the ten laws (one fact one home · the brief is derived not remembered · asks live and die with their work · speak consequence · deltas not events · never restate the settled · one CTA row · the word is the deed · earned calm · truth before presentation), and the acceptance tests. Written after the Aug 2 fragmentation correction: fix the law's whole class, never the screenshot; one coherent arc over N reactive patches.
+
 ### THE PROACTIVE TEAM (July 28–30 — the current arc; plan `docs/proactive-team-plan.md`, memory `project_proactivity_audit.md`)
 
 The judge got hands, honesty, a clock, and a client map; the room got one voice. Six workstreams + trust fixes, all gated (smoke-promise **P1–P32, 138 gates**, outcome-asserted on real accounts + the probe host). Migration `20260728_action_commits.sql` APPLIED.
