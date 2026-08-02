@@ -43,6 +43,20 @@ function RowAction({ label, onClick, disabled, hoverTone, children }: {
 // pre-fills), tracked projects first. Lazy: entities hydrate from the portfolio cache instantly,
 // refresh on first open. Select → the ONE sticky membership PATCH; create → found + attach. ──
 type PickEnt = { id: string; name: string; status: string; weight: number; tracked?: boolean };
+// Session memo for the picker's project list — the portfolio fetch is the slow path, so it runs
+// ONCE (warmed on row hover, long before the picker opens) and every open paints from memory.
+// The background refresh keeps it honest; LS keeps the next session instant.
+let pickerEntsMemo: PickEnt[] | null = null;
+let pickerEntsInflight: Promise<void> | null = null;
+const sortPickEnts = (list: PickEnt[]) => list.filter((e) => e.status === 'active')
+  .sort((a, b) => (b.tracked ? 1 : 0) - (a.tracked ? 1 : 0) || b.weight - a.weight);
+export function warmProjectPicker(): void {
+  if (pickerEntsMemo || pickerEntsInflight) return;
+  pickerEntsInflight = fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => {
+    if (d?.entities) { pickerEntsMemo = sortPickEnts(d.entities as PickEnt[]); saveLS('aug-portfolio-v1', d); }
+  }).catch(() => {}).then(() => { pickerEntsInflight = null; });
+}
+
 function RowProjectPicker({ itemKind, itemId, onAttached }: { itemKind: 'inbox_item' | 'commitment'; itemId: string; onAttached?: (name: string, tracked: boolean) => void }) {
   const [open, setOpen] = useState(false);
   const [ents, setEnts] = useState<PickEnt[]>([]);
@@ -53,11 +67,10 @@ function RowProjectPicker({ itemKind, itemId, onAttached }: { itemKind: 'inbox_i
   const boxRef = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     if (!open) { setQuery(''); setCreating(false); setNewName(''); return; }
-    setEnts(((loadLS<{ entities?: PickEnt[] }>('aug-portfolio-v1')?.entities ?? []) as PickEnt[]).filter((e) => e.status === 'active')
-      .sort((a, b) => (b.tracked ? 1 : 0) - (a.tracked ? 1 : 0) || b.weight - a.weight));
+    // INSTANT: memory first (warmed on hover), LS second — a fetch only refreshes in the background.
+    setEnts(pickerEntsMemo ?? sortPickEnts((loadLS<{ entities?: PickEnt[] }>('aug-portfolio-v1')?.entities ?? []) as PickEnt[]));
     fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => {
-      if (d?.entities) setEnts((d.entities as PickEnt[]).filter((e) => e.status === 'active')
-        .sort((a, b) => (b.tracked ? 1 : 0) - (a.tracked ? 1 : 0) || b.weight - a.weight));
+      if (d?.entities) { pickerEntsMemo = sortPickEnts(d.entities as PickEnt[]); setEnts(pickerEntsMemo); saveLS('aug-portfolio-v1', d); }
     }).catch(() => {});
   }, [open]);
   const q = query.trim().toLowerCase();
@@ -115,13 +128,30 @@ function RowProjectPicker({ itemKind, itemId, onAttached }: { itemKind: 'inbox_i
             </button>
           )}
           <div className="max-h-52 overflow-y-auto border-t border-neutral-100 mt-1 pt-1">
-            {filtered.map((e) => (
-              <button key={e.id} onClick={() => attach(e.id, e.name, !!e.tracked)}
-                className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-neutral-700 hover:bg-indigo-50 transition-colors">
-                <FolderIcon className="w-3 h-3 flex-shrink-0 text-neutral-400" /><span className="min-w-0 flex-1 truncate">{e.name}</span>
-              </button>
-            ))}
-            {filtered.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">{q ? 'No match — start it above.' : 'Nothing yet.'}</p>}
+            {/* ONE PICKER GRAMMAR (July 31): YOUR projects lead (name-sorted — stable across the
+                cache→fetch swap, no reorder flicker); the recognized-but-untracked tail sits
+                below a "Suggested" divider. Same sections in every add-to-project door. */}
+            {(() => {
+              const byName = (a: PickEnt, b: PickEnt) => a.name.localeCompare(b.name);
+              const trackedList = filtered.filter((e) => e.tracked).sort(byName);
+              const suggestedList = filtered.filter((e) => !e.tracked).sort(byName);
+              const row = (e: PickEnt) => (
+                <button key={e.id} onClick={() => attach(e.id, e.name, !!e.tracked)}
+                  className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-neutral-700 hover:bg-indigo-50 transition-colors">
+                  <FolderIcon className="w-3 h-3 flex-shrink-0 text-neutral-400" /><span className="min-w-0 flex-1 truncate">{e.name}</span>
+                </button>
+              );
+              return (
+                <>
+                  {trackedList.map(row)}
+                  {suggestedList.length > 0 && (
+                    <p className="px-2 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400 border-t border-neutral-100 mt-1">Suggested</p>
+                  )}
+                  {suggestedList.map(row)}
+                  {filtered.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">{q ? 'No match — start it above.' : 'Nothing yet.'}</p>}
+                </>
+              );
+            })()}
           </div>
         </div>
       </AnchoredPopover>
@@ -286,7 +316,7 @@ export function WorkRow({ item, emphasis = false, hideInitiative = false, readon
   };
   // Hover = intent to open → warm the deep-dive cache + the route JS so the click is instant.
   // Mousedown fires it too — fast clicks and touch get no hover dwell.
-  const prefetch = () => { prefetchItem(item.href); router.prefetch?.(item.href); };
+  const prefetch = () => { prefetchItem(item.href); router.prefetch?.(item.href); warmProjectPicker(); };
 
   if (removed) return null;
   // Optimistic project tag: set the instant an attach succeeds (tracked-only), replaced by the

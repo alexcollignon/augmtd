@@ -179,7 +179,7 @@ async function writeCache(client: SupabaseClient, userId: string, input: JudgeIn
 export async function judgeWork(client: SupabaseClient, userId: string, input: JudgeInput): Promise<WorkVerdict> {
   try {
     // ── Load the item + its brain neighborhood. ──
-    let title = '', body = '', who: string | null = null, whoEmail: string | null = null;
+    let title = '', body = '', who: string | null = null, whoEmail: string | null = null, threadNow = '';
     let u: ItemUnderstanding | null = null, activityAt = '', workState: string | null = null, rawKind: string | null = null;
     let dueDate: string | null = null; // the item's own stated date (commitment due / extracted deadline) — the event-boundary anchor
     let threadMsgs: ThreadMessage[] = [];
@@ -200,13 +200,28 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       activityAt = String(it.last_activity_at || it.created_at || '');
       const tid = (sd.thread_id as string) || null;
       if (tid) {
-        const { data: msgs } = await client.from('emails').select('is_from_user, received_at, from_address, to_addresses, cc_addresses')
+        const { data: msgs } = await client.from('emails').select('is_from_user, received_at, from_address, from_name, to_addresses, cc_addresses, body')
           .eq('user_id', userId).eq('thread_id', tid);
         threadMsgs = ((msgs ?? []) as Array<Record<string, unknown>>).map((m) => ({
           is_from_user: !!m.is_from_user, received_at: (m.received_at as string) ?? null,
           from: (m.from_address as string) ?? null,
           to: [...((m.to_addresses as string[]) ?? []), ...((m.cc_addresses as string[]) ?? [])],
         }));
+        // THE WATERMARK LAW (Aug 2): the judge judges the thread's PRESENT, never the founding
+        // snapshot — a thread that moved past its stored ask ("thank you, all fixed") was still
+        // judged as the original investigation. The newest messages (own words only — quoted
+        // tails stripped) ride the item text, so every code-check (stated dates/times) and the
+        // verdict itself read the CURRENT position.
+        const ordered = ((msgs ?? []) as Array<Record<string, unknown>>)
+          .filter((m) => m.received_at)
+          .sort((a, b) => String(a.received_at).localeCompare(String(b.received_at)));
+        const newest = ordered.slice(-2);
+        if (newest.length && String(newest[newest.length - 1].received_at) > String(it.created_at)) {
+          const { topMessageOf } = await import('@/lib/inbox/top-message');
+          threadNow = newest.map((m) =>
+            `[${String(m.received_at).slice(0, 16)}] ${m.is_from_user ? 'THE USER' : String(m.from_name || m.from_address || 'them')}: "${topMessageOf(String(m.body || '')).replace(/\s+/g, ' ').slice(0, 400)}"`,
+          ).join('\n');
+        }
       }
     } else {
       const { data: c } = await client.from('commitments')
@@ -231,7 +246,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     const tzName = await userTimezone(client, userId);
     const nowL = localNow(tzName);
     const todayStr = nowL.dateStr;
-    const itemText = `${title}\n${body}`;
+    const itemText = `${title}\n${body}${threadNow ? `\n\nWHERE THE THREAD STANDS NOW (newest last — judge the PRESENT position, not the founding ask; a pure closure/thank-you with nothing further asked = resolution "answered"):\n${threadNow}` : ''}`;
     const eventPassed = !!dueDate && dueDate === todayStr && timesInText(itemText).some((t) => t < nowL.hhmm);
     const sig = `${JUDGE_VERSION}:${todayStr}:${activityAt}:${pool.length}:${pool[0]?.at ?? ''}${eventPassed ? ':past' : ''}`;
     const { hit: cached, prior, priorSig } = await readCache(client, userId, input, sig);
@@ -319,7 +334,8 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         `RIGHT NOW for the user it is ${nowL.pretty} (${nowL.tz}); today's date is ${todayStr}. Times mentioned in items are in this zone unless they say otherwise. The item's last activity was ${activityAt.slice(0, 10) || 'unknown'}.\n\n` +
         dealBlock + personBlock + poolBlock +
         (u ? `UNDERSTANDING: relevance=${u.relevance} ownership=${u.ownership ?? '?'} kind=${u.mailKind ?? '?'}${u.ask ? ` ask="${u.ask}"` : ''}${u.deadline ? ` deadline=${u.deadline}` : ''}\n` : '') +
-        `THE ITEM${who ? ` (from ${who})` : ''}: ${title.slice(0, 140)}\n${body ? `${body.slice(0, 1200)}\n` : ''}\n` +
+        `THE ITEM${who ? ` (from ${who})` : ''}: ${title.slice(0, 140)}\n${body ? `${body.slice(0, 1200)}\n` : ''}` +
+        `${threadNow ? `\nWHERE THE THREAD STANDS NOW (newest last — judge THIS position, not the founding ask): \n${threadNow}\n` : ''}\n` +
         `THE TEAM (for executor "coworker"):\n${roster.map((w) => `- ${w.name} — ${w.role.replace(/_/g, ' ')}: ${w.description}`).join('\n') || '(none)'}\n\n` +
         `COMPONENTS (pick exactly one — what the work surface should mount):\n${renderComponentOptions()}\n\n` +
         (prior ? `YOUR PRIOR JUDGMENT on this item: work=${prior.work}${prior.resolution ? ` resolution=${prior.resolution}` : ''}${prior.revisit ? ` revisit=${prior.revisit.after}` : ''} — "${prior.reason.slice(0, 120)}". BE CONSISTENT with it unless something in the item MATERIALLY changed since; do not flip an ambiguous call on a re-read.${prior.revisit && prior.revisit.after <= todayStr ? ' YOU SET THIS ASIDE until that date and THE DATE HAS ARRIVED — judge it fresh NOW as live work (the wait is over; do not re-park it without a NEW stated basis).' : ''}\n\n` : '') +

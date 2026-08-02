@@ -139,12 +139,27 @@ export default function AddToWorkControl({ kind, id, compact }: { kind: string; 
             </button>
           )}
           <div className="max-h-56 overflow-y-auto border-t border-neutral-100 mt-1 pt-1">
-            {filtered.map((e) => (
-              <button key={e.id} onClick={() => setEntity(e.id)} className={`w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] transition-colors hover:bg-indigo-50 ${e.id === entId ? 'text-indigo-600 font-medium' : 'text-neutral-700'}`}>
-                <FolderIcon className="w-3 h-3 flex-shrink-0 text-neutral-400" /><span className="min-w-0 flex-1 truncate">{e.name}</span>
-              </button>
-            ))}
-            {filtered.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">{q ? 'No match — start it above.' : 'Nothing to link yet.'}</p>}
+            {/* ONE PICKER GRAMMAR: your projects lead (name-sorted, stable); untracked below "Suggested". */}
+            {(() => {
+              const byName = (a: Ent, b: Ent) => a.name.localeCompare(b.name);
+              const trackedList = filtered.filter((e) => e.tracked).sort(byName);
+              const suggestedList = filtered.filter((e) => !e.tracked).sort(byName);
+              const row = (e: Ent) => (
+                <button key={e.id} onClick={() => setEntity(e.id)} className={`w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] transition-colors hover:bg-indigo-50 ${e.id === entId ? 'text-indigo-600 font-medium' : 'text-neutral-700'}`}>
+                  <FolderIcon className="w-3 h-3 flex-shrink-0 text-neutral-400" /><span className="min-w-0 flex-1 truncate">{e.name}</span>
+                </button>
+              );
+              return (
+                <>
+                  {trackedList.map(row)}
+                  {suggestedList.length > 0 && (
+                    <p className="px-2 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400 border-t border-neutral-100 mt-1">Suggested</p>
+                  )}
+                  {suggestedList.map(row)}
+                  {filtered.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">{q ? 'No match — start it above.' : 'Nothing to link yet.'}</p>}
+                </>
+              );
+            })()}
           </div>
         </div>
       </AnchoredPopover>

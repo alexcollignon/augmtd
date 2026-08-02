@@ -262,9 +262,10 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
       existsSync('components/entities/add-item-picker.tsx') && !er5.includes('function AddItemPicker') && er5.includes("from '@/components/entities/add-item-picker'"));
     check('J24 · the ONE picker lives in the ROOM (portfolio modal picker removed by design — user-created-only era)',
       !pv3.includes('AddItemPicker') && er5.includes("from '@/components/entities/add-item-picker'"));
-    check('J24 · creation proposes members from the BRAIN (the founding proposal replaced create-with-work)',
+    check('J24 · creation proposes members from the BRAIN (the founding proposal replaced create-with-work; adoption = ONE door in lib/entities/adopt.ts, the route a thin wrapper — converse arc)',
       readFileSync('lib/entities/founding.ts', 'utf8').includes('proposeFoundingAdoptions') &&
-      readFileSync('app/api/entities/adopt/route.ts', 'utf8').includes('absorbEntity'));
+      readFileSync('lib/entities/adopt.ts', 'utf8').includes('export async function adoptEntity') &&
+      readFileSync('app/api/entities/adopt/route.ts', 'utf8').includes('adoptEntity'));
     check('J24 · today-strip renders the HUMAN time (localTime, one formatter)',
       hv4.includes('localTime ?? b!.schedule![0].time'));
     check('J24 · switcher order Home · Projects · Timeline',

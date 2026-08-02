@@ -15,6 +15,7 @@ export default function MeetingsHomeContent() {
     handleRenameTranscript,
     projects,
     moveToProject,
+    createProject,
     isNew,
   } = useMeetingsData();
 
@@ -30,6 +31,7 @@ export default function MeetingsHomeContent() {
       onRenameTranscript={handleRenameTranscript}
       projects={projects}
       onMoveToProject={moveToProject}
+      onCreateProject={createProject}
     />
   );
 }

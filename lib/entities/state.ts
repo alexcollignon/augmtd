@@ -84,7 +84,34 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
   let totalEmails = 0, automatedEmails = 0, humanCounterparty = false;
   const inboxIds = byKind.get('inbox_item') ?? [];
   if (inboxIds.length) {
-    const { data } = await supabase.from('inbox_items').select('id, work_title, source_data, created_at, status').in('id', inboxIds.slice(0, 100));
+    const { data } = await supabase.from('inbox_items').select('id, work_title, source_data, created_at, status, last_activity_at').in('id', inboxIds.slice(0, 100));
+    // THE WATERMARK LAW (Aug 2): a ledger line must carry the thread's CURRENT position, not the
+    // founding snapshot — a member whose thread moved ("you replied", "they said thanks, done")
+    // used to feed the synthesis its day-one ask forever. ONE batched query: the newest message
+    // per member thread; when it's newer than the founding email, a NOW clause rides the line
+    // (and, being part of the ledger text, it moves the sig — the state re-synthesizes).
+    const nowByThread = new Map<string, { who: string; at: string; gist: string; fromUser: boolean }>();
+    try {
+      const tids = [...new Set(((data ?? []) as Array<Record<string, any>>)
+        .map((it) => (it.source_data?.thread_id as string) || null).filter(Boolean))] as string[];
+      if (tids.length) {
+        const { data: latest } = await supabase.from('emails')
+          .select('thread_id, from_name, from_address, received_at, is_from_user, body')
+          .eq('user_id', userId).in('thread_id', tids.slice(0, 60))
+          .order('received_at', { ascending: false }).limit(300);
+        const { topMessageOf } = await import('@/lib/inbox/top-message');
+        for (const m of (latest ?? []) as Array<Record<string, any>>) {
+          const t = String(m.thread_id);
+          if (nowByThread.has(t)) continue; // desc order — first seen is the newest
+          nowByThread.set(t, {
+            who: m.is_from_user ? 'the user' : String(m.from_name || m.from_address || 'them'),
+            at: String(m.received_at || '').slice(0, 10),
+            gist: topMessageOf(String(m.body || '')).replace(/\s+/g, ' ').trim().slice(0, 110),
+            fromUser: !!m.is_from_user,
+          });
+        }
+      }
+    } catch { /* the founding line still stands */ }
     for (const it of (data ?? []) as Array<Record<string, any>>) {
       const sd = it.source_data ?? {};
       // Resolution status rides the line (L2): a handled/dismissed item must read as SETTLED — so the
@@ -102,9 +129,14 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
       totalEmails++;
       if (isAutomatedSender((sd.from_address as string) || null, (sd.from_name as string) || null, (sd.subject as string) || '')) automatedEmails++;
       else humanCounterparty = true;
+      const nowLine = (() => {
+        const n = sd.thread_id ? nowByThread.get(String(sd.thread_id)) : null;
+        if (!n || !n.at || n.at <= String(sd.received_at ?? it.created_at ?? '').slice(0, 10)) return '';
+        return ` — NOW (${n.at}, ${n.who} spoke last): "${n.gist}"`;
+      })();
       ledger.push({
         at: sd.received_at ?? it.created_at ?? '', kind: 'email', who: sd.from_name ?? sd.from_address ?? null,
-        text: `${String(it.work_title || sd.subject || '')}${res}${gist ? ` — "${gist}"` : ''}${atts.length ? ` [attached: ${atts.slice(0, 3).join(', ')}]` : ''}`,
+        text: `${String(it.work_title || sd.subject || '')}${res}${gist ? ` — "${gist}"` : ''}${atts.length ? ` [attached: ${atts.slice(0, 3).join(', ')}]` : ''}${nowLine}`,
         ref: `inbox:${it.id}`,
       });
     }

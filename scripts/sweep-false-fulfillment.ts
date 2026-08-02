@@ -46,7 +46,7 @@ const userArg = process.argv.includes('--user') ? process.argv[process.argv.inde
       if (!email) continue; // no judgeable message — leave the historical close alone (conservative)
       const meta = (email.metadata ?? {}) as { attachments?: unknown[] };
       const fv = await judgeCommitmentFulfillment(sb, u.id, c,
-        { id: email.id, body: String(email.body ?? ''), attachmentCount: Array.isArray(meta.attachments) ? meta.attachments.length : 0 }, true);
+        { id: email.id, body: String(email.body ?? ''), attachmentCount: Array.isArray(meta.attachments) ? meta.attachments.length : null }, true);
       console.log(`  · "${c.description.slice(0, 60)}" → ${fv.verdict}${fv.newDue ? ` (new due ${fv.newDue})` : ''} — ${fv.reason.slice(0, 110)}`);
       if (fv.verdict === 'delivered' || fv.verdict === 'unclear') continue; // only a POSITIVE "promised" reopens history
       wrong++;

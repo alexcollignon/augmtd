@@ -12,6 +12,7 @@ import {
   PencilIcon,
   TrashIcon,
   UsersIcon,
+  PlusIcon,
 } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
 import { Badge, IconButton, SegmentedControl, EmptyState } from '@/components/ui';
@@ -47,7 +48,9 @@ interface MeetingsHomeProps {
   onRetryFailed: (transcriptId: string) => void;
   isNew: (t: Transcript) => boolean;
   onRenameTranscript?: (id: string, title: string) => Promise<void>;
-  projects?: Array<{ id: string; name: string }>;
+  projects?: Array<{ id: string; name: string; tracked?: boolean }>;
+  /** Create a project (returns its id) — the menu's "Start a new project…" then files the meeting into it. */
+  onCreateProject?: (name: string) => Promise<string | null>;
   onMoveToProject?: (transcriptId: string, projectId: string | null) => Promise<void>;
 }
 
@@ -148,6 +151,7 @@ export default function MeetingsHome({
   isNew,
   onRenameTranscript,
   projects = [],
+  onCreateProject,
   onMoveToProject,
 }: MeetingsHomeProps) {
   const projectName = (id?: string | null) => (id ? projects.find((p) => p.id === id)?.name ?? null : null);
@@ -165,6 +169,8 @@ export default function MeetingsHome({
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Rename
+  const [menuCreating, setMenuCreating] = useState(false);
+  const [menuNewName, setMenuNewName] = useState('');
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renamingValue, setRenamingValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -678,23 +684,60 @@ export default function MeetingsHome({
           className="fixed z-[200] bg-white border border-neutral-200 rounded-xl shadow-lg overflow-y-auto max-h-[70vh] py-1"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Add to project — the unified organizer (same projects as Home). Sticky (project_locked). */}
-          {onMoveToProject && projects.length > 0 && (
+          {/* Add to project — ONE PICKER GRAMMAR (same as the Home deck): Start-new on top, YOUR
+              projects lead (name-sorted, stable), the untracked tail below "Suggested". Sticky. */}
+          {onMoveToProject && (projects.length > 0 || onCreateProject) && (
             <>
               <div className="px-3 py-1.5">
                 <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">Add to project</p>
               </div>
-              {projects.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => { onMoveToProject(menuOpenId, p.id); setMenuOpenId(null); }}
-                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-indigo-50 transition-colors ${menuTranscript.projectId === p.id ? 'text-indigo-600 font-medium' : 'text-neutral-700'}`}
-                >
-                  <FolderIcon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-400" />
-                  <span className="truncate">{p.name}</span>
-                  {menuTranscript.projectId === p.id && <CheckIcon className="w-3 h-3 ml-auto flex-shrink-0" />}
+              {onCreateProject && (menuCreating ? (
+                <div className="px-3 py-1">
+                  <input
+                    autoFocus value={menuNewName} onChange={(e) => setMenuNewName(e.target.value)}
+                    onKeyDown={async (e) => {
+                      e.stopPropagation();
+                      if (e.key === 'Escape') { setMenuCreating(false); setMenuNewName(''); }
+                      if (e.key === 'Enter' && menuNewName.trim()) {
+                        const nid = await onCreateProject(menuNewName.trim());
+                        if (nid && menuOpenId) onMoveToProject(menuOpenId, nid);
+                        setMenuCreating(false); setMenuNewName(''); setMenuOpenId(null);
+                      }
+                    }}
+                    placeholder="New project name…"
+                    className="w-full rounded-lg border border-indigo-200 px-2 py-1 text-[12px] text-neutral-800 outline-none"
+                  />
+                </div>
+              ) : (
+                <button onClick={(e) => { e.stopPropagation(); setMenuCreating(true); }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors">
+                  <PlusIcon className="w-3.5 h-3.5 flex-shrink-0" />Start a new project…
                 </button>
               ))}
+              {(() => {
+                const row = (p: { id: string; name: string }) => (
+                  <button
+                    key={p.id}
+                    onClick={() => { onMoveToProject(menuOpenId, p.id); setMenuOpenId(null); }}
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-indigo-50 transition-colors ${menuTranscript.projectId === p.id ? 'text-indigo-600 font-medium' : 'text-neutral-700'}`}
+                  >
+                    <FolderIcon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-400" />
+                    <span className="truncate">{p.name}</span>
+                    {menuTranscript.projectId === p.id && <CheckIcon className="w-3 h-3 ml-auto flex-shrink-0" />}
+                  </button>
+                );
+                const trackedList = projects.filter((p) => p.tracked);
+                const suggestedList = projects.filter((p) => !p.tracked);
+                return (
+                  <>
+                    {trackedList.map(row)}
+                    {suggestedList.length > 0 && (
+                      <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-400 border-t border-neutral-100 mt-1">Suggested</p>
+                    )}
+                    {suggestedList.map(row)}
+                  </>
+                );
+              })()}
               {menuTranscript.projectId && (
                 <button onClick={() => { onMoveToProject(menuOpenId, null); setMenuOpenId(null); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] text-neutral-500 hover:bg-neutral-50 transition-colors">
                   <XMarkIcon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-400" />

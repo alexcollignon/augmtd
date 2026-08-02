@@ -39,7 +39,7 @@ interface MeetingsLeftPanelProps {
   projects: ProjectRef[];
   selectedProjectId: string | null;
   onSelectProject: (id: string | null) => void;
-  onCreateProject: (name: string) => Promise<void>;
+  onCreateProject: (name: string) => Promise<string | null> | Promise<void>;
   // Suggested initiatives that have meetings — visible + one-click trackable (mirrors Home Projects).
   suggestions: SuggestionRef[];
   selectedSuggestionKey: string | null;
