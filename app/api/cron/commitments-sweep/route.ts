@@ -114,6 +114,7 @@ export async function GET(request: NextRequest) {
       if (err) await sb.from('commitments').update({ status: 'done', updated_at: nowIso }).eq('id', c.id);
       // Remove any inbox item we surfaced for it — it's handled now.
       await sb.from('inbox_items').delete().eq('user_id', c.user_id).eq('source', 'commitment').eq('source_id', c.id);
+      import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(sb, c.user_id, 'commitment', c.id)).catch(() => {});
       closed++;
       continue;
     }

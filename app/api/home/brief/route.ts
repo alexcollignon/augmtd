@@ -234,7 +234,11 @@ export async function GET() {
       // Order by latest THREAD activity, not first-seen created_at: a fresh reply to an old thread
       // (sync bumps last_activity_at) must rank as current, not stale. NULLS LAST guards legacy rows
       // synced before the column existed / before backfill.
-      .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(60),
+      // NO SILENT CAPS (Aug 2 — found live: a genuinely OVERDUE obligation ranked 61st by
+      // last-activity and fell off the deck as fresher noise-lane mail arrived; every downstream
+      // pool silently followed). A quiet thread is not a settled one — recency must never evict
+      // an open obligation. High bound + a loud log when it saturates.
+      .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(250),
     supabase.from('commitments').select('*').eq('user_id', user.id).eq('status', 'open'),
     supabase.from('calendar_events')
       .select('id, title, start_time, attendees, timezone, is_all_day')
@@ -265,6 +269,7 @@ export async function GET() {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const items = (itemsRes.data ?? []) as any[];
+  if (items.length >= 250) console.warn('[home/brief] actionable pool SATURATED the 250 cap — oldest obligations may be missing; raise the bound or tighten the actionable filter');
   // CROSS-TYPE DEDUP (P2): a commitment extracted from an email/meeting the deck ALSO shows as an
   // actionable row is the SAME obligation wearing two types — the item is the resolving surface, the
   // commitment folds (filtered here, so every lane, count, sig and synthesis input downstream agrees).

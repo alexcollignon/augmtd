@@ -46,6 +46,8 @@ export async function applyVerdictConsequences(
             source_data: { ...sd, resolved_at: now, resolution_reason: expired ? 'no_longer_relevant' : 'already_handled' },
           }).eq('id', input.id).eq('user_id', userId);
           out.resolved = true;
+          // Law 3 (experience spec): the resolved item's asks settle with it.
+          import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'inbox_item', input.id)).catch(() => {});
           await narrateAndLog(client, userId, input, String(it.work_title ?? ''), verdict, expired);
         }
       } else {
@@ -57,6 +59,7 @@ export async function applyVerdictConsequences(
             resolved_at: now, resolved_reason: expired ? 'no_longer_relevant' : 'already_handled',
           }).eq('id', input.id).eq('user_id', userId);
           out.resolved = true;
+          import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'commitment', input.id)).catch(() => {});
           await narrateAndLog(client, userId, input, String(c.description ?? ''), verdict, expired);
         }
       }

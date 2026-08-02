@@ -135,12 +135,13 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
     readFileSync('scripts/backfill-entity-category.ts', 'utf8').includes('categoryLocked'));
   check('R3b · the room holds the writable TaskList (+ Task, edit, due, human waiting groups)',
     er.includes('function TaskList') && er.includes('Add a task…') && er.includes('Waiting on {name}'));
-  check('R3c · prepared tokens + ONE suggested hand-off (no assignee column)',
-    er.includes("w.prepared === 'draft'") && er.includes('can take this') && !er.includes('assignee'));
+  check('R3c · prepared tokens (no assignee column) + ONE suggested hand-off — now in the LEFT rail\'s living brief (experience-spec law 1; the right pane asks for nothing)',
+    er.includes("w.prepared === 'draft'") && !er.includes('assignee') &&
+    readFileSync('components/home/item-rail.tsx', 'utf8').includes('can take this'));
   // Workbench B1a reversed the "Gantt out" call (user ask, July 24): the Schedule disclosure
   // renders the ONE shared Gantt — behind a fold, so first paint stays calm.
-  check('R3d · typed inventory (Conversations · Files & docs · Activity); Schedule behind a fold',
-    er.includes('label="Conversations"') && er.includes('label="Files & docs"') && er.includes('label="Activity"') && er.includes('label="Schedule"'));
+  check('R3d · typed inventory behind ONE tab bar (Tasks · Schedule · Meetings · Conversations · Files · Activity)',
+    er.includes('<TabBar') && ['Schedule · ', 'Conversations · ', 'Files · ', 'Activity · '].every((t) => er.includes(t)));
   check('R3a · create_task_item exposed to every chat surface',
     new Set(capabilitiesFor('chief_of_staff').map((c) => c.tool)).has('create_task_item'));
   // ── R2 — the one shell. ──
@@ -180,10 +181,11 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
       id2.includes('chip={null}') && (id2.match(/chip=\{embedded \? null/g) ?? []).length === 3 && (id2.match(/action=\{embedded \? undefined/g) ?? []).length >= 2);
     // W3 superseded the static line: the narration is now COMPOSED from the board row's prepared
     // facts (keyed dedup, real offers) — still deterministic, never a hedge.
-    check('5A.5 · CTA-focus narrates in the per-deal chat (deterministic, grounded — W3)',
-      rl2.includes('export function pushDealTurn') && er2.includes('openHref(moveHref, true)') && er2.includes("row?.prepared === 'draft'"));
-    check('5A.6 · room width + Tasks auto-open + Goals&Rules beside on lg',
-      er2.includes('max-w-[1000px]') && er2.includes("add('work')") && er2.includes('lg:grid-cols-[minmax(0,1fr)_280px]'));
+    check('5A.5 · CTA-focus narrates in the per-deal chat (deterministic, grounded — W3): the brief\'s next-move click narrates + opens its anchor (moved to the rail with the card)',
+      rl2.includes('export function pushDealTurn') && rl2.includes('Opening the next move') && rl2.includes('nextMoveHref') && er2.includes("row?.prepared === 'draft'"));
+    check('5A.6 · room width + Tasks default tab + INTENT as one full-width band (the emptied two-column grid died with the next-move card — experience-spec seat cleanup)',
+      er2.includes('max-w-[1000px]') && er2.includes("useState<'work'") &&
+      er2.includes('md:grid-cols-2 gap-x-8') && !er2.includes('lg:grid-cols-[minmax(0,1fr)_280px]'));
     check('5A.7 · Home today-strip from the existing schedule read',
       hv2.includes('TODAY STRIP') && hv2.includes('b!.schedule![0].time'));
   }
