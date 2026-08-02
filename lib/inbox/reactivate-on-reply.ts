@@ -93,6 +93,39 @@ export async function reactivateResolvedThreadOnReply(params: ReactivateParams):
     const incoming = storedEmail.received_at;
     if (lastSeen && incoming && new Date(incoming) <= new Date(lastSeen)) return false;
 
+    // NOMINATE → JUDGE (Aug 2, the fulfillment law's mirror at the inbound door): the structural
+    // signal (a newer inbound on a resolved thread) only NOMINATES the reopen. A pure CLOSURE —
+    // "Thank you!", "perfect, all set", a confirmation asking nothing further — settles the
+    // thread; it must not resurrect the item as work (Thorsten's thank-you reopened a finished
+    // investigation). One cheap reasoned pass over the message's OWN words decides; any failure
+    // reopens (showing costs less than hiding — the conservative default at THIS door).
+    try {
+      const { topMessageOf } = await import('@/lib/inbox/top-message');
+      const own = topMessageOf(String(storedEmail.body || '')).replace(/\s+/g, ' ').slice(0, 900);
+      if (own.trim()) {
+        const { aiCall } = await import('@/lib/ai/call');
+        const res = await aiCall<{ closure?: boolean; reason?: string }>({
+          userId, supabase: client, shape: { output: 'json' }, temperature: 0, maxTokens: 80,
+          source: 'brain_synthesis',
+          prompt:
+            `A previously-handled email thread got a new reply. Decide: is this reply a PURE CLOSURE ` +
+            `(thanks / acknowledgment / confirmation that the matter is settled, asking NOTHING further of anyone), ` +
+            `or does it ask, add, or change anything (a question, a new request, new information that needs action, a correction)?\n` +
+            `THE REPLY (sender's own words): """${own}"""\n` +
+            `When unsure, closure=false (reopening costs a glance; missing a real ask costs trust).\n` +
+            `JSON only: {"closure":true|false,"reason":"<one sentence>"}`,
+        });
+        if (res.json?.closure === true) {
+          // Settled — record the closure on the resolved item (auditable) and leave it closed.
+          await client.from('inbox_items').update({
+            source_data: { ...(item.source_data ?? {}), closure_note: `${String(storedEmail.received_at).slice(0, 10)}: ${String(res.json.reason ?? 'counterparty closed the loop').slice(0, 140)}` },
+            last_activity_at: storedEmail.received_at ?? new Date().toISOString(),
+          }).eq('id', item.id).eq('user_id', userId);
+          return false;
+        }
+      }
+    } catch { /* judge unavailable → reopen (conservative) */ }
+
     const priorWs = item.work_state ?? null;
     const restoreWs = priorWs && ACTIVE_WS.has(priorWs) ? priorWs : 'work_prepared';
     const reopenedAt = new Date().toISOString();

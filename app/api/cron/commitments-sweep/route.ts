@@ -21,15 +21,23 @@ export async function GET(request: NextRequest) {
     { auth: { autoRefreshToken: false, persistSession: false } },
   );
 
-  const { data: open, error } = await sb.from('commitments').select('*').eq('status', 'open');
+  // THE HONEST BUDGET (Aug 2 — the W2 sweep law applied here): the fulfillment judge added an AI
+  // call per structurally-resolved candidate, and an unbudgeted full-table walk died at
+  // maxDuration mid-list — SILENTLY, leaving arbitrary rows unjudged forever (the Fidelidade
+  // dashboard commitment was never reached). Recency-first order + an explicit time budget +
+  // leftBehind counted and logged; the verdict cache makes continuation cheap next run.
+  const { data: open, error } = await sb.from('commitments').select('*').eq('status', 'open')
+    .order('updated_at', { ascending: false, nullsFirst: false });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!open?.length) return NextResponse.json({ open: 0, closed: 0, surfaced: 0 });
 
   const now = Date.now();
+  const BUDGET_MS = 95_000; // leave headroom under maxDuration=120
   const today = new Date().toISOString().slice(0, 10);
-  let closed = 0, surfaced = 0;
+  let closed = 0, surfaced = 0, leftBehind = 0;
 
   for (const c of open) {
+    if (Date.now() - now > BUDGET_MS) { leftBehind++; continue; } // counted, never silent
     // ── 1. Auto-close — CROSS-SOURCE: resolved by the right move in ANY thread, not just the
     // original one. You fulfil a you_owe by SENDING to the counterparty (new email, reply, anywhere);
     // an awaiting resolves when THEY write back (any thread). This also makes follow-up timing
@@ -91,7 +99,7 @@ export async function GET(request: NextRequest) {
         const { judgeCommitmentFulfillment, applyFulfillmentVerdict } = await import('@/lib/commitments/fulfillment');
         const meta = (em?.metadata ?? {}) as { attachments?: unknown[] };
         const fv = await judgeCommitmentFulfillment(sb, c.user_id, c,
-          { id: fulfillingEmailId, body: String(em?.body ?? ''), attachmentCount: Array.isArray(meta.attachments) ? meta.attachments.length : 0 }, youFulfil);
+          { id: fulfillingEmailId, body: String(em?.body ?? ''), attachmentCount: Array.isArray(meta.attachments) ? meta.attachments.length : null }, youFulfil);
         const closes = await applyFulfillmentVerdict(sb, c.user_id, c, fv, async () => true);
         if (!closes) resolved = false; // promised/unclear — stays open (a re-anchor already landed)
       } catch { resolved = false; } // never close on an error path
@@ -143,5 +151,6 @@ export async function GET(request: NextRequest) {
     await sb.from('commitments').update({ last_nudged_at: new Date().toISOString() }).eq('id', c.id);
   }
 
-  return NextResponse.json({ open: open.length, closed, surfaced });
+  if (leftBehind) console.log(`[commitments-sweep] budget spent — ${leftBehind} candidate(s) left for the next run`);
+  return NextResponse.json({ open: open.length, closed, surfaced, leftBehind });
 }

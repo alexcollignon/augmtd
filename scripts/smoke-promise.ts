@@ -1262,6 +1262,45 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       src('components/entities/entity-timeline.tsx').includes('Array.isArray(d.entities)'));
   }
 
+  // ═══ P33 · THE BRAIN STAYS CURRENT (Aug 2 — the stale-state trio found live: a delivered
+  // report judged "promised" off its own quoted tail + a false zero-attachments fact; a finished
+  // investigation still "owed" because the judge read the founding snapshot; a thank-you reply
+  // resurrecting closed work). Four laws: the top message · true facts or no facts · the
+  // watermark (judge + ledger read the thread's PRESENT) · nominate→judge at the inbound door. ═══
+  {
+    const { topMessageOf } = await import('../lib/inbox/top-message');
+    const own = 'Please find attached the final report and the planning file. Best, A';
+    const tailed = own + '\n\nNo dia 30/07/2026, às 07:53, Sam Vendor <sam@acme-example.com> escreveu:\n> I will close it and share the report before Sunday.';
+    check('P33 unit · topMessageOf strips quoted history (PT/EN attributions, Outlook blocks, >-runs) and keeps a pure-forward whole',
+      topMessageOf(tailed).trim() === own &&
+      topMessageOf(own + '\nOn Jul 30, 2026, Sam wrote:\n> promise text here').trim() === own &&
+      topMessageOf('> fwd line one\n> fwd line two\n> fwd line three') === '> fwd line one\n> fwd line two\n> fwd line three');
+    check('P33 · true facts or no facts (attachment meta stamped on EVERY stored message incl. sent; an unverifiable count is passed UNKNOWN, never zero)',
+      src('lib/email-sync/sync-emails.ts').includes('attachMeta') &&
+      src('lib/commitments/fulfillment.ts').includes('UNKNOWN (metadata unavailable') &&
+      src('lib/inbox/resolve-on-reply.ts').includes('meta.attachments.length : null') &&
+      src('app/api/cron/commitments-sweep/route.ts').includes('meta.attachments.length : null'));
+    check('P33 · the watermark law — the judge and the entity ledger read the thread\'s PRESENT, never only the founding snapshot',
+      src('lib/work/judge.ts').includes('WHERE THE THREAD STANDS NOW') &&
+      src('lib/entities/state.ts').includes('nowByThread') &&
+      src('lib/entities/state.ts').includes('spoke last'));
+    check('P33 · the honest budget at the commitments sweep (recency-first · leftBehind counted, never silent) + nominate→judge at the inbound door (a pure closure settles, never resurrects)',
+      src('app/api/cron/commitments-sweep/route.ts').includes('leftBehind') &&
+      src('app/api/cron/commitments-sweep/route.ts').includes("order('updated_at'") &&
+      src('lib/inbox/reactivate-on-reply.ts').includes('closure') &&
+      src('lib/inbox/reactivate-on-reply.ts').includes('topMessageOf'));
+    // LIVE — the STC replay: a delivery whose quoted tail carries last week's promise, with an
+    // UNKNOWN attachment count, reads DELIVERED (the exact miss that kept the report "owed").
+    const { judgeCommitmentFulfillment } = await import('../lib/commitments/fulfillment');
+    const replay = await judgeCommitmentFulfillment(sb, PERSONAL,
+      { description: 'Deliver the assessment reports to Sam Vendor' },
+      { body: 'Dear Sam, please find attached the assessment report, along with the planning file containing the individual results. Best, P' +
+        '\n\nNo dia 30/07/2026, às 07:53, Sam Vendor <sam@acme-example.com> escreveu:\n> I will close the assessment and share the report before Sunday.',
+        attachmentCount: null }, true);
+    check('P33 live · a delivery with a quoted promise-tail + unknown attachment count reads DELIVERED (never the tail\'s promise)',
+      replay.verdict === 'delivered', `verdict=${replay.verdict} · ${replay.reason.slice(0, 70)}`);
+  }
+
   // ═══ P32 · THE FULFILLMENT LAW (July 30, found live: "I'll close the assessment and share the
   // report before Sunday" marked the deliver-the-report commitment FULFILLED and the week's most
   // important deliverable vanished from the Home). A message and a deliverable are different

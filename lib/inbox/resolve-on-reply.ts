@@ -145,7 +145,7 @@ export async function resolveThreadOnReply(opts: {
         const { judgeCommitmentFulfillment, applyFulfillmentVerdict } = await import('@/lib/commitments/fulfillment');
         const meta = (sent?.metadata ?? {}) as { attachments?: unknown[] };
         const fv = await judgeCommitmentFulfillment(client, userId, c,
-          { id: (sent?.id as string) ?? null, body: String(sent?.body ?? ''), attachmentCount: Array.isArray(meta.attachments) ? meta.attachments.length : 0 }, true);
+          { id: (sent?.id as string) ?? null, body: String(sent?.body ?? ''), attachmentCount: Array.isArray(meta.attachments) ? meta.attachments.length : null }, true);
         const closed = await applyFulfillmentVerdict(client, userId, c, fv, async () => true);
         if (!closed) continue; // promised/unclear — the deliverable stays on the plate
       } catch { continue; } // never close on an error path

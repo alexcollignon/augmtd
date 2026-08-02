@@ -946,6 +946,14 @@ export async function syncEmailsForConnection(
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { attachments: _att, hasAttachments: _ha, outlookInternalId: _oid, has_unsubscribe: _hu, ...emailDbFields } = parsed as any;
 
+        // TRUE FACTS OR NO FACTS (Aug 2): attachment META (name/type/size — no content fetch) is
+        // stamped on EVERY stored message, including the user's own SENT mail. The fulfillment
+        // judge reads this as a fact; before this, sent mail stored an empty metadata and the
+        // judge was told "0 attachments" about a delivery that said "please find attached" —
+        // a false fact that blocked an honest close.
+        const attachMeta = (Array.isArray(_att) ? (_att as Array<Record<string, unknown>>) : [])
+          .map((a) => ({ filename: a.filename ?? a.name ?? null, mimeType: a.mimeType ?? a.contentType ?? null, size: a.size ?? null }));
+
         // Store email
         let { data: storedEmail, error: emailError } = await adminSupabase
           .from('emails')
@@ -953,6 +961,7 @@ export async function syncEmailsForConnection(
             user_id: connection.user_id,
             connection_id: connection.id,
             ...emailDbFields,
+            metadata: { ...((emailDbFields as { metadata?: Record<string, unknown> }).metadata ?? {}), ...(attachMeta.length ? { attachments: attachMeta } : {}) },
             is_from_user: isFromUser, // Flag for learning from sent emails
           })
           .select()
