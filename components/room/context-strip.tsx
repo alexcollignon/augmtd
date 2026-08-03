@@ -70,9 +70,12 @@ export function ContextStrip({ kind, id, view }: { kind: StripKind; id: string; 
       </button>
       {open && (
         <div className="px-3 pb-3 space-y-2">
-          {ent && (
+          {/* Tracked membership needs no chip — the rail's room title IS the project door (law 8);
+              a second "Open project" affordance was the wrong-seat patch (Aug 3). The untracked
+              discovery chip stays: it's the "connects to X" door, a different job. */}
+          {ent && ent.tracked === false && (
             <div className="flex flex-wrap gap-1.5">
-              <Chip label={ent.tracked === false ? `Related work · ${ent.name}` : 'Open project'} onClick={() => router.push(`/?view=projects&entity=${ent.id}`)} />
+              <Chip label={`Related work · ${ent.name}`} onClick={() => router.push(`/home?view=projects&entity=${ent.id}`)} />
             </div>
           )}
           {!ent && !founded && (

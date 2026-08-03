@@ -149,7 +149,7 @@ export default function ProjectMeetingsView({ project, suggestion, transcripts, 
             </Button>
           ) : (
             <Link
-              href={`/?view=projects&project=${project!.id}`}
+              href={`/home?view=projects&project=${project!.id}`}
               className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-1 text-[12px] font-medium text-neutral-600 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
             >
               Open project

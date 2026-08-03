@@ -1582,8 +1582,13 @@ export async function GET() {
   // independent of state synthesis). Entity truth outranks the label-era string where both exist.
   const tagByAtom = new Map<string, string>();
   for (const l of alinksRows) { const nm = trackedNameById.get(l.entity_id); if (nm) tagByAtom.set(l.item_id, nm); }
+  // THE ROOM-DOOR LAW (Aug 3 — experience-spec seat table): a project-member item's row opens its
+  // PROJECT ROOM, not a loose item view. Served from the SAME derivation point as the tag
+  // (tracked-only, entity-link truth) so the door and the label can never disagree.
+  const projectByAtom: Record<string, string> = {};
+  for (const l of alinksRows) { if (trackedNameById.has(l.entity_id)) projectByAtom[l.item_id] = l.entity_id; }
   const taggedMustRespond = mustRespondOut
     ? { ...mustRespondOut, items: (mustRespondOut.items ?? []).map((m: { itemId: string; initiative?: string | null }) => ({ ...m, initiative: tagByAtom.get(m.itemId) ?? m.initiative ?? null })) }
     : mustRespondOut;
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => ({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null })), mustRespond: taggedMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments: commitments.map((c) => ({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null })), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, briefing: cachedBriefing, trackedProjects, mail });
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => ({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null })), mustRespond: taggedMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments: commitments.map((c) => ({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null })), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, projectByAtom, briefing: cachedBriefing, trackedProjects, mail });
 }

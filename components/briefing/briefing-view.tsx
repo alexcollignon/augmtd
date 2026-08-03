@@ -167,7 +167,7 @@ export function useBriefingNavigate(setView?: (v: string) => void) {
     if (r.href) { router.push(r.href); return; }
     if (r.itemKind === 'entity') {
       if (setView) setView('projects');
-      else router.push('/?view=projects');
+      else router.push('/home?view=projects');
     }
   };
 }

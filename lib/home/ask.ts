@@ -15,7 +15,7 @@ export type AskRef = { id: string; kind: 'entity' | 'inbox_item' | 'commitment' 
 export type AskAnswer = { answer: string; refs: AskRef[] };
 export type AskTurn = { role: 'user' | 'assistant'; text: string };
 
-const entHref = (id: string) => `/?view=projects&entity=${id}`;
+const entHref = (id: string) => `/home?view=projects&entity=${id}`;
 
 /** Assemble a compact, bounded snapshot of the brain — everything the answer may reason over.
  *  Exported: the converse core grounds global-scope open turns on the SAME read. */

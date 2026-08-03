@@ -256,6 +256,83 @@ const src = (p: string) => readFileSync(p, 'utf8');
     check('R5 · Rene resolved at runtime (never hardcoded)', rene !== null, rene ? `${rene.slice(0, 8)}…` : 'absent');
   }
 
+  // ═══ R6 — THE ROOM-DOOR LAW + THE ONE-VOICE BRIEF (Aug 3, experience-spec seat table + laws 2/4/5/6/9) ═══
+  {
+    const hv = src('components/home/home-view.tsx');
+    const brief = src('app/api/home/brief/route.ts');
+    check('R6 · deck rows on project-member items open the PROJECT ROOM (one door() rule, every lane; projectByAtom served from the tag derivation point)',
+      brief.includes('projectByAtom') && hv.includes('const door = (itemId: string, fallback: string)') &&
+      (hv.match(/door\(/g)?.length ?? 0) >= 3); // reply + notice + commitment lanes
+    check('R6 · deep-link doors survive: /home?view= everywhere (never /?view= — middleware dropped the query), middleware preserves search, lens+entity react to soft navs',
+      !src('components/room/context-strip.tsx').includes("'/?view=") &&
+      src('middleware.ts').includes('home.search = request.nextUrl.search') &&
+      hv.includes('useSearchParams') && src('components/entities/portfolio-view.tsx').includes('[searchParams]'));
+    check('R6 · the word is the deed: the rail\'s room title IS the project door; the "Open project" chip is gone (tracked); no click-echo turn on the next-move CTA',
+      rail.includes('/home?view=projects&entity=') && !src('components/room/context-strip.tsx').includes("'Open project'") &&
+      !rail.includes('Opening the next move'));
+    const rb = src('lib/room/brief.ts');
+    check('R6 · THE ONE-VOICE BRIEF: authored (not assembled) — sig-gated compose over judged state, last-good serve, AI-failure never blanks, version in the cache',
+      rb.includes('ROOM_BRIEF_VERSION') && rb.includes('ensureRoomBrief') && rb.includes('readRoomBrief') &&
+      rb.includes('if (prior === sig) return') && rb.includes('if (!text) return') &&
+      src('lib/entities/room-view.ts').includes('readRoomBrief') &&
+      src('app/api/entities/[id]/room/route.ts').includes('ensureRoomBrief') &&
+      src('app/api/items/view/route.ts').includes('ensureRoomBrief') &&
+      rail.includes('ent?.brief') && rail.includes("ent.brief") );
+    // LIVE — the composer produces one grounded paragraph for a real tracked project on the probe
+    // host (or a real account), and the sig gate makes the second call a no-op (no re-burn).
+    const { data: cand } = await sb.from('work_entities').select('id, user_id, name, state')
+      .eq('kind', 'initiative').eq('tracked', true).eq('status', 'active')
+      .in('user_id', [A, PERSONAL]).not('state', 'is', null).limit(1).maybeSingle();
+    if (cand) {
+      const { ensureRoomBrief, readRoomBrief } = await import('../lib/room/brief');
+      await ensureRoomBrief(sb, cand.user_id as string, cand.id as string);
+      const text1 = await readRoomBrief(sb, cand.user_id as string, cand.id as string);
+      const t1 = Date.now();
+      await ensureRoomBrief(sb, cand.user_id as string, cand.id as string); // sig unchanged → no-op
+      const noopMs = Date.now() - t1;
+      check('R6 live · the brief composes ONE grounded paragraph (≤600 chars, non-empty) and the sig gate holds (second call cheap)',
+        !!text1 && text1.length > 20 && text1.length <= 600 && noopMs < 3000,
+        text1 ? `"${text1.slice(0, 90)}…" · noop ${noopMs}ms` : 'no brief composed');
+    } else check('R6 live · brief compose (vacuous — no tracked entity with state)', true);
+  }
+
+  // ═══ R7 — THE SUMMONED STAGE + LOOSE-ROOM CONVERGENCE (Aug 3, the spec's stage seat made
+  // transient; "a loose room is a project room with less to file") ═══
+  {
+    const idt = src('components/home/item-detail.tsx');
+    check('R7 · the composer is the SUMMONED STAGE — an overlay raised by the user, never docked in the truth pane, never auto-raised on mount',
+      (idt.match(/THE SUMMONED STAGE/g)?.length ?? 0) >= 2 &&
+      idt.includes('absolute inset-0 z-20 bg-white') &&
+      !idt.includes('setComposerOpen(cached.work') && !idt.includes("setComposerOpen(rel === 'reply')") &&
+      !idt.includes("setComposerOpen(d.verdict.work === 'reply'"));
+    check('R7 · the CTA row lives in the RAIL (law 7 — the right pane asks for nothing); embedded keeps the in-stage palette (no rail to carry it)',
+      rail.includes('ctaRow') && idt.includes('ctaRow={!itemDismissed ?') &&
+      idt.includes('embedded && !itemDismissed && ('));
+    check('R7 · the LOOSE room briefs in the one voice too (same composer, `<kind>:<id>` key) and the rail prefers the composed paragraph on every door',
+      src('lib/room/brief.ts').includes('ensureLooseRoomBrief') &&
+      src('app/api/items/view/route.ts').includes('ensureLooseRoomBrief') &&
+      rail.includes("(ent?.brief || view.brief)"));
+    check('R7 · a sender that is an organization keeps its name (spokenName) · a background auto-attach fails SILENTLY (no error the user never caused)',
+      rail.includes('function spokenName') && rail.includes('ORG_TOKEN') &&
+      idt.includes('{ silent: true }') && idt.includes('opts?.silent'));
+    check('R7 · the click-echo class is drained + the writer is gone (sweep exists; no "Opening the next move" writer anywhere)',
+      src('scripts/sweep-click-echoes.ts').includes("like('text', 'Opening the next move —%')") &&
+      !rail.includes('Opening the next move'));
+    // LIVE — the loose composer produces a grounded paragraph for a synthetic loose room on the
+    // probe host (anchor-only inputs; sig-gated second call).
+    {
+      const { ensureLooseRoomBrief, readRoomBrief } = await import('../lib/room/brief');
+      const key = 'inbox:00000000-0000-0000-0000-0000000r7brf'.slice(0, 42);
+      const anchor = { title: 'Confirm the pilot invoice', who: 'Acme Billing Lda', ask: 'confirm the June invoice total and reply', prepared: 'draft' };
+      await ensureLooseRoomBrief(sb, PERSONAL, key, anchor);
+      const text = await readRoomBrief(sb, PERSONAL, key);
+      check('R7 live · the loose-room brief composes one grounded paragraph from the anchor (org name kept whole, draft mentioned)',
+        !!text && text.length > 20 && /acme/i.test(text ?? ''),
+        text ? `"${text.slice(0, 90)}…"` : 'no brief composed');
+      await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('kind', 'room_brief').eq('entity_id', key);
+    }
+  }
+
   console.log('\n════ THE ONE ROOM GATES ════');
   let pass = 0;
   for (const [n, ok, d] of out) { if (ok) pass++; console.log(` ${ok ? '✓' : '✗'} ${n}${d ? `  → ${d}` : ''}`); }

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { showUndoToast } from '@/lib/activity/undo-toast';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
@@ -95,6 +95,8 @@ type Brief = {
   slippingDeals?: SlippingDeal[]; // proactive: entities quietly slipping, surfaced as deck cards
   bundleStates?: Record<string, BundleState>; // bundle key → its dominant ENTITY's state (membership join)
   deckEntityIds?: string[]; // entities already actionable in the deck (MovingTier contradiction-guard)
+  /** THE ROOM-DOOR LAW: itemId → tracked entity id. A project-member row opens its PROJECT ROOM. */
+  projectByAtom?: Record<string, string>;
 };
 // A deal the verdict flags as SLIPPING (gone-quiet/stalled with something open on you) — surfaced proactively
 // as a card in the deck even with no new mail. Leads with the SAME one next move as the bundle/project/deep-dive.
@@ -788,8 +790,8 @@ function priorityToItem(p: Priority): DoItem {
 }
 function dealToItem(d: SlippingDeal): DoItem {
   return {
-    // Opens the deal's ROOM directly (F1 dead-click fix — `/?view=projects` landed on the grid).
-    source: 'deal', key: `deal-${d.key}`, entityId: d.key, href: `/?view=projects&entity=${d.key}`,
+    // Opens the deal's ROOM directly (F1 dead-click fix — `/home?view=projects` landed on the grid).
+    source: 'deal', key: `deal-${d.key}`, entityId: d.key, href: `/home?view=projects&entity=${d.key}`,
     // GLANCE register: the reasoned next-move imperative when present, else the label. The summary
     // sentence stays in the room.
     ask: cleanTitle(d.label), second: d.nextMove?.title ?? null,
@@ -1022,7 +1024,7 @@ function peekHref(e: DeckEntry): string | null {
   if (e.kind === 'single') return e.item.href;
   if (e.kind === 'priority') return priorityHref(e.p);
   // A deal with no move-ref still opens SOMEWHERE — its room (the dead-click fix, F1).
-  if (e.kind === 'deal') return brainRefHref(e.deal.nextMove?.entityRef) ?? `/?view=projects&entity=${e.deal.key}`;
+  if (e.kind === 'deal') return brainRefHref(e.deal.nextMove?.entityRef) ?? `/home?view=projects&entity=${e.deal.key}`;
   return null;
 }
 
@@ -1358,6 +1360,15 @@ export function HomeView() {
     const v = new URLSearchParams(window.location.search).get('view');
     if (v === 'timeline' || v === 'projects') setViewState(v);
   }, []);
+  // THE ROOM-DOOR LAW (Aug 3): a soft nav to /home?view=… (deck row → project room, "Open project",
+  // any deep-link) changes ONLY the query — the mount effect above never re-fires. React to real
+  // navigations here. Param-PRESENT only: the lens switcher tracks itself via replaceState (which
+  // useSearchParams can't see), so absence proves nothing.
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    const v = searchParams.get('view');
+    if (v === 'timeline' || v === 'projects') setViewState(v);
+  }, [searchParams]);
   const setView = useCallback((v: HomeViewLens) => {
     setViewState(v);
     const url = new URL(window.location.href);
@@ -1731,8 +1742,15 @@ export function HomeView() {
   // the deck can never disagree again ("8 need you" over 5 visible rows was possible before).
   const enc = (s?: string) => (s ? `?angle=${encodeURIComponent(s)}` : '');
   const todayISOStr = new Date().toISOString().slice(0, 10);
+  // THE ROOM-DOOR LAW (Aug 3, experience-spec seat table): a project-member item opens its PROJECT
+  // ROOM — the working conversation lifts its ask, the stage is summoned from the brief's CTA. Only
+  // loose items open the item view directly. One rule, every lane.
+  const door = (itemId: string, fallback: string) => {
+    const eid = b?.projectByAtom?.[itemId];
+    return eid ? `/home?view=projects&entity=${eid}` : fallback;
+  };
   const agendaReplyItems: DoItem[] = bodyReplies.map((m) => ({
-    source: 'reply', key: `r-${m.itemId}`, entityId: m.itemId, href: `/item/${m.itemId}${enc(m.angle)}`,
+    source: 'reply', key: `r-${m.itemId}`, entityId: m.itemId, href: door(m.itemId, `/item/${m.itemId}${enc(m.angle)}`),
     // Only show a "what to do" line when the synthesis produced a DISTINCT one — never echo the subject.
     primary: m.who, ask: cleanTitle((m.ask && m.ask.trim() && m.ask.trim() !== (m.subject ?? '').trim()) ? m.ask : ''), second: m.subject ? cleanTitle(m.subject) : null,
     when: fmtWhen(m.receivedAt), effort: m.effort ?? null, dueDate: m.dueDate ?? null, initiative: m.initiative ?? null, initiativeTotal: m.initiativeTotal ?? null,
@@ -1740,14 +1758,14 @@ export function HomeView() {
     prepared: m.preparedBy ?? (m.draft ? 'draft' : null),
   }));
   const agendaNoticeItems: DoItem[] = (b?.actionNotices ?? []).filter((a) => !clearedIds.has(a.itemId) && !dismissed.has(a.itemId)).map((a) => ({
-    source: 'notice', key: `n-${a.itemId}`, entityId: a.itemId, href: `/item/${a.itemId}?kind=email`,
+    source: 'notice', key: `n-${a.itemId}`, entityId: a.itemId, href: door(a.itemId, `/item/${a.itemId}?kind=email`),
     primary: a.who || null, ask: cleanTitle(a.summary), second: 'Action needed',
     dueDate: a.dueDate ?? null, overdue: !!a.dueDate && a.dueDate < todayISOStr,
     initiative: a.initiative ?? null,
     prepared: a.preparedBy ?? null,
   }));
   const agendaCommitItems: DoItem[] = looseCommitments.map((c) => ({
-    source: 'commitment', key: `c-${c.id}`, entityId: c.id, href: `/item/${c.id}?kind=commitment`,
+    source: 'commitment', key: `c-${c.id}`, entityId: c.id, href: door(c.id, `/item/${c.id}?kind=commitment`),
     primary: null, ask: c.description,
     second: c.counterparty ? (/^from /i.test(c.counterparty) ? c.counterparty : `You owe ${c.counterparty}`) : null,
     overdue: c.overdue, dueToday: c.dueToday, dueDate: c.dueDate ?? null, initiative: c.initiative ?? null, initiativeTotal: c.initiativeTotal ?? null,

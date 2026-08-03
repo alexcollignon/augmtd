@@ -128,6 +128,28 @@ export async function GET(request: NextRequest) {
     const room = linkRes.data?.entity_id
       ? await buildRoomView(supabase, user.id, linkRes.data.entity_id as string, id)
       : { entity: null, siblings: emptySiblings() };
+    // THE ONE-VOICE BRIEF: the deep-dive is a room door too — keep the room's opening fresh.
+    // Linked → the ENTITY room's brief (served on entity.brief). Loose → the LOOSE room's own
+    // brief over the anchor + its turns (same composer, `<kind>:<id>` key — lib/room/turns.ts).
+    const looseKey = `${linkKind === 'inbox_item' ? 'inbox' : linkKind}:${id}`;
+    let looseBrief: string | null = null;
+    if (linkRes.data?.entity_id) {
+      const eid = linkRes.data.entity_id as string; const uid = user.id;
+      after(async () => {
+        try { const { ensureRoomBrief } = await import('@/lib/room/brief'); await ensureRoomBrief(supabase, uid, eid); } catch { /* non-fatal */ }
+      });
+    } else {
+      const uid = user.id;
+      const { readRoomBrief } = await import('@/lib/room/brief');
+      looseBrief = await readRoomBrief(supabase, uid, looseKey);
+      const looseTitle = linkKind === 'inbox_item'
+        ? String(itemRow?.work_title || (itemRow?.source_data as Record<string, unknown> | undefined)?.subject || 'this email')
+        : linkKind === 'commitment' ? String(itemRow?.description ?? 'this commitment') : String(itemRow?.title ?? 'this meeting');
+      const anchorForBrief = { title: looseTitle, who: anchor.who, ask: anchor.ask, prepared: anchor.prepared };
+      after(async () => {
+        try { const { ensureLooseRoomBrief } = await import('@/lib/room/brief'); await ensureLooseRoomBrief(supabase, uid, looseKey, anchorForBrief); } catch { /* non-fatal */ }
+      });
+    }
     const entity = room.entity;
     const siblings = room.siblings;
     // J5 (multi-ask motion) — a commitment extracted as ONE motion carries its clauses as plan
@@ -147,6 +169,8 @@ export async function GET(request: NextRequest) {
       steps,
       entity,
       siblings,
+      // THE ONE-VOICE BRIEF for a LOOSE room (linked rooms carry it on entity.brief).
+      brief: looseBrief,
     });
   } catch (e) {
     console.error('[items/view]', e);

@@ -29,6 +29,9 @@ type RailKind = 'email' | 'followup' | 'commitment' | 'meeting' | 'awareness' | 
 export type RailView = {
   // The open item — what the rail's opening message narrates FIRST (P5b: item-anchored, never generic).
   anchor?: { who: string | null; ask: string | null; prepared: string | null } | null;
+  /** THE ONE-VOICE BRIEF for a LOOSE room (no entity) — composed server-side; the anchor stitch
+   *  is only the fallback until the first compose lands. Linked rooms carry it on entity.brief. */
+  brief?: string | null;
   gap: string | null;
   entity: {
     id: string; name: string;
@@ -36,6 +39,9 @@ export type RailView = {
     summary: string | null; momentum: string | null; nextMove: string | null; nextMoveHref?: string | null;
     whoOwesYou: string[]; whoOwesThem: string[];
     suggestedWorker?: { id: string; name: string; role: string } | null;
+    /** THE ONE-VOICE BRIEF — the room's opening authored as one colleague paragraph (served
+     *  last-good; null until first compose → the stitched fields fall back). */
+    brief?: string | null;
   } | null;
   siblings: {
     threads: Array<{ id: string; subject: string; who: string | null; at: string | null; current: boolean }>;
@@ -108,6 +114,18 @@ export function pushDealTurn(entityId: string, text: string, opts?: { key?: stri
 
 
 
+// A sender's SPOKEN name: first-name a person, keep an ORGANIZATION whole ("M Condomínios Lda"
+// must never become "M" — found live, Aug 3). Structural: legal-form/functional tokens mark an
+// org; a person is 2–4 plain word tokens.
+const ORG_TOKEN = /^(lda|ltda|ltd|llc|gmbh|inc|s\.?a\.?u?|corp|plc|srl|sl|bv|ag|oy|ab|as|kk|co|group|holdings?|team|support|service|services|billing|noreply|no-reply|info|admin|office|geral|contact|hello|hq)[.,]?$/i;
+function spokenName(raw: string): string {
+  const name = raw.replace(/<[^>]*>/g, '').replace(/["']/g, '').trim();
+  if (!name) return name;
+  const toks = name.split(/\s+/);
+  const looksOrg = toks.some((t) => ORG_TOKEN.test(t)) || /@/.test(name) || toks.length === 1 && name === name.toUpperCase();
+  return looksOrg ? name : toks[0];
+}
+
 // Mechanical dedup — plumbing, not judgment: two phrasings of the same move share most of their
 // distinctive words. Normalized content-token overlap ≥ 0.6 (against the shorter set) = an echo.
 function echoesAnchor(nextMove: string, ask: string | null): boolean {
@@ -160,7 +178,7 @@ function TypingDots() {
   );
 }
 
-export function ItemRail({ kind, id, view, pending = false, onDraft, decision, artifact }: {
+export function ItemRail({ kind, id, view, pending = false, onDraft, decision, artifact, ctaRow }: {
   kind: RailKind; id: string; view: RailView;
   /** THE STRUCTURAL FRAME (UX arc): true while the view is still loading — the rail mounts its
    *  shell (header, turns, composer) immediately and shows a quiet shimmer instead of anchor
@@ -173,6 +191,10 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   /** One-room R2 — the ARTIFACT CARD: a staged workspace's inline handle ("Draft ready — open ·
    *  Send"), commit line right on it. onOpen focuses the stage; onCommit fires the same gate. */
   artifact?: { label: string; by?: string | null; commitLabel?: string; onOpen: () => void; onCommit?: () => void | Promise<void>; committing?: boolean } | null;
+  /** THE CTA ROW (Aug 3 — laws 7: affordances live in the brief's one CTA row): the item's verbs
+   *  (Reply · Dismiss · Forward) render here, in the conversation seat — the right pane asks for
+   *  nothing. Host-owned node so each item kind brings its own palette. */
+  ctaRow?: React.ReactNode;
 }) {
   const router = useRouter();
   const ent = view.entity;
@@ -364,7 +386,14 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           archive, a session boundary — never a deletion; the brain's memory is untouched). */}
       <div className="h-10 flex items-center gap-2 px-3 border-b border-neutral-100 flex-shrink-0">
         <ChatBubbleLeftRightIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
-        <span className="text-[12px] font-semibold text-neutral-700 truncate">{inRoom ? 'Chat' : ent ? ent.name : 'About this'}</span>
+        {/* The room title IS the project door (the word is the deed — law 8): a deep-dive on a
+            project-member item reaches its room through the name, never a separate chip. */}
+        {!inRoom && ent && ent.tracked !== false ? (
+          <Link href={`/home?view=projects&entity=${ent.id}`}
+            className="text-[12px] font-semibold text-neutral-700 truncate hover:text-indigo-600 transition-colors">{ent.name}</Link>
+        ) : (
+          <span className="text-[12px] font-semibold text-neutral-700 truncate">{inRoom ? 'Chat' : ent ? ent.name : 'About this'}</span>
+        )}
         <div className="ml-auto flex items-center gap-2.5 relative">
           <button
             onClick={async () => {
@@ -445,42 +474,52 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
             pane — one fact, one home). */}
         {!viewingSession && inRoom && (
           <AssistantRow>
-            {ent?.summary
-              ? <p>{ent.summary}</p>
-              : turns.length === 0
-                ? <p className="text-[12.5px] text-neutral-500">This is the room for {ent?.name ?? 'this work'} — ask anything, correct me, or hand work off. I hold everything on it.</p>
-                : null}
+            {/* THE ONE-VOICE BRIEF (Aug 3): when the composer has spoken, the paragraph IS the
+                opening — one colleague voice carrying position, delta, consequence and the ask in
+                one place. The stitched fields (summary + debt lines) are ONLY the fallback until
+                the first compose lands. */}
+            {ent?.brief
+              ? <p>{ent.brief}</p>
+              : ent?.summary
+                ? <p>{ent.summary}</p>
+                : turns.length === 0
+                  ? <p className="text-[12.5px] text-neutral-500">This is the room for {ent?.name ?? 'this work'} — ask anything, correct me, or hand work off. I hold everything on it.</p>
+                  : null}
             {/* One fact once: the debt line only speaks when it says something the next move
-                doesn't already say (the brief was stating one fact three times — too much text). */}
-            {ent?.whoOwesYou[0] && !(ent.nextMove && echoesAnchor(ent.nextMove, ent.whoOwesYou[0])) && (
+                doesn't already say — and never beside the composed brief (it carries the debts). */}
+            {!ent?.brief && ent?.whoOwesYou[0] && !(ent.nextMove && echoesAnchor(ent.nextMove, ent.whoOwesYou[0])) && (
               <p className="text-[12.5px] text-neutral-500">You owe: {ent.whoOwesYou[0]}</p>
             )}
-            {!ent?.nextMove && ent?.whoOwesThem[0] && <p className="text-[12.5px] text-neutral-500">They owe: {ent.whoOwesThem[0]}</p>}
+            {!ent?.brief && !ent?.nextMove && ent?.whoOwesThem[0] && <p className="text-[12.5px] text-neutral-500">They owe: {ent.whoOwesThem[0]}</p>}
           </AssistantRow>
         )}
         {!viewingSession && !inRoom && <AssistantRow>
-          {(() => {
+          {/* THE ONE-VOICE BRIEF on the deep-dive door too (Aug 3): when composed (entity room's
+              or the loose room's own), the paragraph IS the opening — the anchor stitch below is
+              only the fallback until the first compose lands. */}
+          {(ent?.brief || view.brief) ? <p>{ent?.brief ?? view.brief}</p> : (() => {
             const a = view.anchor;
-            const who = a?.who ? a.who.replace(/<[^>]*>/g, '').trim().split(/\s+/)[0] : null;
+            const who = a?.who ? spokenName(a.who) : null;
             const ask = a?.ask ? a.ask.charAt(0).toLowerCase() + a.ask.slice(1).replace(/\.+$/, '') : null;
             const prep = a?.prepared ? (a.prepared === 'draft' ? 'I drafted a reply below' : `${a.prepared.split(' ')[0]} drafted a reply below`) : null;
-            if (who && ask) return <p>{who} is asking you to {ask}{prep ? ` — ${prep.charAt(0).toLowerCase() + prep.slice(1)}` : ''}.</p>;
-            if (ask) return <p>This needs you to {ask}{prep ? ` — ${prep.charAt(0).toLowerCase() + prep.slice(1)}` : ''}.</p>;
+            // Never lowercase the drafter — "I"/a name stays capital mid-sentence ("— I drafted…").
+            if (who && ask) return <p>{who} is asking you to {ask}{prep ? ` — ${prep}` : ''}.</p>;
+            if (ask) return <p>This needs you to {ask}{prep ? ` — ${prep}` : ''}.</p>;
             if (prep) return <p>{prep}.</p>;
             return null;
           })()}
-          {pending && !ent && !view.anchor?.ask && (
+          {pending && !ent && !view.anchor?.ask && !view.brief && (
             // The frame is up before the view — a quiet shimmer, never a claim we can't back yet.
             <div className="space-y-1.5 py-0.5" aria-hidden>
               <div className="h-3 w-4/5 rounded bg-neutral-100 animate-pulse" />
               <div className="h-3 w-3/5 rounded bg-neutral-100 animate-pulse" />
             </div>
           )}
-          {ent?.summary
+          {!ent?.brief && !view.brief && (ent?.summary
             ? <p className={view.anchor?.ask || view.anchor?.prepared ? 'text-[12px] text-neutral-500' : undefined}>{ent.summary}</p>
-            : (!view.anchor?.ask && !pending && <p>This isn&apos;t tied to a bigger body of work yet — I&apos;ll keep it standalone.</p>)}
-          {!ent?.nextMove && ent?.whoOwesThem[0] && <p className="text-[12px] text-neutral-500">They owe: {ent.whoOwesThem[0]}</p>}
-          {!ent?.nextMove && ent?.whoOwesYou[0] && <p className="text-[12px] text-neutral-500">You owe: {ent.whoOwesYou[0]}</p>}
+            : (!view.anchor?.ask && !pending && <p>This isn&apos;t tied to a bigger body of work yet — I&apos;ll keep it standalone.</p>))}
+          {!ent?.brief && !view.brief && !ent?.nextMove && ent?.whoOwesThem[0] && <p className="text-[12px] text-neutral-500">They owe: {ent.whoOwesThem[0]}</p>}
+          {!ent?.brief && !view.brief && !ent?.nextMove && ent?.whoOwesYou[0] && <p className="text-[12px] text-neutral-500">You owe: {ent.whoOwesYou[0]}</p>}
         </AssistantRow>}
 
         {/* R3 — the ROOM INDEX + founding moved to THE CONTEXT STRIP on the stage
@@ -541,19 +580,20 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
             opening line already said it), the echo is noise — skip the line, keep the hand-off. */}
         {!viewingSession && ent?.nextMove && !echoesAnchor(ent.nextMove, view.anchor?.ask ?? null) && (
           <AssistantRow>
-            {/* The brief's CTA: the next move OPENS its own anchor (the word is the deed) and the
-                click narrates in the room — the same CTA-focus law the old right-pane card carried. */}
-            {ent.nextMoveHref ? (
-              <button
-                onClick={() => {
-                  pushDealTurn(roomKey, `Opening the next move — ${String(ent.nextMove).slice(0, 70)}.`, { key: `cta:${ent.nextMoveHref}` });
-                  router.push(ent.nextMoveHref!);
-                }}
-                className="text-left text-[13px] text-neutral-800 hover:text-indigo-700 transition-colors"
-              >Next: <span className="underline decoration-neutral-200 underline-offset-2">{ent.nextMove}</span> →</button>
-            ) : (
-              <p>Next: {ent.nextMove}</p>
-            )}
+            {/* The brief's CTA: the next move OPENS its own anchor — the word is the deed (law 8),
+                and ONLY the deed: no narration turn (a click echo is not history — law 5), and no
+                link when it would land on the room/item the user is already reading. */}
+            {(() => {
+              const target = ent.nextMoveHref && !(!inRoom && ent.nextMoveHref.includes(`/item/${id}`)) ? ent.nextMoveHref : null;
+              return target ? (
+                <button
+                  onClick={() => router.push(target)}
+                  className="text-left text-[13px] text-neutral-800 hover:text-indigo-700 transition-colors"
+                >Next: <span className="underline decoration-neutral-200 underline-offset-2">{ent.nextMove}</span> →</button>
+              ) : (
+                <p>Next: {ent.nextMove}</p>
+              );
+            })()}
             {suggested && (
               <button
                 onClick={() => send(`Have ${suggested.name.split(' ')[0]} ${ent.nextMove}`)}
@@ -602,6 +642,10 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
             </div>
           </AssistantRow>
         )}
+
+        {/* THE CTA ROW (law 7) — the item's verbs live in the conversation seat, beneath the brief
+            and the artifact card. One row; the right pane never carries an action bar. */}
+        {!viewingSession && ctaRow && <AssistantRow>{ctaRow}</AssistantRow>}
 
         {/* THE CONVERSATION — three grammars, derived STRUCTURALLY from each turn, never styled per
             call site (the UX-arc law):

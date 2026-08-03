@@ -147,16 +147,19 @@ function useReplyAttachments() {
     });
   }, []);
 
-  const onKbSelect = useCallback(async (selected: { id: string; filename: string }[]) => {
+  // opts.silent — a BACKGROUND auto-attach (the prepared artifact's file) must fail quietly: a red
+  // "Could not load X" the user never caused was painting inside the composer (found live, Aug 3).
+  // The user-invoked picker keeps the loud error (they acted; they deserve the answer).
+  const onKbSelect = useCallback(async (selected: { id: string; filename: string }[], opts?: { silent?: boolean }) => {
     setKbPickerOpen(false);
     setAttachErr(null);
     const results = await Promise.all(selected.map(async ({ id, filename }) => {
       try {
         const res = await fetch(`/api/kb/attachment?fileId=${id}`);
-        if (!res.ok) { setAttachErr(`Could not load ${filename}.`); return null; }
+        if (!res.ok) { if (!opts?.silent) setAttachErr(`Could not load ${filename}.`); return null; }
         return await res.json() as PendingAttachment;
       } catch {
-        setAttachErr(`Could not load ${filename}.`);
+        if (!opts?.silent) setAttachErr(`Could not load ${filename}.`);
         return null;
       }
     }));
@@ -852,12 +855,12 @@ function DeepDiveShell({ children, rail, embedded = false }: { children: React.R
   // EMBEDDED (Phase 4 R2 — the one shell): the ROOM provides the outer shell + THE rail; the artifact
   // renders bare inside the room's main card. One shell, the conversation persists.
   if (embedded) {
-    return <div className="flex-1 min-h-0 flex flex-col overflow-hidden">{children}</div>;
+    return <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">{children}</div>;
   }
   if (!rail) {
     return (
       <div className="w-full h-full min-h-0 bg-neutral-50 p-2 flex flex-col">
-        <div className="flex-1 min-h-0 mx-auto w-full max-w-5xl flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
+        <div className="relative flex-1 min-h-0 mx-auto w-full max-w-5xl flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
           {children}
         </div>
       </div>
@@ -1239,7 +1242,6 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
   const userTypedRef = useRef(false);                  // once the user types, a late-arriving draft never clobbers
   const atts = useReplyAttachments();             // shared inbox-style attach surface (base64 → send-reply)
   const editorRef = useRef<HTMLDivElement>(null);
-  const composerRef = useRef<HTMLDivElement>(null); // the docked reply composer
 
   // ── PRIMARY-SURFACE state, driven by the item's understood RELEVANCE (the composer IS the reply
   // task's surface — owner=you — not a separate always-open box). Default:
@@ -1273,7 +1275,8 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
     setVerdict(cached);
     verdictSeededRef.current = true;
     if (!composerTouchedRef.current) {
-      setComposerOpen(cached.work === 'reply' || cached.work === 'send_file');
+      // SUMMONED-STAGE law (Aug 3): the verdict seeds the PALETTE's lead (relevance), never an
+      // auto-raised composer — prepared work waits on the artifact card until reached for.
       setRelevance(cached.work === 'none' ? 'awareness' : (cached.work === 'reply' || cached.work === 'send_file') ? 'reply' : 'action');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1286,10 +1289,8 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
       saveLS(`aug-item-verdict-inbox-${id}`, d.verdict);
       verdictSeededRef.current = true;
       if (!composerTouchedRef.current) {
-        // The verdict's surface: reply/send_file → composer open (send_file mounts its resolved
-        // attachment chip INSIDE the composer); everything else → collapsed (the mounted
-        // component or the message leads). The user can always override via "Reply".
-        setComposerOpen(d.verdict.work === 'reply' || d.verdict.work === 'send_file');
+        // SUMMONED-STAGE law: the verdict drives the palette lead only — the composer overlay is
+        // raised by the user (artifact Open / Reply), never on mount.
         if (d.verdict.work === 'none') setRelevance('awareness');
         else if (d.verdict.work === 'reply' || d.verdict.work === 'send_file') setRelevance('reply');
         else setRelevance('action');
@@ -1317,16 +1318,8 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
         // verdict hasn't already seeded it (the verdict outranks raw relevance), and only until
         // the user touches the composer.
         const rel = d.relevance ?? null;
-        if (!verdictSeededRef.current) {
-          setRelevance(rel);
-          if (!composerTouchedRef.current) {
-            // VERDICT-FIRST (P8): only a known 'reply' relevance opens the composer pre-verdict.
-            // Unknown stays CLOSED — the judge's verdict (cached or fetched) is the authority that
-            // opens it; a kind-only notification must never greet the user with an open reply box.
-            // The user can always open it via the palette's "Reply".
-            setComposerOpen(rel === 'reply');
-          }
-        }
+        // SUMMONED-STAGE law: relevance seeds the palette lead only — never an open composer.
+        if (!verdictSeededRef.current) setRelevance(rel);
       })
       .catch(() => { if (alive) setThreadErr(true); });
 
@@ -1356,7 +1349,9 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
   useEffect(() => {
     if (!preparedAttachment || preparedAttachRef.current === preparedAttachment.fileId) return;
     preparedAttachRef.current = preparedAttachment.fileId;
-    atts.onKbSelect([{ id: preparedAttachment.fileId, filename: preparedAttachment.filename }]);
+    // silent: a failed BACKGROUND attach never paints an error the user didn't cause — the draft
+    // still names the file; the 📎 menu is the fallback.
+    atts.onKbSelect([{ id: preparedAttachment.fileId, filename: preparedAttachment.filename }], { silent: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preparedAttachment?.fileId]);
 
@@ -1444,10 +1439,8 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
   // re-collapse it.
   const openComposer = () => {
     composerTouchedRef.current = true;
-    setComposerOpen(true);
+    setComposerOpen(true); // raises the SUMMONED STAGE overlay
     setForwarding(false);
-    // scroll after the box has a chance to render.
-    requestAnimationFrame(() => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
   };
 
   // ── Item-level Dismiss (acknowledge) — the primary action for an awareness item. Reuses the Home's
@@ -1567,6 +1560,19 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
           onCommit: send,
           committing: sending,
         } : null}
+        ctaRow={!itemDismissed ? (
+          <EmailActionPalette
+            relevance={relevance}
+            composerOpen={composerOpen}
+            onReply={openComposer}
+            onDismiss={dismissItem}
+            onDone={markHandled}
+            onNoLongerRelevant={markNoLongerRelevant}
+            onDismissWithNote={dismissWithNote}
+            onForward={openForward}
+            dismissing={dismissing}
+          />
+        ) : null}
       />
     )}>
       {/* 1 — Header: subject + sender + date (fixed at top). T4 (work-surface): the posture badge
@@ -1588,8 +1594,9 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
 
       {/* 2 — The one scroll area, in the Scape order: message card → judged work → one Send. */}
       <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
-        {/* ONE ACTION BAR — Reply · Dismiss ▾ · Forward. Nothing else; the composer owns Send. */}
-        {!itemDismissed && (
+        {/* THE CTA ROW moved to the RAIL (Aug 3, law 7 — the right pane asks for nothing). The
+            palette renders here ONLY when embedded in the entity room (no own rail to carry it). */}
+        {embedded && !itemDismissed && (
           <EmailActionPalette
             relevance={relevance}
             composerOpen={composerOpen}
@@ -1612,72 +1619,9 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
           <ThreadMessages messages={threadMessages} fallback={fallback} compact />
         )}
 
-        {/* THE WORK, DIRECTLY BENEATH THE MESSAGE (the Scape order, finally applied to this stage:
-            message → mounted work → one commit line). The composer used to sit BELOW every other
-            block — a drafted reply the user had to scroll to find is prepared work that reads as
-            missing. The rail's artifact card "Open →" focuses exactly here. */}
-        {composerOpen && (
-      <div ref={composerRef}>
-        {angle && (
-          <p className="text-[13px] text-neutral-600 leading-relaxed mb-2">
-            <span className="font-medium text-neutral-700">Suggested angle:</span> {angle}
-          </p>
-        )}
-        <h2 className={SECTION_LABEL}>
-          Your reply
-          {/* Byline — attribution when the draft was prepared; a quiet "drafting…" while it's coming. */}
-          {draft ? <DraftByline by={view?.prepared?.find((p) => p.kind === 'reply_draft')?.by ?? null} />
-            : draftLoading ? <span className="ml-2 text-[11px] font-medium text-neutral-400 normal-case tracking-normal animate-pulse">drafting…</span> : null}
-        </h2>
-        {sent ? (
-          <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
-            <CheckIcon className="w-4 h-4 text-emerald-600" />
-            <p className="text-[13px] font-medium text-emerald-700">Reply sent.</p>
-          </div>
-        ) : (
-          <div className={`${CARD} p-4`}>
-            {(
-              <>
-                {/* The SAME rich editor the inbox uses — TYPABLE AT PAINT (never a blocking skeleton):
-                    it mounts empty and the prepared draft seeds it when ready via the `key` bump, only
-                    while untouched. A steer rework re-seeds the same way. */}
-                <ReplyEditor
-                  key={draftV}
-                  ref={editorRef}
-                  initialHTML={draft ? draftToHTML(draft) : ''}
-                  onInput={(h) => { userTypedRef.current = true; setBodyHTML(h); }}
-                  placeholder="Write your reply…"
-                  minHeight={120}
-                  maxHeight={280}
-                  toolbarLeading={<AttachMenu atts={atts} />}
-                >
-                  <AttachSurface atts={atts} />
-                </ReplyEditor>
-                {sendErr && <p className="text-[12px] text-rose-600 mt-2">{sendErr}</p>}
-                <div className="mt-3 flex items-center gap-4">
-                  <button
-                    onClick={send}
-                    disabled={sending}
-                    className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-5 py-2 text-[13.5px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
-                  >
-                    {sending ? 'Sending…' : 'Send'}
-                  </button>
-                  <button
-                    onClick={copy}
-                    className="inline-flex items-center gap-1.5 text-[13px] font-medium text-neutral-600 hover:text-neutral-800"
-                  >
-                    {copied ? <CheckIcon className="w-3.5 h-3.5 text-emerald-500" /> : <ClipboardDocumentIcon className="w-3.5 h-3.5" />}
-                    {copied ? 'Copied' : 'Copy'}
-                  </button>
-                </div>
-                {/* THE STEER INPUT — inline only when there's no rail (the rail's composer owns it). */}
-                {!railView && <SteerRow kind="email" id={id} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }} />}
-              </>
-            )}
-          </div>
-        )}
-      </div>
-      )}
+        {/* THE COMPOSER moved to THE SUMMONED STAGE (Aug 3): an overlay raised by the artifact
+            card's Open / the CTA row's Reply — the right pane holds the item's truth (the thread),
+            never a docked send surface. Rendered below, after the scroll area. */}
 
         {/* One-room R2 — the DECISION renders INLINE in the conversation stream (the rail's
             `decision` prop, surface:'inline' per the registry). The stage keeps it ONLY when no
@@ -1773,6 +1717,74 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
           not conversational. Hidden when embedded — the room IS the project context. */}
       {!embedded && railView && <ContextStrip kind="email" id={id} view={railView} />}
       </div>
+
+      {/* ═══ THE SUMMONED STAGE (Aug 3 — the spec's stage seat, finally transient): the draft
+          review raised OVER the room's truth pane, holding the ONE Send. Summoned by the artifact
+          card / Reply; ✕ lowers it; a send closes it and the room narrates. Never auto-raised —
+          a colleague hands you the letter when you reach for it. ═══ */}
+      {composerOpen && (
+        <div className="absolute inset-0 z-20 bg-white flex flex-col">
+          <div className="flex items-center gap-2 px-7 py-3.5 border-b border-neutral-100 flex-shrink-0">
+            <h2 className="text-[13px] font-semibold text-neutral-800">
+              Your reply
+              {draft ? <DraftByline by={view?.prepared?.find((p) => p.kind === 'reply_draft')?.by ?? null} />
+                : draftLoading ? <span className="ml-2 text-[11px] font-medium text-neutral-400 normal-case tracking-normal animate-pulse">drafting…</span> : null}
+            </h2>
+            <button
+              onClick={() => { composerTouchedRef.current = true; setComposerOpen(false); }}
+              className="ml-auto p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors"
+              title="Back to the thread (your text is kept)"
+            ><XMarkIcon className="w-4 h-4" /></button>
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto px-7 py-5">
+            {angle && (
+              <p className="text-[13px] text-neutral-600 leading-relaxed mb-2">
+                <span className="font-medium text-neutral-700">Suggested angle:</span> {angle}
+              </p>
+            )}
+            {sent ? (
+              <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
+                <CheckIcon className="w-4 h-4 text-emerald-600" />
+                <p className="text-[13px] font-medium text-emerald-700">Reply sent.</p>
+              </div>
+            ) : (
+              <div className={`${CARD} p-4`}>
+                <ReplyEditor
+                  key={draftV}
+                  ref={editorRef}
+                  initialHTML={draft ? draftToHTML(draft) : ''}
+                  onInput={(h) => { userTypedRef.current = true; setBodyHTML(h); }}
+                  placeholder="Write your reply…"
+                  minHeight={160}
+                  maxHeight={420}
+                  toolbarLeading={<AttachMenu atts={atts} />}
+                >
+                  <AttachSurface atts={atts} />
+                </ReplyEditor>
+                {sendErr && <p className="text-[12px] text-rose-600 mt-2">{sendErr}</p>}
+                <div className="mt-3 flex items-center gap-4">
+                  <button
+                    onClick={send}
+                    disabled={sending}
+                    className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-5 py-2 text-[13.5px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+                  >
+                    {sending ? 'Sending…' : 'Send'}
+                  </button>
+                  <button
+                    onClick={copy}
+                    className="inline-flex items-center gap-1.5 text-[13px] font-medium text-neutral-600 hover:text-neutral-800"
+                  >
+                    {copied ? <CheckIcon className="w-3.5 h-3.5 text-emerald-500" /> : <ClipboardDocumentIcon className="w-3.5 h-3.5" />}
+                    {copied ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+                {/* THE STEER INPUT — inline only when there's no rail (the rail's composer owns it). */}
+                {!railView && <SteerRow kind="email" id={id} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }} />}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* KB file picker modal (shared with the inbox) — "From knowledge base" attach path. */}
       {atts.kbPickerOpen && (
@@ -2282,7 +2294,7 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
   const railView = view ? (view as RailView) : null;
   const atts = useReplyAttachments();             // shared inbox-style attach surface (base64 → nudge PATCH)
   const editorRef = useRef<HTMLDivElement>(null);
-  const composerRef = useRef<HTMLDivElement>(null); // the docked nudge composer
+  const [composerOpen, setComposerOpen] = useState(false); // the SUMMONED STAGE (never auto-raised)
 
   useEffect(() => {
     let alive = true;
@@ -2362,7 +2374,19 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
 
   return (
     <DeepDiveShell embedded={embedded} rail={
-      <ItemRail kind="followup" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onDraft={(d) => { setDraft(d); setDraftV((v) => v + 1); }} />
+      <ItemRail kind="followup" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onDraft={(d) => { setDraft(d); setDraftV((v) => v + 1); }}
+        artifact={!sent && !!draft ? {
+          label: 'Follow-up drafted — ready to review',
+          by: view?.prepared?.find((p) => p.kind === 'nudge_draft' || p.kind === 'deliverable')?.by ?? null,
+          onOpen: () => setComposerOpen(true),
+        } : null}
+        ctaRow={!sent && !draft ? (
+          <button
+            onClick={() => setComposerOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white text-neutral-600 px-3 py-1.5 text-[12.5px] font-medium hover:bg-neutral-50 hover:text-neutral-800 transition-colors"
+          >Write the follow-up →</button>
+        ) : null}
+      />
     }>
       {/* Header */}
       <DetailHeader
@@ -2402,30 +2426,44 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
           <InvitePreviewCard kind="followup" entityId={id} taskId={view.inviteTaskId} onSent={() => setInviteOpen(false)} onCancel={() => setInviteOpen(false)} />
         )}
 
-      {/* The follow-up composer — INLINE beneath the message (J2), prefilled with the nudge draft. */}
-      <div ref={composerRef}>
-        <h2 className={SECTION_LABEL}>
-          Your follow-up
-          {draft ? <DraftByline by={view?.prepared?.find((p) => p.kind === 'nudge_draft' || p.kind === 'deliverable')?.by ?? null} />
-            : draftLoading ? <span className="ml-2 text-[11px] font-medium text-neutral-400 normal-case tracking-normal animate-pulse">drafting…</span> : null}
-        </h2>
-        {sent ? (
-          <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
-            <CheckIcon className="w-4 h-4 text-emerald-600" />
-            <p className="text-[13px] font-medium text-emerald-700">Follow-up sent.</p>
+      {/* The follow-up composer moved to THE SUMMONED STAGE (Aug 3) — rendered after the scroll
+          area; raised by the artifact card / "Write the follow-up →". */}
+
+      {/* R3 — the context strip (spatial, never in the conversation). */}
+      {!embedded && railView && <ContextStrip kind="followup" id={id} view={railView} />}
+      </div>
+
+      {/* ═══ THE SUMMONED STAGE — the follow-up review, raised over the truth pane, one Send. ═══ */}
+      {composerOpen && (
+        <div className="absolute inset-0 z-20 bg-white flex flex-col">
+          <div className="flex items-center gap-2 px-7 py-3.5 border-b border-neutral-100 flex-shrink-0">
+            <h2 className="text-[13px] font-semibold text-neutral-800">
+              Your follow-up
+              {draft ? <DraftByline by={view?.prepared?.find((p) => p.kind === 'nudge_draft' || p.kind === 'deliverable')?.by ?? null} />
+                : draftLoading ? <span className="ml-2 text-[11px] font-medium text-neutral-400 normal-case tracking-normal animate-pulse">drafting…</span> : null}
+            </h2>
+            <button
+              onClick={() => setComposerOpen(false)}
+              className="ml-auto p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors"
+              title="Back to the thread (your text is kept)"
+            ><XMarkIcon className="w-4 h-4" /></button>
           </div>
-        ) : (
-          <div className={`${CARD} p-4`}>
-            {(
-              <>
+          <div className="flex-1 min-h-0 overflow-y-auto px-7 py-5">
+            {sent ? (
+              <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
+                <CheckIcon className="w-4 h-4 text-emerald-600" />
+                <p className="text-[13px] font-medium text-emerald-700">Follow-up sent.</p>
+              </div>
+            ) : (
+              <div className={`${CARD} p-4`}>
                 <ReplyEditor
                   key={draftV}
                   ref={editorRef}
                   initialHTML={draft ? draftToHTML(draft) : ''}
                   onInput={() => { userTypedRef.current = true; }}
                   placeholder="Write your follow-up…"
-                  minHeight={110}
-                  maxHeight={260}
+                  minHeight={160}
+                  maxHeight={420}
                   toolbarLeading={<AttachMenu atts={atts} />}
                 >
                   <AttachSurface atts={atts} />
@@ -2449,15 +2487,11 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
                 </div>
                 {/* THE STEER INPUT — inline only when there's no rail (the rail's composer owns it). */}
                 {!railView && <SteerRow kind="followup" id={id} onDraft={(d) => { setDraft(d); setDraftV((v) => v + 1); }} />}
-              </>
+              </div>
             )}
           </div>
-        )}
-      </div>
-
-      {/* R3 — the context strip (spatial, never in the conversation). */}
-      {!embedded && railView && <ContextStrip kind="followup" id={id} view={railView} />}
-      </div>
+        </div>
+      )}
 
       {/* KB file picker modal (shared with the inbox) — "From knowledge base" attach path. */}
       {atts.kbPickerOpen && (

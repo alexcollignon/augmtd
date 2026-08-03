@@ -181,8 +181,13 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
       id2.includes('chip={null}') && (id2.match(/chip=\{embedded \? null/g) ?? []).length === 3 && (id2.match(/action=\{embedded \? undefined/g) ?? []).length >= 2);
     // W3 superseded the static line: the narration is now COMPOSED from the board row's prepared
     // facts (keyed dedup, real offers) — still deterministic, never a hedge.
-    check('5A.5 · CTA-focus narrates in the per-deal chat (deterministic, grounded — W3): the brief\'s next-move click narrates + opens its anchor (moved to the rail with the card)',
-      rl2.includes('export function pushDealTurn') && rl2.includes('Opening the next move') && rl2.includes('nextMoveHref') && er2.includes("row?.prepared === 'draft'"));
+    // Aug 3 (the CTA is the deed — laws 5+8): the rail's next-move click ONLY navigates — the
+    // "Opening the next move" click echo is gone (a click is not history), and a link that would
+    // land on the room/item already open renders as plain text. The room's OWN focus narration
+    // (entity-room openHref) stays — it is composed from facts with real offers, not an echo.
+    check('5A.5 · the CTA is the deed: rail next-move navigates without a click-echo turn; the room\'s grounded focus narration remains',
+      rl2.includes('export function pushDealTurn') && !rl2.includes('Opening the next move') && rl2.includes('nextMoveHref')
+      && rl2.includes('router.push(target)') && er2.includes("row?.prepared === 'draft'"));
     check('5A.6 · room width + Tasks default tab + INTENT as one full-width band (the emptied two-column grid died with the next-move card — experience-spec seat cleanup)',
       er2.includes('max-w-[1000px]') && er2.includes("useState<'work'") &&
       er2.includes('md:grid-cols-2 gap-x-8') && !er2.includes('lg:grid-cols-[minmax(0,1fr)_280px]'));

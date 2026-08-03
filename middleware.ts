@@ -77,9 +77,13 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  // Redirect authenticated users from root to inbox
+  // Redirect authenticated users from root to the Home — PRESERVING the query string (deep-link
+  // doors like ?view=projects&entity=… must survive the hop; dropping it was the dead
+  // "Open project" click, Aug 3).
   if (pathname === '/' && user) {
-    return NextResponse.redirect(new URL('/home', request.url));
+    const home = new URL('/home', request.url);
+    home.search = request.nextUrl.search;
+    return NextResponse.redirect(home);
   }
 
   return supabaseResponse;
