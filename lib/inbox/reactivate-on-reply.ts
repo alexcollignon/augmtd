@@ -101,7 +101,8 @@ export async function reactivateResolvedThreadOnReply(params: ReactivateParams):
     // reopens (showing costs less than hiding — the conservative default at THIS door).
     try {
       const { topMessageOf } = await import('@/lib/inbox/top-message');
-      const own = topMessageOf(String(storedEmail.body || '')).replace(/\s+/g, ' ').slice(0, 900);
+      const { clipForPrompt, EXCERPT_RULE } = await import('@/lib/utils/clip-for-prompt');
+      const own = clipForPrompt(topMessageOf(String(storedEmail.body || '')).replace(/\s+/g, ' '), 900);
       if (own.trim()) {
         const { aiCall } = await import('@/lib/ai/call');
         const res = await aiCall<{ closure?: boolean; reason?: string }>({
@@ -112,6 +113,7 @@ export async function reactivateResolvedThreadOnReply(params: ReactivateParams):
             `(thanks / acknowledgment / confirmation that the matter is settled, asking NOTHING further of anyone), ` +
             `or does it ask, add, or change anything (a question, a new request, new information that needs action, a correction)?\n` +
             `THE REPLY (sender's own words): """${own}"""\n` +
+            `${EXCERPT_RULE}\n` +
             `When unsure, closure=false (reopening costs a glance; missing a real ask costs trust).\n` +
             `JSON only: {"closure":true|false,"reason":"<one sentence>"}`,
         });

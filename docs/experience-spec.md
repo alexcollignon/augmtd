@@ -68,4 +68,8 @@ Corollaries that decide edits:
 5. The one-voice brief on every door (authored, never assembled) + the summoned stage (the composer
    raised by the user, one Send, right pane asks nothing) → laws 2, 4, 5, 7, and the stage seat.
    *(shipped Aug 3 — email + follow-up; commitment/meeting overlays queued)*
-6. Home ask-state chips on deck rows (queued) → Home's seat ("what does attention buy").
+6. The conversational room — clicks are utterances: the verb strip on the stage (verbs only with
+   their object), the exchange grammar (offer → pick → acknowledge → land, reply as reference),
+   artifact cards at the stream's now edge, the excerpt-honesty law. *(shipped Aug 4 — exchange
+   generalization to invite/forward/decide queued)*
+7. Home ask-state chips on deck rows (queued) → Home's seat ("what does attention buy").

@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
       supabase.from('entity_links').select('item_id').eq('user_id', user.id).eq('item_kind', linkKind).eq('item_id', id).maybeSingle(),
       // The open item itself — the ANCHOR the rail leads with (P5b: the rail narrates THIS item first).
       linkKind === 'inbox_item'
-        ? supabase.from('inbox_items').select('work_title, source_data, last_activity_at, created_at').eq('id', id).eq('user_id', user.id).maybeSingle()
+        ? supabase.from('inbox_items').select('work_title, source, source_data, last_activity_at, created_at').eq('id', id).eq('user_id', user.id).maybeSingle()
         : linkKind === 'commitment'
           ? supabase.from('commitments').select('description, counterparty, created_at').eq('id', id).eq('user_id', user.id).maybeSingle()
           : supabase.from('meeting_transcripts').select('title, start_time').eq('id', id).eq('user_id', user.id).maybeSingle(),
@@ -171,6 +171,15 @@ export async function GET(request: NextRequest) {
       siblings,
       // THE ONE-VOICE BRIEF for a LOOSE room (linked rooms carry it on entity.brief).
       brief: looseBrief,
+      // THE VERB-SCOPE LAW (Aug 4): the item's SOURCE decides its verb strip — a meeting-extracted
+      // action item has no thread; Reply must be structurally impossible on it.
+      itemSource: linkKind === 'inbox_item' ? (itemRow?.source as string | undefined) ?? 'email' : null,
+      // TRUTH BEFORE PRESENTATION (Aug 4): the artifact card must not claim "prepared" when the
+      // ambient invite has no grounded time — null = no ambient invite stored yet.
+      inviteHasTime: (() => {
+        const inv = (itemRow?.source_data as Record<string, unknown> | undefined)?.prepared_invite as { startISO?: string } | undefined;
+        return inv ? !!inv.startISO : null;
+      })(),
     });
   } catch (e) {
     console.error('[items/view]', e);

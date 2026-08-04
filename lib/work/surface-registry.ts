@@ -76,7 +76,7 @@ export const renderComponentOptions = (): string =>
   WORK_COMPONENTS.map((c) => `- "${c.key}": ${c.when}`).join('\n');
 
 /** Bump when the verdict schema/prompt changes — cached verdicts self-invalidate. */
-export const JUDGE_VERSION = 12; // 12: THE USER'S CLOCK — local day/hour, same-day expiry with a code-verified stated time, event-boundary sig (a 12:30 meeting is over at 20:34, not at midnight). 11: the sender floor. 10: expired requires a STATED date. 9: `revisit` + open-ask fact. 8: `forward` + failure honesty.
+export const JUDGE_VERSION = 13; // 13: THE EXCERPT-HONESTY LAW — clips end at boundaries + declare themselves; the prompt rules a clip marker is OUR cutting, never source truncation (a normal email read as "cut off mid-sentence" — found live). 12: THE USER'S CLOCK — local day/hour, same-day expiry with a code-verified stated time, event-boundary sig. 11: the sender floor. 10: expired requires a STATED date. 9: `revisit` + open-ask fact. 8: `forward` + failure honesty.
 
 // ── registryParity — the W1 structural law, stated mechanically for the P21 gate: every verb maps
 // to a component; every gated component binds a BUILT capability whose irreversible flag agrees
@@ -117,7 +117,7 @@ export function registryParity(): string[] {
 // so both invalidation stamps live in the ONE registry module — deliberately SEPARATE constants:
 // they invalidate different caches (plans vs judgments) and coupling them would regenerate every
 // item plan on a judge-prompt tweak (waste, not rigor).
-export const PLAN_VERSION = 3;
+export const PLAN_VERSION = 4; // 4: the parity law — send_prepared_reply + prepare_forward in the chief slice
 
 // 'atomic'   → deterministic, no judgment → the System runs it directly (a `tool`/`ai` workflow step).
 // 'judgment' → benefits from a coworker's voice/reasoning/skills → an `agent` step.
@@ -288,6 +288,20 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     intent: "add a task to the user's plate, optionally on a project",
     tool: 'create_task_item', built: true, kind: 'atomic', irreversible: false, feature: null,
     blurb: 'add a task ("add a task on Acme: chase the signed NDA, due Friday")', exposure: ['chief_of_staff'],
+  },
+  // ── THE PARITY LAW (Aug 4): every verb the UI offers must be SAYABLE. "Send it" typed in the
+  // room IS the user's explicit approval — it fires the SAME send door (exactly-once, logged),
+  // behind a deterministic explicit-send floor. "Forward to X" prepares + points at the stage;
+  // the approve click stays the commit.
+  send_prepared_reply: {
+    intent: 'send the ALREADY-DRAFTED reply on the current item — only when the user explicitly says to send',
+    tool: 'send_prepared_reply', built: true, kind: 'atomic', irreversible: true, feature: 'email',
+    blurb: 'send the prepared reply ("send it") — fires only on the user\'s own explicit send word', exposure: ['chief_of_staff'],
+  },
+  prepare_forward: {
+    intent: 'prepare forwarding the current email to someone for review & approval (never sends by itself)',
+    tool: 'prepare_forward', built: true, kind: 'atomic', irreversible: false, feature: 'email',
+    blurb: 'prepare a forward ("forward this to Rita") — review & approve on the card before anything sends', exposure: ['chief_of_staff'],
   },
 };
 

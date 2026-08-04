@@ -48,6 +48,10 @@ export async function POST(request: NextRequest) {
       ...(turn.learned ? { learned: turn.learned } : {}),
       ...(turn.entityName !== undefined ? { entityName: turn.entityName } : {}),
       ...(turn.delegated !== undefined ? { delegated: turn.delegated } : {}),
+      // THE PARITY LAW (Aug 4): the chat-approved send / summoned-stage signals — the client
+      // fires the one send door / raises the stage.
+      ...(turn.commit ? { commit: turn.commit } : {}),
+      ...(turn.openStage ? { openStage: turn.openStage } : {}),
     });
   } catch (e) {
     console.error('[items/steer]', e);

@@ -12,11 +12,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { isAutomatedSender } from '@/lib/inbox/automated';
+import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 
 // VOICE (P5a): bump whenever the synthesis prompt/voice changes — threaded into the stored sig so every
 // cached state regenerates through the existing sig-gated paths (the alignment-cache lesson: a
 // prompt-driven cache must invalidate on the prompt itself, not only on the data).
-export const STATE_PROMPT_VERSION = 6; // 6: LAW 6 — settled ledger lines speak history-grammar, never open-debt grammar. 5: THE DEIXIS LAW — no relative day-words in cached prose; pre-today ledger events are the past. 4: the reasoned `scope` verdict.
+export const STATE_PROMPT_VERSION = 7; // 7: THE EXCERPT-HONESTY LAW — clipped gists declare themselves; a clip marker is never source truncation. 6: LAW 6 — settled ledger lines speak history-grammar, never open-debt grammar. 5: THE DEIXIS LAW — no relative day-words in cached prose; pre-today ledger events are the past. 4: the reasoned `scope` verdict.
 
 // The BANNED machinery register — the system describing its own bookkeeping instead of the matter.
 // ONE definition: the synthesis self-checks against it (with a corrective retry) and the voice smoke
@@ -106,7 +107,9 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
           nowByThread.set(t, {
             who: m.is_from_user ? 'the user' : String(m.from_name || m.from_address || 'them'),
             at: String(m.received_at || '').slice(0, 10),
-            gist: topMessageOf(String(m.body || '')).replace(/\s+/g, ' ').trim().slice(0, 110),
+            // EXCERPT-HONESTY (Aug 4): quoted gists declare their clipping — a hard cut read as
+            // "the email is truncated" by the synthesis (found live on a normal email).
+            gist: clipForPrompt(topMessageOf(String(m.body || '')).replace(/\s+/g, ' ').trim(), 110),
             fromUser: !!m.is_from_user,
           });
         }
@@ -124,7 +127,7 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
       // subject — a title-only ledger made the brain confidently wrong about what an email contained
       // (the "no catalog yet" class). Every ledger consumer (state synthesis, entity ask, the
       // conversation loop's grounding) inherits this.
-      const gist = String(sd.body || '').replace(/\s+/g, ' ').trim().slice(0, 90);
+      const gist = clipForPrompt(String(sd.body || '').replace(/\s+/g, ' ').trim(), 90);
       const atts = Array.isArray(sd.attachments) ? (sd.attachments as Array<{ filename?: string }>).map((a) => a.filename).filter(Boolean) : [];
       totalEmails++;
       if (isAutomatedSender((sd.from_address as string) || null, (sd.from_name as string) || null, (sd.subject as string) || '')) automatedEmails++;
@@ -254,6 +257,8 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
       // THE DEIXIS LAW (T-class): this prose is CACHED and re-read for days — a relative day-word
       // decays into a lie, and anything already behind today's date is the PAST, not a plan.
       `TODAY is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}. This text will be read for DAYS — never write relative day-words ("tomorrow", "next week", "later today"): name absolute dates ("Jul 28"). Anything in the ledger dated BEFORE today already HAPPENED — describe it as past ("they met Jul 28"), never as upcoming.\n` +
+      // EXCERPT-HONESTY (Aug 4): the ledger's quoted gists are clipped by US for length.
+      `${EXCERPT_RULE} Never describe a message or document as truncated/cut-off/incomplete based on a clipped quote.\n` +
       `A ledger line marked DONE / (handled) / (dismissed) is HISTORY — the obligation is settled; NEVER present it as owed, due, or pending, whatever its original due date says. If everything is settled, say so plainly (the calm is earned).\n` +
       `Body of work: ${ent.name}${ent.summary ? ` — ${ent.summary}` : ''}\n` +
       `Days since last real touch: ${quietDays ?? 'unknown'}\n` +

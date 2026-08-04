@@ -615,12 +615,16 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
         const itemKind = f.kind === 'commitment' || f.kind === 'followup' ? 'commitment' as const : 'inbox' as const;
         const sw = d.entity.suggestedWorker ?? null;
         const moveTitle = d.entity.nextMove?.title ?? row?.title ?? '';
+        // NAMED SUBJECTS (Aug 4, found live): in a room holding several items, "this" is ambiguous
+        // — "Clara drafted the reply" one line above "Nothing's prepared on this yet" read as a
+        // contradiction. Every focus narration names the item it speaks about.
+        const subj = (row?.title ?? moveTitle ?? '').slice(0, 44);
         if (f.kind === 'meeting') {
           pushDealTurn(entityId, "Here's the meeting — notes and action items below; ask me anything about it.", { key });
         } else if (row?.prepared === 'draft') {
-          pushDealTurn(entityId, "There's a draft ready below — send it as-is or tell me what to change.", { key });
+          pushDealTurn(entityId, `The draft on "${subj}" is ready — send it as-is or tell me what to change.`, { key });
         } else if (row?.prepared) {
-          pushDealTurn(entityId, `${row.prepared} prepared this — it's on the work below; tell me what to change.`, { key });
+          pushDealTurn(entityId, `${row.prepared} prepared "${subj}" — it's on the work below; tell me what to change.`, { key });
         } else {
           // O5: the decision leads with the JUDGE's route (the roster verdict), the in-house draft is
           // the alternative, and a prepared SIBLING on the same deal is surfaced honestly — the
@@ -629,7 +633,7 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
           const sibNote = sibling
             ? ` (${sibling.prepared === 'draft' ? 'A draft' : `${sibling.prepared}'s work`} is already on "${sibling.title.slice(0, 44)}" in Tasks.)`
             : '';
-          pushDealTurn(entityId, `Nothing's prepared on this yet — want me on it?${sibNote}`, {
+          pushDealTurn(entityId, `Nothing's prepared on "${subj}" yet — want me on it?${sibNote}`, {
             key,
             actions: [
               ...(sw && moveTitle ? [{ label: `Have ${sw.name.split(' ')[0]} prepare it`, act: 'say' as const, text: `Have ${sw.name.split(' ')[0]} ${moveTitle}` }] : []),
@@ -742,7 +746,35 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
   return (
     <RoomShell
       full
-      conversation={rail ? <ItemRail kind="entity" id={entityId} view={rail} /> : null}
+      conversation={rail ? (
+        <ItemRail kind="entity" id={entityId} view={rail}
+          // THE ROOM'S ARTIFACT CARDS (Aug 4): prepared work renders in the CARD grammar here too
+          // (it showed as bare text links while item rooms showed cards — same info, different
+          // clothes, felt like a different product). Derived from the board's own prepared state;
+          // Open focuses the item on the room's stage (one navigation).
+          artifacts={(() => {
+            const rows = [...(d?.board.todo ?? []), ...(d?.board.doing ?? []), ...(d?.board.waiting ?? [])].filter((r) => r.prepared);
+            return rows.slice(0, 3).map((r) => ({
+              key: `prep-${r.id}`,
+              label: `${r.prepared === 'draft' ? 'Draft ready' : 'Prepared'} — "${r.title.slice(0, 44)}"`,
+              by: r.prepared && r.prepared !== 'draft' ? r.prepared : null,
+              onOpen: () => openHref(r.href, false),
+            }));
+          })()}
+          // THE ONE-NAVIGATION LAW (Aug 4): a rail link inside the room opens IN the room — the
+          // same focus/summoned-stage opener the board rows use (openHref narrates + mounts the
+          // item on the stage). Page navigation only for non-item hrefs. One room, one navigation.
+          onOpenHref={(href) => {
+            const f = focusFromHref(href);
+            if (!f) return false;
+            openHref(href, true);
+            return true;
+          }}
+          // A chat stage verb ("forward this to X") focuses the item ON the room's stage — never
+          // a page navigation out of the room.
+          onStage={(_stage, itemId) => { openHref(`/item/${itemId}?kind=email`, false); return true; }}
+        />
+      ) : null}
       stage={<div className="flex-1 min-w-0 flex flex-col h-full min-h-0 overflow-hidden">
         {!e ? (
           <div className="p-6 space-y-3">{[0, 1, 2].map((i) => <div key={i} className="h-24 rounded-2xl bg-gradient-to-br from-neutral-100 to-neutral-50 animate-pulse" />)}</div>

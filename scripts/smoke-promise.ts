@@ -1207,8 +1207,12 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     check('P29 · ONE commit line per artifact (the rail card points — Open →; the stage composer holds the only Send)',
       src('components/home/item-rail.tsx').includes('ONE COMMIT LINE') &&
       !src('components/home/item-rail.tsx').includes('artifact.onCommit?.()'));
-    check('P29 · the Scape order on the stage (message → mounted work → commit; the composer is never buried below the thread\'s siblings)',
-      src('components/home/item-detail.tsx').includes('THE WORK, DIRECTLY BENEATH THE MESSAGE'));
+    // SUPERSEDED (Aug 4, the summoned stage + verb strip): the composer no longer docks in the
+    // scroll at all — the strip sits with the object, prepared work is a card, and the review
+    // surface is SUMMONED with the one Send. Nothing can be "buried below siblings" by construction.
+    check('P29 · the Scape order on the stage (verb strip with the object → message → cards; the composer is SUMMONED, never buried)',
+      src('components/home/item-detail.tsx').includes('THE VERB STRIP') &&
+      src('components/home/item-detail.tsx').includes('THE SUMMONED STAGE'));
     check('P29 · THE FRAME IS STRUCTURAL — the two-pane room mounts from frame one (rail always present, pending shell while loading; never a bare card that morphs) + the SEED HANDOFF (first paint carries the clicked row\'s own title/sender, never the placeholder word)',
       src('components/home/item-detail.tsx').includes('THE FRAME IS STRUCTURAL') &&
       (src('components/home/item-detail.tsx').match(/railView \?\? EMPTY_RAIL/g)?.length ?? 0) >= 4 &&
