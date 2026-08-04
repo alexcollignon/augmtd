@@ -111,6 +111,10 @@ export async function generateReplyDraft(
       `You are ${userName}. Write ${userName}'s reply to the email below (which was sent TO ${userName} ` +
       `by ${from}), in ${userName}'s voice. Address the sender, and sign as ${userName} — NEVER sign as ` +
       `the sender or adopt their name. ` +
+      // The voice exemplars are HTML-stripped and may have LOST line breaks (a signature run
+      // together like "Name CompanyRole" is a formatting artifact, not the user's style) — always
+      // format the sign-off block on separate lines (name / role or company / phone / links).
+      `Format the signature block on separate lines; never reproduce run-together artifacts from the examples. ` +
       `Return ONLY the reply body — no subject line, no preamble, no ` +
       `surrounding quotes. Keep it appropriately concise and ready to send.\n\n` +
       `--- EMAIL TO REPLY TO ---\n` +

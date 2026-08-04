@@ -60,7 +60,16 @@ Corollaries that decide edits:
 
 ## Standing build path (traces for the current arc)
 
-1. Ask supersession + artifact-level dedup → law 3.
-2. The living brief + folded history + pill removal (left panel) → laws 1, 2, 4, 5, 6, 7, 8.
-3. Right-pane tab split; next-move/watch-outs/debts move left → laws 1, and the seat table.
-4. Home ask-state chips on deck rows (queued) → Home's seat ("what does attention buy").
+1. Ask supersession + artifact-level dedup → law 3. *(shipped Aug 2)*
+2. The living brief + folded history + pill removal (left panel) → laws 1, 2, 4, 5, 6, 7, 8. *(shipped Aug 2)*
+3. Right-pane tab split; next-move/watch-outs/debts move left → laws 1, and the seat table. *(shipped Aug 2)*
+4. The room-door law — a project item opens its project room from every surface; deep-links survive
+   the middleware hop → the seat table. *(shipped Aug 3)*
+5. The one-voice brief on every door (authored, never assembled) + the summoned stage (the composer
+   raised by the user, one Send, right pane asks nothing) → laws 2, 4, 5, 7, and the stage seat.
+   *(shipped Aug 3 — email + follow-up; commitment/meeting overlays queued)*
+6. The conversational room — clicks are utterances: the verb strip on the stage (verbs only with
+   their object), the exchange grammar (offer → pick → acknowledge → land, reply as reference),
+   artifact cards at the stream's now edge, the excerpt-honesty law. *(shipped Aug 4 — exchange
+   generalization to invite/forward/decide queued)*
+7. Home ask-state chips on deck rows (queued) → Home's seat ("what does attention buy").

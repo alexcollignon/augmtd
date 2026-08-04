@@ -30,6 +30,10 @@ export interface PreparedCalendarInvite {
   attendees: string[];   // real emails evidenced in the item (never invented)
   description: string;
   timezone: string;      // IANA; defaults to UTC
+  /** THE PROPOSE TIER (Aug 4): the item stated a DAY/window but no clock time — this time is OUR
+   *  grounded PROPOSAL within the stated constraints (working hours, timezones), not the item's own
+   *  words. The card says so; the approve gate protects. Absent/false = the item stated the time. */
+  proposed?: boolean;
 }
 
 // A prepared FORWARD — the S5 send-type, mirroring the invite. The forwarded content is grounded in the
@@ -132,7 +136,10 @@ export async function prepareCalendarInvite(
   ctx: ItemContext,
   stepText: string,
 ): Promise<PreparedCalendarInvite> {
-  const timezone = 'UTC';
+  // THE USER'S CLOCK (Aug 4): "Thursday" resolves in the USER'S timezone, never UTC — and the
+  // weekday of the anchor is STATED to the model (never model-derived; the T-class law).
+  const { userTimezone, localNow } = await import('@/lib/utils/user-time');
+  const timezone = await userTimezone(supabase, userId).catch(() => 'UTC');
   // The real participant emails evidenced in the item — the ONLY attendees the invite may use.
   const knownEmails = ctx.participants
     .map((p) => (p.email || '').trim())
@@ -155,22 +162,31 @@ export async function prepareCalendarInvite(
     timezone,
   });
 
+  const anchorWeekday = new Date(anchorISO).toLocaleDateString('en-US', { weekday: 'long', timeZone: timezone });
+  const nowL = localNow(timezone);
   const prompt =
     `You are preparing a CALENDAR INVITE from an item the user wants to schedule. Extract the invite ` +
-    `details GROUNDED strictly in the context — NEVER invent a date, time, or attendee.\n\n` +
+    `details GROUNDED strictly in the context — NEVER invent a date or an attendee.\n\n` +
     `REFERENCE DATE (treat as "now" for resolving relative times like "tomorrow", "next Tuesday", ` +
-    `"this afternoon"): ${anchorISO}\n\n` +
+    `"this afternoon"): ${anchorISO} — a ${anchorWeekday} in the user's timezone (${timezone}). ` +
+    `Right now for the user it is ${nowL.pretty}. A named weekday ("Thursday") means the NEXT such ` +
+    `day at or after the reference date; the resulting datetime must be in the user's timezone.\n\n` +
     `KNOWN ATTENDEE EMAILS you may use (from the item — do NOT invent others): ` +
     `${knownEmails.length ? knownEmails.join(', ') : '(none evidenced)'}\n\n` +
     `RULES:\n` +
     `- "title": a short meeting title. If the context implies one, use it; else a sensible short title.\n` +
     `- "startISO"/"endISO": ISO 8601 datetimes. Resolve any relative time against the REFERENCE DATE. ` +
-    `If a time is given without a date, use the reference date's day. If NO time can be grounded at all, ` +
-    `return "" for BOTH — do NOT guess a time. Default the meeting to 30 minutes if only a start is given.\n` +
+    `If a time is given without a date, use the reference date's day. Default to 30 minutes if only a start is given.\n` +
+    `- THE PROPOSE TIER: when the item states a DAY or a window but NO clock time ("what does Thursday ` +
+    `look like?", "sometime next week mornings"), PROPOSE a sensible business-hours time on that day that ` +
+    `honors EVERY stated constraint (their working hours, their timezone offset, "my days start at 7:30am") ` +
+    `— overlap both sides' plausible working hours — and set "proposed": true. A proposal must sit INSIDE ` +
+    `the stated day/window; never propose when no day or window is stated at all — then return "" for both ` +
+    `("proposed" false) and the user sets it.\n` +
     `- "attendees": ONLY emails from the KNOWN list above that should be invited. If none apply, [].\n` +
     `- "description": one short line of agenda/purpose from the context, or "".\n\n` +
     `Return ONLY JSON:\n` +
-    `{"title":"...","startISO":"...or empty","endISO":"...or empty","attendees":["..."],"description":"..."}\n\n` +
+    `{"title":"...","startISO":"...or empty","endISO":"...or empty","proposed":true|false,"attendees":["..."],"description":"..."}\n\n` +
     `--- THE STEP THE USER WANTS DONE ---\n${(stepText || '').slice(0, 200)}\n\n` +
     `--- ITEM CONTEXT (${kind}) ---\n${(ctx.text || '').slice(0, 2500)}`;
 
@@ -207,7 +223,7 @@ export async function prepareCalendarInvite(
 
     const description = typeof obj.description === 'string' ? obj.description.trim().slice(0, 1000) : '';
 
-    return { type: 'calendar_invite', title: title.slice(0, 120), startISO, endISO, attendees, description, timezone };
+    return { type: 'calendar_invite', title: title.slice(0, 120), startISO, endISO, attendees, description, timezone, proposed: obj.proposed === true && !!startISO };
   } catch (e) {
     console.error('[prepare-action] prepareCalendarInvite failed:', e);
     return fallback();

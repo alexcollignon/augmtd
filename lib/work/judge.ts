@@ -21,6 +21,7 @@ import { computeThreadReplyState, type ThreadMessage } from '@/lib/inbox/thread-
 import { getPrepared, type PreparedArtifact } from '@/lib/prepare/read';
 import { loadRoster, type RosterEntry } from '@/lib/prepare/route-suggestion';
 import { userTimezone, localNow, timesInText, dateStatedInText } from '@/lib/utils/user-time';
+import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 import { COMPONENT_KEYS, gateOf, renderComponentOptions, componentForWork, JUDGE_VERSION, WORK_VERBS, type WorkComponentKey, type WorkGate, type WorkVerb } from '@/lib/work/surface-registry';
 
 export type WorkVerdict = {
@@ -190,7 +191,10 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       if (!it || it.status !== 'pending') return fallbackVerdict('no longer open');
       const sd = (it.source_data ?? {}) as Record<string, unknown>;
       title = String(it.work_title || sd.subject || '');
-      body = String(sd.body || '').slice(0, 1600);
+      // EXCERPT-HONESTY LAW (Aug 4): a hard character cut quoted as the sender's words made the
+      // judge read a normal email as "cut off mid-sentence" — clips end at boundaries and declare
+      // themselves; the prompt carries the rule that a marker is OUR clipping, never source truth.
+      body = clipForPrompt(String(sd.body || ''), 1200);
       who = (sd.from_name as string) || (sd.from_address as string) || null;
       whoEmail = (sd.from_address as string) || null;
       u = coerceUnderstanding(sd.understanding);
@@ -219,7 +223,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         if (newest.length && String(newest[newest.length - 1].received_at) > String(it.created_at)) {
           const { topMessageOf } = await import('@/lib/inbox/top-message');
           threadNow = newest.map((m) =>
-            `[${String(m.received_at).slice(0, 16)}] ${m.is_from_user ? 'THE USER' : String(m.from_name || m.from_address || 'them')}: "${topMessageOf(String(m.body || '')).replace(/\s+/g, ' ').slice(0, 400)}"`,
+            `[${String(m.received_at).slice(0, 16)}] ${m.is_from_user ? 'THE USER' : String(m.from_name || m.from_address || 'them')}: "${clipForPrompt(topMessageOf(String(m.body || '')).replace(/\s+/g, ' '), 400)}"`,
           ).join('\n');
         }
       }
@@ -323,9 +327,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       : '';
 
     // ── THE ONE REASONED CALL. ──
-    const res = await aiCall<Record<string, unknown>>({
-      userId, supabase: client, shape: { output: 'json' }, temperature: 0, maxTokens: 350, source: 'task_preparation',
-      prompt:
+    const judgePrompt =
         `You are the user's chief of staff judging ONE piece of work: what does DOING it take?\n\n` +
         askBlock +
         // The WEEKDAY and the CLOCK are stated, never derived — "by Thursday" / "tomorrow" / "at
@@ -334,8 +336,10 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         `RIGHT NOW for the user it is ${nowL.pretty} (${nowL.tz}); today's date is ${todayStr}. Times mentioned in items are in this zone unless they say otherwise. The item's last activity was ${activityAt.slice(0, 10) || 'unknown'}.\n\n` +
         dealBlock + personBlock + poolBlock +
         (u ? `UNDERSTANDING: relevance=${u.relevance} ownership=${u.ownership ?? '?'} kind=${u.mailKind ?? '?'}${u.ask ? ` ask="${u.ask}"` : ''}${u.deadline ? ` deadline=${u.deadline}` : ''}\n` : '') +
-        `THE ITEM${who ? ` (from ${who})` : ''}: ${title.slice(0, 140)}\n${body ? `${body.slice(0, 1200)}\n` : ''}` +
-        `${threadNow ? `\nWHERE THE THREAD STANDS NOW (newest last — judge THIS position, not the founding ask): \n${threadNow}\n` : ''}\n` +
+        `THE ITEM${who ? ` (from ${who})` : ''}: ${title.slice(0, 140)}\n${body ? `${body}\n` : ''}` +
+        `${threadNow ? `\nWHERE THE THREAD STANDS NOW (newest last — judge THIS position, not the founding ask): \n${threadNow}\n` : ''}` +
+        // EXCERPT-HONESTY (Aug 4): our own length-clips must never read as source truncation.
+        `${EXCERPT_RULE}\n\n` +
         `THE TEAM (for executor "coworker"):\n${roster.map((w) => `- ${w.name} — ${w.role.replace(/_/g, ' ')}: ${w.description}`).join('\n') || '(none)'}\n\n` +
         `COMPONENTS (pick exactly one — what the work surface should mount):\n${renderComponentOptions()}\n\n` +
         (prior ? `YOUR PRIOR JUDGMENT on this item: work=${prior.work}${prior.resolution ? ` resolution=${prior.resolution}` : ''}${prior.revisit ? ` revisit=${prior.revisit.after}` : ''} — "${prior.reason.slice(0, 120)}". BE CONSISTENT with it unless something in the item MATERIALLY changed since; do not flip an ambiguous call on a re-read.${prior.revisit && prior.revisit.after <= todayStr ? ' YOU SET THIS ASIDE until that date and THE DATE HAS ARRIVED — judge it fresh NOW as live work (the wait is over; do not re-park it without a NEW stated basis).' : ''}\n\n` : '') +
@@ -351,30 +355,58 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         `- executor: "coworker" (name one from THE TEAM — only when producing something is genuinely their craft) · "user" (replying, deciding, personal/admin) · "system" (an atomic mechanical act: send an existing file, book the stated invite).\n` +
         `- requires: for reply/send_file/produce ONLY — the concrete attachable artifacts this work must INCLUDE, each as a short noun phrase in the item's OWN words (an email asking for "the organizational report, the individual report and the allocation sheet" requires those 3). ONLY what the item explicitly asks for or the work objectively cannot go out without; a plain conversational reply requires []. Never invent.\n` +
         `- Respect the deal's rules; never invent people, files, or dates.\n\n` +
-        `JSON only: {"work":"…","component":"…","executor":{"kind":"coworker|user|system","name":"<team name if coworker>"},"options":[{"label":"…"}],"requires":[{"label":"…"}],"resolution":"expired|answered|null","expired_on":"YYYY-MM-DD (expired only — the stated date that passed)","expired_time":"HH:MM (only when it passed earlier TODAY — the stated clock time)","revisit":{"after":"YYYY-MM-DD","reason":"<why later>"}|null,"reason":"<one sentence>"}`,
-    });
-    const verdict = coerceVerdict(res.json, roster, { todayStr, nowHHMM: nowL.hhmm, itemText });
+        `JSON only: {"work":"…","component":"…","executor":{"kind":"coworker|user|system","name":"<team name if coworker>"},"options":[{"label":"…"}],"requires":[{"label":"…"}],"resolution":"expired|answered|null","expired_on":"YYYY-MM-DD (expired only — the stated date that passed)","expired_time":"HH:MM (only when it passed earlier TODAY — the stated clock time)","revisit":{"after":"YYYY-MM-DD","reason":"<why later>"}|null,"reason":"<one sentence>"}`;
+    const judgeOnce = async (extra = '') => {
+      const res = await aiCall<Record<string, unknown>>({
+        userId, supabase: client, shape: { output: 'json' }, temperature: 0, maxTokens: 350, source: 'task_preparation',
+        prompt: judgePrompt + extra,
+      });
+      return coerceVerdict(res.json, roster, { todayStr, nowHHMM: nowL.hhmm, itemText });
+    };
+    // The structural floors — applied to EVERY verdict (first pass and coherence retry alike).
+    const applyFloors = (v: NonNullable<ReturnType<typeof coerceVerdict>>) => {
+      // STRUCTURAL TIME FLOOR — the brain's own extracted deadline outranks the model's date
+      // arithmetic: a deadline that is TODAY or LATER can never be "expired" (the for-Friday
+      // misfire). Facts are structural; the disposition drops, nothing resolves, the item stays live.
+      if (v.resolution === 'expired' && u?.deadline && u.deadline >= todayStr) delete v.resolution;
+      // STRUCTURAL SENDER FLOOR — an automated sender's mailbox has NO READER: work can never be
+      // "reply" or "chase" (the failed-payments class). The item's ACTION visibility is untouched.
+      if (input.kind === 'inbox' && (v.work === 'reply' || v.work === 'chase')
+        && isAutomatedSenderStrong(whoEmail, who, title)) {
+        v.work = 'none'; v.component = 'message_only'; v.gate = null;
+        delete v.requires; delete v.options;
+        v.reason = `automated sender — a reply reaches no one; the action happens outside the mailbox. (${v.reason.slice(0, 110)})`;
+      }
+      return v;
+    };
+    // THE COHERENCE FLOOR (Aug 4 — the P18 class, promoted from "logged" to law): a plain none
+    // whose OWN REASON claims the window passed — with no code-verified expired_on surviving the
+    // floors — is an INCOHERENT verdict, not a judgment ("due tomorrow, but it is now past" stood
+    // as none and vanished live work). Deterministic check on the model's own words; one
+    // corrective retry; still incoherent → FAILED (never cached, never demotes — failure honesty).
+    const incoherentNone = (v: NonNullable<ReturnType<typeof coerceVerdict>>) =>
+      v.work === 'none' && !v.resolution && !v.revisit &&
+      !v.reason.startsWith('automated sender') &&
+      /(?:\bis\b|\bnow\b|\balready\b|\bhas\b)[^.]{0,20}\b(?:past|passed|expired)\b|\bwindow (?:has )?(?:passed|closed)\b|\bno longer (?:relevant|actionable|needed|possible)\b|\btoo late\b/i.test(v.reason);
+
+    let verdict = await judgeOnce();
     // FAILURE HONESTY (W2): an unusable/absent model reply is a FAILED judgment, not a judged none.
     // It is never cached (caching it made an AI hiccup a confident day-long "nothing to do" — and the
     // deck's judgedNoneIds then demoted live work on an outage). The next open simply retries.
     if (!verdict) return { ...fallbackVerdict('could not judge this yet — it will retry'), failed: true };
-    // STRUCTURAL TIME FLOOR — the brain's own extracted deadline outranks the model's date
-    // arithmetic: a deadline that is TODAY or LATER can never be "expired" (the for-Friday misfire:
-    // a weaker model computed a future weekday as past and auto-dismissed live work). Facts are
-    // structural; the disposition drops, nothing resolves, the item stays live.
-    if (verdict.resolution === 'expired' && u?.deadline && u.deadline >= todayStr) {
-      delete verdict.resolution;
-    }
-    // STRUCTURAL SENDER FLOOR — an automated sender's mailbox has NO READER: work can never be
-    // "reply" or "chase" (the failed-payments class: a dunning notice judged reply and drafted a
-    // letter to a robot). The item's ACTION visibility is untouched — the deck routes a you_owe
-    // notice via the notice law (classifyItem), and the demotion set excludes it; the floor only
-    // forbids the email-shaped verbs nobody would receive.
-    if (input.kind === 'inbox' && (verdict.work === 'reply' || verdict.work === 'chase')
-      && isAutomatedSenderStrong(whoEmail, who, title)) {
-      verdict.work = 'none'; verdict.component = 'message_only'; verdict.gate = null;
-      delete verdict.requires; delete verdict.options;
-      verdict.reason = `automated sender — a reply reaches no one; the action happens outside the mailbox. (${verdict.reason.slice(0, 110)})`;
+    verdict = applyFloors(verdict);
+    if (incoherentNone(verdict)) {
+      const retry = await judgeOnce(
+        `\n\nYOUR PREVIOUS VERDICT WAS INCOHERENT: its reason claimed the window/deadline had passed, ` +
+        `but no date stated in the item verifies that (deadlines resolve FORWARD from the item's own ` +
+        `date — "by tomorrow"/"by ${todayStr}" or later is FUTURE, never past). Re-judge: if the work ` +
+        `is live, name it (reply/send_file/produce with its requires); "none" is lawful only with a ` +
+        `verifiable expired_on or a reason that says nothing is owed by anyone.`);
+      const rv = retry ? applyFloors(retry) : null;
+      if (!rv || incoherentNone(rv)) {
+        return { ...fallbackVerdict('incoherent verdict (claimed a passed window with no verifiable date) — it will retry'), failed: true };
+      }
+      verdict = rv;
     }
     await writeCache(client, userId, input, sig, verdict);
     return verdict;

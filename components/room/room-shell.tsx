@@ -23,7 +23,8 @@ export function RoomShell({ conversation, stage, full = false }: {
       <section className="hidden lg:flex flex-1 min-w-0 flex-col h-full min-h-0">
         {conversation ?? <div className="flex-1 rounded-2xl bg-white shadow-sm animate-pulse" />}
       </section>
-      <aside className="flex flex-1 lg:flex-none lg:w-[52%] lg:min-w-[460px] lg:max-w-[760px] min-w-0 flex-col h-full min-h-0 rounded-2xl bg-white shadow-sm overflow-hidden">
+      {/* relative: the SUMMONED STAGE (draft review overlay) positions against this pane. */}
+      <aside className="relative flex flex-1 lg:flex-none lg:w-[52%] lg:min-w-[460px] lg:max-w-[760px] min-w-0 flex-col h-full min-h-0 rounded-2xl bg-white shadow-sm overflow-hidden">
         {stage}
       </aside>
     </div>

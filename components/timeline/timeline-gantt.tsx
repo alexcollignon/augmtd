@@ -92,7 +92,7 @@ export default function TimelineGantt({ onDetailChange }: { onDetailChange?: (op
           // ACTIONABLE empty state — advice alone is a dead end; creation is one tap away.
           <div className="py-10 text-center">
             <p className="text-[13px] text-neutral-400">No projects yet — track one to get its lane here.</p>
-            <Link href="/?view=projects" className="mt-3 inline-flex items-center rounded-lg bg-indigo-600 hover:bg-indigo-700 px-3.5 py-1.5 text-[12.5px] font-medium text-white transition-colors">
+            <Link href="/home?view=projects" className="mt-3 inline-flex items-center rounded-lg bg-indigo-600 hover:bg-indigo-700 px-3.5 py-1.5 text-[12.5px] font-medium text-white transition-colors">
               Start a project →
             </Link>
           </div>

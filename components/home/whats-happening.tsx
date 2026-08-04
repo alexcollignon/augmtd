@@ -72,7 +72,7 @@ export default function WhatsHappening() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => it.projectId ? router.push(`/?view=projects&project=${it.projectId}`) : setExpanded((s) => { const n = new Set(s); n.has(it.key) ? n.delete(it.key) : n.add(it.key); return n; })}
+                      onClick={() => it.projectId ? router.push(`/home?view=projects&project=${it.projectId}`) : setExpanded((s) => { const n = new Set(s); n.has(it.key) ? n.delete(it.key) : n.add(it.key); return n; })}
                       className="text-[13.5px] font-semibold text-neutral-900 truncate hover:text-indigo-600 text-left min-w-0"
                     >
                       {it.label}

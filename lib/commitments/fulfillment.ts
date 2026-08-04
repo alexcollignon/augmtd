@@ -21,10 +21,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { dateStatedInText } from '@/lib/utils/user-time';
 import { topMessageOf } from '@/lib/inbox/top-message';
+import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 
 // Bump on ANY change to the judging prompt/facts/scoping — a cached verdict from an older law
 // must never satisfy the current one (the prompt-version-in-cache-sig law, learned twice now).
-export const FULFILLMENT_LAW_VERSION = 2;
+export const FULFILLMENT_LAW_VERSION = 3; // 3: excerpt-honesty (clips declare themselves; a marker is never source truncation)
 
 export type FulfillmentVerdict = {
   verdict: 'delivered' | 'promised' | 'unclear';
@@ -48,7 +49,8 @@ export async function judgeCommitmentFulfillment(
   const todayStr = new Date().toISOString().slice(0, 10);
   // THE TOP MESSAGE: judge only the sender's OWN words — the quoted reply-chain underneath is
   // history, and a delivery mail quoting last week's promise must never be judged as the promise.
-  const body = topMessageOf(String(message.body ?? '')).replace(/\s+/g, ' ').slice(0, 1800);
+  // EXCERPT-HONESTY (Aug 4): the clip declares itself; the prompt rules it out as source truth.
+  const body = clipForPrompt(topMessageOf(String(message.body ?? '')).replace(/\s+/g, ' '), 1800);
   if (!body.trim()) return { verdict: 'unclear', reason: 'no message text to judge' };
   // Cache per (commitment, candidate message) — the sweep re-nominates the same candidate every
   // pass; a non-delivered verdict must not re-burn AI every 2h. A NEW candidate message re-judges.
@@ -73,6 +75,7 @@ export async function judgeCommitmentFulfillment(
         // TRUE FACTS OR NO FACTS: a count the code cannot verify is passed as UNKNOWN, never as a
         // confident zero (sent-mail metadata may predate attachment capture).
         `FACT: ${typeof message.attachmentCount === 'number' ? `the message carries ${message.attachmentCount} attachment(s)` : 'the attachment count is UNKNOWN (metadata unavailable — do not treat as zero; judge from the words)'} . Today is ${todayStr}.\n` +
+        `${EXCERPT_RULE}\n` +
         `The law: "delivered" ONLY if the thing owed is actually handed over in/with this message — ` +
         `the substantive answer given, the document attached or linked, the action stated as ALREADY done. ` +
         `If what is owed IS a response/answer and this message substantively responds, that is delivered. ` +

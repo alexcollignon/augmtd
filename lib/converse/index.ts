@@ -9,9 +9,12 @@
 //     CHIEF-OF-STAFF exposure slice of the capability registry (lib/home/capability-map.ts
 //     `capabilitiesFor('chief_of_staff')`) — it composes, reasons, and calls tools mid-answer.
 //
-// SAFETY IS STRUCTURAL: the chief-of-staff slice contains ONLY reversible tools (resolve/find/
-// remember). No send executor exists in this module or its toolset — sending stays with the user's
-// explicit approve on the existing surfaces. Reversible acts are undoable via /api/restore.
+// SAFETY IS STRUCTURAL: the chief-of-staff slice holds reversible tools (resolve/find/remember)
+// plus — THE PARITY LAW (Aug 4: every UI verb must be sayable) — exactly ONE send-shaped tool:
+// send_prepared_reply. It never sends from here; it returns a `commit` the CLIENT fires through
+// the one existing send door (route + hash guard + outcome log), and only behind a DETERMINISTIC
+// explicit-send floor on the user's own words. prepare_forward prepares and points at the stage;
+// the approve click stays the commit. Reversible acts are undoable via /api/restore.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -35,6 +38,18 @@ const searchKnowledgeDefinition = {
   input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
 };
 
+// THE PARITY LAW (Aug 4) — the two send-shaped verbs, sayable like every other verb.
+const sendPreparedReplyDefinition = {
+  name: 'send_prepared_reply',
+  description: 'Send the ALREADY-DRAFTED reply on the current item. Use ONLY when the user explicitly says to send ("send it", "envia"). Never to create a draft.',
+  input_schema: { type: 'object', properties: {}, required: [] },
+};
+const prepareForwardDefinition = {
+  name: 'prepare_forward',
+  description: 'Prepare forwarding the current email to someone for the user to review & approve. Never sends by itself.',
+  input_schema: { type: 'object', properties: { to: { type: 'string', description: 'recipient, when the user names one' } }, required: [] },
+};
+
 export type ConverseScope =
   | { kind: 'item'; itemKind: 'email' | 'followup' | 'commitment' | 'meeting' | 'awareness'; itemId: string }
   | { kind: 'entity'; entityId: string }
@@ -53,6 +68,11 @@ export type ConverseTurn = {
   learned?: string[];
   entityName?: string | null;
   delegated?: { agentName: string } | null;
+  /** THE PARITY LAW (Aug 4): a chat-approved send — the CLIENT fires this through the one send
+   *  door (/api/inbox/[id]/send-reply). Emitted ONLY behind the explicit-send floor. */
+  commit?: { kind: 'send_reply'; itemId: string; body: string } | null;
+  /** A verb whose review lives on a stage — the client summons it (forward/invite/reply). */
+  openStage?: { stage: 'forward' | 'invite' | 'reply'; itemId: string } | null;
 };
 
 const linkKindOf = (s: Extract<ConverseScope, { kind: 'item' }>): 'inbox_item' | 'commitment' | 'meeting' =>
@@ -183,7 +203,8 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
     `{"project_name":"Acme"}; "put the Acme invoice email into Admin" → move_item_to_project ` +
     `{"project_name":"Admin","item_description":"Acme invoice"}; "start a project called Acme Pilot ` +
     `from this" → create_project {"name":"Acme Pilot"}; "add a task: chase the signed NDA by Friday" → ` +
-    `create_task_item {"text":"Chase the signed NDA","due_date":"<that Friday>"}). Ambiguous / multi-step → null.\n` +
+    `create_task_item {"text":"Chase the signed NDA","due_date":"<that Friday>"}; "send it" / "send the reply" → ` +
+    `send_prepared_reply {}; "forward this to Rita" → prepare_forward {"to":"Rita"}). Ambiguous / multi-step → null.\n` +
     `- "question" = the note primarily ASKS (status/info/advice). A correction/instruction is NOT a question.\n` +
     `- "facts" = durable constraints/preferences/numbers to remember; a one-off phrasing tweak is NOT one.\n` +
     `- "delegate" ONLY when a named coworker/assistant is explicitly asked.\n` +
@@ -205,14 +226,81 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
   } catch { return { command: null, question: false, facts: [], delegate: null, open: true }; }
 }
 
+// THE EXPLICIT-SEND FLOOR (deterministic, Aug 4): chat may fire the send door ONLY when the user's
+// OWN words contain a send verb — a model mis-map must never mail anything. EN/PT/DE/ES forms.
+const EXPLICIT_SEND = /\b(send|ship|fire (it|off)|envi[ae]\w*|manda\w*|schick\w*|verschick\w*)\b/i;
+
+// The send/forward target: the open item, or — in an ENTITY room — the deal's single drafted
+// pending email (two+ candidates → name them, never guess).
+async function sendTargetOf(
+  client: SupabaseClient, userId: string, scope: ConverseScope,
+): Promise<{ itemId: string; draftBody: string } | { ambiguous: string[] } | null> {
+  if (scope.kind === 'item') {
+    if (linkKindOf(scope) !== 'inbox_item') return null;
+    const { data: it } = await client.from('inbox_items').select('id, source_data')
+      .eq('id', scope.itemId).eq('user_id', userId).maybeSingle();
+    const body = String(((it?.source_data as Record<string, unknown> | undefined)?.draft as { body?: string } | undefined)?.body ?? '').trim();
+    return body ? { itemId: scope.itemId, draftBody: body } : null;
+  }
+  if (scope.kind !== 'entity') return null;
+  const { data: links } = await client.from('entity_links').select('item_id')
+    .eq('user_id', userId).eq('entity_id', scope.entityId).eq('item_kind', 'inbox_item').limit(60);
+  const ids = (links ?? []).map((l) => l.item_id as string);
+  if (!ids.length) return null;
+  const { data: items } = await client.from('inbox_items').select('id, work_title, source_data, status')
+    .in('id', ids).eq('user_id', userId).eq('status', 'pending');
+  const drafted = ((items ?? []) as Array<Record<string, unknown>>)
+    .map((it) => ({ id: String(it.id), title: String(it.work_title ?? ''), body: String(((it.source_data as Record<string, unknown>)?.draft as { body?: string } | undefined)?.body ?? '').trim() }))
+    .filter((x) => x.body);
+  if (drafted.length === 1) return { itemId: drafted[0].id, draftBody: drafted[0].body };
+  if (drafted.length > 1) return { ambiguous: drafted.map((d) => d.title || d.id).slice(0, 4) };
+  return null;
+}
+
 // ── Registry dispatch — the ONE place a chat command becomes an execution. Only the chief-of-staff
 // slice is reachable; an unknown/unexposed tool is refused (exposure is enforced here, structurally).
 async function dispatchCommand(
   client: SupabaseClient, userId: string, scope: ConverseScope, tool: string, args: Record<string, unknown>,
+  userText = '',
 ): Promise<ConverseTurn | null> {
   const allowed = new Set(capabilitiesFor('chief_of_staff').map((c) => c.tool));
   if (!allowed.has(tool)) return null;
   const ctx = { client, userId };
+  // ── THE PARITY LAW verbs (Aug 4) ──
+  if (tool === 'send_prepared_reply') {
+    // The floor: no explicit send word in the user's OWN text → never fire; offer the confirm.
+    if (!EXPLICIT_SEND.test(userText)) {
+      return { say: 'Say "send it" and it goes — or tell me what to change first.', refs: [] };
+    }
+    const target = await sendTargetOf(client, userId, scope);
+    if (!target) return { say: "Nothing is drafted here yet — tell me the angle and I'll draft it first.", refs: [] };
+    if ('ambiguous' in target) return { say: `More than one draft is ready — which one: ${target.ambiguous.join(' · ')}?`, refs: [] };
+    // The CLIENT fires the one send door (route + exactly-once hash + outcome log) with this body.
+    return { say: 'Sending it now…', refs: [], commit: { kind: 'send_reply', itemId: target.itemId, body: target.draftBody } };
+  }
+  if (tool === 'prepare_forward') {
+    if (scope.kind === 'item' && linkKindOf(scope) === 'inbox_item') {
+      const to = String(args.to ?? '').trim();
+      return {
+        say: `Opening the forward for review${to ? ` — add ${to} if it isn't already on it` : ''}. Approve there and it goes.`,
+        refs: [], openStage: { stage: 'forward', itemId: scope.itemId },
+      };
+    }
+    if (scope.kind === 'entity') {
+      // In the deal room: point at the single candidate email's stage (the word is the deed).
+      const { data: links } = await client.from('entity_links').select('item_id')
+        .eq('user_id', userId).eq('entity_id', scope.entityId).eq('item_kind', 'inbox_item').limit(60);
+      const ids = (links ?? []).map((l) => l.item_id as string);
+      const { data: items } = ids.length
+        ? await client.from('inbox_items').select('id, work_title').in('id', ids).eq('user_id', userId).eq('status', 'pending').order('last_activity_at', { ascending: false, nullsFirst: false }).limit(2)
+        : { data: [] };
+      const rows = (items ?? []) as Array<{ id: string; work_title: string | null }>;
+      if (rows.length === 1) return { say: 'Opening the forward for review — approve there and it goes.', refs: [], openStage: { stage: 'forward', itemId: rows[0].id } };
+      if (rows.length > 1) return { say: `Which email should I forward: ${rows.map((r) => `"${String(r.work_title ?? '').slice(0, 50)}"`).join(' · ')}?`, refs: [] };
+      return { say: 'No open email on this project to forward.', refs: [] };
+    }
+    return null;
+  }
   if (tool === 'resolve_inbox_item' && scope.kind === 'item' && linkKindOf(scope) === 'inbox_item') {
     const resolution = args.resolution === 'complete' ? 'complete' as const : 'dismiss' as const;
     const r = await executeResolveInboxItem(ctx, { itemId: scope.itemId, resolution, reason: (args.reason as string) ?? null });
@@ -319,7 +407,7 @@ async function dispatchCommand(
 }
 
 // ── The bounded AGENT LOOP (the 20%) — function-calling over the chief-of-staff toolset. ──
-const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition];
+const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, prepareForwardDefinition];
 
 async function agentLoop(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string, grounding: string,
@@ -332,8 +420,10 @@ async function agentLoop(
   const messages: any[] = [
     { role: 'system', content:
       `You are the user's chief of staff inside their work platform. You hold a SMALL set of reversible tools ` +
-      `(resolving items, finding files, remembering facts) — use them when the user asks; you can NEVER send ` +
-      `anything (drafts are sent only by the user's explicit approve elsewhere). Ground every claim in the ` +
+      `(resolving items, finding files, remembering facts) — use them when the user asks. You never CREATE ` +
+      `and send anything in one motion: send_prepared_reply fires ONLY the already-drafted reply and ONLY when ` +
+      `the user's own words explicitly say send; prepare_forward only prepares (the approve stays with the user). ` +
+      `Ground every claim in the ` +
       `CONTEXT below; when it doesn't cover something, say so plainly. PLAIN PROSE, no markdown, 1-4 sentences.\n\n` +
       `--- CONTEXT ---\n${grounding.slice(0, 4000)}` },
     { role: 'user', content: text },
@@ -348,9 +438,11 @@ async function agentLoop(
     for (const call of calls) {
       let args: Record<string, unknown> = {};
       try { args = JSON.parse(call.function.arguments || '{}'); } catch { /* empty */ }
-      const out = await dispatchCommand(client, userId, scope, call.function.name, args);
+      const out = await dispatchCommand(client, userId, scope, call.function.name, args, text);
       if (out?.applied) applied.push(...out.applied);
       if (out?.files) files.push(...out.files);
+      // A commit/stage signal ends the loop — the client owns the next step (the send door / the stage).
+      if (out?.commit || out?.openStage) return { ...out, applied: applied.length ? applied : out.applied };
       messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(out ?? { error: 'tool unavailable in this context' }).slice(0, 1500) });
     }
   }
@@ -459,7 +551,7 @@ export async function converse(
 
   // 1 — COMMAND fast-path: direct registry dispatch (~1 extra small call total).
   if (verdict.command) {
-    const out = await dispatchCommand(client, userId, scope, verdict.command.tool, verdict.command.args);
+    const out = await dispatchCommand(client, userId, scope, verdict.command.tool, verdict.command.args, text);
     if (out) return out;
   }
 

@@ -11,7 +11,6 @@ import {
   ClockIcon,
   PaperAirplaneIcon,
   PaperClipIcon,
-  ChevronDownIcon,
   XMarkIcon,
   ArrowUturnRightIcon,
   ArrowUturnLeftIcon,
@@ -147,16 +146,19 @@ function useReplyAttachments() {
     });
   }, []);
 
-  const onKbSelect = useCallback(async (selected: { id: string; filename: string }[]) => {
+  // opts.silent — a BACKGROUND auto-attach (the prepared artifact's file) must fail quietly: a red
+  // "Could not load X" the user never caused was painting inside the composer (found live, Aug 3).
+  // The user-invoked picker keeps the loud error (they acted; they deserve the answer).
+  const onKbSelect = useCallback(async (selected: { id: string; filename: string }[], opts?: { silent?: boolean }) => {
     setKbPickerOpen(false);
     setAttachErr(null);
     const results = await Promise.all(selected.map(async ({ id, filename }) => {
       try {
         const res = await fetch(`/api/kb/attachment?fileId=${id}`);
-        if (!res.ok) { setAttachErr(`Could not load ${filename}.`); return null; }
+        if (!res.ok) { if (!opts?.silent) setAttachErr(`Could not load ${filename}.`); return null; }
         return await res.json() as PendingAttachment;
       } catch {
-        setAttachErr(`Could not load ${filename}.`);
+        if (!opts?.silent) setAttachErr(`Could not load ${filename}.`);
         return null;
       }
     }));
@@ -428,6 +430,8 @@ type PreparedInvite = {
   attendees: string[];
   description: string;
   timezone: string;
+  /** The time is OUR grounded proposal within the item's stated day/window (not its own words). */
+  proposed?: boolean;
 };
 
 // The editable invite chips (attendees) — add via a small input, remove via ✕. Never invents.
@@ -481,6 +485,7 @@ function InvitePreviewCard({ kind, entityId, taskId, verdictLevel, onSent, onCan
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [proposed, setProposed] = useState(false); // truth label: the time is OUR proposal
 
   // Pre-fill from the grounded extractor (NO side effects — prepare never sends).
   useEffect(() => {
@@ -501,6 +506,7 @@ function InvitePreviewCard({ kind, entityId, taskId, verdictLevel, onSent, onCan
           setAttendees(Array.isArray(inv.attendees) ? inv.attendees : []);
           setDescription(inv.description || '');
           setTimezone(inv.timezone || 'UTC');
+          setProposed(inv.proposed === true);
         }
       })
       .catch(() => { if (alive) setErr('Could not prepare the invite — fill it in below.'); })
@@ -568,6 +574,13 @@ function InvitePreviewCard({ kind, entityId, taskId, verdictLevel, onSent, onCan
         <div className="p-4"><div className="h-40 rounded-lg bg-neutral-100 animate-pulse" /></div>
       ) : (
         <div className="p-4 space-y-3">
+          {/* TRUTH BEFORE PRESENTATION: a proposed time says so; a missing time is asked for plainly. */}
+          {proposed && startISO && (
+            <p className="text-[12px] text-neutral-500">The time is a proposal within what they suggested — adjust if it doesn&apos;t work.</p>
+          )}
+          {!startISO && (
+            <p className="text-[12px] text-amber-700">No time was stated — pick one below before it can send.</p>
+          )}
           <div>
             <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Title</label>
             <input
@@ -848,16 +861,35 @@ function ActionBar({ primaryLabel, primaryActive, onPrimary, children }: { prima
 // like a colleague (chips, one composer — never steps, never per-step buttons). No rail → one
 // centered column. The plan engine stays invisible substrate either way.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE SUMMONED STAGE's one frame (Aug 4 — the prepared-action grammar): every stage — reply,
+// follow-up, invite, forward — raises in this same overlay over the truth pane. Title row + ✕,
+// scrollable body. The host stays mounted beneath; ✕ lowers it without losing state.
+function StageOverlay({ title, onClose, children }: { title: React.ReactNode; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div className="absolute inset-0 z-20 bg-white flex flex-col">
+      <div className="flex items-center gap-2 px-7 py-3.5 border-b border-neutral-100 flex-shrink-0">
+        <h2 className="text-[13px] font-semibold text-neutral-800">{title}</h2>
+        <button
+          onClick={onClose}
+          className="ml-auto p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors"
+          title="Back (your changes are kept)"
+        ><XMarkIcon className="w-4 h-4" /></button>
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto px-7 py-5">{children}</div>
+    </div>
+  );
+}
+
 function DeepDiveShell({ children, rail, embedded = false }: { children: React.ReactNode; rail?: React.ReactNode; embedded?: boolean }) {
   // EMBEDDED (Phase 4 R2 — the one shell): the ROOM provides the outer shell + THE rail; the artifact
   // renders bare inside the room's main card. One shell, the conversation persists.
   if (embedded) {
-    return <div className="flex-1 min-h-0 flex flex-col overflow-hidden">{children}</div>;
+    return <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">{children}</div>;
   }
   if (!rail) {
     return (
       <div className="w-full h-full min-h-0 bg-neutral-50 p-2 flex flex-col">
-        <div className="flex-1 min-h-0 mx-auto w-full max-w-5xl flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
+        <div className="relative flex-1 min-h-0 mx-auto w-full max-w-5xl flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
           {children}
         </div>
       </div>
@@ -886,6 +918,11 @@ type ItemViewData = {
   // The rail payload — the entity's judged state + everything else living on the deal.
   entity: RailView['entity'];
   siblings: RailView['siblings'];
+  brief?: string | null;
+  /** Truth for the invite card label: false = an ambient invite exists but has NO grounded time. */
+  inviteHasTime?: boolean | null;
+  /** The verb-scope law: 'meeting' = a meeting-extracted action item (no thread — no Reply). */
+  itemSource?: string | null;
 };
 
 function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'awareness', id: string): { view: ItemViewData | null; refresh: () => void } {
@@ -1102,6 +1139,12 @@ const EMAIL_BADGE: Record<NonNullable<ThreadData['type']>, { label: string }> = 
 // ONE action bar (just-works P1): Reply · Dismiss ▾ · Forward. Dismiss carries its two resolution
 // nuances (already handled / no longer relevant) in a small menu, so the bar never grows past three
 // controls — the five-button palette died here. Send lives in the composer, never duplicated.
+// THE VERB STRIP (Aug 4 — the verb-scope law): every object's verbs render as ONE compact
+// icon+word strip ATTACHED to the object on its stage — identical for loose items and items
+// focused inside a project room. Clicking a verb SPEAKS on the left (the exchange / a narrated
+// event); the right pane holds the object and its verbs, nothing else. Verbs derive from the
+// OBJECT KIND (the census law: a meeting-extracted action item has no thread — Reply must be
+// structurally impossible on it; grounded in the registry's chief slice, same as the chat).
 function EmailActionPalette({
   relevance,
   composerOpen,
@@ -1112,6 +1155,7 @@ function EmailActionPalette({
   onDismissWithNote,
   onForward,
   dismissing,
+  objectKind = 'email_thread',
 }: {
   relevance: 'reply' | 'action' | 'awareness' | null;
   composerOpen: boolean;
@@ -1123,7 +1167,14 @@ function EmailActionPalette({
   onDismissWithNote: (note: string) => void;
   onForward: () => void;
   dismissing: boolean;
+  /** The object on stage: an email thread gets Reply/Forward; a meeting-extracted action item has
+   *  NO thread — it gets Done/Dismiss only (the 81-items trap from the census). */
+  objectKind?: 'email_thread' | 'meeting_action';
 }) {
+  // QUIET DISPOSITIONS (Aug 4, law 7 refined): the verbs are must-haves but not peers of the
+  // prepared work — the artifact card above is the one primary; these are small text links (the
+  // word is the deed, no bordered button field). The judged lead gets an indigo accent only.
+  // The dismiss variants (already handled / no longer relevant / with a note) fold behind ⋯.
   const [menuOpen, setMenuOpen] = useState(false);
   const [noting, setNoting] = useState(false);
   const [note, setNote] = useState('');
@@ -1134,41 +1185,36 @@ function EmailActionPalette({
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, [menuOpen]);
-  // The lead action is accented (indigo). On awareness the lead is Dismiss; otherwise Reply. Reply is
-  // suppressed as the lead only when the composer is already open (nothing to reveal).
-  const dismissIsLead = relevance === 'awareness';
-  const btn = (accent: boolean) =>
-    accent
-      ? 'inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 text-white px-3.5 py-1.5 text-[12.5px] font-medium hover:bg-indigo-700 transition-colors'
-      : 'inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white text-neutral-600 px-3 py-1.5 text-[12.5px] font-medium hover:bg-neutral-50 hover:text-neutral-800 transition-colors';
+  const dismissIsLead = relevance === 'awareness' || objectKind === 'meeting_action';
+  const link = (accent: boolean) => accent
+    ? 'inline-flex items-center gap-1 text-[12.5px] font-semibold text-indigo-600 hover:text-indigo-700 transition-colors'
+    : 'inline-flex items-center gap-1 text-[12.5px] font-medium text-neutral-500 hover:text-indigo-600 transition-colors';
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <button
-        onClick={onReply}
-        className={btn(!dismissIsLead && !composerOpen)}
-        title="Write a reply"
-      >
-        <ArrowUturnLeftIcon className="w-3.5 h-3.5" />Reply
+    <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1">
+      {/* Thread verbs ONLY on a thread — a meeting-extracted action item cannot Reply/Forward. */}
+      {objectKind === 'email_thread' && (
+        <button onClick={onReply} className={link(!dismissIsLead && !composerOpen)} title="Write a reply">
+          <ArrowUturnLeftIcon className="w-3.5 h-3.5" />Reply
+        </button>
+      )}
+      {objectKind === 'meeting_action' && (
+        <button onClick={onDone} disabled={dismissing} className={link(true)} title="Mark this action item done">
+          <CheckIcon className="w-3.5 h-3.5" />Done
+        </button>
+      )}
+      <button onClick={onDismiss} disabled={dismissing} className={link(dismissIsLead && objectKind === 'email_thread')} title="Acknowledge and clear this from your Home">
+        <CheckCircleIcon className="w-3.5 h-3.5" />{dismissing ? 'Dismissing…' : 'Dismiss'}
       </button>
+      {objectKind === 'email_thread' && (
+        <button onClick={onForward} className={link(false)} title="Forward this email">
+          <ArrowUturnRightIcon className="w-3.5 h-3.5" />Forward
+        </button>
+      )}
       <div ref={menuRef} className="relative inline-flex">
-        <button
-          onClick={onDismiss}
-          disabled={dismissing}
-          className={`${btn(dismissIsLead)} rounded-r-none`}
-          title="Acknowledge and clear this from your Home"
-        >
-          <CheckCircleIcon className="w-3.5 h-3.5" />{dismissing ? 'Dismissing…' : 'Dismiss'}
-        </button>
-        <button
-          onClick={() => setMenuOpen((v) => !v)}
-          disabled={dismissing}
-          className={`${btn(dismissIsLead)} rounded-l-none border-l-0 px-1.5`}
-          title="More ways to resolve"
-        >
-          <ChevronDownIcon className="w-3 h-3" />
-        </button>
+        {/* Worded, never a bare glyph — a lone "⋯" read as an error (found live, Aug 4). */}
+        <button onClick={() => setMenuOpen((v) => !v)} disabled={dismissing} className={link(false)} title="More ways to resolve">More ⌄</button>
         {menuOpen && (
-          <div className="absolute left-0 top-full mt-1 z-20 w-44 rounded-lg border border-neutral-200 bg-white shadow-sm py-1">
+          <div className="absolute left-0 top-full mt-1 z-20 w-52 rounded-lg border border-neutral-200 bg-white shadow-sm py-1">
             <button
               onClick={() => { setMenuOpen(false); onDone(); }}
               className="w-full text-left px-3 py-1.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50"
@@ -1206,9 +1252,75 @@ function EmailActionPalette({
           </div>
         )}
       </div>
-      <button onClick={onForward} className={btn(false)} title="Forward this email">
-        <ArrowUturnRightIcon className="w-3.5 h-3.5" />Forward
-      </button>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// REPLY DIRECTIONS (Aug 4 — options are offers, never walls): 2–3 REASONED directions for this
+// reply, grounded in the judged ask (never generic smart-replies), each one tap → the draft is
+// rewritten in that direction through the one steer path. The LAST option is always open — "tell
+// me the angle…" — the same law as asks-never-block: the system proposes, the user can always
+// speak instead. Served cached (/api/items/reply-directions); chips appear async, editor typable
+// throughout.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+function ReplyDirections({ kind, id, onDraft }: { kind: 'email' | 'followup'; id: string; onDraft: (d: string) => void }) {
+  const [dirs, setDirs] = useState<Array<{ label: string; instruction: string }> | null>(null);
+  const [busyIdx, setBusyIdx] = useState<number | null>(null); // which chip is redrafting
+  const [open, setOpen] = useState(false);   // the open "tell me the angle" input
+  const [angleText, setAngleText] = useState('');
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/items/reply-directions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, id }),
+    }).then((r) => (r.ok ? r.json() : null)).then((d) => {
+      if (alive && Array.isArray(d?.directions)) setDirs(d.directions.slice(0, 3));
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [kind, id]);
+
+  const steer = async (instruction: string, idx: number) => {
+    if (busyIdx !== null) return;
+    setBusyIdx(idx);
+    try {
+      const res = await fetch('/api/items/steer', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, id, text: instruction }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.draft) onDraft(d.draft);
+    } catch { /* the editor stays as-is — nothing lost */ } finally { setBusyIdx(null); }
+  };
+
+  if (!dirs?.length) return null; // grounded-or-absent: no invented directions, no skeleton
+  const chip = 'rounded-full border border-neutral-200 bg-white px-3 py-1 text-[12.5px] font-medium text-neutral-600 hover:border-indigo-300 hover:text-indigo-600 transition-colors disabled:opacity-50';
+  return (
+    <div className="mb-3">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {dirs.map((d, i) => (
+          <button key={i} onClick={() => steer(`Redraft the reply to take this direction: ${d.instruction}`, i)}
+            disabled={busyIdx !== null} className={chip} title={d.instruction}>
+            {busyIdx === i ? 'Redrafting…' : d.label}
+          </button>
+        ))}
+        {/* The OPEN option — always last, always available (options are offers, never walls). */}
+        {open ? (
+          <input
+            autoFocus value={angleText} onChange={(e) => setAngleText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && angleText.trim()) { steer(`Redraft the reply with this direction: ${angleText.trim()}`, -1); setOpen(false); setAngleText(''); }
+              if (e.key === 'Escape') { setOpen(false); setAngleText(''); }
+            }}
+            placeholder="e.g. shorter, and ask them to send the agenda first"
+            className="w-64 max-w-full rounded-full border border-indigo-200 px-3 py-1 text-[12.5px] text-neutral-700 placeholder:text-neutral-300 outline-none focus:border-indigo-300"
+          />
+        ) : (
+          <button onClick={() => setOpen(true)} disabled={busyIdx !== null} className={chip}>
+            {busyIdx === -1 ? 'Redrafting…' : 'Something else…'}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -1239,7 +1351,6 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
   const userTypedRef = useRef(false);                  // once the user types, a late-arriving draft never clobbers
   const atts = useReplyAttachments();             // shared inbox-style attach surface (base64 → send-reply)
   const editorRef = useRef<HTMLDivElement>(null);
-  const composerRef = useRef<HTMLDivElement>(null); // the docked reply composer
 
   // ── PRIMARY-SURFACE state, driven by the item's understood RELEVANCE (the composer IS the reply
   // task's surface — owner=you — not a separate always-open box). Default:
@@ -1273,7 +1384,8 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
     setVerdict(cached);
     verdictSeededRef.current = true;
     if (!composerTouchedRef.current) {
-      setComposerOpen(cached.work === 'reply' || cached.work === 'send_file');
+      // SUMMONED-STAGE law (Aug 3): the verdict seeds the PALETTE's lead (relevance), never an
+      // auto-raised composer — prepared work waits on the artifact card until reached for.
       setRelevance(cached.work === 'none' ? 'awareness' : (cached.work === 'reply' || cached.work === 'send_file') ? 'reply' : 'action');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1286,10 +1398,8 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
       saveLS(`aug-item-verdict-inbox-${id}`, d.verdict);
       verdictSeededRef.current = true;
       if (!composerTouchedRef.current) {
-        // The verdict's surface: reply/send_file → composer open (send_file mounts its resolved
-        // attachment chip INSIDE the composer); everything else → collapsed (the mounted
-        // component or the message leads). The user can always override via "Reply".
-        setComposerOpen(d.verdict.work === 'reply' || d.verdict.work === 'send_file');
+        // SUMMONED-STAGE law: the verdict drives the palette lead only — the composer overlay is
+        // raised by the user (artifact Open / Reply), never on mount.
         if (d.verdict.work === 'none') setRelevance('awareness');
         else if (d.verdict.work === 'reply' || d.verdict.work === 'send_file') setRelevance('reply');
         else setRelevance('action');
@@ -1317,16 +1427,8 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
         // verdict hasn't already seeded it (the verdict outranks raw relevance), and only until
         // the user touches the composer.
         const rel = d.relevance ?? null;
-        if (!verdictSeededRef.current) {
-          setRelevance(rel);
-          if (!composerTouchedRef.current) {
-            // VERDICT-FIRST (P8): only a known 'reply' relevance opens the composer pre-verdict.
-            // Unknown stays CLOSED — the judge's verdict (cached or fetched) is the authority that
-            // opens it; a kind-only notification must never greet the user with an open reply box.
-            // The user can always open it via the palette's "Reply".
-            setComposerOpen(rel === 'reply');
-          }
-        }
+        // SUMMONED-STAGE law: relevance seeds the palette lead only — never an open composer.
+        if (!verdictSeededRef.current) setRelevance(rel);
       })
       .catch(() => { if (alive) setThreadErr(true); });
 
@@ -1356,7 +1458,9 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
   useEffect(() => {
     if (!preparedAttachment || preparedAttachRef.current === preparedAttachment.fileId) return;
     preparedAttachRef.current = preparedAttachment.fileId;
-    atts.onKbSelect([{ id: preparedAttachment.fileId, filename: preparedAttachment.filename }]);
+    // silent: a failed BACKGROUND attach never paints an error the user didn't cause — the draft
+    // still names the file; the 📎 menu is the fallback.
+    atts.onKbSelect([{ id: preparedAttachment.fileId, filename: preparedAttachment.filename }], { silent: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preparedAttachment?.fileId]);
 
@@ -1442,12 +1546,50 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
   // action item the composer was just collapsed, not gone: open it + scroll to it. On a reply item it's
   // already open, so this just scrolls. Marks the composer "touched" so a late relevance seed can't
   // re-collapse it.
+  // ONE STAGE AT A TIME (Aug 4, found live): two raised stages stacked in the same layer and the
+  // covered one's Open read as dead — opening any stage lowers the others (one letter in hand).
   const openComposer = () => {
     composerTouchedRef.current = true;
-    setComposerOpen(true);
+    setComposerOpen(true); // raises the SUMMONED STAGE overlay
     setForwarding(false);
-    // scroll after the box has a chance to render.
-    requestAnimationFrame(() => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+    setInviteOpen(false);
+  };
+
+  // THE REPLY EXCHANGE (Aug 4 — the room talks like a person): "Reply" opens a DIALOGUE, not a
+  // surface. The offer turn lands in the conversation with the grounded directions ("I'll put the
+  // reply together — which direction?"); a pick becomes the user's turn, the ack shows, the draft
+  // lands on the card. The offer is EPHEMERAL scaffolding (never persisted); the pick + result are
+  // the durable story. Typing instead of picking always works — the composer is the open option.
+  const startReplyExchange = async () => {
+    const roomKey = railView?.entity?.id ?? `inbox:${id}`;
+    const offerKey = `reply-offer:${id}`;
+    const offerText = draft
+      ? 'The draft is ready on the card — send it as is, or take it in a different direction (pick one, or just tell me):'
+      : "I'll put the reply together — which direction? Pick one, or just tell me:";
+    pushDealTurn(roomKey, offerText, { key: offerKey, ephemeral: true });
+    try {
+      const r = await fetch('/api/items/reply-directions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'email', id }),
+      });
+      const d = await r.json().catch(() => ({}));
+      const dirs = (Array.isArray(d?.directions) ? d.directions : []).slice(0, 3) as Array<{ label: string; instruction: string }>;
+      if (dirs.length >= 2) {
+        pushDealTurn(roomKey, offerText, {
+          key: offerKey, ephemeral: true,
+          actions: dirs.map((x) => ({ label: x.label, act: 'direction' as const, instruction: x.instruction, itemKind: 'email' as const, itemId: id })),
+        });
+      } else {
+        // Nothing worth offering — the honest fallback is the stage itself (grounded-or-absent).
+        openComposer();
+      }
+    } catch { openComposer(); }
+  };
+
+  // VERBS SPEAK LEFT (Aug 4): a resolution is a conversation event — the room narrates it
+  // (durable, keyed) so the story reads "dismissed — undo in Activity", never a silent vanish.
+  const narrateResolve = (text: string) => {
+    try { pushDealTurn(railView?.entity?.id ?? `inbox:${id}`, text, { key: `resolve:${id}` }); } catch { /* non-fatal */ }
   };
 
   // ── Item-level Dismiss (acknowledge) — the primary action for an awareness item. Reuses the Home's
@@ -1460,6 +1602,7 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
       if (res.ok) {
         setItemResolution('dismissed');
         setItemDismissed(true);
+        narrateResolve('Dismissed — undo lives in Activity.');
         setTimeout(() => router.back(), 700);
       }
     } finally {
@@ -1481,6 +1624,7 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
       if (res.ok) {
         setItemResolution('dismissed');
         setItemDismissed(true);
+        narrateResolve(`Dismissed with your note — it's on the record${note ? `: "${note.slice(0, 60)}"` : ''}.`);
         setTimeout(() => router.back(), 700);
       }
     } finally { setDismissing(false); }
@@ -1497,6 +1641,7 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
       if (res.ok) {
         setItemResolution('not_relevant');
         setItemDismissed(true);
+        narrateResolve('Marked no longer relevant — undo lives in Activity.');
         setTimeout(() => router.back(), 700);
       }
     } finally {
@@ -1515,6 +1660,7 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
       if (res.ok) {
         setItemResolution('done');
         setItemDismissed(true);
+        narrateResolve('Marked done — undo lives in Activity.');
         setTimeout(() => router.back(), 700);
       }
     } finally {
@@ -1524,11 +1670,33 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
 
   // ── Item-level Forward — opens the grounded ForwardPreviewCard for the whole item (approve-before-
   // commit; nothing sends until "Review & forward"). Collapses the composer so there's one send surface.
-  const openForward = () => { setForwarding(true); setComposerOpen(false); };
+  const openForward = () => { setForwarding(true); setComposerOpen(false); setInviteOpen(false); };
 
   // ONE-ROOM R2: the conversation exists for LOOSE items too (the rail handles a null entity —
   // item-anchored narration + the founding chip). The room key falls back to `<kind>:<id>`.
   const railView = view ? (view as RailView) : null;
+  // THE VERB-SCOPE LAW: the object on stage decides the strip (a meeting-extracted action item
+  // has no thread — Reply/Forward are structurally absent on it).
+  const objectKind: 'email_thread' | 'meeting_action' = view?.itemSource === 'meeting' ? 'meeting_action' : 'email_thread';
+  // ONE derivation of the prepared-artifact cards — the rail renders them at the stream's edge;
+  // EMBEDDED (no own rail) renders the same cards in-stage (the "says prepared, isn't" bug, Aug 4).
+  const artifactList = itemDismissed ? [] : [
+    ...(!sent && !!draft && verdict?.work !== 'decide' && objectKind === 'email_thread' ? [{
+      key: 'reply', label: 'Reply drafted — ready to review',
+      by: view?.prepared?.find((p) => p.kind === 'reply_draft')?.by ?? null,
+      onOpen: openComposer,
+    }] : []),
+    ...((view?.inviteTaskId || verdict?.work === 'schedule') ? [{
+      key: 'invite',
+      // TRUTH BEFORE PRESENTATION: an invite without a grounded time never claims "prepared".
+      label: view?.inviteHasTime === false ? 'Invite drafted — needs a time from you' : 'Calendar invite prepared — review & approve',
+      onOpen: () => { setInviteOpen(true); setComposerOpen(false); setForwarding(false); },
+    }] : []),
+    ...(verdict?.work === 'forward' ? [{
+      key: 'forward', label: 'Forward prepared — review & approve',
+      onOpen: openForward,
+    }] : []),
+  ];
   return (
     // ONE-ROOM R2: the CONVERSATION is the center; this component's children are the STAGE (the
     // message + composer workspace). The judged DECISION and the draft's ARTIFACT CARD render
@@ -1559,14 +1727,13 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
           },
           onDismiss: () => setDecisionCleared(true),
         } : null}
-        artifact={!itemDismissed && !sent && !!draft && verdict?.work !== 'decide' ? {
-          label: 'Reply drafted — ready to review',
-          by: view?.prepared?.find((p) => p.kind === 'reply_draft')?.by ?? null,
-          commitLabel: 'Send',
-          onOpen: openComposer,
-          onCommit: send,
-          committing: sending,
-        } : null}
+        artifacts={artifactList}
+        onStage={(stage, itemId) => {
+          if (itemId !== id) return false;
+          if (stage === 'forward') { openForward(); return true; }
+          if (stage === 'invite') { setInviteOpen(true); setComposerOpen(false); setForwarding(false); return true; }
+          openComposer(); return true;
+        }}
       />
     )}>
       {/* 1 — Header: subject + sender + date (fixed at top). T4 (work-surface): the posture badge
@@ -1588,20 +1755,37 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
 
       {/* 2 — The one scroll area, in the Scape order: message card → judged work → one Send. */}
       <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
-        {/* ONE ACTION BAR — Reply · Dismiss ▾ · Forward. Nothing else; the composer owns Send. */}
+        {/* THE VERB STRIP (Aug 4 — the verb-scope law): the object's verbs, ATTACHED to the object
+            on its stage — identical for loose items and items focused inside a project room.
+            Clicking speaks on the LEFT (the exchange / a narrated event). */}
         {!itemDismissed && (
           <EmailActionPalette
             relevance={relevance}
             composerOpen={composerOpen}
-            onReply={openComposer}
+            onReply={startReplyExchange}
             onDismiss={dismissItem}
             onDone={markHandled}
             onNoLongerRelevant={markNoLongerRelevant}
             onDismissWithNote={dismissWithNote}
             onForward={openForward}
             dismissing={dismissing}
+            objectKind={objectKind}
           />
         )}
+        {/* EMBEDDED (no own rail): the prepared-artifact cards render in-stage — the room said
+            "drafted" and the focused item showed nothing (found live, Aug 4). */}
+        {embedded && artifactList.map((art) => (
+          <div key={art.key} className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-3 py-2.5 flex items-center gap-2.5">
+            <span className="min-w-0 flex-1 text-[12.5px] text-neutral-800">
+              <span className="font-medium">{art.label}</span>
+              {art.by && <span className="text-[11px] text-indigo-500 font-semibold ml-1.5">by {String(art.by).split(' ')[0]}</span>}
+            </span>
+            <button
+              onClick={art.onOpen}
+              className="flex-shrink-0 rounded-lg border border-indigo-200 bg-white px-3 py-1 text-[12px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
+            >Open →</button>
+          </div>
+        ))}
 
         {/* THE MESSAGE (J2, the Scape order) — what arrived, as ONE clean height-capped card;
             every earlier message folds behind "Show N earlier". The work mounts BENEATH it. The
@@ -1612,72 +1796,9 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
           <ThreadMessages messages={threadMessages} fallback={fallback} compact />
         )}
 
-        {/* THE WORK, DIRECTLY BENEATH THE MESSAGE (the Scape order, finally applied to this stage:
-            message → mounted work → one commit line). The composer used to sit BELOW every other
-            block — a drafted reply the user had to scroll to find is prepared work that reads as
-            missing. The rail's artifact card "Open →" focuses exactly here. */}
-        {composerOpen && (
-      <div ref={composerRef}>
-        {angle && (
-          <p className="text-[13px] text-neutral-600 leading-relaxed mb-2">
-            <span className="font-medium text-neutral-700">Suggested angle:</span> {angle}
-          </p>
-        )}
-        <h2 className={SECTION_LABEL}>
-          Your reply
-          {/* Byline — attribution when the draft was prepared; a quiet "drafting…" while it's coming. */}
-          {draft ? <DraftByline by={view?.prepared?.find((p) => p.kind === 'reply_draft')?.by ?? null} />
-            : draftLoading ? <span className="ml-2 text-[11px] font-medium text-neutral-400 normal-case tracking-normal animate-pulse">drafting…</span> : null}
-        </h2>
-        {sent ? (
-          <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
-            <CheckIcon className="w-4 h-4 text-emerald-600" />
-            <p className="text-[13px] font-medium text-emerald-700">Reply sent.</p>
-          </div>
-        ) : (
-          <div className={`${CARD} p-4`}>
-            {(
-              <>
-                {/* The SAME rich editor the inbox uses — TYPABLE AT PAINT (never a blocking skeleton):
-                    it mounts empty and the prepared draft seeds it when ready via the `key` bump, only
-                    while untouched. A steer rework re-seeds the same way. */}
-                <ReplyEditor
-                  key={draftV}
-                  ref={editorRef}
-                  initialHTML={draft ? draftToHTML(draft) : ''}
-                  onInput={(h) => { userTypedRef.current = true; setBodyHTML(h); }}
-                  placeholder="Write your reply…"
-                  minHeight={120}
-                  maxHeight={280}
-                  toolbarLeading={<AttachMenu atts={atts} />}
-                >
-                  <AttachSurface atts={atts} />
-                </ReplyEditor>
-                {sendErr && <p className="text-[12px] text-rose-600 mt-2">{sendErr}</p>}
-                <div className="mt-3 flex items-center gap-4">
-                  <button
-                    onClick={send}
-                    disabled={sending}
-                    className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-5 py-2 text-[13.5px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
-                  >
-                    {sending ? 'Sending…' : 'Send'}
-                  </button>
-                  <button
-                    onClick={copy}
-                    className="inline-flex items-center gap-1.5 text-[13px] font-medium text-neutral-600 hover:text-neutral-800"
-                  >
-                    {copied ? <CheckIcon className="w-3.5 h-3.5 text-emerald-500" /> : <ClipboardDocumentIcon className="w-3.5 h-3.5" />}
-                    {copied ? 'Copied' : 'Copy'}
-                  </button>
-                </div>
-                {/* THE STEER INPUT — inline only when there's no rail (the rail's composer owns it). */}
-                {!railView && <SteerRow kind="email" id={id} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }} />}
-              </>
-            )}
-          </div>
-        )}
-      </div>
-      )}
+        {/* THE COMPOSER moved to THE SUMMONED STAGE (Aug 3): an overlay raised by the artifact
+            card's Open / the CTA row's Reply — the right pane holds the item's truth (the thread),
+            never a docked send surface. Rendered below, after the scroll area. */}
 
         {/* One-room R2 — the DECISION renders INLINE in the conversation stream (the rail's
             `decision` prop, surface:'inline' per the registry). The stage keeps it ONLY when no
@@ -1709,10 +1830,10 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
         {/* THE GAP LINE — in the rail when one exists; inline only for a rail-less item. */}
         {!railView && <GapLine text={view?.gap} />}
 
-        {/* Contextual prepared INVITE — offered when the plan holds an unblocked calendar-invite
-            step OR the judged verdict says the work IS scheduling (W1: the ambient pass prepared the
-            invite; the card serves the stored artifact instantly). Approve-gated card; no stepper. */}
-        {!itemDismissed && (view?.inviteTaskId || verdict?.work === 'schedule') && !inviteOpen && (
+        {/* PREPARED INVITE / FORWARD moved to the RAIL's artifact cards + SUMMONED STAGES (Aug 4 —
+            the words and the deed are one element; the truth pane offers nothing). The in-stage
+            review affordances survive ONLY when embedded in the entity room (no own rail). */}
+        {embedded && !itemDismissed && (view?.inviteTaskId || verdict?.work === 'schedule') && !inviteOpen && (
           <button
             onClick={() => setInviteOpen(true)}
             className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/50 px-3.5 py-1.5 text-[12.5px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
@@ -1720,7 +1841,7 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
             <CalendarDaysIcon className="w-3.5 h-3.5" />Review invite
           </button>
         )}
-        {inviteOpen && (view?.inviteTaskId || verdict?.work === 'schedule') && (
+        {embedded && inviteOpen && (view?.inviteTaskId || verdict?.work === 'schedule') && (
           <InvitePreviewCard
             kind="email"
             entityId={id}
@@ -1730,10 +1851,7 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
             onCancel={() => setInviteOpen(false)}
           />
         )}
-        {/* Verdict-level prepared FORWARD (W1) — the judged `forward` verdict offers the review
-            affordance; the card serves the ambient prepared to/subject/note and the commit stays
-            behind the approve click. */}
-        {!itemDismissed && verdict?.work === 'forward' && !forwarding && (
+        {embedded && !itemDismissed && verdict?.work === 'forward' && !forwarding && (
           <button
             onClick={() => setForwarding(true)}
             className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/50 px-3.5 py-1.5 text-[12.5px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
@@ -1750,9 +1868,9 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
           </div>
         )}
 
-        {/* Item-level prepared FORWARD card — opened from the palette's "Forward" (whole item, no plan
-            step). Grounded + approve-before-commit; on send it closes back to the Home. */}
-        {forwarding && (
+        {/* Item-level prepared FORWARD card — embedded-only here; non-embedded raises the
+            summoned forward stage below. */}
+        {embedded && forwarding && (
           <ForwardPreviewCard
             kind="email"
             entityId={id}
@@ -1773,6 +1891,97 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
           not conversational. Hidden when embedded — the room IS the project context. */}
       {!embedded && railView && <ContextStrip kind="email" id={id} view={railView} />}
       </div>
+
+      {/* ═══ THE SUMMONED STAGE (Aug 3 — the spec's stage seat, finally transient): the draft
+          review raised OVER the room's truth pane, holding the ONE Send. Summoned by the artifact
+          card / Reply; ✕ lowers it; a send closes it and the room narrates. Never auto-raised —
+          a colleague hands you the letter when you reach for it. ═══ */}
+      {composerOpen && (
+        <StageOverlay
+          onClose={() => { composerTouchedRef.current = true; setComposerOpen(false); }}
+          title={<>
+            Your reply
+            {draft ? <DraftByline by={view?.prepared?.find((p) => p.kind === 'reply_draft')?.by ?? null} />
+              : draftLoading ? <span className="ml-2 text-[11px] font-medium text-neutral-400 normal-case tracking-normal animate-pulse">drafting…</span> : null}
+          </>}
+        >
+            {angle && (
+              <p className="text-[13px] text-neutral-600 leading-relaxed mb-2">
+                <span className="font-medium text-neutral-700">Suggested angle:</span> {angle}
+              </p>
+            )}
+            {/* DIRECTION CHIPS — grounded tone/direction offers + the always-open last option;
+                one tap rewrites the draft through the steer path. The editor stays typable. */}
+            {!sent && <ReplyDirections kind="email" id={id} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }} />}
+            {sent ? (
+              <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
+                <CheckIcon className="w-4 h-4 text-emerald-600" />
+                <p className="text-[13px] font-medium text-emerald-700">Reply sent.</p>
+              </div>
+            ) : (
+              <div className={`${CARD} p-4`}>
+                <ReplyEditor
+                  key={draftV}
+                  ref={editorRef}
+                  initialHTML={draft ? draftToHTML(draft) : ''}
+                  onInput={(h) => { userTypedRef.current = true; setBodyHTML(h); }}
+                  placeholder="Write your reply…"
+                  minHeight={160}
+                  maxHeight={420}
+                  toolbarLeading={<AttachMenu atts={atts} />}
+                >
+                  <AttachSurface atts={atts} />
+                </ReplyEditor>
+                {sendErr && <p className="text-[12px] text-rose-600 mt-2">{sendErr}</p>}
+                <div className="mt-3 flex items-center gap-4">
+                  <button
+                    onClick={send}
+                    disabled={sending}
+                    className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-5 py-2 text-[13.5px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+                  >
+                    {sending ? 'Sending…' : 'Send'}
+                  </button>
+                  <button
+                    onClick={copy}
+                    className="inline-flex items-center gap-1.5 text-[13px] font-medium text-neutral-600 hover:text-neutral-800"
+                  >
+                    {copied ? <CheckIcon className="w-3.5 h-3.5 text-emerald-500" /> : <ClipboardDocumentIcon className="w-3.5 h-3.5" />}
+                    {copied ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+                {/* THE STEER INPUT — inline only when there's no rail (the rail's composer owns it). */}
+                {!railView && <SteerRow kind="email" id={id} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }} />}
+              </div>
+            )}
+        </StageOverlay>
+      )}
+
+      {/* THE SUMMONED INVITE STAGE — the artifact card's Open raises the approve-gated review. */}
+      {!embedded && inviteOpen && (view?.inviteTaskId || verdict?.work === 'schedule') && (
+        <StageOverlay title="Review the invite" onClose={() => setInviteOpen(false)}>
+          <InvitePreviewCard
+            kind="email"
+            entityId={id}
+            taskId={view?.inviteTaskId ?? undefined}
+            verdictLevel={!view?.inviteTaskId}
+            onSent={() => setInviteOpen(false)}
+            onCancel={() => setInviteOpen(false)}
+          />
+        </StageOverlay>
+      )}
+
+      {/* THE SUMMONED FORWARD STAGE — same grammar; approve-before-commit stays on the card. */}
+      {!embedded && forwarding && (
+        <StageOverlay title="Review the forward" onClose={() => setForwarding(false)}>
+          <ForwardPreviewCard
+            kind="email"
+            entityId={id}
+            itemLevel={verdict?.work !== 'forward'}
+            onSent={() => { setTimeout(() => router.back(), 700); }}
+            onCancel={() => setForwarding(false)}
+          />
+        </StageOverlay>
+      )}
 
       {/* KB file picker modal (shared with the inbox) — "From knowledge base" attach path. */}
       {atts.kbPickerOpen && (
@@ -2282,7 +2491,7 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
   const railView = view ? (view as RailView) : null;
   const atts = useReplyAttachments();             // shared inbox-style attach surface (base64 → nudge PATCH)
   const editorRef = useRef<HTMLDivElement>(null);
-  const composerRef = useRef<HTMLDivElement>(null); // the docked nudge composer
+  const [composerOpen, setComposerOpen] = useState(false); // the SUMMONED STAGE (never auto-raised)
 
   useEffect(() => {
     let alive = true;
@@ -2362,7 +2571,19 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
 
   return (
     <DeepDiveShell embedded={embedded} rail={
-      <ItemRail kind="followup" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onDraft={(d) => { setDraft(d); setDraftV((v) => v + 1); }} />
+      <ItemRail kind="followup" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onDraft={(d) => { setDraft(d); setDraftV((v) => v + 1); }}
+        artifacts={[
+          ...(!sent && !!draft ? [{
+            key: 'nudge', label: 'Follow-up drafted — ready to review',
+            by: view?.prepared?.find((p) => p.kind === 'nudge_draft' || p.kind === 'deliverable')?.by ?? null,
+            onOpen: () => { setComposerOpen(true); setInviteOpen(false); }, // one stage at a time
+          }] : []),
+          ...(view?.inviteTaskId ? [{
+            key: 'invite', label: 'Calendar invite prepared — review & approve',
+            onOpen: () => { setInviteOpen(true); setComposerOpen(false); },
+          }] : []),
+        ]}
+      />
     }>
       {/* Header */}
       <DetailHeader
@@ -2375,6 +2596,16 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
 
       {/* The one scroll area, in the Scape order: message card → the follow-up composer. */}
       <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
+        {/* THE VERB STRIP (verb-scope law): an awaiting commitment's verb is FOLLOW UP — on the
+            stage, attached to the object. */}
+        {!sent && (
+          <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1">
+            <button onClick={() => { setComposerOpen(true); setInviteOpen(false); }}
+              className="inline-flex items-center gap-1 text-[12.5px] font-semibold text-indigo-600 hover:text-indigo-700 transition-colors">
+              <ArrowUturnLeftIcon className="w-3.5 h-3.5" />Follow up
+            </button>
+          </div>
+        )}
         <div>
           {threadErr ? (
             <p className="text-[13px] text-neutral-400">Could not load the conversation.</p>
@@ -2389,8 +2620,9 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
         {!railView && <GapLine text={view?.gap} />}
         <PreparedLead prepared={view?.prepared ?? null} />
 
-        {/* Contextual prepared INVITE — only when the plan holds an unblocked invite step. */}
-        {view?.inviteTaskId && !inviteOpen && (
+        {/* Prepared INVITE moved to the RAIL's artifact card + the summoned stage (Aug 4);
+            embedded keeps the in-stage affordance (no own rail). */}
+        {embedded && view?.inviteTaskId && !inviteOpen && (
           <button
             onClick={() => setInviteOpen(true)}
             className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/50 px-3.5 py-1.5 text-[12.5px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
@@ -2398,34 +2630,42 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
             <CalendarDaysIcon className="w-3.5 h-3.5" />Review invite
           </button>
         )}
-        {inviteOpen && view?.inviteTaskId && (
+        {embedded && inviteOpen && view?.inviteTaskId && (
           <InvitePreviewCard kind="followup" entityId={id} taskId={view.inviteTaskId} onSent={() => setInviteOpen(false)} onCancel={() => setInviteOpen(false)} />
         )}
 
-      {/* The follow-up composer — INLINE beneath the message (J2), prefilled with the nudge draft. */}
-      <div ref={composerRef}>
-        <h2 className={SECTION_LABEL}>
-          Your follow-up
-          {draft ? <DraftByline by={view?.prepared?.find((p) => p.kind === 'nudge_draft' || p.kind === 'deliverable')?.by ?? null} />
-            : draftLoading ? <span className="ml-2 text-[11px] font-medium text-neutral-400 normal-case tracking-normal animate-pulse">drafting…</span> : null}
-        </h2>
-        {sent ? (
-          <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
-            <CheckIcon className="w-4 h-4 text-emerald-600" />
-            <p className="text-[13px] font-medium text-emerald-700">Follow-up sent.</p>
-          </div>
-        ) : (
-          <div className={`${CARD} p-4`}>
-            {(
-              <>
+      {/* The follow-up composer moved to THE SUMMONED STAGE (Aug 3) — rendered after the scroll
+          area; raised by the artifact card / "Write the follow-up →". */}
+
+      {/* R3 — the context strip (spatial, never in the conversation). */}
+      {!embedded && railView && <ContextStrip kind="followup" id={id} view={railView} />}
+      </div>
+
+      {/* ═══ THE SUMMONED STAGE — the follow-up review, raised over the truth pane, one Send. ═══ */}
+      {composerOpen && (
+        <StageOverlay
+          onClose={() => setComposerOpen(false)}
+          title={<>
+            Your follow-up
+            {draft ? <DraftByline by={view?.prepared?.find((p) => p.kind === 'nudge_draft' || p.kind === 'deliverable')?.by ?? null} />
+              : draftLoading ? <span className="ml-2 text-[11px] font-medium text-neutral-400 normal-case tracking-normal animate-pulse">drafting…</span> : null}
+          </>}
+        >
+            {sent ? (
+              <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
+                <CheckIcon className="w-4 h-4 text-emerald-600" />
+                <p className="text-[13px] font-medium text-emerald-700">Follow-up sent.</p>
+              </div>
+            ) : (
+              <div className={`${CARD} p-4`}>
                 <ReplyEditor
                   key={draftV}
                   ref={editorRef}
                   initialHTML={draft ? draftToHTML(draft) : ''}
                   onInput={() => { userTypedRef.current = true; }}
                   placeholder="Write your follow-up…"
-                  minHeight={110}
-                  maxHeight={260}
+                  minHeight={160}
+                  maxHeight={420}
                   toolbarLeading={<AttachMenu atts={atts} />}
                 >
                   <AttachSurface atts={atts} />
@@ -2449,15 +2689,17 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
                 </div>
                 {/* THE STEER INPUT — inline only when there's no rail (the rail's composer owns it). */}
                 {!railView && <SteerRow kind="followup" id={id} onDraft={(d) => { setDraft(d); setDraftV((v) => v + 1); }} />}
-              </>
+              </div>
             )}
-          </div>
-        )}
-      </div>
+        </StageOverlay>
+      )}
 
-      {/* R3 — the context strip (spatial, never in the conversation). */}
-      {!embedded && railView && <ContextStrip kind="followup" id={id} view={railView} />}
-      </div>
+      {/* THE SUMMONED INVITE STAGE (follow-up door — same grammar as email). */}
+      {!embedded && inviteOpen && view?.inviteTaskId && (
+        <StageOverlay title="Review the invite" onClose={() => setInviteOpen(false)}>
+          <InvitePreviewCard kind="followup" entityId={id} taskId={view.inviteTaskId} onSent={() => setInviteOpen(false)} onCancel={() => setInviteOpen(false)} />
+        </StageOverlay>
+      )}
 
       {/* KB file picker modal (shared with the inbox) — "From knowledge base" attach path. */}
       {atts.kbPickerOpen && (

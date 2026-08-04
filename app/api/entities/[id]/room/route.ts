@@ -2,6 +2,7 @@
 // RailView shape the item deep-dive uses (anchor/gap absent — the Overview artifact is the anchor),
 // built by THE ONE room-view builder shared with /api/items/view. Zero AI.
 import { NextRequest, NextResponse } from 'next/server';
+import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { buildRoomView } from '@/lib/entities/room-view';
 
@@ -13,6 +14,11 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     const { id } = await params;
     const { entity, siblings } = await buildRoomView(supabase, user.id, id, null);
     if (!entity) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    // THE ONE-VOICE BRIEF: served last-good above; every open recomposes in after() if inputs moved.
+    const uid = user.id;
+    after(async () => {
+      try { const { ensureRoomBrief } = await import('@/lib/room/brief'); await ensureRoomBrief(supabase, uid, id); } catch { /* non-fatal */ }
+    });
     return NextResponse.json({ anchor: null, gap: null, entity, siblings });
   } catch (e) {
     console.error('[entities/room]', e);

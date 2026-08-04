@@ -111,13 +111,15 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('R2: the DECISION mounts INLINE in the stream (the rail renders the shared DecisionCard)',
     railSrc.includes('decision?:') && railSrc.includes('<DecisionCard') &&
     detail.includes('decision={!itemDismissed && !decisionCleared'));
-  // SUPERSEDED by the UX arc's ONE-COMMIT-LINE law: the card is the conversation's POINTER to the
-  // staged work (Open → focuses the stage composer); the stage holds the ONLY Send. Two commit
-  // buttons for one artifact was a real duplicated gate.
-  check('R2→UX: the ARTIFACT CARD points at the stage (Open →) — ONE commit line, on the composer only',
-    railSrc.includes('artifact?:') && railSrc.includes('ONE COMMIT LINE') &&
-    !railSrc.includes('artifact.onCommit?.()') &&
-    detail.includes("label: 'Reply drafted — ready to review'"));
+  // SUPERSEDED twice: ONE-COMMIT-LINE (UX arc), then the PREPARED-ACTION GRAMMAR (Aug 4) — the
+  // card list carries EVERY prepared thing (reply/invite/forward), each Open summons its own
+  // stage; the stage holds the ONLY Send. No commit callback exists on the card at all now.
+  check('R2→UX: the ARTIFACT CARDS point at their summoned stages (Open →) — ONE commit line, on the stage only',
+    railSrc.includes('artifacts?:') && railSrc.includes('ONE COMMIT LINE') &&
+    !railSrc.includes('onCommit') &&
+    detail.includes("label: 'Reply drafted — ready to review'") &&
+    detail.includes("label: 'Calendar invite prepared — review & approve'") &&
+    detail.includes("label: 'Forward prepared — review & approve'"));
   check('R2: LOOSE items get the conversation too (railView no longer gated on an entity)',
     detail.includes('const railView = view ? (view as RailView) : null') &&
     !detail.includes('view?.entity ? (view as RailView)'));
@@ -254,6 +256,177 @@ const src = (p: string) => readFileSync(p, 'utf8');
       } else check(`${label} · linked-item key (vacuous — no links)`, true);
     }
     check('R5 · Rene resolved at runtime (never hardcoded)', rene !== null, rene ? `${rene.slice(0, 8)}…` : 'absent');
+  }
+
+  // ═══ R6 — THE ROOM-DOOR LAW + THE ONE-VOICE BRIEF (Aug 3, experience-spec seat table + laws 2/4/5/6/9) ═══
+  {
+    const hv = src('components/home/home-view.tsx');
+    const brief = src('app/api/home/brief/route.ts');
+    check('R6 · deck rows on project-member items open the PROJECT ROOM (one door() rule, every lane; projectByAtom served from the tag derivation point)',
+      brief.includes('projectByAtom') && hv.includes('const door = (itemId: string, fallback: string)') &&
+      (hv.match(/door\(/g)?.length ?? 0) >= 3); // reply + notice + commitment lanes
+    check('R6 · deep-link doors survive: /home?view= everywhere (never /?view= — middleware dropped the query), middleware preserves search, lens+entity react to soft navs',
+      !src('components/room/context-strip.tsx').includes("'/?view=") &&
+      src('middleware.ts').includes('home.search = request.nextUrl.search') &&
+      hv.includes('useSearchParams') && src('components/entities/portfolio-view.tsx').includes('[searchParams]'));
+    check('R6 · the word is the deed: the rail\'s room title IS the project door; the "Open project" chip is gone (tracked); no click-echo turn on the next-move CTA',
+      rail.includes('/home?view=projects&entity=') && !src('components/room/context-strip.tsx').includes("'Open project'") &&
+      !rail.includes('Opening the next move'));
+    const rb = src('lib/room/brief.ts');
+    check('R6 · THE ONE-VOICE BRIEF: authored (not assembled) — sig-gated compose over judged state, last-good serve, AI-failure never blanks, version in the cache',
+      rb.includes('ROOM_BRIEF_VERSION') && rb.includes('ensureRoomBrief') && rb.includes('readRoomBrief') &&
+      rb.includes('if (prior === sig) return') && rb.includes('if (!text) return') &&
+      src('lib/entities/room-view.ts').includes('readRoomBrief') &&
+      src('app/api/entities/[id]/room/route.ts').includes('ensureRoomBrief') &&
+      src('app/api/items/view/route.ts').includes('ensureRoomBrief') &&
+      rail.includes('ent?.brief') && rail.includes("ent.brief") );
+    // LIVE — the composer produces one grounded paragraph for a real tracked project on the probe
+    // host (or a real account), and the sig gate makes the second call a no-op (no re-burn).
+    const { data: cand } = await sb.from('work_entities').select('id, user_id, name, state')
+      .eq('kind', 'initiative').eq('tracked', true).eq('status', 'active')
+      .in('user_id', [A, PERSONAL]).not('state', 'is', null).limit(1).maybeSingle();
+    if (cand) {
+      const { ensureRoomBrief, readRoomBrief } = await import('../lib/room/brief');
+      await ensureRoomBrief(sb, cand.user_id as string, cand.id as string);
+      const text1 = await readRoomBrief(sb, cand.user_id as string, cand.id as string);
+      const t1 = Date.now();
+      await ensureRoomBrief(sb, cand.user_id as string, cand.id as string); // sig unchanged → no-op
+      const noopMs = Date.now() - t1;
+      check('R6 live · the brief composes ONE grounded paragraph (≤600 chars, non-empty) and the sig gate holds (second call cheap)',
+        !!text1 && text1.length > 20 && text1.length <= 600 && noopMs < 3000,
+        text1 ? `"${text1.slice(0, 90)}…" · noop ${noopMs}ms` : 'no brief composed');
+    } else check('R6 live · brief compose (vacuous — no tracked entity with state)', true);
+  }
+
+  // ═══ R7 — THE SUMMONED STAGE + LOOSE-ROOM CONVERGENCE (Aug 3, the spec's stage seat made
+  // transient; "a loose room is a project room with less to file") ═══
+  {
+    const idt = src('components/home/item-detail.tsx');
+    check('R7 · the composer is the SUMMONED STAGE — an overlay raised by the user, never docked in the truth pane, never auto-raised on mount',
+      (idt.match(/THE SUMMONED STAGE/g)?.length ?? 0) >= 2 &&
+      idt.includes('absolute inset-0 z-20 bg-white') &&
+      !idt.includes('setComposerOpen(cached.work') && !idt.includes("setComposerOpen(rel === 'reply')") &&
+      !idt.includes("setComposerOpen(d.verdict.work === 'reply'"));
+    // SUPERSEDED (Aug 4, THE VERB-SCOPE LAW): the verbs moved back ON the stage — attached to their
+    // object, identical loose/embedded (the user's screenshot call: verbs with the item, dialogue
+    // left). The rail carries NO verb chrome at all; the left panel is pure dialogue.
+    check('R7 · THE VERB STRIP: item verbs live ON the stage attached to their object (one strip, loose = embedded); the rail carries no verb chrome',
+      !rail.includes('ctaRow') && idt.includes('THE VERB STRIP') &&
+      idt.includes('objectKind={objectKind}') && !idt.includes('ctaRow='));
+    check('R7 · the LOOSE room briefs in the one voice too (same composer, `<kind>:<id>` key) and the rail prefers the composed paragraph on every door',
+      src('lib/room/brief.ts').includes('ensureLooseRoomBrief') &&
+      src('app/api/items/view/route.ts').includes('ensureLooseRoomBrief') &&
+      rail.includes("(ent?.brief || view.brief)"));
+    check('R7 · a sender that is an organization keeps its name (spokenName) · a background auto-attach fails SILENTLY (no error the user never caused)',
+      rail.includes('function spokenName') && rail.includes('ORG_TOKEN') &&
+      idt.includes('{ silent: true }') && idt.includes('opts?.silent'));
+    check('R7 · the click-echo class is drained + the writer is gone (sweep exists; no "Opening the next move" writer anywhere)',
+      src('scripts/sweep-click-echoes.ts').includes("like('text', 'Opening the next move —%')") &&
+      !rail.includes('Opening the next move'));
+    // LIVE — the loose composer produces a grounded paragraph for a synthetic loose room on the
+    // probe host (anchor-only inputs; sig-gated second call).
+    {
+      const { ensureLooseRoomBrief, readRoomBrief } = await import('../lib/room/brief');
+      const key = 'inbox:00000000-0000-0000-0000-0000000r7brf'.slice(0, 42);
+      const anchor = { title: 'Confirm the pilot invoice', who: 'Acme Billing Lda', ask: 'confirm the June invoice total and reply', prepared: 'draft' };
+      await ensureLooseRoomBrief(sb, PERSONAL, key, anchor);
+      const text = await readRoomBrief(sb, PERSONAL, key);
+      check('R7 live · the loose-room brief composes one grounded paragraph from the anchor (org name kept whole, draft mentioned)',
+        !!text && text.length > 20 && /acme/i.test(text ?? ''),
+        text ? `"${text.slice(0, 90)}…"` : 'no brief composed');
+      await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('kind', 'room_brief').eq('entity_id', key);
+    }
+  }
+
+  // ═══ R8 — THE PREPARED-ACTION GRAMMAR (Aug 4: every prepared thing = a card that summons its
+  // own stage; dispositions quiet; suggestions are offers with an always-open last option) ═══
+  {
+    const idt = src('components/home/item-detail.tsx');
+    check('R8 · ONE stage frame (StageOverlay) hosts reply/follow-up/invite/forward — the truth pane offers nothing (Review buttons embedded-only)',
+      idt.includes('function StageOverlay') &&
+      (idt.match(/<StageOverlay/g)?.length ?? 0) >= 3 &&
+      idt.includes('embedded && !itemDismissed && (view?.inviteTaskId') &&
+      idt.includes('embedded && view?.inviteTaskId && !inviteOpen'));
+    // Aug 4: the bare "⋯" read as an error — the overflow is WORDED ("More ⌄"), never a lone glyph.
+    check('R8 · QUIET DISPOSITIONS: the verbs are text links (word = deed), variants behind a WORDED "More ⌄" — never a bordered button field or a bare glyph',
+      idt.includes('QUIET DISPOSITIONS') && idt.includes('More ⌄') &&
+      !idt.includes('>⋯<') &&
+      !idt.includes('rounded-lg bg-indigo-600 text-white px-3.5 py-1.5 text-[12.5px] font-medium hover:bg-indigo-700 transition-colors\n      : \'inline-flex'));
+    check('R8 · REPLY DIRECTIONS: grounded chips + the ALWAYS-OPEN last option ("Something else…"), redraft via the one steer path, grounded-or-absent',
+      idt.includes('function ReplyDirections') && idt.includes('Something else…') &&
+      idt.includes("fetch('/api/items/steer'") && idt.includes("if (!dirs?.length) return null") &&
+      src('app/api/items/reply-directions/route.ts').includes('topMessageOf') &&
+      src('app/api/items/reply-directions/route.ts').includes("kind: 'reply_directions'"));
+    check('R8 · TWO TEXT CLASSES in the rail: events + refs whisper in ONE muted style (12.5px neutral-500) — no 11–12px neutral-400 ladder in the stream',
+      rail.includes('TWO TEXT CLASSES ONLY') &&
+      !rail.includes('text-[12px] text-neutral-400 leading-snug') &&
+      !rail.includes('text-[11px] text-neutral-400">'));
+  }
+
+  // ═══ R9 — EXCERPT HONESTY · ONE NAVIGATION · CHAT PARITY · CTA COLLAPSE (Aug 4) ═══
+  {
+    const { clipForPrompt, EXCERPT_MARK } = await import('../lib/utils/clip-for-prompt');
+    const long = 'One sentence here. '.repeat(40);
+    const clipped = clipForPrompt(long, 200);
+    check('R9 · clipForPrompt: boundary cut + self-declaring marker; short text passes clean',
+      clipped.endsWith(EXCERPT_MARK) && !/\w$/.test(clipped.replace(EXCERPT_MARK, '').trim().slice(0, -0)) &&
+      clipForPrompt('short', 200) === 'short' && clipped.length <= 200 + EXCERPT_MARK.length + 2);
+    check('R9 · THE EXCERPT-HONESTY LAW at every quoted-source cut (judge · state · fulfillment · reactivate · directions) + version bumps',
+      src('lib/work/judge.ts').includes('clipForPrompt') && src('lib/work/judge.ts').includes('EXCERPT_RULE') &&
+      src('lib/entities/state.ts').includes('clipForPrompt') && src('lib/entities/state.ts').includes('EXCERPT_RULE') &&
+      src('lib/commitments/fulfillment.ts').includes('clipForPrompt') &&
+      src('lib/inbox/reactivate-on-reply.ts').includes('clipForPrompt') &&
+      src('app/api/items/reply-directions/route.ts').includes('clipForPrompt') &&
+      src('lib/work/surface-registry.ts').includes('JUDGE_VERSION = 13') &&
+      src('lib/entities/state.ts').includes('STATE_PROMPT_VERSION = 7') &&
+      src('lib/commitments/fulfillment.ts').includes('FULFILLMENT_LAW_VERSION = 3'));
+    check('R9 · THE ONE-NAVIGATION LAW: in-room rail links route through the room opener (onOpenHref on refs + next-move; entity-room passes focusFromHref/openHref)',
+      rail.includes('onOpenHref?: (href: string) => boolean') && rail.includes('const go = (href: string)') &&
+      (rail.match(/onOpenHref\?\.\(/g)?.length ?? 0) >= 3 &&
+      src('components/entities/entity-room.tsx').includes('onOpenHref={(href)'));
+    check('R9 · THE PARITY LAW: send_prepared_reply + prepare_forward in the chief slice; the explicit-send FLOOR is deterministic; the client fires the ONE send door',
+      src('lib/work/surface-registry.ts').includes('send_prepared_reply:') &&
+      src('lib/work/surface-registry.ts').includes('prepare_forward:') &&
+      src('lib/converse/index.ts').includes('const EXPLICIT_SEND = /') &&
+      src('lib/converse/index.ts').includes("commit: { kind: 'send_reply'") &&
+      rail.includes("fetch(`/api/inbox/${d.commit.itemId}/send-reply`") &&
+      src('app/api/items/steer/route.ts').includes('turn.commit'));
+    // SUPERSEDED (Aug 4, the verb-scope law): the collapse died with the rail row — the strip sits
+    // on the stage with its object; the OBJECT KIND decides the verbs (the census law: a
+    // meeting-extracted action item has no thread → structurally no Reply/Forward).
+    check('R9 · THE VERB-SCOPE LAW: verbs derive from the OBJECT KIND — meeting action items get Done/Dismiss, never Reply; the view serves itemSource; one artifact-card derivation feeds rail AND embedded stage',
+      src('components/home/item-detail.tsx').includes("objectKind === 'email_thread' && (") &&
+      src('components/home/item-detail.tsx').includes("objectKind === 'meeting_action'") &&
+      src('app/api/items/view/route.ts').includes('itemSource') &&
+      src('components/home/item-detail.tsx').includes('const artifactList') &&
+      src('components/home/item-detail.tsx').includes('embedded && artifactList.map'));
+  }
+
+  // ═══ R10 — THE EXCHANGE GRAMMAR (Aug 4: the room talks like a person — offer → pick →
+  // acknowledge → land; clicks are utterances; scaffolding is ephemeral, the story is durable) ═══
+  {
+    const idt = src('components/home/item-detail.tsx');
+    const er = src('components/entities/entity-room.tsx');
+    check('R10 · ROOM COHERENCE: the project room renders prepared work in the CARD grammar (board-derived) · focus narrations NAME their subject · resolutions narrate into the conversation',
+      er.includes('artifacts={(() => {') && er.includes('r.prepared') &&
+      er.includes('Nothing\'s prepared on "${subj}"') &&
+      idt.includes('const narrateResolve') && (idt.match(/narrateResolve\(/g)?.length ?? 0) >= 4); // dismiss · note · not-relevant · done
+    check('R10 · ONE STAGE AT A TIME: opening any stage lowers the others (the covered-Open dead-click class, found live)',
+      idt.includes('ONE STAGE AT A TIME') && idt.includes('setForwarding(false);\n    setInviteOpen(false);') &&
+      idt.includes('onOpen: openForward'));
+    check('R10 · THE REPLY EXCHANGE: Reply opens a DIALOGUE (offer turn + grounded directions), the pick is the USER\'S turn, ack shows, result lands; typing always works',
+      idt.includes('startReplyExchange') && (idt.match(/onReply=\{startReplyExchange\}/g)?.length ?? 0) >= 1 &&
+      rail.includes("act: 'direction'") && rail.includes("addTurn({ role: 'user', text: a.label })") &&
+      rail.includes('Got it — drafting.'));
+    check('R10 · EPHEMERAL SCAFFOLDING: offers/acks render live but never persist (a reloaded offer with dead buttons is noise, not history)',
+      rail.includes('ephemeral?: boolean') && rail.includes('if (!opts?.ephemeral) persistTurn') &&
+      rail.includes('export function dropDealTurn') && idt.includes('ephemeral: true'));
+    check('R10 · THE PROPOSE TIER on invites: a stated day/window earns a grounded PROPOSED time (user clock, weekday stated), labeled as ours; no time stated → the card asks plainly',
+      src('lib/home/prepare-action.ts').includes('THE PROPOSE TIER') &&
+      src('lib/home/prepare-action.ts').includes('userTimezone') &&
+      idt.includes('The time is a proposal within what they suggested') &&
+      idt.includes('No time was stated — pick one below') &&
+      idt.includes("view?.inviteHasTime === false ? 'Invite drafted — needs a time from you'"));
   }
 
   console.log('\n════ THE ONE ROOM GATES ════');

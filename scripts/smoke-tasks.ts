@@ -21,7 +21,10 @@ const RENE_PREFIX = 'ae306f38';
 let PERSONAL = ''; // the PROBE HOST — resolved at start (scripts/probe-user.ts)
 const out: Array<[string, boolean, string]> = [];
 const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
-const MARKER = 'ZZ-smoke chase the pilot paperwork';
+// FIXTURE ROBUSTNESS (Aug 4): the namespace token rides MID-PHRASE — a leading "ZZ-smoke " read
+// like a project tag to the classifier ("I couldn't find a project called ZZ-smoke"), and the
+// title law strips leading tags on some tiers. The lookup is time-scoped on the distinctive tail.
+const MARKER = 'chase the ZZ-smoke pilot paperwork';
 
 // Mirror of the status-update route's compose path (scripts can't auth HTTP) — same modules, same
 // cache contract (item_deliverables kind 'entity' + sig).
@@ -75,9 +78,15 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
     const eid = ent!.id as string;
 
     // 1 — create via the CHAT (entity scope = the room's composer; no project name needed).
+    // FIXTURE ROBUSTNESS (Aug 4): the title law may legitimately strip the "ZZ-smoke" namespace
+    // token from the created description (Rene's tier does), so the lookup is TIME-SCOPED to this
+    // run (created after t0, distinctive tail) — same outcomes asserted, never marker-dependent.
+    const t0 = new Date(Date.now() - 5_000).toISOString();
     const t1 = await converse(sb, uid, { kind: 'entity', entityId: eid }, `add a task: ${MARKER}`);
-    const { data: row } = await sb.from('commitments').select('id, source, status, due_date')
-      .eq('user_id', uid).ilike('description', `%${MARKER}%`).maybeSingle();
+    const { data: rows } = await sb.from('commitments').select('id, source, status, due_date, created_at')
+      .eq('user_id', uid).ilike('description', '%pilot paperwork%')
+      .gte('created_at', t0).order('created_at', { ascending: false }).limit(1);
+    const row = rows?.[0] ?? null;
     const taskId = row?.id as string | undefined;
     check(`${label} · chat-create lands a MANUAL commitment`, row?.source === 'manual' && row?.status === 'open', `"${t1.say.slice(0, 50)}"`);
     const { data: lnk } = await sb.from('entity_links').select('entity_id, via, locked')
@@ -86,7 +95,7 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
 
     // 2 — the BRAIN sees it (the ledger carries the declared task).
     const { ledger } = await assembleLedger(sb, uid, eid);
-    check(`${label} · the deal's LEDGER carries the task`, ledger.some((l) => l.text.includes('chase the pilot paperwork')));
+    check(`${label} · the deal's LEDGER carries the task`, ledger.some((l) => l.text.toLowerCase().includes('pilot paperwork')));
 
     // 3 — the SPINE carries it (deck / timeline / room all read this) AND it is a PREPARATION-PASS
     // candidate (5B: partitionDailyReport routes it into needsYou — the pass's working set).
@@ -181,8 +190,14 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
       id2.includes('chip={null}') && (id2.match(/chip=\{embedded \? null/g) ?? []).length === 3 && (id2.match(/action=\{embedded \? undefined/g) ?? []).length >= 2);
     // W3 superseded the static line: the narration is now COMPOSED from the board row's prepared
     // facts (keyed dedup, real offers) — still deterministic, never a hedge.
-    check('5A.5 · CTA-focus narrates in the per-deal chat (deterministic, grounded — W3): the brief\'s next-move click narrates + opens its anchor (moved to the rail with the card)',
-      rl2.includes('export function pushDealTurn') && rl2.includes('Opening the next move') && rl2.includes('nextMoveHref') && er2.includes("row?.prepared === 'draft'"));
+    // Aug 3 (the CTA is the deed — laws 5+8): the rail's next-move click ONLY navigates — the
+    // "Opening the next move" click echo is gone (a click is not history), and a link that would
+    // land on the room/item already open renders as plain text. The room's OWN focus narration
+    // (entity-room openHref) stays — it is composed from facts with real offers, not an echo.
+    // Aug 4 (one-navigation law): the CTA routes through go() — the room opener first, page nav only unhandled.
+    check('5A.5 · the CTA is the deed: rail next-move navigates without a click-echo turn; the room\'s grounded focus narration remains',
+      rl2.includes('export function pushDealTurn') && !rl2.includes('Opening the next move') && rl2.includes('nextMoveHref')
+      && rl2.includes('go(target)') && er2.includes("row?.prepared === 'draft'"));
     check('5A.6 · room width + Tasks default tab + INTENT as one full-width band (the emptied two-column grid died with the next-move card — experience-spec seat cleanup)',
       er2.includes('max-w-[1000px]') && er2.includes("useState<'work'") &&
       er2.includes('md:grid-cols-2 gap-x-8') && !er2.includes('lg:grid-cols-[minmax(0,1fr)_280px]'));

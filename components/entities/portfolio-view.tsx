@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ChevronRightIcon, CheckIcon, XMarkIcon, ArrowRightIcon, StarIcon,
   ArchiveBoxIcon, PencilIcon, TrashIcon, ArrowUturnLeftIcon, BellSlashIcon, MagnifyingGlassIcon, PlusIcon, ArrowsPointingInIcon,
@@ -220,15 +220,17 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
   const [tailOpen, setTailOpen] = useState(false);
   const [hidden, setHidden] = useState<Set<string>>(new Set()); // optimistic removals this session
   const [selected, setSelected] = useState<string | null>(null); // the open entity detail
-  // Deep-link door (P7c): /?view=projects&entity=<id> opens straight into this deal's overview —
-  // the rail's "Open project overview" chip and any surface can route here.
+  // Deep-link door (P7c → room-door law, Aug 3): /home?view=projects&entity=<id> opens straight
+  // into this deal's ROOM — deck rows on project items, "Open project", any surface routes here.
+  // Keyed on useSearchParams so a soft nav while already mounted (query-only change) still lands.
+  const searchParams = useSearchParams();
   useEffect(() => {
     try {
-      const id = new URLSearchParams(window.location.search).get('entity');
+      const id = searchParams.get('entity');
       if (id) { setSelected(id); onDetailChange?.(true); }
     } catch { /* non-fatal */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [searchParams]);
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
