@@ -133,6 +133,8 @@ export async function GET(request: NextRequest) {
     // brief over the anchor + its turns (same composer, `<kind>:<id>` key — lib/room/turns.ts).
     const looseKey = `${linkKind === 'inbox_item' ? 'inbox' : linkKind}:${id}`;
     let looseBrief: string | null = null;
+    let looseMove: { label: string; ref: string | null } | null = null;
+    let looseOffers: Array<{ label: string; say: string }> = [];
     if (linkRes.data?.entity_id) {
       const eid = linkRes.data.entity_id as string; const uid = user.id;
       after(async () => {
@@ -140,8 +142,9 @@ export async function GET(request: NextRequest) {
       });
     } else {
       const uid = user.id;
-      const { readRoomBrief } = await import('@/lib/room/brief');
-      looseBrief = await readRoomBrief(supabase, uid, looseKey);
+      const { readRoomResponse } = await import('@/lib/room/brief');
+      const r = await readRoomResponse(supabase, uid, looseKey);
+      looseBrief = r?.text ?? null; looseMove = r?.move ?? null; looseOffers = r?.offers ?? [];
       const looseTitle = linkKind === 'inbox_item'
         ? String(itemRow?.work_title || (itemRow?.source_data as Record<string, unknown> | undefined)?.subject || 'this email')
         : linkKind === 'commitment' ? String(itemRow?.description ?? 'this commitment') : String(itemRow?.title ?? 'this meeting');
@@ -169,8 +172,10 @@ export async function GET(request: NextRequest) {
       steps,
       entity,
       siblings,
-      // THE ONE-VOICE BRIEF for a LOOSE room (linked rooms carry it on entity.brief).
+      // THE ONE RESPONDER for a LOOSE room (linked rooms carry it on entity.brief/move/offers).
       brief: looseBrief,
+      move: looseMove,
+      offers: looseOffers,
       // THE VERB-SCOPE LAW (Aug 4): the item's SOURCE decides its verb strip — a meeting-extracted
       // action item has no thread; Reply must be structurally impossible on it.
       itemSource: linkKind === 'inbox_item' ? (itemRow?.source as string | undefined) ?? 'email' : null,

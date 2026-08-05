@@ -1204,9 +1204,11 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       src('components/home/item-rail.tsx').includes('three grammars, derived STRUCTURALLY') &&
       src('components/home/item-rail.tsx').includes('/^(prep:|meeting-prep:)/.test(t.dkey)') &&
       src('lib/room/turns.ts').includes('dedupe_key') && src('lib/room/turns.ts').includes('key: (r.dedupe_key'));
-    check('P29 · ONE commit line per artifact (the rail card points — Open →; the stage composer holds the only Send)',
-      src('components/home/item-rail.tsx').includes('ONE COMMIT LINE') &&
-      !src('components/home/item-rail.tsx').includes('artifact.onCommit?.()'));
+    // Aug 4 (a component is a turn): the card carries NO commit callback at all — Open summons the
+    // stage, the stage holds the only Send. The card is seated at its anchor turn's moment.
+    check('P29 · ONE commit line per artifact (cards point — Open →; the summoned stage holds the only Send; no commit callback on any card)',
+      src('components/home/item-rail.tsx').includes('A COMPONENT IS A TURN') &&
+      !src('components/home/item-rail.tsx').includes('onCommit'));
     // SUPERSEDED (Aug 4, the summoned stage + verb strip): the composer no longer docks in the
     // scroll at all — the strip sits with the object, prepared work is a card, and the review
     // surface is SUMMONED with the one Send. Nothing can be "buried below siblings" by construction.
@@ -1468,8 +1470,11 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     if (!C?.id || !D?.id) check('P30 live · recall fixtures failed to insert', false);
     else {
       const t = await converse(sb, PERSONAL, { kind: 'entity', entityId: String(C.id) }, 'what do we have on the kiteschool assessment?');
+      // Aug 4 hardening: "does not provide" / "no specific information" slipped the old deny-regex —
+      // a denial by any phrasing fails; the honesty floor at the ANSWER DOOR is what passes this.
       check('P30 live · the NAMED body of work is recalled past generic-token decoys, never denied (distinctive tokens decide, "assessment" proves nothing)',
-        /kiteschool/i.test(t.say) && !/don't (see|have)|do not (see|have)|couldn't find|no such/i.test(t.say),
+        /kiteschool/i.test(t.say) &&
+        !/don't (see|have)|do not (see|have|provide|contain)|couldn't find|no such|no (specific )?(information|record|data)|not (available|found)/i.test(t.say),
         `say="${t.say.slice(0, 80)}"`);
       const ids = [String(C.id), String(D.id), ...((dec ?? []) as Array<{ id: string }>).map((d) => String(d.id))];
       await sb.from('room_turns').delete().eq('user_id', PERSONAL).in('room_key', ids);

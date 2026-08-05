@@ -76,7 +76,7 @@ export const renderComponentOptions = (): string =>
   WORK_COMPONENTS.map((c) => `- "${c.key}": ${c.when}`).join('\n');
 
 /** Bump when the verdict schema/prompt changes — cached verdicts self-invalidate. */
-export const JUDGE_VERSION = 13; // 13: THE EXCERPT-HONESTY LAW — clips end at boundaries + declare themselves; the prompt rules a clip marker is OUR cutting, never source truncation (a normal email read as "cut off mid-sentence" — found live). 12: THE USER'S CLOCK — local day/hour, same-day expiry with a code-verified stated time, event-boundary sig. 11: the sender floor. 10: expired requires a STATED date. 9: `revisit` + open-ask fact. 8: `forward` + failure honesty.
+export const JUDGE_VERSION = 14; // 14: ATTACHABLE-REQUIRES — a require is a THING (document/file/link), never a confirmation/decision/answer (the "attach a confirmation of the time" ask, found live). 13: THE EXCERPT-HONESTY LAW — clips end at boundaries + declare themselves; the prompt rules a clip marker is OUR cutting, never source truncation (a normal email read as "cut off mid-sentence" — found live). 12: THE USER'S CLOCK — local day/hour, same-day expiry with a code-verified stated time, event-boundary sig. 11: the sender floor. 10: expired requires a STATED date. 9: `revisit` + open-ask fact. 8: `forward` + failure honesty.
 
 // ── registryParity — the W1 structural law, stated mechanically for the P21 gate: every verb maps
 // to a component; every gated component binds a BUILT capability whose irreversible flag agrees

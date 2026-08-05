@@ -114,11 +114,15 @@ const src = (p: string) => readFileSync(p, 'utf8');
   // SUPERSEDED twice: ONE-COMMIT-LINE (UX arc), then the PREPARED-ACTION GRAMMAR (Aug 4) — the
   // card list carries EVERY prepared thing (reply/invite/forward), each Open summons its own
   // stage; the stage holds the ONLY Send. No commit callback exists on the card at all now.
-  check('R2→UX: the ARTIFACT CARDS point at their summoned stages (Open →) — ONE commit line, on the stage only',
-    railSrc.includes('artifacts?:') && railSrc.includes('ONE COMMIT LINE') &&
+  // Aug 4 (a component is a turn): the card SEATS at its anchor turn's chronological moment in
+  // the stream (the narration becomes the card); unanchored cards append at the end. No commit
+  // callback exists on the card at all — the one Send lives on the summoned stage.
+  check('R2→UX: the ARTIFACT CARDS are TURNS — seated at their anchor moment (anchorKey), Open summons the stage, no commit on the card',
+    railSrc.includes('artifacts?:') && railSrc.includes('A COMPONENT IS A TURN') &&
+    railSrc.includes('anchorKey') && railSrc.includes('anchoredByKey') && railSrc.includes('endArtifacts') &&
     !railSrc.includes('onCommit') &&
     detail.includes("label: 'Reply drafted — ready to review'") &&
-    detail.includes("label: 'Calendar invite prepared — review & approve'") &&
+    detail.includes("'Calendar invite prepared — review & approve'") &&
     detail.includes("label: 'Forward prepared — review & approve'"));
   check('R2: LOOSE items get the conversation too (railView no longer gated on an entity)',
     detail.includes('const railView = view ? (view as RailView) : null') &&
@@ -273,10 +277,12 @@ const src = (p: string) => readFileSync(p, 'utf8');
       rail.includes('/home?view=projects&entity=') && !src('components/room/context-strip.tsx').includes("'Open project'") &&
       !rail.includes('Opening the next move'));
     const rb = src('lib/room/brief.ts');
-    check('R6 · THE ONE-VOICE BRIEF: authored (not assembled) — sig-gated compose over judged state, last-good serve, AI-failure never blanks, version in the cache',
-      rb.includes('ROOM_BRIEF_VERSION') && rb.includes('ensureRoomBrief') && rb.includes('readRoomBrief') &&
-      rb.includes('if (prior === sig) return') && rb.includes('if (!text) return') &&
-      src('lib/entities/room-view.ts').includes('readRoomBrief') &&
+    // Aug 5 (the one responder): the brief grew into {brief, MOVE, offers} composed from THE ONE
+    // GROUNDING; the sig carries the BOARD DIGEST so preparedness changes always recompose.
+    check('R6 · THE ONE RESPONDER: authored from the one grounding — sig includes the board digest, last-good serve, AI-failure never blanks, version in the cache',
+      rb.includes('ROOM_BRIEF_VERSION') && rb.includes('ensureRoomBrief') && rb.includes('readRoomResponse') &&
+      rb.includes('assembleRoomGrounding') && rb.includes('boardDigest') && rb.includes('if (!text) return') &&
+      src('lib/entities/room-view.ts').includes('readRoomResponse') &&
       src('app/api/entities/[id]/room/route.ts').includes('ensureRoomBrief') &&
       src('app/api/items/view/route.ts').includes('ensureRoomBrief') &&
       rail.includes('ent?.brief') && rail.includes("ent.brief") );
@@ -347,14 +353,19 @@ const src = (p: string) => readFileSync(p, 'utf8');
       (idt.match(/<StageOverlay/g)?.length ?? 0) >= 3 &&
       idt.includes('embedded && !itemDismissed && (view?.inviteTaskId') &&
       idt.includes('embedded && view?.inviteTaskId && !inviteOpen'));
-    // Aug 4: the bare "⋯" read as an error — the overflow is WORDED ("More ⌄"), never a lone glyph.
-    check('R8 · QUIET DISPOSITIONS: the verbs are text links (word = deed), variants behind a WORDED "More ⌄" — never a bordered button field or a bare glyph',
-      idt.includes('QUIET DISPOSITIONS') && idt.includes('More ⌄') &&
-      !idt.includes('>⋯<') &&
-      !idt.includes('rounded-lg bg-indigo-600 text-white px-3.5 py-1.5 text-[12.5px] font-medium hover:bg-indigo-700 transition-colors\n      : \'inline-flex'));
-    check('R8 · REPLY DIRECTIONS: grounded chips + the ALWAYS-OPEN last option ("Something else…"), redraft via the one steer path, grounded-or-absent',
-      idt.includes('function ReplyDirections') && idt.includes('Something else…') &&
-      idt.includes("fetch('/api/items/steer'") && idt.includes("if (!dirs?.length) return null") &&
+    // Aug 4 (2nd pass): Dismiss folded into More (user call — the row is two verbs + More); the
+    // chevron is an ICON, baseline-aligned (the text "⌄" sat offset); a divider sits below the row.
+    check('R8 · QUIET DISPOSITIONS: Reply · Forward · More (icon chevron, Dismiss + variants inside) — never a bordered field, a bare glyph, or an offset text chevron',
+      idt.includes('QUIET DISPOSITIONS') && idt.includes('More<ChevronDownIcon') &&
+      !idt.includes('>⋯<') && !idt.includes('More ⌄') &&
+      idt.includes('onClick={() => { setMenuOpen(false); onDismiss(); }}') &&
+      idt.includes('border-b border-neutral-100 pb-4'));
+    // SUPERSEDED (Aug 4, 2nd pass): the directions live ONLY in the CONVERSATION (the exchange) —
+    // the stage is purely read/edit/send; the open option is the composer itself ("or just tell me").
+    check('R8 · REPLY DIRECTIONS live in the CONVERSATION only: the exchange offers grounded picks + the open composer; the stage carries no chips',
+      !idt.includes('function ReplyDirections') && idt.includes('startReplyExchange') &&
+      idt.includes('or just tell me') &&
+      rail.includes("act: 'direction'") &&
       src('app/api/items/reply-directions/route.ts').includes('topMessageOf') &&
       src('app/api/items/reply-directions/route.ts').includes("kind: 'reply_directions'"));
     check('R8 · TWO TEXT CLASSES in the rail: events + refs whisper in ONE muted style (12.5px neutral-500) — no 11–12px neutral-400 ladder in the stream',
@@ -377,7 +388,7 @@ const src = (p: string) => readFileSync(p, 'utf8');
       src('lib/commitments/fulfillment.ts').includes('clipForPrompt') &&
       src('lib/inbox/reactivate-on-reply.ts').includes('clipForPrompt') &&
       src('app/api/items/reply-directions/route.ts').includes('clipForPrompt') &&
-      src('lib/work/surface-registry.ts').includes('JUDGE_VERSION = 13') &&
+      /JUDGE_VERSION = 1[3-9]/.test(src('lib/work/surface-registry.ts')) && // ≥13 (the law landed at 13)
       src('lib/entities/state.ts').includes('STATE_PROMPT_VERSION = 7') &&
       src('lib/commitments/fulfillment.ts').includes('FULFILLMENT_LAW_VERSION = 3'));
     check('R9 · THE ONE-NAVIGATION LAW: in-room rail links route through the room opener (onOpenHref on refs + next-move; entity-room passes focusFromHref/openHref)',
@@ -407,9 +418,11 @@ const src = (p: string) => readFileSync(p, 'utf8');
   {
     const idt = src('components/home/item-detail.tsx');
     const er = src('components/entities/entity-room.tsx');
-    check('R10 · ROOM COHERENCE: the project room renders prepared work in the CARD grammar (board-derived) · focus narrations NAME their subject · resolutions narrate into the conversation',
+    // Aug 5 (the one system): the focus narrations DIED — they were a parallel author contradicting
+    // the responder. openHref only focuses; the opening (brief · MOVE · offers) owns all speech.
+    check('R10 · ROOM COHERENCE: cards board-derived · openHref only FOCUSES (no parallel narrator) · resolutions narrate into the conversation',
       er.includes('artifacts={(() => {') && er.includes('r.prepared') &&
-      er.includes('Nothing\'s prepared on "${subj}"') &&
+      !er.includes('want me on it') && er.includes('openHref only FOCUSES') &&
       idt.includes('const narrateResolve') && (idt.match(/narrateResolve\(/g)?.length ?? 0) >= 4); // dismiss · note · not-relevant · done
     check('R10 · ONE STAGE AT A TIME: opening any stage lowers the others (the covered-Open dead-click class, found live)',
       idt.includes('ONE STAGE AT A TIME') && idt.includes('setForwarding(false);\n    setInviteOpen(false);') &&
@@ -427,6 +440,79 @@ const src = (p: string) => readFileSync(p, 'utf8');
       idt.includes('The time is a proposal within what they suggested') &&
       idt.includes('No time was stated — pick one below') &&
       idt.includes("view?.inviteHasTime === false ? 'Invite drafted — needs a time from you'"));
+  }
+
+  // ═══ R11 — THE PEOPLE TYPEAHEAD (Aug 4: every people field suggests KNOWN contacts as you
+  // type — grounded in the user's own correspondence, never invented; one shared input) ═══
+  {
+    const idt = src('components/home/item-detail.tsx');
+    check('R11 · one PeopleSuggestInput mounts in BOTH chip fields (attendees + recipients); the suggest route is user-scoped, graph-ranked, robots filtered',
+      idt.includes('function PeopleSuggestInput') &&
+      (idt.match(/<PeopleSuggestInput/g)?.length ?? 0) >= 2 &&
+      src('app/api/people/suggest/route.ts').includes('relationship_graph') &&
+      src('app/api/people/suggest/route.ts').includes("no-?reply|notification|mailer"));
+  }
+
+  // ═══ R12 — THE ATTACHABLE-REQUIRES LAW (Aug 4, found live: "attach a confirmation of the
+  // Thursday time" — an ANSWER classified as an artifact; the resolver searched drives for a
+  // decision and asked the user to attach one) ═══
+  {
+    check('R12 · a require is a THING: judge rule (v14) + the reasoned attachability floor at the ONE resolver (memoized, keep-all on failure) + word-boundary labels',
+      src('lib/work/judge.ts').includes('NEVER a confirmation, approval, decision, answer, availability, or time') &&
+      src('lib/work/surface-registry.ts').includes('JUDGE_VERSION = 14') &&
+      src('lib/prepare/requirements.ts').includes('async function attachableOnly') &&
+      src('lib/prepare/requirements.ts').includes('requires = await attachableOnly(admin, userId, requires)') &&
+      src('lib/prepare/requirements.ts').includes('return requires; // failure ≠ a verdict — keep all') &&
+      src('lib/work/judge.ts').includes('function clipLabel'));
+    // LIVE — the floor discriminates on the real label classes (the Carson answer vs EG Bank docs).
+    try {
+      const { aiCall } = await import('../lib/ai/call');
+      const labels = ['confirmation of the Thursday demo call time', 'the Q2 vendor risk register', 'your availability for next week'];
+      const res = await aiCall<{ attachable?: number[] }>({
+        userId: PERSONAL, supabase: sb, shape: { output: 'json' }, temperature: 0, maxTokens: 60, source: 'task_preparation',
+        prompt:
+          `Which of these are ATTACHABLE THINGS — a document, file, report, sheet, deck, or link that ` +
+          `could be retrieved and attached to an email? NOT attachable: a confirmation, approval, ` +
+          `decision, answer, availability, a time, or anything only a person's own words can supply. ` +
+          `(A "confirmation letter" IS a document; "confirmation of the meeting time" is an answer.)\n` +
+          `${labels.map((l, i) => `${i + 1}. ${l}`).join('\n')}\n\nJSON only: {"attachable":[numbers]}`,
+      });
+      const keep = new Set(res.json?.attachable ?? []);
+      check('R12 live · answers are never askable attachments; real documents survive',
+        !keep.has(1) && keep.has(2) && !keep.has(3), `attachable=${JSON.stringify([...keep])}`);
+    } catch { check('R12 live · attachability floor (AI unavailable — vacuous)', true); }
+  }
+
+  // ═══ R13 — THE ONE SYSTEM (Aug 5: one grounding, one responder, surfaces as views — "it should
+  // feel like Claude"; five parallel panel authors died) ═══
+  {
+    const g = src('lib/room/grounding.ts');
+    check('R13 · THE ONE GROUNDING exists and merges what no consumer held together (board = judged verbs + ACTUAL prepared state per item, asks, ledger, transcript, files)',
+      g.includes('export async function assembleRoomGrounding') && g.includes('judgedWork') &&
+      g.includes('function preparedOf') && g.includes('THE LIVE BOARD') && g.includes('OPEN ASKS'));
+    check('R13 · every room-scope reasoner reads the SAME page: the responder, the chat question path, the agent loop',
+      src('lib/room/brief.ts').includes('assembleRoomGrounding') &&
+      src('lib/entities/ask.ts').includes('assembleRoomGrounding') &&
+      src('lib/converse/index.ts').includes('assembleRoomGrounding'));
+    check('R13 · THE MOVE is board-validated (the model picks, the code verifies the ref) and OFFERS are utterances (chips send words through the one composer)',
+      src('lib/room/brief.ts').includes('boardRefs.has(String(mv.target))') &&
+      rail.includes('send(o.say)') && rail.includes('THE MOVE + THE OFFERS'));
+    // LIVE — the responder composes {brief, move, offers} for a real tracked project; the move's
+    // target, when present, is a real board ref (never an invented deed).
+    const { data: cand13 } = await sb.from('work_entities').select('id, user_id, name')
+      .eq('kind', 'initiative').eq('tracked', true).eq('status', 'active')
+      .in('user_id', [A, PERSONAL]).not('state', 'is', null).limit(1).maybeSingle();
+    if (cand13) {
+      const { ensureRoomBrief, readRoomResponse } = await import('../lib/room/brief');
+      const { assembleRoomGrounding } = await import('../lib/room/grounding');
+      await ensureRoomBrief(sb, cand13.user_id as string, cand13.id as string);
+      const r = await readRoomResponse(sb, cand13.user_id as string, cand13.id as string);
+      const g13 = await assembleRoomGrounding(sb, cand13.user_id as string, { kind: 'entity', entityId: cand13.id as string });
+      const refs = new Set(g13.board.map((b) => b.ref));
+      check('R13 live · the responder emits one coherent opening (brief non-empty; move target ∈ board when set)',
+        !!r?.text && (!r.move?.ref || refs.has(r.move.ref)),
+        r ? `move=${r.move ? `"${r.move.label}"→${r.move.ref ?? 'no-target'}` : 'none'} · offers=${r.offers.length}` : 'no response composed');
+    } else check('R13 live · responder compose (vacuous — no tracked entity with state)', true);
   }
 
   console.log('\n════ THE ONE ROOM GATES ════');

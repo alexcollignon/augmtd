@@ -601,48 +601,14 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
   // THE ONE SHELL (R2): a focused artifact renders INSIDE the room's main card — the header, rail
   // and per-deal conversation stay put; a breadcrumb steps back to the room's first paint.
   const [focused, setFocused] = useState<FocusItem | null>(null);
-  const openHref = (href: string | null, narrate = false) => {
+  // THE ONE SYSTEM (Aug 5): openHref only FOCUSES. The click-echo narrations and "want me on
+  // it?" offers that used to be pushed here were a parallel author — they contradicted the
+  // responder's brief because they reasoned from a different slice at a different time. The
+  // room's opening (brief · MOVE · offers) now says everything; a focus is spatial, not speech.
+  const openHref = (href: string | null, _narrate = false) => {
     const f = focusFromHref(href);
-    if (f) {
-      setFocused(f);
-      // CONTINUATION (5A.5 → W3): a CTA-focus speaks in the room's conversation — one deterministic
-      // line COMPOSED FROM FACTS (the board row's prepared state), never a hedge. Keyed, so a
-      // re-click can't duplicate it. When nothing's prepared, the offer is real: tappable
-      // "Draft it now" (the one engine) + the routed hand-off.
-      if (narrate && d) {
-        const row = [...d.board.todo, ...d.board.waiting, ...d.board.done].find((r) => r.id === f.id);
-        const key = `cta:${f.kind}:${f.id}`;
-        const itemKind = f.kind === 'commitment' || f.kind === 'followup' ? 'commitment' as const : 'inbox' as const;
-        const sw = d.entity.suggestedWorker ?? null;
-        const moveTitle = d.entity.nextMove?.title ?? row?.title ?? '';
-        // NAMED SUBJECTS (Aug 4, found live): in a room holding several items, "this" is ambiguous
-        // — "Clara drafted the reply" one line above "Nothing's prepared on this yet" read as a
-        // contradiction. Every focus narration names the item it speaks about.
-        const subj = (row?.title ?? moveTitle ?? '').slice(0, 44);
-        if (f.kind === 'meeting') {
-          pushDealTurn(entityId, "Here's the meeting — notes and action items below; ask me anything about it.", { key });
-        } else if (row?.prepared === 'draft') {
-          pushDealTurn(entityId, `The draft on "${subj}" is ready — send it as-is or tell me what to change.`, { key });
-        } else if (row?.prepared) {
-          pushDealTurn(entityId, `${row.prepared} prepared "${subj}" — it's on the work below; tell me what to change.`, { key });
-        } else {
-          // O5: the decision leads with the JUDGE's route (the roster verdict), the in-house draft is
-          // the alternative, and a prepared SIBLING on the same deal is surfaced honestly — the
-          // thread and its task are one obligation, so "nothing's prepared" must tell the whole truth.
-          const sibling = [...d.board.todo, ...d.board.waiting].find((r) => r.id !== f.id && r.prepared);
-          const sibNote = sibling
-            ? ` (${sibling.prepared === 'draft' ? 'A draft' : `${sibling.prepared}'s work`} is already on "${sibling.title.slice(0, 44)}" in Tasks.)`
-            : '';
-          pushDealTurn(entityId, `Nothing's prepared on "${subj}" yet — want me on it?${sibNote}`, {
-            key,
-            actions: [
-              ...(sw && moveTitle ? [{ label: `Have ${sw.name.split(' ')[0]} prepare it`, act: 'say' as const, text: `Have ${sw.name.split(' ')[0]} ${moveTitle}` }] : []),
-              { label: f.kind === 'email' ? 'Draft the reply here' : 'Prepare it here', act: 'prepare' as const, itemKind, itemId: f.id },
-            ],
-          });
-        }
-      }
-    } else if (href) router.push(href);
+    if (f) setFocused(f);
+    else if (href) router.push(href);
   };
   const [adding, setAdding] = useState(false);
   const addAnchorRef = useRef<HTMLDivElement>(null); // "+ Add existing" popover anchor (portaled)
@@ -759,6 +725,7 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
               label: `${r.prepared === 'draft' ? 'Draft ready' : 'Prepared'} — "${r.title.slice(0, 44)}"`,
               by: r.prepared && r.prepared !== 'draft' ? r.prepared : null,
               onOpen: () => openHref(r.href, false),
+              anchorKey: `prep:${r.id}`,
             }));
           })()}
           // THE ONE-NAVIGATION LAW (Aug 4): a rail link inside the room opens IN the room — the

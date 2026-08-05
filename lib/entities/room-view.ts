@@ -17,10 +17,13 @@ export type RoomEntity = {
   summary: string | null; momentum: string | null; nextMove: string | null; nextMoveHref?: string | null;
   whoOwesYou: string[]; whoOwesThem: string[];
   suggestedWorker: SuggestedWorker | null; // the ONE routing brain's verdict (W2) — served, never client-matched
-  /** THE ONE-VOICE BRIEF (Aug 3) — the room's opening AUTHORED as one colleague paragraph
-   *  (lib/room/brief.ts; served last-good, recomposed in after() when the sig moves). Null until
+  /** THE ONE RESPONDER (Aug 5) — the room's whole opening from one reasoned pass over the one
+   *  grounding: the paragraph, THE MOVE (board-validated target), and the offer chips. Served
+   *  last-good, recomposed in after() when the sig (incl. the board digest) moves. Null until
    *  first compose — the rail falls back to the stitched fields. */
   brief?: string | null;
+  move?: { label: string; ref: string | null } | null;
+  offers?: Array<{ label: string; say: string }>;
 };
 
 export type RoomSiblings = {
@@ -58,7 +61,11 @@ export async function buildRoomView(
     whoOwesYou: Array.isArray(st.whoOwes?.you) ? st.whoOwes!.you!.slice(0, 3) : [],
     whoOwesThem: Array.isArray(st.whoOwes?.them) ? st.whoOwes!.them!.slice(0, 3) : [],
     suggestedWorker: await suggestWorkerForMove(supabase, userId, entityId, { next_move: ent.next_move }),
-    brief: await (async () => { const { readRoomBrief } = await import('@/lib/room/brief'); return readRoomBrief(supabase, userId, entityId); })(),
+    ...(await (async () => {
+      const { readRoomResponse } = await import('@/lib/room/brief');
+      const r = await readRoomResponse(supabase, userId, entityId);
+      return { brief: r?.text ?? null, move: r?.move ?? null, offers: r?.offers ?? [] };
+    })()),
   };
 
   // Everything else on this deal — the "this has 2 other threads" awareness.

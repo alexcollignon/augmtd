@@ -29,9 +29,11 @@ type RailKind = 'email' | 'followup' | 'commitment' | 'meeting' | 'awareness' | 
 export type RailView = {
   // The open item — what the rail's opening message narrates FIRST (P5b: item-anchored, never generic).
   anchor?: { who: string | null; ask: string | null; prepared: string | null } | null;
-  /** THE ONE-VOICE BRIEF for a LOOSE room (no entity) — composed server-side; the anchor stitch
-   *  is only the fallback until the first compose lands. Linked rooms carry it on entity.brief. */
+  /** THE ONE RESPONDER for a LOOSE room (no entity) — composed server-side; the anchor stitch
+   *  is only the fallback until the first compose lands. Linked rooms carry it on entity.*. */
   brief?: string | null;
+  move?: { label: string; ref: string | null } | null;
+  offers?: Array<{ label: string; say: string }>;
   gap: string | null;
   entity: {
     id: string; name: string;
@@ -39,9 +41,11 @@ export type RailView = {
     summary: string | null; momentum: string | null; nextMove: string | null; nextMoveHref?: string | null;
     whoOwesYou: string[]; whoOwesThem: string[];
     suggestedWorker?: { id: string; name: string; role: string } | null;
-    /** THE ONE-VOICE BRIEF — the room's opening authored as one colleague paragraph (served
-     *  last-good; null until first compose → the stitched fields fall back). */
+    /** THE ONE RESPONDER — the room's whole opening from one reasoned pass over the one grounding
+     *  (served last-good; null until first compose → the stitched fields fall back). */
     brief?: string | null;
+    move?: { label: string; ref: string | null } | null;
+    offers?: Array<{ label: string; say: string }>;
   } | null;
   siblings: {
     threads: Array<{ id: string; subject: string; who: string | null; at: string | null; current: boolean }>;
@@ -204,9 +208,12 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   decision?: { title: string | null; options: Array<{ label: string }>; onChoose: (label: string) => void | Promise<void>; onDismiss: () => void } | null;
   /** One-room R2 → the PREPARED-ACTION GRAMMAR (Aug 4): EVERY prepared thing — reply draft,
    *  calendar invite, forward — is an ARTIFACT CARD in the conversation that summons its own
-   *  stage (onOpen). The words and the deed are ONE element (law 8) — a narration line about
-   *  prepared work with the button somewhere else is a seat violation. */
-  artifacts?: Array<{ key: string; label: string; by?: string | null; onOpen: () => void }> | null;
+   *  stage (onOpen). The words and the deed are ONE element (law 8).
+   *  A COMPONENT IS A TURN: `anchorKey` (a turn dedupe-key, e.g. `prep:<itemId>`) seats the card
+   *  at its CHRONOLOGICAL moment in the stream — the engine's narration turn BECOMES the card.
+   *  A card whose anchor turn isn't visible appends at the stream's end (never pinned, never
+   *  floating above later conversation — the invite must not trail questions asked after it). */
+  artifacts?: Array<{ key: string; label: string; by?: string | null; onOpen: () => void; anchorKey?: string }> | null;
   /** THE ONE-NAVIGATION LAW (Aug 4): inside a room, a rail link must open IN the room (the host's
    *  focus/summoned-stage opener), never page-navigate away — clicking Clara's draft from the EG
    *  Bank room dumped the user on a separate item page. Return true = handled; false = fall
@@ -291,7 +298,8 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [turns, busy]);
 
-  const suggested = ent?.suggestedWorker ?? null; // the ONE routing brain's served verdict (W2)
+  // (The hand-off affordance now arrives as one of the responder's OFFERS — the routing brain's
+  // suggestion rides the grounding; no dedicated chip.)
 
   // R1 — every conversational write goes through here: render + durable persist in one motion.
   const addTurn = (t: Turn) => { setTurns((prev) => [...prev, t]); persistTurn(roomKey, t); };
@@ -645,40 +653,73 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           );
         })()}
 
-        {/* The next move + a matching coworker as a PERSON (avatar + one-tap hand-off).
-            Mechanical dedup (J2 rail cleanup): when the deal's next move IS this item's ask (the
-            opening line already said it), the echo is noise — skip the line, keep the hand-off. */}
-        {!viewingSession && ent?.nextMove && !echoesAnchor(ent.nextMove, view.anchor?.ask ?? null) && (
-          <AssistantRow>
-            {/* The brief's CTA: the next move OPENS its own anchor — the word is the deed (law 8),
-                and ONLY the deed: no narration turn (a click echo is not history — law 5), and no
-                link when it would land on the room/item the user is already reading. */}
-            {(() => {
-              const target = ent.nextMoveHref && !(!inRoom && ent.nextMoveHref.includes(`/item/${id}`)) ? ent.nextMoveHref : null;
-              return target ? (
-                <button
-                  onClick={() => go(target)}
-                  className="text-left text-[13px] text-neutral-800 hover:text-indigo-700 transition-colors"
-                >Next: <span className="underline decoration-neutral-200 underline-offset-2">{ent.nextMove}</span> →</button>
-              ) : (
-                <p>Next: {ent.nextMove}</p>
-              );
-            })()}
-            {suggested && (
-              <button
-                onClick={() => send(`Have ${suggested.name.split(' ')[0]} ${ent.nextMove}`)}
-                disabled={busy}
-                className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50/50 pl-1 pr-2.5 py-0.5 text-[11.5px] font-medium text-indigo-700 hover:bg-indigo-50 transition-colors"
-              >
-                {suggested.role && ROLE_AVATARS[suggested.role] ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={ROLE_AVATARS[suggested.role]} alt="" className="w-[18px] h-[18px] rounded-full" />
-                ) : <Initials name={suggested.name} />}
-                {suggested.name.split(' ')[0]} can take this →
-              </button>
-            )}
-          </AssistantRow>
-        )}
+        {/* ═══ THE MOVE + THE OFFERS (Aug 5 — the one responder): ONE primary action card (the
+            single most consequential next thing, board-validated) + ≤3 uniform offer chips, each
+            of which literally SPEAKS through the composer (clicks are utterances). This replaced
+            the "Next:" text link, the hand-off pill, and every "want me on it?" narration — one
+            state, one recommended action, one affordance grammar. Falls back to the legacy
+            next-move line only until the responder's first compose lands. ═══ */}
+        {!viewingSession && (() => {
+          const resp = ent?.brief || view.brief ? { move: ent?.move ?? view.move ?? null, offers: ent?.offers ?? view.offers ?? [] } : null;
+          if (!resp) {
+            // Pre-compose fallback: the legacy next-move line (plain, deed-only).
+            if (!(ent?.nextMove && !echoesAnchor(ent.nextMove, view.anchor?.ask ?? null))) return null;
+            const target = ent.nextMoveHref && !(!inRoom && ent.nextMoveHref.includes(`/item/${id}`)) ? ent.nextMoveHref : null;
+            return (
+              <AssistantRow>
+                {target ? (
+                  <button onClick={() => go(target)} className="text-left text-[13px] text-neutral-800 hover:text-indigo-700 transition-colors">
+                    Next: <span className="underline decoration-neutral-200 underline-offset-2">{ent.nextMove}</span> →
+                  </button>
+                ) : <p>Next: {ent.nextMove}</p>}
+              </AssistantRow>
+            );
+          }
+          const refHref = (ref: string | null): string | null => {
+            if (!ref) return null;
+            const [k, i] = ref.split(':');
+            return k === 'inbox' ? `/item/${i}` : k === 'commit' ? `/item/${i}?kind=commitment` : null;
+          };
+          const href = refHref(resp.move?.ref ?? null);
+          const selfTarget = !inRoom && !!href && href.includes(`/item/${id}`);
+          const moveClick = resp.move
+            ? () => {
+                if (selfTarget) { if (!onStage?.('reply', id)) { /* the stage host isn't mounted — nothing to do */ } return; }
+                if (href) go(href);
+              }
+            : null;
+          return (
+            <>
+              {resp.move && (
+                <AssistantRow>
+                  {(href || selfTarget) && moveClick ? (
+                    <button onClick={moveClick}
+                      className="w-full flex items-center gap-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 px-3.5 py-2.5 text-left transition-colors">
+                      <span className="min-w-0 flex-1 text-[13px] font-medium text-white">{resp.move.label}</span>
+                      <span className="flex-shrink-0 text-white/80" aria-hidden>→</span>
+                    </button>
+                  ) : (
+                    <div className="w-full rounded-xl border border-indigo-200 bg-indigo-50/50 px-3.5 py-2.5">
+                      <span className="text-[13px] font-medium text-indigo-800">{resp.move.label}</span>
+                    </div>
+                  )}
+                </AssistantRow>
+              )}
+              {resp.offers.length > 0 && (
+                <AssistantRow>
+                  <div className="flex flex-wrap gap-1.5">
+                    {resp.offers.map((o, j) => (
+                      <button key={j} onClick={() => send(o.say)} disabled={busy}
+                        className="rounded-full border border-neutral-200 bg-white px-3 py-1 text-[12.5px] font-medium text-neutral-600 hover:border-indigo-300 hover:text-indigo-600 transition-colors disabled:opacity-50">
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </AssistantRow>
+              )}
+            </>
+          );
+        })()}
 
         {/* One-room R2 — INLINE COMPONENTS in the stream (the registry's surface:'inline' class).
             The judged DECISION renders as a conversation card (numbered routes, decline last). */}
@@ -711,6 +752,22 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
             byline carries the attribution). */}
         {(() => {
           const all = viewingSession?.turns ?? turns;
+          // A COMPONENT IS A TURN (Aug 4): the artifact card renders AT its anchor turn's
+          // chronological position; the shared card row keeps one markup for both seats.
+          const cardRow = (art: NonNullable<typeof artifacts>[number]) => (
+            <AssistantRow key={`card-${art.key}`}>
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-3 py-2.5 flex items-center gap-2.5">
+                <span className="min-w-0 flex-1 text-[12.5px] text-neutral-800">
+                  <span className="font-medium">{art.label}</span>
+                  {art.by && <span className="text-[11px] text-indigo-500 font-semibold ml-1.5">by {art.by.split(' ')[0]}</span>}
+                </span>
+                <button
+                  onClick={art.onOpen}
+                  className="flex-shrink-0 rounded-lg border border-indigo-200 bg-white px-3 py-1 text-[12px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
+                >Open →</button>
+              </div>
+            </AssistantRow>
+          );
           // The lifted engine ask lives in the brief above — never twice on screen (law 1).
           const liftedAsk = viewingSession ? null : turns.find((t): t is Extract<Turn, { role: 'system' }> => t.role === 'system' && !t.author?.name && !!t.checklist?.length && !!t.turnId);
           const stream = all.filter((t) => t !== liftedAsk);
@@ -722,6 +779,16 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           // older waits behind one "earlier" line. Sessions view stays complete (it IS history).
           const visible = viewingSession || showEarlier ? stream : fresh.slice(-3);
           const earlier = stream.length - visible.length;
+          // A COMPONENT IS A TURN: cards whose anchor turn is VISIBLE seat there (the narration
+          // becomes the card); the rest append at the stream's end (never above later conversation).
+          const visibleDkeys = new Set(visible.map((t) => (t.role === 'system' ? t.dkey : undefined)).filter(Boolean) as string[]);
+          const anchoredByKey = new Map<string, NonNullable<typeof artifacts>>();
+          for (const a of (viewingSession ? [] : artifacts ?? [])) {
+            if (a.anchorKey && visibleDkeys.has(a.anchorKey)) {
+              anchoredByKey.set(a.anchorKey, [...(anchoredByKey.get(a.anchorKey) ?? []), a]);
+            }
+          }
+          const endArtifacts = (viewingSession ? [] : artifacts ?? []).filter((a) => !(a.anchorKey && visibleDkeys.has(a.anchorKey)));
           return (
             <>
               {earlier > 0 && (
@@ -734,6 +801,9 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           <div key={i} className="flex justify-end">
             <div className="max-w-[80%] px-3 py-2 bg-neutral-100 rounded-2xl rounded-br-sm text-[13px] text-neutral-800 leading-relaxed">{t.text}</div>
           </div>
+        ) : (t.role === 'system' && t.dkey && anchoredByKey.has(t.dkey)) ? (
+          // The anchor turn IS the card — its moment in the story, its words folded into the label.
+          <React.Fragment key={i}>{anchoredByKey.get(t.dkey)!.map(cardRow)}</React.Fragment>
         ) : ((artifacts?.length ?? 0) > 0 && t.dkey && /^(prep:|meeting-prep:)/.test(t.dkey)) ? null
         : (!t.author?.name && !t.checklist?.length && !t.actions?.length && t.key !== 'founding-proposal') ? (
           /* TWO TEXT CLASSES ONLY (Aug 4, user law — "different font colors and sizes are hard to
@@ -876,28 +946,11 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
             </div>
           </div>
               ))}
+              {/* Cards without a visible anchor turn — the stream's end (never above later talk). */}
+              {endArtifacts.map(cardRow)}
             </>
           );
         })()}
-        {/* THE ARTIFACT CARDS — at the STREAM'S "NOW" EDGE (Aug 4, user law: the vertical
-            conversation flow — a reworked draft lands BELOW the exchange that produced it, never
-            shooting back to the top). Every prepared thing's inline handle: what's ready, who made
-            it, Open summons its own stage. ONE COMMIT LINE (O5): the conversation POINTS at the
-            work; the commit lives on the summoned stage — never a second Send here. */}
-        {!viewingSession && (artifacts ?? []).map((art) => (
-          <AssistantRow key={art.key}>
-            <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-3 py-2.5 flex items-center gap-2.5">
-              <span className="min-w-0 flex-1 text-[12.5px] text-neutral-800">
-                <span className="font-medium">{art.label}</span>
-                {art.by && <span className="text-[11px] text-indigo-500 font-semibold ml-1.5">by {art.by.split(' ')[0]}</span>}
-              </span>
-              <button
-                onClick={art.onOpen}
-                className="flex-shrink-0 rounded-lg border border-indigo-200 bg-white px-3 py-1 text-[12px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
-              >Open →</button>
-            </div>
-          </AssistantRow>
-        ))}
         {busy && <AssistantRow><TypingDots /></AssistantRow>}
       </div>
 
