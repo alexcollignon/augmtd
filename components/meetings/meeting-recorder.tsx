@@ -14,6 +14,11 @@ interface MeetingRecorderProps {
   onResume: () => void;
   onStop: () => void;
   onReset: () => void;
+  /** Present when a failed upload is still held locally and can be re-attempted. */
+  onRetryUpload?: () => void;
+  /** Present when the held audio can be saved to the user's device. */
+  onDownload?: () => void;
+  hasPendingUpload?: boolean;
 }
 
 function formatElapsed(secs: number) {
@@ -32,6 +37,9 @@ export default function MeetingRecorder({
   onResume,
   onStop,
   onReset,
+  onRetryUpload,
+  onDownload,
+  hasPendingUpload,
 }: MeetingRecorderProps) {
   return (
     <div className="flex flex-col gap-3">
@@ -121,13 +129,34 @@ export default function MeetingRecorder({
 
       {state === 'error' && (
         <div className="space-y-2">
-          <p className="text-sm text-red-700">{errorMessage}</p>
-          <button
-            onClick={onReset}
-            className="text-xs text-neutral-500 hover:text-neutral-700 underline"
-          >
-            Try again
-          </button>
+          <p className="text-sm text-red-700">
+            {errorMessage}
+            {hasPendingUpload && ' — your audio is safe on this device.'}
+          </p>
+          <div className="flex items-center gap-2">
+            {hasPendingUpload && onRetryUpload && (
+              <button
+                onClick={onRetryUpload}
+                className="px-3 py-1.5 rounded-md text-xs font-medium bg-red-600 text-white hover:bg-red-700 transition-colors"
+              >
+                Retry upload
+              </button>
+            )}
+            {hasPendingUpload && onDownload && (
+              <button
+                onClick={onDownload}
+                className="px-3 py-1.5 rounded-md text-xs font-medium text-red-700 border border-red-200 hover:bg-red-50 transition-colors"
+              >
+                Download audio
+              </button>
+            )}
+            <button
+              onClick={onReset}
+              className="text-xs text-neutral-500 hover:text-neutral-700 underline"
+            >
+              {hasPendingUpload ? 'Discard recording' : 'Try again'}
+            </button>
+          </div>
         </div>
       )}
     </div>

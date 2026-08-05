@@ -13,7 +13,7 @@ load_dotenv()
 
 from models import BotRecord, BotState, bots
 from scheduler import schedule_bot, scheduler
-from transcription_worker import run_transcription
+from transcription_worker import run_transcription, requeue_stuck_transcriptions
 from email_backfill_worker import run_email_backfill
 
 logging.basicConfig(level=logging.INFO)
@@ -34,11 +34,25 @@ def verify_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
     return credentials
 
 
+async def _stuck_transcription_loop():
+    """A crashed/rebooted worker must never leave a recording stuck at 'processing' —
+    scan shortly after startup (the reboot case), then every 30 min (the crash case).
+    Sequential by construction: one loop, awaited requeues — no double-processing."""
+    await asyncio.sleep(120)  # let a fresh deploy settle before touching anything
+    while True:
+        try:
+            await requeue_stuck_transcriptions()
+        except Exception as exc:
+            logger.error(f'[Main] stuck-transcription sweep error: {exc}')
+        await asyncio.sleep(30 * 60)
+
+
 @app.on_event('startup')
 async def startup():
     scheduler.start()
     logger.info('[Main] APScheduler started')
     os.makedirs('/tmp/recordings', exist_ok=True)
+    asyncio.create_task(_stuck_transcription_loop())
 
 
 @app.on_event('shutdown')
