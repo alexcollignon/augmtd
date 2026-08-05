@@ -2,6 +2,7 @@
 
 import { createContext, useContext, type ReactNode } from 'react';
 import { useRecording, type UseRecordingReturn } from '@/hooks/useRecording';
+import RecordingRecoveryBanner from '@/components/meetings/recording-recovery-banner';
 
 const RecordingContext = createContext<UseRecordingReturn | null>(null);
 
@@ -14,6 +15,8 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   return (
     <RecordingContext.Provider value={recording}>
       {children}
+      {/* Crash/close recovery — renders only when the vault holds an orphaned session. */}
+      <RecordingRecoveryBanner />
     </RecordingContext.Provider>
   );
 }

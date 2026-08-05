@@ -298,6 +298,9 @@ export default function MeetingDetailPanel({
                             onResume={panelRecording.resumeRecording}
                             onStop={panelRecording.stopAndUpload}
                             onReset={panelRecording.reset}
+                            onRetryUpload={panelRecording.retryUpload}
+                            onDownload={panelRecording.downloadRecording}
+                            hasPendingUpload={panelRecording.hasPendingUpload}
                           />
                         </div>
                       )}

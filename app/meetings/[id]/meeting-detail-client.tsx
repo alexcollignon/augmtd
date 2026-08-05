@@ -477,6 +477,9 @@ export default function MeetingDetailClient({
                 onResume={detailRecording.resumeRecording}
                 onStop={detailRecording.stopAndUpload}
                 onReset={detailRecording.reset}
+                onRetryUpload={detailRecording.retryUpload}
+                onDownload={detailRecording.downloadRecording}
+                hasPendingUpload={detailRecording.hasPendingUpload}
               />
             </div>
           )}

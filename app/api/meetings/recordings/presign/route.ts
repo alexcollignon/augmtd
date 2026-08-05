@@ -33,11 +33,20 @@ export async function POST(request: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Ensure bucket exists (no-op if already created)
+    // Ensure bucket exists (no-op if already created) AND carries the intended size limit.
+    // createBucket alone is not enough: on a pre-existing bucket it's a no-op, so the limit
+    // silently stays whatever the bucket was created with (this bucket predates the limit and
+    // had none — uploads were capped by the PROJECT-global limit instead, which rejected a
+    // >50MB conference recording with a bare 400; found live Aug 5). NB the effective cap is
+    // min(bucket, project global) — the global limit must also be raised in the dashboard.
     await adminClient.storage.createBucket(BUCKET, {
       public: false,
       fileSizeLimit: MAX_FILE_SIZE,
     });
+    await adminClient.storage.updateBucket(BUCKET, {
+      public: false,
+      fileSizeLimit: MAX_FILE_SIZE,
+    }).catch(() => { /* limit assertion is best-effort — presign must still serve */ });
 
     const { randomUUID } = await import('crypto');
     const storagePath = `${user.id}/${randomUUID()}.webm`;

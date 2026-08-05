@@ -22,6 +22,14 @@ import { getPrepared, type PreparedArtifact } from '@/lib/prepare/read';
 import { loadRoster, type RosterEntry } from '@/lib/prepare/route-suggestion';
 import { userTimezone, localNow, timesInText, dateStatedInText } from '@/lib/utils/user-time';
 import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+
+// Word-boundary label clip (UI text, no excerpt marker — labels aren't prompts).
+function clipLabel(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const w = cut.lastIndexOf(' ');
+  return (w > max * 0.5 ? cut.slice(0, w) : cut).trim();
+}
 import { COMPONENT_KEYS, gateOf, renderComponentOptions, componentForWork, JUDGE_VERSION, WORK_VERBS, type WorkComponentKey, type WorkGate, type WorkVerb } from '@/lib/work/surface-registry';
 
 export type WorkVerdict = {
@@ -138,7 +146,8 @@ function coerceVerdict(raw: unknown, roster: RosterEntry[], ctx: TimeCtx): WorkV
   // The deliverable inventory is only meaningful on outbound work (a none/chase carries nothing).
   if ((work === 'reply' || work === 'send_file' || work === 'produce') && Array.isArray(r.requires)) {
     const reqs = (r.requires as unknown[]).slice(0, 5)
-      .map((o) => ({ label: String((o as Record<string, unknown>)?.label ?? o ?? '').trim().slice(0, 90) }))
+      // Word-boundary clip — a mid-word label ("…timezone offset an") read as broken UI (Aug 4).
+      .map((o) => ({ label: clipLabel(String((o as Record<string, unknown>)?.label ?? o ?? '').trim(), 90) }))
       .filter((o) => o.label);
     if (reqs.length) out.requires = reqs;
   }
@@ -353,7 +362,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         `- REVISIT ("not yet"): when the item's OWN WORDS say the right move comes LATER — a stated get-back date ("I'll send the numbers next week"), "let's reconnect after the board meeting on X", "check back in once the pilot ends" — then work="none" with revisit={"after":"YYYY-MM-DD"} (the date resolved FORWARD from the item's own date; if only a rough window is stated, pick its earliest day). The item leaves the desk and RETURNS on that date. Only with a concrete stated basis; NEVER park work that can and should be done now (an ask due today or undated is live work, not a revisit).\n` +
         `- decide ONLY when the real move is a choice between 2-3 CONCRETE routes stated in the item (accept/decline/redirect) — then give options (short labels, ≤4; do NOT include a decline, the surface adds it).\n` +
         `- executor: "coworker" (name one from THE TEAM — only when producing something is genuinely their craft) · "user" (replying, deciding, personal/admin) · "system" (an atomic mechanical act: send an existing file, book the stated invite).\n` +
-        `- requires: for reply/send_file/produce ONLY — the concrete attachable artifacts this work must INCLUDE, each as a short noun phrase in the item's OWN words (an email asking for "the organizational report, the individual report and the allocation sheet" requires those 3). ONLY what the item explicitly asks for or the work objectively cannot go out without; a plain conversational reply requires []. Never invent.\n` +
+        `- requires: for reply/send_file/produce ONLY — the concrete ATTACHABLE artifacts this work must INCLUDE, each as a short noun phrase in the item's OWN words (an email asking for "the organizational report, the individual report and the allocation sheet" requires those 3). An artifact is a THING that can be attached: a document, file, sheet, deck, link. NEVER a confirmation, approval, decision, answer, availability, or time — those are the user's sign-off or the reply's own words, not attachments (a "confirm the Thursday time" ask requires [], the reply itself carries the answer). ONLY what the item explicitly asks for or the work objectively cannot go out without; a plain conversational reply requires []. Never invent.\n` +
         `- Respect the deal's rules; never invent people, files, or dates.\n\n` +
         `JSON only: {"work":"…","component":"…","executor":{"kind":"coworker|user|system","name":"<team name if coworker>"},"options":[{"label":"…"}],"requires":[{"label":"…"}],"resolution":"expired|answered|null","expired_on":"YYYY-MM-DD (expired only — the stated date that passed)","expired_time":"HH:MM (only when it passed earlier TODAY — the stated clock time)","revisit":{"after":"YYYY-MM-DD","reason":"<why later>"}|null,"reason":"<one sentence>"}`;
     const judgeOnce = async (extra = '') => {

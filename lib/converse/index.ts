@@ -433,7 +433,23 @@ async function agentLoop(
     const msg = res.choices?.[0]?.message;
     if (!msg) break;
     const calls = (msg.tool_calls ?? []) as Array<{ id: string; function: { name: string; arguments: string } }>;
-    if (!calls.length) return { say: (msg.content ?? '').trim() || 'Done.', refs: [], applied, files: files.length ? files : undefined };
+    if (!calls.length) {
+      let say = (msg.content ?? '').trim() || 'Done.';
+      // THE HONESTY FLOOR AT THE ANSWER DOOR (Aug 4, found by the P30 gate): registryMatches
+      // guarded only the SEARCH tools — when the model answered a recall question directly
+      // (no tool call), the denial bypassed the floor and the brain looked amnesiac about a
+      // name it holds ("no information on the kiteschool assessment" beside a registered
+      // "ZZ Kiteschool Pilot"). No denial leaves the loop without checking the registry.
+      if (/\b(?:don't|do not|no)\b[^.!?]{0,50}\b(?:information|record|data|details?|found|see|have)\b|couldn't find|does not (?:provide|have|contain)|not (?:available|found)/i.test(say)) {
+        try {
+          const mm = await registryMatches(client, userId, text, scope.kind === 'entity' ? scope.entityId : null);
+          if (mm) {
+            say = `Nothing directly on file here — but this looks like ${mm.replace(/^MEMORY MATCHES[^:]*: /, '')}. Its work lives on that project — open it, or tell me what to pull from it.`;
+          }
+        } catch { /* the floor is an enhancement — the honest answer still returns */ }
+      }
+      return { say, refs: [], applied, files: files.length ? files : undefined };
+    }
     messages.push(msg);
     for (const call of calls) {
       let args: Record<string, unknown> = {};
@@ -705,17 +721,20 @@ export async function converse(
     return turn;
   }
 
-  // 5 — OPEN / composite → the agent loop, grounded in the scope's memory.
+  // 5 — OPEN / composite → the agent loop, grounded in THE ONE GROUNDING (Aug 5, the one-system
+  // arc): the same assembled page the responder and the question path read — the loop can never
+  // reason from a thinner slice of the truth than the panel it sits beside.
   let grounding = '';
   const entityId = await entityOfScope(client, userId, scope);
-  if (entityId) {
-    const { assembleLedger } = await import('@/lib/entities/state');
-    const { data: ent } = await client.from('work_entities').select('name, state, next_move').eq('id', entityId).maybeSingle();
-    const st = (ent?.state ?? {}) as { summary?: string };
-    const { ledger } = await assembleLedger(client, userId, entityId);
-    grounding = `Deal: ${ent?.name}\nWhere it stands: ${st.summary ?? ''}\nRecent events:\n` +
-      ledger.slice(0, 14).map((l) => `- ${(l.at || '').slice(0, 10)} ${l.kind}${l.who ? ` ${l.who}` : ''}: ${l.text.slice(0, 100)}`).join('\n');
-  } else if (scope.kind === 'item') {
+  if (entityId || scope.kind === 'item') {
+    try {
+      const { assembleRoomGrounding } = await import('@/lib/room/grounding');
+      const g = await assembleRoomGrounding(client, userId,
+        entityId ? { kind: 'entity', entityId } : { kind: 'item', itemKind: linkKindOf(scope as Extract<ConverseScope, { kind: 'item' }>) === 'inbox_item' ? 'inbox' : linkKindOf(scope as Extract<ConverseScope, { kind: 'item' }>) === 'commitment' ? 'commitment' : 'meeting', itemId: (scope as Extract<ConverseScope, { kind: 'item' }>).itemId });
+      grounding = g.text.slice(0, 4500);
+    } catch { /* fall through to the item/global fallbacks below */ }
+  }
+  if (!grounding && scope.kind === 'item') {
     const { buildItemContext } = await import('@/lib/home/item-context');
     const ctx = await buildItemContext(client, userId, scope.itemKind, scope.itemId);
     grounding = (ctx?.text || '').slice(0, 3500);

@@ -144,9 +144,11 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
     readFileSync('scripts/backfill-entity-category.ts', 'utf8').includes('categoryLocked'));
   check('R3b · the room holds the writable TaskList (+ Task, edit, due, human waiting groups)',
     er.includes('function TaskList') && er.includes('Add a task…') && er.includes('Waiting on {name}'));
-  check('R3c · prepared tokens (no assignee column) + ONE suggested hand-off — now in the LEFT rail\'s living brief (experience-spec law 1; the right pane asks for nothing)',
+  // Aug 5 (the one responder): the dedicated hand-off chip died — the routing suggestion arrives
+  // as one of the responder's OFFERS (a sayable chip), composed from the one grounding.
+  check('R3c · prepared tokens (no assignee column) + hand-off as a responder OFFER (one affordance grammar; the right pane asks for nothing)',
     er.includes("w.prepared === 'draft'") && !er.includes('assignee') &&
-    readFileSync('components/home/item-rail.tsx', 'utf8').includes('can take this'));
+    readFileSync('components/home/item-rail.tsx', 'utf8').includes('send(o.say)'));
   // Workbench B1a reversed the "Gantt out" call (user ask, July 24): the Schedule disclosure
   // renders the ONE shared Gantt — behind a fold, so first paint stays calm.
   check('R3d · typed inventory behind ONE tab bar (Tasks · Schedule · Meetings · Conversations · Files · Activity)',
@@ -194,10 +196,12 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
     // "Opening the next move" click echo is gone (a click is not history), and a link that would
     // land on the room/item already open renders as plain text. The room's OWN focus narration
     // (entity-room openHref) stays — it is composed from facts with real offers, not an echo.
-    // Aug 4 (one-navigation law): the CTA routes through go() — the room opener first, page nav only unhandled.
-    check('5A.5 · the CTA is the deed: rail next-move navigates without a click-echo turn; the room\'s grounded focus narration remains',
+    // Aug 5 (the one system): the room's focus narrations died with the parallel authors — the
+    // responder's MOVE card is the deed; the legacy next-move line survives only as the
+    // pre-compose fallback (deed-only, no click echo).
+    check('5A.5 · the CTA is the deed: the MOVE card / fallback next-move navigate without a click-echo turn; no parallel focus narrator',
       rl2.includes('export function pushDealTurn') && !rl2.includes('Opening the next move') && rl2.includes('nextMoveHref')
-      && rl2.includes('go(target)') && er2.includes("row?.prepared === 'draft'"));
+      && rl2.includes('go(target)') && rl2.includes('THE MOVE + THE OFFERS') && !er2.includes('want me on it'));
     check('5A.6 · room width + Tasks default tab + INTENT as one full-width band (the emptied two-column grid died with the next-move card — experience-spec seat cleanup)',
       er2.includes('max-w-[1000px]') && er2.includes("useState<'work'") &&
       er2.includes('md:grid-cols-2 gap-x-8') && !er2.includes('lg:grid-cols-[minmax(0,1fr)_280px]'));

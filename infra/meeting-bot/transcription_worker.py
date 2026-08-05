@@ -234,7 +234,19 @@ async def run_transcription(
         # 4. Call local Whisper — no timeout risk (localhost)
         # Retry on connection-level errors (RemoteProtocolError / ConnectError) which
         # happen on the very first request when faster-whisper-server is loading the
-        # model lazily. Second attempt always succeeds once the model is warm.
+        # model lazily — and when the server was OOM-killed mid-request and docker
+        # restarted it (observed live Aug 4-5 under the old float32 config).
+        #
+        # Model: large-v3-turbo int8 (benchmarked Aug 5 on this box: ~2-3x faster than
+        # the old medium/float32 AND more accurate). The server must run with
+        # WHISPER__COMPUTE_TYPE=int8 — see infra/hetzner/docker-compose.yml.
+        # NB: the server SILENTLY IGNORES unknown form fields (condition_on_previous_text
+        # was never applied) — only send fields in its openapi schema.
+        # `language` is intentionally OMITTED → Whisper auto-detects per file, so a
+        # Portuguese/German meeting is transcribed in its own language instead of being
+        # forced through English (the old hardcode).
+        # `prompt` seeds punctuated decoding — turbo without it emits lowercase,
+        # punctuation-free text (verified on this box).
         import asyncio as _asyncio
         filename = storage_path.split('/')[-1]
         _MAX_WHISPER_RETRIES = 3
@@ -246,11 +258,10 @@ async def run_transcription(
                         f'{WHISPER_URL}/v1/audio/transcriptions',
                         files={'file': (filename, audio_bytes, 'audio/webm')},
                         data={
-                            'model': 'Systran/faster-whisper-medium',
+                            'model': 'deepdml/faster-whisper-large-v3-turbo-ct2',
                             'response_format': 'verbose_json',
-                            'language': 'en',
                             'vad_filter': 'true',
-                            'condition_on_previous_text': 'false',
+                            'prompt': 'Okay, let us begin.',
                         },
                     )
                     whisper_resp.raise_for_status()
@@ -393,3 +404,58 @@ async def run_transcription(
                     )
             except Exception as mark_err:
                 logger.error(f'[Transcription] Could not mark as failed: {mark_err}')
+
+
+# ── THE STUCK-TRANSCRIPTION SWEEP (Aug 5) ─────────────────────────────────────────────────────
+# run_transcription is a fire-and-forget asyncio task: a worker crash, container recreate, or
+# box reboot mid-transcription leaves the row at bot_state='processing' FOREVER — the audio sits
+# safely in storage while the UI shows "Transcribing…" indefinitely and nothing ever retries.
+# This sweep (startup + every 30 min, wired in main.py) requeues such rows through the existing
+# retry path (transcript_id given → update in place, idempotent). Rows are processed
+# SEQUENTIALLY so a batch of stragglers can't stampede the 4-core Whisper box, and the loop's
+# own await ordering guarantees a still-running requeue is never picked up twice.
+
+_STUCK_THRESHOLD_MIN = 30
+_STUCK_BATCH_CAP = 3
+
+
+async def requeue_stuck_transcriptions() -> None:
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=_STUCK_THRESHOLD_MIN)).isoformat()
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f'{SUPABASE_URL}/rest/v1/meeting_transcripts',
+                params={
+                    'bot_state': 'eq.processing',
+                    'recording_storage_path': 'not.is.null',
+                    'updated_at': f'lt.{cutoff}',
+                    'select': 'id,user_id,recording_storage_path,calendar_event_id,source,updated_at',
+                    'order': 'updated_at.asc',
+                    'limit': str(_STUCK_BATCH_CAP),
+                },
+                headers={
+                    'Authorization': f'Bearer {SUPABASE_SERVICE_ROLE_KEY}',
+                    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+                },
+            )
+            resp.raise_for_status()
+            rows = resp.json()
+    except Exception as exc:
+        logger.warning(f'[StuckSweep] scan failed: {exc}')
+        return
+
+    if not rows:
+        return
+    logger.info(f'[StuckSweep] Requeuing {len(rows)} stuck transcription(s)')
+    for row in rows:
+        try:
+            await run_transcription(
+                storage_path=row['recording_storage_path'],
+                calendar_event_id=row.get('calendar_event_id'),
+                user_id=row['user_id'],
+                source=row.get('source') or 'recording',
+                transcript_id=row['id'],
+            )
+        except Exception as exc:
+            logger.error(f'[StuckSweep] requeue failed for {row["id"]}: {exc}')

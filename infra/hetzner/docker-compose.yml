@@ -2,9 +2,25 @@ services:
   whisper:
     image: fedirz/faster-whisper-server:latest-cpu
     environment:
-      WHISPER__MODEL: Systran/faster-whisper-medium   # large-v3 OOMs on CX32
+      # int8 is load-bearing: the unset default ran float32 (fp16 unsupported on CPU),
+      # which was both ~2x slower AND ballooned to ~6GB RSS on 40-min files — the OOM
+      # kills behind the "Server disconnected" transcription retries (Aug 4-5).
+      # The MODEL env is only a default — the worker names its model per-request
+      # (deepdml/faster-whisper-large-v3-turbo-ct2, benchmarked fastest+most accurate).
+      WHISPER__COMPUTE_TYPE: int8
+      WHISPER__MODEL: deepdml/faster-whisper-large-v3-turbo-ct2
     ports:
-      - "8000:8000"
+      # Bound to loopback + the docker bridge gateway (the meeting-bot reaches it via
+      # 172.19.0.1) — NEVER 0.0.0.0: the port was internet-open with no auth and being
+      # probed by scanners (found live Aug 5).
+      - "127.0.0.1:8000:8000"
+      - "172.19.0.1:8000:8000"
+    volumes:
+      # Persistent HF model cache — a container recreate must not re-download ~1.6GB.
+      - /root/whisper-cache:/root/.cache/huggingface
+    # Cap below host RAM so a pathological file OOMs THIS container (docker restarts it)
+    # instead of letting the kernel pick a victim host-wide.
+    mem_limit: 5g
     restart: unless-stopped
 
   meeting-bot:

@@ -15,6 +15,7 @@ import {
   ArrowUturnRightIcon,
   ArrowUturnLeftIcon,
   ChevronRightIcon,
+  ChevronDownIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import { RoomShell } from '@/components/room/room-shell';
@@ -434,14 +435,76 @@ type PreparedInvite = {
   proposed?: boolean;
 };
 
-// The editable invite chips (attendees) — add via a small input, remove via ✕. Never invents.
-function AttendeeChips({ attendees, onChange }: { attendees: string[]; onChange: (next: string[]) => void }) {
+// THE PEOPLE TYPEAHEAD (Aug 4): every people field suggests KNOWN contacts as you type — grounded
+// in the user's own correspondence (relationship graph + real mail), never invented. One shared
+// input; the invite attendees and forward recipients both mount it.
+function PeopleSuggestInput({ placeholder, onPick }: { placeholder: string; onPick: (email: string) => void }) {
   const [input, setInput] = useState('');
-  const add = () => {
+  const [sugs, setSugs] = useState<Array<{ email: string; name: string | null }>>([]);
+  const [hi, setHi] = useState(0); // highlighted row
+  const boxRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const q = input.trim();
+    if (q.length < 2 || q.includes('@') && q.split('@')[1]?.includes('.')) { setSugs([]); return; }
+    debounceRef.current = setTimeout(() => {
+      fetch(`/api/people/suggest?q=${encodeURIComponent(q)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (Array.isArray(d?.people)) { setSugs(d.people); setHi(0); } })
+        .catch(() => {});
+    }, 220);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [input]);
+  useEffect(() => {
+    const close = (e: MouseEvent) => { if (!boxRef.current?.contains(e.target as Node)) setSugs([]); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, []);
+  const pick = (email: string) => { onPick(email); setInput(''); setSugs([]); };
+  const commitFree = () => {
     const v = input.trim();
-    if (v && v.includes('@') && !attendees.includes(v)) onChange([...attendees, v]);
-    setInput('');
+    if (v && v.includes('@')) { onPick(v); setInput(''); setSugs([]); }
+    else if (!v) setSugs([]);
   };
+  return (
+    <div ref={boxRef} className="relative min-w-[140px] flex-1">
+      <input
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown' && sugs.length) { e.preventDefault(); setHi((h) => Math.min(h + 1, sugs.length - 1)); }
+          else if (e.key === 'ArrowUp' && sugs.length) { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); }
+          else if ((e.key === 'Enter' || e.key === ',')) {
+            e.preventDefault();
+            if (sugs.length) pick(sugs[hi]?.email ?? sugs[0].email); else commitFree();
+          } else if (e.key === 'Escape') setSugs([]);
+        }}
+        onBlur={() => setTimeout(commitFree, 150)}
+        placeholder={placeholder}
+        className="w-full bg-transparent text-[12.5px] text-neutral-800 placeholder:text-neutral-300 focus:outline-none py-0.5"
+      />
+      {sugs.length > 0 && (
+        <div className="absolute left-0 top-full mt-1 z-30 w-72 max-w-[80vw] rounded-lg border border-neutral-200 bg-white shadow-lg py-1">
+          {sugs.map((s, i) => (
+            <button
+              key={s.email}
+              onMouseDown={(e) => { e.preventDefault(); pick(s.email); }}
+              onMouseEnter={() => setHi(i)}
+              className={`w-full text-left px-3 py-1.5 ${i === hi ? 'bg-indigo-50' : ''}`}
+            >
+              <span className="block text-[12.5px] text-neutral-800 truncate">{s.name || s.email}</span>
+              {s.name && <span className="block text-[11.5px] text-neutral-400 truncate">{s.email}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The editable invite chips (attendees) — typeahead over known people, remove via ✕. Never invents.
+function AttendeeChips({ attendees, onChange }: { attendees: string[]; onChange: (next: string[]) => void }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {attendees.map((a) => (
@@ -452,13 +515,9 @@ function AttendeeChips({ attendees, onChange }: { attendees: string[]; onChange:
           </button>
         </span>
       ))}
-      <input
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add(); } }}
-        onBlur={add}
+      <PeopleSuggestInput
         placeholder={attendees.length ? 'Add another…' : 'attendee@email.com'}
-        className="min-w-[140px] flex-1 bg-transparent text-[12.5px] text-neutral-800 placeholder:text-neutral-300 focus:outline-none py-0.5"
+        onPick={(email) => { if (!attendees.includes(email)) onChange([...attendees, email]); }}
       />
     </div>
   );
@@ -666,12 +725,6 @@ type PreparedForward = { type: 'forward'; to: string[]; subject: string; forward
 
 // Reused chips editor for To (same pattern as AttendeeChips — add via input, remove via ✕, never invents).
 function RecipientChips({ recipients, onChange }: { recipients: string[]; onChange: (next: string[]) => void }) {
-  const [input, setInput] = useState('');
-  const add = () => {
-    const v = input.trim();
-    if (v && v.includes('@') && !recipients.includes(v)) onChange([...recipients, v]);
-    setInput('');
-  };
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {recipients.map((a) => (
@@ -682,13 +735,9 @@ function RecipientChips({ recipients, onChange }: { recipients: string[]; onChan
           </button>
         </span>
       ))}
-      <input
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add(); } }}
-        onBlur={add}
+      <PeopleSuggestInput
         placeholder={recipients.length ? 'Add another…' : 'finance@company.com'}
-        className="min-w-[150px] flex-1 bg-transparent text-[12.5px] text-neutral-800 placeholder:text-neutral-300 focus:outline-none py-0.5"
+        onPick={(email) => { if (!recipients.includes(email)) onChange([...recipients, email]); }}
       />
     </div>
   );
@@ -1185,15 +1234,16 @@ function EmailActionPalette({
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, [menuOpen]);
-  const dismissIsLead = relevance === 'awareness' || objectKind === 'meeting_action';
   const link = (accent: boolean) => accent
     ? 'inline-flex items-center gap-1 text-[12.5px] font-semibold text-indigo-600 hover:text-indigo-700 transition-colors'
     : 'inline-flex items-center gap-1 text-[12.5px] font-medium text-neutral-500 hover:text-indigo-600 transition-colors';
+  const menuItem = 'w-full text-left px-3 py-1.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50';
   return (
     <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1">
-      {/* Thread verbs ONLY on a thread — a meeting-extracted action item cannot Reply/Forward. */}
+      {/* Thread verbs ONLY on a thread — a meeting-extracted action item cannot Reply/Forward.
+          Dismiss lives in More (Aug 4, user call) — the row stays two verbs + More. */}
       {objectKind === 'email_thread' && (
-        <button onClick={onReply} className={link(!dismissIsLead && !composerOpen)} title="Write a reply">
+        <button onClick={onReply} className={link(!composerOpen && relevance !== 'awareness')} title="Write a reply">
           <ArrowUturnLeftIcon className="w-3.5 h-3.5" />Reply
         </button>
       )}
@@ -1202,19 +1252,26 @@ function EmailActionPalette({
           <CheckIcon className="w-3.5 h-3.5" />Done
         </button>
       )}
-      <button onClick={onDismiss} disabled={dismissing} className={link(dismissIsLead && objectKind === 'email_thread')} title="Acknowledge and clear this from your Home">
-        <CheckCircleIcon className="w-3.5 h-3.5" />{dismissing ? 'Dismissing…' : 'Dismiss'}
-      </button>
       {objectKind === 'email_thread' && (
         <button onClick={onForward} className={link(false)} title="Forward this email">
           <ArrowUturnRightIcon className="w-3.5 h-3.5" />Forward
         </button>
       )}
       <div ref={menuRef} className="relative inline-flex">
-        {/* Worded, never a bare glyph — a lone "⋯" read as an error (found live, Aug 4). */}
-        <button onClick={() => setMenuOpen((v) => !v)} disabled={dismissing} className={link(false)} title="More ways to resolve">More ⌄</button>
+        {/* Worded, never a bare glyph; the chevron is an ICON, baseline-aligned (the text "⌄" sat
+            offset — found live, Aug 4). */}
+        <button onClick={() => setMenuOpen((v) => !v)} disabled={dismissing} className={link(false)} title="More ways to resolve">
+          More<ChevronDownIcon className="w-3 h-3" />
+        </button>
         {menuOpen && (
           <div className="absolute left-0 top-full mt-1 z-20 w-52 rounded-lg border border-neutral-200 bg-white shadow-sm py-1">
+            <button
+              onClick={() => { setMenuOpen(false); onDismiss(); }}
+              disabled={dismissing}
+              className={menuItem}
+            >
+              {dismissing ? 'Dismissing…' : 'Dismiss'}
+            </button>
             <button
               onClick={() => { setMenuOpen(false); onDone(); }}
               className="w-full text-left px-3 py-1.5 text-[12.5px] text-neutral-700 hover:bg-neutral-50"
@@ -1256,74 +1313,9 @@ function EmailActionPalette({
   );
 }
 
-// ════════════════════════════════════════════════════════════════════════════════════════════════
-// REPLY DIRECTIONS (Aug 4 — options are offers, never walls): 2–3 REASONED directions for this
-// reply, grounded in the judged ask (never generic smart-replies), each one tap → the draft is
-// rewritten in that direction through the one steer path. The LAST option is always open — "tell
-// me the angle…" — the same law as asks-never-block: the system proposes, the user can always
-// speak instead. Served cached (/api/items/reply-directions); chips appear async, editor typable
-// throughout.
-// ════════════════════════════════════════════════════════════════════════════════════════════════
-function ReplyDirections({ kind, id, onDraft }: { kind: 'email' | 'followup'; id: string; onDraft: (d: string) => void }) {
-  const [dirs, setDirs] = useState<Array<{ label: string; instruction: string }> | null>(null);
-  const [busyIdx, setBusyIdx] = useState<number | null>(null); // which chip is redrafting
-  const [open, setOpen] = useState(false);   // the open "tell me the angle" input
-  const [angleText, setAngleText] = useState('');
-  useEffect(() => {
-    let alive = true;
-    fetch('/api/items/reply-directions', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind, id }),
-    }).then((r) => (r.ok ? r.json() : null)).then((d) => {
-      if (alive && Array.isArray(d?.directions)) setDirs(d.directions.slice(0, 3));
-    }).catch(() => {});
-    return () => { alive = false; };
-  }, [kind, id]);
-
-  const steer = async (instruction: string, idx: number) => {
-    if (busyIdx !== null) return;
-    setBusyIdx(idx);
-    try {
-      const res = await fetch('/api/items/steer', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind, id, text: instruction }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (res.ok && d.draft) onDraft(d.draft);
-    } catch { /* the editor stays as-is — nothing lost */ } finally { setBusyIdx(null); }
-  };
-
-  if (!dirs?.length) return null; // grounded-or-absent: no invented directions, no skeleton
-  const chip = 'rounded-full border border-neutral-200 bg-white px-3 py-1 text-[12.5px] font-medium text-neutral-600 hover:border-indigo-300 hover:text-indigo-600 transition-colors disabled:opacity-50';
-  return (
-    <div className="mb-3">
-      <div className="flex flex-wrap items-center gap-1.5">
-        {dirs.map((d, i) => (
-          <button key={i} onClick={() => steer(`Redraft the reply to take this direction: ${d.instruction}`, i)}
-            disabled={busyIdx !== null} className={chip} title={d.instruction}>
-            {busyIdx === i ? 'Redrafting…' : d.label}
-          </button>
-        ))}
-        {/* The OPEN option — always last, always available (options are offers, never walls). */}
-        {open ? (
-          <input
-            autoFocus value={angleText} onChange={(e) => setAngleText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && angleText.trim()) { steer(`Redraft the reply with this direction: ${angleText.trim()}`, -1); setOpen(false); setAngleText(''); }
-              if (e.key === 'Escape') { setOpen(false); setAngleText(''); }
-            }}
-            placeholder="e.g. shorter, and ask them to send the agenda first"
-            className="w-64 max-w-full rounded-full border border-indigo-200 px-3 py-1 text-[12.5px] text-neutral-700 placeholder:text-neutral-300 outline-none focus:border-indigo-300"
-          />
-        ) : (
-          <button onClick={() => setOpen(true)} disabled={busyIdx !== null} className={chip}>
-            {busyIdx === -1 ? 'Redrafting…' : 'Something else…'}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
+// (ReplyDirections moved into the CONVERSATION — the exchange in startReplyExchange owns the
+// direction offers; the stage is purely read/edit/send. The /api/items/reply-directions route
+// serves the exchange.)
 
 function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: string | null; embedded?: boolean }) {
   const router = useRouter();
@@ -1684,7 +1676,7 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
     ...(!sent && !!draft && verdict?.work !== 'decide' && objectKind === 'email_thread' ? [{
       key: 'reply', label: 'Reply drafted — ready to review',
       by: view?.prepared?.find((p) => p.kind === 'reply_draft')?.by ?? null,
-      onOpen: openComposer,
+      onOpen: openComposer, anchorKey: `prep:${id}`,
     }] : []),
     ...((view?.inviteTaskId || verdict?.work === 'schedule') ? [{
       key: 'invite',
@@ -1694,7 +1686,7 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
     }] : []),
     ...(verdict?.work === 'forward' ? [{
       key: 'forward', label: 'Forward prepared — review & approve',
-      onOpen: openForward,
+      onOpen: openForward, anchorKey: `prep:${id}`,
     }] : []),
   ];
   return (
@@ -1757,20 +1749,23 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
       <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
         {/* THE VERB STRIP (Aug 4 — the verb-scope law): the object's verbs, ATTACHED to the object
             on its stage — identical for loose items and items focused inside a project room.
-            Clicking speaks on the LEFT (the exchange / a narrated event). */}
+            Clicking speaks on the LEFT (the exchange / a narrated event). Divider below separates
+            the verbs from the thread. */}
         {!itemDismissed && (
-          <EmailActionPalette
-            relevance={relevance}
-            composerOpen={composerOpen}
-            onReply={startReplyExchange}
-            onDismiss={dismissItem}
-            onDone={markHandled}
-            onNoLongerRelevant={markNoLongerRelevant}
-            onDismissWithNote={dismissWithNote}
-            onForward={openForward}
-            dismissing={dismissing}
-            objectKind={objectKind}
-          />
+          <div className="border-b border-neutral-100 pb-4">
+            <EmailActionPalette
+              relevance={relevance}
+              composerOpen={composerOpen}
+              onReply={startReplyExchange}
+              onDismiss={dismissItem}
+              onDone={markHandled}
+              onNoLongerRelevant={markNoLongerRelevant}
+              onDismissWithNote={dismissWithNote}
+              onForward={openForward}
+              dismissing={dismissing}
+              objectKind={objectKind}
+            />
+          </div>
         )}
         {/* EMBEDDED (no own rail): the prepared-artifact cards render in-stage — the room said
             "drafted" and the focused item showed nothing (found live, Aug 4). */}
@@ -1910,9 +1905,8 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
                 <span className="font-medium text-neutral-700">Suggested angle:</span> {angle}
               </p>
             )}
-            {/* DIRECTION CHIPS — grounded tone/direction offers + the always-open last option;
-                one tap rewrites the draft through the steer path. The editor stays typable. */}
-            {!sent && <ReplyDirections kind="email" id={id} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }} />}
+            {/* Direction chips moved to the CONVERSATION (Aug 4, the exchange) — the stage is
+                purely read/edit/send; the dialogue owns the steering. */}
             {sent ? (
               <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
                 <CheckIcon className="w-4 h-4 text-emerald-600" />
@@ -2576,7 +2570,7 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
           ...(!sent && !!draft ? [{
             key: 'nudge', label: 'Follow-up drafted — ready to review',
             by: view?.prepared?.find((p) => p.kind === 'nudge_draft' || p.kind === 'deliverable')?.by ?? null,
-            onOpen: () => { setComposerOpen(true); setInviteOpen(false); }, // one stage at a time
+            onOpen: () => { setComposerOpen(true); setInviteOpen(false); }, anchorKey: `prep:${id}`, // one stage at a time
           }] : []),
           ...(view?.inviteTaskId ? [{
             key: 'invite', label: 'Calendar invite prepared — review & approve',

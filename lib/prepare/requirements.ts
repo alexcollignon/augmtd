@@ -187,6 +187,36 @@ function buildTruth(have: RequirementResolution[], missing: RequirementResolutio
   );
 }
 
+// THE ATTACHABILITY FLOOR's one reasoned check — which labels denote retrievable/attachable
+// THINGS (documents, files, sheets, decks, links) vs answers/decisions/confirmations that only
+// the user's own words or sign-off can supply. Memoized per label-set (the same judged requires
+// recur every pass); conservative on failure (keep all).
+const _attachMemo = new Map<string, { at: number; keep: Set<string> }>();
+async function attachableOnly(
+  client: SupabaseClient, userId: string, requires: Array<{ label: string }>,
+): Promise<Array<{ label: string }>> {
+  const sig = requires.map((r) => r.label.toLowerCase()).join('|');
+  const memo = _attachMemo.get(sig);
+  if (memo && Date.now() - memo.at < 10 * 60 * 1000) return requires.filter((r) => memo.keep.has(r.label));
+  try {
+    const lines = requires.map((r, i) => `${i + 1}. ${r.label}`).join('\n');
+    const res = await aiCall<{ attachable?: number[] }>({
+      userId, supabase: client, shape: { output: 'json' }, temperature: 0, maxTokens: 80,
+      source: 'task_preparation',
+      prompt:
+        `Which of these are ATTACHABLE THINGS — a document, file, report, sheet, deck, or link that ` +
+        `could be retrieved and attached to an email? NOT attachable: a confirmation, approval, ` +
+        `decision, answer, availability, a time, or anything only a person's own words can supply. ` +
+        `(A "confirmation letter" IS a document; "confirmation of the meeting time" is an answer.)\n` +
+        `${lines}\n\nJSON only: {"attachable":[numbers]}`,
+    });
+    if (!Array.isArray(res.json?.attachable)) return requires; // failure ≠ a verdict — keep all
+    const keep = new Set(res.json.attachable.map((n) => requires[Number(n) - 1]?.label).filter(Boolean) as string[]);
+    _attachMemo.set(sig, { at: Date.now(), keep });
+    return requires.filter((r) => keep.has(r.label));
+  } catch { return requires; }
+}
+
 export async function resolveRequirements(
   admin: SupabaseClient, userId: string,
   args: {
@@ -198,7 +228,17 @@ export async function resolveRequirements(
   },
 ): Promise<RequirementsResult> {
   const empty: RequirementsResult = { resolutions: [], have: [], missing: [], artifactTruth: '' };
-  const requires = (args.requires ?? []).filter((r) => r.label?.trim()).slice(0, 5);
+  let requires = (args.requires ?? []).filter((r) => r.label?.trim()).slice(0, 5);
+  if (!requires.length) return empty;
+
+  // ── THE ATTACHABILITY FLOOR (Aug 4, found live: "attach a confirmation of the Thursday demo
+  // call time" — an ANSWER classified as an artifact; the resolver searched drives for a decision
+  // and asked the user to attach one). A require the resolver works on must denote a retrievable
+  // THING. One cheap reasoned check (never a keyword list — "confirmation letter" IS a document),
+  // memoized per label-set; on AI failure keep everything (a silly ask beats a silently dropped
+  // real requirement). Runs at the ONE resolver, so every door — pass, on-demand draft, judge
+  // serving edge, any item/task/project — inherits it. ──
+  requires = await attachableOnly(admin, userId, requires);
   if (!requires.length) return empty;
 
   try {

@@ -174,6 +174,9 @@ export default function CaptureClient() {
                   onResume={captureRecording.resumeRecording}
                   onStop={captureRecording.stopAndUpload}
                   onReset={captureRecording.reset}
+                  onRetryUpload={captureRecording.retryUpload}
+                  onDownload={captureRecording.downloadRecording}
+                  hasPendingUpload={captureRecording.hasPendingUpload}
                 />
               </div>
             )}

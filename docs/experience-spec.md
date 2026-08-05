@@ -72,4 +72,7 @@ Corollaries that decide edits:
    their object), the exchange grammar (offer → pick → acknowledge → land, reply as reference),
    artifact cards at the stream's now edge, the excerpt-honesty law. *(shipped Aug 4 — exchange
    generalization to invite/forward/decide queued)*
-7. Home ask-state chips on deck rows (queued) → Home's seat ("what does attention buy").
+7. The one system — one grounding (`assembleRoomGrounding`), one responder (brief · THE MOVE ·
+   offers), surfaces as views; the parallel panel authors died; the MOVE is board-validated and
+   offers are utterances → laws 1, 7, 10, and the whole "team took over" sentence. *(shipped Aug 5)*
+8. Home ask-state chips on deck rows (queued) → Home's seat ("what does attention buy").
