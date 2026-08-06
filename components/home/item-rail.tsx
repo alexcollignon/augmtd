@@ -18,7 +18,8 @@ import Link from 'next/link';
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { DocumentIcon, PaperAirplaneIcon, PaperClipIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
+import { DocumentIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
+import { WorkerMentionInput } from '@/components/workers/worker-mention-input';
 import { ROLE_AVATARS } from '@/lib/workers/roles';
 import { DecisionCard } from '@/components/work/decision-card';
 
@@ -297,15 +298,12 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
     return () => window.removeEventListener('aug:deal-turn', onTurn);
   }, [roomKey]);
   const [showEarlier, setShowEarlier] = useState(false); // history folds — the room reads ONE thing
-  const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   // History (Claude-style): archived sessions of THIS room; viewing one is read-only.
   const [historyOpen, setHistoryOpen] = useState(false);
   const [sessions, setSessions] = useState<Array<{ at: string; count: number; firstText: string }> | null>(null);
   const [viewingSession, setViewingSession] = useState<{ at: string; turns: Turn[] } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [turns, busy]);
@@ -393,11 +391,9 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
     } finally { setBusy(false); }
   };
 
-  const send = async (raw?: string) => {
-    const t = (raw ?? text).trim();
+  const send = async (raw: string) => {
+    const t = raw.trim();
     if (!t || busy) return;
-    setText('');
-    if (inputRef.current) inputRef.current.style.height = 'auto';
     addTurn({ role: 'user', text: t });
     setBusy(true);
     try {
@@ -1008,44 +1004,32 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
         {busy && <AssistantRow><TypingDots /></AssistantRow>}
       </div>
 
-      {/* Composer — the shared idiom (hidden while viewing a past session — read-only). */}
+      {/* THE ONE COMPOSER (workstream 3, the rail fold): the SAME WorkerMentionInput as the Home
+          floor and the worker surfaces — @ picks Coworkers/Tasks/Documents, attach feeds the
+          room's INGEST FUNNEL (the pool — immediate, the room's law), Enter sends through the
+          one steer core. A coworker mention becomes the ADDRESS in the sent words (the delegate
+          path already speaks names); task/document mentions ride as grounding hints. Hidden
+          while viewing a past session — read-only. */}
+      {/* The hidden file input stays — the checklist asks' attach buttons share it. */}
+      <input ref={fileRef} type="file" className="hidden"
+        accept=".pdf,.docx,.txt,.csv,.xlsx,.pptx"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) attach(f); }} />
       {!viewingSession && (
       <div className="flex-shrink-0 px-3 pb-3 pt-2">
-        <div className="flex items-end gap-2 rounded-2xl border border-neutral-200 bg-white shadow-sm px-3 py-2">
-          <textarea
-            ref={inputRef}
-            value={text}
-            onChange={(e) => {
-              setText(e.target.value);
-              e.target.style.height = 'auto';
-              e.target.style.height = `${e.target.scrollHeight}px`;
+        <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
+          <WorkerMentionInput
+            frameless
+            onSubmit={(t, mentions) => {
+              const cw = mentions.find((m) => m.type === 'coworker');
+              const hints = mentions.filter((m) => m.type !== 'coworker').map((m) => m.label);
+              let out = cw ? `${cw.label.split(' ')[0]}, ${t}` : t;
+              if (hints.length) out += ` (about: ${hints.join('; ')})`;
+              void send(out);
             }}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+            disabled={busy}
             placeholder="Ask, correct, or hand off…"
-            rows={1}
-            disabled={busy}
-            className="flex-1 text-[12px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none min-w-0 disabled:opacity-50 resize-none overflow-hidden leading-relaxed"
-            style={{ maxHeight: '120px', overflowY: 'auto' }}
+            onAttach={(files) => { void (async () => { for (const f of files) await attach(f); })(); }}
           />
-          <input ref={fileRef} type="file" className="hidden"
-            accept=".pdf,.docx,.txt,.csv,.xlsx,.pptx"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) attach(f); }} />
-          <button
-            onClick={() => fileRef.current?.click()}
-            disabled={busy}
-            className="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 disabled:opacity-40 transition-colors mb-px"
-            title="Attach a file"
-          >
-            <PaperClipIcon className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => send()}
-            disabled={busy || !text.trim()}
-            className="flex-shrink-0 w-7 h-7 bg-indigo-600 rounded-full flex items-center justify-center disabled:opacity-40 transition-opacity mb-px"
-            title="Send"
-          >
-            <PaperAirplaneIcon className="w-3.5 h-3.5 text-white" />
-          </button>
         </div>
       </div>
       )}

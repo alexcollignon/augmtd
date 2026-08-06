@@ -11,7 +11,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChatBubbleLeftEllipsisIcon } from '@heroicons/react/24/outline';
 
-type Conversation = { key: string; kind: 'room' | 'chat'; label: string; href: string | null; at: string | null };
+type Conversation = { key: string; kind: 'room' | 'chat' | 'coworker'; label: string; href: string | null; at: string | null };
 
 export function AllConversations({ onOpenChat }: { onOpenChat: (key: string) => void }) {
   const router = useRouter();
@@ -52,7 +52,7 @@ export function AllConversations({ onOpenChat }: { onOpenChat: (key: string) => 
         {filtered.map((c) => (
           <button
             key={c.key}
-            onClick={() => (c.kind === 'chat' ? onOpenChat(c.key) : c.href && router.push(c.href))}
+            onClick={() => (c.kind === 'chat' || c.kind === 'coworker' ? onOpenChat(c.key) : c.href && router.push(c.href))}
             className="w-full flex items-center gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 text-left hover:border-indigo-200 transition-colors"
           >
             <ChatBubbleLeftEllipsisIcon className="w-4 h-4 flex-shrink-0 text-neutral-300" />
@@ -62,8 +62,9 @@ export function AllConversations({ onOpenChat }: { onOpenChat: (key: string) => 
             </span>
             {/* ONE NAME EVERYWHERE (owner refinement): rows wear the CONCRETE product word —
                 project / email / task / meeting / chat — never internal words or a vague "work". */}
-            <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-medium ${c.kind === 'chat' ? 'bg-neutral-100 text-neutral-500' : 'bg-indigo-50 text-indigo-600'}`}>
+            <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-medium ${c.kind === 'chat' ? 'bg-neutral-100 text-neutral-500' : c.kind === 'coworker' ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'}`}>
               {c.kind === 'chat' ? 'chat'
+                : c.kind === 'coworker' ? 'coworker'
                 : c.key.startsWith('inbox:') ? 'email'
                 : c.key.startsWith('commitment:') ? 'task'
                 : c.key.startsWith('meeting:') ? 'meeting' : 'project'}

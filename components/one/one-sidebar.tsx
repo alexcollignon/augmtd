@@ -22,7 +22,7 @@ import type { WorkspaceFeatures } from '@/lib/workspace/types';
 import { DEFAULT_FEATURES } from '@/lib/workspace/types';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 
-type Conversation = { key: string; kind: 'room' | 'chat'; label: string; href: string | null };
+type Conversation = { key: string; kind: 'room' | 'chat' | 'coworker'; label: string; href: string | null };
 type Rooms = { pinned: Array<{ id: string; name: string; href: string }>; conversations: Conversation[] };
 const LS_KEY = 'aug-one-sidebar-v1';
 
@@ -129,7 +129,7 @@ export default function OneSidebar({
           <>
             <div className={sectionLabel}>Recent</div>
             {rooms.conversations.slice(0, 5).map((c) => (
-              c.kind === 'chat' ? (
+              c.kind === 'chat' || c.kind === 'coworker' ? (
                 <button key={c.key} onClick={() => openChat(c.key)} className={`${item(false)} w-full text-left italic`}>
                   <span className="truncate">{c.label}</span>
                 </button>

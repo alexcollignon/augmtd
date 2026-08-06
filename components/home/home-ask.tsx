@@ -10,7 +10,10 @@
 
 import React, { useRef, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowUpIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, EyeSlashIcon, XMarkIcon, FolderIcon } from '@heroicons/react/24/outline';
+import { WorkerMentionInput } from '@/components/workers/worker-mention-input';
+import { ProjectPickerPanel } from '@/components/work/work-row';
+import { AnchoredPopover } from '@/components/ui/anchored-popover';
 // (BriefingBlock removed from the chat — Phase 3 F2: the prose brief duplicated the deck; the
 // composeBriefing machinery survives as the deck's ordering anchor + the daily report.)
 
@@ -87,6 +90,7 @@ function Answer({ text, refs, onOpen }: { text: string; refs: Ref[]; onOpen: (r:
 // the old one stays durable (the fold's future frame lists them). Persistence ≠ object
 // creation — no task/project is minted by chatting (ladder law 3). ──
 const CHAT_KEY_LS = 'aug-home-chat-key';
+const SCOPE_LS = 'aug-home-chat-scope';
 function chatRoomKey(): string {
   try {
     const existing = localStorage.getItem(CHAT_KEY_LS);
@@ -106,7 +110,12 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   useEffect(() => {
     try {
       const key = localStorage.getItem(CHAT_KEY_LS);
-      if (key?.startsWith('chat:')) loadRoom(key);
+      const sc = localStorage.getItem(SCOPE_LS);
+      if (sc) {
+        // A SCOPED conversation rehydrates into its project room (the adoption stuck).
+        try { const s = JSON.parse(sc) as { id?: string; name?: string }; if (s?.id && s?.name) { setScope({ id: s.id, name: s.name }); loadRoom(s.id); } } catch { /* bad blob */ }
+      } else if (key?.startsWith('chat:')) loadRoom(key);
+      else if (key?.startsWith('worker:')) void loadWorkerRoom(key);
       // A cross-page "open this conversation" intent (sidebar/All-conversations from another
       // route): the panel must actually OPEN — loading turns into a closed card reads as a
       // dead click (found live, Aug 6).
@@ -115,10 +124,11 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         setOpen(true);
       }
     } catch { /* no LS */ }
-    const onNew = () => { setTurns([]); setTemp(false); setOpen(true); setTimeout(() => inputRef.current?.focus(), 60); };
+    const onNew = () => { setTurns([]); setTemp(false); setScope(null); workerRoomRef.current = null; try { localStorage.removeItem(SCOPE_LS); } catch { /* no LS */ } setOpen(true); setTimeout(() => focusComposer(), 60); };
     const onOpen = (e: Event) => {
       const key = (e as CustomEvent).detail?.key as string | undefined;
       if (key?.startsWith('chat:')) { loadRoom(key); setOpen(true); }
+      else if (key?.startsWith('worker:')) { void loadWorkerRoom(key); setOpen(true); }
     };
     window.addEventListener('aug:new-chat', onNew);
     window.addEventListener('aug:open-chat', onOpen);
@@ -136,6 +146,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       refs: (t.refs ?? []).map((r, i) => ({ id: `h${i}`, kind: 'link', label: r.label, href: r.href })),
     }));
   const loadRoom = (key: string) => {
+    workerRoomRef.current = null; // switching to a chief chat room leaves worker mode
+    if (key.startsWith('chat:')) { setScope(null); try { localStorage.removeItem(SCOPE_LS); } catch { /* no LS */ } }
     fetch(`/api/room/turns?key=${encodeURIComponent(key)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
@@ -143,6 +155,31 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         setTurns(mapServerTurns(d.turns));
         try { localStorage.setItem(CHAT_KEY_LS, key); } catch { /* no LS */ }
       }).catch(() => {});
+  };
+  // ── THE ABSORPTION, BRICK 2 (Aug 6): a COWORKER conversation from Recent/All opens HERE — the
+  // one panel. `worker:<threadId>:<agentId>` loads the thread's own messages (work_messages IS
+  // its store — never copied into room_turns) with the coworker's attribution; the panel enters
+  // WORKER MODE: the next message continues in that SAME thread (the DM pointer re-aims), and
+  // chief persistence is structurally off while the mode holds. ──
+  const workerRoomRef = useRef<{ id: string; name: string } | null>(null);
+  const loadWorkerRoom = async (key: string) => {
+    const [, tid, agentId] = key.split(':');
+    if (!tid || !agentId) return;
+    try {
+      const d = await fetch(`/api/work/threads/${tid}/messages`).then((r) => (r.ok ? r.json() : null));
+      if (!Array.isArray(d?.messages)) return;
+      const roster = await getRoster();
+      const name = roster.find((x) => x.id === agentId)?.name
+        ?? String((d.thread as { title?: string } | null)?.title ?? 'Coworker').replace(/^Chat with /, '');
+      setTurns((d.messages as Array<{ role: string; content: string }>)
+        .filter((m) => (m.role === 'user' || m.role === 'assistant') && String(m.content ?? '').trim())
+        .map((m) => (m.role === 'user'
+          ? { role: 'user' as const, text: m.content }
+          : { role: 'assistant' as const, text: m.content, author: name.split(' ')[0] })));
+      workerRoomRef.current = { id: agentId, name };
+      setScope(null); // a coworker DM is addressed, never project-scoped from here
+      try { localStorage.setItem(`aug-dm-${agentId}`, tid); localStorage.setItem(CHAT_KEY_LS, key); localStorage.removeItem(SCOPE_LS); } catch { /* no LS */ }
+    } catch { /* the click already opened the panel — an empty load stays honest */ }
   };
   // THE HISTORY PICKER — thread management lives INSIDE the chat panel (the owner's law: threads
   // belong to the converged chat section, never a nav surface). Lazily fetched, quiet, Claude-shaped.
@@ -156,17 +193,54 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         .catch(() => setChats([]));
     }
   };
+  // ── THE SCOPE CHIP + THE ADOPTION CASCADE (one-surface § context controls): the conversation
+  // header shows its scope ("No project · Add to…" / "<Project> ✓"), settable at ANY time.
+  // Adopting moves the conversation's turns INTO the project room (the one membership machinery
+  // — /api/rooms/adopt), and from then on the panel talks IN that room: turns persist to its
+  // key, answers ground on its full room page (converse entity scope). The chip when scoped is
+  // the DOOR to the room. ──
+  const [scope, setScope] = useState<{ id: string; name: string } | null>(null);
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const scopeChipRef = useRef<HTMLSpanElement>(null);
+  const adopt = async (e: { id: string; name: string }) => {
+    setScopeOpen(false);
+    try {
+      const res = await fetch('/api/rooms/adopt', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomKey: chatRoomKey(), entityId: e.id }),
+      });
+      if (!res.ok) throw new Error();
+      setScope(e);
+      try { localStorage.setItem(SCOPE_LS, JSON.stringify(e)); localStorage.setItem(CHAT_KEY_LS, e.id); } catch { /* no LS */ }
+      window.dispatchEvent(new CustomEvent('aug:conversation-changed'));
+    } catch {
+      setTurns((prev) => [...prev, { role: 'assistant', text: "Filing into the project didn't go through — try again." }]);
+    }
+  };
+  const createAndAdopt = async (name: string) => {
+    try {
+      const res = await fetch('/api/entities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.id) throw new Error();
+      await adopt({ id: d.id as string, name });
+    } catch {
+      setScopeOpen(false);
+      setTurns((prev) => [...prev, { role: 'assistant', text: "Couldn't create that project — try again." }]);
+    }
+  };
   // TEMPORARY CHAT (one-surface ladder law 4's opt-out — the explicit ephemeral mode): nothing
   // is persisted, no room is minted; the promise is honest ("won't be saved"). Armed before a
   // conversation starts; locked once it has turns (past turns can't be retro-saved); reset by New.
   const [temp, setTemp] = useState(false);
   const persistTurn = (role: 'user' | 'system', text: string, refs?: Ref[]) => {
     if (temp) return; // temporary: the conversation lives only in this session's memory
+    if (workerRoomRef.current) return; // worker mode: the thread's own store holds the conversation
     try {
       fetch('/api/room/turns', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          roomKey: chatRoomKey(), role, text,
+          // Scoped conversations persist INTO the project room — one conversation, one home.
+          roomKey: scope ? scope.id : chatRoomKey(), role, text,
           refs: refs?.length ? refs.map((r) => ({ label: r.label, href: r.href })) : undefined,
         }),
       }).then(() => {
@@ -175,11 +249,17 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       }).catch(() => {});
     } catch { /* persistence is an enhancement — the session still works */ }
   };
-  const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  // The live STAGE from the streaming ask ("Searching your files…") — the busy line speaks it.
+  const [stage, setStage] = useState<string | null>(null);
+  // THE ONE COMPOSER's state: prefill lands a suggestion INTO the textarea (user finishes the
+  // thought); pendingFiles buffer until send (the worker-chat pattern — upload rides the route).
+  const [prefill, setPrefill] = useState<string | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const endRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const composerWrapRef = useRef<HTMLDivElement>(null);
+  const focusComposer = () => composerWrapRef.current?.querySelector('textarea')?.focus();
   // Which assistant turn TYPES in live (only the newest — history never re-animates). Staged via a
   // ref from the setTurns updater (no setState-in-updater), committed by the effect below.
   const [animateIdx, setAnimateIdx] = useState<number | null>(null);
@@ -244,8 +324,13 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     if (id) { try { localStorage.setItem(k, id); } catch { /* no LS */ } }
     return id;
   };
-  const askWorker = async (question: string, w: { id: string; name: string }) => {
-    setTurns((prev) => [...prev, { role: 'user', text: question }]);
+  const askWorker = async (
+    question: string, w: { id: string; name: string },
+    extra?: { mentions?: Array<{ id: string; type: string; label: string }>; files?: File[] },
+  ) => {
+    const fileNote = extra?.files?.length ? ` (attached: ${extra.files.map((f) => f.name).join(', ')})` : '';
+    setOpen(true);
+    setTurns((prev) => [...prev, { role: 'user', text: question + fileNote }]);
     setTurns((prev) => [...prev, { role: 'assistant', text: '', author: w.name }]);
     setBusy(true);
     const patchLast = (text: string) => setTurns((prev) => {
@@ -257,9 +342,25 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     try {
       const tid = await dmThread(w);
       if (!tid) throw new Error('no thread');
+      // Buffered files upload NOW, to the addressed thread (the worker chat's own attach door).
+      let attachments: Array<{ id: string; name: string }> = [];
+      if (extra?.files?.length) {
+        try {
+          const fd = new FormData();
+          extra.files.forEach((f) => fd.append('file', f));
+          const up = await fetch(`/api/work/threads/${tid}/chat-attach`, { method: 'POST', body: fd });
+          attachments = up.ok
+            ? (((await up.json()).attachments ?? []) as Array<{ chatAttachId: string; filename: string }>).map((r) => ({ id: r.chatAttachId, name: r.filename }))
+            : [];
+        } catch { attachments = []; }
+      }
       const res = await fetch(`/api/work/threads/${tid}/chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: question, agentId: w.id }),
+        body: JSON.stringify({
+          content: question, agentId: w.id,
+          ...(extra?.mentions?.length ? { mentions: extra.mentions } : {}),
+          ...(attachments.length ? { attachments } : {}),
+        }),
       });
       if (!res.ok || !res.body) throw new Error('stream failed');
       const reader = res.body.getReader();
@@ -312,50 +413,118 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     } finally { setBusy(false); }
   };
 
-  const ask = async (q: string) => {
-    const question = q.trim();
-    if (!question || busy) return;
-    setInput('');
-    // Addressed? → the worker engine (skipped in TEMPORARY mode: the worker's store always
-    // persists its own thread, which would break the not-saved promise).
-    if (!temp) {
-      const roster = await getRoster();
-      const w = detectAddress(question, roster);
-      if (w) { await askWorker(question, w); return; }
+  // Chief-side attachments land in the KNOWLEDGE BASE (presign → PUT → confirm+index) so the
+  // brain can find/compute over them immediately — the lawful chief attach (files live with
+  // the knowledge, not in a chat blob). Returns the filenames that made it.
+  const uploadToKB = async (files: File[]): Promise<string[]> => {
+    try {
+      const pres = await fetch('/api/drive/upload/presign', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: files.map((f) => ({ filename: f.name, mimeType: f.type || 'application/octet-stream', size: f.size })) }),
+      }).then((r) => (r.ok ? r.json() : null));
+      const uploads = (pres?.uploads ?? []) as Array<{ signedUrl: string; storagePath: string; filename: string; mimeType: string }>;
+      const done: string[] = [];
+      for (const u of uploads) {
+        const f = files.find((x) => x.name === u.filename);
+        if (!f) continue;
+        const put = await fetch(u.signedUrl, { method: 'PUT', headers: { 'Content-Type': u.mimeType }, body: f });
+        if (!put.ok) continue;
+        const conf = await fetch('/api/drive/upload/confirm', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: u.storagePath, filename: u.filename, mimeType: u.mimeType }),
+        });
+        if (conf.ok) done.push(u.filename);
+      }
+      return done;
+    } catch { return []; }
+  };
+
+  // THE ONE ROUTING (the consolidation's brain): a coworker MENTION is the address; else the
+  // typed address; else the chief. Files follow the route — the addressed thread's attach door,
+  // or the knowledge base. Temporary mode: no worker routing, no uploads (both stores persist).
+  const handleSubmit = async (text: string, mentions: Array<{ id: string; type: 'coworker' | 'task' | 'document'; label: string }>) => {
+    const question = text.trim();
+    const files = pendingFiles;
+    if ((!question && !files.length) || busy) return;
+    if (temp && files.length) {
+      setPendingFiles([]);
+      setTurns((prev) => [...prev, { role: 'assistant', text: 'Attachments are off in a temporary chat (they would persist). Switch Temporary off to attach.' }]);
+      return;
     }
+    setPendingFiles([]);
+    if (!temp) {
+      // Address resolution: an explicit @-mention wins → the OPEN worker conversation continues
+      // (worker mode) → the typed address ("Clara, …") → else the chief.
+      const cw = mentions.find((m) => m.type === 'coworker');
+      const w = cw ? { id: cw.id, name: cw.label }
+        : (workerRoomRef.current ?? detectAddress(question, await getRoster()));
+      if (w) {
+        await askWorker(question || 'Here are the files.', w, {
+          mentions: mentions.filter((m) => !(m.type === 'coworker' && m.id === w.id)),
+          files,
+        });
+        return;
+      }
+    }
+    // Chief path — KB-upload files first; mention labels ride as grounding hints.
+    let sendQ = question;
+    let fileNote = '';
+    if (files.length) {
+      const done = await uploadToKB(files);
+      if (done.length) { sendQ += `\n[Attached to the knowledge base just now: ${done.join(', ')}]`; fileNote = ` (attached: ${done.join(', ')})`; }
+      else if (!question) { setTurns((prev) => [...prev, { role: 'assistant', text: 'The upload did not go through — try again, or use the Knowledge page.' }]); return; }
+    }
+    const hints = mentions.filter((m) => m.type !== 'coworker').map((m) => m.label);
+    if (hints.length) sendQ += ` (about: ${hints.join('; ')})`;
     const history = turns.map((t) => ({ role: t.role, text: t.text }));
-    setTurns((prev) => [...prev, { role: 'user', text: question }]);
-    persistTurn('user', question);
+    const shown = (question || 'Attached files.') + fileNote;
+    setOpen(true);
+    setTurns((prev) => [...prev, { role: 'user', text: shown }]);
+    persistTurn('user', shown);
     setBusy(true);
     try {
-      const res = await fetch('/api/home/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, history }) });
-      const d = await res.json();
+      // STREAMING ASK (Aug 6): SSE — `progress` events narrate the core's live stage (the busy
+      // line speaks them), `done` carries the answer. A non-SSE response (error JSON) falls back.
+      const res = await fetch('/api/home/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(scope ? { entityId: scope.id } : {}) }) });
+      let d: { answer?: string; refs?: Ref[] } = {};
+      if (res.body && res.headers.get('content-type')?.includes('text/event-stream')) {
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const frames = buf.split('\n\n'); buf = frames.pop() ?? '';
+          for (const f of frames) {
+            const line = f.split('\n').find((l) => l.startsWith('data: '));
+            if (!line) continue;
+            try {
+              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[] };
+              if (ev.type === 'progress' && ev.label) setStage(ev.label);
+              else if (ev.type === 'done') d = ev;
+            } catch { /* partial frame */ }
+          }
+        }
+      } else {
+        d = await res.json();
+      }
       setTurns((prev) => { pendingAnimate.current = prev.length; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [] }]; });
       if (d.answer) persistTurn('system', d.answer, d.refs ?? []);
     } catch {
       setTurns((prev) => [...prev, { role: 'assistant', text: "Something went wrong reaching your brain — try again." }]);
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setStage(null); }
   };
+  const ask = (q: string) => { void handleSubmit(q, []); };
 
   const hasThread = turns.length > 0;
-  // GRANOLA PANEL (v2): at rest = pills + input only. HOVER (the chat block ONLY — not the page) slides a
-  // 2-line brief preview in TIGHT above the composer. FOCUS or a live thread morphs the block into an
-  // ELEVATED CARD (border + surface + shadow) holding brief → conversation → composer. One smooth motion.
-  const [hovered, setHovered] = useState(false);
-  const [focused, setFocused] = useState(false);
-  // The panel's OPEN state is explicit: focusing the input opens it; clicking OUTSIDE closes it smoothly.
-  // The conversation STATE persists (component state) — reopening restores it; a reload or "New" clears.
+  // THE CONVERSATION IS A PAGE (owner, Aug 6 — "conversation-focused page, not a component"; a
+  // hover-out must NEVER collapse a live conversation): once turns exist and the panel is open,
+  // the thread OWNS the page — no hover gating, no outside-click close. Leaving is EXPLICIT:
+  // Close (hands the dashboard back, the conversation stays and re-opens on focus), or New.
   const [open, setOpen] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const onDown = (ev: MouseEvent) => {
-      if (shellRef.current && !shellRef.current.contains(ev.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, []);
-  const expanded = focused || open;
-  const showThread = hasThread && (expanded || hovered);
+  const showThread = hasThread && open;
   // THE PAGE TAKEOVER (owner, Aug 6 — "doesn't transition to a chat page"): a live conversation
   // OWNS the page — the host hides the deck behind it (Claude's arrival feel); closing hands the
   // dashboard back.
@@ -370,17 +539,40 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // input stays put as the card's floor, and the scroll container pins to the latest turn.
   return (
     <section className="w-full">
-      <div ref={shellRef} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
-        className={`transition-all duration-300 ease-out ${showThread ? 'rounded-2xl border border-neutral-200 bg-white shadow-[0_12px_40px_-18px_rgba(23,23,23,0.16)] p-4' : ''}`}>
+      {/* PAGE MODE: a live conversation renders directly on the page in a centered reading
+          column (Claude's anatomy) — never inside a floating card. */}
+      <div ref={shellRef}
+        className={`transition-all duration-300 ease-out ${showThread ? 'max-w-3xl mx-auto w-full' : ''}`}>
         {/* The thread — above the input, smooth open/close (grid-rows), bounded + self-scrolling. */}
         <div className={`grid transition-all duration-300 ease-out ${showThread ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
           <div className="overflow-hidden min-h-0">
             <div className="flex items-center justify-between mb-1">
               {/* THE HISTORY PICKER — threads managed inside the chat panel (Claude-shaped). */}
-              <div className="relative">
+              <div className="relative flex items-center gap-3">
                 <button onClick={toggleHistory} className="inline-flex items-center gap-1 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-700 transition-colors">
                   History
                 </button>
+                {/* THE SCOPE CHIP — the conversation's project scope, settable any time. Scoped,
+                    the chip is the DOOR to the project room. Hidden in temp (nothing persists to
+                    adopt) and in a coworker DM (addressed, not scoped). */}
+                {!temp && !workerRoomRef.current && (
+                  <span ref={scopeChipRef} className="relative inline-flex">
+                    {scope ? (
+                      <button onClick={() => router.push(`/home?view=projects&entity=${scope.id}`)} title="Open the project room"
+                        className="inline-flex items-center gap-1 text-[11.5px] font-medium text-indigo-600 hover:text-indigo-800 transition-colors">
+                        <FolderIcon className="w-3.5 h-3.5" /> {scope.name} ✓
+                      </button>
+                    ) : (
+                      <button onClick={() => setScopeOpen((v) => !v)}
+                        className="inline-flex items-center gap-1 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-700 transition-colors">
+                        <FolderIcon className="w-3.5 h-3.5" /> No project · Add to…
+                      </button>
+                    )}
+                    <AnchoredPopover anchorRef={scopeChipRef} open={scopeOpen} onClose={() => setScopeOpen(false)} align="left" width={240}>
+                      <ProjectPickerPanel onSelect={(e) => { void adopt(e); }} onCreateProject={(n) => { void createAndAdopt(n); }} />
+                    </AnchoredPopover>
+                  </span>
+                )}
                 {historyOpen && (
                   <div className="absolute left-0 top-full mt-1.5 z-30 w-72 max-w-[80vw] rounded-xl border border-neutral-200 bg-white shadow-lg py-1.5">
                     {chats === null && <p className="px-3.5 py-2 text-[12px] text-neutral-400">Loading…</p>}
@@ -401,15 +593,20 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                 )}
               </div>
               <span className="flex items-center gap-3">
-                {temp && <span className="text-[11px] font-medium text-amber-500" title="This conversation won't be saved and won't appear in History">Temporary — not saved</span>}
-                <button onClick={() => { setTurns([]); setTemp(false); setHistoryOpen(false); try { localStorage.removeItem(CHAT_KEY_LS); } catch { /* no LS */ } }} className="inline-flex items-center gap-1 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-700 transition-colors">
+                {temp && <span className="flex items-center gap-1 text-[11px] font-medium text-amber-500" title="This conversation won't be saved and won't appear in History"><EyeSlashIcon className="w-3.5 h-3.5" />Temporary — not saved</span>}
+                <button onClick={() => { setTurns([]); setTemp(false); setScope(null); setHistoryOpen(false); workerRoomRef.current = null; try { localStorage.removeItem(CHAT_KEY_LS); localStorage.removeItem(SCOPE_LS); } catch { /* no LS */ } }} className="inline-flex items-center gap-1 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-700 transition-colors">
                   <ArrowPathIcon className="w-3.5 h-3.5" /> New
+                </button>
+                {/* Close hands the dashboard back — the conversation STAYS (focus the composer
+                    to return to it); leaving is a decision, never a hover accident. */}
+                <button onClick={() => setOpen(false)} className="inline-flex items-center gap-1 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-700 transition-colors">
+                  <XMarkIcon className="w-3.5 h-3.5" /> Close
                 </button>
               </span>
             </div>
             {/* THE TAKEOVER (Claude-feel): a live conversation gets a CHAT'S room to breathe —
                 tall column, same smooth grid morph in, composer fixed as the floor. */}
-            <div ref={scrollRef} className="space-y-4 max-h-[calc(100vh-330px)] overflow-y-auto [scrollbar-width:thin] pr-1 pb-3">
+            <div ref={scrollRef} className="space-y-4 max-h-[calc(100vh-250px)] min-h-[40vh] overflow-y-auto [scrollbar-width:thin] pr-1 pb-3">
               {turns.map((t, i) => (
                 t.role === 'user' ? (
                   <div key={i} className="flex justify-end"><span className="rounded-2xl rounded-br-sm bg-neutral-100 px-3.5 py-2 text-[13.5px] text-neutral-800 max-w-[80%]">{t.text}</span></div>
@@ -433,7 +630,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                   </div>
                 )
               ))}
-              {busy && <div className="flex items-center gap-1.5 text-[13px] text-neutral-400"><span className="w-1.5 h-1.5 rounded-full bg-indigo-300 animate-pulse" />Thinking…</div>}
+              {busy && <div className="flex items-center gap-1.5 text-[13px] text-neutral-400"><span className="w-1.5 h-1.5 rounded-full bg-indigo-300 animate-pulse" />{stage ?? 'Thinking…'}</div>}
               <div ref={endRef} />
             </div>
           </div>
@@ -443,46 +640,34 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         {!hasThread && suggestions.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
             {suggestions.map((s) => (
-              <button key={s} onClick={() => (s.endsWith('…') ? setInput(s.slice(0, -1) + ' ') : ask(s))} disabled={busy} className="rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-[12px] text-neutral-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-white transition-all duration-150">{s}</button>
+              <button key={s} onClick={() => (s.endsWith('…') ? (setPrefill(s.slice(0, -1) + ' '), focusComposer()) : ask(s))} disabled={busy} className="rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-[12px] text-neutral-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-white transition-all duration-150">{s}</button>
             ))}
             <button onClick={() => setTemp((v) => !v)}
               title={temp ? 'This conversation will NOT be saved' : 'Start a conversation that is never saved or remembered'}
-              className={`ml-auto rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${temp ? 'bg-amber-50 text-amber-600' : 'text-neutral-300 hover:text-neutral-500'}`}>
-              {temp ? '● Temporary' : 'Temporary'}
+              className={`ml-auto flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors ${temp ? 'bg-amber-50 text-amber-600' : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'}`}>
+              <EyeSlashIcon className="w-3.5 h-3.5" /> Temporary
             </button>
           </div>
         )}
-        {/* @-MENTION LITE (the composer-consolidation's forerunner): typing "@" offers the team;
-            a pick becomes the ADDRESS ("Clara, ") — the same routing as typing the name. The full
-            mention/attach composer (tasks · documents · files) is workstream 3. */}
-        {input.startsWith('@') && (rosterRef.current?.length ?? 0) > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-2">
-            {(rosterRef.current ?? [])
-              .filter((r) => r.name.toLowerCase().includes(input.slice(1).toLowerCase()))
-              .map((r) => (
-                <button key={r.id}
-                  onClick={() => { setInput(`${r.name.split(' ')[0]}, `); inputRef.current?.focus(); }}
-                  className="rounded-full border border-indigo-200 bg-indigo-50/60 px-3 py-1 text-[12px] font-medium text-indigo-700 hover:bg-indigo-100 transition-colors">
-                  @{r.name.split(' ')[0]}
-                </button>
-              ))}
-          </div>
-        )}
-        {/* The input — the card's FLOOR, never moves once a conversation is live. */}
-        <div className={`flex items-center gap-2 rounded-2xl border px-3.5 py-2.5 transition-all duration-300 ${showThread
-          ? 'border-neutral-200 bg-neutral-50/70 focus-within:border-indigo-300'
-          : 'border-neutral-200 bg-white shadow-[0_4px_28px_-12px_rgba(23,23,23,0.22)] focus-within:border-indigo-300 focus-within:shadow-[0_4px_32px_-10px_rgba(79,70,229,0.28)]'}`}>
-          <input
-            ref={inputRef}
-            value={input} onChange={(e) => { const v = e.target.value; setInput(v); if (v.startsWith('@')) void getRoster(); }}
-            onFocus={() => { setFocused(true); setOpen(true); }} onBlur={() => setFocused(false)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(input); } }}
-            placeholder="Ask anything — or address a coworker: “Clara, …”"
-            className="flex-1 bg-transparent text-[14px] text-neutral-800 placeholder:text-neutral-400 outline-none py-1"
+        {/* THE ONE COMPOSER (workstream 3 — the consolidation): WorkerMentionInput is the SAME
+            component the worker surfaces use — @ opens the Coworkers/Tasks/Documents picker,
+            📎 buffers files (uploaded on send), Enter submits. A coworker mention IS the address;
+            files route to the addressed thread (chat-attach) or into the knowledge base (chief). */}
+        <div
+          ref={composerWrapRef}
+          onFocusCapture={() => setOpen(true)}
+          className="rounded-2xl border overflow-hidden transition-all duration-300 border-neutral-200 bg-white shadow-[0_4px_28px_-12px_rgba(23,23,23,0.22)] focus-within:border-indigo-300 focus-within:shadow-[0_4px_32px_-10px_rgba(79,70,229,0.28)]">
+          <WorkerMentionInput
+            frameless
+            onSubmit={(text, mentions) => { void handleSubmit(text, mentions); }}
+            disabled={busy}
+            placeholder="Ask anything — @ mentions your team"
+            prefill={prefill}
+            onPrefillConsumed={() => setPrefill(null)}
+            onAttach={(files) => setPendingFiles((p) => [...p, ...files])}
+            attachments={pendingFiles.map((f, i) => ({ id: `${i}-${f.name}`, name: f.name, size: f.size }))}
+            onRemoveAttachment={(id) => setPendingFiles((p) => p.filter((f, i) => `${i}-${f.name}` !== id))}
           />
-          <button onClick={() => ask(input)} disabled={!input.trim() || busy} className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-30 disabled:hover:bg-indigo-600 text-white transition-colors">
-            <ArrowUpIcon className="w-4 h-4" />
-          </button>
         </div>
       </div>
     </section>

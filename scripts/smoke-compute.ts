@@ -432,15 +432,19 @@ const src = (p: string) => readFileSync(p, 'utf8');
   const ha = src('components/home/home-ask.tsx');
   check('F1: THE DURABLE HOME CHAT — every exchange persists as a `chat:<uuid>` loose room (history is the default), a reload rehydrates, "New" starts fresh while the old room stays durable; chatting mints no objects',
     ha.includes('THE DURABLE HOME CHAT') && ha.includes("`chat:${crypto.randomUUID()}`") &&
-    ha.includes("persistTurn('user', question)") && ha.includes("persistTurn('system', d.answer") &&
+    ha.includes("persistTurn('user', shown)") && ha.includes("persistTurn('system', d.answer") &&
     ha.includes('/api/room/turns?key=') &&
     ha.includes('localStorage.removeItem(CHAT_KEY_LS)') &&
     ha.includes('Persistence ≠ object'));
   check('F2: THE FOLD\'s config door — Settings → Team (roster/skills/tools belong to Settings; coworkers are executors in the work, not a destination)',
     src('components/settings/settings-left-panel.tsx').includes("id: 'team', label: 'Team'") &&
     src('components/settings/settings-left-panel.tsx').includes("href: '/workers'"));
-  check('F3: THE CLAUDE-SHAPED CHAT — the PAGE takeover (the deck steps aside via aug:chat-active; the thread fills the viewport), THE HISTORY PICKER inside the panel, answers in THE VOICE, chat rooms titled by their own first ask',
-    src('components/home/home-ask.tsx').includes('max-h-[calc(100vh-330px)]') &&
+  check('F3: THE CLAUDE-SHAPED CHAT — a live conversation is a PAGE (centered reading column, thread fills the viewport, the deck steps aside via aug:chat-active; NO hover gating — hover-out never collapses it, leaving is the explicit Close/New), THE HISTORY PICKER inside the panel, answers in THE VOICE, chat rooms titled by their own first ask',
+    src('components/home/home-ask.tsx').includes('const showThread = hasThread && open;') &&
+    !src('components/home/home-ask.tsx').includes('onMouseLeave={() => setHovered(false)}') &&
+    src('components/home/home-ask.tsx').includes('max-w-3xl mx-auto') &&
+    src('components/home/home-ask.tsx').includes('max-h-[calc(100vh-250px)]') &&
+    src('components/home/home-ask.tsx').includes('setOpen(false)} className') &&
     src('components/home/home-ask.tsx').includes("CustomEvent('aug:chat-active'") &&
     src('components/home/home-view.tsx').includes("view === 'dashboard' && !chatActive") &&
     src('components/home/home-ask.tsx').includes('THE HISTORY PICKER') &&
@@ -492,7 +496,7 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('F4: TEMPORARY CHAT — the ladder\'s explicit ephemeral opt-out: persistence structurally skipped, no room minted, honest "not saved" label, armable only pre-conversation, reset by New',
     src('components/home/home-ask.tsx').includes('if (temp) return;') &&
     src('components/home/home-ask.tsx').includes('Temporary — not saved') &&
-    src('components/home/home-ask.tsx').includes('setTemp(false); setOpen(true)') &&
+    src('components/home/home-ask.tsx').includes('const onNew = () => { setTurns([]); setTemp(false); setScope(null);') &&
     src('components/home/home-ask.tsx').includes('!hasThread && suggestions.length > 0'));
 
   check('AB1: THE ABSORPTION brick 1 — an ADDRESSED message routes through the WORKER ENGINE (streamed SSE into the panel, author attribution, tool chips); the DM thread is get-or-created; the conversation lives in the worker\'s OWN store (never double-persisted); temporary mode skips addressing (the store would break the promise)',
@@ -502,6 +506,53 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/home/home-ask.tsx').includes('never') &&
     src('components/home/home-ask.tsx').includes('if (!temp) {') &&
     src('components/home/home-ask.tsx').includes('t.author && <p'));
+
+  check('AB2: THE ONE COMPOSER (workstream 3) — the Home floor mounts the SAME WorkerMentionInput the worker surfaces use (@ Coworkers/Tasks/Documents picker, attach, suggestion prefill); a coworker MENTION is the address; files follow the route — chat-attach on the addressed thread, the KNOWLEDGE BASE on the chief path; temporary mode refuses uploads (they would persist)',
+    src('components/home/home-ask.tsx').includes('<WorkerMentionInput') &&
+    src('components/home/home-ask.tsx').includes("mentions.find((m) => m.type === 'coworker')") &&
+    src('components/home/home-ask.tsx').includes('/api/drive/upload/presign') &&
+    src('components/home/home-ask.tsx').includes('chat-attach') &&
+    src('components/home/home-ask.tsx').includes('temp && files.length') &&
+    src('components/home/home-ask.tsx').includes('setPrefill(s.slice(0, -1)') &&
+    !src('components/home/home-ask.tsx').includes('<input'));
+
+  check('AB3: THE ABSORPTION brick 2 — coworker conversations LIST in the merged Recent/All (chat threads only, never run threads; temporary excluded) and OPEN in the ONE Home panel: worker mode loads the thread\'s own messages (work_messages stays the store — chief persistence structurally off), the DM pointer re-aims so the next message continues the SAME thread',
+    src('app/api/rooms/recent/route.ts').includes('worker:${t.id}:${t.agent_id}') &&
+    src('app/api/rooms/recent/route.ts').includes(".is('workflow_id', null)") &&
+    src('components/one/all-conversations.tsx').includes("'coworker'") &&
+    src('components/home/home-ask.tsx').includes('loadWorkerRoom') &&
+    src('components/home/home-ask.tsx').includes('if (workerRoomRef.current) return;') &&
+    src('components/home/home-ask.tsx').includes('localStorage.setItem(`aug-dm-${agentId}`, tid)'));
+
+  check('ST8: THE STREAMING ASK — the chief path answers over SSE with live PROGRESS labels (the ONE progress channel in converse: tool labels speak consequence, fast-path + agent loop both emit); the panel\'s busy line speaks the stage; the JSON path survives for non-panel callers',
+    src('app/api/home/ask/route.ts').includes('text/event-stream') &&
+    src('app/api/home/ask/route.ts').includes('onProgress') &&
+    src('lib/converse/index.ts').includes('TOOL_PROGRESS') &&
+    src('lib/converse/index.ts').includes('progressLabelFor(call.function.name)') &&
+    src('lib/converse/index.ts').includes('progressLabelFor(verdict.command.tool)') &&
+    src('components/home/home-ask.tsx').includes('stream: true') &&
+    src('components/home/home-ask.tsx').includes('setStage(ev.label)') &&
+    src('components/home/home-ask.tsx').includes("{stage ?? 'Thinking…'}"));
+
+  check('F7: THE SCOPE CHIP + THE ADOPTION CASCADE — the conversation header shows its scope ("No project · Add to…" / "<Project> ✓" = the room door), settable any time via the ONE picker grammar (ProjectPickerPanel, extracted and shared with the deck door); adopting MOVES the turns into the project room (chat:* only, idempotent narration at the seam), then the panel talks IN the room: turns persist to its key, answers ground entity-scoped through the one core',
+    src('components/home/home-ask.tsx').includes('No project · Add to…') &&
+    src('components/home/home-ask.tsx').includes("'/api/rooms/adopt'") &&
+    src('components/home/home-ask.tsx').includes('scope ? scope.id : chatRoomKey()') &&
+    src('components/home/home-ask.tsx').includes('entityId: scope.id') &&
+    src('components/home/home-ask.tsx').includes('<ProjectPickerPanel') &&
+    src('components/work/work-row.tsx').includes('export function ProjectPickerPanel') &&
+    src('app/api/rooms/adopt/route.ts').includes("startsWith('chat:')") &&
+    src('app/api/rooms/adopt/route.ts').includes('.update({ room_key: entityId })') &&
+    src('app/api/rooms/adopt/route.ts').includes('adopt:${roomKey}') &&
+    src('app/api/home/ask/route.ts').includes("kind: 'entity'"));
+
+  check('AB4: THE RAIL COMPOSER FOLD — the room\'s composer IS the one composer (WorkerMentionInput frameless; the bespoke textarea died); a coworker mention becomes the ADDRESS in the sent words (the delegate path speaks names), attach feeds the room\'s ingest funnel immediately, chips/offers still speak through send(raw)',
+    src('components/home/item-rail.tsx').includes('<WorkerMentionInput') &&
+    src('components/home/item-rail.tsx').includes('frameless') &&
+    !src('components/home/item-rail.tsx').includes('<textarea') &&
+    src('components/home/item-rail.tsx').includes("placeholder=\"Ask, correct, or hand off…\"") &&
+    src('components/home/item-rail.tsx').includes('const send = async (raw: string)') &&
+    src('components/home/item-rail.tsx').includes('for (const f of files) await attach(f)'));
 
   // ── Report ──
   let pass = 0;

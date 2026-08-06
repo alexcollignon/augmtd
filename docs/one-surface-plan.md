@@ -378,6 +378,72 @@ C. **THE ABSORPTION** — after A+B (A done, B first-passed). BRICK 1, protocol 
    own store would break the not-saved promise). Rider shipped ahead (Aug 6): **TEMPORARY CHAT** (F4 gate) — the ladder's ephemeral
    opt-out, persistence structurally skipped, honest "not saved" label, pre-conversation-armed,
    reset by New.
+D. **THE COMPOSER CONSOLIDATION — DONE (Aug 6, gate AB2 — 73/73, tsc + build green).**
+   Workstream 3 executed: HomeAsk's bare `<input>` + @-mention-lite DIED; the floor now mounts
+   the SAME `WorkerMentionInput` the worker surfaces use (@ opens the Coworkers/Tasks/Documents
+   picker · attach buffers files until send · suggestion chips ending in "…" prefill the
+   textarea via `prefill`/`onPrefillConsumed`). THE ONE ROUTING in `handleSubmit`: a coworker
+   MENTION is the address (typed "Clara, …" detection stays the fallback); files FOLLOW the
+   route — an addressed message uploads through the thread's own chat-attach door and rides the
+   chat POST as `attachments`, a chief message uploads to the KNOWLEDGE BASE (presign → PUT →
+   confirm+index) and the question carries an honest `[Attached to the knowledge base…]` note;
+   task/document mention labels ride the chief question as `(about: …)` grounding hints.
+   Temporary mode refuses uploads with honest copy (both destinations persist — the not-saved
+   promise holds structurally). The user's durable turn persists WITH its attach note (F1
+   re-pointed to `persistTurn('user', shown)`). Remaining from the workstream: the rail
+   (item-rail composer) still speaks its own idiom — fold it onto WorkerMentionInput when the
+   room's exchange grammar next opens; scope chips ride workstream 2. RIDER (owner call, Aug 6):
+   `frameless` prop on WorkerMentionInput — the HOST owns the frame (the Home floor's double-pill
+   died); the Temporary toggle wears EyeSlashIcon in the composer's icon-word grammar.
+E. **THE STREAMING ASK + BRICK 2 — DONE (Aug 6, gates ST8 + AB3 — 75/75, tsc + build green,
+   progress channel live-verified on the probe host, listing query live-verified on 4 real
+   accounts).** (1) STREAMING: `/api/home/ask` `{stream:true}` answers over SSE — the ONE
+   PROGRESS CHANNEL in converse (`onProgress` threaded through the fast-path dispatch AND the
+   agent loop; `TOOL_PROGRESS` labels speak consequence: "Searching your files…", "Running the
+   numbers…") narrates live; the panel's busy line speaks the stage; `done` carries the same
+   payload as the surviving JSON path (non-panel callers untouched). The final answer types in
+   via the existing typewriter — full token streaming rides the token pass if ever needed.
+   (2) THE ABSORPTION BRICK 2: coworker chat threads (workflow_id null, temporary excluded)
+   LIST in the merged Recent/All-conversations (`worker:<threadId>:<agentId>` keys, emerald
+   "coworker" chip, global-recency merge) and OPEN in the ONE Home panel: WORKER MODE loads the
+   thread's own work_messages with attribution (the thread stays the store — chief persistence
+   structurally off), re-aims the `aug-dm-<agentId>` pointer so the next message continues the
+   SAME thread through the worker engine; an explicit @-mention overrides; New/chat-load/temp
+   all exit the mode. /workers' chat has no remaining listing monopoly — the fold's absorption
+   story is complete for DM chats (project/group coworker threads: future).
+F. **THE CONVERSATION IS A PAGE — DONE (Aug 6, owner correction: "conversation-focused page
+   instead of the component; hover-out made it disappear"; gate F3 re-pointed, 75/75).** The
+   Granola hover-card era is dead: `showThread = hasThread && open` — no hover gating, no
+   outside-click collapse (a live conversation NEVER disappears under the mouse). The thread
+   renders directly on the page in a centered max-w-3xl reading column (no card border/shadow),
+   viewport-tall (calc(100vh-250px), min 40vh). Leaving is EXPLICIT: Close (✕ — hands the
+   dashboard back; the conversation stays and re-opens on composer focus) or New. Submitting
+   from anywhere opens the page.
+G. **THE SCOPE CHIP + THE ADOPTION CASCADE — DONE (Aug 6, gate F7 — 76/76, tsc + build green,
+   cascade live-verified on the probe host: turns move, room narrates once, chat empties;
+   work-surface 51/51 after the picker extraction).** The context-controls clause built: the
+   conversation header wears its scope — "No project · Add to…" opens the ONE PICKER GRAMMAR
+   (`ProjectPickerPanel`, EXTRACTED from RowProjectPicker into a shared export — every
+   add-to-project door now renders the same panel, only consequences differ); "<Project> ✓" is
+   the DOOR to the room. Adopting = POST `/api/rooms/adopt`: the chat room's turns RE-HOME into
+   the project room (chat:* only; idempotent seam narration "Filed a Home conversation…", dedupe
+   `adopt:<chatKey>`), then the panel TALKS IN THE ROOM: turns persist to the entity key (the
+   room's rail shows the conversation — one conversation, one home) and answers ground
+   entity-scoped through the one core (`entityId` on /api/home/ask → converse entity scope =
+   full room grounding + room verbs). Scope survives reload (LS), clears on New / chat-load /
+   coworker-DM load; hidden in temp (nothing persists to adopt). V1 boundary: adoption is
+   one-way per conversation (turns interleave in the room after the move — re-scoping would need
+   per-turn provenance; not built).
+H. **THE RAIL COMPOSER FOLD — DONE (Aug 6, gate AB4 — 77/77, one-room 85/85, tsc + build
+   green).** The room's bespoke composer (textarea + own attach/send buttons) died; the rail
+   mounts the SAME `WorkerMentionInput` (frameless — the rail's own rounded frame hosts it).
+   Mapping: a coworker @-mention becomes the ADDRESS in the sent words ("Clara, …" — the steer
+   core's delegate path already speaks names, no new plumbing); task/document mentions ride as
+   "(about: …)" hints; attach feeds the room's INGEST FUNNEL immediately (pool semantics — a
+   room file lands now, never buffered); `send(raw)` keeps serving the offer chips / go-ahead
+   buttons (clicks are utterances, unchanged). ONE COMPOSER now holds everywhere it exists:
+   Home floor · worker chat · the room rail. Remaining composers by design: the reply/forward
+   STAGE editors (rich-text email composition — a different instrument, not a chat composer).
 
 ### THE POC CONTINUITY CLAUSE (AHK et al. — nothing breaks mid-rebuild)
 

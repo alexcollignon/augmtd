@@ -57,24 +57,77 @@ export function warmProjectPicker(): void {
   }).catch(() => {}).then(() => { pickerEntsInflight = null; });
 }
 
-function RowProjectPicker({ itemKind, itemId, onAttached }: { itemKind: 'inbox_item' | 'commitment'; itemId: string; onAttached?: (name: string, tracked: boolean) => void }) {
-  const [open, setOpen] = useState(false);
+// THE ONE PICKER GRAMMAR, extracted (Aug 6 — the scope chip is the newest door): search leads,
+// "Start a new project…" on top (query pre-fills), YOUR tracked projects first name-sorted, the
+// recognized-but-untracked tail below "Suggested". Every add-to-project door renders THIS panel;
+// only the select/create consequences differ per door.
+export function ProjectPickerPanel({ onSelect, onCreateProject }: {
+  onSelect: (e: { id: string; name: string; tracked: boolean }) => void;
+  onCreateProject: (name: string) => void;
+}) {
   const [ents, setEnts] = useState<PickEnt[]>([]);
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
-  const [busy, setBusy] = useState(false);
-  const boxRef = useRef<HTMLSpanElement>(null);
   useEffect(() => {
-    if (!open) { setQuery(''); setCreating(false); setNewName(''); return; }
     // INSTANT: memory first (warmed on hover), LS second — a fetch only refreshes in the background.
     setEnts(pickerEntsMemo ?? sortPickEnts((loadLS<{ entities?: PickEnt[] }>('aug-portfolio-v1')?.entities ?? []) as PickEnt[]));
     fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => {
       if (d?.entities) { pickerEntsMemo = sortPickEnts(d.entities as PickEnt[]); setEnts(pickerEntsMemo); saveLS('aug-portfolio-v1', d); }
     }).catch(() => {});
-  }, [open]);
+  }, []);
   const q = query.trim().toLowerCase();
   const filtered = q ? ents.filter((e) => e.name.toLowerCase().includes(q)) : ents;
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-white shadow-lg p-1 cursor-default">
+      {creating ? (
+        <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter' && newName.trim()) onCreateProject(newName.trim()); if (e.key === 'Escape') { setCreating(false); setNewName(''); } }}
+          placeholder="New project name…"
+          className="w-full rounded-lg border border-indigo-200 px-2 py-1.5 text-[12.5px] text-neutral-800 outline-none" />
+      ) : (
+        <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter' && filtered.length === 1) onSelect({ id: filtered[0].id, name: filtered[0].name, tracked: !!filtered[0].tracked }); }}
+          placeholder="Search projects…"
+          className="w-full rounded-lg border border-neutral-200 px-2 py-1.5 text-[12.5px] text-neutral-800 outline-none focus:border-indigo-300" />
+      )}
+      {!creating && (
+        <button onClick={() => { setNewName(query.trim()); setCreating(true); }}
+          className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 mt-1 text-left text-[12.5px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors">
+          <PlusIcon className="w-3 h-3 flex-shrink-0" />{q && filtered.length === 0 ? `Start "${query.trim()}"…` : 'Start a new project…'}
+        </button>
+      )}
+      <div className="max-h-52 overflow-y-auto border-t border-neutral-100 mt-1 pt-1">
+        {(() => {
+          const byName = (a: PickEnt, b: PickEnt) => a.name.localeCompare(b.name);
+          const trackedList = filtered.filter((e) => e.tracked).sort(byName);
+          const suggestedList = filtered.filter((e) => !e.tracked).sort(byName);
+          const row = (e: PickEnt) => (
+            <button key={e.id} onClick={() => onSelect({ id: e.id, name: e.name, tracked: !!e.tracked })}
+              className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-neutral-700 hover:bg-indigo-50 transition-colors">
+              <FolderIcon className="w-3 h-3 flex-shrink-0 text-neutral-400" /><span className="min-w-0 flex-1 truncate">{e.name}</span>
+            </button>
+          );
+          return (
+            <>
+              {trackedList.map(row)}
+              {suggestedList.length > 0 && (
+                <p className="px-2 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400 border-t border-neutral-100 mt-1">Suggested</p>
+              )}
+              {suggestedList.map(row)}
+              {filtered.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">{q ? 'No match — start it above.' : 'Nothing yet.'}</p>}
+            </>
+          );
+        })()}
+      </div>
+    </div>
+  );
+}
+
+function RowProjectPicker({ itemKind, itemId, onAttached }: { itemKind: 'inbox_item' | 'commitment'; itemId: string; onAttached?: (name: string, tracked: boolean) => void }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const boxRef = useRef<HTMLSpanElement>(null);
   const attach = async (entityId: string, name: string, tracked: boolean) => {
     setBusy(true); setOpen(false);
     try {
@@ -87,8 +140,7 @@ function RowProjectPicker({ itemKind, itemId, onAttached }: { itemKind: 'inbox_i
       try { window.dispatchEvent(new CustomEvent('aug:membership-changed', { detail: { kind: itemKind, id: itemId } })); } catch { /* SSR-safe */ }
     } catch { toast.error('Could not add'); } finally { setBusy(false); }
   };
-  const createAndAttach = async () => {
-    const n = newName.trim();
+  const createAndAttach = async (n: string) => {
     if (!n || busy) return;
     setBusy(true); setOpen(false);
     try {
@@ -109,51 +161,10 @@ function RowProjectPicker({ itemKind, itemId, onAttached }: { itemKind: 'inbox_i
           transform-animated sections — an in-flow absolute panel gets clipped and layered under
           the right rail. AnchoredPopover escapes to <body>. */}
       <AnchoredPopover anchorRef={boxRef} open={open} onClose={() => setOpen(false)} align="right" width={240}>
-        <div className="rounded-xl border border-neutral-200 bg-white shadow-lg p-1 cursor-default">
-          {creating ? (
-            <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') createAndAttach(); if (e.key === 'Escape') { setCreating(false); setNewName(''); } }}
-              placeholder="New project name…"
-              className="w-full rounded-lg border border-indigo-200 px-2 py-1.5 text-[12.5px] text-neutral-800 outline-none" />
-          ) : (
-            <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') setOpen(false); if (e.key === 'Enter' && filtered.length === 1) attach(filtered[0].id, filtered[0].name, !!filtered[0].tracked); }}
-              placeholder="Search projects…"
-              className="w-full rounded-lg border border-neutral-200 px-2 py-1.5 text-[12.5px] text-neutral-800 outline-none focus:border-indigo-300" />
-          )}
-          {!creating && (
-            <button onClick={() => { setNewName(query.trim()); setCreating(true); }}
-              className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 mt-1 text-left text-[12.5px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors">
-              <PlusIcon className="w-3 h-3 flex-shrink-0" />{q && filtered.length === 0 ? `Start "${query.trim()}"…` : 'Start a new project…'}
-            </button>
-          )}
-          <div className="max-h-52 overflow-y-auto border-t border-neutral-100 mt-1 pt-1">
-            {/* ONE PICKER GRAMMAR (July 31): YOUR projects lead (name-sorted — stable across the
-                cache→fetch swap, no reorder flicker); the recognized-but-untracked tail sits
-                below a "Suggested" divider. Same sections in every add-to-project door. */}
-            {(() => {
-              const byName = (a: PickEnt, b: PickEnt) => a.name.localeCompare(b.name);
-              const trackedList = filtered.filter((e) => e.tracked).sort(byName);
-              const suggestedList = filtered.filter((e) => !e.tracked).sort(byName);
-              const row = (e: PickEnt) => (
-                <button key={e.id} onClick={() => attach(e.id, e.name, !!e.tracked)}
-                  className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-neutral-700 hover:bg-indigo-50 transition-colors">
-                  <FolderIcon className="w-3 h-3 flex-shrink-0 text-neutral-400" /><span className="min-w-0 flex-1 truncate">{e.name}</span>
-                </button>
-              );
-              return (
-                <>
-                  {trackedList.map(row)}
-                  {suggestedList.length > 0 && (
-                    <p className="px-2 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400 border-t border-neutral-100 mt-1">Suggested</p>
-                  )}
-                  {suggestedList.map(row)}
-                  {filtered.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">{q ? 'No match — start it above.' : 'Nothing yet.'}</p>}
-                </>
-              );
-            })()}
-          </div>
-        </div>
+        <ProjectPickerPanel
+          onSelect={(e) => attach(e.id, e.name, e.tracked)}
+          onCreateProject={(n) => { void createAndAttach(n); }}
+        />
       </AnchoredPopover>
     </span>
   );

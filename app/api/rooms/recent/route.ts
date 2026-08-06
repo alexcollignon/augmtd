@@ -88,21 +88,50 @@ export async function GET(request: NextRequest) {
         .filter((c): c is { key: string; label: string; at: string } => !!c);
     }
 
+    // COWORKER CONVERSATIONS (the absorption, brick 2): a chat with a coworker IS a conversation —
+    // it lists beside chat rooms and item rooms and opens in the ONE Home panel (key
+    // `worker:<threadId>:<agentId>`). CHAT threads only (workflow_id null — run/report threads
+    // stay in Activity); temporary threads excluded (the not-saved promise holds in listings too).
+    let workerConvos: Array<{ key: string; kind: 'coworker'; label: string; href: null; at: string | null }> = [];
+    try {
+      const { data: workers } = await supabase.from('custom_agents')
+        .select('id, name').eq('user_id', user.id).eq('is_worker', true);
+      if (workers?.length) {
+        const nameOf = new Map((workers as Array<{ id: string; name: string }>).map((w) => [w.id, String(w.name).split(' ')[0]]));
+        const { data: wts } = await supabase.from('work_threads')
+          .select('id, title, agent_id, updated_at')
+          .eq('user_id', user.id).eq('status', 'active')
+          .in('agent_id', (workers as Array<{ id: string }>).map((w) => w.id))
+          .is('workflow_id', null)
+          .or('is_temporary.eq.false,is_temporary.is.null')
+          .order('updated_at', { ascending: false }).limit(all ? 20 : 6);
+        workerConvos = ((wts ?? []) as Array<{ id: string; title: string | null; agent_id: string; updated_at: string | null }>)
+          .map((t) => ({
+            key: `worker:${t.id}:${t.agent_id}`, kind: 'coworker' as const,
+            label: String(t.title || `Chat with ${nameOf.get(t.agent_id) ?? 'a coworker'}`).slice(0, 60),
+            href: null, at: t.updated_at ?? null,
+          }));
+      }
+    } catch { /* coworker listing is an enhancement — the merged list still serves */ }
+
     // THE MERGED CONVERSATIONS (the sidebar's Recent + the All-conversations view): every
-    // conversed-in room — chat rooms AND item/entity rooms — in one global-recency order (`keys`
-    // came from the turns scan newest-first). Chats title by their first ask; rooms by their
-    // record; unlabelable keys drop honestly.
+    // conversed-in room — chat rooms, item/entity rooms, AND coworker chats — in one
+    // global-recency order. Chats title by their first ask; rooms by their record; coworker
+    // threads by their own title; unlabelable keys drop honestly.
     const chatLabel = new Map(chats.map((c) => [c.key, c.label]));
+    type Convo = { key: string; kind: 'room' | 'chat' | 'coworker'; label: string; href: string | null; at: string | null };
     const conversations = keys
-      .map((k) => {
+      .map((k): Convo | null => {
         if (k.startsWith('chat:')) {
           const l = chatLabel.get(k);
-          return l ? { key: k, kind: 'chat' as const, label: l, href: null, at: lastAt.get(k) ?? null } : null;
+          return l ? { key: k, kind: 'chat', label: l, href: null, at: lastAt.get(k) ?? null } : null;
         }
         const l = label.get(k);
-        return l && hrefOf(k) ? { key: k, kind: 'room' as const, label: l.slice(0, 60), href: hrefOf(k), at: lastAt.get(k) ?? null } : null;
+        return l && hrefOf(k) ? { key: k, kind: 'room', label: l.slice(0, 60), href: hrefOf(k), at: lastAt.get(k) ?? null } : null;
       })
-      .filter((c): c is NonNullable<typeof c> => !!c)
+      .filter((c): c is Convo => !!c)
+      .concat(workerConvos)
+      .sort((a, b) => new Date(b.at ?? 0).getTime() - new Date(a.at ?? 0).getTime())
       .slice(0, all ? 40 : 8);
 
     return NextResponse.json({ pinned, recent, chats, conversations });

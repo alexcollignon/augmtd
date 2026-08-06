@@ -59,6 +59,32 @@ export type ConverseScope =
 
 export type ConverseHistoryTurn = { role: 'user' | 'assistant'; text: string };
 
+// ── THE PROGRESS CHANNEL (streaming ask, Aug 6): human labels for what the core is DOING right
+// now — surfaced live over SSE so a long agent loop never reads as a dead "Thinking…". Labels
+// speak consequence in the user's words (law 4), never tool names. One map — a new chief tool
+// without a label falls back to the generic line, never to silence. ──
+const TOOL_PROGRESS: Record<string, string> = {
+  find_file: 'Searching your files…',
+  search_knowledge_base: 'Searching the knowledge base…',
+  get_emails: 'Reading recent mail…',
+  get_meeting_context: 'Pulling the meeting notes…',
+  read_action_history: 'Checking what was sent and done…',
+  run_compute: 'Running the numbers…',
+  resolve_inbox_item: 'Updating the item…',
+  resolve_commitment: 'Updating the commitment…',
+  remember_fact: 'Noting that down…',
+  move_item_to_project: 'Filing it on the project…',
+  set_project_status: 'Updating the project…',
+  merge_projects: 'Merging the projects…',
+  create_project: 'Creating the project…',
+  create_task_item: 'Creating the task…',
+  send_prepared_reply: 'Checking the prepared reply…',
+  prepare_forward: 'Preparing the forward…',
+  propose_standing_task: 'Drafting the standing task…',
+  steer_standing_task: 'Adjusting how that task runs…',
+};
+const progressLabelFor = (tool: string) => TOOL_PROGRESS[tool] ?? 'Working on it…';
+
 export type ConverseTurn = {
   say: string;
   refs: Array<{ id?: string; kind?: string; label: string; href: string | null }>;
@@ -493,6 +519,7 @@ const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition
 
 async function agentLoop(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string, grounding: string,
+  onProgress?: (label: string) => void,
 ): Promise<ConverseTurn> {
   const { toOpenAITool } = await import('@/lib/tools');
   const { client: ai, model } = await getAIClient(userId, 'conversation', client);
@@ -543,6 +570,7 @@ async function agentLoop(
     for (const call of calls) {
       let args: Record<string, unknown> = {};
       try { args = JSON.parse(call.function.arguments || '{}'); } catch { /* empty */ }
+      onProgress?.(progressLabelFor(call.function.name));
       const out = await dispatchCommand(client, userId, scope, call.function.name, args, text);
       if (out?.applied) applied.push(...out.applied);
       if (out?.files) files.push(...out.files);
@@ -581,7 +609,7 @@ async function viewingExcerpt(client: SupabaseClient, userId: string, scope: Con
 /** THE entry — every chat surface calls this with its scope. */
 export async function converse(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string,
-  opts: { history?: ConverseHistoryTurn[] } = {},
+  opts: { history?: ConverseHistoryTurn[]; onProgress?: (label: string) => void } = {},
 ): Promise<ConverseTurn> {
   const [dlg, viewing] = await Promise.all([
     dialogueContext(client, userId, scope),
@@ -656,6 +684,7 @@ export async function converse(
 
   // 1 — COMMAND fast-path: direct registry dispatch (~1 extra small call total).
   if (verdict.command) {
+    opts.onProgress?.(progressLabelFor(verdict.command.tool));
     const out = await dispatchCommand(client, userId, scope, verdict.command.tool, verdict.command.args, text);
     if (out) return out;
   }
@@ -707,6 +736,7 @@ export async function converse(
       dlg.transcript, matches,
     ].filter(Boolean).join('\n');
     if (scope.kind === 'global') {
+      opts.onProgress?.('Looking across your work…');
       const { answerHomeQuestion } = await import('@/lib/home/ask');
       const { answer, refs } = await answerHomeQuestion(client, userId, text, opts.history ?? []);
       return { say: answer, refs };
@@ -841,5 +871,5 @@ export async function converse(
     'RULE: never claim something does not exist or cannot be seen if THE CONVERSATION or MEMORY MATCHES below name it — reference it instead.',
     dlg.transcript, matches, viewing,
   ].filter(Boolean).join('\n\n');
-  return agentLoop(client, userId, scope, text, preamble ? `${preamble}\n\n${grounding}` : grounding);
+  return agentLoop(client, userId, scope, text, preamble ? `${preamble}\n\n${grounding}` : grounding, opts.onProgress);
 }
