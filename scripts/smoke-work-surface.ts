@@ -194,8 +194,8 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('H10: NO SILENT CAPS on the deck\'s candidate pool (Aug 2 — an overdue obligation ranked 61st of a 60 cap and vanished): high bound + a loud saturation warning',
     src('app/api/home/brief/route.ts').includes('.limit(250)') &&
     src('app/api/home/brief/route.ts').includes('SATURATED the 250 cap'));
-  check('H9: a LONG deck group folds past 8 rows behind the ONE expander idiom (ExpandableRows in the group container — nothing hidden, just folded)',
-    hv.includes('<ExpandableRows items={g.rows} limit={8}'));
+  check('H9: a LONG deck group folds past 8 rows behind the ONE expander idiom (ExpandableRows in the group container — nothing hidden, just folded; lives in one-home since the Aug 6 extraction)',
+    src('components/one/one-home.tsx').includes('<ExpandableRows items={g.rows} limit={8}'));
   check('H8b: EVERY deck lane derives its row tag from the ENTITY LINK against the tracked registry — on the SERVED payload the client actually builds the deck from (reply + notice + commitment; P15 tracked-only; independent of state synthesis) + the client notice mapping carries it',
     src('app/api/home/brief/route.ts').includes('tagByAtom = new Map') &&
     (src('app/api/home/brief/route.ts').match(/tagByAtom\.get\(/g) ?? []).length >= 3 &&

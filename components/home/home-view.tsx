@@ -1345,6 +1345,14 @@ export function HomeView() {
   }, []);
 
   const [activityOpen, setActivityOpen] = useState(false); // right-side Activity slide-over
+  // THE PAGE TAKEOVER: a live Home conversation owns the page (the deck steps aside; the floor's
+  // thread fills). Driven by the panel's own state via one event — no prop drilling.
+  const [chatActive, setChatActive] = useState(false);
+  useEffect(() => {
+    const on = (e: Event) => setChatActive(!!(e as CustomEvent).detail?.active);
+    window.addEventListener('aug:chat-active', on);
+    return () => window.removeEventListener('aug:chat-active', on);
+  }, []);
   // Initiative Brain state — joined into the deck so a bundle (an initiative) shows WHERE IT STANDS + its ONE
   // next move (the "across your work" data, unified INTO the one list — no separate second list). Keyed by
   // normalized label to match the bundle key (i:<normKey>). Instant-load cached.
@@ -2033,11 +2041,13 @@ export function HomeView() {
             onDetailChange lets a project deep-dive hide the Home greeting above (deep-dive framing). */}
         {view === 'projects' && <RiseIn key="lens-projects"><PortfolioView onDetailChange={setProjectDetailOpen} /></RiseIn>}
 
-        {view === 'dashboard' && (<>
+        {view === 'dashboard' && !chatActive && (<>
         {/* AMBIENT "also happening" pills removed for now (AmbientStrip kept below for easy restore). */}
 
         {/* THE ASK ZONE moved to the shell's FLOOR (the Claude anatomy — see the sticky block at
-            the end of this column): the conversation is always at hand, opening UPWARD. */}
+            the end of this column): the conversation is always at hand, opening UPWARD. When the
+            conversation is LIVE it OWNS the page — this whole content block steps aside
+            (aug:chat-active), Claude's arrival feel. */}
 
         {/* THE EMPTY STATE tells the truth — three different situations, three different messages:
             nothing connected → the connect CTA; first sync in flight → the honest syncing state
@@ -2167,10 +2177,10 @@ export function HomeView() {
         )}
         </>)}
 
-        {/* ── THE COMPOSER IS THE FLOOR (the shell — Claude's anatomy): always at hand, docked to
-            the bottom of the column, the conversation takeover opening UPWARD from it. Present on
-            the dashboard lens (the front door — a brand-new user with zero data can still talk,
-            create tasks, found projects); other lenses keep their own grammars. ── */}
+        {/* ── THE COMPOSER IS THE FLOOR (the shell — Claude's anatomy): ALWAYS PRESENT on the
+            dashboard lens, docked to the bottom, the conversation takeover opening UPWARD. The
+            front door never hides behind data — a brand-new user with zero synced data can still
+            talk, create tasks, found projects (P19); other lenses keep their own grammars. ── */}
         {view === 'dashboard' && !projectDetailOpen && (
           <div className="sticky bottom-0 mt-auto pt-8 pb-5 bg-gradient-to-t from-[#fbfbfd] via-[#fbfbfd]/95 to-transparent">
             <HomeAsk

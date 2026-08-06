@@ -15,7 +15,13 @@ import { ArrowUpIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 // composeBriefing machinery survives as the deck's ordering anchor + the daily report.)
 
 type Ref = { id: string; kind: string; label: string; href: string | null };
-type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[] };
+type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
+  /** THE ABSORPTION (brick 1): a coworker's own reply carries their name — the one-narrator
+   *  law's attribution, now in the Home panel. */
+  author?: string;
+  /** Deliverables the coworker produced in THIS exchange — cards POINT (Open →); the full
+   *  viewer/send door lives on the worker's page until the Home grows its own stage. */
+  cards?: Array<{ label: string; sub?: string; href: string }> };
 
 // TYPEWRITER — the same streaming feel as the coworker chats. The answer arrives whole (JSON + refs need
 // the full text), so we REVEAL it progressively: ~3 chars/frame, a partial trailing [ref tag is trimmed
@@ -109,7 +115,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         setOpen(true);
       }
     } catch { /* no LS */ }
-    const onNew = () => { setTurns([]); setOpen(true); setTimeout(() => inputRef.current?.focus(), 60); };
+    const onNew = () => { setTurns([]); setTemp(false); setOpen(true); setTimeout(() => inputRef.current?.focus(), 60); };
     const onOpen = (e: Event) => {
       const key = (e as CustomEvent).detail?.key as string | undefined;
       if (key?.startsWith('chat:')) { loadRoom(key); setOpen(true); }
@@ -150,7 +156,12 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         .catch(() => setChats([]));
     }
   };
+  // TEMPORARY CHAT (one-surface ladder law 4's opt-out — the explicit ephemeral mode): nothing
+  // is persisted, no room is minted; the promise is honest ("won't be saved"). Armed before a
+  // conversation starts; locked once it has turns (past turns can't be retro-saved); reset by New.
+  const [temp, setTemp] = useState(false);
   const persistTurn = (role: 'user' | 'system', text: string, refs?: Ref[]) => {
+    if (temp) return; // temporary: the conversation lives only in this session's memory
     try {
       fetch('/api/room/turns', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -191,10 +202,127 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
 
   const openRef = (r: Ref) => { if ('href' in r && r.href) router.push(r.href); };
 
+  // ── THE ABSORPTION, BRICK 1 (Aug 6 — the doc's verified contract): addressing a coworker
+  // ("Clara, …" / "@Clara …") routes the message through the WORKER ENGINE (full capability:
+  // tools, memory, skills) and STREAMS the reply into this panel with their attribution. The
+  // conversation lives in the worker's own store (work_threads/work_messages — never
+  // double-persisted into chat rooms); listing those conversations here is brick 2. ──
+  const rosterRef = useRef<Array<{ id: string; name: string }> | null>(null);
+  const [, rosterTick] = useState(0); // re-render once the roster lands (the @-row reads a ref)
+  const getRoster = async (): Promise<Array<{ id: string; name: string }>> => {
+    if (rosterRef.current) return rosterRef.current;
+    try {
+      const d = await fetch('/api/workers/mentions?types=coworker').then((r) => (r.ok ? r.json() : null));
+      rosterRef.current = ((d?.results ?? []) as Array<{ type: string; id: string; label: string }>)
+        .filter((x) => x.type === 'coworker').map((x) => ({ id: x.id, name: x.label }));
+    } catch { rosterRef.current = []; }
+    rosterTick((t) => t + 1);
+    return rosterRef.current;
+  };
+  const detectAddress = (q: string, roster: Array<{ id: string; name: string }>) => {
+    const m = q.match(/^@?([A-Za-zÀ-ÿ]+)(?:[\s,:!—–-]|$)/);
+    if (!m) return null;
+    const w = m[1].toLowerCase();
+    return roster.find((r) => r.name.split(' ')[0].toLowerCase() === w) ?? null;
+  };
+  // Get-or-create the coworker's Home DM thread (cached; the worker's page shows the same thread).
+  const dmThread = async (w: { id: string; name: string }): Promise<string | null> => {
+    const k = `aug-dm-${w.id}`;
+    try { const c = localStorage.getItem(k); if (c) return c; } catch { /* no LS */ }
+    let id: string | null = null;
+    try {
+      const d = await fetch(`/api/work/threads?agent_id=${w.id}`).then((r) => (r.ok ? r.json() : null));
+      id = (d?.threads?.[0]?.id as string) ?? null;
+      if (!id) {
+        const c = await fetch('/api/work/threads', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: `Chat with ${w.name.split(' ')[0]}`, agentId: w.id }),
+        }).then((r) => (r.ok ? r.json() : null));
+        id = (c?.thread?.id as string) ?? null;
+      }
+    } catch { /* honest failure below */ }
+    if (id) { try { localStorage.setItem(k, id); } catch { /* no LS */ } }
+    return id;
+  };
+  const askWorker = async (question: string, w: { id: string; name: string }) => {
+    setTurns((prev) => [...prev, { role: 'user', text: question }]);
+    setTurns((prev) => [...prev, { role: 'assistant', text: '', author: w.name }]);
+    setBusy(true);
+    const patchLast = (text: string) => setTurns((prev) => {
+      const next = [...prev];
+      const last = next[next.length - 1];
+      if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, text };
+      return next;
+    });
+    try {
+      const tid = await dmThread(w);
+      if (!tid) throw new Error('no thread');
+      const res = await fetch(`/api/work/threads/${tid}/chat`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: question, agentId: w.id }),
+      });
+      if (!res.ok || !res.body) throw new Error('stream failed');
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let acc = ''; let lineBuffer = '';
+      const cards: NonNullable<Turn['cards']> = [];
+      const threadHref = `/workers?worker=${w.id}&thread=${tid}`;
+      const first = w.name.split(' ')[0];
+      const setCards = () => setTurns((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, cards: [...cards] };
+        return next;
+      });
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        lineBuffer += decoder.decode(value, { stream: true });
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(line.slice(6)) as {
+              type?: string; delta?: string; label?: string; name?: string;
+              artifact?: { id?: string; title?: string; type?: string }; draft?: { subject?: string };
+            };
+            if (event.type === 'text') { acc += event.delta ?? ''; patchLast(acc); }
+            else if (event.type === 'text_clear') { acc = ''; patchLast(acc); }
+            else if (event.type === 'tool_start') patchLast(`${acc}${acc ? '\n\n' : ''}· ${event.label ?? event.name ?? 'working'}…`);
+            else if (event.type === 'tool_result') patchLast(acc);
+            // THE DELIVERABLES SURFACE (the room grammar, on the Home): cards POINT at what was
+            // produced; the full viewer / the editable send card live on the worker's page.
+            else if (event.type === 'artifact_ready' && event.artifact?.title) {
+              cards.push({ label: event.artifact.title, sub: `document · by ${first}`, href: threadHref }); setCards();
+            }
+            else if (event.type === 'artifact' && event.artifact) {
+              cards.push({ label: event.artifact.title ?? event.artifact.type ?? 'Prepared work', sub: `by ${first}`, href: threadHref }); setCards();
+            }
+            else if (event.type === 'email_draft') {
+              cards.push({ label: event.draft?.subject ? `Email drafted — "${String(event.draft.subject).slice(0, 60)}"` : 'Email drafted', sub: `review & send on ${first}'s page`, href: threadHref }); setCards();
+            }
+          } catch { /* partial frame */ }
+        }
+      }
+      patchLast(acc.trim() || (cards.length ? `${first} produced the work below.` : `${first} finished without a reply — their page has the full thread.`));
+      if (cards.length) setCards();
+    } catch {
+      patchLast(`Couldn't reach ${w.name.split(' ')[0]} right now — try again, or open their page from Settings → Team.`);
+    } finally { setBusy(false); }
+  };
+
   const ask = async (q: string) => {
     const question = q.trim();
     if (!question || busy) return;
     setInput('');
+    // Addressed? → the worker engine (skipped in TEMPORARY mode: the worker's store always
+    // persists its own thread, which would break the not-saved promise).
+    if (!temp) {
+      const roster = await getRoster();
+      const w = detectAddress(question, roster);
+      if (w) { await askWorker(question, w); return; }
+    }
     const history = turns.map((t) => ({ role: t.role, text: t.text }));
     setTurns((prev) => [...prev, { role: 'user', text: question }]);
     persistTurn('user', question);
@@ -228,6 +356,12 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   }, []);
   const expanded = focused || open;
   const showThread = hasThread && (expanded || hovered);
+  // THE PAGE TAKEOVER (owner, Aug 6 — "doesn't transition to a chat page"): a live conversation
+  // OWNS the page — the host hides the deck behind it (Claude's arrival feel); closing hands the
+  // dashboard back.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('aug:chat-active', { detail: { active: showThread } }));
+  }, [showThread]);
   // Re-pin to the latest turn when the thread reveals (the grid transition needs a beat).
   useEffect(() => { const tm = window.setTimeout(pinToEnd, 320); return () => window.clearTimeout(tm); }, [showThread]); // eslint-disable-line react-hooks/exhaustive-deps
   // THE CHAT CARD (final): standard chat anatomy — the CONVERSATION ABOVE, the INPUT AT THE BOTTOM
@@ -266,18 +400,37 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                   </div>
                 )}
               </div>
-              <button onClick={() => { setTurns([]); setHistoryOpen(false); try { localStorage.removeItem(CHAT_KEY_LS); } catch { /* no LS */ } }} className="inline-flex items-center gap-1 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-700 transition-colors">
-                <ArrowPathIcon className="w-3.5 h-3.5" /> New
-              </button>
+              <span className="flex items-center gap-3">
+                {temp && <span className="text-[11px] font-medium text-amber-500" title="This conversation won't be saved and won't appear in History">Temporary — not saved</span>}
+                <button onClick={() => { setTurns([]); setTemp(false); setHistoryOpen(false); try { localStorage.removeItem(CHAT_KEY_LS); } catch { /* no LS */ } }} className="inline-flex items-center gap-1 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-700 transition-colors">
+                  <ArrowPathIcon className="w-3.5 h-3.5" /> New
+                </button>
+              </span>
             </div>
             {/* THE TAKEOVER (Claude-feel): a live conversation gets a CHAT'S room to breathe —
                 tall column, same smooth grid morph in, composer fixed as the floor. */}
-            <div ref={scrollRef} className="space-y-4 max-h-[62vh] overflow-y-auto [scrollbar-width:thin] pr-1 pb-3">
+            <div ref={scrollRef} className="space-y-4 max-h-[calc(100vh-330px)] overflow-y-auto [scrollbar-width:thin] pr-1 pb-3">
               {turns.map((t, i) => (
                 t.role === 'user' ? (
                   <div key={i} className="flex justify-end"><span className="rounded-2xl rounded-br-sm bg-neutral-100 px-3.5 py-2 text-[13.5px] text-neutral-800 max-w-[80%]">{t.text}</span></div>
                 ) : (
-                  <div key={i} className="pr-2"><AnimatedAnswer text={t.text} refs={t.refs ?? []} onOpen={openRef} animate={i === animateIdx} /></div>
+                  <div key={i} className="pr-2">
+                    {/* A coworker's reply wears THEIR name (the one-narrator law); it streams
+                        live, so no typewriter re-reveal. */}
+                    {t.author && <p className="mb-1 text-[11.5px] font-semibold text-indigo-600">{t.author.split(' ')[0]}</p>}
+                    <AnimatedAnswer text={t.text} refs={t.refs ?? []} onOpen={openRef} animate={!t.author && i === animateIdx} />
+                    {/* Deliverable cards at the exchange's now edge — cards POINT (Open →). */}
+                    {t.cards?.map((c, j) => (
+                      <button key={j} onClick={() => router.push(c.href)}
+                        className="mt-2 w-full flex items-center justify-between gap-2 rounded-xl border border-indigo-100 bg-indigo-50/40 px-3.5 py-2.5 text-left hover:border-indigo-300 transition-colors">
+                        <span className="min-w-0">
+                          <span className="block truncate text-[12.5px] font-medium text-neutral-800">{c.label}</span>
+                          {c.sub && <span className="block text-[11px] text-neutral-400">{c.sub}</span>}
+                        </span>
+                        <span className="flex-shrink-0 text-[12px] font-semibold text-indigo-600">Open →</span>
+                      </button>
+                    ))}
+                  </div>
                 )
               ))}
               {busy && <div className="flex items-center gap-1.5 text-[13px] text-neutral-400"><span className="w-1.5 h-1.5 rounded-full bg-indigo-300 animate-pulse" />Thinking…</div>}
@@ -285,12 +438,34 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             </div>
           </div>
         </div>
-        {/* Suggestions ABOVE the input (the floor anatomy: nothing sits below the composer). */}
+        {/* Suggestions ABOVE the input (the floor anatomy: nothing sits below the composer) +
+            the quiet TEMPORARY toggle, armable only before the conversation starts. */}
         {!hasThread && suggestions.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-2.5">
+          <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
             {suggestions.map((s) => (
               <button key={s} onClick={() => (s.endsWith('…') ? setInput(s.slice(0, -1) + ' ') : ask(s))} disabled={busy} className="rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-[12px] text-neutral-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-white transition-all duration-150">{s}</button>
             ))}
+            <button onClick={() => setTemp((v) => !v)}
+              title={temp ? 'This conversation will NOT be saved' : 'Start a conversation that is never saved or remembered'}
+              className={`ml-auto rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${temp ? 'bg-amber-50 text-amber-600' : 'text-neutral-300 hover:text-neutral-500'}`}>
+              {temp ? '● Temporary' : 'Temporary'}
+            </button>
+          </div>
+        )}
+        {/* @-MENTION LITE (the composer-consolidation's forerunner): typing "@" offers the team;
+            a pick becomes the ADDRESS ("Clara, ") — the same routing as typing the name. The full
+            mention/attach composer (tasks · documents · files) is workstream 3. */}
+        {input.startsWith('@') && (rosterRef.current?.length ?? 0) > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {(rosterRef.current ?? [])
+              .filter((r) => r.name.toLowerCase().includes(input.slice(1).toLowerCase()))
+              .map((r) => (
+                <button key={r.id}
+                  onClick={() => { setInput(`${r.name.split(' ')[0]}, `); inputRef.current?.focus(); }}
+                  className="rounded-full border border-indigo-200 bg-indigo-50/60 px-3 py-1 text-[12px] font-medium text-indigo-700 hover:bg-indigo-100 transition-colors">
+                  @{r.name.split(' ')[0]}
+                </button>
+              ))}
           </div>
         )}
         {/* The input — the card's FLOOR, never moves once a conversation is live. */}
@@ -299,10 +474,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           : 'border-neutral-200 bg-white shadow-[0_4px_28px_-12px_rgba(23,23,23,0.22)] focus-within:border-indigo-300 focus-within:shadow-[0_4px_32px_-10px_rgba(79,70,229,0.28)]'}`}>
           <input
             ref={inputRef}
-            value={input} onChange={(e) => setInput(e.target.value)}
+            value={input} onChange={(e) => { const v = e.target.value; setInput(v); if (v.startsWith('@')) void getRoster(); }}
             onFocus={() => { setFocused(true); setOpen(true); }} onBlur={() => setFocused(false)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(input); } }}
-            placeholder="Ask anything about your work…"
+            placeholder="Ask anything — or address a coworker: “Clara, …”"
             className="flex-1 bg-transparent text-[14px] text-neutral-800 placeholder:text-neutral-400 outline-none py-1"
           />
           <button onClick={() => ask(input)} disabled={!input.trim() || busy} className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-30 disabled:hover:bg-indigo-600 text-white transition-colors">

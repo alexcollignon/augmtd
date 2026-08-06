@@ -360,7 +360,24 @@ B. **FIRST PASS DONE (Aug 6)** — meetings panel aligned to the one sub-panel w
    sub-panels (width, padding, type scale from the shell), the inbox folder rail collapsible,
    the meetings panel de-noised (the empty projects block earns its space or folds). "All
    meetings" already replaced the meetings-internal "Home" (two Homes never sit side-by-side).
-C. **THE ABSORPTION** — after A+B.
+C. **THE ABSORPTION** — after A+B (A done, B first-passed). BRICK 1, protocol VERIFIED Aug 6
+   (recon against worker-chat-tab): the worker engine speaks POST
+   `/api/work/threads/<threadId>/chat` `{content, agentId, mentions?, attachments?}` → SSE
+   `data: {type}` events (`thinking_delta` · `thinking_done` · `text_clear` · `text{delta}` ·
+   tool events · artifacts · email drafts). The brick: (1) a get-or-create door for a coworker's
+   DM thread (resolve from the existing threads list per agent); (2) HomeAsk detects the ADDRESS
+   ("Clara, …" / "@Clara" — roster from /api/workers/mentions, cached) and routes the message
+   through that engine, consuming the SSE into the panel (streaming text + tool chips + author
+   attribution); (3) the conversation LIVES in work_threads/work_messages (its existing store —
+   never double-persisted into room_turns); listing coworker conversations in Recent/All is
+   brick 2. **BRICK 1 BUILT (Aug 6, gate AB1 — 71/71, build green):** address detection against
+   the live roster (first-name / @name), the DM thread get-or-created + LS-cached (the worker's
+   page shows the SAME thread), the SSE consumed live into the panel (streaming text — the
+   Home's first true streaming — + tool-progress lines + the coworker's name on their reply),
+   honest failure copy, and the TEMPORARY guard (addressing skipped in temp mode — the worker's
+   own store would break the not-saved promise). Rider shipped ahead (Aug 6): **TEMPORARY CHAT** (F4 gate) — the ladder's ephemeral
+   opt-out, persistence structurally skipped, honest "not saved" label, pre-conversation-armed,
+   reset by New.
 
 ### THE POC CONTINUITY CLAUSE (AHK et al. — nothing breaks mid-rebuild)
 
@@ -377,8 +394,16 @@ a better home than the one it closes.
    full-page chat takeover) + stage. THE FOLD HAPPENS HERE, WHOLESALE (Workers/Chat/Drive seats
    don't exist in the new frame; routes survive; Settings doors already in). The design-token
    pass rides this build natively.
-2. **CHAT SMOOTHNESS** — streaming /api/home/ask · temporary chat · the scope chip + adoption
-   cascade.
+2. **CHAT SMOOTHNESS** — streaming /api/home/ask · ~~temporary chat~~ (done) · the scope chip +
+   adoption cascade. **Riders shipped Aug 6:** THE PAGE TAKEOVER (a live conversation OWNS the
+   page — the deck steps aside via aug:chat-active, the thread fills to the viewport; Claude's
+   arrival feel) · @-MENTION LITE (typing "@" offers the team; a pick becomes the address) ·
+   DELIVERABLE CARDS in the Home exchange (artifact_ready / artifact / email_draft events →
+   cards that POINT at the worker page's viewer/send door). QUEUED with owner note (Aug 6, low
+   priority): ONE REASONING RIBBON — a unified thinking/processing visual (chief "Thinking…" ·
+   worker thinking_delta · tool progress lines today are three idioms; unify in the token pass).
+   The FULL attach + mention composer (tasks · documents · files · scope chips) IS workstream 3
+   (the composer consolidation) — never faked piecemeal.
 3. **THE ABSORPTION** — coworker chat as addressed conversations with full worker capability +
    the composer consolidation (one composer). The step that lets /workers' chat truly die.
 4. **THE TAIL** — slim Knowledge panel · loose-room standing tasks · recurrence founding ·

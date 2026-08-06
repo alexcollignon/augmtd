@@ -378,9 +378,27 @@ async function dispatchCommand(
     return { say: `Baked in — "${r.taskName}" carries that from the next run on.`, refs: [], applied: [{ tool, title: r.taskName }] };
   }
   if (tool === 'run_compute') {
-    // THE SANDBOX FROM THE HOME (Aug 6 — the chief slice had the exposure but never the mount):
-    // "what's 12% of the July total in that sheet?" computes in the locked room, honestly.
-    const digest = await executeRunCompute(args as unknown as ComputeConfig, userId, client);
+    // THE SANDBOX FROM THE HOME (Aug 6): "what's 17.5% of 84,300?" computes in the locked room.
+    // The fast-path can't author code (found live: it dispatched with NO script → a dead-end
+    // refusal) — a missing script triggers ONE codegen step (with THE CLOCK) from the user's own
+    // words; a genuine non-compute ask declines honestly.
+    const cfg = { ...(args as unknown as ComputeConfig) };
+    if (!cfg.script?.trim()) {
+      try {
+        const { aiCall } = await import('@/lib/ai/call');
+        const day = new Date().toISOString().slice(0, 10);
+        const res = await aiCall<{ script?: string; skip?: string }>({
+          userId, supabase: client, shape: { output: 'json' }, temperature: 0, maxTokens: 700, source: 'task_preparation',
+          prompt: `Today is ${day}. The user asked: "${userText.slice(0, 300)}"\n` +
+            `If this is a COMPUTATION (arithmetic, dates, data transforms), write ONE Python script that computes it ` +
+            `and prints each result on a line starting "FINDINGS: " (stdlib + pandas available; NO network; no files ` +
+            `unless provided). Otherwise decline.\nJSON only: {"script":"…"} OR {"skip":"<why>"}`,
+        });
+        if (res.json?.script?.trim()) cfg.script = res.json.script;
+        else return { say: `That doesn't look like something to compute — ${String(res.json?.skip ?? 'tell me the numbers or the file and I will').slice(0, 140)}.`, refs: [] };
+      } catch { return { say: 'I could not set up that computation right now — try rephrasing with the concrete numbers.', refs: [] }; }
+    }
+    const digest = await executeRunCompute(cfg, userId, client);
     return { say: digest, refs: [] };
   }
   if (tool === 'read_action_history') {

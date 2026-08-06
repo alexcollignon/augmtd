@@ -439,8 +439,10 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('F2: THE FOLD\'s config door — Settings → Team (roster/skills/tools belong to Settings; coworkers are executors in the work, not a destination)',
     src('components/settings/settings-left-panel.tsx').includes("id: 'team', label: 'Team'") &&
     src('components/settings/settings-left-panel.tsx').includes("href: '/workers'"));
-  check('F3: THE CLAUDE-SHAPED CHAT — the takeover (62vh conversation column), THE HISTORY PICKER inside the panel (never a nav surface), answers in THE VOICE, chat rooms titled by their own first ask',
-    src('components/home/home-ask.tsx').includes('max-h-[62vh]') &&
+  check('F3: THE CLAUDE-SHAPED CHAT — the PAGE takeover (the deck steps aside via aug:chat-active; the thread fills the viewport), THE HISTORY PICKER inside the panel, answers in THE VOICE, chat rooms titled by their own first ask',
+    src('components/home/home-ask.tsx').includes('max-h-[calc(100vh-330px)]') &&
+    src('components/home/home-ask.tsx').includes("CustomEvent('aug:chat-active'") &&
+    src('components/home/home-view.tsx').includes("view === 'dashboard' && !chatActive") &&
     src('components/home/home-ask.tsx').includes('THE HISTORY PICKER') &&
     src('components/home/home-ask.tsx').includes('loadRoom(c.key)') &&
     src('components/home/home-ask.tsx').includes('font-voice text-[14.5px] text-neutral-700') &&
@@ -486,6 +488,20 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/meetings/meetings-left-panel.tsx').includes('All meetings') &&
     !src('components/meetings/meetings-left-panel.tsx').includes('No projects with recordings yet') &&
     !src('components/meetings/meetings-left-panel.tsx').includes('>Home</span>'));
+
+  check('F4: TEMPORARY CHAT — the ladder\'s explicit ephemeral opt-out: persistence structurally skipped, no room minted, honest "not saved" label, armable only pre-conversation, reset by New',
+    src('components/home/home-ask.tsx').includes('if (temp) return;') &&
+    src('components/home/home-ask.tsx').includes('Temporary — not saved') &&
+    src('components/home/home-ask.tsx').includes('setTemp(false); setOpen(true)') &&
+    src('components/home/home-ask.tsx').includes('!hasThread && suggestions.length > 0'));
+
+  check('AB1: THE ABSORPTION brick 1 — an ADDRESSED message routes through the WORKER ENGINE (streamed SSE into the panel, author attribution, tool chips); the DM thread is get-or-created; the conversation lives in the worker\'s OWN store (never double-persisted); temporary mode skips addressing (the store would break the promise)',
+    src('components/home/home-ask.tsx').includes('detectAddress') &&
+    src('components/home/home-ask.tsx').includes("fetch(`/api/work/threads/${tid}/chat`") &&
+    src('components/home/home-ask.tsx').includes("event.type === 'text'") &&
+    src('components/home/home-ask.tsx').includes('never') &&
+    src('components/home/home-ask.tsx').includes('if (!temp) {') &&
+    src('components/home/home-ask.tsx').includes('t.author && <p'));
 
   // ── Report ──
   let pass = 0;
