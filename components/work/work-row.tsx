@@ -271,8 +271,12 @@ export const isReadonlyWorkItem = (w: WorkItem): boolean =>
 // THE ROW — one component for everything you owe. A leading TYPE ICON carries the species; the body
 // is one line (who · ask) + an optional second line; controls appear only on hover.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-export function WorkRow({ item, emphasis = false, hideInitiative = false, readonly = false, evidence = false, flat = false, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment, dismissOverride }: {
+export function WorkRow({ item, emphasis = false, hideInitiative = false, readonly = false, evidence = false, flat = false, variant = 'row', onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment, dismissOverride }: {
   item: DoItem; emphasis?: boolean; hideInitiative?: boolean;
+  /** THE CARD VARIANT (Arc 3 shell, owner-triggered Aug 6 — the mockup's deck grammar for the
+   *  HOME only): state dot · sentence · sub-line · one CTA row. Other surfaces keep the
+   *  one-line row anatomy; same handlers either way (one logic, two skins). */
+  variant?: 'row' | 'card';
   /** flat = the row lives inside a GROUP CONTAINER (hairline dividers own the chrome) — no border,
    *  no rounding, no shadow of its own. The one-container-per-group anatomy. */
   flat?: boolean;
@@ -326,6 +330,58 @@ export function WorkRow({ item, emphasis = false, hideInitiative = false, readon
   const iconTone = isCommit && item.overdue ? 'text-rose-500' : text;
   const badge = item.overdue ? 'Overdue' : item.dueToday ? 'Today' : (isCommit && item.dueDate) ? fmtDue(item.dueDate) : null;
   const busy = acting || commit.acting;
+
+  if (variant === 'card') {
+    // The state dot IS the judgment (semantic, never decorative): overdue → rose · prepared →
+    // indigo (something awaits your sign-off) · due today → amber · else quiet.
+    const dot = item.overdue ? 'bg-rose-400' : item.prepared ? 'bg-indigo-400' : item.dueToday ? 'bg-amber-400' : 'bg-neutral-300';
+    // The CTA speaks the JUDGED state, never a promise: "Review & send" only when a prepared
+    // draft truly exists (server truth — the July "See X's work" lesson honored); it opens the
+    // same room the row itself opens.
+    const cta = item.prepared
+      ? (item.source === 'reply' ? 'Review & send →' : 'Review →')
+      : (isDeal ? 'Open project →' : 'Open →');
+    const sub = [
+      !hideInitiative && shownInitiative ? shownInitiative : null,
+      item.second && item.second !== 'Action needed' ? item.second : null,
+      !item.overdue && !item.dueToday && item.dueDate ? `due ${fmtDue(item.dueDate)}` : null,
+    ].filter(Boolean).join(' · ');
+    return (
+      // COMPACT (owner: "the cards are too big"): TWO lines, tight — title+badge · verb+context.
+      <div onMouseEnter={prefetch} onFocus={prefetch} onMouseDown={prefetch} onTouchStart={prefetch}
+        className={`group rounded-[10px] border bg-white transition-all duration-300 ease-out ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${emphasis ? 'border-indigo-200' : 'border-neutral-200/70 hover:border-indigo-200'}`}>
+        <div role="button" tabIndex={0} onClick={open}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
+          className="w-full flex items-start gap-2.5 px-3.5 py-2 text-left cursor-pointer">
+          <span className={`flex-shrink-0 mt-[7px] w-1.5 h-1.5 rounded-full ${dot}`} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline gap-2">
+              <h3 className={`min-w-0 truncate text-[13px] leading-snug ${evidence ? 'font-normal text-neutral-500' : 'font-medium text-neutral-900'}`}>
+                {item.primary}{item.primary && item.ask && <span className="font-normal text-neutral-400"> — </span>}{item.ask && <span className={evidence ? 'font-normal' : 'font-medium text-neutral-800'}>{item.ask}</span>}
+              </h3>
+              {(item.overdue || item.dueToday) && (
+                <span className={`flex-shrink-0 ml-auto text-[10px] font-semibold uppercase tracking-wide ${item.overdue ? 'text-rose-500' : 'text-amber-500'}`}>{item.overdue ? 'Overdue' : 'Today'}</span>
+              )}
+            </div>
+            <div className="mt-[3px] flex items-center gap-2 min-w-0">
+              <span className="flex-shrink-0 text-[12px] font-semibold text-indigo-600 group-hover:text-indigo-700 transition-colors">{cta}</span>
+              {item.prepared && <span className="flex-shrink-0 text-[10.5px] font-semibold text-indigo-400">ready</span>}
+              {sub && <span className="min-w-0 truncate text-[11.5px] text-neutral-400">{sub}</span>}
+              <span className="ml-auto flex-shrink-0 flex items-center gap-2.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                {!readonly && !isDeal && <RowAction label="Mark done" hoverTone="hover:text-emerald-600" disabled={busy} onClick={done}>✓</RowAction>}
+                {!readonly && <RowAction label="Dismiss" hoverTone="hover:text-rose-600" disabled={busy} onClick={drop}>✕</RowAction>}
+                {!readonly && !isDeal && item.entityId && (
+                  <RowProjectPicker itemKind={isCommit ? 'commitment' : 'inbox_item'} itemId={item.entityId}
+                    onAttached={(name, tracked) => { if (tracked) setLocalTag(name); }} />
+                )}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     // ONE LINE PER ROW (work-surface correction — the real list-wise anatomy, not padding): the
     // SECOND LINE IS DEAD. Everything a row says fits one truncating line — [icon] primary · ask

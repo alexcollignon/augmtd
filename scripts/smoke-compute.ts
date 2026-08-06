@@ -401,18 +401,28 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('lib/tools/compute.ts').includes("update({ entity_id: config.entityId })") &&
     src('lib/prepare/pass.ts').includes('entityId: w.entity?.id ?? null') &&
     src('lib/prepare/compute-produce.ts').includes('entityId: args.entityId ?? null'));
-  check('D2: THE DRIVE DEMOTION — Drive leaves the nav (the seat is retired, the route survives); Settings → Knowledge is the door',
-    !src('components/sidebar-nav.tsx').includes("name: 'Drive'") &&
-    src('components/sidebar-nav.tsx').includes('THE DRIVE DEMOTION') &&
+  check('D2: THE FOLD IS WHOLESALE (the shell) — the old icon rail is DELETED; the layout mounts the one-surface sidebar; Workers/Chat/Drive have NO seats (routes survive); Settings carries the Knowledge + Team doors',
+    !existsSync('components/sidebar-nav.tsx') &&
+    src('app/(main)/layout.tsx').includes("from '@/components/one/one-sidebar'") &&
+    !src('components/one/one-sidebar.tsx').includes("href=\"/workers\"") &&
+    !src('components/one/one-sidebar.tsx').includes("href=\"/work\"") &&
+    !src('components/one/one-sidebar.tsx').includes("href=\"/drive\"") &&
     src('components/settings/settings-left-panel.tsx').includes("id: 'knowledge', label: 'Knowledge'") &&
-    src('components/settings/settings-left-panel.tsx').includes("href: '/drive'"));
-  check('D3: NO INTERIM ROOMS SURFACE (owner call Aug 6, twice) — no conversations strip, no rooms pills, no rooms fetch on the rail; conversations earn their seat at THE FOLD. The endpoint stands ready with the ladder laws',
+    src('components/settings/settings-left-panel.tsx').includes("id: 'team', label: 'Team'"));
+  check('D3: THE CONVERSATION FRAME — the sidebar is owned by conversations (New chat · Pinned · Recent · All conversations · Sources), consuming the MERGED list; the ladder laws hold at the endpoint (tracked pins · conversed-in only · pinned excluded)',
     !existsSync('components/home/conversations-strip.tsx') &&
-    !src('components/home/home-view.tsx').includes('ConversationsStrip') &&
-    !src('components/sidebar-nav.tsx').includes('/api/rooms/recent') &&
-    src('components/sidebar-nav.tsx').includes('The LEAN RAIL') &&
+    src('components/one/one-sidebar.tsx').includes('New chat') &&
+    src('components/one/one-sidebar.tsx').includes("fetch('/api/rooms/recent')") &&
+    src('components/one/one-sidebar.tsx').includes('All conversations →') &&
     src('app/api/rooms/recent/route.ts').includes(".eq('tracked', true)") &&
-    src('app/api/rooms/recent/route.ts').includes('pinnedIds.has(k)'));
+    src('app/api/rooms/recent/route.ts').includes('pinnedIds.has(k)') &&
+    src('app/api/rooms/recent/route.ts').includes('THE MERGED CONVERSATIONS'));
+  check('D3b: ALL CONVERSATIONS is a real destination — the sidebar-reached lens; a chat row loads into the ONE Home panel (aug:open-chat), a room row opens its door; searchable, ?all=1 deep read',
+    src('components/one/all-conversations.tsx').includes("fetch('/api/rooms/recent?all=1')") &&
+    src('components/home/home-view.tsx').includes("view === 'conversations'") &&
+    src('components/home/home-view.tsx').includes("CustomEvent('aug:open-chat'") &&
+    src('components/home/home-ask.tsx').includes("addEventListener('aug:open-chat'") &&
+    src('components/home/home-ask.tsx').includes("addEventListener('aug:new-chat'"));
   check('D4: THE VOICE — the team\'s words (Home brief + room openings) wear the serif voice class; ONE class in globals, never on chrome',
     src('app/globals.css').includes('.font-voice') &&
     (src('components/briefing/briefing-view.tsx').match(/font-voice/g)?.length ?? 0) >= 6 &&
@@ -436,6 +446,46 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/home/home-ask.tsx').includes('font-voice text-[14.5px] text-neutral-700') &&
     src('app/api/rooms/recent/route.ts').includes('THE CHAT HISTORY') &&
     src('app/api/rooms/recent/route.ts').includes("k.startsWith('chat:')"));
+
+  // ── SH · THE SHELL'S CENTER + ONE NAME EVERYWHERE (Arc 3 S2). ──
+  check('SH1: ONE NAME EVERYWHERE — the sidebar section is PROJECTS (never "pinned"), with the All-projects mirror; conversation rows wear CONCRETE product words (project/email/task/meeting/chat)',
+    src('components/one/one-sidebar.tsx').includes('>Projects</div>') &&
+    !src('components/one/one-sidebar.tsx').includes('>Pinned</div>') &&
+    src('components/one/one-sidebar.tsx').includes('All projects →') &&
+    src('components/one/all-conversations.tsx').includes("c.key.startsWith('inbox:') ? 'email'") &&
+    src('components/one/all-conversations.tsx').includes("c.key.startsWith('commitment:') ? 'task'"));
+  check('SH5: A CLICK OPENS THE CONVERSATION — the open/new intents OPEN the panel (event same-page, sessionStorage intent cross-page; turns never load into a closed card); suggestions sit ABOVE the floor input',
+    src('components/home/home-ask.tsx').includes("sessionStorage.getItem('aug-open-chat-intent')") &&
+    src('components/home/home-ask.tsx').includes('loadRoom(key); setOpen(true);') &&
+    src('components/one/one-sidebar.tsx').includes("sessionStorage.setItem('aug-open-chat-intent'") &&
+    src('components/home/home-view.tsx').includes("sessionStorage.setItem('aug-open-chat-intent'") &&
+    src('components/home/home-ask.tsx').includes('Suggestions ABOVE the input'));
+  check('SH2: NO PROSE ON THE HOME (owner law, twice) — the deck IS the day; no briefing render, no voice teaser, no orb; the composed briefing still powers ordering (sentencedIds)',
+    src('components/home/home-view.tsx').includes('NO PROSE ON THE HOME') &&
+    !src('components/home/home-view.tsx').includes('<BriefingBlock') &&
+    !src('components/home/home-view.tsx').includes('font-voice mt-2.5') &&
+    src('components/home/home-view.tsx').includes('sentencedIds') &&
+    src('components/one/one-home.tsx').includes('text-[20px] font-semibold tracking-tight') &&
+    !src('components/home/home-view.tsx').includes('energy sphere'));
+  check('SH4: THE COMPOSER IS THE FLOOR — bottom-docked (sticky, mt-auto), the takeover opening upward; the mid-page ask zone is gone',
+    src('components/home/home-view.tsx').includes('THE COMPOSER IS THE FLOOR') &&
+    src('components/home/home-view.tsx').includes('sticky bottom-0 mt-auto') &&
+    !src('components/home/home-view.tsx').includes('<div className="mt-9 mb-6">'));
+  check('SH3: ONE thread system — the History picker links into the same All-conversations view (picker ↔ view ↔ sidebar are one story)',
+    src('components/home/home-ask.tsx').includes('/home?view=conversations'));
+
+  check('SH6: THE DECK WEARS THE CARD GRAMMAR (Home only) — WorkRow variant="card": semantic state dot, the CTA speaks the JUDGED state ("Review & send" only when a draft truly exists — the July promise-lesson honored), one card stack',
+    src('components/work/work-row.tsx').includes("variant?: 'row' | 'card'") &&
+    src('components/work/work-row.tsx').includes("item.source === 'reply' ? 'Review & send →' : 'Review →'") &&
+    src('components/work/work-row.tsx').includes('never a promise') &&
+    src('components/one/one-home.tsx').includes('variant="card"') &&
+    !src('components/home/home-view.tsx').includes('border-neutral-200/70 bg-white divide-y'));
+
+  check('SH7: SOURCES HARMONIZATION — the meetings panel aligns to the one sub-panel system (204px), its section root is "All meetings" (never a second "Home"), and an empty inventory never narrates its own emptiness',
+    src('components/meetings/meetings-left-panel.tsx').includes('w-[204px]') &&
+    src('components/meetings/meetings-left-panel.tsx').includes('All meetings') &&
+    !src('components/meetings/meetings-left-panel.tsx').includes('No projects with recordings yet') &&
+    !src('components/meetings/meetings-left-panel.tsx').includes('>Home</span>'));
 
   // ── Report ──
   let pass = 0;

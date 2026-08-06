@@ -94,12 +94,32 @@ function chatRoomKey(): string {
 export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   const router = useRouter();
   const [turns, setTurns] = useState<Turn[]>([]);
-  // Rehydrate the current chat room on mount (last-known conversation, the ChatGPT-parity habit).
+  // Rehydrate the current chat room on mount (last-known conversation, the ChatGPT-parity habit) +
+  // the SHELL'S WIRES: the sidebar's "New chat" resets this panel; opening a past conversation
+  // from the sidebar / All-conversations view loads it here.
   useEffect(() => {
     try {
       const key = localStorage.getItem(CHAT_KEY_LS);
       if (key?.startsWith('chat:')) loadRoom(key);
+      // A cross-page "open this conversation" intent (sidebar/All-conversations from another
+      // route): the panel must actually OPEN — loading turns into a closed card reads as a
+      // dead click (found live, Aug 6).
+      if (sessionStorage.getItem('aug-open-chat-intent')) {
+        sessionStorage.removeItem('aug-open-chat-intent');
+        setOpen(true);
+      }
     } catch { /* no LS */ }
+    const onNew = () => { setTurns([]); setOpen(true); setTimeout(() => inputRef.current?.focus(), 60); };
+    const onOpen = (e: Event) => {
+      const key = (e as CustomEvent).detail?.key as string | undefined;
+      if (key?.startsWith('chat:')) { loadRoom(key); setOpen(true); }
+    };
+    window.addEventListener('aug:new-chat', onNew);
+    window.addEventListener('aug:open-chat', onOpen);
+    return () => {
+      window.removeEventListener('aug:new-chat', onNew);
+      window.removeEventListener('aug:open-chat', onOpen);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // Load ANY chat room into the panel (mount rehydration + the History picker share this).
@@ -138,6 +158,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           roomKey: chatRoomKey(), role, text,
           refs: refs?.length ? refs.map((r) => ({ label: r.label, href: r.href })) : undefined,
         }),
+      }).then(() => {
+        // The sidebar's Recent stays live (a new conversation appears as it starts).
+        if (role === 'user') window.dispatchEvent(new CustomEvent('aug:conversation-changed'));
       }).catch(() => {});
     } catch { /* persistence is an enhancement — the session still works */ }
   };
@@ -145,6 +168,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   const [busy, setBusy] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   // Which assistant turn TYPES in live (only the newest — history never re-animates). Staged via a
   // ref from the setTurns updater (no setState-in-updater), committed by the effect below.
   const [animateIdx, setAnimateIdx] = useState<number | null>(null);
@@ -235,6 +259,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                         <span className="block text-[11px] text-neutral-400">{c.at.slice(0, 10)}</span>
                       </button>
                     ))}
+                    {/* ONE thread system: the picker and the full view are the same story. */}
+                    <a href="/home?view=conversations" className="block px-3.5 py-2 text-[11.5px] text-neutral-400 hover:text-neutral-700 border-t border-neutral-100 transition-colors">
+                      All conversations →
+                    </a>
                   </div>
                 )}
               </div>
@@ -257,11 +285,20 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             </div>
           </div>
         </div>
+        {/* Suggestions ABOVE the input (the floor anatomy: nothing sits below the composer). */}
+        {!hasThread && suggestions.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2.5">
+            {suggestions.map((s) => (
+              <button key={s} onClick={() => (s.endsWith('…') ? setInput(s.slice(0, -1) + ' ') : ask(s))} disabled={busy} className="rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-[12px] text-neutral-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-white transition-all duration-150">{s}</button>
+            ))}
+          </div>
+        )}
         {/* The input — the card's FLOOR, never moves once a conversation is live. */}
         <div className={`flex items-center gap-2 rounded-2xl border px-3.5 py-2.5 transition-all duration-300 ${showThread
           ? 'border-neutral-200 bg-neutral-50/70 focus-within:border-indigo-300'
           : 'border-neutral-200 bg-white shadow-[0_4px_28px_-12px_rgba(23,23,23,0.22)] focus-within:border-indigo-300 focus-within:shadow-[0_4px_32px_-10px_rgba(79,70,229,0.28)]'}`}>
           <input
+            ref={inputRef}
             value={input} onChange={(e) => setInput(e.target.value)}
             onFocus={() => { setFocused(true); setOpen(true); }} onBlur={() => setFocused(false)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(input); } }}
@@ -272,15 +309,6 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             <ArrowUpIcon className="w-4 h-4" />
           </button>
         </div>
-        {!hasThread && suggestions.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mt-2.5">
-            {suggestions.map((s) => (
-              // A trailing "…" chip PREFILLS the composer (a fill-in verb like "Add a task…");
-              // everything else asks immediately.
-              <button key={s} onClick={() => (s.endsWith('…') ? setInput(s.slice(0, -1) + ' ') : ask(s))} disabled={busy} className="rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-[12px] text-neutral-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-white transition-all duration-150">{s}</button>
-            ))}
-          </div>
-        )}
       </div>
     </section>
   );

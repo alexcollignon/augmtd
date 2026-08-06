@@ -273,8 +273,105 @@ a NEW component tree (never an incremental graft onto the 2.3k-line home-view), 
 battle-tested organs (BriefingBlock · the judged deck · HomeAsk/converse · This-week rail ·
 RoomShell) MOUNTED into it, never rewritten. Order:
 
-0. **THE CHECKPOINT** — commit the current tree (3 arcs, 61/61) BEFORE the fresh start; the
-   rebuild must be separable from the engine work.
+0. **THE CHECKPOINT** — DONE (Aug 6, `ba201d0` on dev: 39 files, the three arcs, 61/61).
+0.5 **SHELL S1 BUILT (Aug 6) — THE FOLD, WHOLESALE.** `components/one/one-sidebar.tsx` replaces
+   the icon rail app-wide (the old rail DELETED): the conversation-owned frame — Home · New chat ·
+   Pinned (tracked rooms) · Recent (the MERGED conversations list: chat rooms + conversed item/
+   entity rooms in one global-recency order) · All conversations → · Sources (Inbox · Meetings) ·
+   identity/Settings footer. Workers/Chat/Drive have NO seats; routes survive; Settings holds the
+   Team + Knowledge doors. **ALL CONVERSATIONS is real** (`components/one/all-conversations.tsx`,
+   the `?view=conversations` sidebar-reached lens): searchable, `?all=1` deep read, a chat row
+   loads into the ONE Home panel (aug:open-chat), a room row opens its door. New-chat/open-chat
+   wires into HomeAsk; a starting conversation appears in the sidebar live. This is LAWFUL now —
+   the fold ships WITH the frame (the Aug-6 lesson honored). Gates D2/D3/D3b (62/62); full
+   production build green.
+0.6 **SHELL S2 BUILT (Aug 6) — THE CENTER + ONE NAME EVERYWHERE.** The dashboard's top is the
+   mockup's composition: date eyebrow · compact greeting (Claude's own idiom, 20px — the 72px orb
+   retired; the calm IS the signal) · **THE BRIEF IN THE VOICE** — the brain-authored briefing
+   (composeBriefing) renders FLAT and serif as the day's opening, refs live + struck-when-acted
+   (BriefingBlock + the existing clearedIds/briefNav machinery — it was composed daily but
+   UNRENDERED since the chat removal); voice-styled teaser fallback. NAMING (owner law): the
+   sidebar section is **Projects** (never "pinned") with the All-projects mirror; conversation
+   chips speak product words (project / work / chat — never "room"); the History picker links
+   into the same All-conversations view (picker ↔ view ↔ sidebar = ONE thread system). Gates
+   SH1–SH3 (65/65); build green.
+0.7 **SHELL S3 (Aug 6, owner-corrected) — THE OPENER IS ONE PARAGRAPH; THE COMPOSER IS THE
+   FLOOR.** The full four-block prose brief re-made July's mistake (it DUPLICATED the deck
+   sitting under it — Rene/TECNICLIMA/Fidelidade listed twice); the Home now opens with the
+   briefing's LEAD ONLY (BriefingBlock `leadOnly` — one short serif paragraph of the day's
+   shape, refs live) and the deck carries the inventory. The composer moved to the shell's
+   FLOOR (sticky bottom, mt-auto, gradient hood — Claude's anatomy) with the conversation
+   takeover opening UPWARD; the mid-page ask zone is gone. Gates SH2 (rewritten) + SH4 (66/66);
+   build green.
+0.8 **SHELL S4 (Aug 6) — THE DEAD CLICK DIES + CONCRETE WORDS.** Found live: clicking a
+   conversation loaded its turns into a CLOSED panel — a dead click. THE OPEN INTENT: the event
+   opens the panel same-page; a sessionStorage intent flag covers the cross-page mount (sidebar/
+   All-view → /home); "New chat" opens + focuses. Suggestions moved ABOVE the floor input
+   (nothing sits below the composer). Conversation rows wear CONCRETE product words (project /
+   email / task / meeting / chat — never "work"/"room"). Header rhythm (mb-9) separates the
+   opener from the deck. Gates SH1 (rewritten) + SH5 (67/67); build green.
+0.9 **SHELL S5 (Aug 6, owner-triggered) — THE DECK WEARS THE CARD GRAMMAR (Home only).**
+   `WorkRow variant="card"` — SAME handlers (exit/undo/prefetch/seed), a second skin: semantic
+   state dot (rose overdue · indigo prepared-awaits-you · amber due-today) · sentence · sub-line
+   (project · context · due) · ONE CTA row whose verb speaks the JUDGED state ("Review & send →"
+   only when a prepared draft truly exists — server truth; the July "See X's work" promise-lesson
+   honored; the CTA opens the same room the card opens). The deck's bordered divide-y container
+   retired for a calm card stack; every OTHER surface keeps the one-line row (H6 in
+   smoke-work-surface RE-POINTED to the card design — the house doctrine, never weakened).
+   Gates SH6 (68/68); build green.
+1.0 **SHELL S6 (Aug 6, owner-corrected) — NO PROSE ON THE HOME (now law, said twice) + COMPACT
+   CARDS.** The deck IS the day: no briefing render above it, ever — the composed briefing keeps
+   powering ORDER + de-dup (sentencedIds), it just never re-speaks. Cards tightened to TWO lines
+   (title+badge · verb+context, py-2, 1.5px dot). Gates SH2 rewritten (68/68); build green.
+   HONEST LEDGER of "ground-up": NEW files = the sidebar frame, All-conversations, the
+   conversations system, the card skin, the floor anatomy; STILL THE OLD BODY = home-view.tsx
+   (2.3k lines) hosting the composition, the deck section headers, the This-week rail, the
+   ring/Activity cluster, the view-switcher island. The remaining ground-up step = EXTRACting
+   the center into components/one/one-home.tsx (a clean composition mounting agenda/rail/
+   composer), retiring home-view to a data shell — a focused session with owner review.
+   Rider (Aug 6): **THE SANDBOX FROM THE HOME** — run_compute mounted in the chief loop
+   (CHIEF_TOOL_DEFS + dispatch; the exposure existed, the mount didn't) — the Home chat can now
+   compute in the locked room.
+### THE NEXT-SESSION CONTRACT (settled Aug 6 — execute in THIS order, fresh eyes first)
+
+A. **DONE (Aug 6)** — `components/one/one-home.tsx` authored from blank: `OneHomeHeader`
+   (eyebrow · greeting · today line · live-cluster slot) + `OneDeck` (the card stack; grouping
+   as a pure function; fresh quiet header, fresh empty state; urgent-open/calm-pin behavior
+   carried in as law). home-view now computes and MOUNTS — the deck/header JSX is gone from it
+   (~130 lines out). Affected gates re-pointed to one-home (68/68); lint + full build green.
+   The meetings-internal "Home" → "All meetings" (own icon) rode along.
+   ORIGINAL CONTRACT (kept for reference): author
+   `components/one/one-home.tsx` from a BLANK file — the clean composition (top cluster · deck ·
+   rail · floor) — and splice it into home-view as `<OneHome {...bindings} />`. The binding
+   inventory (derived Aug 6, making the session mechanical): b · greeting · syncing/lastUpdatedAt/
+   realtimeConnected · showRing/ringCleared · agenda · activityOpen/setActivityOpen · doGroupMode/
+   setDoGroupMode · pinned-group state (togglePinnedGroup/hover) · dismissDeal · onDismiss/
+   onCleared/toastInbox/toastCommitment · sentencedIds · deckEntityIds — plus relocating the
+   module-local Label/SectionCleared/ThisWeekCard/MovingTier (move or export). home-view retires
+   toward a data shell. Every spacing/hierarchy decision made FRESH against the mockup.
+B. **FIRST PASS DONE (Aug 6)** — meetings panel aligned to the one sub-panel width (204px, the
+   inbox rail's system); the empty-projects narration removed (an empty inventory never narrates
+   its own emptiness — the + stays as the create door); "All meetings" replaced the second
+   "Home". The inbox rail was ALREADY collapsible (52px) + resizable — the squeeze's remaining
+   depth (calendar panel width, reading-pane paddings, one type scale) rides the token pass.
+   Gate SH7 (69/69); build green. ORIGINAL SCOPE: the wide
+   sidebar (212px) squeezed the sources' own sub-panels — Inbox runs FIVE columns (app sidebar ·
+   folder rail · list · reading pane · calendar). The pass: one visual system for section
+   sub-panels (width, padding, type scale from the shell), the inbox folder rail collapsible,
+   the meetings panel de-noised (the empty projects block earns its space or folds). "All
+   meetings" already replaced the meetings-internal "Home" (two Homes never sit side-by-side).
+C. **THE ABSORPTION** — after A+B.
+
+### THE POC CONTINUITY CLAUSE (AHK et al. — nothing breaks mid-rebuild)
+
+The pilots ride the ENGINE, which no shell work touches: scheduled workflows run from the
+dispatcher regardless of UI; deliverables still reach their email/document homes; report-backs
+still write; the standing binding only ADDS visibility (a dead run = an overdue deck row).
+Doors that must stay open and are: /workers + /work ROUTES live (Settings → Team), Studio via
+?workflow= (the card's "method" link), report-back deep-links (/workers?worker=&thread=). The
+fold retires NAV SEATS only — never routes, never the engine — until the absorption gives chat
+a better home than the one it closes.
+
 1. **THE SHELL** — the one-surface frame built clean: sidebar (New chat · Pinned · Recent ·
    All-conversations view · Inbox · Meetings · team footer) + center (brief → deck → composer,
    full-page chat takeover) + stage. THE FOLD HAPPENS HERE, WHOLESALE (Workers/Chat/Drive seats

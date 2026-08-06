@@ -7,20 +7,22 @@
 //   • recent — rooms with actual recent TURNS (conversed-in, the ladder's rule), labeled from
 //     their own records, pinned rooms excluded (one seat each).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // ?all=1 — the All-conversations view's read (deeper scan, more rows); default = the sidebar's.
+    const all = request.nextUrl.searchParams.get('all') === '1';
 
     const [entsRes, turnsRes] = await Promise.all([
       supabase.from('work_entities').select('id, name, priority')
         .eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active').eq('tracked', true).limit(20),
       supabase.from('room_turns').select('room_key, created_at')
-        .eq('user_id', user.id).order('created_at', { ascending: false }).limit(80),
+        .eq('user_id', user.id).order('created_at', { ascending: false }).limit(all ? 400 : 80),
     ]);
 
     const pinned = ((entsRes.data ?? []) as Array<{ id: string; name: string; priority: { weight?: number } | null }>)
@@ -32,11 +34,14 @@ export async function GET() {
     // Recent = distinct conversed-in rooms, newest first, minus the pinned (one seat each).
     const seen = new Set<string>();
     const keys: string[] = [];
-    for (const t of (turnsRes.data ?? []) as Array<{ room_key: string }>) {
+    const lastAt = new Map<string, string>();
+    for (const t of (turnsRes.data ?? []) as Array<{ room_key: string; created_at: string }>) {
       const k = t.room_key;
-      if (!k || seen.has(k) || pinnedIds.has(k)) continue;
+      if (!k) continue;
+      if (!lastAt.has(k)) lastAt.set(k, t.created_at);
+      if (seen.has(k) || pinnedIds.has(k)) continue;
       seen.add(k); keys.push(k);
-      if (keys.length >= 10) break;
+      if (keys.length >= (all ? 60 : 12)) break;
     }
     const entKeys = keys.filter((k) => !k.includes(':'));
     const inboxIds = keys.filter((k) => k.startsWith('inbox:')).map((k) => k.slice(6));
@@ -63,9 +68,9 @@ export async function GET() {
       .map((r) => ({ ...r, label: r.label.slice(0, 48) }))
       .slice(0, 5);
 
-    // THE CHAT HISTORY (the durable Home chat's list — managed INSIDE the chat panel, never a nav
-    // surface): past `chat:` rooms, titled by their own first user turn.
-    const chatKeys = keys.filter((k) => k.startsWith('chat:')).slice(0, 8);
+    // THE CHAT HISTORY (the durable Home chat's list): past `chat:` rooms, titled by their own
+    // first user turn.
+    const chatKeys = keys.filter((k) => k.startsWith('chat:')).slice(0, all ? 40 : 8);
     let chats: Array<{ key: string; label: string; at: string }> = [];
     if (chatKeys.length) {
       const { data: chatTurns } = await supabase.from('room_turns')
@@ -83,7 +88,24 @@ export async function GET() {
         .filter((c): c is { key: string; label: string; at: string } => !!c);
     }
 
-    return NextResponse.json({ pinned, recent, chats });
+    // THE MERGED CONVERSATIONS (the sidebar's Recent + the All-conversations view): every
+    // conversed-in room — chat rooms AND item/entity rooms — in one global-recency order (`keys`
+    // came from the turns scan newest-first). Chats title by their first ask; rooms by their
+    // record; unlabelable keys drop honestly.
+    const chatLabel = new Map(chats.map((c) => [c.key, c.label]));
+    const conversations = keys
+      .map((k) => {
+        if (k.startsWith('chat:')) {
+          const l = chatLabel.get(k);
+          return l ? { key: k, kind: 'chat' as const, label: l, href: null, at: lastAt.get(k) ?? null } : null;
+        }
+        const l = label.get(k);
+        return l && hrefOf(k) ? { key: k, kind: 'room' as const, label: l.slice(0, 60), href: hrefOf(k), at: lastAt.get(k) ?? null } : null;
+      })
+      .filter((c): c is NonNullable<typeof c> => !!c)
+      .slice(0, all ? 40 : 8);
+
+    return NextResponse.json({ pinned, recent, chats, conversations });
   } catch (e) {
     console.error('[rooms/recent]', e);
     return NextResponse.json({ pinned: [], recent: [] });

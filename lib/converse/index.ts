@@ -24,7 +24,7 @@ import {
   executeResolveInboxItem, executeResolveCommitment, executeFindFile, executeRememberFact,
   resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition,
 } from '@/lib/tools/item-actions';
-import { getEmailsDefinition, executeGetEmails, getMeetingContextDefinition, executeGetMeetingContext, readActionHistoryDefinition, executeReadActionHistory, type ActionHistoryConfig } from '@/lib/tools';
+import { getEmailsDefinition, executeGetEmails, getMeetingContextDefinition, executeGetMeetingContext, readActionHistoryDefinition, executeReadActionHistory, type ActionHistoryConfig, runComputeDefinition, executeRunCompute, type ComputeConfig } from '@/lib/tools';
 import { proposeStandingTaskDefinition } from '@/lib/work/standing-spec';
 import { steerStandingTaskDefinition } from '@/lib/workflows/standing';
 import {
@@ -377,6 +377,12 @@ async function dispatchCommand(
     if (!r.ok) return { say: `I couldn't apply that — ${r.error}.`, refs: [] };
     return { say: `Baked in — "${r.taskName}" carries that from the next run on.`, refs: [], applied: [{ tool, title: r.taskName }] };
   }
+  if (tool === 'run_compute') {
+    // THE SANDBOX FROM THE HOME (Aug 6 — the chief slice had the exposure but never the mount):
+    // "what's 12% of the July total in that sheet?" computes in the locked room, honestly.
+    const digest = await executeRunCompute(args as unknown as ComputeConfig, userId, client);
+    return { say: digest, refs: [] };
+  }
   if (tool === 'read_action_history') {
     // The history read (one-surface § context controls): "what was sent this week?" answered from
     // the real ledgers. The digest carries its own boundary line (through-the-platform only).
@@ -465,7 +471,7 @@ async function dispatchCommand(
 }
 
 // ── The bounded AGENT LOOP (the 20%) — function-calling over the chief-of-staff toolset. ──
-const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, prepareForwardDefinition, readActionHistoryDefinition, proposeStandingTaskDefinition, steerStandingTaskDefinition];
+const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, prepareForwardDefinition, readActionHistoryDefinition, proposeStandingTaskDefinition, steerStandingTaskDefinition, runComputeDefinition];
 
 async function agentLoop(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string, grounding: string,

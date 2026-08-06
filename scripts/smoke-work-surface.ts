@@ -173,16 +173,19 @@ const src = (p: string) => readFileSync(p, 'utf8');
     wr.includes('SECOND LINE IS DEAD') && !wr.includes('line-clamp-1`}>{item.second}</p>') &&
     wr.includes("item.second !== 'Action needed'"));
   check('H2: Tasks | By project lens on the deck (same entries, regrouped; persisted; effect-hydrated)',
-    hv.includes("'aug-do-group'") && hv.includes('trackedLookup') && hv.includes('By project') &&
+    hv.includes("'aug-do-group'") && hv.includes('trackedLookup') && src('components/one/one-home.tsx').includes('By project') &&
     !hv.includes("useState<'time' | 'project'>(() =>"));
-  // The final Home simplification: ONE row species — bundles retired from the deck, groups own the
-  // chrome (one container, hairline dividers), the row is flat inside it.
-  check('H6: bundles are RETIRED from the deck (flat rows only, one container per group)',
-    !hv.includes('<BundleGroup') && hv.includes('divide-y divide-neutral-100') && hv.includes('flat.push'));
+  // The final Home simplification: ONE row species — bundles retired from the deck. RE-POINTED
+  // Aug 6 (the one-surface shell, owner-triggered): the deck wears THE CARD GRAMMAR (a calm
+  // space-y stack of WorkRow variant="card" — state dot · sentence · sub · one CTA row); the
+  // bordered divide-y container retired with the one-line rows. Other surfaces keep the row.
+  check('H6: bundles are RETIRED from the deck (ONE species: the card stack — no bundle cards, no divided container)',
+    !hv.includes('<BundleGroup') && src('components/one/one-home.tsx').includes('variant="card"') && hv.includes('flat.push') &&
+    !hv.includes('border-neutral-200/70 bg-white divide-y'));
   check('H6: WorkRow flat mode + the row-density law (one signal per category; prepared = one word: ready)',
     wr.includes('flat = false') && wr.includes('ONE signal per category') && wr.includes('>ready</span>'));
   check('H7: calm groups collapse (hover-preview + click-pin, persisted — owner-reinstated July 30); urgent groups always open',
-    hv.includes("g.key === 'overdue' || g.key === 'today'") && hv.includes("'aug-do-pinned'") && hv.includes('hoverGroup === g.key'));
+    src('components/one/one-home.tsx').includes("g.key === 'overdue' || g.key === 'today'") && hv.includes("'aug-do-pinned'") && src('components/one/one-home.tsx').includes('hoverGroup === g.key'));
   check('H8: membership is visible IMMEDIATELY (July 30) — attach busts the brief server-side, the Home listens for membership-changed, and the row wears an optimistic TRACKED-only tag until the server tag arrives',
     src('app/api/items/entity/route.ts').includes('softBustBrief') &&
     hv.includes("addEventListener('aug:membership-changed'") &&
