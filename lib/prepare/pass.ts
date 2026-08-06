@@ -116,6 +116,7 @@ export async function prepareOneItem(
       // what's staged and never fabricates the rest), and a user-executor item is never silent —
       // the ask IS the preparation.
       let artifactTruth = '';
+      let stagedKbFiles: Array<{ id: string; filename: string }> = [];
       if (verdict.requires?.length) {
         const { resolveRequirements } = await import('@/lib/prepare/requirements');
         const reqs = await resolveRequirements(admin, userId, {
@@ -128,9 +129,27 @@ export async function prepareOneItem(
         if (verdict.executor.kind !== 'coworker' && reqs.missing.length && !reqs.proceeded) {
           return { did: 'none', reason: `needs ${reqs.missing.length} input(s) from you — asked in the room` };
         }
+        const { COMPUTABLE_EXT } = await import('@/lib/prepare/compute-produce');
+        stagedKbFiles = reqs.have
+          .filter((h) => h.file?.source === 'kb' && COMPUTABLE_EXT.test(h.file.filename))
+          .map((h) => ({ id: h.file!.id, filename: h.file!.filename }));
+      }
+      // ── ARC 1 STAGE 3 — PRODUCE COMPUTES BEFORE IT WRITES (docs/one-surface-plan.md): with real
+      // data files staged, the numbers are computed in the sandbox FIRST and ride the envelope as
+      // COMPUTED FACTS — the writer writes from verified numbers, never asserts them. The codegen
+      // may decline (a memo needs no sandbox); a failure returns the lane to the status quo. ──
+      let computedStamp: string | undefined;
+      if (stagedKbFiles.length) {
+        const { computeForProduce } = await import('@/lib/prepare/compute-produce');
+        const cf = await computeForProduce(admin, userId, {
+          title: w.title, judgeReason: verdict.reason,
+          requires: (verdict.requires ?? []).map((r) => r.label), files: stagedKbFiles,
+          entityId: w.entity?.id ?? null,
+        });
+        if (cf) { artifactTruth = [artifactTruth, cf.facts].filter(Boolean).join('\n\n'); computedStamp = cf.stamp; }
       }
       if (verdict.executor.kind === 'coworker' && verdict.executor.id) {
-        const dr = await delegatePrepare(admin, userId, w, { id: verdict.executor.id, name: verdict.executor.name ?? 'Coworker', worker_role: null, is_worker: true }, artifactTruth || undefined);
+        const dr = await delegatePrepare(admin, userId, w, { id: verdict.executor.id, name: verdict.executor.name ?? 'Coworker', worker_role: null, is_worker: true }, artifactTruth || undefined, computedStamp);
         return await done({ ...dr, why: verdict.reason });
       }
       // W1: a produce verdict WITHOUT a named coworker is no longer a silent none — the drafting
@@ -139,7 +158,7 @@ export async function prepareOneItem(
       // for above; with everything in hand the assistant builds from what's staged.
       const paProduce = await getDraftingAssistant(admin, userId);
       if (paProduce) {
-        const dr = await delegatePrepare(admin, userId, w, { id: paProduce.id, name: paProduce.name, worker_role: 'personal_assistant', is_worker: true }, artifactTruth || undefined);
+        const dr = await delegatePrepare(admin, userId, w, { id: paProduce.id, name: paProduce.name, worker_role: 'personal_assistant', is_worker: true }, artifactTruth || undefined, computedStamp);
         return await done({ ...dr, why: verdict.reason });
       }
       return { did: 'none', reason: 'produced work needs a coworker and none is set up yet' };
@@ -389,7 +408,7 @@ async function prepareForwardDraft(
 // ── C2 · the COWORKER branch — judgment shapes are prepared by the right coworker, with the item's
 // grounding + the deliverable pool (runDelegation reads+writes it). Idempotent per item. Nothing
 // sends — prompt-level prepare-and-hand-back guardrail lives in buildDelegationPrompt. ──
-async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkItem, worker: WorkerRow, artifactTruth?: string): Promise<PrepareOneResult> {
+async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkItem, worker: WorkerRow, artifactTruth?: string, computedStamp?: string): Promise<PrepareOneResult> {
   const poolKind = w.id.startsWith('commit:') ? 'commitment' : 'email';
   const { data: prior } = await admin.from('item_deliverables').select('id')
     .eq('user_id', userId).eq('kind', poolKind).eq('entity_id', w.entityId).eq('task_id', 'prepare-pass').limit(1).maybeSingle();
@@ -458,7 +477,10 @@ async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkIte
   const dres = await runDelegation({
     supabase: admin, userId, worker, prompt, itemLabel: w.title.slice(0, 80),
     pool: { kind: poolKind, entityId: w.entityId, taskId: 'prepare-pass' },
-    provenance: { item: w.title.slice(0, 100), ...(w.entity ? { entity: w.entity.name } : {}), ...(w.who ? { who: w.who } : {}), ...(w.when.explicit ? { due: w.when.explicit } : {}) },
+    // THE PROVENANCE CHIP (Arc 1 made visible): `computed` is a STRUCTURAL marker — set only when
+    // the sandbox actually ran over the staged files (never text-matched from the deliverable) —
+    // and the UI renders the "✓ numbers computed in code" chip from it, with the as-of stamp.
+    provenance: { item: w.title.slice(0, 100), ...(w.entity ? { entity: w.entity.name } : {}), ...(w.who ? { who: w.who } : {}), ...(w.when.explicit ? { due: w.when.explicit } : {}), ...(computedStamp ? { computed: computedStamp } : {}) },
   });
   // FIX 3 — a needs_input outcome is an ASK, not prepared work: no "Prepared by" attribution (there
   // is nothing prepared), no activity claiming preparation. The ask already landed as a room

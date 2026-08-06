@@ -23,6 +23,10 @@ export { sendCalendarInviteDefinition, executeSendCalendarInvite } from './send-
 export type { SendCalendarInviteConfig } from './send-calendar-invite';
 export { forwardEmailDefinition, executeForwardEmail } from './forward-email';
 export type { ForwardEmailConfig } from './forward-email';
+export { runComputeDefinition, executeRunCompute } from './compute';
+export type { ComputeConfig } from './compute';
+export { readActionHistoryDefinition, executeReadActionHistory } from './action-history';
+export type { ActionHistoryConfig } from './action-history';
 export { deepResearchDefinition } from './deep-research';
 export {
   slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition, slackListMembersDefinition,

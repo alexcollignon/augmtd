@@ -106,6 +106,16 @@ export async function GET(request: NextRequest) {
     });
   }
 
+  // THE STANDING BINDING's convergent door (Arc 2): every hourly tick re-syncs all standing
+  // commitments — idempotent, self-healing. A workflow that silently died (null next_run_at,
+  // stalled dispatcher) keeps its past due_date and stands as an OVERDUE DEBT on the deck.
+  after(async () => {
+    try {
+      const { syncAllStandingCommitments } = await import('@/lib/workflows/standing');
+      await syncAllStandingCommitments(supabase);
+    } catch { /* bookkeeping — never breaks the dispatcher */ }
+  });
+
   return NextResponse.json({
     ok: true,
     now: now.toISOString(),

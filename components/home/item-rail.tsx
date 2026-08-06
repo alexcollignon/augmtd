@@ -77,7 +77,10 @@ type Turn =
       turnId?: string; proceeded?: boolean;
       /** UX arc — the turn's dedupe key: the structural handle folding rules key on (a `prep:*`
        *  narration collapses into the artifact card it narrates; never content-matching). */
-      dkey?: string };
+      dkey?: string;
+      /** THE SPEC CARD (Arc 2): a proposed standing task awaiting the user's explicit confirm —
+       *  the card IS the commit surface (saying prepared it; confirming creates it). */
+      standingSpec?: { name: string; deliverable: string; cadenceLabel: string; ownerName: string; firstRun?: string | null; status: string; workflowId?: string | null } };
 
 // THE ROOM (P7c-c1 → one-room R1): the conversation is PER-DEAL, not per-item — navigating between
 // a deal's artifacts keeps the chat. The module store is now only the LIVE RENDER CACHE; the durable
@@ -267,6 +270,15 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
               turn.checklist = t.component.state.items.map((m) => String(m)).filter(Boolean);
               turn.turnId = t.id;
               turn.proceeded = !!t.component.state?.proceeded;
+            }
+            // THE SPEC CARD (Arc 2): the durable proposal re-renders until confirmed (the confirm
+            // route flips the stored component in place; the card then reads as the record).
+            if (turn.role === 'system' && t.component?.key === 'standing_spec' && t.component.state) {
+              const st = t.component.state as unknown as { name?: string; deliverable?: string; cadenceLabel?: string; ownerName?: string; firstRun?: string | null; status?: string; workflowId?: string | null };
+              if (st.name) {
+                turn.standingSpec = { name: String(st.name), deliverable: String(st.deliverable ?? ''), cadenceLabel: String(st.cadenceLabel ?? ''), ownerName: String(st.ownerName ?? 'a coworker'), firstRun: st.firstRun ?? null, status: String(st.status ?? 'pending'), workflowId: st.workflowId ?? null };
+                turn.turnId = t.id;
+              }
             }
             return turn;
           });
@@ -557,7 +569,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
                 one place. The stitched fields (summary + debt lines) are ONLY the fallback until
                 the first compose lands. */}
             {ent?.brief
-              ? <p>{ent.brief}</p>
+              ? <p className="font-voice text-[14.5px] leading-[1.65] text-neutral-800">{ent.brief}</p>
               : ent?.summary
                 ? <p>{ent.summary}</p>
                 : turns.length === 0
@@ -575,7 +587,9 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           {/* THE ONE-VOICE BRIEF on the deep-dive door too (Aug 3): when composed (entity room's
               or the loose room's own), the paragraph IS the opening — the anchor stitch below is
               only the fallback until the first compose lands. */}
-          {(ent?.brief || view.brief) ? <p>{ent?.brief ?? view.brief}</p> : (() => {
+          {/* THE VOICE (Arc 3 design language): the room's authored opening is the TEAM speaking —
+              serif, a touch larger; chrome stays sans. */}
+          {(ent?.brief || view.brief) ? <p className="font-voice text-[14.5px] leading-[1.65] text-neutral-800">{ent?.brief ?? view.brief}</p> : (() => {
             const a = view.anchor;
             const who = a?.who ? spokenName(a.who) : null;
             const ask = a?.ask ? a.ask.charAt(0).toLowerCase() + a.ask.slice(1).replace(/\.+$/, '') : null;
@@ -886,6 +900,46 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
                     disabled={busy}
                     className="mt-0.5 rounded-full border border-neutral-200 px-2.5 py-1 text-[11.5px] font-medium text-neutral-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors disabled:opacity-50"
                   >Go ahead with what&apos;s available →</button>
+                )}
+              </div>
+            )}
+            {/* THE SPEC CARD (Arc 2): the standing-task proposal — explicit fields, ONE Confirm.
+                Saying prepared it; only this click (or the user's explicit word) creates anything.
+                Confirmed → the card flips in place and reads as the record. */}
+            {t.standingSpec && (
+              <div className="mt-1.5 rounded-xl border border-neutral-200 px-3.5 py-2.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[12.5px] font-semibold text-neutral-800 truncate">{t.standingSpec.name}</span>
+                  {t.standingSpec.status === 'confirmed' && (
+                    <span className="flex-shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-semibold text-emerald-700">✓ standing</span>
+                  )}
+                </div>
+                <p className="mt-0.5 text-[12px] text-neutral-500">{t.standingSpec.deliverable}</p>
+                <p className="mt-1 text-[11.5px] text-neutral-400">
+                  {t.standingSpec.cadenceLabel} · {t.standingSpec.ownerName.split(' ')[0]} owns it{t.standingSpec.firstRun ? ` · first run ${String(t.standingSpec.firstRun).slice(0, 10)}` : ''}
+                  {/* Studio DEMOTED to the method editor (Arc 2): a deep-dive behind the standing
+                      object, never a destination — the quiet link is its only door from here. */}
+                  {t.standingSpec.status === 'confirmed' && t.standingSpec.workflowId && (
+                    <> · <a href={`/studio?workflow=${t.standingSpec.workflowId}`} className="text-neutral-400 underline decoration-neutral-300 hover:text-indigo-600 transition-colors">method</a></>
+                  )}
+                </p>
+                {t.standingSpec.status === 'pending' && t.dkey && (
+                  <button
+                    onClick={async () => {
+                      const dk = t.dkey!;
+                      const res = await fetch('/api/tasks/standing', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ roomKey, dedupeKey: dk }),
+                      }).catch(() => null);
+                      const d = res?.ok ? await res.json().catch(() => null) : null;
+                      if (d?.ok) {
+                        setTurns((prev) => prev.map((x) => (x.role === 'system' && x.dkey === dk && x.standingSpec
+                          ? { ...x, standingSpec: { ...x.standingSpec, status: 'confirmed', firstRun: d.firstRun ?? x.standingSpec.firstRun } } : x)));
+                      }
+                    }}
+                    disabled={busy}
+                    className="mt-2 rounded-lg bg-indigo-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                  >Confirm — start it</button>
                 )}
               </div>
             )}

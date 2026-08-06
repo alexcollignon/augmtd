@@ -14,7 +14,10 @@ export async function GET(request: NextRequest) {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    const q = (request.nextUrl.searchParams.get('q') ?? '').trim().toLowerCase();
+    // Strip PostgREST or()-syntax breakers (, ( )) and the broad % wildcard — a pasted
+    // "Doe (Acme)" or "smith, jones" must degrade to a working prefix search, never a 400
+    // that silently kills the typeahead. `_` stays (legit in emails; a benign 1-char wildcard).
+    const q = (request.nextUrl.searchParams.get('q') ?? '').replace(/[,()%]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
     if (q.length < 2) return NextResponse.json({ people: [] });
 
     const seen = new Map<string, { email: string; name: string | null }>();

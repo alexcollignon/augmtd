@@ -24,7 +24,9 @@ import {
   executeResolveInboxItem, executeResolveCommitment, executeFindFile, executeRememberFact,
   resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition,
 } from '@/lib/tools/item-actions';
-import { getEmailsDefinition, executeGetEmails, getMeetingContextDefinition, executeGetMeetingContext } from '@/lib/tools';
+import { getEmailsDefinition, executeGetEmails, getMeetingContextDefinition, executeGetMeetingContext, readActionHistoryDefinition, executeReadActionHistory, type ActionHistoryConfig } from '@/lib/tools';
+import { proposeStandingTaskDefinition } from '@/lib/work/standing-spec';
+import { steerStandingTaskDefinition } from '@/lib/workflows/standing';
 import {
   executeMoveItemToProject, executeSetProjectStatus, executeMergeProjects, executeCreateProject, executeCreateTaskItem, resolveItemByDescription,
   moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition,
@@ -325,6 +327,62 @@ async function dispatchCommand(
     }
     return { say: `Found ${r.files.length === 1 ? 'this' : 'these'}:`, refs: [], files: r.files };
   }
+  if (tool === 'propose_standing_task') {
+    // THE SPEC CARD (Arc 2): saying prepares — the spec lands as a durable card in the work's
+    // room; NOTHING is created until the user confirms on it. Room resolution: this room, the
+    // item's room, or (global) the entity the request names.
+    const { buildStandingSpec } = await import('@/lib/work/standing-spec');
+    const request = (String(args.request ?? '').trim() || userText).trim();
+    const spec = await buildStandingSpec(client, userId, request);
+    if ('error' in spec) return { say: `I can't set that up yet — ${spec.error}.`, refs: [] };
+    let roomKey: string | null = null; let roomLabel = 'this room';
+    if (scope.kind === 'entity') roomKey = scope.entityId;
+    else if (scope.kind === 'item') {
+      const { roomKeyForItem } = await import('@/lib/room/turns');
+      const ik = linkKindOf(scope) === 'inbox_item' ? 'inbox' as const : linkKindOf(scope) === 'commitment' ? 'commitment' as const : 'meeting' as const;
+      roomKey = await roomKeyForItem(client, userId, ik, scope.itemId);
+    } else {
+      const { findEntityFocus } = await import('@/lib/home/ask');
+      const { data: ents } = await client.from('work_entities').select('id, name, aliases')
+        .eq('user_id', userId).eq('kind', 'initiative').eq('status', 'active').limit(60);
+      const f = findEntityFocus(request, (ents ?? []) as Array<{ id: string; name: string; aliases?: string[] | null }>);
+      if (f) { roomKey = f.id; roomLabel = `the ${f.name} room`; }
+    }
+    if (!roomKey) {
+      return { say: `Here's what I'd set up: "${spec.name}" — ${spec.cadenceLabel}, ${spec.ownerName} producing ${spec.deliverable} Which project does it belong to? Name it (or ask from that project's room) and I'll place the confirm card there.`, refs: [] };
+    }
+    const { writeRoomTurn } = await import('@/lib/room/turns');
+    const dedupeKey = `standing-spec:${crypto.randomUUID().slice(0, 8)}`;
+    await writeRoomTurn(client, userId, roomKey, {
+      role: 'system',
+      text: `Standing task proposed: "${spec.name}" — ${spec.cadenceLabel}, owned by ${spec.ownerName.split(' ')[0]}. Nothing runs until you confirm on the card.`,
+      dedupeKey,
+      component: { key: 'standing_spec', state: { ...spec, status: 'pending' } },
+    });
+    return {
+      say: scope.kind === 'global'
+        ? `Set it up as "${spec.name}" — ${spec.cadenceLabel}, ${spec.ownerName.split(' ')[0]} producing it. The confirm card is in ${roomLabel}; it starts only when you confirm.`
+        : `Here's the setup: "${spec.name}" — ${spec.cadenceLabel}, ${spec.ownerName.split(' ')[0]} producing it. Confirm on the card and the first run lands ${spec.firstRun ? spec.firstRun.slice(0, 10) : 'on schedule'}.`,
+      refs: [],
+    };
+  }
+  if (tool === 'steer_standing_task') {
+    // ROOM FEEDBACK MUTATES THE METHOD (Arc 2 stage 4): only meaningful in a standing
+    // commitment's own room — the executor verifies the source structurally.
+    if (scope.kind !== 'item' || linkKindOf(scope) !== 'commitment') {
+      return { say: 'Say that in the standing task\'s own room and I\'ll bake it into the method.', refs: [] };
+    }
+    const { executeSteerStandingTask } = await import('@/lib/workflows/standing');
+    const r = await executeSteerStandingTask(client, userId, { commitmentId: scope.itemId, instruction: String(args.instruction ?? userText) });
+    if (!r.ok) return { say: `I couldn't apply that — ${r.error}.`, refs: [] };
+    return { say: `Baked in — "${r.taskName}" carries that from the next run on.`, refs: [], applied: [{ tool, title: r.taskName }] };
+  }
+  if (tool === 'read_action_history') {
+    // The history read (one-surface § context controls): "what was sent this week?" answered from
+    // the real ledgers. The digest carries its own boundary line (through-the-platform only).
+    const digest = await executeReadActionHistory(args as ActionHistoryConfig, userId, client);
+    return { say: digest, refs: [] };
+  }
   if (tool === 'remember_fact' && scope.kind !== 'global') {
     const r = await executeRememberFact(ctx, scope.kind === 'entity'
       ? { fact: String(args.fact ?? ''), entityId: scope.entityId }
@@ -407,7 +465,7 @@ async function dispatchCommand(
 }
 
 // ── The bounded AGENT LOOP (the 20%) — function-calling over the chief-of-staff toolset. ──
-const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, prepareForwardDefinition];
+const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, prepareForwardDefinition, readActionHistoryDefinition, proposeStandingTaskDefinition, steerStandingTaskDefinition];
 
 async function agentLoop(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string, grounding: string,
@@ -420,7 +478,8 @@ async function agentLoop(
   const messages: any[] = [
     { role: 'system', content:
       `You are the user's chief of staff inside their work platform. You hold a SMALL set of reversible tools ` +
-      `(resolving items, finding files, remembering facts) — use them when the user asks. You never CREATE ` +
+      `(resolving items, finding files, remembering facts, reading the action ledger of what was sent/done) — ` +
+      `use them when the user asks. You never CREATE ` +
       `and send anything in one motion: send_prepared_reply fires ONLY the already-drafted reply and ONLY when ` +
       `the user's own words explicitly say send; prepare_forward only prepares (the approve stays with the user). ` +
       `Ground every claim in the ` +
@@ -444,7 +503,13 @@ async function agentLoop(
         try {
           const mm = await registryMatches(client, userId, text, scope.kind === 'entity' ? scope.entityId : null);
           if (mm) {
-            say = `Nothing directly on file here — but this looks like ${mm.replace(/^MEMORY MATCHES[^:]*: /, '')}. Its work lives on that project — open it, or tell me what to pull from it.`;
+            const pointer = `this looks like ${mm.replace(/^MEMORY MATCHES[^:]*: /, '')}. Its work lives on that project — open it, or tell me what to pull from it.`;
+            // A hedge inside a substantive answer ("I don't have the exact date, but the report
+            // went out Tuesday…") must never DESTROY the answer — replace only a short pure
+            // denial; a longer answer keeps its substance and the pointer rides along.
+            say = say.length <= 200
+              ? `Nothing directly on file here — but ${pointer}`
+              : `${say}\n\nThat said — ${pointer}`;
           }
         } catch { /* the floor is an enhancement — the honest answer still returns */ }
       }
@@ -739,9 +804,11 @@ export async function converse(
     const ctx = await buildItemContext(client, userId, scope.itemKind, scope.itemId);
     grounding = (ctx?.text || '').slice(0, 3500);
   } else if (scope.kind === 'global') {
-    // Global open turns hold the SAME brain snapshot the Home ask answers from (one read, one truth).
+    // Global open turns hold the SAME brain snapshot the Home ask answers from (one read, one
+    // truth) — WITH the one-grounding focus (Aug 5): the question threads through, so a named
+    // entity's full room page rides along; the wider slice keeps the appended focus block alive.
     const { buildBrainSnapshot } = await import('@/lib/home/ask');
-    grounding = (await buildBrainSnapshot(client, userId)).text.slice(0, 3500);
+    grounding = (await buildBrainSnapshot(client, userId, text)).text.slice(0, 7000);
   }
   // The agent loop sees the conversation + registry matches too (one law, every path), under the
   // same honesty floor.

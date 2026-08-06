@@ -10,7 +10,6 @@ import {
   ChatBubbleLeftEllipsisIcon,
   UserGroupIcon,
   VideoCameraIcon,
-  FolderIcon,
   Cog6ToothIcon,
   ArrowRightOnRectangleIcon,
   ShieldCheckIcon,
@@ -53,7 +52,10 @@ export default function SidebarNav({
     { name: 'Workers', href: '/workers', icon: UserGroupIcon },
     { name: 'Chat',    href: '/work',    icon: ChatBubbleLeftEllipsisIcon },
     ...(features.meetings ? [{ name: 'Meetings', href: '/meetings', icon: VideoCameraIcon }] : []),
-    ...(features.drive    ? [{ name: 'Drive',    href: '/drive',    icon: FolderIcon }]      : []),
+    // THE DRIVE DEMOTION (Arc 3 stage 1, owner-confirmed Aug 5 — one-surface plan / prepared-work
+    // D1): Drive is OUR knowledge base, not an untouched source — files live WITH their work (the
+    // room's Files tab, the resolver); the audit/status surface's door is Settings → Knowledge.
+    // The /drive route stays reachable (nothing lost) — only the nav seat is retired.
     ...(isSuperAdmin ? [{ name: 'Platform Admin', href: '/platform-admin', icon: ShieldCheckIcon }] : []),
   ];
 
@@ -73,17 +75,14 @@ export default function SidebarNav({
   const userInitial = userEmail?.[0]?.toUpperCase() ?? '?';
 
   return (
+    // The LEAN RAIL (owner call, Aug 6): the global nav lists SECTIONS only — the rooms dimension
+    // (pinned projects · recent conversations) lives INSIDE the converged chat section on the
+    // Home (components/home/conversations-strip.tsx), never under the main nav mid-migration.
     <div className="flex h-screen w-14 flex-col bg-neutral-50 flex-shrink-0">
 
       {/* Logo */}
       <div className="flex h-12 items-center justify-center">
-        <Image
-          src="/augmtd-logo.png"
-          alt="AUGMTD"
-          width={20}
-          height={20}
-          className="w-5 h-5"
-        />
+        <Image src="/augmtd-logo.png" alt="AUGMTD" width={20} height={20} className="w-5 h-5" />
       </div>
 
       {/* Navigation */}

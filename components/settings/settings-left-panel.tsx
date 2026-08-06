@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { UserIcon, BuildingOffice2Icon, Squares2X2Icon, EnvelopeIcon } from '@heroicons/react/24/outline';
+import { UserIcon, BuildingOffice2Icon, Squares2X2Icon, EnvelopeIcon, FolderIcon, UserGroupIcon } from '@heroicons/react/24/outline';
 
 function BrainIcon({ className }: { className?: string }) {
   return (
@@ -23,6 +23,13 @@ const NAV_ITEMS = [
   { id: 'email', label: 'Email', Icon: EnvelopeIcon },
   { id: 'company', label: 'Company', Icon: BuildingOffice2Icon },
   { id: 'connections', label: 'Connections', Icon: Squares2X2Icon },
+  // THE DRIVE DEMOTION (Arc 3): the knowledge base's audit/management door lives HERE now —
+  // files themselves live with their work (rooms' Files tabs); this opens the existing surface.
+  { id: 'knowledge', label: 'Knowledge', Icon: FolderIcon, href: '/drive' },
+  // THE FOLD's config door (Arc 3): team management (roster · skills · per-worker tools) belongs
+  // to Settings; coworkers themselves are executors IN the work, not a destination. Interim: opens
+  // the existing surface; the nav seat retires when the converged chat can absorb it.
+  { id: 'team', label: 'Team', Icon: UserGroupIcon, href: '/workers' },
   { id: 'memory', label: 'Memory', Icon: BrainIcon },
 ];
 
@@ -130,7 +137,7 @@ export default function SettingsLeftPanel({ activeTab, companyRole }: { activeTa
             }
 
             return (
-              <Link key={item.id} href={`/settings?tab=${item.id}`} className={itemClass(isActive)}>
+              <Link key={item.id} href={'href' in item && item.href ? item.href : `/settings?tab=${item.id}`} className={itemClass(isActive)}>
                 <item.Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-indigo-500' : 'text-neutral-400'}`} />
                 {item.label}
               </Link>

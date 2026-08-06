@@ -2754,13 +2754,18 @@ function PreparedLead({ prepared }: { prepared: ItemViewData['prepared'] | null 
             <button onClick={() => setOpenId(open ? null : d.id)} className="w-full flex items-baseline gap-2 text-left">
               <span className="text-[11px] font-semibold text-indigo-500 flex-shrink-0">{d.by ? `Prepared by ${d.by.split(' ')[0]}` : 'Prepared'}</span>
               <span className="text-[13px] font-medium text-neutral-800 truncate min-w-0 flex-1">{d.title || 'Deliverable'}</span>
+              {/* THE PROVENANCE CHIP (truth made visible): renders ONLY from the structural
+                  `computed` marker the sandbox stamps — never inferred from the content. */}
+              {prov?.computed && (
+                <span title={prov.computed} className="flex-shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-semibold text-emerald-700">✓ computed in code</span>
+              )}
               <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-400 flex-shrink-0 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
             </button>
             {open && (
               <div className="mt-2">
                 {prov && (
                   <p className="mb-1.5 text-[11px] text-neutral-400">
-                    from: {[prov.item, prov.entity, prov.who].filter(Boolean).join(' · ')}
+                    from: {[prov.item, prov.entity, prov.who].filter(Boolean).join(' · ')}{prov.computed ? ` · ${prov.computed}` : ''}
                   </p>
                 )}
                 <div className="text-[13px] text-neutral-700 leading-relaxed whitespace-pre-wrap max-h-[320px] overflow-y-auto [scrollbar-width:thin]">{d.content}</div>

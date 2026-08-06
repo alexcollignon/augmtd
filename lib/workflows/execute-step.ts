@@ -14,8 +14,8 @@ import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-con
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { buildSkillsBlock, buildSkillsBlockByIds } from '@/lib/work/worker-skills-context';
 import { composeSlackMessage } from './slack-message';
-import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext, executeSlackReadMessages, executeSlackPostMessage, executeSendCalendarInvite, executeForwardEmail, executeFindTeamWork } from '@/lib/tools';
-import type { SendCalendarInviteConfig, ForwardEmailConfig } from '@/lib/tools';
+import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext, executeSlackReadMessages, executeSlackPostMessage, executeSendCalendarInvite, executeForwardEmail, executeFindTeamWork, executeRunCompute } from '@/lib/tools';
+import type { SendCalendarInviteConfig, ForwardEmailConfig, ComputeConfig } from '@/lib/tools';
 import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep } from './types';
 
 export interface StepContext {
@@ -109,6 +109,7 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
     case 'slack_send':         return await toolSlackSend(step, ctx);
     case 'send_calendar_invite': return await executeSendCalendarInvite(step.config as unknown as SendCalendarInviteConfig, ctx.userId, ctx.supabase);
     case 'forward_email':     return await executeForwardEmail(step.config as unknown as ForwardEmailConfig, ctx.userId, ctx.supabase);
+    case 'run_compute':       return await executeRunCompute(step.config as unknown as ComputeConfig, ctx.userId, ctx.supabase);
     case 'linkedin_post':     return await executeLinkedInPost(step.config, {
       userId: ctx.userId,
       supabase: ctx.supabase,

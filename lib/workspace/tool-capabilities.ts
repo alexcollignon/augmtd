@@ -34,6 +34,10 @@ export const TOOL_FEATURE: Record<string, FeatureKey | null> = {
   present_linkedin_post: null,
   get_workflow_output: null,
   generate_document: null,
+  run_compute: null,
+  propose_standing_task: 'studio',
+  steer_standing_task: 'studio',
+  read_action_history: null,
 
   // ── Cross-coworker / tasks / skills / documents (always; the coworker section itself is gated elsewhere) ──
   find_team_work: null,

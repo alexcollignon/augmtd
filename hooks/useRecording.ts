@@ -337,7 +337,6 @@ export function useRecording(
 
       // 3. Confirm — fire-and-forget transcription (include live notes)
       setState('processing');
-      console.log('[Recording] confirm sending with existingNoteId:', noteIdRef.current);
       const confirmRes = await fetch('/api/meetings/recordings/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

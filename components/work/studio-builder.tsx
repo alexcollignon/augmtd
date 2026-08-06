@@ -124,10 +124,12 @@ const AVAILABLE_TOOLS = [
   { id: 'get_workflow_output', label: "Use a coworker's task",      description: "Pulls the latest output of another coworker's task and passes it as context. Build on what a teammate already produced." },
   { id: 'slack_read_channel',  label: 'Read a Slack channel',      description: 'Returns recent messages from a Slack channel this coworker is in — to summarize, digest, or act on. Config: channel (#name or id), limit.' },
   { id: 'slack_send',          label: 'Send a Slack message',      description: 'Posts a message to a channel, written by this coworker from your instruction + what the pipeline produced. Notify a team, tag people. Config: channel + instruction.' },
+  { id: 'run_compute',         label: 'Compute over files/data',   description: 'Runs code in a locked sandbox over your files (spreadsheets, PDFs, CSVs) or prior step data — parse, reconcile, verify numbers, produce a data file. Cannot send anything.' },
 ];
 
 const TOOL_GROUPS = [
   { label: 'Gather',      ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file', 'web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research', 'slack_read_channel'] },
+  { label: 'Compute',     ids: ['run_compute'] },
   { label: 'Collaborate', ids: ['get_workflow_output'] },
   { label: 'Act',         ids: ['slack_send'] },
   // linkedin_post deprecated from the picker — superseded by the LinkedIn coworker + a LinkedIn skill (still runs for existing tasks).
@@ -149,6 +151,7 @@ const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
   get_workflow_output:  ArrowPathIcon,
   slack_read_channel:   ChatBubbleLeftRightIcon,
   slack_send:           PaperAirplaneIcon,
+  run_compute:          CpuChipIcon,
 };
 
 const TOOL_STYLES: Record<string, { bg: string; logo?: string }> = {
@@ -167,6 +170,7 @@ const TOOL_STYLES: Record<string, { bg: string; logo?: string }> = {
   get_workflow_output:  { bg: 'bg-teal-500' },
   slack_read_channel:   { bg: 'bg-[#4A154B]' },
   slack_send:           { bg: 'bg-[#4A154B]' },
+  run_compute:          { bg: 'bg-neutral-800' },
 };
 
 const STEP_TYPE_COLORS = {
@@ -1730,6 +1734,7 @@ function InlineToolGrid({ value, onChange }: { value: string; onChange: (toolId:
   const displayId = value === 'browser_fetch' ? 'fetch_url' : (value === 'get_urgent_emails' ? 'get_emails' : value);
   const groups = [
     { label: 'Gather',      ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file', 'web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research', 'slack_read_channel'] },
+    { label: 'Compute',     ids: ['run_compute'] },
     { label: 'Collaborate', ids: ['get_workflow_output'] },
     { label: 'Act',         ids: ['slack_send'] },
   ];

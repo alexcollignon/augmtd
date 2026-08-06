@@ -431,6 +431,21 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     }).eq('id', runId);
     await admin.from('workflows').update({ last_run_at: new Date().toISOString() }).eq('id', workflow.id);
 
+    // THE MISSED PROMISE (Arc 2): a failed run narrates honestly into the standing commitment's
+    // room AND stamps its due_date to today — the debt SHOWS (the dispatcher already advanced
+    // next_run_at, which would otherwise hide the failure forever).
+    if (!opts.isTest) {
+      try {
+        const { narrateStandingRun } = await import('@/lib/workflows/standing');
+        await narrateStandingRun(admin, {
+          id: workflow.id, user_id: workflow.user_id, name: workflow.name, status: workflow.status,
+          trigger: workflow.trigger as { type?: string } | null,
+          next_run_at: workflow.next_run_at ?? null,
+          agent_id: (workflow as Workflow & { agent_id?: string }).agent_id ?? null,
+        }, { ok: false, runId, threadId, workerName: 'Your coworker', error: runError });
+      } catch { /* bookkeeping — never breaks the failure path */ }
+    }
+
     // Still write the partial outputs into the thread as an assistant message for debugging.
     const debug = stepOutputs.map(o =>
       `[${o.label}]${o.error ? ` ERROR: ${o.error}` : ''}\n${typeof o.output === 'string' ? o.output : JSON.stringify(o.output)}`
@@ -642,6 +657,21 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       last_run_at: completedAt.toISOString(),
       next_run_at: nextRun ? nextRun.toISOString() : null,
     }).eq('id', workflow.id);
+
+    // THE STANDING BINDING (Arc 2): a successful run advances the standing commitment's due_date
+    // to the next scheduled run (fromSuccessfulRun — the only key that unlocks a PAST due date),
+    // and THE RUN LANDS IN THE ROOM: the standing commitment's room gets the narration + link.
+    try {
+      const { syncStandingCommitment, narrateStandingRun } = await import('@/lib/workflows/standing');
+      const wfRow = {
+        id: workflow.id, user_id: workflow.user_id, name: workflow.name, status: workflow.status,
+        trigger: workflow.trigger as { type?: string } | null,
+        next_run_at: nextRun ? nextRun.toISOString() : null,
+        agent_id: (workflow as Workflow & { agent_id?: string }).agent_id ?? null,
+      };
+      await syncStandingCommitment(admin, wfRow, worker?.name ?? null, { fromSuccessfulRun: true });
+      await narrateStandingRun(admin, wfRow, { ok: true, runId, threadId, workerName: worker?.name ?? 'Your coworker' });
+    } catch { /* bookkeeping — never breaks a run */ }
 
     // ── Auto-pause: don't keep producing output nobody reads ──
     // Runs AFTER the next_run_at write above so the pause's null isn't overwritten.

@@ -92,8 +92,10 @@ export async function assembleRoomGrounding(
       : Promise.resolve({ data: null }),
     entityId ? assembleLedger(client, userId, entityId) : Promise.resolve({ ledger: [] as Array<{ at: string; kind: string; who: string | null; text: string; ref: string }> }),
     entityId
+      // Newest links first — the caps below must drop the OLDEST items, never arbitrary ones
+      // (an unordered limit made board membership random on big rooms — the no-silent-caps law).
       ? client.from('entity_links').select('item_kind, item_id').eq('user_id', userId).eq('entity_id', entityId)
-          .in('item_kind', ['inbox_item', 'commitment']).limit(80)
+          .in('item_kind', ['inbox_item', 'commitment']).order('created_at', { ascending: false }).limit(80)
       : Promise.resolve({ data: scope.kind === 'item' ? [{ item_kind: scope.itemKind === 'inbox' ? 'inbox_item' : scope.itemKind, item_id: scope.itemId }] : [] }),
     (async () => {
       try {
@@ -111,8 +113,12 @@ export async function assembleRoomGrounding(
   // the one merge no prior consumer held (the source of every "drafted vs nothing-prepared"
   // contradiction). Same tables the deck and the cards read. ──
   const lrows = (linksRes.data ?? []) as Array<{ item_kind: string; item_id: string }>;
-  const inboxIds = lrows.filter((l) => l.item_kind === 'inbox_item').map((l) => l.item_id).slice(0, 30);
-  const commitIds = lrows.filter((l) => l.item_kind === 'commitment').map((l) => l.item_id).slice(0, 30);
+  const allInbox = lrows.filter((l) => l.item_kind === 'inbox_item');
+  const allCommit = lrows.filter((l) => l.item_kind === 'commitment');
+  const inboxIds = allInbox.map((l) => l.item_id).slice(0, 30);
+  const commitIds = allCommit.map((l) => l.item_id).slice(0, 30);
+  // No silent caps: what the board omits, the grounding DECLARES (oldest links are the ones cut).
+  const boardOmitted = Math.max(0, allInbox.length - 30) + Math.max(0, allCommit.length - 30) + (lrows.length === 80 ? 1 : 0);
   const [inboxRes, commitRes, judgRes] = await Promise.all([
     inboxIds.length
       ? client.from('inbox_items').select('id, work_title, status, source_data').in('id', inboxIds).eq('user_id', userId).eq('status', 'pending')
@@ -213,7 +219,7 @@ export async function assembleRoomGrounding(
     entity?.nextMove ? `THE SYNTHESIZED NEXT MOVE: ${entity.nextMove.title}` : null,
     entity?.goals.length ? `GOALS: ${entity.goals.join(' · ')}` : null,
     entity?.rules.length ? `RULES: ${entity.rules.join(' · ')}` : null,
-    board.length ? `THE LIVE BOARD (each item: judged work + what is ACTUALLY prepared — these are the only truths about preparedness):\n${boardLines.join('\n')}` : null,
+    board.length ? `THE LIVE BOARD (each item: judged work + what is ACTUALLY prepared — these are the only truths about preparedness):\n${boardLines.join('\n')}${boardOmitted ? `\n(NOTE: ~${boardOmitted} older linked item${boardOmitted === 1 ? '' : 's'} not shown — never claim this list is everything.)` : ''}` : null,
     asks.length ? `OPEN ASKS TO THE USER:\n${asks.map((a) => `- since ${a.since ?? '?'}${a.proceeded ? ' (user said go ahead)' : ''}: ${a.items.join('; ')}`).join('\n')}` : null,
     ledgerLines.length ? `HISTORY (newest first, reference as [L#]):\n${ledgerLines.join('\n')}` : null,
     fileLines.length ? `FILES on this work (reference as [F#]):\n${fileLines.join('\n')}` : null,

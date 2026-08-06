@@ -117,7 +117,7 @@ export function registryParity(): string[] {
 // so both invalidation stamps live in the ONE registry module — deliberately SEPARATE constants:
 // they invalidate different caches (plans vs judgments) and coupling them would regenerate every
 // item plan on a judge-prompt tweak (waste, not rigor).
-export const PLAN_VERSION = 4; // 4: the parity law — send_prepared_reply + prepare_forward in the chief slice
+export const PLAN_VERSION = 5; // 5: run_compute (Arc 1 — sandboxed code over the user's files; computed numbers, never asserted ones). 4: the parity law — send_prepared_reply + prepare_forward in the chief slice
 
 // 'atomic'   → deterministic, no judgment → the System runs it directly (a `tool`/`ai` workflow step).
 // 'judgment' → benefits from a coworker's voice/reasoning/skills → an `agent` step.
@@ -213,6 +213,16 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     blurb: 'generate a document / deliverable',
   },
 
+  // ── Compute (Arc 1, docs/one-surface-plan.md — the deliverable ceiling): model-written code in
+  // the locked sandbox (infra/compute — no network, declared read-only inputs, hard caps). Atomic +
+  // REVERSIBLE BY CONSTRUCTION (the room can't send); the trust laws generalized — numbers computed,
+  // never asserted. ──
+  run_compute: {
+    intent: 'compute over files/data with code — parse or reconcile spreadsheets/PDFs/CSVs, verify numbers, transform data, produce a data file',
+    tool: 'run_compute', built: true, kind: 'atomic', irreversible: false, feature: null, exposure: ['chief_of_staff', 'coworker', 'workflow'],
+    blurb: 'RUN CODE over files/data we have (parse/verify/transform spreadsheets, PDFs, CSVs; compute numbers; produce a data file) — sandboxed, cannot send anything',
+  },
+
   // ── Commit (irreversible → approval gate) ──
   send_email: {
     intent: 'send an email as the user (connected mailbox)',
@@ -261,6 +271,21 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     intent: "save a durable fact/constraint onto this deal's memory",
     tool: 'remember_fact', built: true, kind: 'atomic', irreversible: false, feature: null,
     blurb: "remember a durable fact on the deal (future drafts respect it)", exposure: ['chief_of_staff'],
+  },
+  propose_standing_task: {
+    intent: 'the user asks for a RECURRING deliverable (weekly report, daily digest) — propose the standing task for confirmation',
+    tool: 'propose_standing_task', built: true, kind: 'atomic', irreversible: false, feature: 'studio',
+    blurb: 'propose a STANDING task ("weekly report on X") — places the confirm card; creates nothing by itself', exposure: ['chief_of_staff'],
+  },
+  steer_standing_task: {
+    intent: 'feedback on a standing/recurring task ("less macro, more tenders") — bake it into the method so future runs inherit it',
+    tool: 'steer_standing_task', built: true, kind: 'atomic', irreversible: false, feature: 'studio',
+    blurb: 'apply feedback to a STANDING task\'s method (next runs inherit it) — only in the standing task\'s room', exposure: ['chief_of_staff'],
+  },
+  read_action_history: {
+    intent: 'read the ledger of actions taken — what was sent, committed, done, delegated recently',
+    tool: 'read_action_history', built: true, kind: 'atomic', irreversible: false, feature: null,
+    blurb: 'read the action ledger ("what was sent this week?", "what did we do on X?") — read-only', exposure: ['chief_of_staff'],
   },
   // ── MEMBERSHIP / PROJECT management (projecthood-plan P4) — the "manage my projects" verbs, in the
   // registry so every chat surface gets them at once. All reversible-or-logged; none send anything.

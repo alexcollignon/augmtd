@@ -238,9 +238,18 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       }
     } else {
       const { data: c } = await client.from('commitments')
-        .select('id, description, counterparty, direction, status, due_date, updated_at, created_at')
+        .select('id, description, counterparty, direction, status, due_date, updated_at, created_at, source')
         .eq('id', input.id).eq('user_id', userId).maybeSingle();
       if (!c || !['open', 'pending', 'in_progress'].includes(String(c.status))) return fallbackVerdict('no longer open');
+      // THE STANDING FLOOR (Arc 2 binding): a source='workflow' commitment is the team's standing
+      // promise — its WORKFLOW produces it. Structurally none: the pass must never delegate it,
+      // no drafter touches it; overdue-ness is its whole surface (the missed-run debt).
+      if (String(c.source) === 'workflow') {
+        return {
+          work: 'none', component: 'message_only', executor: { kind: 'system' }, gate: null,
+          reason: 'a standing scheduled task — its workflow produces the deliverable; overdue means a run was missed',
+        };
+      }
       title = String(c.description || '');
       who = (c.counterparty as string) || null;
       activityAt = String(c.updated_at || c.created_at || '');

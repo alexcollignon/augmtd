@@ -96,16 +96,16 @@ export function BriefingBlock({ briefing, clearedIds, onNavigate, flat = false }
     return (
       <div className="space-y-2">
         <Prose text={briefing.lead.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
-          className="text-[14.5px] text-neutral-800 leading-[1.75]" />
+          className="font-voice text-[15.5px] text-neutral-800 leading-[1.75]" />
         <Prose text={briefing.action.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
-          className="text-[14.5px] text-neutral-600 leading-[1.75]" />
+          className="font-voice text-[15.5px] text-neutral-600 leading-[1.75]" />
         {briefing.watchlist && (
           <Prose text={briefing.watchlist.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
-            className="text-[14.5px] text-neutral-600 leading-[1.75]" />
+            className="font-voice text-[15.5px] text-neutral-600 leading-[1.75]" />
         )}
         {briefing.pulse && (
           <Prose text={briefing.pulse.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
-            className="text-[14.5px] text-neutral-600 leading-[1.75]" />
+            className="font-voice text-[15.5px] text-neutral-600 leading-[1.75]" />
         )}
       </div>
     );
@@ -121,13 +121,13 @@ export function BriefingBlock({ briefing, clearedIds, onNavigate, flat = false }
       >
         <div ref={innerRef}>
           <Prose text={briefing.lead.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
-            className="text-[14.5px] text-neutral-800 leading-[1.8]" />
+            className="font-voice text-[15.5px] text-neutral-800 leading-[1.8]" />
           <Prose text={briefing.action.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
-            className="mt-3 text-[14.5px] text-neutral-600 leading-[1.8]" />
+            className="font-voice mt-3 text-[15.5px] text-neutral-600 leading-[1.8]" />
           {briefing.watchlist && (
             <div className="mt-3.5 border-l-2 border-amber-300/70 pl-3.5">
               <Prose text={briefing.watchlist.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
-                className="text-[14.5px] text-neutral-500 leading-[1.8]" />
+                className="font-voice text-[15.5px] text-neutral-500 leading-[1.8]" />
             </div>
           )}
           {briefing.pulse && (

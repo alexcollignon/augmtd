@@ -29,6 +29,7 @@ import {
   executeSlackListChannels, executeSlackPostMessage, executeSlackReadMessages, executeSlackListMembers,
   findTeamWorkDefinition, readTeamWorkDefinition, executeFindTeamWork, executeReadTeamWork,
   composeEmailDefinition, executeComposeEmail, getUserEmailIdentities, type EmailDraft,
+  runComputeDefinition, executeRunCompute, type ComputeConfig,
 } from '@/lib/tools';
 import { buildConnectedIntegrationsBlock } from '@/lib/integrations/connection';
 import {
@@ -1389,6 +1390,10 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
     );
   }
 
+  // ── Compute (Arc 1) — sandboxed code over the user's files/data; reversible by construction
+  // (the sandbox cannot send). Gates itself on env config inside the executor. ──
+  neutral.push(runComputeDefinition);
+
   // ── Action tools ────────────────────────────────────────────────────────────
   neutral.push(
     {
@@ -1942,6 +1947,13 @@ async function executeChatTool(
       const result = await executeWebSearch(input);
       const query = typeof input.query === 'string' ? input.query : '';
       return { result, summary: `Web search: ${query.slice(0, 50)}` };
+    }
+
+    case 'run_compute': {
+      const result = await executeRunCompute(input as ComputeConfig, ctx.userId, ctx.adminClient);
+      const failed = /FAILED|nothing was run|unreachable|not configured/i.test(result.slice(0, 200));
+      const desc = typeof input.description === 'string' ? input.description.slice(0, 50) : 'sandboxed script';
+      return { result, summary: failed ? `Compute failed: ${desc}` : `Computed: ${desc}` };
     }
 
     case 'fetch_url': {
