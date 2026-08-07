@@ -25,11 +25,27 @@ export async function POST(request: NextRequest) {
     const scope = body.entityId
       ? ({ kind: 'entity', entityId: String(body.entityId) } as const)
       : ({ kind: 'global' } as const);
-    const payloadOf = (turn: Awaited<ReturnType<typeof converse>>) => ({
+    // THE RECOGNITION NUDGE (Aug 7 — "will it suggest opening the project room?"): when an
+    // UNSCOPED question NAMES a registered project (the same deterministic focus match the
+    // grounding uses), the response carries the match so the panel can OFFER filing the
+    // conversation there — a suggestion, never an auto-file (chat is cheap, objects are
+    // deliberate). Zero AI: one entity read + token matching.
+    const focusOf = async (): Promise<{ id: string; name: string } | undefined> => {
+      if (scope.kind !== 'global') return undefined;
+      try {
+        const { findEntityFocus } = await import('@/lib/home/ask');
+        const { data: ents } = await supabase.from('work_entities').select('id, name, aliases')
+          .eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active')
+          .order('last_event_at', { ascending: false }).limit(200);
+        return findEntityFocus(q, (ents ?? []) as Array<{ id: string; name: string; aliases?: string[] | null }>) ?? undefined;
+      } catch { return undefined; }
+    };
+    const payloadOf = (turn: Awaited<ReturnType<typeof converse>>, focus?: { id: string; name: string }) => ({
       answer: turn.say, refs: turn.refs,
       ...(turn.applied?.length ? { applied: turn.applied } : {}),
       ...(turn.files?.length ? { files: turn.files } : {}),
       ...(turn.delegated ? { delegated: turn.delegated } : {}),
+      ...(focus ? { focus } : {}),
     });
     if (body.stream === true) {
       const enc = new TextEncoder();
@@ -38,9 +54,12 @@ export async function POST(request: NextRequest) {
           const send = (d: Record<string, unknown>) => {
             try { controller.enqueue(enc.encode(`data: ${JSON.stringify(d)}\n\n`)); } catch { /* client gone */ }
           };
-          converse(supabase, user.id, scope, q, {
-            history, onProgress: (label) => send({ type: 'progress', label }),
-          }).then((turn) => { send({ type: 'done', ...payloadOf(turn) }); })
+          Promise.all([
+            converse(supabase, user.id, scope, q, {
+              history, onProgress: (label) => send({ type: 'progress', label }),
+            }),
+            focusOf(),
+          ]).then(([turn, focus]) => { send({ type: 'done', ...payloadOf(turn, focus) }); })
             .catch((e) => { console.error('[home/ask] stream error:', e); send({ type: 'error' }); })
             .finally(() => { try { controller.close(); } catch { /* already closed */ } });
         },
@@ -49,8 +68,8 @@ export async function POST(request: NextRequest) {
         headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' },
       });
     }
-    const turn = await converse(supabase, user.id, scope, q, { history });
-    return NextResponse.json(payloadOf(turn));
+    const [turn, focus] = await Promise.all([converse(supabase, user.id, scope, q, { history }), focusOf()]);
+    return NextResponse.json(payloadOf(turn, focus));
   } catch (e) {
     console.error('[home/ask] error:', e);
     return NextResponse.json({ error: 'failed' }, { status: 500 });

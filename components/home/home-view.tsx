@@ -846,61 +846,6 @@ function brainRefHref(ref: string | null | undefined): string | null {
 // The ONE momentum vocabulary — lib/work-items/states.ts (same dot = same meaning on every surface).
 const MOMENTUM = MOMENTUM_TOKENS;
 
-// ── MOVING · nothing needed — the calm reassurance tier. Initiatives that are progressing but need nothing
-// from you right now (active / waiting). Collapsed by default (one summary line: "N moving · nothing needed
-// from you") so it never competes with "what needs you"; expands to per-initiative rows (momentum + where it
-// stands, opens the project/deep-dive). This is the ambient half of the chief-of-staff view, kept quiet.
-function MovingTier({ exclude }: { exclude?: Set<string> }) {
-  const [open, setOpen] = useState(false);
-  const router = useRouter();
-  // ONE BRAIN (Blocker A): read the entity PORTFOLIO (the same registry Projects/Timeline read) instead of
-  // the retired /api/initiatives/states. Instant-load from the shared portfolio cache, background refresh.
-  const [ents, setEnts] = useState<Array<{ id: string; name: string; status: string; momentum: string; summary: string | null; nextMove: { title: string; entityRef: string | null } | null }>>(
-    () => (loadLS<{ entities?: Array<{ id: string; name: string; status: string; momentum: string; summary: string | null; nextMove: { title: string; entityRef: string | null } | null }> }>('aug-portfolio-v1')?.entities ?? []));
-  useEffect(() => {
-    let alive = true;
-    fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => { if (alive && d?.entities) { setEnts(d.entities); saveLS('aug-portfolio-v1', d); } }).catch(() => {});
-    return () => { alive = false; };
-  }, []);
-  // Progressing work that needs nothing now — AND isn't already surfaced as an action in the deck above
-  // (the `exclude` entity-id set), so "nothing needed from you" can never contradict "What needs you".
-  const moving = ents.filter((e) => e.status === 'active' && (e.momentum === 'active' || e.momentum === 'waiting') && e.summary && !exclude?.has(e.id));
-  if (!moving.length) return null;
-  return (
-    <section className="mt-8">
-      <button onClick={() => setOpen((v) => !v)} className="group w-full flex items-center gap-2 text-left">
-        <span className="inline-flex -space-x-1">
-          {moving.slice(0, 4).map((e) => <span key={e.id} className={`w-2 h-2 rounded-full ring-2 ring-white ${(MOMENTUM[e.momentum as BrainState['momentum']] ?? MOMENTUM.unknown).dot}`} />)}
-        </span>
-        <span className="text-[12px] font-medium text-neutral-500">{moving.length} moving · nothing needed from you</span>
-        <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-300 group-hover:text-neutral-500 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
-      </button>
-      <Collapse open={open}>
-        <div className="space-y-1.5 pt-3">
-          {moving.map((e) => {
-            const m = MOMENTUM[e.momentum as BrainState['momentum']] ?? MOMENTUM.unknown;
-            const href = e.nextMove ? brainRefHref(e.nextMove.entityRef) : null;
-            const go = () => href ? router.push(href) : undefined;
-            return (
-              <button key={e.id} onClick={go} className="group w-full flex items-start gap-2.5 rounded-lg border border-neutral-200/50 bg-white/50 px-3 py-2 text-left transition-all duration-200 hover:bg-white hover:border-neutral-300">
-                <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${m.dot}`} title={m.label} />
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-2">
-                    <span className="text-[12.5px] font-medium text-neutral-700 truncate">{e.name}</span>
-                    <span className={`text-[10px] font-semibold uppercase tracking-wide flex-shrink-0 ${m.text}`}>{m.label}</span>
-                  </span>
-                  {e.summary && <span className="block text-[11.5px] text-neutral-400 truncate mt-0.5">{e.summary}</span>}
-                </span>
-                <ChevronRightIcon className="flex-shrink-0 w-3.5 h-3.5 text-neutral-300 group-hover:text-indigo-400 transition-colors mt-0.5" />
-              </button>
-            );
-          })}
-        </div>
-      </Collapse>
-    </section>
-  );
-}
-
 // ── B3b (iterated July 24) — THIS WEEK: the calendar rides BESIDE the task list as the second
 // column — day-grouped, deal-chipped, deterministic (zero AI). The "To prep" card was REMOVED
 // (the prep pass still prepares; its briefs live in the deal rooms). Cache-read lives in the
@@ -1348,10 +1293,24 @@ export function HomeView() {
   // THE PAGE TAKEOVER: a live Home conversation owns the page (the deck steps aside; the floor's
   // thread fills). Driven by the panel's own state via one event — no prop drilling.
   const [chatActive, setChatActive] = useState(false);
+  // The takeover EASES (owner, Aug 6 — the instant deck→chat swap read as a glitch): entering
+  // fades the deck out for a beat before it unmounts; leaving remounts instantly (returning
+  // content never needs a wait). chatFading drives the opacity, chatActive the unmount.
+  const [chatFading, setChatFading] = useState(false);
+  const chatFadeTm = useRef<number | null>(null);
   useEffect(() => {
-    const on = (e: Event) => setChatActive(!!(e as CustomEvent).detail?.active);
+    const on = (e: Event) => {
+      const active = !!(e as CustomEvent).detail?.active;
+      if (chatFadeTm.current) { window.clearTimeout(chatFadeTm.current); chatFadeTm.current = null; }
+      if (active) {
+        setChatFading(true);
+        chatFadeTm.current = window.setTimeout(() => { setChatActive(true); chatFadeTm.current = null; }, 180);
+      } else {
+        setChatActive(false); setChatFading(false);
+      }
+    };
     window.addEventListener('aug:chat-active', on);
-    return () => window.removeEventListener('aug:chat-active', on);
+    return () => { window.removeEventListener('aug:chat-active', on); if (chatFadeTm.current) window.clearTimeout(chatFadeTm.current); };
   }, []);
   // Initiative Brain state — joined into the deck so a bundle (an initiative) shows WHERE IT STANDS + its ONE
   // next move (the "across your work" data, unified INTO the one list — no separate second list). Keyed by
@@ -1978,7 +1937,9 @@ export function HomeView() {
         {/* Header + narration + live status chips. HIDDEN when a project deep-dive is open — a project
             detail owns the screen (its own back-link + title header), like the item deep-dive, so the day
             greeting shouldn't sit above it. */}
-        {!projectDetailOpen && (
+        {/* The greeting header steps aside WITH the deck (owner, Aug 7 — "the top things clear
+            for conversation"): a live conversation owns the WHOLE page, not just the deck rows. */}
+        {!projectDetailOpen && !chatActive && (
         <RiseIn>
           {/* Living orb — abstract morphing glow in the brand spectrum, signalling the brief is
               continuously alive. Sits left so the greeting + narrative use the full width. */}
@@ -2041,7 +2002,8 @@ export function HomeView() {
             onDetailChange lets a project deep-dive hide the Home greeting above (deep-dive framing). */}
         {view === 'projects' && <RiseIn key="lens-projects"><PortfolioView onDetailChange={setProjectDetailOpen} /></RiseIn>}
 
-        {view === 'dashboard' && !chatActive && (<>
+        {view === 'dashboard' && !chatActive && (
+        <div className={`transition-opacity duration-200 ease-out ${chatFading ? 'opacity-0' : 'opacity-100'}`}>
         {/* AMBIENT "also happening" pills removed for now (AmbientStrip kept below for easy restore). */}
 
         {/* THE ASK ZONE moved to the shell's FLOOR (the Claude anatomy — see the sticky block at
@@ -2170,12 +2132,14 @@ export function HomeView() {
                 IN the deck above (as bundle cards carrying momentum + next move); this collapsed strip holds
                 only the ones that are progressing but need nothing from you, so the Home reads as ONE
                 initiative-aware list, not two competing rollups. Renders nothing until states populate. */}
-            {!b?.briefing?.pulse && <RiseIn><MovingTier exclude={new Set(b?.deckEntityIds ?? [])} /></RiseIn>}
+            {/* The MovingTier ("N moving · nothing needed") DIED (owner call, Aug 6): the deck IS
+                the day — an ambient reassurance line floating below it read as clutter. Momentum
+                lives in the sidebar's Projects + the portfolio. */}
 
             </div>{/* ── end ACTION content ── */}
           </div>
         )}
-        </>)}
+        </div>)}
 
         {/* ── THE COMPOSER IS THE FLOOR (the shell — Claude's anatomy): ALWAYS PRESENT on the
             dashboard lens, docked to the bottom, the conversation takeover opening UPWARD. The

@@ -61,9 +61,12 @@ export function warmProjectPicker(): void {
 // "Start a new project…" on top (query pre-fills), YOUR tracked projects first name-sorted, the
 // recognized-but-untracked tail below "Suggested". Every add-to-project door renders THIS panel;
 // only the select/create consequences differ per door.
-export function ProjectPickerPanel({ onSelect, onCreateProject }: {
+export function ProjectPickerPanel({ onSelect, onCreateProject, onClear, clearLabel }: {
   onSelect: (e: { id: string; name: string; tracked: boolean }) => void;
   onCreateProject: (name: string) => void;
+  /** When set, a "remove" row leads the list — hosts whose subject can be UN-filed pass it. */
+  onClear?: () => void;
+  clearLabel?: string;
 }) {
   const [ents, setEnts] = useState<PickEnt[]>([]);
   const [query, setQuery] = useState('');
@@ -95,6 +98,12 @@ export function ProjectPickerPanel({ onSelect, onCreateProject }: {
         <button onClick={() => { setNewName(query.trim()); setCreating(true); }}
           className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 mt-1 text-left text-[12.5px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors">
           <PlusIcon className="w-3 h-3 flex-shrink-0" />{q && filtered.length === 0 ? `Start "${query.trim()}"…` : 'Start a new project…'}
+        </button>
+      )}
+      {!creating && onClear && (
+        <button onClick={onClear}
+          className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700 transition-colors">
+          <span className="w-3 h-3 flex-shrink-0 text-center leading-3">×</span>{clearLabel ?? 'Remove from project'}
         </button>
       )}
       <div className="max-h-52 overflow-y-auto border-t border-neutral-100 mt-1 pt-1">

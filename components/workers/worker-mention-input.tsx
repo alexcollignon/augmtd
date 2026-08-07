@@ -50,9 +50,12 @@ interface Props {
   /** The HOST owns the frame (border/bg/focus ring) — the component renders only its innards.
       One frame, never a pill inside a pill (the Home floor wraps this in its own chrome). */
   frameless?: boolean;
+  /** Host-supplied control rendered in the action row after Attach (e.g. the Home's scope
+      chip) — context controls live WITH the composer, not above the conversation. */
+  accessory?: React.ReactNode;
 }
 
-export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, onPrefillConsumed, onAttach, attachments = [], onRemoveAttachment, frameless }: Props) {
+export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, onPrefillConsumed, onAttach, attachments = [], onRemoveAttachment, frameless, accessory }: Props) {
   const [value, setValue] = useState('');
   const [mentions, setMentions] = useState<WorkerMention[]>([]);
   const [mq, setMq] = useState<string | null>(null);
@@ -297,6 +300,7 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
               <PaperClipIcon className="w-3.5 h-3.5" /> Attach
             </button>
           )}
+          {accessory}
           <button onClick={submit} disabled={disabled || !value.trim()}
             className="ml-auto flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-600 text-white disabled:opacity-40 hover:bg-indigo-700 transition-colors">
             <PaperAirplaneIcon className="w-3.5 h-3.5" />

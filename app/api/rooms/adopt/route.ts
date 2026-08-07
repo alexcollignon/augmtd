@@ -4,43 +4,82 @@ import { writeRoomTurn } from '@/lib/room/turns';
 
 export const maxDuration = 15;
 
-// POST /api/rooms/adopt — THE ADOPTION CASCADE (one-surface § context controls): scoping a Home
-// conversation to a project AFTER the fact moves everything it produced through the one
-// membership machinery — its turns RE-HOME into the project room (the same law as a meeting
-// move cascading its commitments; setItemMembership re-homes engine turns the same way). The
-// conversation then LIVES in the project room: the room's rail shows it, and the Home panel
-// keeps talking into the same key. { roomKey: 'chat:<uuid>', entityId } → { ok, moved }.
+// THE SCOPE BINDING (Aug 7 rework — owner: "any conversation can get added/changed/removed to a
+// project?"). v1 MOVED the chat's turns into the room, which made adoption one-way. v2 is a
+// LINK: the conversation keeps its own key and turns; the binding (item_plans kind
+// 'room_scope', keyed by the chat key) says which project it belongs to. File, RE-file, and
+// UN-file are all one upsert/delete; the project room carries a dedupe-keyed seam narration
+// that follows the binding (moves on re-file, disappears on un-file). Server truth — the panel
+// reads the binding, never a local cache.
+//   GET  ?key=chat:<uuid>                → { scope: { id, name } | null }
+//   POST { roomKey, entityId }           → file / re-file
+//   POST { roomKey, entityId: null }     → un-file
+export async function GET(request: NextRequest) {
+  try {
+    const supabase = await createClient();
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const key = request.nextUrl.searchParams.get('key') ?? '';
+    if (!key.startsWith('chat:')) return NextResponse.json({ scope: null });
+    const { data } = await supabase.from('item_plans').select('tasks')
+      .eq('user_id', user.id).eq('kind', 'room_scope').eq('entity_id', key).maybeSingle();
+    const t = (data?.tasks ?? null) as { entityId?: string; entityName?: string } | null;
+    return NextResponse.json({ scope: t?.entityId ? { id: t.entityId, name: t.entityName ?? '' } : null });
+  } catch (e) {
+    console.error('[rooms/adopt GET]', e);
+    return NextResponse.json({ scope: null });
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    const body = (await request.json()) as { roomKey?: string; entityId?: string };
+    const body = (await request.json()) as { roomKey?: string; entityId?: string | null };
     const roomKey = String(body.roomKey ?? '');
-    const entityId = String(body.entityId ?? '');
-    // Only a LOOSE CHAT room adopts — item/entity rooms already have a home (the room-door law).
-    if (!roomKey.startsWith('chat:') || !entityId) {
-      return NextResponse.json({ error: 'roomKey (chat:*) and entityId required' }, { status: 400 });
+    const entityId = body.entityId ? String(body.entityId) : null;
+    // Only a LOOSE CHAT room files — item/entity rooms already have a home (the room-door law).
+    if (!roomKey.startsWith('chat:')) {
+      return NextResponse.json({ error: 'roomKey (chat:*) required' }, { status: 400 });
     }
+
+    // The prior binding — a re-file/un-file must retract the OLD room's seam narration.
+    const { data: prior } = await supabase.from('item_plans').select('tasks')
+      .eq('user_id', user.id).eq('kind', 'room_scope').eq('entity_id', roomKey).maybeSingle();
+    const priorEntity = ((prior?.tasks ?? null) as { entityId?: string } | null)?.entityId ?? null;
+    if (priorEntity && priorEntity !== entityId) {
+      await supabase.from('room_turns').delete()
+        .eq('user_id', user.id).eq('room_key', priorEntity).eq('dedupe_key', `adopt:${roomKey}`);
+    }
+
+    if (!entityId) {
+      // UN-FILE: the conversation goes loose again; nothing else changes.
+      await supabase.from('item_plans').delete()
+        .eq('user_id', user.id).eq('kind', 'room_scope').eq('entity_id', roomKey);
+      return NextResponse.json({ ok: true, scope: null });
+    }
+
     const { data: ent } = await supabase.from('work_entities')
       .select('id, name').eq('id', entityId).eq('user_id', user.id).eq('status', 'active').maybeSingle();
     if (!ent) return NextResponse.json({ error: 'project not found' }, { status: 404 });
 
-    const { data: moved, error: mvErr } = await supabase.from('room_turns')
-      .update({ room_key: entityId })
-      .eq('user_id', user.id).eq('room_key', roomKey)
-      .select('id');
-    if (mvErr) throw mvErr;
+    const { error: upErr } = await supabase.from('item_plans').upsert({
+      user_id: user.id, kind: 'room_scope', entity_id: roomKey,
+      tasks: { entityId: ent.id, entityName: ent.name, at: new Date().toISOString() },
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id,kind,entity_id' });
+    if (upErr) throw upErr;
 
-    // The seam narrates (deltas, not silence): the project room's story says where these turns
-    // came from. Dedupe-keyed so a re-adopt of the same chat never repeats the line.
-    await writeRoomTurn(supabase, user.id, entityId, {
+    // The seam narrates in the project room (deltas, not silence) — dedupe-keyed so it moves
+    // with the binding instead of stacking.
+    await writeRoomTurn(supabase, user.id, ent.id, {
       role: 'system',
-      text: `Filed a Home conversation into this project (${moved?.length ?? 0} turns).`,
+      text: 'A Home conversation was filed into this project — its answers now ground here.',
       dedupeKey: `adopt:${roomKey}`,
     });
 
-    return NextResponse.json({ ok: true, moved: moved?.length ?? 0, name: ent.name });
+    return NextResponse.json({ ok: true, scope: { id: ent.id, name: ent.name } });
   } catch (e) {
     console.error('[rooms/adopt]', e);
     return NextResponse.json({ error: 'failed' }, { status: 500 });

@@ -14,7 +14,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import {
-  HomeIcon, EnvelopeIcon, VideoCameraIcon, PlusIcon,
+  HomeIcon, EnvelopeIcon, VideoCameraIcon, PlusIcon, FolderIcon,
   Cog6ToothIcon, ArrowRightOnRectangleIcon, ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 import { useRecordingContext } from '@/context/recording-context';
@@ -108,22 +108,13 @@ export default function OneSidebar({
           New chat
         </button>
 
-        {/* ONE NAME EVERYWHERE (owner call): these ARE the tracked PROJECTS — the same word the
-            product uses on every other surface (never "pinned"). */}
-        {rooms.pinned.length > 0 && (
-          <>
-            <div className={sectionLabel}>Projects</div>
-            {rooms.pinned.map((p) => (
-              <Link key={p.id} href={p.href} className={item(false)}>
-                <span className="w-1.5 h-1.5 rounded-full bg-indigo-300 flex-shrink-0" />
-                <span className="truncate">{p.name}</span>
-              </Link>
-            ))}
-            <Link href="/home?view=projects" className="block px-2.5 py-[6px] text-[11.5px] text-neutral-400 hover:text-neutral-700 transition-colors">
-              All projects →
-            </Link>
-          </>
-        )}
+        {/* ONE NAME EVERYWHERE (owner call, refined Aug 7): Projects is ONE menu item — the
+            portfolio lens is the destination; the sidebar never carries the project LIST
+            (the roster lives on its own page, not the nav). */}
+        <Link href="/home?view=projects" className={item(false)}>
+          <FolderIcon className="w-[17px] h-[17px] flex-shrink-0 text-neutral-400" />
+          Projects
+        </Link>
 
         {rooms.conversations.length > 0 && (
           <>

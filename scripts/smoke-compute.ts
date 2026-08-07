@@ -434,30 +434,33 @@ const src = (p: string) => readFileSync(p, 'utf8');
     ha.includes('THE DURABLE HOME CHAT') && ha.includes("`chat:${crypto.randomUUID()}`") &&
     ha.includes("persistTurn('user', shown)") && ha.includes("persistTurn('system', d.answer") &&
     ha.includes('/api/room/turns?key=') &&
-    ha.includes('localStorage.removeItem(CHAT_KEY_LS)') &&
+    src('components/one/one-sidebar.tsx').includes("localStorage.removeItem('aug-home-chat-key')") &&
     ha.includes('Persistence ≠ object'));
-  check('F2: THE FOLD\'s config door — Settings → Team (roster/skills/tools belong to Settings; coworkers are executors in the work, not a destination)',
+  check('F2: THE FOLD\'s config door — Settings → Team (roster/skills/tools belong to Settings; coworkers are executors in the work, not a destination; grounded Aug 6 — no href ejection)',
     src('components/settings/settings-left-panel.tsx').includes("id: 'team', label: 'Team'") &&
-    src('components/settings/settings-left-panel.tsx').includes("href: '/workers'"));
+    !src('components/settings/settings-left-panel.tsx').includes("href: '/workers'"));
   check('F3: THE CLAUDE-SHAPED CHAT — a live conversation is a PAGE (centered reading column, thread fills the viewport, the deck steps aside via aug:chat-active; NO hover gating — hover-out never collapses it, leaving is the explicit Close/New), THE HISTORY PICKER inside the panel, answers in THE VOICE, chat rooms titled by their own first ask',
     src('components/home/home-ask.tsx').includes('const showThread = hasThread && open;') &&
     !src('components/home/home-ask.tsx').includes('onMouseLeave={() => setHovered(false)}') &&
     src('components/home/home-ask.tsx').includes('max-w-3xl mx-auto') &&
     src('components/home/home-ask.tsx').includes('max-h-[calc(100vh-250px)]') &&
-    src('components/home/home-ask.tsx').includes('setOpen(false)} className') &&
+    src('components/home/home-ask.tsx').includes('const onHomeReset = () => setOpen(false);') &&
+    !src('components/home/home-ask.tsx').includes('> Close') &&
     src('components/home/home-ask.tsx').includes("CustomEvent('aug:chat-active'") &&
     src('components/home/home-view.tsx').includes("view === 'dashboard' && !chatActive") &&
-    src('components/home/home-ask.tsx').includes('THE HISTORY PICKER') &&
-    src('components/home/home-ask.tsx').includes('loadRoom(c.key)') &&
+    src('components/home/home-ask.tsx').includes('THE HISTORY PICKER DIED') &&
+    !src('components/home/home-ask.tsx').includes('toggleHistory') &&
+    src('components/home/home-view.tsx').includes('!projectDetailOpen && !chatActive') &&
     src('components/home/home-ask.tsx').includes('font-voice text-[14.5px] text-neutral-700') &&
     src('app/api/rooms/recent/route.ts').includes('THE CHAT HISTORY') &&
     src('app/api/rooms/recent/route.ts').includes("k.startsWith('chat:')"));
 
   // ── SH · THE SHELL'S CENTER + ONE NAME EVERYWHERE (Arc 3 S2). ──
-  check('SH1: ONE NAME EVERYWHERE — the sidebar section is PROJECTS (never "pinned"), with the All-projects mirror; conversation rows wear CONCRETE product words (project/email/task/meeting/chat)',
-    src('components/one/one-sidebar.tsx').includes('>Projects</div>') &&
+  check('SH1: ONE NAME EVERYWHERE — Projects is ONE nav item (owner refinement Aug 7: the portfolio lens is the destination; the sidebar never carries the project LIST), never "pinned"; conversation rows wear CONCRETE product words (project/email/task/meeting/chat)',
+    src('components/one/one-sidebar.tsx').includes('Projects is ONE menu item') &&
+    !src('components/one/one-sidebar.tsx').includes('rooms.pinned.map') &&
     !src('components/one/one-sidebar.tsx').includes('>Pinned</div>') &&
-    src('components/one/one-sidebar.tsx').includes('All projects →') &&
+    src('components/one/one-sidebar.tsx').includes('href="/home?view=projects"') &&
     src('components/one/all-conversations.tsx').includes("c.key.startsWith('inbox:') ? 'email'") &&
     src('components/one/all-conversations.tsx').includes("c.key.startsWith('commitment:') ? 'task'"));
   check('SH5: A CLICK OPENS THE CONVERSATION — the open/new intents OPEN the panel (event same-page, sessionStorage intent cross-page; turns never load into a closed card); suggestions sit ABOVE the floor input',
@@ -477,8 +480,9 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/home/home-view.tsx').includes('THE COMPOSER IS THE FLOOR') &&
     src('components/home/home-view.tsx').includes('sticky bottom-0 mt-auto') &&
     !src('components/home/home-view.tsx').includes('<div className="mt-9 mb-6">'));
-  check('SH3: ONE thread system — the History picker links into the same All-conversations view (picker ↔ view ↔ sidebar are one story)',
-    src('components/home/home-ask.tsx').includes('/home?view=conversations'));
+  check('SH3: ONE thread system — the SIDEBAR owns history (Recent + All conversations; the in-panel picker DIED Aug 7 as redundant)',
+    src('components/one/one-sidebar.tsx').includes('/home?view=conversations') &&
+    !src('components/home/home-ask.tsx').includes('/home?view=conversations'));
 
   check('SH6: THE DECK WEARS THE CARD GRAMMAR (Home only) — WorkRow variant="card": semantic state dot, the CTA speaks the JUDGED state ("Review & send" only when a draft truly exists — the July promise-lesson honored), one card stack',
     src('components/work/work-row.tsx').includes("variant?: 'row' | 'card'") &&
@@ -522,7 +526,8 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/one/all-conversations.tsx').includes("'coworker'") &&
     src('components/home/home-ask.tsx').includes('loadWorkerRoom') &&
     src('components/home/home-ask.tsx').includes('if (workerRoomRef.current) return;') &&
-    src('components/home/home-ask.tsx').includes('localStorage.setItem(`aug-dm-${agentId}`, tid)'));
+    src('components/home/home-ask.tsx').includes('localStorage.setItem(dmKey(agentId), tid)') &&
+    src('components/home/home-ask.tsx').includes("startsWith('Chat with')"));
 
   check('ST8: THE STREAMING ASK — the chief path answers over SSE with live PROGRESS labels (the ONE progress channel in converse: tool labels speak consequence, fast-path + agent loop both emit); the panel\'s busy line speaks the stage; the JSON path survives for non-panel callers',
     src('app/api/home/ask/route.ts').includes('text/event-stream') &&
@@ -535,15 +540,22 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/home/home-ask.tsx').includes("{stage ?? 'Thinking…'}"));
 
   check('F7: THE SCOPE CHIP + THE ADOPTION CASCADE — the conversation header shows its scope ("No project · Add to…" / "<Project> ✓" = the room door), settable any time via the ONE picker grammar (ProjectPickerPanel, extracted and shared with the deck door); adopting MOVES the turns into the project room (chat:* only, idempotent narration at the seam), then the panel talks IN the room: turns persist to its key, answers ground entity-scoped through the one core',
-    src('components/home/home-ask.tsx').includes('No project · Add to…') &&
+    src('components/home/home-ask.tsx').includes("hasThread ? 'No project' : 'Project'") &&
+    src('components/home/home-ask.tsx').includes('accessory={temp ? (') &&
     src('components/home/home-ask.tsx').includes("'/api/rooms/adopt'") &&
-    src('components/home/home-ask.tsx').includes('scope ? scope.id : chatRoomKey()') &&
     src('components/home/home-ask.tsx').includes('entityId: scope.id') &&
     src('components/home/home-ask.tsx').includes('<ProjectPickerPanel') &&
     src('components/work/work-row.tsx').includes('export function ProjectPickerPanel') &&
+    // v2 LINK MODEL (Aug 7 — add/CHANGE/REMOVE, owner ask): the binding (item_plans
+    // kind 'room_scope') says where the conversation belongs; turns NEVER move; the seam
+    // narration follows the binding; scope is SERVER TRUTH (GET), un-file is entityId:null.
     src('app/api/rooms/adopt/route.ts').includes("startsWith('chat:')") &&
-    src('app/api/rooms/adopt/route.ts').includes('.update({ room_key: entityId })') &&
+    src('app/api/rooms/adopt/route.ts').includes("'room_scope'") &&
     src('app/api/rooms/adopt/route.ts').includes('adopt:${roomKey}') &&
+    !src('app/api/rooms/adopt/route.ts').includes('.update({ room_key') &&
+    src('app/api/rooms/adopt/route.ts').includes('export async function GET') &&
+    src('components/home/home-ask.tsx').includes('void adopt(null)') &&
+    src('components/home/home-ask.tsx').includes('roomKey: chatRoomKey(), role, text') &&
     src('app/api/home/ask/route.ts').includes("kind: 'entity'"));
 
   check('AB4: THE RAIL COMPOSER FOLD — the room\'s composer IS the one composer (WorkerMentionInput frameless; the bespoke textarea died); a coworker mention becomes the ADDRESS in the sent words (the delegate path speaks names), attach feeds the room\'s ingest funnel immediately, chips/offers still speak through send(raw)',
@@ -553,6 +565,51 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/home/item-rail.tsx').includes("placeholder=\"Ask, correct, or hand off…\"") &&
     src('components/home/item-rail.tsx').includes('const send = async (raw: string)') &&
     src('components/home/item-rail.tsx').includes('for (const f of files) await attach(f)'));
+
+  check('KN1: THE SLIM KNOWLEDGE PANEL — /drive survives as the Settings→Knowledge door but the folder grid is DELETED (drive-client gone); the page is the sovereignty/audit surface: one overview read (kind derives STRUCTURALLY from provider_file_id/source — meeting·attachment·upload·generated), indexing status honest (chunks>0), files name their project (entity_id), name+content search, explicit two-step remove, meeting notes managed from Meetings (never deletable here)',
+    !existsSync('app/drive/drive-client.tsx') &&
+    src('app/(main)/drive/page.tsx').includes("redirect('/settings?tab=knowledge')") &&
+    src('app/(main)/settings/page.tsx').includes("tab === 'knowledge'") &&
+    src('app/(main)/settings/page.tsx').includes('<KnowledgePanel />') &&
+    !src('components/settings/settings-left-panel.tsx').includes("href: '/drive'") &&
+    src('app/api/knowledge/overview/route.ts').includes("p.startsWith('transcript::')") &&
+    src('app/api/knowledge/overview/route.ts').includes("deletable: kind !== 'meeting'") &&
+    src('components/knowledge/knowledge-panel.tsx').includes('/api/knowledge/overview') &&
+    src('components/knowledge/knowledge-panel.tsx').includes('/api/drive/search') &&
+    src('components/knowledge/knowledge-panel.tsx').includes('confirmDel === f.id') &&
+    src('components/knowledge/knowledge-panel.tsx').includes("f.indexed ? `indexed"));
+
+  check('AB5: THE ABSORPTION brick 3 — the one surface OWNS its outputs: a coworker\'s DOCUMENT opens the SAME ThreadArtifactsPanel as a right-side overlay in the Home conversation (viewer/versions/download — never a page away; a loaded worker conversation surfaces its existing documents too); an EMAIL DRAFT mounts the SAME editable EmailDraftCard inline (the user-gated Send door); only registry renders still point at the worker page',
+    src('components/home/home-ask.tsx').includes('<ThreadArtifactsPanel') &&
+    src('components/home/home-ask.tsx').includes('<EmailDraftCard') &&
+    src('components/home/home-ask.tsx').includes('openArtifact(c.art.tid, c.art.id)') &&
+    src('components/home/home-ask.tsx').includes('if (!autoOpened) { autoOpened = true;') &&
+    src('components/home/home-ask.tsx').includes("drafts.push({ draft: event.draft, tid, agentId: w.id })") &&
+    src('components/home/home-ask.tsx').includes('art: { tid, id: a.id }') &&
+    !src('components/home/home-ask.tsx').includes("review & send on ${first}'s page"));
+
+  check('DG1: THE DELIVERABLE GRAMMAR (owner call, Aug 6 — "shouldn\'t the report show in a right panel?") — a substantial composed deliverable (report/briefing/proposal past ~a screen) is PRODUCED as a document (generate_document DIRECTLY, no added clarification friction) with a 2-3 sentence chat summary, never pasted whole into chat; quick answers/short-form stay inline; the inline-era "content type alone is never enough" rule is DEAD in both the native prompt and the AgentOS prompts (parity rides the next box redeploy)',
+    src('lib/work/chat-system-prompt.ts').includes('THE DELIVERABLE GRAMMAR') &&
+    src('lib/work/chat-system-prompt.ts').includes('generate_document DIRECTLY') &&
+    src('lib/work/chat-system-prompt.ts').includes('NEVER paste the full deliverable into chat') &&
+    !src('lib/work/chat-system-prompt.ts').includes('Content type alone is never enough') &&
+    src('infra/agentos/workers.py').includes('DELIVERABLE_GRAMMAR = """') &&
+    (src('infra/agentos/workers.py').match(/\+ DELIVERABLE_GRAMMAR\}/g)?.length ?? 0) === 4);
+
+  check('TM1: SETTINGS → TEAM GROUNDED (/workers kill-list item 1) — team CONFIG is a real Settings section (the grounded-door law: no href ejection); the roster expands per coworker into the SAME WorkerToolsTab/WorkerKnowledgeTab the worker page mounts (one truth), the skills library rides below; coworkers are talked to from conversations, configured here',
+    !src('components/settings/settings-left-panel.tsx').includes("href: '/workers'") &&
+    src('app/(main)/settings/page.tsx').includes("tab === 'team'") &&
+    src('app/(main)/settings/page.tsx').includes('<TeamSection />') &&
+    src('components/settings/team-section.tsx').includes('<WorkerToolsTab') &&
+    src('components/settings/team-section.tsx').includes('<WorkerKnowledgeTab') &&
+    src('components/settings/team-section.tsx').includes('<SkillsLibraryView'));
+
+  check('RN1: THE RECOGNITION NUDGE (owner, Aug 7 — "will it suggest opening the project room?") — an unscoped Home ask that NAMES a registered project carries the deterministic focus match back (`focus` on both response paths, zero AI); the scope chip becomes an OFFER ("About X? · File it" + dismiss) — a suggestion, never an auto-file; one click runs the adoption cascade; the hint clears on New/chat-load/DM-load',
+    src('app/api/home/ask/route.ts').includes('findEntityFocus') &&
+    src('app/api/home/ask/route.ts').includes("scope.kind !== 'global'") &&
+    src('components/home/home-ask.tsx').includes('About {scopeHint.name}? · File it') &&
+    src('components/home/home-ask.tsx').includes('if (d.focus && !scope && !temp) setScopeHint(d.focus)') &&
+    src('components/home/home-ask.tsx').includes('setScopeHint(null); void adopt(h)'));
 
   // ── Report ──
   let pass = 0;

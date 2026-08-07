@@ -444,6 +444,108 @@ H. **THE RAIL COMPOSER FOLD — DONE (Aug 6, gate AB4 — 77/77, one-room 85/85,
    buttons (clicks are utterances, unchanged). ONE COMPOSER now holds everywhere it exists:
    Home floor · worker chat · the room rail. Remaining composers by design: the reply/forward
    STAGE editors (rich-text email composition — a different instrument, not a chat composer).
+I. **THE SLIM KNOWLEDGE PANEL — DONE (Aug 6, gate KN1 — 78/78, tsc + build green, derivation
+   live-verified on the heaviest real account: 68 files → 2 meetings · 66 attachments · 62
+   indexed · 6 processing · 36 project-stamped).** The folder grid DIED (drive-client.tsx
+   deleted, 1.8k lines); /drive survives as the Settings → Knowledge door, now rendering
+   `components/knowledge/knowledge-panel.tsx` — the sovereignty/audit surface: ONE overview
+   read (`/api/knowledge/overview`; kind derives STRUCTURALLY — transcript::→meeting,
+   email_attachment::→attachment, augmtd source→generated, else upload — never a stored
+   label), the audit line (indexed/processing from real chunk counts + which mailboxes feed
+   attachments), source-count filter chips, name+content search (instant substring + debounced
+   semantic riding the same brain retrieval), each file naming its PROJECT (entity_id), upload
+   (presign→PUT→confirm), and the right to remove (two-step, optimistic, restore-on-failure).
+   Boundary by design: meeting notes are never deletable here — they live with their meeting.
+   Instant-load from LS (ambient, ageless). OWNER CORRECTION (same day, now law): Knowledge is a
+   real SETTINGS SECTION — the panel renders INSIDE the Settings shell (`?tab=knowledge`, the
+   left panel stays grounded), never a standalone page ejection; /drive survives only as a
+   redirect to `/settings?tab=knowledge`. A Settings door must never leave Settings.
+J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTier line ("N
+   moving · nothing needed from you") DIED — the deck IS the day; an ambient reassurance line
+   floating in empty space read as clutter (momentum lives in sidebar Projects + portfolio).
+   (2) THE INSTANT ECHO — the submitted turn + busy line land SYNCHRONOUSLY before any
+   routing/roster/upload await (an 8s cold /api/workers/mentions made submit look dead);
+   the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
+   EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
+   instantly; the swap no longer reads as a glitch.
+L5. **THE SCOPE BINDING v2 — LINK, NOT MOVE (Aug 7, owner: "any conversation can get
+   added/changed/removed?"; gate F7 re-pointed — 82/82; lifecycle live-verified on the probe:
+   file→re-file→un-file, seam follows, turns never move).** v1's physical turn-move made
+   adoption one-way; v2 is a BINDING: the conversation keeps its own key and turns
+   (persistTurn always targets the chat key); `item_plans kind='room_scope'` says which
+   project it belongs to; the project room carries ONE dedupe-keyed seam narration that moves
+   with the binding and disappears on un-file. Scope is SERVER TRUTH (GET /api/rooms/adopt —
+   per-conversation, cross-device; the SCOPE_LS local cache died). The chip when scoped =
+   name (the room door) + ▾ (manage: the same picker with "Remove from <project>" on top).
+   ANY chat conversation now files, re-files, and un-files at any time. Boundary: coworker
+   DMs stay unscoped (addressed, not filed) — their work lands via the thread; item/entity
+   rooms have homes by construction.
+L4. **THE RECOGNITION NUDGE — DONE (Aug 7, gate RN1 — 82/82, matcher live-verified: "any
+   update on soboplac?" → SOBOPLAC on the real 83-entity account).** The answer to "will it
+   suggest the project room?": an unscoped Home ask that NAMES a registered project carries
+   the deterministic focus match back (`focus` on both ask response paths — the SAME matcher
+   the grounding already uses, zero new AI, 200-entity recency-ordered read); the scope chip
+   becomes an OFFER — "About EG Bank? · File it" + a dismiss ✕. One click runs the adoption
+   cascade (the conversation moves into the room, the chip becomes the door); never an
+   auto-file (chat is cheap, objects are deliberate). The full ladder story now: grounded
+   answer immediately → refs are doors → the brain OFFERS filing → filing homes the
+   conversation → the chip opens the room.
+L3. **THE CHROME DIES + CONVERSATIONS ARE MANAGEABLE (Aug 7 midday, owner):** (1) the in-panel
+   New/Close DIED — the SIDEBAR is the navigation (Home closes the takeover via
+   augmtd:home-reset; New chat starts fresh; the idiom every other product trained users on);
+   the Temporary tag rides the composer row. (2) PROJECTS IS ONE NAV ITEM — the sidebar never
+   carries the project list; the portfolio lens is the destination (SH1 re-pointed). (3)
+   conversations RENAME + DELETE in All conversations (chat rooms: item_plans kind
+   'room_title' override + POST /api/rooms/title, archive-delete via the existing turns
+   DELETE; coworker threads: the existing thread PATCH/DELETE; item/entity rooms are WORK —
+   no delete door). NEXT ARC AGREED (the production floor): chief-as-dispatcher WITH a
+   visible assignment proposal ("I'll have Sofia do this — ok or change?" selector, like
+   Claude's model picker; never a silent route) · the verify loop on chat-produced documents ·
+   the structural word-is-deed guard · the box redeploy · proactive project deliverables.
+L2. **THE ARTIFACT ARRIVES OPEN (Aug 7, owner):** the FIRST document of an exchange summons
+   the artifact panel itself (auto-open on artifact_ready); the card stays as the durable
+   re-open. Verified live by the owner: summary + card + real document, end to end (the
+   deliverable grammar + word-is-deed held on the retry).
+L. **THE CONVERSATION HEADER QUIETED + THE CLAIMED-DOCUMENT CLASS (Aug 7 morning, owner
+   corrections + a live catch):** (1) the in-panel HISTORY PICKER DIED — the sidebar owns
+   history (Recent + All conversations); a second picker was redundant (SH3/F3 re-pointed).
+   (2) THE FULL TAKEOVER — the greeting header (+ ring/activity cluster) clears WITH the deck
+   (`!chatActive` on the header block); a stale takeover can't survive a lens switch (unmount
+   dispatches active:false). (3) THE SCOPE CHIP moved INTO the composer's control row
+   (WorkerMentionInput gained an `accessory` slot — context controls live with the composer,
+   not above the conversation). (4) **CLAIM-WITHOUT-DEED, found live**: Clara said "I've
+   created a focused priorities report" with tool_calls:[] — ZERO calls, no document. THE WORD
+   IS THE DEED added to the deliverable grammar (native + AgentOS): a document exists only if
+   generate_document was called in THIS response. (5) **THE DM GLUE BUG, found live**: dmThread
+   took threads[0] and glued the Home DM onto a "Handed to Clara: …" delegation thread — now it
+   finds/creates the "Chat with <name>" thread by title (LS key bumped to aug-dm2-*, polluted
+   v1 keys orphaned). KNOWN OPEN (observed in the same logs): /api/home/brief recomputes
+   15-23s of queries on REPEATED loads in dev — the sig/cache path deserves a perf pass.
+K. **THE DELIVERABLE GRAMMAR + SETTINGS → TEAM — DONE (Aug 6 late, gates DG1 + TM1 — 81/81,
+   tsc + build green, workers.py ast-verified).** (1) DG: the worker prompt's inline-era FILE
+   INTENT GATE ("content type alone is never enough") is DEAD — a substantial composed
+   deliverable (report/briefing/proposal past ~a screen) is PRODUCED via generate_document
+   DIRECTLY (no added clarification friction) with a 2-3 sentence chat summary, never pasted
+   whole into chat; quick answers/short-form stay inline. Native prompt + all four AgentOS
+   prompts (DELIVERABLE_GRAMMAR appended — parity lands on the next box redeploy). With brick
+   3, a worker report now arrives as a CARD that opens the artifact panel. (2) TM: Settings →
+   Team is a real grounded section (`?tab=team`) — roster rows expanding into the SAME
+   WorkerToolsTab/WorkerKnowledgeTab the worker page mounts + the skills library below; the
+   href ejection died (F2 re-pointed). /workers still serves report-back deep-links until
+   kill-list items 2-3 land.
+J. **THE ABSORPTION BRICK 3 — artifacts in the one surface — DONE (Aug 6, gate AB5 — 79/79,
+   tsc + build green).** The Home conversation OWNS its outputs: a coworker's DOCUMENT card
+   opens the SAME `ThreadArtifactsPanel` the worker page docks, as a right-side overlay over
+   the conversation (viewer · versions · download · delete — zero re-implementation, one
+   component both hosts); an EMAIL DRAFT mounts the SAME editable `EmailDraftCard` inline
+   (recipients/subject/body editable, the user-gated Send through the existing
+   send-coworker-email door); a LOADED worker conversation surfaces its existing documents as
+   openable cards. Only typed registry renders (rare) still point at the worker page. THE
+   /WORKERS KILL LIST (what remains before it becomes a redirect like /drive): (1) Settings →
+   Team as a real embedded section (roster · per-worker tools · skills — the grounded-door
+   law); (2) registry renders inline; (3) repoint report-back deep-links to rooms/panel; then
+   /workers → redirect. The team-home review desk DIES rather than moves (its jobs are deck
+   jobs).
 
 ### THE POC CONTINUITY CLAUSE (AHK et al. — nothing breaks mid-rebuild)
 

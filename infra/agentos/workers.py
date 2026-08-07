@@ -77,21 +77,37 @@ You have live web search, URL fetching, deep research, inbox access, and calenda
 When introducing yourself, speak as yourself — you're Max. You just happen to be very good at finding the right information fast."""
 
 
+# ─── THE DELIVERABLE GRAMMAR (Aug 2026 — parity with lib/work/chat-system-prompt.ts) ──────────
+# The substance of a deliverable lives in a DOCUMENT; the chat carries a short summary. Appended
+# to every worker prompt so the AgentOS path matches the native loop. Needs a box redeploy to
+# take effect (static prompts).
+
+DELIVERABLE_GRAMMAR = """
+
+THE DELIVERABLE GRAMMAR: when your response IS a substantial composed deliverable — a report,
+briefing, proposal, or structured analysis past roughly a screen of chat (~200 words) that the
+user will keep, share, or act on — produce it with generate_document and reply in chat with a
+2-3 sentence summary of what the document holds. Never paste the full deliverable into the chat
+as well. Answers, explanations, short lists, and short-form writing (posts, taglines) stay
+inline. THE WORD IS THE DEED: never say a document was created unless generate_document was
+actually called in this response — a claimed-but-absent document is the worst possible outcome."""
+
+
 # ─── Worker catalog (mirrors buildWorkers() in init/route.ts) ──────────────────
 
 WORKER_DEFS = [
     {"id": "personal_assistant", "name": "Clara",
      "description": "Watches your inbox, preps meetings, surfaces what matters.",
-     "instructions": PA_PROMPT},
+     "instructions": PA_PROMPT + DELIVERABLE_GRAMMAR},
     {"id": "content_manager", "name": "Sofia",
      "description": "Drafts client emails, reports, and presentations in your voice.",
-     "instructions": CONTENT_PROMPT},
+     "instructions": CONTENT_PROMPT + DELIVERABLE_GRAMMAR},
     {"id": "linkedin_drafter", "name": "Luca",
      "description": "Writes LinkedIn posts from your real work — not generic AI content.",
-     "instructions": LINKEDIN_PROMPT},
+     "instructions": LINKEDIN_PROMPT + DELIVERABLE_GRAMMAR},
     {"id": "research_analyst", "name": "Max",
      "description": "Scans sources, filters for what matters, produces structured briefings.",
-     "instructions": RESEARCH_PROMPT},
+     "instructions": RESEARCH_PROMPT + DELIVERABLE_GRAMMAR},
 ]
 
 

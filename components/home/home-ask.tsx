@@ -10,10 +10,13 @@
 
 import React, { useRef, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowPathIcon, EyeSlashIcon, XMarkIcon, FolderIcon } from '@heroicons/react/24/outline';
+import { EyeSlashIcon, FolderIcon } from '@heroicons/react/24/outline';
 import { WorkerMentionInput } from '@/components/workers/worker-mention-input';
 import { ProjectPickerPanel } from '@/components/work/work-row';
 import { AnchoredPopover } from '@/components/ui/anchored-popover';
+import { EmailDraftCard, type EmailDraftData } from '@/components/workers/email-draft-card';
+import { ThreadArtifactsPanel } from '@/components/work/chat-artifact-panel';
+import type { DocumentArtifact } from '@/lib/types/inbox';
 // (BriefingBlock removed from the chat — Phase 3 F2: the prose brief duplicated the deck; the
 // composeBriefing machinery survives as the deck's ordering anchor + the daily report.)
 
@@ -22,9 +25,11 @@ type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
   /** THE ABSORPTION (brick 1): a coworker's own reply carries their name — the one-narrator
    *  law's attribution, now in the Home panel. */
   author?: string;
-  /** Deliverables the coworker produced in THIS exchange — cards POINT (Open →); the full
-   *  viewer/send door lives on the worker's page until the Home grows its own stage. */
-  cards?: Array<{ label: string; sub?: string; href: string }> };
+  /** Deliverables the coworker produced in THIS exchange (brick 3 — the one surface owns its
+   *  outputs): a DOCUMENT card opens the artifact panel HERE (art), a registry render still
+   *  points at its page (href); an EMAIL DRAFT mounts the editable send card INLINE. */
+  cards?: Array<{ label: string; sub?: string; href?: string; art?: { tid: string; id: string } }>;
+  drafts?: Array<{ draft: EmailDraftData; tid: string; agentId: string }> };
 
 // TYPEWRITER — the same streaming feel as the coworker chats. The answer arrives whole (JSON + refs need
 // the full text), so we REVEAL it progressively: ~3 chars/frame, a partial trailing [ref tag is trimmed
@@ -90,7 +95,6 @@ function Answer({ text, refs, onOpen }: { text: string; refs: Ref[]; onOpen: (r:
 // the old one stays durable (the fold's future frame lists them). Persistence ≠ object
 // creation — no task/project is minted by chatting (ladder law 3). ──
 const CHAT_KEY_LS = 'aug-home-chat-key';
-const SCOPE_LS = 'aug-home-chat-scope';
 function chatRoomKey(): string {
   try {
     const existing = localStorage.getItem(CHAT_KEY_LS);
@@ -110,11 +114,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   useEffect(() => {
     try {
       const key = localStorage.getItem(CHAT_KEY_LS);
-      const sc = localStorage.getItem(SCOPE_LS);
-      if (sc) {
-        // A SCOPED conversation rehydrates into its project room (the adoption stuck).
-        try { const s = JSON.parse(sc) as { id?: string; name?: string }; if (s?.id && s?.name) { setScope({ id: s.id, name: s.name }); loadRoom(s.id); } } catch { /* bad blob */ }
-      } else if (key?.startsWith('chat:')) loadRoom(key);
+      if (key?.startsWith('chat:')) loadRoom(key); // loadRoom restores the scope binding itself
       else if (key?.startsWith('worker:')) void loadWorkerRoom(key);
       // A cross-page "open this conversation" intent (sidebar/All-conversations from another
       // route): the panel must actually OPEN — loading turns into a closed card reads as a
@@ -124,17 +124,25 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         setOpen(true);
       }
     } catch { /* no LS */ }
-    const onNew = () => { setTurns([]); setTemp(false); setScope(null); workerRoomRef.current = null; try { localStorage.removeItem(SCOPE_LS); } catch { /* no LS */ } setOpen(true); setTimeout(() => focusComposer(), 60); };
+    const onNew = () => { setTurns([]); setTemp(false); setScope(null); setScopeHint(null); workerRoomRef.current = null; setOpen(true); setTimeout(() => focusComposer(), 60); };
     const onOpen = (e: Event) => {
       const key = (e as CustomEvent).detail?.key as string | undefined;
       if (key?.startsWith('chat:')) { loadRoom(key); setOpen(true); }
       else if (key?.startsWith('worker:')) { void loadWorkerRoom(key); setOpen(true); }
     };
+    // Warm the roster NOW — the submit-time address check must never wait on a cold endpoint
+    // (an 8s /api/workers/mentions was the "nothing happened" lag, found live Aug 6).
+    void getRoster();
+    // Sidebar "Home" IS the close (the idiom: you leave a chat by going home — no in-thread
+    // Close button); the conversation stays and re-opens on composer focus.
+    const onHomeReset = () => setOpen(false);
     window.addEventListener('aug:new-chat', onNew);
     window.addEventListener('aug:open-chat', onOpen);
+    window.addEventListener('augmtd:home-reset', onHomeReset);
     return () => {
       window.removeEventListener('aug:new-chat', onNew);
       window.removeEventListener('aug:open-chat', onOpen);
+      window.removeEventListener('augmtd:home-reset', onHomeReset);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -147,7 +155,14 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     }));
   const loadRoom = (key: string) => {
     workerRoomRef.current = null; // switching to a chief chat room leaves worker mode
-    if (key.startsWith('chat:')) { setScope(null); try { localStorage.removeItem(SCOPE_LS); } catch { /* no LS */ } }
+    if (key.startsWith('chat:')) {
+      setScope(null); setScopeHint(null);
+      // Scope is SERVER TRUTH (the binding) — per-conversation, survives devices; never a
+      // global local cache that bleeds across conversations.
+      fetch(`/api/rooms/adopt?key=${encodeURIComponent(key)}`).then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (d?.scope?.id) setScope({ id: d.scope.id, name: d.scope.name }); })
+        .catch(() => {});
+    }
     fetch(`/api/room/turns?key=${encodeURIComponent(key)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
@@ -171,28 +186,43 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       const roster = await getRoster();
       const name = roster.find((x) => x.id === agentId)?.name
         ?? String((d.thread as { title?: string } | null)?.title ?? 'Coworker').replace(/^Chat with /, '');
-      setTurns((d.messages as Array<{ role: string; content: string }>)
+      const loaded: Turn[] = (d.messages as Array<{ role: string; content: string }>)
         .filter((m) => (m.role === 'user' || m.role === 'assistant') && String(m.content ?? '').trim())
         .map((m) => (m.role === 'user'
           ? { role: 'user' as const, text: m.content }
-          : { role: 'assistant' as const, text: m.content, author: name.split(' ')[0] })));
+          : { role: 'assistant' as const, text: m.content, author: name.split(' ')[0] }));
+      // Brick 3: the thread's documents ride along — openable HERE, never a page away.
+      const arts = ((d.thread as { artifacts?: Array<{ id?: string; title?: string }> } | null)?.artifacts ?? [])
+        .filter((a): a is { id: string; title: string } => !!a.id && !!a.title);
+      if (arts.length) {
+        loaded.push({
+          role: 'assistant', author: name.split(' ')[0], text: '',
+          cards: arts.map((a) => ({ label: a.title, sub: 'document', art: { tid, id: a.id } })),
+        });
+      }
+      setTurns(loaded);
       workerRoomRef.current = { id: agentId, name };
-      setScope(null); // a coworker DM is addressed, never project-scoped from here
-      try { localStorage.setItem(`aug-dm-${agentId}`, tid); localStorage.setItem(CHAT_KEY_LS, key); localStorage.removeItem(SCOPE_LS); } catch { /* no LS */ }
+      setScope(null); setScopeHint(null); // a coworker DM is addressed, never project-scoped from here
+      try { localStorage.setItem(dmKey(agentId), tid); localStorage.setItem(CHAT_KEY_LS, key); } catch { /* no LS */ }
     } catch { /* the click already opened the panel — an empty load stays honest */ }
   };
-  // THE HISTORY PICKER — thread management lives INSIDE the chat panel (the owner's law: threads
-  // belong to the converged chat section, never a nav surface). Lazily fetched, quiet, Claude-shaped.
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [chats, setChats] = useState<Array<{ key: string; label: string; at: string }> | null>(null);
-  const toggleHistory = () => {
-    setHistoryOpen((v) => !v);
-    if (!chats) {
-      fetch('/api/rooms/recent').then((r) => (r.ok ? r.json() : null))
-        .then((d) => setChats(Array.isArray(d?.chats) ? d.chats : []))
-        .catch(() => setChats([]));
+  // THE HISTORY PICKER DIED (owner, Aug 7): the SIDEBAR owns history — Recent + All
+  // conversations are the one thread list; a second picker inside the panel was redundant.
+  // ── THE ARTIFACT PANEL (brick 3 — the one surface owns its outputs): a document card opens
+  // the SAME ThreadArtifactsPanel the worker page uses, as a right-side overlay HERE — viewer,
+  // versions, download, delete, all without leaving the conversation. ──
+  const [artifactPanel, setArtifactPanel] = useState<{ thread: { id: string; title: string; artifacts?: DocumentArtifact[] }; initialId: string | null } | null>(null);
+  const openArtifact = async (tid: string, artifactId: string) => {
+    try {
+      const d = await fetch(`/api/work/threads/${tid}/messages`).then((r) => (r.ok ? r.json() : null));
+      const th = d?.thread as { id: string; title?: string; artifacts?: DocumentArtifact[] } | null;
+      if (!th) throw new Error();
+      setArtifactPanel({ thread: { id: th.id, title: th.title ?? 'Work', artifacts: th.artifacts ?? [] }, initialId: artifactId });
+    } catch {
+      setTurns((prev) => [...prev, { role: 'assistant', text: "Couldn't open that document just now — try again." }]);
     }
   };
+
   // ── THE SCOPE CHIP + THE ADOPTION CASCADE (one-surface § context controls): the conversation
   // header shows its scope ("No project · Add to…" / "<Project> ✓"), settable at ANY time.
   // Adopting moves the conversation's turns INTO the project room (the one membership machinery
@@ -201,20 +231,27 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // the DOOR to the room. ──
   const [scope, setScope] = useState<{ id: string; name: string } | null>(null);
   const [scopeOpen, setScopeOpen] = useState(false);
+  // THE RECOGNITION NUDGE: the ask response names the project the conversation is ABOUT
+  // (deterministic focus match) — the chip turns into an OFFER ("About X? · File it"); one
+  // click adopts, ✕ dismisses. A suggestion, never an auto-file.
+  const [scopeHint, setScopeHint] = useState<{ id: string; name: string } | null>(null);
   const scopeChipRef = useRef<HTMLSpanElement>(null);
-  const adopt = async (e: { id: string; name: string }) => {
+  // File / re-file / un-file — one binding call (v2 link model: the conversation keeps its
+  // key and turns; the project holds the binding; all three are one upsert/delete).
+  const adopt = async (e: { id: string; name: string } | null) => {
     setScopeOpen(false);
+    const prev = scope;
+    setScope(e); // optimistic — the binding call converges
     try {
       const res = await fetch('/api/rooms/adopt', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomKey: chatRoomKey(), entityId: e.id }),
+        body: JSON.stringify({ roomKey: chatRoomKey(), entityId: e?.id ?? null }),
       });
       if (!res.ok) throw new Error();
-      setScope(e);
-      try { localStorage.setItem(SCOPE_LS, JSON.stringify(e)); localStorage.setItem(CHAT_KEY_LS, e.id); } catch { /* no LS */ }
       window.dispatchEvent(new CustomEvent('aug:conversation-changed'));
     } catch {
-      setTurns((prev) => [...prev, { role: 'assistant', text: "Filing into the project didn't go through — try again." }]);
+      setScope(prev);
+      setTurns((p) => [...p, { role: 'assistant', text: "That project change didn't go through — try again." }]);
     }
   };
   const createAndAdopt = async (name: string) => {
@@ -239,8 +276,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       fetch('/api/room/turns', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          // Scoped conversations persist INTO the project room — one conversation, one home.
-          roomKey: scope ? scope.id : chatRoomKey(), role, text,
+          // v2 link model: turns ALWAYS live on the chat's own key — the binding, not the
+          // turns' address, says which project the conversation belongs to.
+          roomKey: chatRoomKey(), role, text,
           refs: refs?.length ? refs.map((r) => ({ label: r.label, href: r.href })) : undefined,
         }),
       }).then(() => {
@@ -306,17 +344,23 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     return roster.find((r) => r.name.split(' ')[0].toLowerCase() === w) ?? null;
   };
   // Get-or-create the coworker's Home DM thread (cached; the worker's page shows the same thread).
+  // The DM pointer — v2 key: v1 took threads[0] (most-recent) and could GLUE the Home DM onto a
+  // delegation/report thread ("Handed to Clara: …", found live Aug 7). The DM is its own
+  // "Chat with <name>" thread — found by title, created if absent; old v1 keys are orphaned.
+  const dmKey = (agentId: string) => `aug-dm2-${agentId}`;
   const dmThread = async (w: { id: string; name: string }): Promise<string | null> => {
-    const k = `aug-dm-${w.id}`;
+    const k = dmKey(w.id);
     try { const c = localStorage.getItem(k); if (c) return c; } catch { /* no LS */ }
     let id: string | null = null;
+    const title = `Chat with ${w.name.split(' ')[0]}`;
     try {
       const d = await fetch(`/api/work/threads?agent_id=${w.id}`).then((r) => (r.ok ? r.json() : null));
-      id = (d?.threads?.[0]?.id as string) ?? null;
+      id = ((d?.threads ?? []) as Array<{ id: string; title?: string | null }>)
+        .find((t) => String(t.title ?? '').startsWith('Chat with'))?.id ?? null;
       if (!id) {
         const c = await fetch('/api/work/threads', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: `Chat with ${w.name.split(' ')[0]}`, agentId: w.id }),
+          body: JSON.stringify({ title, agentId: w.id }),
         }).then((r) => (r.ok ? r.json() : null));
         id = (c?.thread?.id as string) ?? null;
       }
@@ -326,11 +370,11 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   };
   const askWorker = async (
     question: string, w: { id: string; name: string },
-    extra?: { mentions?: Array<{ id: string; type: string; label: string }>; files?: File[] },
+    extra?: { mentions?: Array<{ id: string; type: string; label: string }>; files?: File[]; echoed?: boolean },
   ) => {
     const fileNote = extra?.files?.length ? ` (attached: ${extra.files.map((f) => f.name).join(', ')})` : '';
     setOpen(true);
-    setTurns((prev) => [...prev, { role: 'user', text: question + fileNote }]);
+    if (!extra?.echoed) setTurns((prev) => [...prev, { role: 'user', text: question + fileNote }]);
     setTurns((prev) => [...prev, { role: 'assistant', text: '', author: w.name }]);
     setBusy(true);
     const patchLast = (text: string) => setTurns((prev) => {
@@ -367,12 +411,17 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       const decoder = new TextDecoder();
       let acc = ''; let lineBuffer = '';
       const cards: NonNullable<Turn['cards']> = [];
+      const drafts: NonNullable<Turn['drafts']> = [];
       const threadHref = `/workers?worker=${w.id}&thread=${tid}`;
       const first = w.name.split(' ')[0];
+      // THE ARTIFACT ARRIVES OPEN (owner, Aug 7 — "I thought it would open the right panel
+      // automatically"): the FIRST document of an exchange summons the panel itself; the card
+      // stays as the durable re-open affordance.
+      let autoOpened = false;
       const setCards = () => setTurns((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
-        if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, cards: [...cards] };
+        if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, cards: [...cards], drafts: [...drafts] };
         return next;
       });
       while (true) {
@@ -386,30 +435,32 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           try {
             const event = JSON.parse(line.slice(6)) as {
               type?: string; delta?: string; label?: string; name?: string;
-              artifact?: { id?: string; title?: string; type?: string }; draft?: { subject?: string };
+              artifact?: { id?: string; title?: string; type?: string }; draft?: EmailDraftData;
             };
             if (event.type === 'text') { acc += event.delta ?? ''; patchLast(acc); }
             else if (event.type === 'text_clear') { acc = ''; patchLast(acc); }
             else if (event.type === 'tool_start') patchLast(`${acc}${acc ? '\n\n' : ''}· ${event.label ?? event.name ?? 'working'}…`);
             else if (event.type === 'tool_result') patchLast(acc);
-            // THE DELIVERABLES SURFACE (the room grammar, on the Home): cards POINT at what was
-            // produced; the full viewer / the editable send card live on the worker's page.
-            else if (event.type === 'artifact_ready' && event.artifact?.title) {
-              cards.push({ label: event.artifact.title, sub: `document · by ${first}`, href: threadHref }); setCards();
+            // THE DELIVERABLES SURFACE (brick 3 — the one surface owns its outputs): a document
+            // opens the artifact panel HERE; an email draft mounts the SAME editable send card
+            // the worker page uses, inline. Only registry renders still point at their page.
+            else if (event.type === 'artifact_ready' && event.artifact?.title && event.artifact.id) {
+              cards.push({ label: event.artifact.title, sub: `document · by ${first}`, art: { tid, id: event.artifact.id } }); setCards();
+              if (!autoOpened) { autoOpened = true; void openArtifact(tid, event.artifact.id); }
             }
             else if (event.type === 'artifact' && event.artifact) {
               cards.push({ label: event.artifact.title ?? event.artifact.type ?? 'Prepared work', sub: `by ${first}`, href: threadHref }); setCards();
             }
-            else if (event.type === 'email_draft') {
-              cards.push({ label: event.draft?.subject ? `Email drafted — "${String(event.draft.subject).slice(0, 60)}"` : 'Email drafted', sub: `review & send on ${first}'s page`, href: threadHref }); setCards();
+            else if (event.type === 'email_draft' && event.draft) {
+              drafts.push({ draft: event.draft, tid, agentId: w.id }); setCards();
             }
           } catch { /* partial frame */ }
         }
       }
-      patchLast(acc.trim() || (cards.length ? `${first} produced the work below.` : `${first} finished without a reply — their page has the full thread.`));
-      if (cards.length) setCards();
+      patchLast(acc.trim() || (cards.length || drafts.length ? `${first} produced the work below.` : `${first} finished without a written reply.`));
+      if (cards.length || drafts.length) setCards();
     } catch {
-      patchLast(`Couldn't reach ${w.name.split(' ')[0]} right now — try again, or open their page from Settings → Team.`);
+      patchLast(`Couldn't reach ${w.name.split(' ')[0]} right now — try again in a moment.`);
     } finally { setBusy(false); }
   };
 
@@ -452,41 +503,55 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       return;
     }
     setPendingFiles([]);
-    if (!temp) {
-      // Address resolution: an explicit @-mention wins → the OPEN worker conversation continues
-      // (worker mode) → the typed address ("Clara, …") → else the chief.
-      const cw = mentions.find((m) => m.type === 'coworker');
-      const w = cw ? { id: cw.id, name: cw.label }
-        : (workerRoomRef.current ?? detectAddress(question, await getRoster()));
-      if (w) {
-        await askWorker(question || 'Here are the files.', w, {
-          mentions: mentions.filter((m) => !(m.type === 'coworker' && m.id === w.id)),
-          files,
-        });
-        return;
+    // THE INSTANT ECHO (owner, Aug 6 — "looked like nothing happened"): the submitted turn and
+    // the busy line land SYNCHRONOUSLY, before any routing/roster/upload awaits. Feedback is
+    // never gated on the network.
+    const fileNote = files.length ? ` (attached: ${files.map((f) => f.name).join(', ')})` : '';
+    const shown = (question || 'Attached files.') + fileNote;
+    setOpen(true);
+    setTurns((prev) => [...prev, { role: 'user', text: shown }]);
+    setBusy(true);
+    try {
+      if (!temp) {
+        // Address resolution: an explicit @-mention wins → the OPEN worker conversation continues
+        // (worker mode) → the typed address ("Clara, …") → else the chief.
+        const cw = mentions.find((m) => m.type === 'coworker');
+        const w = cw ? { id: cw.id, name: cw.label }
+          : (workerRoomRef.current ?? detectAddress(question, await getRoster()));
+        if (w) {
+          await askWorker(question || 'Here are the files.', w, {
+            mentions: mentions.filter((m) => !(m.type === 'coworker' && m.id === w.id)),
+            files, echoed: true,
+          });
+          return;
+        }
       }
-    }
-    // Chief path — KB-upload files first; mention labels ride as grounding hints.
+      await askChief(question, files, mentions, shown);
+    } finally { setBusy(false); setStage(null); }
+  };
+
+  // Chief path — KB-upload files first; mention labels ride as grounding hints.
+  const askChief = async (
+    question: string, files: File[],
+    mentions: Array<{ id: string; type: 'coworker' | 'task' | 'document'; label: string }>, shown: string,
+  ) => {
     let sendQ = question;
-    let fileNote = '';
     if (files.length) {
+      setStage('Adding the files to your knowledge base…');
       const done = await uploadToKB(files);
-      if (done.length) { sendQ += `\n[Attached to the knowledge base just now: ${done.join(', ')}]`; fileNote = ` (attached: ${done.join(', ')})`; }
+      if (done.length) { sendQ += `\n[Attached to the knowledge base just now: ${done.join(', ')}]`; }
       else if (!question) { setTurns((prev) => [...prev, { role: 'assistant', text: 'The upload did not go through — try again, or use the Knowledge page.' }]); return; }
     }
     const hints = mentions.filter((m) => m.type !== 'coworker').map((m) => m.label);
     if (hints.length) sendQ += ` (about: ${hints.join('; ')})`;
+    // History excludes the just-echoed user turn (it rides as `question`).
     const history = turns.map((t) => ({ role: t.role, text: t.text }));
-    const shown = (question || 'Attached files.') + fileNote;
-    setOpen(true);
-    setTurns((prev) => [...prev, { role: 'user', text: shown }]);
     persistTurn('user', shown);
-    setBusy(true);
     try {
       // STREAMING ASK (Aug 6): SSE — `progress` events narrate the core's live stage (the busy
       // line speaks them), `done` carries the answer. A non-SSE response (error JSON) falls back.
       const res = await fetch('/api/home/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(scope ? { entityId: scope.id } : {}) }) });
-      let d: { answer?: string; refs?: Ref[] } = {};
+      let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string } } = {};
       if (res.body && res.headers.get('content-type')?.includes('text/event-stream')) {
         const reader = res.body.getReader();
         const dec = new TextDecoder();
@@ -500,7 +565,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             const line = f.split('\n').find((l) => l.startsWith('data: '));
             if (!line) continue;
             try {
-              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[] };
+              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string } };
               if (ev.type === 'progress' && ev.label) setStage(ev.label);
               else if (ev.type === 'done') d = ev;
             } catch { /* partial frame */ }
@@ -511,6 +576,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       }
       setTurns((prev) => { pendingAnimate.current = prev.length; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [] }]; });
       if (d.answer) persistTurn('system', d.answer, d.refs ?? []);
+      if (d.focus && !scope && !temp) setScopeHint(d.focus);
     } catch {
       setTurns((prev) => [...prev, { role: 'assistant', text: "Something went wrong reaching your brain — try again." }]);
     } finally { setBusy(false); setStage(null); }
@@ -531,6 +597,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('aug:chat-active', { detail: { active: showThread } }));
   }, [showThread]);
+  // Unmount (a lens switch) hands the page back — a stale takeover must never hide the header.
+  useEffect(() => () => { window.dispatchEvent(new CustomEvent('aug:chat-active', { detail: { active: false } })); }, []);
   // Re-pin to the latest turn when the thread reveals (the grid transition needs a beat).
   useEffect(() => { const tm = window.setTimeout(pinToEnd, 320); return () => window.clearTimeout(tm); }, [showThread]); // eslint-disable-line react-hooks/exhaustive-deps
   // THE CHAT CARD (final): standard chat anatomy — the CONVERSATION ABOVE, the INPUT AT THE BOTTOM
@@ -546,64 +614,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         {/* The thread — above the input, smooth open/close (grid-rows), bounded + self-scrolling. */}
         <div className={`grid transition-all duration-300 ease-out ${showThread ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
           <div className="overflow-hidden min-h-0">
-            <div className="flex items-center justify-between mb-1">
-              {/* THE HISTORY PICKER — threads managed inside the chat panel (Claude-shaped). */}
-              <div className="relative flex items-center gap-3">
-                <button onClick={toggleHistory} className="inline-flex items-center gap-1 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-700 transition-colors">
-                  History
-                </button>
-                {/* THE SCOPE CHIP — the conversation's project scope, settable any time. Scoped,
-                    the chip is the DOOR to the project room. Hidden in temp (nothing persists to
-                    adopt) and in a coworker DM (addressed, not scoped). */}
-                {!temp && !workerRoomRef.current && (
-                  <span ref={scopeChipRef} className="relative inline-flex">
-                    {scope ? (
-                      <button onClick={() => router.push(`/home?view=projects&entity=${scope.id}`)} title="Open the project room"
-                        className="inline-flex items-center gap-1 text-[11.5px] font-medium text-indigo-600 hover:text-indigo-800 transition-colors">
-                        <FolderIcon className="w-3.5 h-3.5" /> {scope.name} ✓
-                      </button>
-                    ) : (
-                      <button onClick={() => setScopeOpen((v) => !v)}
-                        className="inline-flex items-center gap-1 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-700 transition-colors">
-                        <FolderIcon className="w-3.5 h-3.5" /> No project · Add to…
-                      </button>
-                    )}
-                    <AnchoredPopover anchorRef={scopeChipRef} open={scopeOpen} onClose={() => setScopeOpen(false)} align="left" width={240}>
-                      <ProjectPickerPanel onSelect={(e) => { void adopt(e); }} onCreateProject={(n) => { void createAndAdopt(n); }} />
-                    </AnchoredPopover>
-                  </span>
-                )}
-                {historyOpen && (
-                  <div className="absolute left-0 top-full mt-1.5 z-30 w-72 max-w-[80vw] rounded-xl border border-neutral-200 bg-white shadow-lg py-1.5">
-                    {chats === null && <p className="px-3.5 py-2 text-[12px] text-neutral-400">Loading…</p>}
-                    {chats?.length === 0 && <p className="px-3.5 py-2 text-[12px] text-neutral-400">No earlier conversations yet.</p>}
-                    {(chats ?? []).map((c) => (
-                      <button key={c.key}
-                        onClick={() => { loadRoom(c.key); setHistoryOpen(false); }}
-                        className="w-full text-left px-3.5 py-2 hover:bg-neutral-50 transition-colors">
-                        <span className="block text-[12.5px] text-neutral-700 truncate">{c.label}</span>
-                        <span className="block text-[11px] text-neutral-400">{c.at.slice(0, 10)}</span>
-                      </button>
-                    ))}
-                    {/* ONE thread system: the picker and the full view are the same story. */}
-                    <a href="/home?view=conversations" className="block px-3.5 py-2 text-[11.5px] text-neutral-400 hover:text-neutral-700 border-t border-neutral-100 transition-colors">
-                      All conversations →
-                    </a>
-                  </div>
-                )}
-              </div>
-              <span className="flex items-center gap-3">
-                {temp && <span className="flex items-center gap-1 text-[11px] font-medium text-amber-500" title="This conversation won't be saved and won't appear in History"><EyeSlashIcon className="w-3.5 h-3.5" />Temporary — not saved</span>}
-                <button onClick={() => { setTurns([]); setTemp(false); setScope(null); setHistoryOpen(false); workerRoomRef.current = null; try { localStorage.removeItem(CHAT_KEY_LS); localStorage.removeItem(SCOPE_LS); } catch { /* no LS */ } }} className="inline-flex items-center gap-1 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-700 transition-colors">
-                  <ArrowPathIcon className="w-3.5 h-3.5" /> New
-                </button>
-                {/* Close hands the dashboard back — the conversation STAYS (focus the composer
-                    to return to it); leaving is a decision, never a hover accident. */}
-                <button onClick={() => setOpen(false)} className="inline-flex items-center gap-1 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-700 transition-colors">
-                  <XMarkIcon className="w-3.5 h-3.5" /> Close
-                </button>
-              </span>
-            </div>
+            {/* NO conversation chrome (owner, Aug 7 — "is New/Close best practice? that's not
+                how others do it"): the SIDEBAR is the navigation — Home shows the day, New chat
+                starts fresh, All conversations manages. The thread is just the thread. */}
             {/* THE TAKEOVER (Claude-feel): a live conversation gets a CHAT'S room to breathe —
                 tall column, same smooth grid morph in, composer fixed as the floor. */}
             <div ref={scrollRef} className="space-y-4 max-h-[calc(100vh-250px)] min-h-[40vh] overflow-y-auto [scrollbar-width:thin] pr-1 pb-3">
@@ -616,9 +629,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                         live, so no typewriter re-reveal. */}
                     {t.author && <p className="mb-1 text-[11.5px] font-semibold text-indigo-600">{t.author.split(' ')[0]}</p>}
                     <AnimatedAnswer text={t.text} refs={t.refs ?? []} onOpen={openRef} animate={!t.author && i === animateIdx} />
-                    {/* Deliverable cards at the exchange's now edge — cards POINT (Open →). */}
+                    {/* Deliverable cards at the exchange's now edge — a DOCUMENT opens the
+                        artifact panel HERE (brick 3); registry renders still point away. */}
                     {t.cards?.map((c, j) => (
-                      <button key={j} onClick={() => router.push(c.href)}
+                      <button key={j} onClick={() => { if (c.art) void openArtifact(c.art.tid, c.art.id); else if (c.href) router.push(c.href); }}
                         className="mt-2 w-full flex items-center justify-between gap-2 rounded-xl border border-indigo-100 bg-indigo-50/40 px-3.5 py-2.5 text-left hover:border-indigo-300 transition-colors">
                         <span className="min-w-0">
                           <span className="block truncate text-[12.5px] font-medium text-neutral-800">{c.label}</span>
@@ -626,6 +640,11 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                         </span>
                         <span className="flex-shrink-0 text-[12px] font-semibold text-indigo-600">Open →</span>
                       </button>
+                    ))}
+                    {/* An email draft is the SAME editable send card the worker page uses —
+                        review, edit, and the user-gated Send, inline in this exchange. */}
+                    {t.drafts?.map((d, j) => (
+                      <EmailDraftCard key={d.draft.id ?? j} draft={d.draft} threadId={d.tid} agentId={d.agentId} />
                     ))}
                   </div>
                 )
@@ -667,9 +686,67 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             onAttach={(files) => setPendingFiles((p) => [...p, ...files])}
             attachments={pendingFiles.map((f, i) => ({ id: `${i}-${f.name}`, name: f.name, size: f.size }))}
             onRemoveAttachment={(id) => setPendingFiles((p) => p.filter((f, i) => `${i}-${f.name}` !== id))}
+            accessory={temp ? (
+              <span className="flex items-center gap-1 px-2.5 py-1.5 text-[11.5px] font-medium text-amber-500" title="This conversation won't be saved and won't appear in your conversations">
+                <EyeSlashIcon className="w-3.5 h-3.5" />Temporary — not saved
+              </span>
+            ) : !workerRoomRef.current ? (
+              // THE SCOPE CHIP lives WITH the composer (owner, Aug 7): where the words are
+              // written is where their destination is set. Scoped, the chip is the room's door.
+              <span ref={scopeChipRef} className="relative inline-flex">
+                {scope ? (
+                  <span className="flex items-center rounded-lg hover:bg-indigo-50/60 transition-colors">
+                    <button onClick={() => router.push(`/home?view=projects&entity=${scope.id}`)} title="Open the project room"
+                      className="flex items-center gap-1 pl-2.5 pr-1 py-1.5 text-[12px] text-indigo-600 hover:text-indigo-800 transition-colors">
+                      <FolderIcon className="w-3.5 h-3.5" /> {scope.name} ✓
+                    </button>
+                    {/* Manage — change or remove the project (the binding is editable, any time). */}
+                    <button onClick={() => setScopeOpen((v) => !v)} title="Change or remove the project"
+                      className="pr-2 pl-0.5 py-1.5 text-[10px] text-indigo-300 hover:text-indigo-600 transition-colors">▾</button>
+                  </span>
+                ) : scopeHint ? (
+                  <span className="flex items-center rounded-lg bg-indigo-50/70">
+                    <button onClick={() => { const h = scopeHint; setScopeHint(null); void adopt(h); }}
+                      title={`File this conversation into ${scopeHint.name} — it moves into the project's room`}
+                      className="flex items-center gap-1 pl-2.5 pr-1 py-1.5 text-[12px] font-medium text-indigo-700 hover:text-indigo-900 transition-colors">
+                      <FolderIcon className="w-3.5 h-3.5" /> About {scopeHint.name}? · File it
+                    </button>
+                    <button onClick={() => setScopeHint(null)} title="Keep it loose"
+                      className="pr-2 pl-1 py-1.5 text-indigo-300 hover:text-indigo-600 transition-colors">×</button>
+                  </span>
+                ) : (
+                  <button onClick={() => setScopeOpen((v) => !v)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 transition-colors">
+                    <FolderIcon className="w-3.5 h-3.5" /> {hasThread ? 'No project' : 'Project'}
+                  </button>
+                )}
+                <AnchoredPopover anchorRef={scopeChipRef} open={scopeOpen} onClose={() => setScopeOpen(false)} align="left" width={240}>
+                  <ProjectPickerPanel
+                    onSelect={(e) => { void adopt(e); }}
+                    onCreateProject={(n) => { void createAndAdopt(n); }}
+                    {...(scope ? { onClear: () => { void adopt(null); }, clearLabel: `Remove from ${scope.name}` } : {})}
+                  />
+                </AnchoredPopover>
+              </span>
+            ) : undefined}
           />
         </div>
       </div>
+      {/* THE ARTIFACT PANEL OVERLAY (brick 3): the same panel the worker page docks, summoned
+          over the conversation — the document never requires leaving the one surface. */}
+      {artifactPanel && (
+        <>
+          <div className="fixed inset-0 z-40 bg-neutral-900/20" onClick={() => setArtifactPanel(null)} aria-hidden />
+          <div className="fixed right-0 top-0 z-50 h-screen w-[min(620px,92vw)] shadow-2xl bg-neutral-50">
+            <ThreadArtifactsPanel
+              thread={artifactPanel.thread}
+              onClose={() => setArtifactPanel(null)}
+              initialDetailId={artifactPanel.initialId}
+              onArtifactsUpdate={(arts) => setArtifactPanel((p) => (p ? { ...p, thread: { ...p.thread, artifacts: arts } } : p))}
+            />
+          </div>
+        </>
+      )}
     </section>
   );
 }

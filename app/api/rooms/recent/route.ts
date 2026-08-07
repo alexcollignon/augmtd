@@ -69,14 +69,22 @@ export async function GET(request: NextRequest) {
       .slice(0, 5);
 
     // THE CHAT HISTORY (the durable Home chat's list): past `chat:` rooms, titled by their own
-    // first user turn.
+    // first user turn — unless the user RENAMED them (item_plans kind 'room_title' overrides).
     const chatKeys = keys.filter((k) => k.startsWith('chat:')).slice(0, all ? 40 : 8);
     let chats: Array<{ key: string; label: string; at: string }> = [];
     if (chatKeys.length) {
-      const { data: chatTurns } = await supabase.from('room_turns')
-        .select('room_key, role, text, created_at')
-        .eq('user_id', user.id).in('room_key', chatKeys)
-        .order('created_at', { ascending: true }).limit(200);
+      const [{ data: chatTurns }, { data: titleRows }] = await Promise.all([
+        supabase.from('room_turns')
+          .select('room_key, role, text, created_at')
+          .eq('user_id', user.id).in('room_key', chatKeys)
+          .order('created_at', { ascending: true }).limit(200),
+        supabase.from('item_plans').select('entity_id, tasks')
+          .eq('user_id', user.id).eq('kind', 'room_title').in('entity_id', chatKeys),
+      ]);
+      const customTitle = new Map<string, string>();
+      for (const r of (titleRows ?? []) as Array<{ entity_id: string; tasks: { title?: string } | null }>) {
+        if (r.tasks?.title) customTitle.set(r.entity_id, r.tasks.title);
+      }
       const firstByKey = new Map<string, { label: string; at: string }>();
       for (const t of (chatTurns ?? []) as Array<{ room_key: string; role: string; text: string; created_at: string }>) {
         if (!firstByKey.has(t.room_key) && t.role === 'user' && t.text?.trim()) {
@@ -84,7 +92,7 @@ export async function GET(request: NextRequest) {
         }
       }
       chats = chatKeys
-        .map((k) => { const f = firstByKey.get(k); return f ? { key: k, label: f.label, at: f.at } : null; })
+        .map((k) => { const f = firstByKey.get(k); return f ? { key: k, label: customTitle.get(k) ?? f.label, at: f.at } : null; })
         .filter((c): c is { key: string; label: string; at: string } => !!c);
     }
 
