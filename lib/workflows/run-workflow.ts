@@ -322,11 +322,15 @@ export interface RunWorkflowOptions {
   isTest?: boolean;
   /** If triggered from a chat thread, post a completion message back into this thread. */
   sourceThreadId?: string;
+  /** THE APPROVAL RESUME (production arc step 2): this run was parked `awaiting_approval` —
+   *  seed the completed step outputs from the run row and continue PAST the approval step
+   *  that parked it. Requires runId. */
+  resumeFromApproval?: boolean;
 }
 
 export interface RunWorkflowResult {
   runId: string;
-  status: 'succeeded' | 'failed';
+  status: 'succeeded' | 'failed' | 'awaiting_approval';
   threadId: string | null;
   error?: string;
 }
@@ -395,12 +399,57 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
   const steps = (workflow.steps || []) as Workflow['steps'];
   const stepOutputs: StepOutput[] = [];
   let runError: string | null = null;
+  // THE APPROVAL RESUME: seed the already-completed outputs and note WHICH approval step the
+  // park happened at (the first approval step at/after the seeded boundary) — that one passes
+  // as approved; any later approval step parks again, naturally.
+  let resumeApprovalAt = -1;
+  if (opts.resumeFromApproval && runId) {
+    const { data: parked } = await admin.from('workflow_runs').select('step_outputs, status').eq('id', runId).maybeSingle();
+    const seeded = (parked?.step_outputs ?? []) as StepOutput[];
+    stepOutputs.push(...seeded);
+    for (let j = stepOutputs.length; j < steps.length; j++) {
+      if ((steps[j] as { type?: string }).type === 'approval') { resumeApprovalAt = j; break; }
+    }
+  }
   const workerAgentId = (workflow as Workflow & { agent_id?: string }).agent_id ?? undefined;
   const workerInstructions = (workflow as Workflow & { worker_instructions?: string | null }).worker_instructions ?? null;
   const skillIds = (workflow as Workflow & { skill_ids?: string[] }).skill_ids ?? undefined;
 
-  for (let i = 0; i < steps.length; i++) {
+  for (let i = stepOutputs.length; i < steps.length; i++) {
     const step = steps[i];
+    // ── THE APPROVAL STEP (production arc step 2 — pause/resume, the Executor-validated
+    // shape). OPT-IN BY CONSTRUCTION: only a workflow that explicitly CONTAINS this step ever
+    // parks (the pilot outcome contract — an existing pilot can never hit this branch). ──
+    if ((step as { type?: string }).type === 'approval') {
+      const instruction = String((step as { instruction?: string }).instruction ?? '').slice(0, 300);
+      if (opts.isTest) {
+        // Test/cadence-simulation runs never park (a paused simulation proves nothing).
+        stepOutputs.push({ step_id: step.id, step_type: 'approval', label: step.label || 'Approval', output: '[Approval gate — auto-passed in test mode]' });
+        continue;
+      }
+      if (i === resumeApprovalAt) {
+        // The approve that resumed this run passes exactly THIS gate — once.
+        stepOutputs.push({ step_id: step.id, step_type: 'approval', label: step.label || 'Approval', output: `[Approved by the user${instruction ? ` — ${instruction}` : ''}]` });
+        continue;
+      }
+      // PARK: snapshot the completed outputs, mark the run, surface the ask, and stop.
+      // LOUD ON FAILURE (found live: a status CHECK constraint silently refused the park and
+      // the run pretended to wait): a park that cannot persist is a FAILED run, never a lie.
+      const { error: parkErr } = await admin.from('workflow_runs').update({
+        status: 'awaiting_approval', step_outputs: stepOutputs,
+      }).eq('id', runId);
+      if (parkErr) {
+        runError = `Approval step could not park the run (${parkErr.message}). Apply migration 20260808_workflow_runs_approval_status.sql.`;
+        break;
+      }
+      try {
+        const { narrateApprovalAsk } = await import('@/lib/workflows/standing');
+        const prev = stepOutputs[stepOutputs.length - 1]?.output;
+        const preview = (typeof prev === 'string' ? prev : JSON.stringify(prev ?? '')).slice(0, 400);
+        await narrateApprovalAsk(admin, workflow, { runId: runId!, instruction, preview });
+      } catch { /* the parked status is the source of truth; the ask is a surface */ }
+      return { runId: runId!, status: 'awaiting_approval', threadId };
+    }
     const out = await executeStep(step, {
       userId: workflow.user_id,
       runnerId,

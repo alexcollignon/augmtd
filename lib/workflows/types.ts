@@ -24,7 +24,7 @@ export type WorkflowTrigger = ManualTrigger | ScheduleTrigger;
 
 // ── Steps ──────────────────────────────────────────────────────────────────────
 
-export type StepType = 'tool' | 'ai' | 'agent';
+export type StepType = 'tool' | 'ai' | 'agent' | 'approval';
 
 // Tool step — deterministic data fetch via the MCP registry or a built-in tool id.
 export interface ToolStep {
@@ -59,7 +59,21 @@ export interface AgentStep {
   prompt: string;                  // what we're asking this agent to do this step
 }
 
-export type WorkflowStep = ToolStep | AIStep | AgentStep;
+// Approval step — THE HUMAN GATE (production arc step 2, the Executor-validated shape): the run
+// PARKS here (`awaiting_approval`, outputs snapshotted), the ask lands in the standing
+// commitment's room + on the deck as due-today debt, and an explicit approve RESUMES the run
+// where it stopped; reject ends it honestly. OPT-IN BY CONSTRUCTION (the pilot outcome
+// contract): only a workflow that explicitly CONTAINS this step ever pauses — never
+// retrofitted onto existing steps, never implied by a send.
+export interface ApprovalStep {
+  type: 'approval';
+  id: string;
+  label: string;
+  /** What the approver is deciding — rendered on the ask ("Review the briefing before it goes to the client list"). */
+  instruction?: string;
+}
+
+export type WorkflowStep = ToolStep | AIStep | AgentStep | ApprovalStep;
 
 // ── Output ─────────────────────────────────────────────────────────────────────
 

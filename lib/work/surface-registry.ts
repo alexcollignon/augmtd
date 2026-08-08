@@ -227,6 +227,53 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     blurb: 'RUN CODE over files/data we have (parse/verify/transform spreadsheets, PDFs, CSVs; compute numbers; produce a data file) — sandboxed, cannot send anything',
   },
 
+  // ── THE PRODUCTION ARC step 1 (Aug 8) — the WORKFLOW STEP SPACE joins the one registry.
+  // Workflows were the last consumer of the pre-registry flat toolkit: the picker, the step
+  // executor, and generate-config each carried their own list. Now every pipeline step id has a
+  // row here (exposure 'workflow'); the executor GATES on it (a tool without a row does not run);
+  // the smoke parity check keeps picker/prompt lists from drifting. Reads reversible; the only
+  // send-shaped step (slack_send) is irreversible → the coming APPROVAL STEP's gate. ──
+  read_kb_file: {
+    intent: 'read one knowledge-base file in full by id (a pipeline source)',
+    tool: 'read_kb_file', built: true, kind: 'atomic', irreversible: false, feature: 'drive', exposure: ['workflow'],
+    blurb: 'READ one knowledge-base file in full (pipeline source)',
+  },
+  fetch_url: {
+    intent: 'read the full current content of a specific web page every run',
+    tool: 'fetch_url', built: true, kind: 'atomic', irreversible: false, feature: null, exposure: ['workflow'],
+    blurb: 'READ a specific web page (date-stamped; never a news landing page — use rss_feed)',
+  },
+  rss_feed: {
+    intent: 'follow a news or blog feed — new items only since last run, each with its publication date',
+    tool: 'rss_feed', built: true, kind: 'atomic', irreversible: false, feature: null, exposure: ['workflow'],
+    blurb: 'FOLLOW an RSS/Atom feed (new items since last run, dated; category_filter for site-wide feeds)',
+  },
+  browser_fetch: {
+    intent: 'fetch a JS-heavy page with a real browser when plain fetch fails',
+    tool: 'browser_fetch', built: true, kind: 'atomic', irreversible: false, feature: null, exposure: ['workflow'],
+    blurb: 'FETCH a JS-rendered page with a headless browser (fallback for dynamic sites)',
+  },
+  get_pt_tenders: {
+    intent: 'fetch Portuguese public tenders/contracts from Portal Base (Base.gov.pt)',
+    tool: 'get_pt_tenders', built: true, kind: 'atomic', irreversible: false, feature: null, exposure: ['workflow'],
+    blurb: 'FETCH Portuguese public tenders from Base.gov.pt (day-window enforced code-side)',
+  },
+  get_workflow_output: {
+    intent: "pull the latest output of another task/workflow as context (build on a teammate's work)",
+    tool: 'get_workflow_output', built: true, kind: 'atomic', irreversible: false, feature: null, exposure: ['workflow'],
+    blurb: "USE another task's latest output as context (cross-task composition)",
+  },
+  slack_read_channel: {
+    intent: 'read recent messages from a Slack channel as a pipeline source',
+    tool: 'slack_read_channel', built: true, kind: 'atomic', irreversible: false, feature: null, exposure: ['workflow'],
+    blurb: 'READ a Slack channel (recent messages as pipeline input)',
+  },
+  slack_send: {
+    intent: 'post a coworker-written message to a Slack channel from the pipeline output',
+    tool: 'slack_send', built: true, kind: 'atomic', irreversible: true, feature: null, exposure: ['workflow'],
+    blurb: 'SEND a Slack message from the pipeline (real post — the approval-gated send step)',
+  },
+
   // ── THE DISPATCHER + THE SENSIBLE ASK (Aug 8 — production asks reach the team without the
   // user routing; decisions reach the user ONLY when consequential and non-inferable). Both
   // conversation-core: delegation is REVERSIBLE (work lands as a room report-back, nothing
@@ -358,9 +405,20 @@ export function capabilitiesFor(surface: CapabilityExposure): Capability[] {
 }
 
 // Only the capabilities that are actually wired today drive the classifier prompt —
-// conversation-flow capabilities (dispatcher/ask) excluded: they are not plan steps.
+// conversation-flow capabilities (dispatcher/ask) and WORKFLOW-ONLY step tools excluded:
+// neither is an item-plan step (a feed-follow belongs to pipelines, not an email's plan).
 function builtCapabilities(): Capability[] {
-  return Object.values(CAPABILITY_MAP).filter((c) => c.built && !c.conversational);
+  return Object.values(CAPABILITY_MAP).filter((c) =>
+    c.built && !c.conversational && !(c.exposure && c.exposure.length === 1 && c.exposure[0] === 'workflow'));
+}
+
+/** THE WORKFLOW STEP GATE (production arc step 1): may this tool id run as a pipeline step?
+ *  Absent exposure = the pre-P6b default (coworker + workflow). */
+export function isWorkflowStepTool(id: string): boolean {
+  const c = CAPABILITY_MAP[id];
+  if (!c || !c.built) return false;
+  const exp = c.exposure ?? ['coworker', 'workflow'];
+  return exp.includes('workflow');
 }
 
 // ── The orchestration-board runtime helpers. A plan task carries a coarse `capability`

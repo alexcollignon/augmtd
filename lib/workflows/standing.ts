@@ -107,6 +107,32 @@ export async function narrateStandingRun(
   } catch { /* narration is bookkeeping — never breaks a run */ }
 }
 
+/** THE APPROVAL ASK (production arc step 2): a run PARKED at an approval step surfaces its ask
+ *  in the standing commitment's room — an `approval` component turn (Approve resumes · Reject
+ *  ends, both through /api/workflows/runs/[id]/resume) — and stamps the commitment due TODAY so
+ *  the deck shows the debt. A workflow without a binding (manual, never scheduled) still parks
+ *  honestly; its run status is the source of truth (the ledger lists it). */
+export async function narrateApprovalAsk(
+  admin: SupabaseClient, wf: WfRow,
+  ask: { runId: string; instruction: string; preview: string },
+): Promise<void> {
+  try {
+    const { data: c } = await admin.from('commitments').select('id, status')
+      .eq('user_id', wf.user_id).eq('source', 'workflow').eq('source_id', wf.id)
+      .eq('status', 'open').limit(1).maybeSingle();
+    if (!c) return;
+    await admin.from('commitments').update({ due_date: new Date().toISOString().slice(0, 10) }).eq('id', c.id);
+    const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
+    const roomKey = await roomKeyForItem(admin, wf.user_id, 'commitment', String(c.id));
+    await writeRoomTurn(admin, wf.user_id, roomKey, {
+      role: 'system',
+      text: `"${wf.name}" is ready and WAITING ON YOUR APPROVAL before it delivers${ask.instruction ? ` — ${ask.instruction}` : ''}.`,
+      component: { key: 'approval', refId: ask.runId, state: { runId: ask.runId, workflowId: wf.id, name: wf.name, instruction: ask.instruction, preview: ask.preview } },
+      dedupeKey: `approval:${ask.runId}`,
+    });
+  } catch { /* the parked run status is the source of truth */ }
+}
+
 /** ARC 2 stage 4 — ROOM FEEDBACK MUTATES THE METHOD. Feedback spoken in the standing commitment's
  *  room appends to the workflow's worker_instructions — the exact channel the final AI step
  *  injects — so next Monday's run inherits it. Durable, dated, capped. */

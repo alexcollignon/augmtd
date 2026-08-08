@@ -43,6 +43,9 @@ export async function executeStep(step: WorkflowStep, ctx: StepContext): Promise
       case 'tool':  output = await executeToolStep(step, ctx); break;
       case 'ai':    output = await executeAIStep(step, ctx); break;
       case 'agent': output = await executeAgentStep(step, ctx); break;
+      // The APPROVAL step is handled by the RUN LOOP (pause/resume in run-workflow) — reaching
+      // it here means a caller bypassed the loop; pass through harmlessly, never park.
+      case 'approval': output = '[Approval gate — handled by the run loop]'; break;
       default: {
         // exhaustiveness check
         const _never: never = step;
@@ -93,7 +96,17 @@ function formatPreviousOutputs(outputs: StepOutput[], maxChars?: number): string
 
 // ── Tool step ─────────────────────────────────────────────────────────────────
 
+// THE REGISTRY GATE (production arc step 1, Aug 8): a pipeline tool without a workflow-exposed
+// registry row does not run — parity enforced at RUNTIME, not just review (the workflow engine
+// was the last consumer of the pre-registry flat toolkit). Legacy ids predating the registry
+// keep running for existing tasks but are never pickable.
+const LEGACY_STEP_TOOLS = new Set(['linkedin_post', 'get_urgent_emails']);
+
 async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string> {
+  const { isWorkflowStepTool } = await import('@/lib/work/surface-registry');
+  if (!isWorkflowStepTool(step.tool) && !LEGACY_STEP_TOOLS.has(step.tool)) {
+    return `Tool step "${step.tool}" is not registered for workflows — it did not run. (Every step needs a workflow-exposed row in the capability registry.)`;
+  }
   switch (step.tool) {
     case 'get_emails':        return await executeGetEmails(step.config, ctx.userId, ctx.supabase);
     case 'get_urgent_emails': return await executeGetEmails({ mode: 'urgent', ...step.config }, ctx.userId, ctx.supabase);

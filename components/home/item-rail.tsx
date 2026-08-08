@@ -82,7 +82,10 @@ type Turn =
       dkey?: string;
       /** THE SPEC CARD (Arc 2): a proposed standing task awaiting the user's explicit confirm —
        *  the card IS the commit surface (saying prepared it; confirming creates it). */
-      standingSpec?: { name: string; deliverable: string; cadenceLabel: string; ownerName: string; firstRun?: string | null; status: string; workflowId?: string | null } };
+      standingSpec?: { name: string; deliverable: string; cadenceLabel: string; ownerName: string; firstRun?: string | null; status: string; workflowId?: string | null };
+      /** THE APPROVAL ASK (production arc step 2): a run parked at its approval step — Approve
+       *  resumes it (the guarded send fires through the normal path), Hold back ends it. */
+      approval?: { runId: string; name: string; instruction?: string; preview?: string; decided?: 'approved' | 'rejected' } };
 
 // THE ROOM (P7c-c1 → one-room R1): the conversation is PER-DEAL, not per-item — navigating between
 // a deal's artifacts keeps the chat. The module store is now only the LIVE RENDER CACHE; the durable
@@ -282,6 +285,11 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
             }
             // THE SPEC CARD (Arc 2): the durable proposal re-renders until confirmed (the confirm
             // route flips the stored component in place; the card then reads as the record).
+            if (turn.role === 'system' && t.component?.key === 'approval' && (t.component.state as { runId?: string } | undefined)?.runId) {
+              const st = t.component.state as unknown as { runId: string; name?: string; instruction?: string; preview?: string };
+              turn.approval = { runId: String(st.runId), name: String(st.name ?? 'this run'), instruction: st.instruction || undefined, preview: st.preview || undefined };
+              turn.turnId = t.id;
+            }
             if (turn.role === 'system' && t.component?.key === 'standing_spec' && t.component.state) {
               const st = t.component.state as unknown as { name?: string; deliverable?: string; cadenceLabel?: string; ownerName?: string; firstRun?: string | null; status?: string; workflowId?: string | null };
               if (st.name) {
@@ -986,6 +994,50 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
                     disabled={busy}
                     className="mt-2 rounded-lg bg-indigo-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-indigo-700 transition-colors disabled:opacity-50"
                   >Confirm — start it</button>
+                )}
+              </div>
+            )}
+            {/* THE APPROVAL CARD (production arc step 2): a parked run's human gate — Approve
+                RESUMES it (the guarded delivery fires through the normal path), Hold back ends
+                it honestly. The decision flips the card in place; both routes speak. */}
+            {t.approval && (
+              <div className="mt-1.5 rounded-xl border border-amber-200/70 bg-amber-50/40 px-3.5 py-2.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[12.5px] font-semibold text-neutral-800 truncate">{t.approval.name}</span>
+                  {t.approval.decided === 'approved' && <span className="flex-shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-semibold text-emerald-700">✓ approved — delivering</span>}
+                  {t.approval.decided === 'rejected' && <span className="flex-shrink-0 rounded-full bg-neutral-100 px-2 py-0.5 text-[10.5px] font-semibold text-neutral-500">held back</span>}
+                  {!t.approval.decided && <span className="flex-shrink-0 rounded-full bg-amber-100/80 px-2 py-0.5 text-[10.5px] font-semibold text-amber-700">waiting on you</span>}
+                </div>
+                {t.approval.instruction && <p className="mt-0.5 text-[12px] text-neutral-500">{t.approval.instruction}</p>}
+                {t.approval.preview && !t.approval.decided && (
+                  <p className="mt-1 text-[11.5px] text-neutral-400 line-clamp-3">{t.approval.preview}</p>
+                )}
+                {!t.approval.decided && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      onClick={async () => {
+                        const runId = t.approval!.runId;
+                        setTurns((prev) => prev.map((x) => (x.role === 'system' && x.approval?.runId === runId ? { ...x, approval: { ...x.approval!, decided: 'approved' as const } } : x)));
+                        const res = await fetch(`/api/workflows/runs/${runId}/resume`, {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approve: true }),
+                        }).catch(() => null);
+                        if (!res?.ok) setTurns((prev) => prev.map((x) => (x.role === 'system' && x.approval?.runId === runId ? { ...x, approval: { ...x.approval!, decided: undefined } } : x)));
+                      }}
+                      disabled={busy}
+                      className="rounded-lg bg-indigo-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                    >Approve — deliver it</button>
+                    <button
+                      onClick={async () => {
+                        const runId = t.approval!.runId;
+                        setTurns((prev) => prev.map((x) => (x.role === 'system' && x.approval?.runId === runId ? { ...x, approval: { ...x.approval!, decided: 'rejected' as const } } : x)));
+                        await fetch(`/api/workflows/runs/${runId}/resume`, {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approve: false }),
+                        }).catch(() => null);
+                      }}
+                      disabled={busy}
+                      className="rounded-lg px-3 py-1.5 text-[12px] font-medium text-neutral-500 hover:text-neutral-700 hover:bg-white/70 transition-colors disabled:opacity-50"
+                    >Hold back</button>
+                  </div>
                 )}
               </div>
             )}

@@ -711,6 +711,41 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('app/api/work/threads/[id]/chat/route.ts').includes('claimsDoc && allArtifactIds.length === 0 && !wordDeedCorrected') &&
     src('app/api/work/threads/[id]/chat/route.ts').includes('[SYSTEM CHECK — not the user]'));
 
+  // ── PA · THE PRODUCTION ARC step 1 — the workflow step space joins the one registry ──
+  {
+    const { isWorkflowStepTool } = await import('../lib/work/surface-registry');
+    const es = src('lib/workflows/execute-step.ts');
+    const LEGACY = new Set(['linkedin_post', 'get_urgent_emails']);
+    const caseIds = [...es.matchAll(/case '([a-z_]+)':/g)].map((m) => m[1])
+      .filter((id) => !['tool', 'ai', 'agent', 'approval'].includes(id)); // step TYPES, not tool ids
+    const unregistered = caseIds.filter((id) => !LEGACY.has(id) && !isWorkflowStepTool(id));
+    const sb = src('components/work/studio-builder.tsx');
+    const pickerIds = [...sb.matchAll(/\{ id: '([a-z_]+)', {1,10}label/g)].map((m) => m[1]);
+    const pickerUnregistered = pickerIds.filter((id) => id !== 'linkedin_post' && !isWorkflowStepTool(id));
+    check('PA1: THE WORKFLOW STEP SPACE ON THE ONE REGISTRY (production arc step 1) — every pipeline step id has a workflow-exposed capability row (executor cases + Studio picker cross-checked BY IMPORT, zero drift possible); the RUNTIME GATE refuses an unregistered tool step; workflow-only rows never leak into the item-plan classifier; slack_send is the irreversible send step (the coming approval gate\'s target)',
+      caseIds.length >= 15 && pickerIds.length >= 12 &&
+      unregistered.length === 0 && pickerUnregistered.length === 0 &&
+      es.includes('THE REGISTRY GATE') &&
+      es.includes('is not registered for workflows') &&
+      isWorkflowStepTool('rss_feed') && isWorkflowStepTool('slack_send') && !isWorkflowStepTool('offer_choices') &&
+      src('lib/work/surface-registry.ts').includes("exposure.length === 1 && c.exposure[0] === 'workflow'"));
+    if (unregistered.length || pickerUnregistered.length) console.log('  unregistered:', unregistered, pickerUnregistered);
+  }
+
+  check('PA2: THE APPROVAL STEP — pause/resume, the Executor-validated shape (production arc step 2): an `approval` STEP TYPE parks the run (`awaiting_approval`, outputs snapshotted) and surfaces the ask (room `approval` component + commitment due TODAY); approve RESUMES past exactly that gate (later gates park again); reject ends honestly; test/cadence runs auto-pass (a paused simulation proves nothing); OPT-IN BY CONSTRUCTION (the pilot outcome contract — an existing workflow can never hit the branch); a park that cannot persist FAILS LOUDLY naming its migration',
+    src('lib/workflows/types.ts').includes("interface ApprovalStep") &&
+    src('lib/workflows/run-workflow.ts').includes("status: 'awaiting_approval', step_outputs: stepOutputs") &&
+    src('lib/workflows/run-workflow.ts').includes('resumeApprovalAt') &&
+    src('lib/workflows/run-workflow.ts').includes('auto-passed in test mode') &&
+    src('lib/workflows/run-workflow.ts').includes('Apply migration 20260808_workflow_runs_approval_status.sql') &&
+    src('lib/workflows/standing.ts').includes('narrateApprovalAsk') &&
+    src('lib/workflows/standing.ts').includes("key: 'approval'") &&
+    src('app/api/workflows/runs/[id]/resume/route.ts').includes("run.status !== 'awaiting_approval'") &&
+    src('components/home/item-rail.tsx').includes('Approve — deliver it') &&
+    src('components/home/item-rail.tsx').includes('Hold back') &&
+    src('lib/workflows/generate-config.ts').includes('"type": "approval"') &&
+    existsSync('supabase/migrations/20260808_workflow_runs_approval_status.sql'));
+
   // ── Report ──
   let pass = 0;
   for (const [n, ok, d] of out) {

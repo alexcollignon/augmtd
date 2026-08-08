@@ -47,6 +47,15 @@ Tool step — fetches data, always before AI steps:
 AI step — synthesises all previous outputs, always last and always exactly one:
 { "type": "ai", "id": "step_010", "label": "3–5 word label", "prompt": "...", "output_format": "markdown", "model_tier": "reasoning" }
 
+Approval step — a HUMAN GATE: the run pauses here and waits for the user's explicit approve
+before continuing (the deliverable shows for review; approve resumes, reject holds it back):
+{ "type": "approval", "id": "step_009", "label": "Your approval", "instruction": "one line: what the user is deciding" }
+RULE: when the task's words ask for review/approval before delivery ("send it to me for
+approval first", "let me check before it goes out"), place ONE approval step directly before
+the delivery. When the user says it should run fully automatically, use none. When neither is
+said and the output goes to EXTERNAL recipients (not the user themselves), prefer including it
+— a held send is recoverable, an unwanted one is not.
+
 ━━━ AVAILABLE TOOLS ━━━
 
 get_emails          — reads the user's inbox. config: { "mode": "recent" }

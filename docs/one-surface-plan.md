@@ -468,6 +468,36 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+T. **THE APPROVAL STEP — DONE (Aug 8, production arc step 2; gate PA2 — 95/95, tasks 72/72,
+   tsc + build green; E2E on the probe: park → snapshot → resume past the gate → the guarded
+   delivery ran; pre-migration behavior proven LOUD).** The Executor-validated pause/resume
+   shape: `ApprovalStep` is a STEP TYPE (opt-in by construction — the pilot outcome contract;
+   an existing workflow can never hit the branch). The run loop PARKS at it
+   (`awaiting_approval`, step_outputs snapshotted), `narrateApprovalAsk` surfaces the ask (an
+   `approval` component turn in the standing commitment's room + commitment due TODAY — deck
+   debt), and POST /api/workflows/runs/[id]/resume either RESUMES past exactly that gate
+   (later gates park again; completion runs the normal path: materialise → narrate → advance
+   the binding) or records an honest rejection (room narrates "held back; nothing was
+   delivered"). Exactly-once: only `awaiting_approval` resumes. Test/cadence runs AUTO-PASS
+   the gate (a paused simulation proves nothing). The room renders the amber APPROVAL CARD
+   (Approve — deliver it · Hold back; flips in place). generate-config emits the step for NEW
+   workflows on review-language / external recipients. FOUND LIVE + FIXED: the
+   workflow_runs status CHECK silently refused the park (the run pretended to wait) — parks
+   now FAIL LOUDLY naming **migration 20260808_workflow_runs_approval_status.sql (MANUAL
+   APPLY REQUIRED — adds awaiting_approval + rejected to the status check; until applied, an
+   approval step yields an honest failed run, and no existing workflow contains one)**.
+S. **THE PRODUCTION ARC STEP 1 — THE STEP SPACE ON THE ONE REGISTRY (Aug 8; gate PA1 —
+   94/94, tasks 72/72, tsc + build green; commit 1d6d9e6 preceded).** Eight workflow step
+   tools gained registry rows (read_kb_file · fetch_url · rss_feed · browser_fetch ·
+   get_pt_tenders · get_workflow_output · slack_read_channel · slack_send — the one
+   irreversible send step, the coming approval gate's target); `isWorkflowStepTool()` honors
+   the absent-exposure default; THE RUNTIME GATE in executeToolStep refuses an unregistered
+   tool step (legacy linkedin_post/get_urgent_emails keep running, never pickable);
+   workflow-only rows never leak into the item-plan classifier. PA1 cross-checks the executor
+   cases AND the Studio picker against the registry BY IMPORT — drift is structurally caught.
+   NEXT (step 2): the APPROVAL STEP as pause/resume (action_commit staged · run parked
+   `awaiting_approval` with an execution id · the ask on the deck · approve RESUMES — the
+   Executor-validated shape).
 R5. **A CONVERSATION REQUIRES THE USER'S VOICE + THE PROJECT WORD IS EARNED (Aug 8, owner
    catch — 93/93; live-measured: 38 of 44 listed rooms on the real account were ENGINE-ONLY).**
    (1) The recents scan listed any room with TURNS — but the engine's narrations are turns, so
@@ -847,6 +877,64 @@ flat toolkit; proven by run_compute: one registry row lit up chat + workflows + 
 every executor read the same page"); then registry-rebase → entity edge + grounded drafting →
 the approval step → the ledger surface. **Never**: a canvas-led surface; coworker-owned
 automation; a second creation grammar outside the spec card.
+
+**THE PILOT OUTCOME CONTRACT (owner law, Aug 8, refined — "the workflow itself can be adapted
+to whatever improved system we develop; the OUTCOME needs to be the same"):** an
+implementation-freeze is NOT the law — the engine under existing workflows may evolve freely
+(and already has: the registry gate, date discipline, the head-truncation fix all improved
+pilot runs in place). The INVARIANT is the outcome: **the same deliverable keeps arriving on
+the same schedule at the same destination, and nothing NEW executes** — no new sends, no new
+recipients, no approval pauses a pilot never asked for, no silently skipped runs. Rules:
+(1) the approval step is a STEP TYPE a workflow explicitly contains — never retrofitted onto
+existing steps (a scheduled pilot run pausing for an approval nobody knows to click is a
+silently dead briefing — structurally impossible). (2) No auto-migration of stored rows;
+generate-config emits new-grammar steps for NEW workflows only. (3) The ledger lists pilots
+as-is (visibility improves; behavior doesn't move). (4) Engine changes touching the RUN PATH
+prove the contract before deploy with the CADENCE SIMULATION (the dated-source arc's tool:
+test-mode runs, rewound last_run, assert deliverable produced · destination unchanged · no
+unexpected sends). PROVEN for step 1 (Aug 8 live scan): 11 live workflows / 66 tool steps all
+pass the registry gate — zero refusals, zero outcome change.
+
+**THE EXECUTOR LEARNINGS (Aug 8 — reviewed executor.sh / UsefulSoftwareCo/executor at the
+owner's ask; our registry/commit-door/Nango architecture already embodies its core principles —
+these four refinements adopted):**
+1. **The approval step is PAUSE/RESUME, not a blocking wait** (their `resume --execution-id`
+   validates our design): the run stages its send as an action_commit, the RUN ROW parks as
+   `awaiting_approval` with an execution id, the ask lands on the deck (later: approval via
+   email reply), approval RESUMES the run where it stopped; reject steers. The commit-door
+   claim/fire machinery is ~80% of this — the durable parked-run + resume door is the build.
+2. **Protocol-derived safety defaults for the MCP adoption recipe**: a mounted third-party tool
+   without a hand-set row derives its gate from the protocol — read-only verbs → allowed;
+   mutations/destructiveHint/unknown → approval-gated. The safe path is the easy path,
+   structurally. (Hand-set registry rows still override — curation stays sovereign.)
+3. **Lazy tool loading for the worker loop** (noted, build when tool count justifies): a
+   search_tools capability + dynamic schema injection once MCP mounts grow the catalog — the
+   1,640-tools→1-tool token math is real; the chief loop (~20 defs) doesn't need it.
+4. **The policy page is the sovereignty surface's centerpiece**: a registry-derived render —
+   everything the system can do, what runs free, what waits for approval, per coworker/surface
+   — visible and auditable. Cheap (the registry is the source); sales-critical for the
+   regulated pitch. NOT adopted: catalog-scale schema auto-ingestion (the opposite of judged
+   curation) and the gateway business itself — though if we ever expose the brain to users'
+   OTHER agents, the shape is one MCP endpoint + our registry as catalog + our policies as
+   governance.
+
+**THE PROACTIVITY COMPLETION (Aug 8 — the owner's standing flag: "there's more to be done,
+also regarding proactivity"; the remaining ladder, in dependency order):**
+1. **Proactive project deliverables** — the judge extends from "what does this item need" to
+   "what does this PROJECT deserve this week" (an entity-level produce appetite: a client
+   gone quiet deserves a check-in draft; a project with a Friday cadence deserves its status
+   doc before Friday). Rides the workflow machinery (a proposed deliverable = a spec-card
+   offer, never silent production).
+2. **Standing reactions** (judged triggers): "whenever a role brief lands, draft the JD" —
+   the same describe→confirm grammar, brain-conditioned; the Production arc's trigger half.
+3. **Dispatched deliverables stream back into the origin exchange** (today: the report text
+   returns; the ARTIFACT/pane doesn't ride along for delegation-produced docs).
+4. **Filing feeds the brain**: a filed conversation's decisions/facts distill into entity
+   memory on adoption — the room's brief genuinely reflects what was discussed.
+5. **The outcome loop → the autonomy ladder** (collecting since July): accept/edit/discard
+   history earns per-lane autonomy — drafts start sending themselves in lanes the user has
+   always approved. The months-scale payoff; needs the approval-step plumbing first (an
+   auto-approved lane = an approval gate the ladder opens).
 
 ## FRAMES — live, shareable artifacts (rides Arc 1 capability + Arc 3 stage)
 
