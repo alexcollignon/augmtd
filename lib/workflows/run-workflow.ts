@@ -415,6 +415,16 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
   const workerInstructions = (workflow as Workflow & { worker_instructions?: string | null }).worker_instructions ?? null;
   const skillIds = (workflow as Workflow & { skill_ids?: string[] }).skill_ids ?? undefined;
 
+  // THE ENTITY EDGE — scope inheritance at run time: a workflow linked to a project runs with
+  // that project's CURRENT room page (the same one grounding every other reasoner reads).
+  // Loaded once per run; injected into AI steps only (never the verify gate — it judges draft
+  // vs sources alone). Non-fatal: a missing edge changes nothing.
+  let projectGrounding: string | null = null;
+  try {
+    const { workflowRunGrounding } = await import('@/lib/workflows/entity-edge');
+    projectGrounding = await workflowRunGrounding(admin, workflow.user_id, workflow.id);
+  } catch { /* non-fatal */ }
+
   for (let i = stepOutputs.length; i < steps.length; i++) {
     const step = steps[i];
     // ── THE APPROVAL STEP (production arc step 2 — pause/resume, the Executor-validated
@@ -463,6 +473,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       isLastStep: i === steps.length - 1,
       workerInstructions,
       skillIds,
+      projectGrounding,
     });
     stepOutputs.push(out);
     if (out.error) {

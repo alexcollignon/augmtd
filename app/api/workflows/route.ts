@@ -137,5 +137,13 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (error) return NextResponse.json({ error: sanitizeError(error) }, { status: 500 });
+
+  // THE ENTITY EDGE — a saved workflow that names a registered project links to it at birth.
+  try {
+    const { adoptWorkflowEntity } = await import('@/lib/workflows/entity-edge');
+    const wf = data as { id: string; name: string; description: string | null };
+    await adoptWorkflowEntity(supabase, user.id, wf.id, `${wf.name}. ${wf.description ?? ''}`);
+  } catch { /* non-fatal */ }
+
   return NextResponse.json({ workflow: data });
 }

@@ -755,6 +755,68 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('lib/workflows/generate-config.ts').includes('"type": "verify"') &&
     src('lib/workflows/generate-config.ts').includes('two competing verifiers'));
 
+  // ── PA4 · THE ENTITY EDGE (production arc step 4) — workflows join the one brain. ──
+  check('PA4a: the edge is wired at every seam (source parity) — both creation doors adopt (chat create_task + the builder save POST); generate-config drafts over the named project\'s room page AND the existing-tasks dup read (overlap_note informs, never blocks); run time inherits the scope into AI steps ONLY (the verify gate judges draft vs sources alone); the room\'s grounding lists its STANDING PRODUCTION (one section, visible to all reasoning)',
+    src('lib/tools/worker-tasks.ts').includes('adoptWorkflowEntity') &&
+    src('app/api/workflows/route.ts').includes('adoptWorkflowEntity') &&
+    src('lib/workflows/generate-config.ts').includes('workflowDraftGrounding') &&
+    src('lib/workflows/generate-config.ts').includes('[EXISTING TASKS') &&
+    src('lib/workflows/generate-config.ts').includes('overlap_note') &&
+    src('lib/workflows/run-workflow.ts').includes('workflowRunGrounding') &&
+    src('lib/workflows/execute-step.ts').includes("ctx.projectGrounding && step.use_worker_identity !== false") &&
+    src('lib/room/grounding.ts').includes('STANDING PRODUCTION'));
+
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const { createClient } = await import('@supabase/supabase-js');
+    const sbE = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    const { resolveProbeUser } = await import('./probe-user');
+    const probeE = await resolveProbeUser(sbE);
+    const stampE = `smoke-ee-${Date.now()}`;
+    let entId: string | null = null; let wfId: string | null = null;
+    try {
+      const { data: ent, error: entErr } = await sbE.from('work_entities').insert({
+        user_id: probeE, kind: 'initiative', name: 'Zephyrline Dossier', status: 'active', tracked: true,
+        aliases: [], sig: stampE,
+      }).select('id').single();
+      if (entErr || !ent) throw new Error(`entity insert: ${entErr?.message}`);
+      entId = ent.id as string;
+      const { data: wf, error: wfErr } = await sbE.from('workflows').insert({
+        user_id: probeE, name: `[${stampE}] Weekly Zephyrline digest`, status: 'paused',
+        trigger: { type: 'manual' }, steps: [], output_config: { destination: 'message' },
+      }).select('id').single();
+      if (wfErr || !wf) throw new Error(`workflow insert: ${wfErr?.message}`);
+      wfId = wf.id as string;
+
+      const { adoptWorkflowEntity, getWorkflowScope, workflowsScopedToEntity, recognizeWorkflowEntity, workflowRunGrounding } =
+        await import('../lib/workflows/entity-edge');
+      const adopted = await adoptWorkflowEntity(sbE, probeE, wfId, 'Weekly digest of everything moving on the Zephyrline Dossier');
+      const scope = await getWorkflowScope(sbE, probeE, wfId);
+      const reverse = await workflowsScopedToEntity(sbE, probeE, entId);
+      const noMatch = await recognizeWorkflowEntity(sbE, probeE, 'every monday summarize the latest economy news');
+      check('PA4b-LIVE: the edge round-trip on the probe — a workflow naming a registered project ADOPTS it (deterministic matcher, scope persisted, via recognized); the reverse read finds the workflow from the entity; an all-generic request matches NOTHING',
+        adopted?.id === entId && scope?.entityId === entId && scope?.via === 'recognized' &&
+        reverse.some((r) => r.workflowId === wfId) && noMatch === null);
+
+      const runG = await workflowRunGrounding(sbE, probeE, wfId);
+      const { assembleRoomGrounding } = await import('../lib/room/grounding');
+      const roomG = await assembleRoomGrounding(sbE, probeE, { kind: 'entity', entityId: entId });
+      check('PA4c-LIVE: both directions ground — the run inherits the project\'s room page (named, capped, tags stripped) and the project\'s room grounding lists the standing workflow by name',
+        !!runG && runG.includes('Zephyrline Dossier') && runG.includes('THE PROJECT THIS TASK SERVES') &&
+        !!roomG?.text && roomG.text.includes('STANDING PRODUCTION') && roomG.text.includes('Weekly Zephyrline digest'));
+    } catch (e) {
+      check('PA4b-LIVE: entity-edge round-trip', false, e instanceof Error ? e.message : 'failed');
+      check('PA4c-LIVE: both directions ground', false, 'skipped after failure');
+    } finally {
+      if (wfId) {
+        await sbE.from('item_plans').delete().eq('user_id', probeE).eq('kind', 'workflow_scope').eq('entity_id', wfId);
+        await sbE.from('workflows').delete().eq('id', wfId);
+      }
+      if (entId) await sbE.from('work_entities').delete().eq('id', entId);
+    }
+  } else {
+    console.log('· PA4-LIVE skipped — SUPABASE_SERVICE_ROLE_KEY not set in this env');
+  }
+
   // ── Report ──
   let pass = 0;
   for (const [n, ok, d] of out) {

@@ -468,6 +468,28 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+V. **THE ENTITY EDGE — DONE (Aug 8, production arc step 4; gates PA4a/b/c — 99/99, tasks
+   72/72, tsc + build green; E2E: a probe request naming the entity drew overlap_note
+   naming the existing Monday task AND a pipeline born with the verify gate).** Workflows
+   join the one brain — "your team handles the ad hoc; your workflows run the production;
+   both share one brain," now structural. `lib/workflows/entity-edge.ts`: the SCOPE
+   (item_plans kind='workflow_scope' keyed by workflow id — the room-scope precedent, no
+   migration; via recognized|user, a human re-file outranks recognition) adopted at BOTH
+   creation doors (chat create_task + the builder save POST) with the SAME deterministic
+   focus matcher as the Home/workers (zero AI; all-generic never matches). Four reads on
+   the edge: (1) GROUNDED DRAFTING — generateWorkflowConfig drafts over the named
+   project's room page (workflowDraftGrounding; sources/language/open work known before a
+   step is written); (2) DUP-AWARENESS — the generator sees [EXISTING TASKS] and sets
+   `overlap_note` (informs, never blocks; surfaced by the chat door, rides the
+   generate-from-description response for the coming ledger); (3) SCOPE INHERITANCE at run
+   time — workflowRunGrounding injects the project's CURRENT page into AI steps ONLY
+   (`ctx.projectGrounding`; the verify gate is excluded BY the use_worker_identity:false
+   check — it must judge draft vs sources alone); (4) THE REVERSE EDGE — the room's
+   grounding gains STANDING PRODUCTION (workflows serving this work, schedule + last/next
+   run — visible to ALL reasoning at once, so the responder never proposes building what
+   already runs). REMAINING IN ARC: the Workflows ledger (nav item, describe→draft→
+   review→confirm, overlap_note surfaced in review, Studio one click deep) → standing
+   reactions (judged triggers).
 U. **THE STRUCTURAL VERIFICATION GATE — DONE (Aug 8, production arc step 3; gate PA3 — 96/96,
    tasks 72/72, tsc + build green; E2E on the probe with a poisoned draft: the wrong sum
    corrected BY the code-computed must-fix, the ungrounded claim deleted, the emptied section

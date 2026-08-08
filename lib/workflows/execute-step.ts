@@ -31,6 +31,9 @@ export interface StepContext {
   isLastStep?: boolean;       // true for the final step in the ordered list
   workerInstructions?: string | null; // task-specific tone/persona, injected between KB and step prompt
   skillIds?: string[];        // task-pinned skill IDs (selector); empty/undefined → fall back to the worker's assigned skills
+  /** THE ENTITY EDGE — the scoped project's current room page (workflowRunGrounding). Injected
+   *  into AI steps only; a verify gate (use_worker_identity: false) never sees it. */
+  projectGrounding?: string | null;
 }
 
 // ── Public entrypoint ─────────────────────────────────────────────────────────
@@ -394,6 +397,14 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
         systemPrompt += `\n\n<reference_documents>\nUse these documents as format and style reference for your output.\n${kb.context}\n</reference_documents>`;
       }
     } catch { /* non-fatal */ }
+  }
+
+  // THE ENTITY EDGE — scope inheritance: the linked project's current state rides every AI
+  // step EXCEPT the verify gate (use_worker_identity === false), which must judge the draft
+  // against the run's own sources alone — outside knowledge would let it "correct" the draft
+  // from memory instead of from the material.
+  if (ctx.projectGrounding && step.use_worker_identity !== false) {
+    systemPrompt += `\n\n${ctx.projectGrounding}`;
   }
 
   const userPrompt = [

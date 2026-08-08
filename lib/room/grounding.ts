@@ -84,8 +84,9 @@ export async function assembleRoomGrounding(
   }
   const roomKey = entityId ?? (scope.kind === 'item' ? `${scope.itemKind}:${scope.itemId}` : scope.entityId);
 
-  // ── The parallel reads: entity + ledger, the linked items, the room's turns, the files. ──
-  const [entRes, ledgerRes, linksRes, turnsRes, filesRes] = await Promise.all([
+  // ── The parallel reads: entity + ledger, the linked items, the room's turns, the files,
+  //    the standing production (THE ENTITY EDGE reverse read — workflows scoped to this work). ──
+  const [entRes, ledgerRes, linksRes, turnsRes, filesRes, prodRes] = await Promise.all([
     entityId
       ? client.from('work_entities').select('id, name, tracked, summary, state, next_move, goals, rules, sig')
           .eq('id', entityId).eq('user_id', userId).maybeSingle()
@@ -107,6 +108,23 @@ export async function assembleRoomGrounding(
       ? client.from('knowledge_files').select('id, filename, summary')
           .eq('user_id', userId).eq('entity_id', entityId).order('indexed_at', { ascending: false }).limit(10)
       : Promise.resolve({ data: [] }),
+    (async () => {
+      if (!entityId) return [] as Array<{ name: string; scheduleLabel: string | null; status: string; lastRunAt: string | null; nextRunAt: string | null }>;
+      try {
+        const { workflowsScopedToEntity } = await import('@/lib/workflows/entity-edge');
+        const scoped = await workflowsScopedToEntity(client, userId, entityId);
+        if (!scoped.length) return [];
+        const { data: wfs } = await client.from('workflows')
+          .select('id, name, status, trigger, last_run_at, next_run_at')
+          .in('id', scoped.map((s) => s.workflowId)).eq('user_id', userId);
+        return ((wfs ?? []) as Array<{ name: string; status: string; trigger: { label?: string; cron?: string } | null; last_run_at: string | null; next_run_at: string | null }>)
+          .map((w) => ({
+            name: w.name,
+            scheduleLabel: w.trigger?.label ?? (w.trigger?.cron ? `cron ${w.trigger.cron}` : null),
+            status: w.status, lastRunAt: w.last_run_at, nextRunAt: w.next_run_at,
+          }));
+      } catch { return []; }
+    })(),
   ]);
 
   // ── THE BOARD: the room's live items with their judged verbs AND their actual prepared state —
@@ -220,6 +238,7 @@ export async function assembleRoomGrounding(
     entity?.goals.length ? `GOALS: ${entity.goals.join(' · ')}` : null,
     entity?.rules.length ? `RULES: ${entity.rules.join(' · ')}` : null,
     board.length ? `THE LIVE BOARD (each item: judged work + what is ACTUALLY prepared — these are the only truths about preparedness):\n${boardLines.join('\n')}${boardOmitted ? `\n(NOTE: ~${boardOmitted} older linked item${boardOmitted === 1 ? '' : 's'} not shown — never claim this list is everything.)` : ''}` : null,
+    prodRes.length ? `STANDING PRODUCTION (scheduled workflows serving this work — deliverables arrive on their own; never propose building what already runs):\n${prodRes.map((w) => `- "${w.name}"${w.scheduleLabel ? ` — ${w.scheduleLabel}` : ''}${w.status !== 'active' ? ` [${w.status}]` : ''}${w.lastRunAt ? ` · last ran ${String(w.lastRunAt).slice(0, 10)}` : ' · never run yet'}${w.nextRunAt ? ` · next ${String(w.nextRunAt).slice(0, 10)}` : ''}`).join('\n')}` : null,
     asks.length ? `OPEN ASKS TO THE USER:\n${asks.map((a) => `- since ${a.since ?? '?'}${a.proceeded ? ' (user said go ahead)' : ''}: ${a.items.join('; ')}`).join('\n')}` : null,
     ledgerLines.length ? `HISTORY (newest first, reference as [L#]):\n${ledgerLines.join('\n')}` : null,
     fileLines.length ? `FILES on this work (reference as [F#]):\n${fileLines.join('\n')}` : null,
