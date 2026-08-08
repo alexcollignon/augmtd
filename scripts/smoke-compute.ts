@@ -717,7 +717,7 @@ const src = (p: string) => readFileSync(p, 'utf8');
     const es = src('lib/workflows/execute-step.ts');
     const LEGACY = new Set(['linkedin_post', 'get_urgent_emails']);
     const caseIds = [...es.matchAll(/case '([a-z_]+)':/g)].map((m) => m[1])
-      .filter((id) => !['tool', 'ai', 'agent', 'approval'].includes(id)); // step TYPES, not tool ids
+      .filter((id) => !['tool', 'ai', 'agent', 'approval', 'verify'].includes(id)); // step TYPES, not tool ids
     const unregistered = caseIds.filter((id) => !LEGACY.has(id) && !isWorkflowStepTool(id));
     const sb = src('components/work/studio-builder.tsx');
     const pickerIds = [...sb.matchAll(/\{ id: '([a-z_]+)', {1,10}label/g)].map((m) => m[1]);
@@ -745,6 +745,15 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/home/item-rail.tsx').includes('Hold back') &&
     src('lib/workflows/generate-config.ts').includes('"type": "approval"') &&
     existsSync('supabase/migrations/20260808_workflow_runs_approval_status.sql'));
+
+  check('PA3: THE STRUCTURAL VERIFICATION GATE (production arc step 3) — `verify` is a STEP TYPE built into the engine (one versioned implementation; the AHK hand-built gate never copy-pasted again): the ARITHMETIC FLOOR runs FIRST (code-recomputed claims become MUST-FIX lines) then one persona-free reasoned pass (use_worker_identity:false through the ONE AI-step executor — clock/context ride along); generate-config emits it after synthesis for external-material pipelines and bans duplicate prose verifiers; E2E: wrong sum corrected · ungrounded claim deleted · structure intact',
+    src('lib/workflows/types.ts').includes('interface VerifyStep') &&
+    src('lib/workflows/execute-step.ts').includes('VERIFY_GATE_VERSION') &&
+    src('lib/workflows/execute-step.ts').includes('COMPUTED BY CODE') &&
+    src('lib/workflows/execute-step.ts').includes('use_worker_identity: false,\n    prompt: verifyGatePrompt') &&
+    src('lib/workflows/execute-step.ts').includes("case 'verify': output = await executeVerifyStep") &&
+    src('lib/workflows/generate-config.ts').includes('"type": "verify"') &&
+    src('lib/workflows/generate-config.ts').includes('two competing verifiers'));
 
   // ── Report ──
   let pass = 0;

@@ -47,6 +47,16 @@ Tool step — fetches data, always before AI steps:
 AI step — synthesises all previous outputs, always last and always exactly one:
 { "type": "ai", "id": "step_010", "label": "3–5 word label", "prompt": "...", "output_format": "markdown", "model_tier": "reasoning" }
 
+Verify step — the STRUCTURAL VERIFICATION GATE (built into the engine, versioned): treats the
+previous step's output as THE DRAFT and everything before it as SOURCE MATERIAL — recomputes
+the draft's numbers BY CODE, deletes/corrects ungrounded claims, fixes citations, keeps
+structure exactly, never modernizes dates. Output = the corrected draft:
+{ "type": "verify", "id": "step_008", "label": "Verify against sources", "instruction": "optional extra domain rules" }
+RULE: ALWAYS place one verify step directly after the final synthesis AI step when the
+pipeline gathers external material (news, web, feeds, research, tenders) or states numbers.
+Do NOT write verification instructions into the AI step's own prompt — the verify step IS the
+gate; duplicating it in prose creates two competing verifiers.
+
 Approval step — a HUMAN GATE: the run pauses here and waits for the user's explicit approve
 before continuing (the deliverable shows for review; approve resumes, reject holds it back):
 { "type": "approval", "id": "step_009", "label": "Your approval", "instruction": "one line: what the user is deciding" }

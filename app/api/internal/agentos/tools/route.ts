@@ -188,6 +188,14 @@ export async function POST(request: NextRequest) {
         result = await executeDeepResearch(config as never, '');
         break;
 
+      // ── Sandboxed compute (the production floor reaching prod workers, Aug 8) ──
+      case 'run_compute': {
+        if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });
+        const { executeRunCompute } = await import('@/lib/tools');
+        result = await executeRunCompute(config as never, user_id, ac);
+        break;
+      }
+
       // ── Document generation (Op-B) ──
       case 'generate_document': {
         if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });

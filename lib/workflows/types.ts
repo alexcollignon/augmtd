@@ -24,7 +24,7 @@ export type WorkflowTrigger = ManualTrigger | ScheduleTrigger;
 
 // ── Steps ──────────────────────────────────────────────────────────────────────
 
-export type StepType = 'tool' | 'ai' | 'agent' | 'approval';
+export type StepType = 'tool' | 'ai' | 'agent' | 'approval' | 'verify';
 
 // Tool step — deterministic data fetch via the MCP registry or a built-in tool id.
 export interface ToolStep {
@@ -73,7 +73,22 @@ export interface ApprovalStep {
   instruction?: string;
 }
 
-export type WorkflowStep = ToolStep | AIStep | AgentStep | ApprovalStep;
+// Verify step — THE STRUCTURAL VERIFICATION GATE (production arc step 3): the AHK arc's
+// hand-built gate promoted into the ENGINE — one implementation, versioned, never copy-pasted
+// into workflow prompts again. The step treats the PREVIOUS output as THE DRAFT and everything
+// before it as SOURCE MATERIAL: the arithmetic floor recomputes the draft's computable claims
+// BY CODE first, then one persona-free reasoned pass deletes/corrects ungrounded claims, fixes
+// citations to real source URLs, keeps structure EXACTLY, and never modernizes dates. Output =
+// the corrected draft (feeds delivery/approval).
+export interface VerifyStep {
+  type: 'verify';
+  id: string;
+  label: string;
+  /** Optional extra domain rules for this workflow ("cite only .gov sources", …). */
+  instruction?: string;
+}
+
+export type WorkflowStep = ToolStep | AIStep | AgentStep | ApprovalStep | VerifyStep;
 
 // ── Output ─────────────────────────────────────────────────────────────────────
 

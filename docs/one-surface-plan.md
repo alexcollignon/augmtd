@@ -468,6 +468,20 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+U. **THE STRUCTURAL VERIFICATION GATE — DONE (Aug 8, production arc step 3; gate PA3 — 96/96,
+   tasks 72/72, tsc + build green; E2E on the probe with a poisoned draft: the wrong sum
+   corrected BY the code-computed must-fix, the ungrounded claim deleted, the emptied section
+   kept its header).** `verify` is a STEP TYPE built into the engine — VERIFY_GATE_VERSION,
+   one implementation; the AHK arc's hand-built gate never copy-pasted into workflow prompts
+   again. Order is the law: the ARITHMETIC FLOOR runs FIRST (verifyComputableClaims — its
+   findings become MUST-FIX lines the reasoned pass cannot ignore), then ONE persona-free
+   reasoned pass (delegated to the one AI-step executor with use_worker_identity:false — the
+   clock, language, and previous-outputs context ride along; the draft = last output, sources
+   = everything before). generate-config: ALWAYS after synthesis for external-material
+   pipelines; duplicate prose verifiers banned ("the verify step IS the gate"). Pilots
+   untouched (their prompts keep their hand-built gates; new workflows are born with the
+   structural one). REMAINING IN ARC: entity edge + grounded drafting → the Workflows ledger
+   (describe-to-draft) → standing reactions.
 T. **THE APPROVAL STEP — DONE (Aug 8, production arc step 2; gate PA2 — 95/95, tasks 72/72,
    tsc + build green; E2E on the probe: park → snapshot → resume past the gate → the guarded
    delivery ran; pre-migration behavior proven LOUD).** The Executor-validated pause/resume

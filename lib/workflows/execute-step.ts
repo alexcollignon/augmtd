@@ -16,7 +16,7 @@ import { buildSkillsBlock, buildSkillsBlockByIds } from '@/lib/work/worker-skill
 import { composeSlackMessage } from './slack-message';
 import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext, executeSlackReadMessages, executeSlackPostMessage, executeSendCalendarInvite, executeForwardEmail, executeFindTeamWork, executeRunCompute } from '@/lib/tools';
 import type { SendCalendarInviteConfig, ForwardEmailConfig, ComputeConfig } from '@/lib/tools';
-import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep } from './types';
+import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep, VerifyStep } from './types';
 
 export interface StepContext {
   userId: string;
@@ -46,6 +46,7 @@ export async function executeStep(step: WorkflowStep, ctx: StepContext): Promise
       // The APPROVAL step is handled by the RUN LOOP (pause/resume in run-workflow) — reaching
       // it here means a caller bypassed the loop; pass through harmlessly, never park.
       case 'approval': output = '[Approval gate — handled by the run loop]'; break;
+      case 'verify': output = await executeVerifyStep(step, ctx); break;
       default: {
         // exhaustiveness check
         const _never: never = step;
@@ -220,6 +221,59 @@ async function toolReadKbFile(
 
 
 // ── AI step ───────────────────────────────────────────────────────────────────
+
+// ── THE STRUCTURAL VERIFICATION GATE (production arc step 3) ─────────────────────────────────
+// The AHK arc's hand-built gate promoted into the engine: ONE implementation, versioned — never
+// copy-pasted into workflow prompts again. Order matters: the ARITHMETIC FLOOR runs first (code
+// recomputes the draft's computable claims; its findings become MUST-FIX lines the reasoned pass
+// cannot ignore), then one persona-free reasoned pass verifies the draft against the sources.
+export const VERIFY_GATE_VERSION = 1;
+
+function verifyGatePrompt(instruction?: string): string {
+  return (
+    `THE VERIFICATION GATE (v${VERIFY_GATE_VERSION}). The LAST previous-step output below is THE DRAFT. ` +
+    `Everything before it is SOURCE MATERIAL. Your ONLY job is to verify the draft against the sources ` +
+    `and return the CORRECTED DRAFT — nothing else.\n` +
+    `Rules:\n` +
+    `1. Every factual claim must be grounded in the source material. DELETE or CORRECT any claim the ` +
+    `sources do not support — never keep an ungrounded claim because it sounds plausible.\n` +
+    `2. Citations must point at REAL URLs from the source material — fix wrong ones; remove unfixable ones.\n` +
+    `3. Keep the draft's structure EXACTLY: every section and heading stays; a section emptied by ` +
+    `deletions keeps its header with an honest empty line; never renumber, reorder, or add sections.\n` +
+    `4. Dates are sacred: never shift a date, year, or figure toward the present; source material older ` +
+    `than the task's window is HISTORICAL and must read as such.\n` +
+    `5. Respect the draft's own language and style rules; change wording only where correction requires it.\n` +
+    `6. Return ONLY the corrected draft — no commentary, no preamble, no list of changes.` +
+    (instruction?.trim() ? `\nWorkflow-specific rules:\n${instruction.trim()}` : '')
+  );
+}
+
+async function executeVerifyStep(step: VerifyStep, ctx: StepContext): Promise<string> {
+  const prev = ctx.previousOutputs;
+  const rawDraft = prev.length ? prev[prev.length - 1]?.output : null;
+  const draft = typeof rawDraft === 'string' ? rawDraft : JSON.stringify(rawDraft ?? '');
+  if (!draft.trim()) return '[Verification gate: nothing to verify — no prior step output]';
+  // 1 — the arithmetic floor (deterministic; an outage speaks no verdict and the reasoned gate still runs).
+  let mismatchBlock = '';
+  try {
+    const { verifyComputableClaims } = await import('@/lib/prepare/verify-claims');
+    const mismatches = await verifyComputableClaims(ctx.supabase, ctx.userId, draft.slice(0, 12000));
+    if (mismatches.length) {
+      mismatchBlock =
+        `\n\nCOMPUTED BY CODE — these numbers in the draft are WRONG and MUST be corrected ` +
+        `(recomputed deterministically from the draft's own figures):\n` +
+        mismatches.map((m) => `- "${m.quote.slice(0, 100)}" states ${m.stated}; the correct value is ${m.expected}`).join('\n');
+    }
+  } catch { /* enhancement only */ }
+  // 2 — the reasoned gate, persona-free, through the ONE AI-step executor (clock, language,
+  // previous-outputs context, and the use_worker_identity:false contract all ride along).
+  const gate: AIStep = {
+    type: 'ai', id: step.id, label: step.label || 'Verification gate',
+    model_tier: 'reasoning', output_format: 'markdown', use_worker_identity: false,
+    prompt: verifyGatePrompt(step.instruction) + mismatchBlock,
+  };
+  return executeAIStep(gate, ctx);
+}
 
 async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
   // Task type (NOT the company's billing tier — see resolved.tier below for that).
