@@ -16,13 +16,16 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   HomeIcon, EnvelopeIcon, VideoCameraIcon, PlusIcon, FolderIcon,
   Cog6ToothIcon, ArrowRightOnRectangleIcon, ShieldCheckIcon,
+  ChatBubbleLeftEllipsisIcon, UserCircleIcon,
 } from '@heroicons/react/24/outline';
 import { useRecordingContext } from '@/context/recording-context';
 import type { WorkspaceFeatures } from '@/lib/workspace/types';
 import { DEFAULT_FEATURES } from '@/lib/workspace/types';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { AnchoredPopover } from '@/components/ui/anchored-popover';
+import { toast } from 'sonner';
 
-type Conversation = { key: string; kind: 'room' | 'chat' | 'coworker'; label: string; href: string | null };
+type Conversation = { key: string; kind: 'room' | 'chat' | 'coworker'; label: string; href: string | null; sub?: string };
 type Rooms = { pinned: Array<{ id: string; name: string; href: string }>; conversations: Conversation[] };
 const LS_KEY = 'aug-one-sidebar-v1';
 
@@ -40,6 +43,54 @@ export default function OneSidebar({
   const [showUserMenu, setShowUserMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const [rooms, setRooms] = useState<Rooms>({ pinned: [], conversations: [] });
+  // THE ROW MENU (owner, Aug 8 — "the 3 dots on hover of the recents"): manage where you see —
+  // rename inline, delete with the Undo toast (the same archive-under-the-hood as everywhere).
+  const [convMenu, setConvMenu] = useState<string | null>(null);
+  const [convRenaming, setConvRenaming] = useState<string | null>(null);
+  const [convRenameVal, setConvRenameVal] = useState('');
+  const menuAnchorRef = useRef<HTMLElement | null>(null);
+  const workerTid = (key: string) => key.split(':')[1] ?? null;
+  const bump = () => { try { window.dispatchEvent(new CustomEvent('aug:conversation-changed')); } catch { /* SSR */ } };
+  const renameConv = async (c: Conversation) => {
+    const title = convRenameVal.trim().slice(0, 80);
+    setConvRenaming(null);
+    if (!title || title === c.label) return;
+    setRooms((r) => ({ ...r, conversations: r.conversations.map((x) => (x.key === c.key ? { ...x, label: title } : x)) }));
+    try {
+      const res = c.kind === 'chat'
+        ? await fetch('/api/rooms/title', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: c.key, title }) })
+        : await fetch(`/api/work/threads/${workerTid(c.key)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) });
+      if (!res.ok) throw new Error();
+      bump();
+    } catch { bump(); /* refetch restores truth */ }
+  };
+  const removeConv = async (c: Conversation) => {
+    setConvMenu(null);
+    setRooms((r) => ({ ...r, conversations: r.conversations.filter((x) => x.key !== c.key) }));
+    try {
+      const res = c.kind === 'chat'
+        ? await fetch(`/api/room/turns?key=${encodeURIComponent(c.key)}`, { method: 'DELETE' })
+        : await fetch(`/api/work/threads/${workerTid(c.key)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'archived' }) });
+      if (!res.ok) throw new Error();
+      bump();
+      toast('Conversation deleted', {
+        action: {
+          label: 'Undo',
+          onClick: () => {
+            void (async () => {
+              try {
+                const r = c.kind === 'chat'
+                  ? await fetch('/api/rooms/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: c.key }) })
+                  : await fetch(`/api/work/threads/${workerTid(c.key)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'active' }) });
+                if (!r.ok) throw new Error();
+                bump();
+              } catch { toast.error("Couldn't restore it — check All conversations."); }
+            })();
+          },
+        },
+      });
+    } catch { bump(); }
+  };
 
   useEffect(() => {
     const cached = loadLS<Rooms>(LS_KEY);
@@ -119,17 +170,65 @@ export default function OneSidebar({
         {rooms.conversations.length > 0 && (
           <>
             <div className={sectionLabel}>Recent</div>
-            {rooms.conversations.slice(0, 5).map((c) => (
-              c.kind === 'chat' || c.kind === 'coworker' ? (
-                <button key={c.key} onClick={() => openChat(c.key)} className={`${item(false)} w-full text-left italic`}>
-                  <span className="truncate">{c.label}</span>
-                </button>
+            {/* THE KIND GLYPH + THE HOVER EXPAND (owner, Aug 8): a subtle icon says what each
+                conversation IS (chat · coworker DM · work room); hovering smoothly reveals the
+                second line — "with Clara" / "in EG Bank" / the kind word. Plain chats stay
+                quiet (nothing worth expanding). */}
+            {rooms.conversations.slice(0, 5).map((c) => {
+              const Glyph = c.kind === 'coworker' ? UserCircleIcon : c.kind === 'chat' ? ChatBubbleLeftEllipsisIcon : FolderIcon;
+              const manageable = c.kind === 'chat' || c.kind === 'coworker';
+              const inner = (
+                <>
+                  <span className="flex items-center gap-2.5 min-w-0">
+                    <Glyph className="w-[13px] h-[13px] flex-shrink-0 text-neutral-300" />
+                    {convRenaming === c.key ? (
+                      <input autoFocus value={convRenameVal} onChange={(e) => setConvRenameVal(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') void renameConv(c); if (e.key === 'Escape') setConvRenaming(null); }}
+                        onBlur={() => void renameConv(c)}
+                        className="min-w-0 flex-1 rounded border border-indigo-200 bg-white px-1 py-0.5 text-[12px] not-italic text-neutral-800 outline-none" />
+                    ) : (
+                      <span className="truncate italic">{c.label}</span>
+                    )}
+                    {manageable && convRenaming !== c.key && (
+                      <button
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); menuAnchorRef.current = e.currentTarget; setConvMenu(convMenu === c.key ? null : c.key); }}
+                        className="ml-auto flex-shrink-0 opacity-0 group-hover/conv:opacity-100 text-neutral-300 hover:text-neutral-600 text-[15px] leading-none px-0.5 transition-opacity"
+                        title="Rename or delete"
+                      >⋯</button>
+                    )}
+                  </span>
+                  {c.sub && (
+                    <span className="block overflow-hidden max-h-0 opacity-0 group-hover/conv:max-h-4 group-hover/conv:opacity-100 transition-all duration-200 ease-out pl-[23.5px] text-[10.5px] not-italic text-neutral-400">
+                      {c.sub}
+                    </span>
+                  )}
+                </>
+              );
+              const rowCls = `${item(false)} group/conv w-full text-left !flex-col !items-stretch !gap-0 cursor-pointer`;
+              return manageable ? (
+                <div key={c.key} role="button" tabIndex={0} onClick={() => { if (convRenaming !== c.key) openChat(c.key); }} className={rowCls}>{inner}</div>
               ) : (
-                <Link key={c.key} href={c.href ?? '/home'} className={`${item(false)} italic`}>
-                  <span className="truncate">{c.label}</span>
-                </Link>
-              )
-            ))}
+                <Link key={c.key} href={c.href ?? '/home'} className={rowCls}>{inner}</Link>
+              );
+            })}
+            {/* The one row menu (portaled — the overlay law). */}
+            <AnchoredPopover anchorRef={menuAnchorRef} open={!!convMenu} onClose={() => setConvMenu(null)} align="left" width={150}>
+              <div className="rounded-xl border border-neutral-200 bg-white shadow-lg py-1">
+                {(() => {
+                  const c = rooms.conversations.find((x) => x.key === convMenu);
+                  if (!c) return null;
+                  return (
+                    <>
+                      <button onClick={() => { setConvRenameVal(c.label); setConvRenaming(c.key); setConvMenu(null); }}
+                        className="w-full px-3 py-1.5 text-left text-[12px] text-neutral-600 hover:bg-neutral-50">Rename</button>
+                      <button onClick={() => { void removeConv(c); }}
+                        className="w-full px-3 py-1.5 text-left text-[12px] text-red-600 hover:bg-red-50">Delete</button>
+                    </>
+                  );
+                })()}
+              </div>
+            </AnchoredPopover>
             <Link href="/home?view=conversations" className="block px-2.5 py-[6px] text-[11.5px] text-neutral-400 hover:text-neutral-700 transition-colors">
               All conversations →
             </Link>

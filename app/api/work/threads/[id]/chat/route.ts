@@ -509,6 +509,13 @@ export async function POST(
           const worldBlock = await renderWorldContext(adminClient, user.id);
           if (worldBlock) contextParts.push(worldBlock);
         } catch { /* non-fatal */ }
+        // THE WORKERS READ THE ONE GROUNDING (Aug 8): a message NAMING a registered project pulls
+        // that project's FULL room page — the worker and the room read the same truth.
+        try {
+          const { focusedProjectGrounding } = await import('@/lib/work/worker-grounding');
+          const pageBlock = await focusedProjectGrounding(adminClient, user.id, content, { excludeName: agent.name ?? null });
+          if (pageBlock) contextParts.push(pageBlock);
+        } catch { /* non-fatal */ }
       }
 
       if (agent.memory_text?.trim()) {
@@ -872,6 +879,8 @@ export async function POST(
           let turnIndex = 0;
           let toolRetries = 0;
           const MAX_TOOL_RETRIES = 2;
+          // THE WORD IS THE DEED — STRUCTURAL (Aug 8): one corrective round max per turn.
+          let wordDeedCorrected = false;
           // Dedup: prevent same tool+query being called twice in one turn
           const calledTools = new Set<string>();
           const toolResultCache = new Map<string, string>();
@@ -1048,9 +1057,22 @@ export async function POST(
                   for (const tr of toolResultMessages) messages.push(tr);
                   if (continueLoop) continueLoop = true; // continue to get AI's response after tools
                 } else {
-                  fullAssistantText += cleanText;
-                  messages.push({ role: 'assistant', content: cleanText || '' });
-                  continueLoop = false;
+                  // THE WORD IS THE DEED — STRUCTURAL (Aug 8; the prompt rule alone failed live:
+                  // "I've created a focused priorities report", tool_calls: []): a final reply
+                  // CLAIMING a document while none was produced this turn gets ONE corrective
+                  // round — produce it now or restate without the claim. Never ship the lie.
+                  const claimsDoc = /\b(?:i(?:'ve| have)?\s+(?:created|prepared|generated|put together)|created)\b[^.!?\n]{0,80}\b(?:document|report|file|deck|spreadsheet|presentation|pdf)\b/i.test(cleanText);
+                  if (claimsDoc && allArtifactIds.length === 0 && !wordDeedCorrected) {
+                    wordDeedCorrected = true;
+                    send({ type: 'text_clear' });
+                    messages.push({ role: 'assistant', content: cleanText || '' });
+                    messages.push({ role: 'user', content: '[SYSTEM CHECK — not the user] Your reply claims a document was created, but generate_document was never called: no document exists. Either call generate_document NOW with the full content and then summarize, or restate your reply without claiming a document. Never claim what was not done. Do not apologize or mention this check.' });
+                    // continueLoop stays true → one more round.
+                  } else {
+                    fullAssistantText += cleanText;
+                    messages.push({ role: 'assistant', content: cleanText || '' });
+                    continueLoop = false;
+                  }
                 }
 
               } else if (finishReason === 'tool_calls') {

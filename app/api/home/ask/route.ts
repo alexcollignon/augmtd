@@ -45,6 +45,7 @@ export async function POST(request: NextRequest) {
       ...(turn.applied?.length ? { applied: turn.applied } : {}),
       ...(turn.files?.length ? { files: turn.files } : {}),
       ...(turn.delegated ? { delegated: turn.delegated } : {}),
+      ...(turn.options?.length ? { options: turn.options } : {}),
       ...(focus ? { focus } : {}),
     });
     if (body.stream === true) {

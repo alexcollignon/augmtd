@@ -461,8 +461,16 @@ const src = (p: string) => readFileSync(p, 'utf8');
     !src('components/one/one-sidebar.tsx').includes('rooms.pinned.map') &&
     !src('components/one/one-sidebar.tsx').includes('>Pinned</div>') &&
     src('components/one/one-sidebar.tsx').includes('href="/home?view=projects"') &&
-    src('components/one/all-conversations.tsx').includes("c.key.startsWith('inbox:') ? 'email'") &&
-    src('components/one/all-conversations.tsx').includes("c.key.startsWith('commitment:') ? 'task'"));
+    // Aug 8: the KIND GLYPH + HOVER EXPAND — the row says what it is on sight and who/where on
+    // approach ("with Clara" / "in EG Bank" / the kind word); plain chats stay quiet.
+    src('components/one/one-sidebar.tsx').includes('group-hover/conv:max-h-4') &&
+    src('app/api/rooms/recent/route.ts').includes('sub: `with ${') &&
+    src('app/api/rooms/recent/route.ts').includes('sub: `in ${proj}`') &&
+    // Aug 8 rework: the chip pills died — the CONCRETE words ride the server's sub line
+    // (roomSub) rendered under every row; glyph + sub carry the kind.
+    src('app/api/rooms/recent/route.ts').includes("k.startsWith('inbox:') ? 'email'") &&
+    src('app/api/rooms/recent/route.ts').includes("k.startsWith('commitment:') ? 'task'") &&
+    src('components/one/all-conversations.tsx').includes('{c.sub}'));
   check('SH5: A CLICK OPENS THE CONVERSATION — the open/new intents OPEN the panel (event same-page, sessionStorage intent cross-page; turns never load into a closed card); suggestions sit ABOVE the floor input',
     src('components/home/home-ask.tsx').includes("sessionStorage.getItem('aug-open-chat-intent')") &&
     src('components/home/home-ask.tsx').includes('loadRoom(key); setOpen(true);') &&
@@ -583,7 +591,11 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/home/home-ask.tsx').includes('<ThreadArtifactsPanel') &&
     src('components/home/home-ask.tsx').includes('<EmailDraftCard') &&
     src('components/home/home-ask.tsx').includes('openArtifact(c.art.tid, c.art.id)') &&
-    src('components/home/home-ask.tsx').includes('if (!autoOpened) { autoOpened = true;') &&
+    // Aug 8 (the docked pane): EVERY arrival refreshes the pane to the newest version — the
+    // edit loop ("make it shorter" updates the open document); no dim, no backdrop, non-modal.
+    src('components/home/home-ask.tsx').includes('STAYS CURRENT') &&
+    !src('components/home/home-ask.tsx').includes('bg-neutral-900/20') &&
+    src('components/home/home-ask.tsx').includes("lg:mr-[608px]") &&
     src('components/home/home-ask.tsx').includes("drafts.push({ draft: event.draft, tid, agentId: w.id })") &&
     src('components/home/home-ask.tsx').includes('art: { tid, id: a.id }') &&
     !src('components/home/home-ask.tsx').includes("review & send on ${first}'s page"));
@@ -627,7 +639,7 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/home/home-ask.tsx').includes(".get('chat')") &&
     src('app/api/rooms/adopt/route.ts').includes('/home?chat=') &&
     src('app/api/rooms/recent/route.ts').includes('projectOf') &&
-    src('components/one/all-conversations.tsx').includes('{c.project}'));
+    src('app/api/rooms/recent/route.ts').includes('sub: `in ${proj}`'));
 
   check('TF1: ONE DEED, ONE OBJECT (owner, Aug 7 — "CTA to check, action buttons, then again check CTA") — when the MOVE\'s target IS a prepared artifact on the rail, the two renderers MERGE into ONE action card (object + primary verb + ≤2 quiet variants ON the card); the duplicate stream card is suppressed; the banner+chips form survives only when nothing prepared matches',
     src('components/home/item-rail.tsx').includes('ONE DEED, ONE OBJECT') &&
@@ -667,6 +679,37 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/entities/entity-room.tsx').includes('railCoversItem(rail?.move?.ref, focused.id)') &&
     !src('components/home/item-rail.tsx').includes(".split(':')[1] ?? null") &&
     !src('components/entities/entity-room.tsx').includes('rail.move.ref.includes'));
+
+  check('WG1: THE WORKERS READ THE ONE GROUNDING (production-floor step 1) — a message NAMING a registered project pulls that project\'s FULL room page (the SAME assembleRoomGrounding the room/chief read) into the worker context on BOTH runtimes (native loop + AgentOS bridge); deterministic focus entry (the shared matcher, zero AI), tags stripped, THE ADDRESSED-NAME STRIP (found live: "Clara, report on EG Bank" matched the entity "Madalena Clara" — the envelope is never the subject)',
+    src('lib/work/worker-grounding.ts').includes('THE WORKERS READ THE ONE GROUNDING') &&
+    src('lib/work/worker-grounding.ts').includes('assembleRoomGrounding') &&
+    src('lib/work/worker-grounding.ts').includes('THE ADDRESSED-NAME STRIP') &&
+    src('lib/work/worker-grounding.ts').includes("replace(/\\[(?:L|F)\\d+\\]\\s?/g, '')") &&
+    src('app/api/work/threads/[id]/chat/route.ts').includes('focusedProjectGrounding(adminClient, user.id, content, { excludeName: agent.name') &&
+    src('lib/work/agentos-bridge.ts').includes('buildWorkerRunContext(adminClient, userId, agentId, message)') &&
+    src('lib/work/agentos-bridge.ts').includes('buildWorkerRunContext(args.adminClient, args.userId, args.agentId, args.message)') &&
+    src('lib/work/agentos-bridge.ts').includes('excludeName: agent?.name'));
+
+  check('DS1: THE DISPATCHER + THE SENSIBLE ASK (owner: "agnostic — reasoning when it needs input; not asking for the sake of asking") — two REGISTRY capabilities (conversational: excluded from the plan classifier): assign_to_coworker ACTS on clear-fit production asks (reversible, visible attribution, never permission theater); offer_choices is the loop\'s ONE decision door (≤4 options, each tap SPEAKS its say — ephemeral, consumed on tap); loop terminates on options/delegated; live-verified: unaddressed produce ask → delegated to the right fit, plain question → no chips',
+    src('lib/work/surface-registry.ts').includes('conversational?: boolean') &&
+    src('lib/work/surface-registry.ts').includes('!c.conversational') &&
+    src('lib/converse/index.ts').includes('assignToCoworkerDefinition, offerChoicesDefinition]') &&
+    src('lib/converse/index.ts').includes("tool === 'assign_to_coworker'") &&
+    src('lib/converse/index.ts').includes("tool === 'offer_choices'") &&
+    src('lib/converse/index.ts').includes('out?.options || out?.delegated') &&
+    src('lib/converse/index.ts').includes('Asking for the sake of asking is a failure') &&
+    src('app/api/home/ask/route.ts').includes('turn.options?.length') &&
+    src('components/home/home-ask.tsx').includes('options: undefined } : x)));') &&
+    src('components/home/home-ask.tsx').includes('void handleSubmit(o.say, [])'));
+
+  check('VL1: THE VERIFY LOOP ON CHAT DOCUMENTS + THE STRUCTURAL WORD-IS-DEED (production-floor step 3) — every chat-produced document passes the arithmetic floor (verify-claims BY CODE; a mismatch never blocks delivery but stamps qa_report AND is SAID in the coworker\'s summary — flagged never silent; floor outage speaks no verdict); the native loop\'s final reply CLAIMING a document with none produced gets ONE corrective round (produce it or restate — never ship the lie; regex verified 7/7 incl. the live case)',
+    src('lib/work/generate-thread-document.ts').includes('THE VERIFY LOOP ON CHAT DOCUMENTS') &&
+    src('lib/work/generate-thread-document.ts').includes('verifyComputableClaims') &&
+    src('lib/work/generate-thread-document.ts').includes('qa_report') &&
+    src('lib/work/generate-thread-document.ts').includes('qaNote}`') &&
+    src('app/api/work/threads/[id]/chat/route.ts').includes('THE WORD IS THE DEED — STRUCTURAL') &&
+    src('app/api/work/threads/[id]/chat/route.ts').includes('claimsDoc && allArtifactIds.length === 0 && !wordDeedCorrected') &&
+    src('app/api/work/threads/[id]/chat/route.ts').includes('[SYSTEM CHECK — not the user]'));
 
   // ── Report ──
   let pass = 0;

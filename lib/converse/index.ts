@@ -52,6 +52,28 @@ const prepareForwardDefinition = {
   input_schema: { type: 'object', properties: { to: { type: 'string', description: 'recipient, when the user names one' } }, required: [] },
 };
 
+// ── THE DISPATCHER + THE SENSIBLE ASK (Aug 8) — production asks reach the team without the user
+// routing; decisions reach the user ONLY when consequential and non-inferable. ──
+const assignToCoworkerDefinition = {
+  name: 'assign_to_coworker',
+  description: "Assign a production task (a report, draft, research, analysis, post) to the best-fit coworker on the user's team and start the work NOW. Use when the user asks for produced work WITHOUT naming who — pick the obvious fit yourself (writing/documents/reports → Sofia · research/analysis → Max · ops/admin/inbox/calendar → Clara · LinkedIn → Luca). Reversible: the work reports back into this conversation; nothing external is sent.",
+  input_schema: { type: 'object', properties: {
+    coworker: { type: 'string', description: 'first name or role of the coworker' },
+    task: { type: 'string', description: "the task in one clear sentence, in the user's own terms" },
+  }, required: ['coworker', 'task'] },
+};
+const offerChoicesDefinition = {
+  name: 'offer_choices',
+  description: 'Put ONE genuinely consequential, non-inferable decision to the user as tappable options. Use SPARINGLY — never for choices you can infer from context, never to confirm reversible actions, at most once per turn. Each option is the exact message sent on their behalf when tapped.',
+  input_schema: { type: 'object', properties: {
+    question: { type: 'string', description: 'one short sentence stating the decision' },
+    options: { type: 'array', items: { type: 'object', properties: {
+      label: { type: 'string', description: '2-5 word button label' },
+      say: { type: 'string', description: 'the message sent when tapped' },
+    }, required: ['label', 'say'] } },
+  }, required: ['question', 'options'] },
+};
+
 export type ConverseScope =
   | { kind: 'item'; itemKind: 'email' | 'followup' | 'commitment' | 'meeting' | 'awareness'; itemId: string }
   | { kind: 'entity'; entityId: string }
@@ -101,6 +123,9 @@ export type ConverseTurn = {
   commit?: { kind: 'send_reply'; itemId: string; body: string } | null;
   /** A verb whose review lives on a stage — the client summons it (forward/invite/reply). */
   openStage?: { stage: 'forward' | 'invite' | 'reply'; itemId: string } | null;
+  /** THE SENSIBLE ASK (Aug 8): ONE consequential decision as tappable options — each tap SPEAKS
+   *  its `say` through the composer (clicks are utterances). Ephemeral scaffolding, never persisted. */
+  options?: Array<{ label: string; say: string }>;
 };
 
 const linkKindOf = (s: Extract<ConverseScope, { kind: 'item' }>): 'inbox_item' | 'commitment' | 'meeting' =>
@@ -294,6 +319,23 @@ async function dispatchCommand(
   const allowed = new Set(capabilitiesFor('chief_of_staff').map((c) => c.tool));
   if (!allowed.has(tool)) return null;
   const ctx = { client, userId };
+  // ── THE DISPATCHER: a clear-fit production ask ACTS (delegation is reversible — the work
+  // reports back; nothing external fires) with visible attribution. ──
+  if (tool === 'assign_to_coworker') {
+    const cw = String(args.coworker ?? '').trim();
+    const task = String(args.task ?? '').trim();
+    if (!cw || !task) return { say: 'I need who and what for the hand-off — name the task in one line.', refs: [] };
+    return runCoworkerDelegation(client, userId, scope, cw, task, userText);
+  }
+  // ── THE SENSIBLE ASK: the loop's ONE decision door — malformed asks fall back to prose. ──
+  if (tool === 'offer_choices') {
+    const q = String(args.question ?? '').trim().slice(0, 200);
+    const options = (Array.isArray(args.options) ? args.options : [])
+      .map((o) => ({ label: String((o as { label?: string }).label ?? '').trim().slice(0, 40), say: String((o as { say?: string }).say ?? '').trim().slice(0, 200) }))
+      .filter((o) => o.label && o.say).slice(0, 4);
+    if (!q || options.length < 2) return null;
+    return { say: q, refs: [], options };
+  }
   // ── THE PARITY LAW verbs (Aug 4) ──
   if (tool === 'send_prepared_reply') {
     // The floor: no explicit send word in the user's OWN text → never fire; offer the confirm.
@@ -514,8 +556,57 @@ async function dispatchCommand(
   return null;
 }
 
+// ── THE ONE DELEGATION EXECUTOR — shared by the named-coworker verdict path ("have Max…") and
+// the dispatcher's assign_to_coworker tool. Delegation is REVERSIBLE (work lands as a room
+// report-back; nothing external fires), so it acts directly — with visible attribution. ──
+async function runCoworkerDelegation(
+  client: SupabaseClient, userId: string, scope: ConverseScope, coworkerWant: string, task: string, userText: string,
+): Promise<ConverseTurn> {
+  try {
+    const { createClient: createAdmin } = await import('@supabase/supabase-js');
+    const admin = createAdmin(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    const { data: workers } = await client.from('custom_agents').select('id, name, worker_role').eq('user_id', userId).eq('is_worker', true);
+    const want = coworkerWant.toLowerCase();
+    const worker = (workers ?? []).find((w) => String(w.name).toLowerCase().startsWith(want) || String(w.worker_role ?? '').toLowerCase().includes(want));
+    if (worker) {
+      const [{ buildItemContext }, { buildDelegationPrompt, runDelegation }, { data: prof }] = await Promise.all([
+        import('@/lib/home/item-context'), import('@/lib/home/delegate'),
+        client.from('profiles').select('full_name').eq('id', userId).single(),
+      ]);
+      const itemCtx = scope.kind === 'item' ? await buildItemContext(client, userId, scope.itemKind, scope.itemId) : null;
+      const prompt = buildDelegationPrompt({
+        kind: scope.kind === 'item' ? scope.itemKind : 'email',
+        itemContext: itemCtx?.text || '',
+        step: { text: task, detail: `The user asked for this in chat: "${userText}"` },
+      });
+      const out = await runDelegation({
+        supabase: admin, userId, worker: { id: worker.id as string, name: String(worker.name), worker_role: (worker.worker_role as string) ?? null, is_worker: true },
+        prompt, itemLabel: task.slice(0, 80),
+        firstName: (prof?.full_name as string | undefined)?.split(' ')[0] ?? null,
+        ...(scope.kind === 'item' ? { pool: { kind: scope.itemKind, entityId: scope.itemId }, provenance: { item: task.slice(0, 80), steered: true } } : {}),
+      });
+      // FIX 3 — a needs_input outcome is an ASK, not work in flight: say so plainly (the
+      // checklist already landed in the room as the coworker's own turn).
+      if (out?.needsInput?.length) return { say: `${String(worker.name).split(' ')[0]} needs something from you first: ${out.needsInput.join('; ')}. It's listed in the room — attach or answer here.`, refs: [], delegated: { agentName: String(worker.name) } };
+      if (out) {
+        // THE LOOP CLOSES IN PLACE (Aug 8, owner flag): the delegation runs synchronously — by
+        // the time we speak, the work EXISTS. The origin conversation gets the coworker's own
+        // report (never "will report back" about a finished thing); the full output lives in
+        // their thread, listed in Recent.
+        const first = String(worker.name).split(' ')[0];
+        const report = String(out.reportText || '').trim();
+        const say = report
+          ? `${report.slice(0, 700)}${report.length > 700 ? '…' : ''}\n\n(The full version is in your ${first} conversation.)`
+          : `${first} finished — the work is in your ${first} conversation.`;
+        return { say, refs: [], delegated: { agentName: String(worker.name) } };
+      }
+    }
+    return { say: "I couldn't find that coworker on your team.", refs: [] };
+  } catch { return { say: "The hand-off didn't go through — try again in a moment.", refs: [] }; }
+}
+
 // ── The bounded AGENT LOOP (the 20%) — function-calling over the chief-of-staff toolset. ──
-const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, prepareForwardDefinition, readActionHistoryDefinition, proposeStandingTaskDefinition, steerStandingTaskDefinition, runComputeDefinition];
+const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, prepareForwardDefinition, readActionHistoryDefinition, proposeStandingTaskDefinition, steerStandingTaskDefinition, runComputeDefinition, assignToCoworkerDefinition, offerChoicesDefinition];
 
 async function agentLoop(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string, grounding: string,
@@ -535,6 +626,14 @@ async function agentLoop(
       `the user's own words explicitly say send; prepare_forward only prepares (the approve stays with the user). ` +
       `Ground every claim in the ` +
       `CONTEXT below; when it doesn't cover something, say so plainly. PLAIN PROSE, no markdown, 1-4 sentences.\n\n` +
+      `THE TEAM (assign production work with assign_to_coworker): Clara — ops, admin, inbox, calendar · ` +
+      `Sofia — writing, documents, reports · Max — research, analysis · Luca — LinkedIn. When the user asks ` +
+      `for PRODUCED work (a report, draft, analysis, post) without naming who, assign the obvious fit ` +
+      `YOURSELF and say who's on it — the work is reversible and reports back here; never ask permission ` +
+      `for a hand-off. THE SENSIBLE ASK: offer_choices is for ONE genuinely consequential decision you ` +
+      `cannot infer (ambiguous scope that changes the work, two truly equal owners, a choice with external ` +
+      `impact) — NEVER to confirm reversible steps, never for what context already answers, at most one ` +
+      `ask per turn. Asking for the sake of asking is a failure.\n\n` +
       `--- CONTEXT ---\n${grounding.slice(0, 4000)}` },
     { role: 'user', content: text },
   ];
@@ -574,8 +673,9 @@ async function agentLoop(
       const out = await dispatchCommand(client, userId, scope, call.function.name, args, text);
       if (out?.applied) applied.push(...out.applied);
       if (out?.files) files.push(...out.files);
-      // A commit/stage signal ends the loop — the client owns the next step (the send door / the stage).
-      if (out?.commit || out?.openStage) return { ...out, applied: applied.length ? applied : out.applied };
+      // A commit/stage/options/delegation signal ends the loop — the client (or the coworker)
+      // owns the next step; the loop never talks past its own hand-off.
+      if (out?.commit || out?.openStage || out?.options || out?.delegated) return { ...out, applied: applied.length ? applied : out.applied };
       messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(out ?? { error: 'tool unavailable in this context' }).slice(0, 1500) });
     }
   }
@@ -683,7 +783,10 @@ export async function converse(
   const verdict = await classifyTurn(client, userId, scope, text, dlg.transcript);
 
   // 1 — COMMAND fast-path: direct registry dispatch (~1 extra small call total).
-  if (verdict.command) {
+  // EXCEPT raw-context reads (found via P30's flake): search_knowledge_base returns the RAW KB
+  // block — served straight as `say` it reads as a context dump, not an answer. Reads that need
+  // COMPOSITION go through the agent loop, which reads the block as a tool result and answers.
+  if (verdict.command && verdict.command.tool !== 'search_knowledge_base') {
     opts.onProgress?.(progressLabelFor(verdict.command.tool));
     const out = await dispatchCommand(client, userId, scope, verdict.command.tool, verdict.command.args, text);
     if (out) return out;
@@ -691,36 +794,7 @@ export async function converse(
 
   // 2 — DELEGATE: "have Max research X" → the real delegation engine (prepare + report back).
   if (verdict.delegate) {
-    try {
-      const { createClient: createAdmin } = await import('@supabase/supabase-js');
-      const admin = createAdmin(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-      const { data: workers } = await client.from('custom_agents').select('id, name, worker_role').eq('user_id', userId).eq('is_worker', true);
-      const want = verdict.delegate.coworker.toLowerCase();
-      const worker = (workers ?? []).find((w) => String(w.name).toLowerCase().startsWith(want) || String(w.worker_role ?? '').toLowerCase().includes(want));
-      if (worker) {
-        const [{ buildItemContext }, { buildDelegationPrompt, runDelegation }, { data: prof }] = await Promise.all([
-          import('@/lib/home/item-context'), import('@/lib/home/delegate'),
-          client.from('profiles').select('full_name').eq('id', userId).single(),
-        ]);
-        const itemCtx = scope.kind === 'item' ? await buildItemContext(client, userId, scope.itemKind, scope.itemId) : null;
-        const prompt = buildDelegationPrompt({
-          kind: scope.kind === 'item' ? scope.itemKind : 'email',
-          itemContext: itemCtx?.text || '',
-          step: { text: verdict.delegate.task, detail: `The user asked for this in chat: "${text}"` },
-        });
-        const out = await runDelegation({
-          supabase: admin, userId, worker: { id: worker.id as string, name: String(worker.name), worker_role: (worker.worker_role as string) ?? null, is_worker: true },
-          prompt, itemLabel: verdict.delegate.task.slice(0, 80),
-          firstName: (prof?.full_name as string | undefined)?.split(' ')[0] ?? null,
-          ...(scope.kind === 'item' ? { pool: { kind: scope.itemKind, entityId: scope.itemId }, provenance: { item: verdict.delegate.task.slice(0, 80), steered: true } } : {}),
-        });
-        // FIX 3 — a needs_input outcome is an ASK, not work in flight: say so plainly (the
-        // checklist already landed in the room as the coworker's own turn).
-        if (out?.needsInput?.length) return { say: `${String(worker.name).split(' ')[0]} needs something from you first: ${out.needsInput.join('; ')}. It's listed in the room — attach or answer here.`, refs: [], delegated: { agentName: String(worker.name) } };
-        if (out) return { say: `${String(worker.name).split(' ')[0]} is on it and will report back.`, refs: [], delegated: { agentName: String(worker.name) } };
-      }
-      return { say: "I couldn't find that coworker on your team.", refs: [] };
-    } catch { return { say: "The hand-off didn't go through — try again in a moment.", refs: [] }; }
+    return runCoworkerDelegation(client, userId, scope, verdict.delegate.coworker, verdict.delegate.task, text);
   }
 
   // 3 — QUESTION: grounded answer from the scope's memory — the whole brain (global), the deal's

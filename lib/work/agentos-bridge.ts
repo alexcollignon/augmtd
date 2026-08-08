@@ -123,11 +123,14 @@ async function buildWorkerRunContext(
   adminClient: any,
   userId: string,
   agentId: string,
+  // THE WORKERS READ THE ONE GROUNDING (Aug 8): the message text, so a named project pulls its
+  // full room page into the run context — parity with the native loop.
+  focusText?: string,
 ): Promise<string> {
   const [agentRes, identityBlock, routinesRes, skillsBlock, integrationsBlock, worldBlock] = await Promise.all([
     adminClient
       .from('custom_agents')
-      .select('memory_text, user_preferences')
+      .select('memory_text, user_preferences, name')
       .eq('id', agentId)
       .single(),
     buildUserContextBlock(userId, adminClient).catch(() => ''),
@@ -146,7 +149,7 @@ async function buildWorkerRunContext(
     import('@/lib/context/brain-context').then((m) => m.renderWorldContext(adminClient, userId)).catch(() => ''),
   ])
 
-  const agent = agentRes?.data as { memory_text: string | null; user_preferences: string | null } | null
+  const agent = agentRes?.data as { memory_text: string | null; user_preferences: string | null; name?: string | null } | null
   const parts: string[] = []
 
   // The clock — the AgentOS worker prompts are static (infra/agentos/workers.py), so
@@ -178,6 +181,15 @@ async function buildWorkerRunContext(
   }
   if (worldBlock) {
     parts.push(worldBlock)
+  }
+  // THE WORKERS READ THE ONE GROUNDING: a message naming a registered project pulls that
+  // project's FULL room page — the worker and the room read the same truth (never contradict).
+  if (focusText) {
+    try {
+      const { focusedProjectGrounding } = await import('@/lib/work/worker-grounding')
+      const pageBlock = await focusedProjectGrounding(adminClient, userId, focusText, { excludeName: agent?.name ?? null })
+      if (pageBlock) parts.push(pageBlock)
+    } catch { /* non-fatal */ }
   }
 
   const routines = (routinesRes?.data ?? []) as Array<{
@@ -223,7 +235,7 @@ export async function runWorkerStepViaAgentOS(args: {
 
   let userContext = ''
   try {
-    userContext = await buildWorkerRunContext(args.adminClient, args.userId, args.agentId)
+    userContext = await buildWorkerRunContext(args.adminClient, args.userId, args.agentId, args.message)
   } catch { /* best-effort */ }
 
   const form = new URLSearchParams()
@@ -306,7 +318,7 @@ export async function streamWorkerViaAgentOS({
   // — a failure here must not block the chat, so fall back to no extra context.
   let userContext = ''
   try {
-    userContext = await buildWorkerRunContext(adminClient, userId, agentId)
+    userContext = await buildWorkerRunContext(adminClient, userId, agentId, message)
   } catch (err) {
     console.error('[AgentOS bridge] context build failed (continuing):', err)
   }

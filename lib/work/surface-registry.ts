@@ -139,6 +139,10 @@ export interface Capability {
   blurb: string;                // one terse line rendered into the classifier prompt
   /** Which agents/surfaces may hold this tool. Absent = the pre-P6b default (coworker + workflow). */
   exposure?: CapabilityExposure[];
+  /** A CONVERSATION-FLOW capability (dispatcher/ask) — real in chat loops, but never a plan STEP:
+   *  excluded from the item-plan classifier prompt (a step graded "assign_to_coworker" would have
+   *  no assembler path). */
+  conversational?: boolean;
   /** MCP-backed capability (Phase 5D): served by a SELF-HOSTED MCP server mounted on AgentOS (never
    *  a hosted relay — sovereignty). Adoption recipe (infra/agentos/README.md): review + pin the
    *  server → verify TENANT-SAFETY (per-call auth via Nango, never startup credentials) → run on the
@@ -221,6 +225,22 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     intent: 'compute over files/data with code — parse or reconcile spreadsheets/PDFs/CSVs, verify numbers, transform data, produce a data file',
     tool: 'run_compute', built: true, kind: 'atomic', irreversible: false, feature: null, exposure: ['chief_of_staff', 'coworker', 'workflow'],
     blurb: 'RUN CODE over files/data we have (parse/verify/transform spreadsheets, PDFs, CSVs; compute numbers; produce a data file) — sandboxed, cannot send anything',
+  },
+
+  // ── THE DISPATCHER + THE SENSIBLE ASK (Aug 8 — production asks reach the team without the
+  // user routing; decisions reach the user ONLY when consequential and non-inferable). Both
+  // conversation-core: delegation is REVERSIBLE (work lands as a room report-back, nothing
+  // external fires) so a clear fit ACTS with visible attribution; offer_choices is the loop's
+  // ONE ask channel — actionable options, never a wall of questions. ──
+  assign_to_coworker: {
+    intent: "hand a production task (report, draft, research, analysis, post) to the best-fit coworker when the user didn't name one",
+    tool: 'assign_to_coworker', built: true, kind: 'judgment', irreversible: false, feature: null, exposure: ['chief_of_staff'], conversational: true,
+    blurb: 'ASSIGN produced work to the best-fit coworker and start it now (reversible — it reports back here)',
+  },
+  offer_choices: {
+    intent: 'put one genuinely consequential, non-inferable decision to the user as tappable options',
+    tool: 'offer_choices', built: true, kind: 'judgment', irreversible: false, feature: null, exposure: ['chief_of_staff'], conversational: true,
+    blurb: 'ASK the user ONE consequential decision as tappable options (sparingly — never to confirm reversible acts)',
   },
 
   // ── Commit (irreversible → approval gate) ──
@@ -337,9 +357,10 @@ export function capabilitiesFor(surface: CapabilityExposure): Capability[] {
     c.built && (c.exposure ? c.exposure.includes(surface) : surface !== 'chief_of_staff'));
 }
 
-// Only the capabilities that are actually wired today drive the classifier prompt.
+// Only the capabilities that are actually wired today drive the classifier prompt —
+// conversation-flow capabilities (dispatcher/ask) excluded: they are not plan steps.
 function builtCapabilities(): Capability[] {
-  return Object.values(CAPABILITY_MAP).filter((c) => c.built);
+  return Object.values(CAPABILITY_MAP).filter((c) => c.built && !c.conversational);
 }
 
 // ── The orchestration-board runtime helpers. A plan task carries a coarse `capability`

@@ -468,6 +468,105 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+R5. **A CONVERSATION REQUIRES THE USER'S VOICE + THE PROJECT WORD IS EARNED (Aug 8, owner
+   catch — 93/93; live-measured: 38 of 44 listed rooms on the real account were ENGINE-ONLY).**
+   (1) The recents scan listed any room with TURNS — but the engine's narrations are turns, so
+   proactivity minted conversations the user never had. Law: only a room with a USER turn is a
+   conversation; engine-only rooms surface through the DECK (attention), never the conversation
+   list. (2) The room rows called every entity "project" — but tracked is a HUMAN decision
+   (R4/P13): tracked → "project", machine-recognized → "suggested" (the portfolio's own word,
+   never presenting a system guess as the user's project). (3) All conversations centered
+   (mx-auto).
+R4. **THE ROW MENU + THE CONVERSATIONS PAGE REWORK (Aug 8, owner; SH1/UX2 re-pointed —
+   93/93).** (1) Sidebar Recent rows grew the hover ⋯ (chat/coworker only — rooms are work):
+   Rename inline · Delete with the Undo toast; one portaled menu (the overlay law); rows became
+   divs (no nested buttons). (2) ALL CONVERSATIONS rebuilt on the Claude Recents anatomy: TIME
+   BUCKETS (Today · Yesterday · This week · Earlier) over a divided list — glyph · title · sub
+   ("with Clara" / "in EG Bank" / kind · project) · short date · hover manage verbs. The chip
+   pills DIED (glyph + sub carry the kind); search covers subs too; the two-step delete confirm
+   became direct + Undo (the toast IS the safety, consistent with the sidebar).
+R3. **THE HOVER EXPAND (Aug 8, owner: "a smooth expand with the name of the project or
+   worker?"; SH1 extended — 93/93).** Recent rows smoothly reveal a second line on hover —
+   "with Clara" (DMs) · "in EG Bank" (filed chats) · the concrete kind word (rooms:
+   project/email/task/meeting); plain unfiled chats stay quiet (nothing worth expanding —
+   the owner's own read). Server serves `sub` per row; max-h/opacity transition, glyph-aligned.
+   ITERATED (owner screenshot: "missing something"): an ITEM room's line carries its PROJECT
+   NAME too — "email · in EG Bank" (entity_links joined, TRACKED-only per the P15 chip law);
+   an entity room's title IS the project, so just the word.
+R2. **THE LOOP CLOSES IN PLACE + THE KIND GLYPH (Aug 8, owner batch — 93/93).** (1) The flagged
+   dispatcher gap FIXED: runDelegation is synchronous — the work EXISTS when the turn speaks;
+   "is on it and will report back" was false twice. The origin conversation now receives the
+   coworker's own REPORT (reportText, capped, with "the full version is in your <name>
+   conversation") — both the dispatcher and the named-coworker path (one executor). (2) Sidebar
+   Recent rows wear a subtle KIND GLYPH (chat bubble · coworker person · room folder) —
+   recognition without reading. DESIGN ANSWERS RECORDED: (a) the docked-pane + edit-loop
+   grammar must generalize to project rooms and loose items — the rooms today use their own
+   viewers (DeliverableFocus, the stage); unifying every deliverable onto ONE pane component is
+   the token-pass's biggest item, now named THE ONE VIEWER; (b) artifact MANAGEMENT needs no
+   new surface — the library already exists twice lawfully: Settings → Knowledge ("Generated"
+   kind = every produced doc, searchable, removable) and each room's Files tab; if a gap shows
+   it's discoverability, not machinery.
+R. **THE DOCKED ARTIFACT PANE (Aug 8, owner: "doesn't make sense to have an overlay on top of
+   chat; should be workable like Claude — what if the user wants to edit again?"; AB5
+   re-pointed — 93/93).** The overlay era is over: the pane DOCKS non-modally (no dim, no
+   backdrop, border+shadow; the conversation section shifts left via margin at lg — both stay
+   live; below lg it floats, small screens stack). **THE EDIT LOOP**: every artifact_ready
+   refreshes the open pane to the NEWEST version — typing "make it shorter" continues the same
+   worker thread (worker-mode continuation + the route's documents-in-context injection), the
+   new version arrives, the pane updates in place; versions stay navigable in the pane
+   (computeVersionedArtifacts). The pane itself has no edit input BY DESIGN — the conversation
+   is the editing instrument (the Claude model). KNOWN GAP (noted, not built): a
+   DISPATCHER-assigned production ("Max is on it") reports back into the worker's thread —
+   its deliverable doesn't yet stream back into the originating Home conversation live; the
+   report-back card arrives via the team feed. Wiring dispatched deliverables back into the
+   origin exchange rides the proactive-deliverables step.
+Q. **THE VERIFY LOOP ON CHAT DOCUMENTS + THE STRUCTURAL WORD-IS-DEED — DONE (Aug 8,
+   production-floor step 3; gate VL1 — 93/93, tsc + build green; claim-regex verified 7/7
+   incl. the live failure case).** (1) Every chat-produced document now passes the ARITHMETIC
+   FLOOR (`verifyComputableClaims` in generateThreadDocument — the same channel the prepare
+   pass uses): a computable claim that doesn't recompute stamps `qa_report` on the artifact
+   (persisted; visible in the panel) AND is SAID in the coworker's chat summary ("a number
+   didn't verify — worth a look") — flagged, never silent; a floor outage speaks no verdict.
+   (2) The prompt rule alone failed live ("I've created a report", tool_calls:[]) — now the
+   native loop's final reply CLAIMING a document while none was produced gets ONE CORRECTIVE
+   ROUND ([SYSTEM CHECK] → produce it now or restate; never ship the lie; text_clear resets
+   the stream). AgentOS parity note: the guard is native-loop only (the bridge streams
+   upstream frames) — the prompt-level word-is-deed rides both; structural parity when the
+   loop moves or the bridge gains a post-pass. NEXT in arc: proactive project deliverables ·
+   then THE PRODUCTION ARC (registry rebase → approval step → workflows ledger).
+P. **THE DISPATCHER + THE SENSIBLE ASK — DONE (Aug 8, production-floor step 2; gate DS1 —
+   92/92, promise 146/146, tsc + build green; live-verified on the probe: unaddressed produce
+   ask → delegated to Max with visible attribution, plain question → no chips).** AGNOSTIC by
+   design (owner: "not a selector for a specific case — reasoning when it needs important
+   input; not asking for the sake of asking"): two REGISTRY capabilities (chief_of_staff
+   exposure, `conversational: true` — excluded from the item-plan classifier where a step
+   would have no assembler path). (1) **assign_to_coworker** — a clear-fit production ask ACTS
+   (delegation is reversible: the work reports back, nothing external fires) with visible
+   attribution and an easy override in words; the ONE delegation executor extracted
+   (runCoworkerDelegation — shared with the named-coworker path). (2) **offer_choices** — the
+   loop's ONE decision door: ≤4 tappable options, each tap SPEAKS its `say` through the
+   composer (clicks are utterances; ephemeral, consumed on tap); prompt law: only a
+   consequential, non-inferable decision — "asking for the sake of asking is a failure". The
+   loop terminates on options/delegated (never talks past its own hand-off). RIDER (found via
+   P30's flake): the command fast-path no longer serves search_knowledge_base raw — a
+   context-dump `say` was reaching users when the classifier picked the search command;
+   composition reads go through the loop. NEXT: the verify loop on chat documents + the
+   structural word-is-deed guard.
+O. **THE WORKERS READ THE ONE GROUNDING — DONE (Aug 8, production-floor step 1; gate WG1 —
+   91/91, tsc + build green; matcher live-verified 4/4 on the real account).** The last
+   reasoner outside the tent brought in: `lib/work/worker-grounding.ts`
+   `focusedProjectGrounding` — when the user's message NAMES a registered project (the SAME
+   deterministic focus matcher as the Home ask), the worker receives that project's FULL room
+   page (the SAME assembleRoomGrounding the room's responder/Q&A/chief read; [L#]/[F#] tags
+   stripped) on BOTH runtimes: the native loop's context parts and the AgentOS bridge's
+   user_context (both chat-stream and workflow-step call sites; bridge parity lands with the
+   flag's runtime — no box redeploy needed, the block rides per-run context). **THE
+   ADDRESSED-NAME STRIP** (found live: "Clara, report on EG Bank" matched the entity "Madalena
+   Clara" — a coworker's name colliding with a person-named project): the address is the
+   envelope, never the subject — the worker's first name strips before matching; a GENUINE
+   person-named subject still matches on its remaining tokens (verified). Delegation was
+   already entity-grounded via buildItemContext. Clara and the room now read one truth.
+   NEXT: the dispatcher (visible assignment selector).
 N5. **THE PRESENTATION LAW (Aug 7, owner: "that grounding/reasoning also needs to exist — there
    shouldn't be redundancy"; gate PR1 — 90/90, one-room 85/85).** The no-redundancy dedupes had
    been accumulating as per-pane RENDER PATCHES (move×card, embedded×rail…) — each correct,

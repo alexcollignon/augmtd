@@ -29,7 +29,10 @@ type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
    *  outputs): a DOCUMENT card opens the artifact panel HERE (art), a registry render still
    *  points at its page (href); an EMAIL DRAFT mounts the editable send card INLINE. */
   cards?: Array<{ label: string; sub?: string; href?: string; art?: { tid: string; id: string } }>;
-  drafts?: Array<{ draft: EmailDraftData; tid: string; agentId: string }> };
+  drafts?: Array<{ draft: EmailDraftData; tid: string; agentId: string }>;
+  /** THE SENSIBLE ASK: one consequential decision as tappable options — a tap SPEAKS its `say`
+   *  through the composer. Ephemeral scaffolding (never persisted); consumed on tap. */
+  options?: Array<{ label: string; say: string }> };
 
 // TYPEWRITER — the same streaming feel as the coworker chats. The answer arrives whole (JSON + refs need
 // the full text), so we REVEAL it progressively: ~3 chars/frame, a partial trailing [ref tag is trimmed
@@ -439,10 +442,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       const drafts: NonNullable<Turn['drafts']> = [];
       const threadHref = `/workers?worker=${w.id}&thread=${tid}`;
       const first = w.name.split(' ')[0];
-      // THE ARTIFACT ARRIVES OPEN (owner, Aug 7 — "I thought it would open the right panel
-      // automatically"): the FIRST document of an exchange summons the panel itself; the card
-      // stays as the durable re-open affordance.
-      let autoOpened = false;
+      // THE ARTIFACT ARRIVES OPEN + STAYS CURRENT (Aug 7-8): EVERY document arrival summons/
+      // refreshes the pane to the newest version — so "make it shorter" in the same exchange
+      // updates the open document in place (the Claude edit loop). The card stays the durable
+      // re-open affordance.
       const setCards = () => setTurns((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
@@ -471,7 +474,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             // the worker page uses, inline. Only registry renders still point at their page.
             else if (event.type === 'artifact_ready' && event.artifact?.title && event.artifact.id) {
               cards.push({ label: event.artifact.title, sub: `document · by ${first}`, art: { tid, id: event.artifact.id } }); setCards();
-              if (!autoOpened) { autoOpened = true; void openArtifact(tid, event.artifact.id); }
+              void openArtifact(tid, event.artifact.id);
             }
             else if (event.type === 'artifact' && event.artifact) {
               cards.push({ label: event.artifact.title ?? event.artifact.type ?? 'Prepared work', sub: `by ${first}`, href: threadHref }); setCards();
@@ -576,7 +579,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // STREAMING ASK (Aug 6): SSE — `progress` events narrate the core's live stage (the busy
       // line speaks them), `done` carries the answer. A non-SSE response (error JSON) falls back.
       const res = await fetch('/api/home/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(scope ? { entityId: scope.id } : {}) }) });
-      let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string } } = {};
+      let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }> } = {};
       if (res.body && res.headers.get('content-type')?.includes('text/event-stream')) {
         const reader = res.body.getReader();
         const dec = new TextDecoder();
@@ -590,7 +593,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             const line = f.split('\n').find((l) => l.startsWith('data: '));
             if (!line) continue;
             try {
-              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string } };
+              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }> };
               if (ev.type === 'progress' && ev.label) setStage(ev.label);
               else if (ev.type === 'done') d = ev;
             } catch { /* partial frame */ }
@@ -599,7 +602,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       } else {
         d = await res.json();
       }
-      setTurns((prev) => { pendingAnimate.current = prev.length; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [] }]; });
+      setTurns((prev) => { pendingAnimate.current = prev.length; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}) }]; });
       if (d.answer) persistTurn('system', d.answer, d.refs ?? []);
       if (d.focus && !scope && !temp) setScopeHint(d.focus);
     } catch {
@@ -631,9 +634,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // the thread SMOOTHLY expands above it (grid-rows transition — the same Collapse idiom), the
   // input stays put as the card's floor, and the scroll container pins to the latest turn.
   return (
-    <section className="w-full">
+    <section className={`w-full transition-[margin] duration-300 ease-out ${artifactPanel ? 'lg:mr-[608px]' : ''}`}>
       {/* PAGE MODE: a live conversation renders directly on the page in a centered reading
-          column (Claude's anatomy) — never inside a floating card. */}
+          column (Claude's anatomy) — never inside a floating card. With the artifact pane
+          docked, the column keeps reading-width beside it (the section margin makes room). */}
       <div ref={shellRef}
         className={`transition-all duration-300 ease-out ${showThread ? 'max-w-3xl mx-auto w-full' : ''}`}>
         {/* The thread — above the input, smooth open/close (grid-rows), bounded + self-scrolling. */}
@@ -671,6 +675,22 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                     {t.drafts?.map((d, j) => (
                       <EmailDraftCard key={d.draft.id ?? j} draft={d.draft} threadId={d.tid} agentId={d.agentId} />
                     ))}
+                    {/* THE SENSIBLE ASK — a tap SPEAKS its message through the composer (clicks
+                        are utterances); the chips consume on tap (ephemeral scaffolding). */}
+                    {t.options && t.options.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {t.options.map((o, j) => (
+                          <button key={j} disabled={busy}
+                            onClick={() => {
+                              setTurns((prev) => prev.map((x) => (x === t ? { ...x, options: undefined } : x)));
+                              void handleSubmit(o.say, []);
+                            }}
+                            className="rounded-full border border-indigo-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-indigo-700 hover:bg-indigo-50 transition-colors disabled:opacity-50">
+                            {o.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )
               ))}
@@ -757,20 +777,20 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           />
         </div>
       </div>
-      {/* THE ARTIFACT PANEL OVERLAY (brick 3): the same panel the worker page docks, summoned
-          over the conversation — the document never requires leaving the one surface. */}
+      {/* THE ARTIFACT PANE (brick 3, reworked Aug 8 — owner: "doesn't make sense to have an
+          overlay on top of chat; should be workable like Claude"): DOCKED, NON-MODAL — no dim,
+          no backdrop; the conversation shifts left (the section's margin) and BOTH stay live.
+          Editing is the conversation: "make it shorter" continues the same worker thread, the
+          new version arrives, and the pane refreshes to it. Close = the pane's own ✕. */}
       {artifactPanel && (
-        <>
-          <div className="fixed inset-0 z-40 bg-neutral-900/20" onClick={() => setArtifactPanel(null)} aria-hidden />
-          <div className="fixed right-0 top-0 z-50 h-screen w-[min(620px,92vw)] shadow-2xl bg-neutral-50">
-            <ThreadArtifactsPanel
-              thread={artifactPanel.thread}
-              onClose={() => setArtifactPanel(null)}
-              initialDetailId={artifactPanel.initialId}
-              onArtifactsUpdate={(arts) => setArtifactPanel((p) => (p ? { ...p, thread: { ...p.thread, artifacts: arts } } : p))}
-            />
-          </div>
-        </>
+        <div className="fixed right-0 top-0 z-40 h-screen w-[min(600px,92vw)] border-l border-neutral-200 shadow-[-12px_0_40px_-24px_rgba(23,23,23,0.25)] bg-neutral-50">
+          <ThreadArtifactsPanel
+            thread={artifactPanel.thread}
+            onClose={() => setArtifactPanel(null)}
+            initialDetailId={artifactPanel.initialId}
+            onArtifactsUpdate={(arts) => setArtifactPanel((p) => (p ? { ...p, thread: { ...p.thread, artifacts: arts } } : p))}
+          />
+        </div>
       )}
     </section>
   );
