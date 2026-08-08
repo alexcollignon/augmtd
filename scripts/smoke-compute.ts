@@ -766,6 +766,20 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('lib/workflows/execute-step.ts').includes("ctx.projectGrounding && step.use_worker_identity !== false") &&
     src('lib/room/grounding.ts').includes('STANDING PRODUCTION'));
 
+  // ── PA5 · THE WORKFLOWS LEDGER (production arc step 5) — the production surface, ledger-led. ──
+  check('PA5: THE WORKFLOWS LEDGER — Workflows is a sidebar door to a LEDGER-LED lens (what waits on you leads · what stands · what ran; live-verified on the served page with real production); creation is DESCRIBE→DRAFT→REVIEW→CONFIRM (the review card speaks plain grammar — steps, schedule, deliverable home, presenter chips, the amber overlap warning — and Confirm IS the deed); Studio stays ONE click deep as "Edit method", never the front door; approvals decide inline through the one resume route; THE CHECKPOINT: completed step outputs persist as a run advances (durable-execution practice — live progress readable, a crash leaves evidence)',
+    src('components/one/one-sidebar.tsx').includes('/home?view=workflows') &&
+    src('components/home/view-switcher.tsx').includes("'workflows'") &&
+    src('components/home/home-view.tsx').includes("view === 'workflows'") &&
+    src('components/workflows/workflows-ledger.tsx').includes('generate-from-description') &&
+    src('components/workflows/workflows-ledger.tsx').includes('overlap_note') &&
+    src('components/workflows/workflows-ledger.tsx').includes('Confirm — it goes live') &&
+    src('components/workflows/workflows-ledger.tsx').includes('Approve — deliver it') &&
+    src('components/workflows/workflows-ledger.tsx').includes('/studio?workflow=') &&
+    src('app/api/workflows/ledger/route.ts').includes('awaiting') &&
+    src('app/api/workflows/ledger/route.ts').includes('workflow_scope') &&
+    src('lib/workflows/run-workflow.ts').includes('THE CHECKPOINT'));
+
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
     const { createClient } = await import('@supabase/supabase-js');
     const sbE = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);

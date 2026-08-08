@@ -7,8 +7,8 @@ import { Squares2X2Icon, CalendarDaysIcon, FolderIcon } from '@heroicons/react/2
 // this never sits on top of a card or rail. It expands only on intent and preserves the distinctive
 // AUGMTD interaction.
 
-// 'conversations' is a sidebar-reached lens (the All-conversations view) — never a switcher pill.
-export type HomeView = 'dashboard' | 'timeline' | 'projects' | 'conversations';
+// 'conversations' and 'workflows' are sidebar-reached lenses — never switcher pills.
+export type HomeView = 'dashboard' | 'timeline' | 'projects' | 'conversations' | 'workflows';
 
 const VIEWS: Array<{ id: HomeView; label: string; icon: React.ElementType }> = [
   { id: 'dashboard', label: 'Home',     icon: Squares2X2Icon },

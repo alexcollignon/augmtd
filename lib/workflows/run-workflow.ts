@@ -476,6 +476,11 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       projectGrounding,
     });
     stepOutputs.push(out);
+    // THE CHECKPOINT (durable-execution practice, Aug 8): completed step outputs persist as the
+    // run advances — the ledger reads live progress, a crash leaves evidence of exactly where,
+    // and the approval snapshot stops being the only mid-run truth. Best-effort: a failed
+    // checkpoint never fails the step it records.
+    await admin.from('workflow_runs').update({ step_outputs: stepOutputs }).eq('id', runId).then(() => {}, () => {});
     if (out.error) {
       runError = `Step "${out.label}" failed: ${out.error}`;
       break;

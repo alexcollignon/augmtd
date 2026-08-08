@@ -468,6 +468,27 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+W. **THE WORKFLOWS LEDGER — DONE (Aug 8, production arc step 5; gate PA5 — 100/100, build
+   green; LIVE-VERIFIED on the served page with the owner's real production: both AHK
+   workflows standing with schedule/presenter/last-run truth, and a deliberately
+   overlapping describe drew the amber "Overlaps 'AHK Executive Briefing' (every Wednesday
+   at 9am)" warning with the drafted pipeline BORN carrying the verify gate).** Workflows
+   is a sidebar door (BoltIcon → /home?view=workflows, a sidebar-reached lens like
+   Conversations — never a switcher pill). The surface is LEDGER-LED: "Waiting on you"
+   leads (parked approvals decide inline through the one resume route — Approve—deliver
+   it / Hold back), then Standing (each workflow: status dot · schedule · project chip ·
+   "X presents" · last-run truth · shield/check glyphs for verify/approval steps · hover
+   verbs Run now / Pause / Edit method), then the Recent runs trail. CREATION is
+   describe→draft→review→confirm: one sentence → generate-from-description → the review
+   card in plain grammar (numbered steps, schedule, deliverable home, presenter chips
+   defaulting to the ops worker, the overlap warning) → "Confirm — it goes live" POSTs
+   through the one save door (entity adoption + scope fire there). Studio is ONE click
+   deep as "Edit method" — never the front door. `/api/workflows/ledger` = one read
+   (workflows + scopes + parked + recent + the presenter roster). Plus THE CHECKPOINT
+   (durable-execution practice): run-workflow persists step_outputs after EVERY step —
+   the ledger reads live progress ("running — step 3/12"), a crash leaves evidence, and
+   the approval snapshot stopped being the only mid-run truth. REMAINING IN ARC: standing
+   reactions (judged triggers — workflows that fire on events, not just cron).
 V. **THE ENTITY EDGE — DONE (Aug 8, production arc step 4; gates PA4a/b/c — 99/99, tasks
    72/72, tsc + build green; E2E: a probe request naming the entity drew overlap_note
    naming the existing Monday task AND a pipeline born with the verify gate).** Workflows

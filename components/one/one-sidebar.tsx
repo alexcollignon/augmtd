@@ -16,7 +16,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   HomeIcon, EnvelopeIcon, VideoCameraIcon, PlusIcon, FolderIcon,
   Cog6ToothIcon, ArrowRightOnRectangleIcon, ShieldCheckIcon,
-  ChatBubbleLeftEllipsisIcon, UserCircleIcon,
+  ChatBubbleLeftEllipsisIcon, UserCircleIcon, BoltIcon,
 } from '@heroicons/react/24/outline';
 import { useRecordingContext } from '@/context/recording-context';
 import type { WorkspaceFeatures } from '@/lib/workspace/types';
@@ -165,6 +165,14 @@ export default function OneSidebar({
         <Link href="/home?view=projects" className={item(false)}>
           <FolderIcon className="w-[17px] h-[17px] flex-shrink-0 text-neutral-400" />
           Projects
+        </Link>
+
+        {/* THE PRODUCTION DOOR (production arc step 5): Workflows is the LEDGER — what stands,
+            what ran, what waits on your approval; creation is describe→confirm; Studio stays
+            one click deep as the method editor. Coworkers = ad hoc; workflows = production. */}
+        <Link href="/home?view=workflows" className={item(false)}>
+          <BoltIcon className="w-[17px] h-[17px] flex-shrink-0 text-neutral-400" />
+          Workflows
         </Link>
 
         {rooms.conversations.length > 0 && (

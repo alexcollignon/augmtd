@@ -32,6 +32,7 @@ import {
 import { cleanTitle } from '@/lib/work-items/report';
 import TimelineGantt from '@/components/timeline/timeline-gantt';
 import PortfolioView from '@/components/entities/portfolio-view';
+import WorkflowsLedger from '@/components/workflows/workflows-ledger';
 
 // Priority / SlippingDeal / DoItem / DeckEntry / bundling / sorting now live in lib/home/agenda.ts —
 // the ONE agenda spine the deck, the day ring, and the brief composer all project from (Living-Home S1).
@@ -1326,7 +1327,7 @@ export function HomeView() {
   // survives refresh, and the switch feels instant (never "navigating to another screen").
   useEffect(() => {
     const v = new URLSearchParams(window.location.search).get('view');
-    if (v === 'timeline' || v === 'projects' || v === 'conversations') setViewState(v);
+    if (v === 'timeline' || v === 'projects' || v === 'conversations' || v === 'workflows') setViewState(v);
   }, []);
   // THE ROOM-DOOR LAW (Aug 3): a soft nav to /home?view=… (deck row → project room, "Open project",
   // any deep-link) changes ONLY the query — the mount effect above never re-fires. React to real
@@ -1335,7 +1336,7 @@ export function HomeView() {
   const searchParams = useSearchParams();
   useEffect(() => {
     const v = searchParams.get('view');
-    if (v === 'timeline' || v === 'projects' || v === 'conversations') setViewState(v);
+    if (v === 'timeline' || v === 'projects' || v === 'conversations' || v === 'workflows') setViewState(v);
   }, [searchParams]);
   const setView = useCallback((v: HomeViewLens) => {
     setViewState(v);
@@ -2001,6 +2002,10 @@ export function HomeView() {
         {/* PROJECTS lens — initiatives grouping your work (goals + rules your coworkers respect).
             onDetailChange lets a project deep-dive hide the Home greeting above (deep-dive framing). */}
         {view === 'projects' && <RiseIn key="lens-projects"><PortfolioView onDetailChange={setProjectDetailOpen} /></RiseIn>}
+
+        {/* WORKFLOWS lens (the production ledger) — sidebar-reached; describe→draft→review→confirm,
+            approvals lead, Studio one click deep as the method editor. */}
+        {view === 'workflows' && <RiseIn key="lens-workflows"><WorkflowsLedger /></RiseIn>}
 
         {view === 'dashboard' && !chatActive && (
         <div className={`transition-opacity duration-200 ease-out ${chatFading ? 'opacity-0' : 'opacity-100'}`}>
