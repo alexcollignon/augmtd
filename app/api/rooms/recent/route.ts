@@ -72,15 +72,23 @@ export async function GET(request: NextRequest) {
     // first user turn — unless the user RENAMED them (item_plans kind 'room_title' overrides).
     const chatKeys = keys.filter((k) => k.startsWith('chat:')).slice(0, all ? 40 : 8);
     let chats: Array<{ key: string; label: string; at: string }> = [];
+    const projectOf = new Map<string, string>();
     if (chatKeys.length) {
-      const [{ data: chatTurns }, { data: titleRows }] = await Promise.all([
+      const [{ data: chatTurns }, { data: titleRows }, { data: scopeRows }] = await Promise.all([
         supabase.from('room_turns')
           .select('room_key, role, text, created_at')
           .eq('user_id', user.id).in('room_key', chatKeys)
           .order('created_at', { ascending: true }).limit(200),
         supabase.from('item_plans').select('entity_id, tasks')
           .eq('user_id', user.id).eq('kind', 'room_title').in('entity_id', chatKeys),
+        supabase.from('item_plans').select('entity_id, tasks')
+          .eq('user_id', user.id).eq('kind', 'room_scope').in('entity_id', chatKeys),
       ]);
+      // The filed chats wear their PROJECT as a quiet tag (which project is this about — visible
+      // in the list, the sidebar direction of the binding).
+      for (const r of (scopeRows ?? []) as Array<{ entity_id: string; tasks: { entityName?: string } | null }>) {
+        if (r.tasks?.entityName) projectOf.set(r.entity_id, r.tasks.entityName);
+      }
       const customTitle = new Map<string, string>();
       for (const r of (titleRows ?? []) as Array<{ entity_id: string; tasks: { title?: string } | null }>) {
         if (r.tasks?.title) customTitle.set(r.entity_id, r.tasks.title);
@@ -127,12 +135,12 @@ export async function GET(request: NextRequest) {
     // global-recency order. Chats title by their first ask; rooms by their record; coworker
     // threads by their own title; unlabelable keys drop honestly.
     const chatLabel = new Map(chats.map((c) => [c.key, c.label]));
-    type Convo = { key: string; kind: 'room' | 'chat' | 'coworker'; label: string; href: string | null; at: string | null };
+    type Convo = { key: string; kind: 'room' | 'chat' | 'coworker'; label: string; href: string | null; at: string | null; project?: string };
     const conversations = keys
       .map((k): Convo | null => {
         if (k.startsWith('chat:')) {
           const l = chatLabel.get(k);
-          return l ? { key: k, kind: 'chat', label: l, href: null, at: lastAt.get(k) ?? null } : null;
+          return l ? { key: k, kind: 'chat', label: l, href: null, at: lastAt.get(k) ?? null, ...(projectOf.get(k) ? { project: projectOf.get(k) } : {}) } : null;
         }
         const l = label.get(k);
         return l && hrefOf(k) ? { key: k, kind: 'room', label: l.slice(0, 60), href: hrefOf(k), at: lastAt.get(k) ?? null } : null;

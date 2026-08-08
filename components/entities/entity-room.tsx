@@ -18,6 +18,7 @@ import { ItemRail, type RailView } from '@/components/home/item-rail';
 import { ItemDetail } from '@/components/home/item-detail';
 import { RoomShell } from '@/components/room/room-shell';
 import { pushDealTurn } from '@/components/home/item-rail';
+import { railCoversItem } from '@/lib/room/presentation';
 import { AddItemPicker } from '@/components/entities/add-item-picker';
 import GanttChart from '@/components/entities/gantt-chart';
 import { toast } from 'sonner';
@@ -593,6 +594,45 @@ function Disclosure({ label, count, open, onToggle, children }: {
   );
 }
 
+// THE ROOM WARM (instant-load doctrine, owner Aug 7 — "should be instant"): hovering a project
+// row prefetches the room's two payloads into the same LS keys the room hydrates from — a first
+// open paints from cache like every later one. POLITE by design (the Aug 7 contention lesson —
+// a hover sweep across rows fired N heavy requests that queued the whole DB): 160ms hover
+// intent before anything fires, and warms run ONE at a time through a serial queue.
+const roomWarmed = new Set<string>();
+const warmQueue: string[] = [];
+let warmRunning = false;
+const warmTimers = new Map<string, ReturnType<typeof setTimeout>>();
+async function drainWarmQueue(): Promise<void> {
+  if (warmRunning) return;
+  warmRunning = true;
+  try {
+    while (warmQueue.length) {
+      const entityId = warmQueue.shift()!;
+      await Promise.all([
+        fetch(`/api/entities/${entityId}/detail`).then((r) => r.json())
+          .then((d) => { if (d?.entity) saveLS(`aug-entity-detail-${entityId}`, d); }).catch(() => {}),
+        fetch(`/api/entities/${entityId}/room`).then((r) => r.json())
+          .then((d) => { if (d?.entity) saveLS(`aug-entity-rail-${entityId}`, d); }).catch(() => {}),
+      ]);
+    }
+  } finally { warmRunning = false; }
+}
+export function warmEntityRoom(entityId: string): void {
+  if (roomWarmed.has(entityId) || warmTimers.has(entityId)) return;
+  warmTimers.set(entityId, setTimeout(() => {
+    warmTimers.delete(entityId);
+    if (roomWarmed.has(entityId)) return;
+    roomWarmed.add(entityId);
+    warmQueue.push(entityId);
+    void drainWarmQueue();
+  }, 160));
+}
+export function cancelWarmEntityRoom(entityId: string): void {
+  const t = warmTimers.get(entityId);
+  if (t) { clearTimeout(t); warmTimers.delete(entityId); }
+}
+
 export default function EntityRoom({ entityId, onBack, initialTab }: { entityId: string; onBack: () => void; initialTab?: 'overview' | 'work' | 'timeline' }) {
   const [d, setD] = useState<Detail | null>(null);
   const [rail, setRail] = useState<RailView | null>(null);
@@ -601,12 +641,19 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
   // THE ONE SHELL (R2): a focused artifact renders INSIDE the room's main card — the header, rail
   // and per-deal conversation stay put; a breadcrumb steps back to the room's first paint.
   const [focused, setFocused] = useState<FocusItem | null>(null);
+  // The stage INTENT riding a focus (the merged action card / a chat stage verb): the embedded
+  // item raises that stage on arrival — Open lands on the PREPARED thing, never the bare thread.
+  // The NONCE makes the intent re-fireable (a second click after ✕ must raise again — the same
+  // state value fired nothing; found live Aug 7).
+  const [focusStage, setFocusStage] = useState<'reply' | 'forward' | 'invite' | null>(null);
+  const [stageNonce, setStageNonce] = useState(0);
   // THE ONE SYSTEM (Aug 5): openHref only FOCUSES. The click-echo narrations and "want me on
   // it?" offers that used to be pushed here were a parallel author — they contradicted the
   // responder's brief because they reasoned from a different slice at a different time. The
   // room's opening (brief · MOVE · offers) now says everything; a focus is spatial, not speech.
   const openHref = (href: string | null, _narrate = false) => {
     const f = focusFromHref(href);
+    setFocusStage(null); // a plain focus carries no stage intent (onStage re-sets after)
     if (f) setFocused(f);
     else if (href) router.push(href);
   };
@@ -737,9 +784,15 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
             openHref(href, true);
             return true;
           }}
-          // A chat stage verb ("forward this to X") focuses the item ON the room's stage — never
-          // a page navigation out of the room.
-          onStage={(_stage, itemId) => { openHref(`/item/${itemId}?kind=email`, false); return true; }}
+          // A chat stage verb / the merged action card focuses the item ON the room's stage WITH
+          // its stage raised (the prepared work is the first thing seen) — never a bare thread,
+          // never a page navigation out of the room.
+          onStage={(stage, itemId) => {
+            openHref(`/item/${itemId}?kind=email`, false);
+            setFocusStage(stage === 'forward' ? 'forward' : stage === 'invite' ? 'invite' : 'reply');
+            setStageNonce((n) => n + 1);
+            return true;
+          }}
         />
       ) : null}
       stage={<div className="flex-1 min-w-0 flex flex-col h-full min-h-0 overflow-hidden">
@@ -759,7 +812,11 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
               <DeliverableFocus id={focused.id} title={focused.title}
                 meta={(d?.statusBrief?.deliverables ?? []).find((dv) => dv.ref === focused.id) ?? null} />
             ) : (
-              <ItemDetail key={`${focused.kind}-${focused.id}`} id={focused.id} kind={focused.kind} embedded />
+              <ItemDetail key={`${focused.kind}-${focused.id}`} id={focused.id} kind={focused.kind} embedded
+                initialStage={focusStage ?? undefined} stageSignal={stageNonce}
+                // THE PRESENTATION LAW (lib/room/presentation): when the rail's merged action
+                // card covers this item, the truth pane never duplicates its buttons.
+                hideArtifactCards={railCoversItem(rail?.move?.ref, focused.id)} />
             )}
           </div>
         ) : (
@@ -788,8 +845,25 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
                   {e.summary && <p className="text-[14px] text-neutral-500 leading-relaxed mt-1.5 max-w-[680px]">{e.summary}</p>}
                 </div>
                 <div className="flex-shrink-0 flex items-center gap-2">
-                  {/* Status + category (F4/R1) — the same verbs as the portfolio row; no star (Accept/
-                      Not-a-project is the membership control). */}
+                  {/* NEW CHAT, PRE-FILED (owner design, Aug 7 — the Claude "new conversation in
+                      this project" gesture): starts a fresh Home conversation already scoped to
+                      THIS project (grounded on its room; the binding written on first use). The
+                      room's own stream stays the working session; produce-threads are satellites. */}
+                  <button
+                    onClick={() => {
+                      try {
+                        localStorage.removeItem('aug-home-chat-key');
+                        sessionStorage.setItem('aug-open-chat-intent', '1');
+                        sessionStorage.setItem('aug-new-chat-scope', JSON.stringify({ id: e.id, name: e.name }));
+                      } catch { /* no LS */ }
+                      window.dispatchEvent(new CustomEvent('aug:new-chat'));
+                      router.push('/home');
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-neutral-50 h-8 px-3 text-[12px] font-medium text-neutral-500 hover:bg-indigo-50 hover:text-indigo-700 transition-all duration-200"
+                    title={`Start a conversation about ${e.name} — it files here automatically`}
+                  >
+                    New chat
+                  </button>
                   <div className="relative">
                     <button onClick={() => setMenu((v) => !v)} className="text-neutral-300 hover:text-neutral-600 transition-colors text-[18px] leading-none" title="Status">⋯</button>
                     {menu && (

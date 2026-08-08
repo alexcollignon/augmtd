@@ -10,9 +10,10 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import { ChatBubbleLeftEllipsisIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 
-type Conversation = { key: string; kind: 'room' | 'chat' | 'coworker'; label: string; href: string | null; at: string | null };
+type Conversation = { key: string; kind: 'room' | 'chat' | 'coworker'; label: string; href: string | null; at: string | null; project?: string };
 
 export function AllConversations({ onOpenChat }: { onOpenChat: (key: string) => void }) {
   const router = useRouter();
@@ -51,17 +52,38 @@ export function AllConversations({ onOpenChat }: { onOpenChat: (key: string) => 
     }
   };
 
+  // SPEAK CONSEQUENCE (owner, Aug 7): delete is ARCHIVE under the hood (chat turns batch-archive;
+  // coworker threads soft-archive via PATCH — never the hard DELETE), and the toast carries the
+  // way back. Undo restores the conversation exactly as it was.
+  const restoreRow = (c: Conversation) =>
+    setRows((r) => [...(r ?? []), c].sort((a, b) => new Date(b.at ?? 0).getTime() - new Date(a.at ?? 0).getTime()));
   const remove = async (c: Conversation) => {
     setConfirmDel(null);
     setRows((r) => (r ?? []).filter((x) => x.key !== c.key)); // optimistic
     try {
       const res = c.kind === 'chat'
         ? await fetch(`/api/room/turns?key=${encodeURIComponent(c.key)}`, { method: 'DELETE' })
-        : await fetch(`/api/work/threads/${workerTid(c.key)}`, { method: 'DELETE' });
+        : await fetch(`/api/work/threads/${workerTid(c.key)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'archived' }) });
       if (!res.ok) throw new Error();
       changed();
+      toast('Conversation deleted', {
+        action: {
+          label: 'Undo',
+          onClick: () => {
+            void (async () => {
+              try {
+                const r = c.kind === 'chat'
+                  ? await fetch('/api/rooms/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: c.key }) })
+                  : await fetch(`/api/work/threads/${workerTid(c.key)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'active' }) });
+                if (!r.ok) throw new Error();
+                restoreRow(c); changed();
+              } catch { toast.error("Couldn't restore it — check All conversations in a moment."); }
+            })();
+          },
+        },
+      });
     } catch {
-      setRows((r) => [...(r ?? []), c].sort((a, b) => new Date(b.at ?? 0).getTime() - new Date(a.at ?? 0).getTime()));
+      restoreRow(c);
     }
   };
 
@@ -100,7 +122,11 @@ export function AllConversations({ onOpenChat }: { onOpenChat: (key: string) => 
                 className="min-w-0 flex-1 text-left"
               >
                 <span className={`block truncate text-[13.5px] text-neutral-800 ${c.kind === 'chat' ? '' : 'font-medium'}`}>{c.label}</span>
-                {c.at && <span className="block text-[11.5px] text-neutral-400">{c.at.slice(0, 10)}</span>}
+                {(c.at || c.project) && (
+                  <span className="block truncate text-[11.5px] text-neutral-400">
+                    {c.at?.slice(0, 10)}{c.project ? <> · <span className="text-indigo-400">{c.project}</span></> : null}
+                  </span>
+                )}
               </button>
             )}
             {/* Manage — rename + delete for chat/coworker conversations; a two-step confirm.

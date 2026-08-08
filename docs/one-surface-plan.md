@@ -468,6 +468,81 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+N5. **THE PRESENTATION LAW (Aug 7, owner: "that grounding/reasoning also needs to exist — there
+   shouldn't be redundancy"; gate PR1 — 90/90, one-room 85/85).** The no-redundancy dedupes had
+   been accumulating as per-pane RENDER PATCHES (move×card, embedded×rail…) — each correct,
+   the set ad-hoc. Now ONE module (`lib/room/presentation.ts`: moveTargetId ·
+   mergedArtifactKey · stageOfArtifactKey · railCoversItem) is the composition law both panes
+   consume — a deed presents EXACTLY ONCE by construction. The REASONING half already existed
+   (the one responder composes over the one grounding + live board, so it can't recommend the
+   already-done); this is its presentation counterpart. Future duplicate classes get a
+   function HERE, never a component-local suppression.
+N4. **THE RE-FIREABLE INTENT + ONE DEED ACROSS PANES (Aug 7 late, owner: "why does the left
+   button not work now? isn't it redundant in both panels?"; R9 re-pointed — one-room 85/85,
+   89/89).** (1) The rail's action button died on the SECOND click: the stage intent rode a
+   state value + remount key — same value, no change, nothing fired. Now the intent rides a
+   NONCE (`stageSignal` prop; the raise effect keys on it) — every click re-raises, no
+   remount, no refetch. (2) The truth pane's embedded "Reply drafted [Open]" card duplicated
+   the rail's merged action card — `hideArtifactCards` suppresses the embedded copies exactly
+   when the rail's MOVE covers the focused item (one deed, one object, across panes); items
+   the move does NOT cover keep their embedded affordance (their only door).
+N3. **THE INSTANT SERVE + THE SHEET (Aug 7 evening, gate PF2 — 89/89, one-room 85/85).**
+   (1) Found live: the merged card says "drafted by Clara", the raised stage said "drafting…"
+   for seconds — the draft route ran the FULL judge (+resolution) before serving even a STORED
+   draft. Now a stored prepared draft serves on the CACHED judgment alone (one read; a cached
+   non-reply verdict still refuses — P2 holds; an absent cache falls through to the full gate,
+   never a bypass). "drafting…" now only shows when genuinely generating. (2) THE STAGE IS A
+   SHEET, NOT A CURTAIN — StageOverlay rises from the bottom of the truth pane, capped ~72%,
+   rounded top + shadow: the source THREAD stays visible and scrollable above the reply/
+   forward/invite being reviewed (owner: "the user sees the context"). One component, all
+   three stages.
+N2. **THE CONTENTION FINDING (Aug 7 — "everything seems super slow"; gate PF1 — 88/88).**
+   The 36-43s "reconcile" in the brief's marks was QUEUE TIME, not work — profiled live: the
+   reconcile's real inputs are 168 items / 351 emails / ~0.6s of queries / 0 pending
+   resolutions. The killer was the CONCURRENT BURST: brief + portfolio + workers-home +
+   timeline + 2×(detail+room) hover-warms, all queueing on one dev process + one DB pool —
+   every route's wall-time balloons and the marks blame whoever waited. Fixes: (1) the
+   RECONCILE THROTTLE — module-level 10-min TTL + single-flight (the aux stamp landed in
+   after(), so overlapping requests both ran it); (2) THE POLITE WARM — 160ms hover intent +
+   a serial queue (one warm at a time; a hover sweep across rows had fired N heavy request
+   pairs at once); cancel on mouse-leave. KNOWN REMAINING (the real perf pass, still owed):
+   the detail/room/portfolio routes are individually heavy (multi-second alone, tens under
+   contention) — they deserve the timeline_cache treatment (server last-good + after()
+   converge); dev-mode cold compiles amplify everything and prod won't pay those.
+N. **THE TRUST FIXES (Aug 7 — the production-floor arc's step 0; gates TF1-TF3 — 87/87,
+   one-room 85/85, tsc + build green).** (1) **ONE DEED, ONE OBJECT** — the last dedupe the
+   Aug 5 one-responder rework didn't reach: responder MOVE × board artifact card lived in
+   different layers with no structural join. Now computed at component scope: when the MOVE's
+   target IS a prepared artifact on the rail, ONE action card renders (object + by-line +
+   primary verb + ≤2 quiet offer variants ON the card); the duplicate stream card is
+   suppressed; banner+chips survive only when nothing prepared matches. (2) **OPEN LANDS ON
+   THE PREPARED THING** (found live: "Prepared by Clara" → Open → the bare thread) — the
+   merged card's click carries a STAGE INTENT: entity-room focuses the item with
+   `initialStage`, ItemDetail raises composer/forward/invite on arrival (the click carried
+   the user's intent — the summoned-stage law holds). (3) **THE ROOM WARM** — hovering a
+   portfolio row prefetches detail+room into the same LS keys the room hydrates from; a first
+   open paints from cache like every later one (the room already LS-hydrated — cold first
+   opens were the gap). NEXT (the agreed order): workers-read-the-one-grounding → dispatcher
+   (visible assignment selector) → verify loop on chat documents → proactive project
+   deliverables.
+M. **THE UX BATCH — SPEAK CONSEQUENCE + THE THREAD-STORY COMPLETION (Aug 7 afternoon, gates
+   UX1+UX2 — 84/84, one-room 85/85, restore round-trip live-verified; commit a443d01 preceded
+   it).** From the owner conversation ("a user might be used to work a certain way — Clear
+   maybe he thinks it will delete?"): (1) the room pair is self-explanatory — **New session ↔
+   Earlier sessions** ("Clear"/"History" dead; the way back is visible before it's needed).
+   (2) conversation DELETE is archive + an **Undo toast** — chat rooms batch-un-archive via
+   POST /api/rooms/restore; coworker threads soft-archive via the extended thread PATCH
+   (status), never the hard DELETE. (3) **the pre-filed New chat** — the project room's "New
+   chat" button starts a Home conversation already scoped (sessionStorage intent → binding
+   written up front): the Claude "new conversation in this project" gesture, mapped to
+   satellites-around-one-room. (4) **the seam line is a DOOR** (ref → /home?chat=<key>,
+   handled in the panel, param stripped after). (5) filed chats wear their **project tag** in
+   All conversations (room_scope join in the recent route). SETTLED DESIGN (the thread
+   question, owner-worked): ONE room stream per project (the proactive working session — the
+   engine must know where to speak); deliverable-threads are SATELLITES (filed chats + worker
+   threads the dispatcher will spawn); the user never manages context — typing anywhere is
+   always correct because grounding assembles fresh each turn (no context rot to hygiene
+   around).
 L5. **THE SCOPE BINDING v2 — LINK, NOT MOVE (Aug 7, owner: "any conversation can get
    added/changed/removed?"; gate F7 re-pointed — 82/82; lifecycle live-verified on the probe:
    file→re-file→un-file, seam follows, turns never move).** v1's physical turn-move made
@@ -610,6 +685,69 @@ a better home than the one it closes.
 - **Home firehose guard**: with one front door, the deck's curation laws (judged, folded, earned
   calm, no silent caps) become load-bearing, not polish. Any convergence PR must show the deck
   survives the added inflow.
+
+## THE PRODUCTION ARC (designed Aug 8, owner-worked — "coworkers are ad hoc; workflows are production")
+
+**The taxonomy (the owner's sketch, adopted):** assistants → prompts · **agents → team → AD HOC** ·
+**workflows → production**. A real company has colleagues AND production lines; "a team took over"
+was never the whole company. The narrative: **"Your team handles the ad hoc; your workflows run
+the production; both share one brain."** The differentiator vs Relay/Zapier/n8n: their workflows
+know their own steps — OURS KNOW YOUR COMPANY (judged triggers, grounded drafting, entity-scoped
+retrieval, verification gates, sandboxed compute, sovereign runtime, debt on the deck when one
+fails).
+
+**The surface — a "Workflows" nav item, LEDGER-LED (never canvas-led):**
+- **Landing = the ledger**: every workflow — promise · schedule/trigger · last run · next run ·
+  health dot · the project it feeds · presenter-coworker chip when output wears a voice. A row
+  opens its run history + room narration; "method" opens Studio. Doubles as the sovereignty/audit
+  surface ("everything the system does on its own authority").
+- **Creation = describe → draft → review → confirm**: a describe box ("Every Monday build the ops
+  report from the tracker and email it to me") → generate-config DRAFTS the pipeline → shown as
+  READABLE STEPS (gather → compute → synthesize → verify → deliver), editable → Confirm = the
+  standing binding + the ledger row. SAYING PREPARES, COMMITTING STAYS EXPLICIT — same spec-card
+  grammar. The Studio canvas survives ONE CLICK DEEP ("edit steps" / "start from blank") — the
+  power-user door; builder available, never builder-led. Conversational creation (the spec card
+  from any chat) lands in the SAME ledger.
+- **SYSTEM-OWNED, coworker-optional**: the dispatcher runs it; an attached coworker is VOICE and
+  report-back only (the per-coworker Tasks tabs become filtered views of the one ledger).
+
+**The engine — REBASE ON THE ONE REGISTRY** (workflows are the last consumer of the pre-registry
+flat toolkit; proven by run_compute: one registry row lit up chat + workflows + picker at once):
+1. Step types = capability rows (exposure slice 'workflow') — one row lights up chat, judge,
+   items, AND the picker; the Studio double TOOL_GROUPS sync wart dies; generate-config derives
+   its catalogue from the registry.
+2. **THE APPROVAL STEP = the commit door with a pause** (backlog #3 "approval gate — backend
+   done, UI missing" revived): a pipeline send stages an action_commit, the approve lands on the
+   deck (and later email), approval fires exactly-once; reject steers. This is what makes
+   production trustworthy for the regulated audience (the Relay-style human gate, on our rails).
+3. Verification becomes a STRUCTURAL step type (evaluator + arithmetic floor as a pipeline
+   stage; generate-config emits it by default) — every generated workflow born with a QA gate,
+   never a copy-pasted prompt block (the AHK lesson, made law).
+4. Sends route through action_commits; outputs get provenance chips + outcome logging (production
+   feeds the same learning loop as ambient work).
+5. **Judged triggers → STANDING REACTIONS** ("whenever a role brief lands…", "when a client goes
+   quiet 10 days…"): the same describe→confirm grammar, brain-conditioned — only possible because
+   capability and judgment share one registry.
+
+**BRAIN-AWARE BY CONSTRUCTION (the owner's requirement — "the system knows what we have"):**
+1. The workflow ↔ PROJECT edge is first-class (creation from a room pre-links; describe
+   recognizes a named project via the same focus matcher; the ledger's project column).
+2. **Grounded drafting**: generate-config reads the ROOM'S PAGE (goals/rules/people/actual
+   sources) — "the EG Bank weekly report" drafts steps naming EG Bank's real material; the
+   pipeline author is just another reasoner behind the one grounding.
+3. **Scope-inherited runtime**: a project-linked workflow's retrieval steps default to the
+   entity's scope (its files, threads, ledger) — like a filed conversation grounds on its room.
+4. **The ledger rides the grounding**: standing tasks (schedule · last run · health) become a
+   section of the room grounding + the brain snapshot — "what's automated here?" answers from
+   the same truth the Workflows page shows; the responder can SAY "Monday's report failed".
+5. **Duplicate-awareness at creation**: the brain knows existing automations → the spec card
+   catches "you already have a weekly EG Bank report — extend or replace?" (the covers-merge
+   class; never two standing promises for one job).
+
+**Sequencing**: after workers-read-the-one-grounding + the dispatcher (shared foundation: "make
+every executor read the same page"); then registry-rebase → entity edge + grounded drafting →
+the approval step → the ledger surface. **Never**: a canvas-led surface; coworker-owned
+automation; a second creation grammar outside the spec card.
 
 ## FRAMES — live, shareable artifacts (rides Arc 1 capability + Arc 3 stage)
 

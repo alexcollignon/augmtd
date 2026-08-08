@@ -72,10 +72,11 @@ export async function POST(request: NextRequest) {
     if (upErr) throw upErr;
 
     // The seam narrates in the project room (deltas, not silence) — dedupe-keyed so it moves
-    // with the binding instead of stacking.
+    // with the binding instead of stacking; the ref is the DOOR (a seam line must be clickable).
     await writeRoomTurn(supabase, user.id, ent.id, {
       role: 'system',
       text: 'A Home conversation was filed into this project — its answers now ground here.',
+      refs: [{ label: 'Open the conversation', href: `/home?chat=${encodeURIComponent(roomKey)}` }],
       dedupeKey: `adopt:${roomKey}`,
     });
 

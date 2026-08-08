@@ -611,6 +611,63 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/home/home-ask.tsx').includes('if (d.focus && !scope && !temp) setScopeHint(d.focus)') &&
     src('components/home/home-ask.tsx').includes('setScopeHint(null); void adopt(h)'));
 
+  check('UX1: SPEAK CONSEQUENCE ON CONVERSATION VERBS (owner, Aug 7 — ""Clear" reads as delete; can he get it back?") — the room pair is self-explanatory (New session ↔ Earlier sessions, "Clear" dead); conversation delete is ARCHIVE with an Undo toast (chat: batch un-archive via /api/rooms/restore; coworker: soft status PATCH, never the hard DELETE)',
+    src('components/home/item-rail.tsx').includes('>New session</button>') &&
+    src('components/home/item-rail.tsx').includes('>Earlier sessions</button>') &&
+    !src('components/home/item-rail.tsx').includes('>Clear</button>') &&
+    src('components/one/all-conversations.tsx').includes("toast('Conversation deleted'") &&
+    src('components/one/all-conversations.tsx').includes("'/api/rooms/restore'") &&
+    src('components/one/all-conversations.tsx').includes("status: 'archived'") &&
+    src('app/api/rooms/restore/route.ts').includes('archived_at: null') &&
+    src('app/api/work/threads/[id]/route.ts').includes("status === 'archived' || status === 'active'"));
+
+  check('UX2: THE PRE-FILED NEW CHAT + THE SEAM DOOR + PROJECT TAGS — the project room\'s "New chat" starts a Home conversation already scoped (intent → binding up front); the room\'s seam line is a clickable door (?chat= ref, handled in the panel); filed chats wear their project as a quiet tag in All conversations',
+    src('components/entities/entity-room.tsx').includes("'aug-new-chat-scope'") &&
+    src('components/home/home-ask.tsx').includes("sessionStorage.getItem('aug-new-chat-scope')") &&
+    src('components/home/home-ask.tsx').includes(".get('chat')") &&
+    src('app/api/rooms/adopt/route.ts').includes('/home?chat=') &&
+    src('app/api/rooms/recent/route.ts').includes('projectOf') &&
+    src('components/one/all-conversations.tsx').includes('{c.project}'));
+
+  check('TF1: ONE DEED, ONE OBJECT (owner, Aug 7 — "CTA to check, action buttons, then again check CTA") — when the MOVE\'s target IS a prepared artifact on the rail, the two renderers MERGE into ONE action card (object + primary verb + ≤2 quiet variants ON the card); the duplicate stream card is suppressed; the banner+chips form survives only when nothing prepared matches',
+    src('components/home/item-rail.tsx').includes('ONE DEED, ONE OBJECT') &&
+    src('components/home/item-rail.tsx').includes('mergedArtKey') &&
+    src('components/home/item-rail.tsx').includes('streamArts.filter') &&
+    src('components/home/item-rail.tsx').includes('resp.offers.slice(0, 2)'));
+
+  check('TF2: OPEN LANDS ON THE PREPARED THING — the merged card\'s click carries the STAGE INTENT: the room focuses the item WITH its stage raised (ItemDetail initialStage → composer/forward/invite up on arrival, the thread beneath); never the bare thread behind a "Prepared by Clara" promise',
+    src('components/home/item-rail.tsx').includes('onStage?.(stageOfArtifactKey(mergedArt.key), respMoveTargetId)') &&
+    src('components/home/item-detail.tsx').includes('initialStage?:') &&
+    src('components/home/item-detail.tsx').includes('OPEN LANDS ON THE PREPARED THING') &&
+    src('components/entities/entity-room.tsx').includes('focusStage') &&
+    src('components/entities/entity-room.tsx').includes('initialStage={focusStage ?? undefined}'));
+
+  check('TF3: THE ROOM WARM — hovering a project row prefetches the room\'s two payloads into the SAME LS keys the room hydrates from (a first open paints from cache like every later one); session-deduped',
+    src('components/entities/entity-room.tsx').includes('export function warmEntityRoom') &&
+    src('components/entities/entity-room.tsx').includes('roomWarmed.has(entityId)') &&
+    src('components/entities/portfolio-view.tsx').includes('onMouseEnter={() => warmEntityRoom(e.id)}'));
+
+  check('PF1: THE RECONCILE THROTTLE (found live, Aug 7 — reconcile burned 36-43s inside every brief load and every concurrent surface paid it again, queueing the whole DB behind it) — module-level per-user TTL (10 min) + single-flight (concurrent callers share ONE run); the sync-time resolver still fires real-time; `force` bypasses',
+    src('lib/inbox/reconcile-replied.ts').includes('RECONCILE_TTL_MS') &&
+    src('lib/inbox/reconcile-replied.ts').includes('reconcileInflight') &&
+    src('lib/inbox/reconcile-replied.ts').includes('if (inflight) return inflight;') &&
+    src('lib/inbox/reconcile-replied.ts').includes('force?: boolean'));
+
+  check('PF2: THE INSTANT SERVE + THE SHEET (owner, Aug 7 — ""drafted" then takes too long"; "show the thread too") — a STORED prepared draft serves on the CACHED judgment alone (one read, no re-judge/resolution; a cached non-reply verdict still refuses — P2 holds, absent cache falls through to the full gate); the summoned stage is a bottom SHEET capped ~72% so the source thread stays visible above it',
+    src('app/api/inbox/[id]/draft/route.ts').includes('THE INSTANT SERVE') &&
+    src('app/api/inbox/[id]/draft/route.ts').includes("eq('kind', 'judgment').eq('entity_id', `inbox:${id}`)") &&
+    src('app/api/inbox/[id]/draft/route.ts').includes("skipped: 'judged_none' });\n    }\n  }") &&
+    src('components/home/item-detail.tsx').includes('THE STAGE IS A SHEET, NOT A CURTAIN') &&
+    src('components/home/item-detail.tsx').includes('max-h-[72%]'));
+
+  check('PR1: THE PRESENTATION LAW (owner, Aug 7 — "that grounding/reasoning needs to exist; there shouldn\'t be redundancy") — the no-redundancy composition lives in ONE module (lib/room/presentation: moveTargetId · mergedArtifactKey · stageOfArtifactKey · railCoversItem) consumed by BOTH panes; a deed presents exactly once BY CONSTRUCTION, never by per-pane suppression patches; no local re-derivation of the match remains',
+    src('lib/room/presentation.ts').includes('THE PRESENTATION LAW') &&
+    src('components/home/item-rail.tsx').includes("from '@/lib/room/presentation'") &&
+    src('components/entities/entity-room.tsx').includes("from '@/lib/room/presentation'") &&
+    src('components/entities/entity-room.tsx').includes('railCoversItem(rail?.move?.ref, focused.id)') &&
+    !src('components/home/item-rail.tsx').includes(".split(':')[1] ?? null") &&
+    !src('components/entities/entity-room.tsx').includes('rail.move.ref.includes'));
+
   // ── Report ──
   let pass = 0;
   for (const [n, ok, d] of out) {

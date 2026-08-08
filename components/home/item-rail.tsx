@@ -21,6 +21,7 @@ import { useRouter } from 'next/navigation';
 import { DocumentIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import { WorkerMentionInput } from '@/components/workers/worker-mention-input';
 import { ROLE_AVATARS } from '@/lib/workers/roles';
+import { moveTargetId, mergedArtifactKey, stageOfArtifactKey } from '@/lib/room/presentation';
 import { DecisionCard } from '@/components/work/decision-card';
 
 // 'entity' = the PROJECT DOOR (P7c-c2): the same rail inside the project room — id is the entity
@@ -231,6 +232,13 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   const ent = view.entity;
   const sib = view.siblings;
   const inRoom = kind === 'entity';
+  // ONE DEED ONE OBJECT — derived from THE PRESENTATION LAW (lib/room/presentation, the one
+  // composition every pane consumes): the responder block promotes the matched artifact into
+  // the action card; the stream suppresses its duplicate; the truth pane yields (its host reads
+  // the same law).
+  const respMove = (ent?.brief || view.brief) ? (ent?.move ?? view.move ?? null) : null;
+  const respMoveTargetId = moveTargetId(respMove?.ref ?? null);
+  const mergedArtKey = mergedArtifactKey(respMove, artifacts);
   // ONE-NAVIGATION LAW: every rail link goes through here — the host's in-room opener first
   // (focus/summoned stage), page navigation only when unhandled.
   const go = (href: string) => { if (onOpenHref?.(href)) return; router.push(href); };
@@ -491,8 +499,11 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
               } catch { setSessions([]); }
             }}
             className="text-[11px] font-medium text-neutral-300 hover:text-neutral-500 transition-colors"
-            title="Past conversations on this work"
-          >History</button>
+            title="Reopen a past session of this conversation — nothing is ever deleted"
+          >Earlier sessions</button>
+          {/* SPEAK CONSEQUENCE (owner, Aug 7 — ""Clear" reads as delete"): the verb says what
+              happens — a NEW SESSION starts, the old one files under Earlier sessions. The
+              pair is self-explanatory: new session ↔ earlier sessions. */}
           {turns.length > 0 && !viewingSession && (
             <button
               onClick={() => {
@@ -501,8 +512,8 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
                 fetch(`/api/room/turns?key=${encodeURIComponent(roomKey)}`, { method: 'DELETE' }).catch(() => {});
               }}
               className="text-[11px] font-medium text-neutral-300 hover:text-neutral-500 transition-colors"
-              title="Archive this conversation (find it again under History; the brain's memory is untouched)"
-            >Clear</button>
+              title="Start a fresh session — this one files under Earlier sessions (nothing is deleted; the brain's memory is untouched)"
+            >New session</button>
           )}
           {historyOpen && (
             <div className="absolute top-6 right-0 z-30 w-60 max-h-64 overflow-y-auto rounded-xl border border-neutral-200 bg-white shadow-lg p-1">
@@ -671,6 +682,13 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
             next-move line only until the responder's first compose lands. ═══ */}
         {!viewingSession && (() => {
           const resp = ent?.brief || view.brief ? { move: ent?.move ?? view.move ?? null, offers: ent?.offers ?? view.offers ?? [] } : null;
+          // ═══ ONE DEED, ONE OBJECT (owner, Aug 7 — "CTA to check, action buttons, then again
+          // check CTA"): when the MOVE's target IS a prepared artifact on this rail, the two
+          // renderers MERGE — the artifact card becomes the action surface (the move's label as
+          // its primary verb, the offers as its quiet variants ON the card), and the separate
+          // banner + chips row + duplicate card all cease to exist. The last dedupe the Aug 5
+          // one-responder rework didn't reach (responder × board card lived in different layers). ═══
+          const mergedArt = mergedArtKey ? (artifacts ?? []).find((a) => a.key === mergedArtKey) ?? null : null;
           if (!resp) {
             // Pre-compose fallback: the legacy next-move line (plain, deed-only).
             if (!(ent?.nextMove && !echoesAnchor(ent.nextMove, view.anchor?.ask ?? null))) return null;
@@ -694,10 +712,39 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           const selfTarget = !inRoom && !!href && href.includes(`/item/${id}`);
           const moveClick = resp.move
             ? () => {
+                // The merged card's click carries the STAGE INTENT — Open lands on the prepared
+                // thing (the host raises the stage), never the bare thread.
+                if (mergedArt && respMoveTargetId && onStage?.(stageOfArtifactKey(mergedArt.key), respMoveTargetId)) return;
                 if (selfTarget) { if (!onStage?.('reply', id)) { /* the stage host isn't mounted — nothing to do */ } return; }
                 if (href) go(href);
               }
             : null;
+          if (resp.move && mergedArt && moveClick) {
+            // THE ONE ACTION CARD: object + primary verb + quiet variants, one surface.
+            return (
+              <AssistantRow>
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 overflow-hidden">
+                  <div className="px-3.5 pt-2.5 pb-1.5 text-[12.5px] text-neutral-800">
+                    <span className="font-medium">{mergedArt.label}</span>
+                    {mergedArt.by && <span className="text-[11px] text-indigo-500 font-semibold ml-1.5">by {mergedArt.by.split(' ')[0]}</span>}
+                  </div>
+                  <div className="flex items-center gap-2 px-2 pb-2">
+                    <button onClick={moveClick}
+                      className="flex items-center gap-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 px-3.5 py-2 text-left transition-colors">
+                      <span className="text-[12.5px] font-medium text-white">{resp.move.label}</span>
+                      <span className="text-white/80" aria-hidden>→</span>
+                    </button>
+                    {resp.offers.slice(0, 2).map((o, j) => (
+                      <button key={j} onClick={() => send(o.say)} disabled={busy}
+                        className="rounded-lg px-2.5 py-2 text-[12px] font-medium text-neutral-500 hover:text-indigo-700 hover:bg-white/70 transition-colors disabled:opacity-50">
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </AssistantRow>
+            );
+          }
           return (
             <>
               {resp.move && (
@@ -792,13 +839,16 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           // A COMPONENT IS A TURN: cards whose anchor turn is VISIBLE seat there (the narration
           // becomes the card); the rest append at the stream's end (never above later conversation).
           const visibleDkeys = new Set(visible.map((t) => (t.role === 'system' ? t.dkey : undefined)).filter(Boolean) as string[]);
+          // ONE DEED ONE OBJECT: the artifact promoted into the action card above never renders
+          // a second time in the stream.
+          const streamArts = (viewingSession ? [] : artifacts ?? []).filter((a) => a.key !== mergedArtKey);
           const anchoredByKey = new Map<string, NonNullable<typeof artifacts>>();
-          for (const a of (viewingSession ? [] : artifacts ?? [])) {
+          for (const a of streamArts) {
             if (a.anchorKey && visibleDkeys.has(a.anchorKey)) {
               anchoredByKey.set(a.anchorKey, [...(anchoredByKey.get(a.anchorKey) ?? []), a]);
             }
           }
-          const endArtifacts = (viewingSession ? [] : artifacts ?? []).filter((a) => !(a.anchorKey && visibleDkeys.has(a.anchorKey)));
+          const endArtifacts = streamArts.filter((a) => !(a.anchorKey && visibleDkeys.has(a.anchorKey)));
           return (
             <>
               {earlier > 0 && (

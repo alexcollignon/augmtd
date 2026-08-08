@@ -113,9 +113,34 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // from the sidebar / All-conversations view loads it here.
   useEffect(() => {
     try {
-      const key = localStorage.getItem(CHAT_KEY_LS);
-      if (key?.startsWith('chat:')) loadRoom(key); // loadRoom restores the scope binding itself
-      else if (key?.startsWith('worker:')) void loadWorkerRoom(key);
+      // THE SEAM DOOR: a project room's "Open the conversation" ref lands here with ?chat= —
+      // an explicit click, it outranks every other rehydration path.
+      const chatParam = new URLSearchParams(window.location.search).get('chat');
+      // A PRE-FILED NEW CHAT (the project room's "New chat" door): the intent carries the
+      // project — the fresh conversation starts already scoped, binding written up front.
+      const scopeIntent = sessionStorage.getItem('aug-new-chat-scope');
+      if (chatParam?.startsWith('chat:')) {
+        loadRoom(chatParam); setOpen(true);
+        try { window.history.replaceState(null, '', '/home'); } catch { /* no history */ }
+      } else if (scopeIntent) {
+        sessionStorage.removeItem('aug-new-chat-scope');
+        try {
+          const s = JSON.parse(scopeIntent) as { id?: string; name?: string };
+          if (s?.id && s?.name) {
+            setScope({ id: s.id, name: s.name });
+            setOpen(true);
+            void fetch('/api/rooms/adopt', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ roomKey: chatRoomKey(), entityId: s.id }),
+            }).catch(() => {});
+            setTimeout(() => focusComposer(), 120);
+          }
+        } catch { /* bad blob */ }
+      } else {
+        const key = localStorage.getItem(CHAT_KEY_LS);
+        if (key?.startsWith('chat:')) loadRoom(key); // loadRoom restores the scope binding itself
+        else if (key?.startsWith('worker:')) void loadWorkerRoom(key);
+      }
       // A cross-page "open this conversation" intent (sidebar/All-conversations from another
       // route): the panel must actually OPEN — loading turns into a closed card reads as a
       // dead click (found live, Aug 6).

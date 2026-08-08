@@ -308,9 +308,10 @@ const src = (p: string) => readFileSync(p, 'utf8');
   // transient; "a loose room is a project room with less to file") ═══
   {
     const idt = src('components/home/item-detail.tsx');
-    check('R7 · the composer is the SUMMONED STAGE — an overlay raised by the user, never docked in the truth pane, never auto-raised on mount',
+    check('R7 · the composer is the SUMMONED STAGE — a bottom SHEET raised by the user (the thread stays visible above it — owner call Aug 7), never docked in the truth pane, never auto-raised on mount (initialStage carries a user click)',
       (idt.match(/THE SUMMONED STAGE/g)?.length ?? 0) >= 2 &&
-      idt.includes('absolute inset-0 z-20 bg-white') &&
+      idt.includes('absolute inset-x-0 bottom-0 z-20 max-h-[72%]') &&
+      idt.includes('THE STAGE IS A SHEET, NOT A CURTAIN') &&
       !idt.includes('setComposerOpen(cached.work') && !idt.includes("setComposerOpen(rel === 'reply')") &&
       !idt.includes("setComposerOpen(d.verdict.work === 'reply'"));
     // SUPERSEDED (Aug 4, THE VERB-SCOPE LAW): the verbs moved back ON the stage — attached to their
@@ -410,7 +411,9 @@ const src = (p: string) => readFileSync(p, 'utf8');
       src('components/home/item-detail.tsx').includes("objectKind === 'meeting_action'") &&
       src('app/api/items/view/route.ts').includes('itemSource') &&
       src('components/home/item-detail.tsx').includes('const artifactList') &&
-      src('components/home/item-detail.tsx').includes('embedded && artifactList.map'));
+      // Aug 7 (one deed across panes): the embedded cards yield when the ROOM's rail already
+      // carries the merged action card for this item.
+      src('components/home/item-detail.tsx').includes('embedded && !hideArtifactCards && artifactList.map'));
   }
 
   // ═══ R10 — THE EXCHANGE GRAMMAR (Aug 4: the room talks like a person — offer → pick →
