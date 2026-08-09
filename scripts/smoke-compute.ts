@@ -831,6 +831,69 @@ const src = (p: string) => readFileSync(p, 'utf8');
     console.log('· PA4-LIVE skipped — SUPABASE_SERVICE_ROLE_KEY not set in this env');
   }
 
+  // ── PA6 · STANDING REACTIONS (production arc step 6) — the brain as a trigger. ──
+  check('PA6a: the reaction shape is wired at every seam — a `reaction` TRIGGER TYPE (judged condition in plain words; the deterministic-spine law: reasoning at the trigger EDGE, the fixed pipeline fires); judged at the sync tail AFTER recognition (scope = the entity edge); the triggering event rides EVERY AI step incl. the verify gate (it IS source material, unlike projectGrounding); the hourly dispatcher re-fires stale queued event-runs (a crashed tail never silently eats an event); generate-config births reactions from "when/whenever" requests; schedule/standing machinery ignores reactions (no next_run_at, no standing commitment)',
+    src('lib/workflows/types.ts').includes("interface ReactionTrigger") &&
+    src('lib/workflows/reactions.ts').includes('checkReactions') &&
+    src('lib/workflows/reactions.ts').includes('DAILY_CAP') &&
+    src('lib/email-sync/sync-emails.ts').includes('checkReactions') &&
+    src('lib/workflows/execute-step.ts').includes('triggering_event') &&
+    src('app/api/cron/workflows-dispatch/route.ts').includes('refireStaleEventRuns') &&
+    src('lib/workflows/generate-config.ts').includes('"type": "reaction"') &&
+    src('lib/workflows/standing.ts').includes("wf.trigger?.type === 'schedule'") &&
+    src('app/api/workflows/ledger/route.ts').includes("trig?.type === 'reaction'"));
+
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const { createClient } = await import('@supabase/supabase-js');
+    const sbR6 = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    const { resolveProbeUser } = await import('./probe-user');
+    const probeR6 = await resolveProbeUser(sbR6);
+    const stampR6 = `smoke-rx-${Date.now()}`;
+    let wfId: string | null = null; const itemIds: string[] = [];
+    try {
+      const { data: wf } = await sbR6.from('workflows').insert({
+        user_id: probeR6, name: `[${stampR6}] invoice reaction`, status: 'active',
+        trigger: { type: 'reaction', when: 'an invoice arrives asking the user to pay', label: 'When an invoice lands' },
+        steps: [{ type: 'ai', id: 's1', label: 'Summarize', prompt: 'Summarize the triggering event in one line.', model_tier: 'fast' }],
+        output_config: { destination: 'message' },
+      }).select('id').single();
+      wfId = wf!.id as string;
+      const sinceIso = new Date(Date.now() - 60_000).toISOString();
+      for (const [title, body] of [
+        ['Invoice #4417 — payment due', 'Please find attached invoice #4417 for 850 EUR, due within 14 days. Kindly arrange payment.'],
+        ['Lunch on Friday?', 'Hey! Are you free for lunch on Friday around noon?'],
+      ]) {
+        const { data: it } = await sbR6.from('inbox_items').insert({
+          user_id: probeR6, source: 'email', work_title: title, status: 'pending',
+          source_data: { subject: title, snippet: body, from_name: 'Acme Billing', is_from_user: false },
+        }).select('id').single();
+        itemIds.push(it!.id as string);
+      }
+      const { checkReactions } = await import('../lib/workflows/reactions');
+      const r1 = await checkReactions(sbR6, probeR6, sinceIso);
+      const { data: queued } = await sbR6.from('workflow_runs').select('id, status, triggered_by').eq('workflow_id', wfId);
+      const { data: fireRows } = await sbR6.from('item_plans').select('entity_id, tasks').eq('user_id', probeR6).eq('kind', 'reaction_fire');
+      const fires = (fireRows ?? []) as Array<{ entity_id: string; tasks: { context?: string } }>;
+      const r2 = await checkReactions(sbR6, probeR6, sinceIso); // idempotence: same window, no new fire
+      check('PA6b-LIVE: the reaction fires on the probe — the invoice CLEARLY matching the condition fires (queued event-run + exactly-once record carrying the trigger context); the lunch note does NOT; the same window re-checked fires NOTHING (dedupe holds)',
+        r1?.fired === 1 && (queued ?? []).length === 1 && (queued?.[0] as { triggered_by?: string })?.triggered_by === 'event' &&
+        fires.length === 1 && fires[0].entity_id === `${wfId}:inbox:${itemIds[0]}` &&
+        !!fires[0].tasks?.context?.includes('Invoice #4417') &&
+        r2?.fired === 0);
+    } catch (e) {
+      check('PA6b-LIVE: standing reaction fire', false, e instanceof Error ? e.message : 'failed');
+    } finally {
+      if (wfId) {
+        await sbR6.from('workflow_runs').delete().eq('workflow_id', wfId);
+        await sbR6.from('workflows').delete().eq('id', wfId);
+        await sbR6.from('item_plans').delete().eq('user_id', probeR6).eq('kind', 'reaction_fire');
+      }
+      for (const id of itemIds) await sbR6.from('inbox_items').delete().eq('id', id);
+    }
+  } else {
+    console.log('· PA6-LIVE skipped — SUPABASE_SERVICE_ROLE_KEY not set in this env');
+  }
+
   // ── Report ──
   let pass = 0;
   for (const [n, ok, d] of out) {

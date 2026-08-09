@@ -36,10 +36,15 @@ type LedgerPayload = { ledger: LedgerRow[]; awaiting: Awaiting[]; recent: Recent
 type DraftStep = { type: string; label?: string; tool?: string };
 type Draft = {
   name: string; description: string | null;
-  trigger: { type: string; cron?: string; label?: string; timezone?: string };
+  trigger: { type: string; cron?: string; label?: string; timezone?: string; when?: string };
   steps: DraftStep[]; output_config: Record<string, unknown>;
   worker_instructions?: string | null; overlap_note?: string | null;
 };
+
+const triggerWord = (t: Draft['trigger']): string =>
+  t.type === 'schedule' ? (t.label ?? `cron ${t.cron}`) :
+  t.type === 'reaction' ? (t.label ?? (t.when ? `When ${t.when}` : 'On event')) :
+  'Runs on demand';
 
 const LS_KEY = 'aug-wf-ledger-v1';
 const HOME_WORD: Record<string, string> = { message: 'a message', document: 'a document', slack: 'Slack', email: 'your inbox' };
@@ -114,7 +119,7 @@ export default function WorkflowsLedger() {
       });
       const j = await r.json();
       if (!r.ok || !j.workflow) { toast.error(j.error ?? 'Could not create it.'); return; }
-      toast.success(`"${draft.name}" is live — ${draft.trigger.type === 'schedule' ? (draft.trigger.label ?? 'on its schedule') : 'run it anytime'}.`);
+      toast.success(`"${draft.name}" is live — ${draft.trigger.type === 'schedule' ? (draft.trigger.label ?? 'on its schedule') : draft.trigger.type === 'reaction' ? 'it fires when the condition is met' : 'run it anytime'}.`);
       setDraft(null); setDescribe('');
       void refresh(true);
     } finally { setConfirming(false); }
@@ -188,7 +193,7 @@ export default function WorkflowsLedger() {
               <div>
                 <div className="text-[15px] font-semibold text-neutral-900">{draft.name}</div>
                 <div className="mt-0.5 text-[12px] text-neutral-500">
-                  {draft.trigger.type === 'schedule' ? (draft.trigger.label ?? `cron ${draft.trigger.cron}`) : 'Runs on demand'}
+                  {triggerWord(draft.trigger)}
                   {' · delivers to '}{HOME_WORD[String((draft.output_config as { destination?: string }).destination ?? 'message')] ?? 'a message'}
                 </div>
               </div>

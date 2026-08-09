@@ -1354,6 +1354,7 @@ function cronPreview(freq: Freq, days: number[], hour: number, _minute: number, 
 
 function triggerShortTitle(trigger: WorkflowTrigger): string {
   if (trigger.type === 'manual') return 'Manual trigger';
+  if (trigger.type === 'reaction') return trigger.label ?? 'When it happens';
   const { freq, days, hour, dom } = parseCronHuman(trigger.cron ?? '0 9 * * *');
   const t = `${String(hour).padStart(2, '0')}:00`;
   if (freq === 'hourly')   return 'Every hour';

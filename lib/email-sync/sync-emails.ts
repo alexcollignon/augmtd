@@ -2045,6 +2045,13 @@ export async function syncEmailsForConnection(
         // day it appears, not only if it happens to get recorded.
         await shadowRecognizeCalendar(adminSupabase, connection.user_id).catch(() => {});
       } catch { /* non-fatal */ }
+      // STANDING REACTIONS (production arc step 6) — AFTER recognition, so a project-scoped
+      // reaction sees fresh entity links. Cheap no-op for the ~all users with no reactions.
+      try {
+        const { checkReactions } = await import('@/lib/workflows/reactions');
+        const rx = await checkReactions(adminSupabase, connection.user_id, syncStartedAt);
+        if (rx?.fired) console.log(`[reactions] fired ${rx.fired} run(s) for ${connection.user_id.slice(0, 8)}`);
+      } catch { /* non-fatal */ }
     } catch { /* non-fatal — Home-load hook backstops */ }
 
   } catch (error) {

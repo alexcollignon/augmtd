@@ -326,6 +326,9 @@ export interface RunWorkflowOptions {
    *  seed the completed step outputs from the run row and continue PAST the approval step
    *  that parked it. Requires runId. */
   resumeFromApproval?: boolean;
+  /** STANDING REACTIONS (production arc step 6): the triggering event's context block — rides
+   *  every AI step (including the verify gate, for which it is legitimate source material). */
+  triggerContext?: string;
 }
 
 export interface RunWorkflowResult {
@@ -474,6 +477,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       workerInstructions,
       skillIds,
       projectGrounding,
+      triggerEvent: opts.triggerContext ?? null,
     });
     stepOutputs.push(out);
     // THE CHECKPOINT (durable-execution practice, Aug 8): completed step outputs persist as the

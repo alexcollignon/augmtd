@@ -43,8 +43,10 @@ JSON shape:
 
 { "type": "manual" }
 { "type": "schedule", "cron": "0 9 * * 1", "timezone": "Europe/Lisbon", "label": "Every Monday at 9am" }
+{ "type": "reaction", "when": "a new public tender matching the client's construction profile arrives", "label": "When a matching tender lands" }
 
 Use schedule whenever the request mentions timing. Infer the most natural timezone from context (company, sources, language).
+Use reaction when the request says the workflow should fire WHEN/WHENEVER something happens ("when a matching tender lands", "whenever a client emails about pricing") — "when" states the condition in plain words (it is judged against each new arriving event), "label" is the short human rendering. A reaction workflow receives the triggering event as its first context block — its steps should work FROM that event (summarize, enrich, respond, produce), never re-fetch broad news/feeds the event doesn't call for.
 
 ━━━ STEP TYPES ━━━
 

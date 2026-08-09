@@ -34,6 +34,9 @@ export interface StepContext {
   /** THE ENTITY EDGE — the scoped project's current room page (workflowRunGrounding). Injected
    *  into AI steps only; a verify gate (use_worker_identity: false) never sees it. */
   projectGrounding?: string | null;
+  /** STANDING REACTIONS — the triggering event block. Unlike projectGrounding this IS source
+   *  material, so the verify gate sees it too (a claim about the trigger must be checkable). */
+  triggerEvent?: string | null;
 }
 
 // ── Public entrypoint ─────────────────────────────────────────────────────────
@@ -408,6 +411,7 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
   }
 
   const userPrompt = [
+    ctx.triggerEvent ? `<triggering_event>\n${ctx.triggerEvent}\n</triggering_event>` : null,
     previousBlock,
     `<instruction>\n${step.prompt}${formatNote}\n</instruction>`,
   ].filter(Boolean).join('\n\n');

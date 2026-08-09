@@ -468,6 +468,32 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+X. **STANDING REACTIONS — DONE (Aug 8, production arc step 6, THE ARC'S LAST STEP; gates
+   PA6a/b — 102/102, tasks 72/72, build green; LIVE on the probe: the invoice matching "an
+   invoice arrives asking the user to pay" FIRED (queued event-run + exactly-once record
+   carrying the trigger context), the lunch note did NOT, the re-checked window fired
+   nothing, and the fired run's output was grounded in the event — "Invoice #4417 from
+   Acme Billing… 850 EUR… 14 days").** The brain as a trigger: a `reaction` TRIGGER TYPE
+   whose `when` is a judged condition in plain words — the deterministic-spine law
+   (reasoning at the trigger EDGE; what fires is the fixed auditable pipeline).
+   `lib/workflows/reactions.ts`: judged at the SYNC TAIL after recognition (near-real-time
+   on arrival; scope = the entity edge — a project-scoped reaction only sees its project's
+   items); structural floors FIRST (bulk/own-mail excluded, exactly-once per
+   (workflow,item) via item_plans kind='reaction_fire', honest DAILY CAP that logs skips);
+   ONE conservative batched judgment per workflow ("a maybe is a no"); a fire = queued
+   run + inline after() attempt + THE BACKSTOP (hourly dispatcher re-fires event-runs
+   still queued after 10 min with their stored context — a crashed tail never silently
+   eats an event; AI-failure writes NO fire record, so the next sync re-judges honestly).
+   The trigger context rides every AI step INCLUDING the verify gate (it IS source
+   material — unlike projectGrounding, which the gate must not see). generate-config
+   births reactions from when/whenever requests (steps work FROM the event, never
+   re-fetch the world); schedule/standing machinery ignores reactions by construction
+   (nextRunFromTrigger null; no standing commitment); ledger + builder speak "When …".
+   Post-migration the approval loop was also E2E-proven REAL: park persisted
+   (awaiting_approval, outputs snapshotted) → resume passed exactly the gate → succeeded.
+   THE PRODUCTION ARC IS COMPLETE: registry gate → approval → verify → entity edge →
+   ledger → reactions. NEXT: the proactivity completion list (artifacts-into-origin
+   first), the perf pass, THE ONE VIEWER.
 W. **THE WORKFLOWS LEDGER — DONE (Aug 8, production arc step 5; gate PA5 — 100/100, build
    green; LIVE-VERIFIED on the served page with the owner's real production: both AHK
    workflows standing with schedule/presenter/last-run truth, and a deliberately

@@ -7,7 +7,7 @@ export type { DocumentArtifact };
 
 // ── Triggers ───────────────────────────────────────────────────────────────────
 
-export type TriggerType = 'manual' | 'schedule';
+export type TriggerType = 'manual' | 'schedule' | 'reaction';
 
 export interface ManualTrigger {
   type: 'manual';
@@ -20,7 +20,18 @@ export interface ScheduleTrigger {
   label?: string;        // human-readable: "Every Monday at 9am Lisbon"
 }
 
-export type WorkflowTrigger = ManualTrigger | ScheduleTrigger;
+// STANDING REACTION (production arc step 6) — the brain as a trigger: a judged condition over
+// the event stream ("when a tender matching the client's profile lands"). The reasoning sits at
+// the trigger EDGE; what fires is the fixed pipeline. Judged conservatively at the sync tail
+// (lib/workflows/reactions.ts); scope = the workflow's entity edge; exactly-once per event;
+// honest daily cap.
+export interface ReactionTrigger {
+  type: 'reaction';
+  when: string;          // the condition, in plain words — judged against each new event
+  label?: string;        // human-readable: "When a matching tender lands"
+}
+
+export type WorkflowTrigger = ManualTrigger | ScheduleTrigger | ReactionTrigger;
 
 // ── Steps ──────────────────────────────────────────────────────────────────────
 

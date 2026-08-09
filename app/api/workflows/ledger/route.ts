@@ -79,12 +79,15 @@ export async function GET() {
 
   const ledger = wfs.map(w => {
     const out = normalizeOutput(w.output_config);
-    const trig = w.trigger as { type?: string; label?: string; cron?: string } | null;
+    const trig = w.trigger as { type?: string; label?: string; cron?: string; when?: string } | null;
     const lastRun = runs.find(r => r.workflow_id === w.id && r.status !== 'awaiting_approval');
     const running = runs.find(r => r.workflow_id === w.id && r.status === 'running');
     return {
       id: w.id, name: w.name, description: w.description, status: w.status,
-      scheduleLabel: trig?.type === 'schedule' ? (trig.label ?? (trig.cron ? `cron ${trig.cron}` : null)) : 'On demand',
+      scheduleLabel:
+        trig?.type === 'schedule' ? (trig.label ?? (trig.cron ? `cron ${trig.cron}` : null)) :
+        trig?.type === 'reaction' ? (trig.label ?? (trig.when ? `When ${trig.when}` : 'On event')) :
+        'On demand',
       home: out.home,
       stepCount: (w.steps ?? []).length,
       hasApproval: (w.steps ?? []).some(s => (s as { type?: string }).type === 'approval'),
