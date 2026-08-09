@@ -161,6 +161,9 @@ export async function GET(request: NextRequest) {
           .in('agent_id', (workers as Array<{ id: string }>).map((w) => w.id))
           .is('workflow_id', null)
           .or('is_temporary.eq.false,is_temporary.is.null')
+          // A CONVERSATION REQUIRES THE USER'S VOICE: delegation hand-off threads are engine
+          // files (the "user" turns are engine-authored prompts) — never conversations.
+          .not('title', 'like', 'Handed to %')
           .order('updated_at', { ascending: false }).limit(all ? 20 : 6);
         workerConvos = ((wts ?? []) as Array<{ id: string; title: string | null; agent_id: string; updated_at: string | null }>)
           .map((t) => ({

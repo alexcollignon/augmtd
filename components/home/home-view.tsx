@@ -1327,7 +1327,7 @@ export function HomeView() {
   // survives refresh, and the switch feels instant (never "navigating to another screen").
   useEffect(() => {
     const v = new URLSearchParams(window.location.search).get('view');
-    if (v === 'timeline' || v === 'projects' || v === 'conversations' || v === 'workflows') setViewState(v);
+    if (v === 'timeline' || v === 'projects' || v === 'conversations' || v === 'workflows' || v === 'runs') setViewState(v);
   }, []);
   // THE ROOM-DOOR LAW (Aug 3): a soft nav to /home?view=… (deck row → project room, "Open project",
   // any deep-link) changes ONLY the query — the mount effect above never re-fires. React to real
@@ -1336,8 +1336,13 @@ export function HomeView() {
   const searchParams = useSearchParams();
   useEffect(() => {
     const v = searchParams.get('view');
-    if (v === 'timeline' || v === 'projects' || v === 'conversations' || v === 'workflows') setViewState(v);
+    if (v === 'timeline' || v === 'projects' || v === 'conversations' || v === 'workflows' || v === 'runs') setViewState(v);
   }, [searchParams]);
+  // THE LENS ANNOUNCER — replaceState is invisible to useSearchParams subscribers, so the
+  // sidebar mirrors the active lens through this event (fires on every lens change, any path).
+  useEffect(() => {
+    try { window.dispatchEvent(new CustomEvent('aug:view-changed', { detail: { view } })); } catch { /* SSR-safe */ }
+  }, [view]);
   const setView = useCallback((v: HomeViewLens) => {
     setViewState(v);
     const url = new URL(window.location.href);
@@ -1349,7 +1354,16 @@ export function HomeView() {
   useEffect(() => {
     const reset = () => setView('dashboard');
     window.addEventListener('augmtd:home-reset', reset);
-    return () => window.removeEventListener('augmtd:home-reset', reset);
+    // THE CHAT LIVES ON THE DASHBOARD LENS (owner, Aug 9 — "new chat not working"): opening a
+    // new/past chat from ANY other lens (Workflows, Projects…) must bring the dashboard forward,
+    // or the panel opens invisibly behind a lens that doesn't render it.
+    window.addEventListener('aug:new-chat', reset);
+    window.addEventListener('aug:open-chat', reset);
+    return () => {
+      window.removeEventListener('augmtd:home-reset', reset);
+      window.removeEventListener('aug:new-chat', reset);
+      window.removeEventListener('aug:open-chat', reset);
+    };
   }, [setView]);
   // Sync-status indicator state (3 bits): `syncing` = a background load(true) is in flight; `lastUpdatedAt`
   // = when the last load succeeded (drives "Updated Nm ago"); `realtimeConnected` = the postgres_changes
@@ -1940,7 +1954,7 @@ export function HomeView() {
             greeting shouldn't sit above it. */}
         {/* The greeting header steps aside WITH the deck (owner, Aug 7 — "the top things clear
             for conversation"): a live conversation owns the WHOLE page, not just the deck rows. */}
-        {!projectDetailOpen && !chatActive && (
+        {!projectDetailOpen && !chatActive && view !== 'workflows' && view !== 'runs' && (
         <RiseIn>
           {/* Living orb — abstract morphing glow in the brand spectrum, signalling the brief is
               continuously alive. Sits left so the greeting + narrative use the full width. */}
@@ -2003,9 +2017,13 @@ export function HomeView() {
             onDetailChange lets a project deep-dive hide the Home greeting above (deep-dive framing). */}
         {view === 'projects' && <RiseIn key="lens-projects"><PortfolioView onDetailChange={setProjectDetailOpen} /></RiseIn>}
 
-        {/* WORKFLOWS lens (the production ledger) — sidebar-reached; describe→draft→review→confirm,
-            approvals lead, Studio one click deep as the method editor. */}
-        {view === 'workflows' && <RiseIn key="lens-workflows"><WorkflowsLedger /></RiseIn>}
+        {/* WORKFLOWS lens (the production ledger) + its RUNS side — the island's contextual pill
+            switches between them (owner, Aug 9: the island, not in-page tabs). */}
+        {(view === 'workflows' || view === 'runs') && (
+          <RiseIn key="lens-workflows">
+            <WorkflowsLedger tab={view === 'runs' ? 'activity' : 'workflows'} />
+          </RiseIn>
+        )}
 
         {view === 'dashboard' && !chatActive && (
         <div className={`transition-opacity duration-200 ease-out ${chatFading ? 'opacity-0' : 'opacity-100'}`}>

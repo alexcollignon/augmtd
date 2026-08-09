@@ -117,7 +117,7 @@ export type ConverseTurn = {
   draft?: string | null;
   learned?: string[];
   entityName?: string | null;
-  delegated?: { agentName: string } | null;
+  delegated?: { agentName: string; agentId?: string } | null;
   /** THE PARITY LAW (Aug 4): a chat-approved send — the CLIENT fires this through the one send
    *  door (/api/inbox/[id]/send-reply). Emitted ONLY behind the explicit-send floor. */
   commit?: { kind: 'send_reply'; itemId: string; body: string } | null;
@@ -126,6 +126,10 @@ export type ConverseTurn = {
   /** THE SENSIBLE ASK (Aug 8): ONE consequential decision as tappable options — each tap SPEAKS
    *  its `say` through the composer (clicks are utterances). Ephemeral scaffolding, never persisted. */
   options?: Array<{ label: string; say: string }>;
+  /** ARTIFACTS-INTO-ORIGIN (Aug 9): the dispatched deliverable's REAL artifact rides back into
+   *  the conversation that asked — the surface renders its card and opens the viewer, instead of
+   *  pointing the user at another conversation. */
+  artifact?: { id: string; title: string; threadId: string; agentName: string } | null;
 };
 
 const linkKindOf = (s: Extract<ConverseScope, { kind: 'item' }>): 'inbox_item' | 'commitment' | 'meeting' =>
@@ -587,18 +591,27 @@ async function runCoworkerDelegation(
       });
       // FIX 3 — a needs_input outcome is an ASK, not work in flight: say so plainly (the
       // checklist already landed in the room as the coworker's own turn).
-      if (out?.needsInput?.length) return { say: `${String(worker.name).split(' ')[0]} needs something from you first: ${out.needsInput.join('; ')}. It's listed in the room — attach or answer here.`, refs: [], delegated: { agentName: String(worker.name) } };
+      if (out?.needsInput?.length) return { say: `${String(worker.name).split(' ')[0]} needs something from you first: ${out.needsInput.join('; ')}. It's listed in the room — attach or answer here.`, refs: [], delegated: { agentName: String(worker.name), agentId: String(worker.id) } };
       if (out) {
         // THE LOOP CLOSES IN PLACE (Aug 8, owner flag): the delegation runs synchronously — by
-        // the time we speak, the work EXISTS. The origin conversation gets the coworker's own
-        // report (never "will report back" about a finished thing); the full output lives in
-        // their thread, listed in Recent.
+        // the time we speak, the work EXISTS. ARTIFACTS-INTO-ORIGIN (Aug 9): when the work
+        // materialized as a real document, its card rides THIS turn and the viewer opens HERE —
+        // the origin conversation holds the deliverable, never a pointer to another one.
         const first = String(worker.name).split(' ')[0];
         const report = String(out.reportText || '').trim();
+        if (out.artifact) {
+          const say = report
+            ? `${report.slice(0, 700)}${report.length > 700 ? '…' : ''}`
+            : `${first} finished — the document is ready.`;
+          return {
+            say, refs: [], delegated: { agentName: String(worker.name), agentId: String(worker.id) },
+            artifact: { ...out.artifact, agentName: String(worker.name) },
+          };
+        }
         const say = report
           ? `${report.slice(0, 700)}${report.length > 700 ? '…' : ''}\n\n(The full version is in your ${first} conversation.)`
           : `${first} finished — the work is in your ${first} conversation.`;
-        return { say, refs: [], delegated: { agentName: String(worker.name) } };
+        return { say, refs: [], delegated: { agentName: String(worker.name), agentId: String(worker.id) } };
       }
     }
     return { say: "I couldn't find that coworker on your team.", refs: [] };
@@ -781,6 +794,27 @@ export async function converse(
   }
 
   const verdict = await classifyTurn(client, userId, scope, text, dlg.transcript);
+
+  // THE ADDRESSED-COWORKER FLOOR (Aug 9, found live: "Sofia, put together a one-page overview…"
+  // classified as create_task_item — the addressed hand-off became a to-do on the user's OWN
+  // plate). Deterministic: a message that OPENS by addressing a real coworker by name IS a
+  // hand-off — the address outranks whatever the classifier mapped. Roster-read, never a
+  // hardcoded name list.
+  if (!verdict.delegate) {
+    const m = text.trim().match(/^([A-Za-zÀ-ÿ]+)\s*[,:—-]\s+(.{8,})/);
+    if (m) {
+      try {
+        const { data: ws } = await client.from('custom_agents').select('name')
+          .eq('user_id', userId).eq('is_worker', true).eq('is_active', true);
+        const addressed = (ws ?? []).find((w) => String((w as { name: string }).name).split(' ')[0].toLowerCase() === m[1].toLowerCase());
+        if (addressed) verdict.delegate = { coworker: m[1], task: m[2].trim() };
+      } catch { /* the classifier's verdict stands */ }
+    }
+  }
+  // A hand-off OUTRANKS a command (same bug, second face: the classifier returned BOTH
+  // delegate AND create_task_item, and the command fast-path ran first — the addressed
+  // work landed on the user's own plate instead of the coworker's).
+  if (verdict.delegate) verdict.command = null;
 
   // 1 — COMMAND fast-path: direct registry dispatch (~1 extra small call total).
   // EXCEPT raw-context reads (found via P30's flake): search_knowledge_base returns the RAW KB

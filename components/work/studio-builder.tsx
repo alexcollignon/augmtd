@@ -54,6 +54,8 @@ import {
   EllipsisVerticalIcon,
   ChatBubbleLeftRightIcon,
   PaperAirplaneIcon,
+  ShieldCheckIcon,
+  HandRaisedIcon,
 } from '@heroicons/react/24/outline';
 import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
@@ -177,12 +179,16 @@ const STEP_TYPE_COLORS = {
   tool:  { bg: 'bg-blue-500',    activeBg: 'bg-blue-50',    activeText: 'text-blue-700' },
   ai:    { bg: 'bg-violet-500',  activeBg: 'bg-violet-50',  activeText: 'text-violet-700' },
   agent: { bg: 'bg-emerald-500', activeBg: 'bg-emerald-50', activeText: 'text-emerald-700' },
+  verify:   { bg: 'bg-teal-600',  activeBg: 'bg-teal-50',  activeText: 'text-teal-700' },
+  approval: { bg: 'bg-amber-500', activeBg: 'bg-amber-50', activeText: 'text-amber-700' },
 };
 
 const STEP_TYPE_ICONS = {
   tool:  WrenchScrewdriverIcon,
   ai:    SparklesIcon,
   agent: UserCircleIcon,
+  verify:   ShieldCheckIcon,
+  approval: HandRaisedIcon,
 };
 
 type ActivePanel = 'identity' | 'trigger' | 'output' | { stepId: string };
@@ -953,6 +959,14 @@ function StepFlowCard({ step, index: _index, active, onClick }: {
       const snippet = p ? (p.length > 42 ? p.slice(0, 42) + '…' : p) : 'No instruction yet';
       return `AI · ${snippet}`;
     }
+    if (step.type === 'verify') {
+      const ins = (step as { instruction?: string }).instruction?.trim();
+      return `Built-in check · corrects the draft against the sources${ins ? ` · ${ins.slice(0, 30)}…` : ''}`;
+    }
+    if (step.type === 'approval') {
+      const ins = (step as { instruction?: string }).instruction?.trim();
+      return `Pauses for your approval${ins ? ` · ${ins.slice(0, 34)}` : ' before continuing'}`;
+    }
     const p = (step as AgentStep).prompt?.trim();
     const snippet = p ? (p.length > 42 ? p.slice(0, 42) + '…' : p) : 'No task yet';
     return `Agent · ${snippet}`;
@@ -1258,6 +1272,23 @@ function StepConfigSection({
       {step.type === 'agent' && (
         <AgentStepFields step={step as AgentStep} agents={agents} onUpdate={onUpdate as (p: Partial<AgentStep>) => void}
           isEnhancing={isEnhancing} isPending={isPending} onEnhance={onEnhance} />
+      )}
+      {(step.type === 'verify' || step.type === 'approval') && (
+        <div className="p-4 space-y-3">
+          <p className="text-[12.5px] text-neutral-500 leading-relaxed">
+            {step.type === 'verify'
+              ? 'A built-in check: it treats the previous step\u2019s output as the draft, recomputes its numbers in code, removes anything the sources don\u2019t back, and keeps the structure exactly. No prompt needed.'
+              : 'The run pauses here and waits for your go-ahead — you approve or hold it back from the Workflows page. Nothing is delivered until you approve.'}
+          </p>
+          <Field label="Extra rules (optional)" hint={step.type === 'verify' ? 'e.g. "cite only .gov sources"' : 'what you\u2019re deciding'}>
+            <textarea
+              value={(step as { instruction?: string }).instruction ?? ''}
+              onChange={e => (onUpdate as (p: Record<string, unknown>) => void)({ instruction: e.target.value })}
+              rows={2}
+              className="w-full text-[13px] bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-indigo-300 focus:bg-white resize-none"
+            />
+          </Field>
+        </div>
       )}
     </div>
   );

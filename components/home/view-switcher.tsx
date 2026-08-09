@@ -1,22 +1,34 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Squares2X2Icon, CalendarDaysIcon, FolderIcon } from '@heroicons/react/24/outline';
+import { Squares2X2Icon, CalendarDaysIcon, BoltIcon, QueueListIcon } from '@heroicons/react/24/outline';
 
 // ── Workspace island — deliberately kept on the edge, while the workspace reserves its gutter so
 // this never sits on top of a card or rail. It expands only on intent and preserves the distinctive
 // AUGMTD interaction.
 
-// 'conversations' and 'workflows' are sidebar-reached lenses — never switcher pills.
-export type HomeView = 'dashboard' | 'timeline' | 'projects' | 'conversations' | 'workflows';
+// 'conversations' is sidebar-reached (never a pill). 'runs' = the Workflows lens's activity
+// side — a CONTEXTUAL island pill that appears while you're in Workflows (owner, Aug 9:
+// "leverage the island buttons instead of tabs").
+export type HomeView = 'dashboard' | 'timeline' | 'projects' | 'conversations' | 'workflows' | 'runs';
 
-const VIEWS: Array<{ id: HomeView; label: string; icon: React.ElementType }> = [
-  { id: 'dashboard', label: 'Home',     icon: Squares2X2Icon },
-  { id: 'projects',  label: 'Projects', icon: FolderIcon },
-  { id: 'timeline',  label: 'Timeline', icon: CalendarDaysIcon },
+// THE ISLAND IS LOCAL (owner, Aug 9 — "the island should be a navigation of the page it's in";
+// the Spinnable rule): the SIDEBAR moves you between places; the island shows VIEWS OF HERE.
+// Each place declares its own views; a place with one view shows NO island (an empty switcher
+// is chrome). Sidebar nouns never repeat here.
+const CONTEXTS: Array<{ match: HomeView[]; views: Array<{ id: HomeView; label: string; icon: React.ElementType }> }> = [
+  { match: ['dashboard', 'timeline'], views: [
+    { id: 'dashboard', label: 'Today',    icon: Squares2X2Icon },
+    { id: 'timeline',  label: 'Timeline', icon: CalendarDaysIcon },
+  ] },
+  { match: ['workflows', 'runs'], views: [
+    { id: 'workflows', label: 'Overview', icon: BoltIcon },
+    { id: 'runs',      label: 'Runs',     icon: QueueListIcon },
+  ] },
 ];
 
 export default function ViewSwitcher({ value, onChange, hidden }: { value: HomeView; onChange: (v: HomeView) => void; hidden?: boolean }) {
+  const views = CONTEXTS.find((c) => c.match.includes(value))?.views ?? null;
   const [expanded, setExpanded] = useState(false);
   const [top, setTop] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -42,6 +54,8 @@ export default function ViewSwitcher({ value, onChange, hidden }: { value: HomeV
     e.preventDefault();
   };
 
+  if (!views) return null; // one-view places carry no island
+
   return (
     <div
       onMouseEnter={() => !dragging && setExpanded(true)}
@@ -54,7 +68,7 @@ export default function ViewSwitcher({ value, onChange, hidden }: { value: HomeV
       <div onPointerDown={onGripDown} className={`flex items-center justify-center h-5 mb-1 rounded-lg ${dragging ? 'cursor-grabbing' : 'cursor-grab'} hover:bg-neutral-100/70 transition-colors`} title="Drag to move" aria-hidden="true">
         <div className="grid grid-cols-3 gap-[3px]">{Array.from({ length: 6 }).map((_, i) => <span key={i} className="w-[3px] h-[3px] rounded-full bg-neutral-300" />)}</div>
       </div>
-      {VIEWS.map((v) => {
+      {views.map((v) => {
         const active = value === v.id;
         const Icon = v.icon;
         return (

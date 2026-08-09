@@ -894,6 +894,39 @@ const src = (p: string) => readFileSync(p, 'utf8');
     console.log('· PA6-LIVE skipped — SUPABASE_SERVICE_ROLE_KEY not set in this env');
   }
 
+  check('PA5b: THE LEDGER REWORK (owner review, Aug 9) — the recent trail is GROUPED per workflow (deltas speak: failures itemize, held-backs count, repeat successes collapse to "N runs · last <date>"); "open" opens THE DELIVERABLE in the docked viewer (the same ThreadArtifactsPanel as the Home chat — never a /workers chat page); row verbs are VISIBLE with a WORDED "Edit method" (a hidden door is no door); THE GALLERY seeds describe→draft (category chips + outcome-worded cards; project-suggestion cards removed by owner call); the review card offers Adjust in Studio (saved as DRAFT, nothing live) and the page carries a build-from-scratch Studio door; the presenter chips died (a workflow is system-owned — the voice is a detail, defaulted silently, changeable in Studio); delegations append to ONE standing "Handed to <Name>" thread per worker (never a thread per hand-off) and hand-off threads are excluded from the conversations list (a conversation requires the user\'s voice)',
+    src('components/workflows/workflows-ledger.tsx').includes('ThreadArtifactsPanel') &&
+    src('components/workflows/workflows-ledger.tsx').includes('see the latest') &&
+    src('components/workflows/workflows-ledger.tsx').includes('Edit in Studio') &&
+    src('components/workflows/workflows-ledger.tsx').includes('TEMPLATES') &&
+    src('components/workflows/workflows-ledger.tsx').includes('Adjust in Studio') &&
+    src('components/workflows/workflows-ledger.tsx').includes('build one from scratch in Studio') &&
+    src('app/api/workflows/ledger/route.ts').includes('failures') &&
+    src('lib/home/delegate.ts').includes('ONE STANDING HAND-OFF THREAD') &&
+    src('app/api/rooms/recent/route.ts').includes("not('title', 'like', 'Handed to %')") &&
+    src('components/workflows/workflows-ledger.tsx').includes('Really delete?') &&
+    src('components/workflows/workflows-ledger.tsx').includes('function RunAudit') &&
+    src('components/workflows/workflows-ledger.tsx').includes('from=workflows') &&
+    src('app/studio/studio-page-client.tsx').includes('backTo') &&
+    src('app/studio/studio-page-client.tsx').includes("'Untitled workflow'"));
+
+  // ── AO · ARTIFACTS-INTO-ORIGIN (proactivity completion #1, Aug 9). ──
+  check('AO1: THE DISPATCHED DELIVERABLE COMES HOME — substantial delegated production materializes as a REAL document artifact on the delegation thread (the SAME textToDocContent/uploadArtifact primitives as workflow runs — one shared module, run-workflow imports it too, never two diverging copies); the artifact rides the ConverseTurn back into the conversation that asked (Home chat renders its card AND opens the viewer; the room rail carries the door chip); a short answer or an ask stays text. E2E-proven live on the probe: real .docx in storage, card on the turn',
+    src('lib/workflows/doc-content.ts').includes('export function textToDocContent') &&
+    src('lib/workflows/run-workflow.ts').includes("from '@/lib/workflows/doc-content'") &&
+    src('lib/home/delegate.ts').includes('ARTIFACTS-INTO-ORIGIN') &&
+    src('lib/home/delegate.ts').includes('output.length >= 600') &&
+    src('lib/converse/index.ts').includes('artifact: { ...out.artifact, agentName') &&
+    src('app/api/home/ask/route.ts').includes('turn.artifact') &&
+    src('app/api/items/steer/route.ts').includes('turn.artifact') &&
+    src('components/home/home-ask.tsx').includes('void openArtifact(d.artifact.threadId, d.artifact.id)') &&
+    src('components/home/item-rail.tsx').includes('d.artifact?.id'));
+
+  check('AO2: THE ADDRESSED-COWORKER FLOOR (found live: "Sofia, put together…" became a to-do on the user\'s OWN plate) — a message OPENING with a real coworker\'s name IS a hand-off (deterministic, roster-read, never a hardcoded name list), and a delegate verdict OUTRANKS a command verdict (the classifier returned BOTH and the command fast-path ran first — the second face of the same bug)',
+    src('lib/converse/index.ts').includes('THE ADDRESSED-COWORKER FLOOR') &&
+    src('lib/converse/index.ts').includes("eq('is_worker', true)") &&
+    src('lib/converse/index.ts').includes('if (verdict.delegate) verdict.command = null;'));
+
   // ── Report ──
   let pass = 0;
   for (const [n, ok, d] of out) {

@@ -133,6 +133,19 @@ export default function OneSidebar({
     if (pathname !== '/home') router.push('/home');
   };
 
+  // THE LENS MIRROR (owner, Aug 9 — "why is it all 'home'?"): the sidebar highlights the
+  // ACTIVE LENS, not just the route. home-view announces every lens change (aug:view-changed);
+  // init from the URL for direct loads.
+  const [lens, setLens] = useState<string | null>(null);
+  useEffect(() => {
+    try { setLens(new URLSearchParams(window.location.search).get('view')); } catch { /* SSR */ }
+    const onLens = (e: Event) => setLens(((e as CustomEvent).detail?.view as string) ?? null);
+    window.addEventListener('aug:view-changed', onLens);
+    return () => window.removeEventListener('aug:view-changed', onLens);
+  }, []);
+  const onHome = pathname === '/home';
+  const lensIs = (...vs: string[]) => onHome && vs.includes(lens ?? 'dashboard');
+
   const item = (active: boolean) =>
     `flex items-center gap-2.5 px-2.5 py-[7px] mb-px rounded-lg text-[12.5px] transition-colors ${
       active ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-neutral-500 hover:text-neutral-800 hover:bg-neutral-200/50'
@@ -149,9 +162,9 @@ export default function OneSidebar({
       </div>
 
       <nav className="flex-1 overflow-y-auto py-2 px-2 [scrollbar-width:thin]">
-        <Link href="/home" className={item(pathname === '/home' || pathname.startsWith('/item'))}
+        <Link href="/home" className={item(lensIs('dashboard', 'timeline') || pathname.startsWith('/item'))}
           onClick={() => { if (pathname === '/home') window.dispatchEvent(new CustomEvent('augmtd:home-reset')); }}>
-          <HomeIcon className={`w-[17px] h-[17px] flex-shrink-0 ${pathname === '/home' ? 'text-indigo-500' : 'text-neutral-400'}`} />
+          <HomeIcon className={`w-[17px] h-[17px] flex-shrink-0 ${lensIs('dashboard', 'timeline') ? 'text-indigo-500' : 'text-neutral-400'}`} />
           Home
         </Link>
         <button onClick={newChat} className={`${item(false)} w-full text-left`}>
@@ -162,16 +175,16 @@ export default function OneSidebar({
         {/* ONE NAME EVERYWHERE (owner call, refined Aug 7): Projects is ONE menu item — the
             portfolio lens is the destination; the sidebar never carries the project LIST
             (the roster lives on its own page, not the nav). */}
-        <Link href="/home?view=projects" className={item(false)}>
-          <FolderIcon className="w-[17px] h-[17px] flex-shrink-0 text-neutral-400" />
+        <Link href="/home?view=projects" className={item(lensIs('projects'))}>
+          <FolderIcon className={`w-[17px] h-[17px] flex-shrink-0 ${lensIs('projects') ? 'text-indigo-500' : 'text-neutral-400'}`} />
           Projects
         </Link>
 
         {/* THE PRODUCTION DOOR (production arc step 5): Workflows is the LEDGER — what stands,
             what ran, what waits on your approval; creation is describe→confirm; Studio stays
             one click deep as the method editor. Coworkers = ad hoc; workflows = production. */}
-        <Link href="/home?view=workflows" className={item(false)}>
-          <BoltIcon className="w-[17px] h-[17px] flex-shrink-0 text-neutral-400" />
+        <Link href="/home?view=workflows" className={item(lensIs('workflows', 'runs'))}>
+          <BoltIcon className={`w-[17px] h-[17px] flex-shrink-0 ${lensIs('workflows', 'runs') ? 'text-indigo-500' : 'text-neutral-400'}`} />
           Workflows
         </Link>
 

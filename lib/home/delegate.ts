@@ -95,6 +95,10 @@ export interface DelegateResult {
   /** FIX 3 — the evaluator judged the output a genuine ASK for principal-only inputs; these are the
    *  concrete things requested. The output was routed as a room checklist, NOT stored as a deliverable. */
   needsInput?: string[];
+  /** ARTIFACTS-INTO-ORIGIN (Aug 9): substantial delegated production is materialized as a REAL
+   *  document artifact on the delegation thread (same primitives as workflow runs) — the origin
+   *  conversation renders its card and opens it, instead of pointing at a text wall elsewhere. */
+  artifact?: { id: string; title: string; threadId: string } | null;
 }
 
 /**
@@ -204,17 +208,31 @@ export async function runDelegation(args: {
   // coworker's output is the `assistant` message — so opening the coworker's chat shows the exchange. ──
   let threadId: string | null = null;
   try {
-    const { data: thread } = await supabase
-      .from('work_threads')
-      .insert({
-        user_id: userId,
-        agent_id: worker.id,
-        title: `Handed to ${worker.name}: ${itemLabel}`.slice(0, 200),
-        status: 'active',
-      })
-      .select('id')
-      .single();
-    threadId = (thread?.id as string) ?? null;
+    // ONE STANDING HAND-OFF THREAD per (user, worker) — owner, Aug 9: a thread per delegation
+    // flooded the coworker's conversation list with dozens of "Handed to Max: …" rows (engine
+    // plumbing parading as conversations). Every delegation now appends to the worker's one
+    // "Handed to <Name>" thread — the exchange reads as an ongoing working relationship, and
+    // artifacts accumulate in one place.
+    const standingTitle = `Handed to ${worker.name}`;
+    const { data: standing } = await supabase.from('work_threads').select('id')
+      .eq('user_id', userId).eq('agent_id', worker.id).eq('status', 'active')
+      .eq('title', standingTitle).is('workflow_id', null)
+      .limit(1).maybeSingle();
+    if (standing?.id) {
+      threadId = standing.id as string;
+    } else {
+      const { data: thread } = await supabase
+        .from('work_threads')
+        .insert({
+          user_id: userId,
+          agent_id: worker.id,
+          title: standingTitle,
+          status: 'active',
+        })
+        .select('id')
+        .single();
+      threadId = (thread?.id as string) ?? null;
+    }
     if (threadId) {
       await supabase.from('work_messages').insert([
         { thread_id: threadId, role: 'user', content: prompt },
@@ -229,6 +247,34 @@ export async function runDelegation(args: {
     }
   } catch (e) {
     console.error('[delegate] thread write failed (non-fatal):', e);
+  }
+
+  // ── ARTIFACTS-INTO-ORIGIN (Aug 9): substantial produced work becomes a REAL document artifact
+  // on the delegation thread — the same textToDocContent + storage path a workflow run uses, so
+  // the viewer/download/versions machinery all just work. A short answer or an ask stays text
+  // (not everything a coworker says is a document). Non-fatal: the delegation already landed. ──
+  let artifact: DelegateResult['artifact'] = null;
+  if (threadId && deliverableOk && output.length >= 600) {
+    try {
+      const { textToDocContent, uploadArtifact } = await import('@/lib/workflows/doc-content');
+      const { randomUUID } = await import('crypto');
+      const title = itemLabel.slice(0, 120) || 'Delegated work';
+      const doc = textToDocContent(title, output);
+      const artifactId = randomUUID();
+      const { storagePath } = await uploadArtifact(supabase, userId, threadId, artifactId, 'document', doc);
+      const row = {
+        id: artifactId, title, type: 'document' as const,
+        generated_at: new Date().toISOString(), storage_path: storagePath, content: doc,
+      };
+      const { data: th } = await supabase.from('work_threads').select('artifacts').eq('id', threadId).single();
+      const existing = Array.isArray(th?.artifacts) ? (th!.artifacts as unknown[]) : [];
+      await supabase.from('work_threads')
+        .update({ artifacts: [...existing, row].slice(-20), artifact: row, updated_at: new Date().toISOString() })
+        .eq('id', threadId);
+      artifact = { id: artifactId, title, threadId };
+    } catch (e) {
+      console.error('[delegate] artifact materialization failed (non-fatal):', e);
+    }
   }
 
   // ── Write the coworker's output into the per-item pool (S2 — ADDITIVE; report-back + thread +
@@ -282,5 +328,5 @@ export async function runDelegation(args: {
     } catch { /* narration is an enhancement — the delegation already landed */ }
   }
 
-  return { output, agentName: worker.name, threadId, reportText, deliverable, poolSize: pool.length, ...(needsInput?.length ? { needsInput } : {}) };
+  return { output, agentName: worker.name, threadId, reportText, deliverable, poolSize: pool.length, artifact, ...(needsInput?.length ? { needsInput } : {}) };
 }

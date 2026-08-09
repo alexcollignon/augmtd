@@ -9,9 +9,9 @@ export const metadata = { title: 'Studio — AUGMTD' };
 export default async function StudioPage({
   searchParams,
 }: {
-  searchParams: Promise<{ workflow?: string; assign_worker?: string }>;
+  searchParams: Promise<{ workflow?: string; assign_worker?: string; from?: string }>;
 }) {
-  const { workflow: initialWorkflowId, assign_worker: assignWorkerId } = await searchParams;
+  const { workflow: initialWorkflowId, assign_worker: assignWorkerId, from } = await searchParams;
   const supabase = await createClient();
 
   const { data: { user } } = await supabase.auth.getUser();
@@ -98,6 +98,7 @@ export default async function StudioPage({
       initialAgents={enrichedAgents}
       initialWorkflowId={initialWorkflowId || null}
       assignWorkerId={assignWorkerId || null}
+      backTo={from === 'workflows' ? '/home?view=workflows' : null}
     />
   );
 }

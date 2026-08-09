@@ -468,6 +468,65 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+AA. **THE WORKFLOWS POLISH ARC — DONE (Aug 9 evening, four owner screenshot rounds; gates
+   105/105, tasks 72/72, build green; every change live-verified).** (1) SIMPLE LANGUAGE
+   everywhere ("Set one up once — it runs on its own and delivers to you" · "delivered by
+   Max" · "ran 10 times · last on 5 Aug" · "Edit in Studio" — the owner asked twice how to
+   open Studio while "Edit method" sat visible: an unclear word IS a missing feature).
+   (2) THE STUDIO DOORS: review card gains "Adjust in Studio" (saves as DRAFT, nothing
+   live); "build one from scratch in Studio" under the describe box; Back/Save-&-close
+   honor ?from=workflows (they landed on the retired /workers page); a never-edited blank
+   is deleted on back-out (both blank names); presenter chips DIED (a workflow is
+   system-owned — the voice is a detail, defaulted silently, changeable in Studio);
+   project-suggestion gallery cards removed (owner call); DELETE on every row (two-step
+   "Really delete?"); Studio renders verify/approval steps properly (they showed as
+   "Agent · No task yet" — a user could mangle the gate). (3) THE RUN AUDIT: Activity
+   groups expand to every run (status chip · duration · N steps · Open deliverable);
+   each run's steps unfold with per-step duration and the ACTUAL output inline — lazy,
+   audit-on-demand. (4) THE DESIGN PASS (Google AI Studio Flows reference): status
+   CHIPS (Delivered/Failed/Held back/Waiting), chevron-first expandable rows, THE READER
+   (68ch measure, 15px/1.75, real heading scale, 720px panel — shared, so Home chat +
+   worker page inherit it). (5) THE ISLAND IS LOCAL (owner: "the island should be a
+   navigation of the page it's in" — the Spinnable rule): the sidebar moves BETWEEN
+   places, the island shows VIEWS OF HERE (Home: Today·Timeline; Workflows:
+   Overview·Runs; one-view places carry NO island); sidebar highlights the ACTIVE LENS
+   via the aug:view-changed announcer (it said "Home" on every lens); the Home greeting
+   hides on the Workflows lens. (6) NEW CHAT FROM ANY LENS: the chat lives on the
+   dashboard lens — aug:new-chat/open-chat now reset the lens (the panel used to open
+   invisibly behind Workflows). Also THE ONE STANDING HAND-OFF THREAD + the 72-thread
+   sweep (in Z's rider).
+Z. **THE LEDGER REWORK — DONE (Aug 9, owner screenshot review; gate PA5b — 105/105, build
+   green; live-verified: grouped trail, the briefing document opening DOCKED on the
+   Workflows page, the gallery leading with the user's real projects).** Four corrections:
+   (1) the recent trail GROUPS per workflow — "10 runs · last 5 Aug"; failures itemize,
+   held-backs count, repeat successes never wall (deltas not events); (2) "open" opens THE
+   DELIVERABLE in the docked ThreadArtifactsPanel — never the /workers chat page (a run
+   with no document artifact honestly shows no open link — the owner's EB emails body
+   text); (3) row verbs VISIBLE + worded "Edit method" (a hidden door is no door);
+   (4) THE GALLERY (the Gemini-activities pattern): category chips + outcome-worded
+   template cards seeding describe→draft→review (never instant-live), TOP SUGGESTIONS
+   BRAIN-AWARE from the user's tracked projects ("Weekly status report on EG Bank" —
+   the edge a recipe catalogue can't copy). Plus THE ONE STANDING HAND-OFF THREAD:
+   delegations append to one "Handed to <Name>" thread per worker (a thread per
+   delegation flooded the coworker chat list — 72 legacy threads archived by
+   scripts/sweep-delegation-threads.ts, 56 on the owner's account); hand-off threads
+   excluded from the conversations list (engine files, not conversations).
+Y. **ARTIFACTS-INTO-ORIGIN — DONE (Aug 9, proactivity completion #1; gates AO1/AO2 —
+   104/104, build green; E2E on the probe: "Sofia, put together a one-page overview…" →
+   delegated, a REAL 9.7KB .docx materialized on the delegation thread, and the turn came
+   back carrying the artifact — card + auto-opened viewer in the origin conversation).**
+   Substantial delegated production (≥600 chars, evaluator-passed) materializes as a real
+   document artifact via a SHARED module (`lib/workflows/doc-content.ts` —
+   textToDocContent + uploadArtifact extracted from run-workflow; one mapping, never two
+   copies). The artifact rides `ConverseTurn.artifact` → the ask route + the steer route
+   pass it through → the Home chat renders the card AND opens the docked viewer; the room
+   rail carries the door chip. A short answer or an ask stays text. TWO ROUTING BUGS
+   found live by the E2E and fixed as floors (gate AO2): THE ADDRESSED-COWORKER FLOOR
+   ("Sofia, put together…" was classified create_task_item — a message opening with a
+   real coworker's name IS a hand-off; deterministic, roster-read) and DELEGATE OUTRANKS
+   COMMAND (the classifier returned BOTH and the command fast-path ran first — the same
+   bug's second face). REMAINING PROACTIVITY COMPLETION: proactive project deliverables ·
+   filing-feeds-the-brain · outcome loop → autonomy ladder.
 X. **STANDING REACTIONS — DONE (Aug 8, production arc step 6, THE ARC'S LAST STEP; gates
    PA6a/b — 102/102, tasks 72/72, build green; LIVE on the probe: the invoice matching "an
    invoice arrives asking the user to pay" FIRED (queued event-run + exactly-once record

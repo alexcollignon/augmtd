@@ -46,6 +46,8 @@ export async function POST(request: NextRequest) {
       ...(turn.files?.length ? { files: turn.files } : {}),
       ...(turn.delegated ? { delegated: turn.delegated } : {}),
       ...(turn.options?.length ? { options: turn.options } : {}),
+      // ARTIFACTS-INTO-ORIGIN (Aug 9): the dispatched deliverable's card rides the answer.
+      ...(turn.artifact ? { artifact: turn.artifact } : {}),
       ...(focus ? { focus } : {}),
     });
     if (body.stream === true) {

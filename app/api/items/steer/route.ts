@@ -52,6 +52,9 @@ export async function POST(request: NextRequest) {
       // fires the one send door / raises the stage.
       ...(turn.commit ? { commit: turn.commit } : {}),
       ...(turn.openStage ? { openStage: turn.openStage } : {}),
+      // ARTIFACTS-INTO-ORIGIN (Aug 9): the dispatched deliverable's card rides into the room.
+      ...(turn.artifact ? { artifact: turn.artifact } : {}),
+      ...(turn.options?.length ? { options: turn.options } : {}),
     });
   } catch (e) {
     console.error('[items/steer]', e);

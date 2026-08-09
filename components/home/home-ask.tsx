@@ -579,7 +579,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // STREAMING ASK (Aug 6): SSE — `progress` events narrate the core's live stage (the busy
       // line speaks them), `done` carries the answer. A non-SSE response (error JSON) falls back.
       const res = await fetch('/api/home/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(scope ? { entityId: scope.id } : {}) }) });
-      let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }> } = {};
+      let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string } } = {};
       if (res.body && res.headers.get('content-type')?.includes('text/event-stream')) {
         const reader = res.body.getReader();
         const dec = new TextDecoder();
@@ -593,7 +593,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             const line = f.split('\n').find((l) => l.startsWith('data: '));
             if (!line) continue;
             try {
-              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }> };
+              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string } };
               if (ev.type === 'progress' && ev.label) setStage(ev.label);
               else if (ev.type === 'done') d = ev;
             } catch { /* partial frame */ }
@@ -602,7 +602,13 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       } else {
         d = await res.json();
       }
-      setTurns((prev) => { pendingAnimate.current = prev.length; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}) }]; });
+      // ARTIFACTS-INTO-ORIGIN (Aug 9): a dispatched deliverable's card rides the answer turn and
+      // the viewer opens HERE — the conversation that asked holds the work.
+      const artCard = d.artifact
+        ? { cards: [{ label: d.artifact.title, sub: `document · by ${d.artifact.agentName.split(' ')[0]}`, art: { tid: d.artifact.threadId, id: d.artifact.id } }] }
+        : {};
+      setTurns((prev) => { pendingAnimate.current = prev.length; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...artCard }]; });
+      if (d.artifact) void openArtifact(d.artifact.threadId, d.artifact.id);
       if (d.answer) persistTurn('system', d.answer, d.refs ?? []);
       if (d.focus && !scope && !temp) setScopeHint(d.focus);
     } catch {
@@ -783,7 +789,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           Editing is the conversation: "make it shorter" continues the same worker thread, the
           new version arrives, and the pane refreshes to it. Close = the pane's own ✕. */}
       {artifactPanel && (
-        <div className="fixed right-0 top-0 z-40 h-screen w-[min(600px,92vw)] border-l border-neutral-200 shadow-[-12px_0_40px_-24px_rgba(23,23,23,0.25)] bg-neutral-50">
+        <div className="fixed right-0 top-0 z-40 h-screen w-[min(720px,94vw)] border-l border-neutral-200 shadow-[-12px_0_40px_-24px_rgba(23,23,23,0.25)] bg-neutral-50">
           <ThreadArtifactsPanel
             thread={artifactPanel.thread}
             onClose={() => setArtifactPanel(null)}

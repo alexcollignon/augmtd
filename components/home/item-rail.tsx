@@ -446,11 +446,16 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           const handled = onStage?.(d.openStage.stage, d.openStage.itemId);
           if (!handled) go(`/item/${d.openStage.itemId}?kind=email`); // the stage lives on the item view
         }
+        // ARTIFACTS-INTO-ORIGIN (Aug 9): a dispatched deliverable rides back as a chip on THIS
+        // turn — the room that asked holds the door to the document, never a bare pointer.
+        const artRef = d.artifact?.id && d.artifact?.threadId
+          ? [{ label: `📄 ${String(d.artifact.title ?? 'Document').slice(0, 60)}`, href: `/workers?worker=${encodeURIComponent(String(d.delegated?.agentId ?? ''))}&thread=${encodeURIComponent(String(d.artifact.threadId))}` }]
+          : [];
         setTurns((prev) => [...prev, {
           role: 'system',
           // Refs render as chips below — the raw [L4]/[F2] markers must never sit in the prose.
           text: String(d.say || d.answer || 'Done.').replace(/\s*\[[LF]?\d+(?:\s*,\s*[LF]?\d+)*\]/g, ''),
-          refs: Array.isArray(d.refs) ? d.refs.map((r: { label?: string; href?: string | null }) => ({ label: String(r.label ?? ''), href: r.href ?? null })) : [],
+          refs: [...artRef, ...(Array.isArray(d.refs) ? d.refs.map((r: { label?: string; href?: string | null }) => ({ label: String(r.label ?? ''), href: r.href ?? null })) : [])],
           files: Array.isArray(d.files) ? d.files : undefined,
         }]);
       }

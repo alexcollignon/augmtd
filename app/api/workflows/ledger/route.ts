@@ -103,14 +103,43 @@ export async function GET() {
     };
   });
 
-  const recent = runs.filter(r => r.status !== 'awaiting_approval').slice(0, 12).map(r => ({
-    id: r.id, workflowId: r.workflow_id,
-    workflowName: wfById.get(r.workflow_id)?.name ?? 'Workflow',
-    status: r.status, triggeredBy: r.triggered_by,
-    at: r.completed_at ?? r.created_at, error: r.error,
-    agentId: wfById.get(r.workflow_id)?.agent_id ?? null,
-    threadId: r.thread_id,
-  }));
+  // ── THE RECENT TRAIL, GROUPED (owner, Aug 9 — "a green checkmark wall is noise"): one line
+  // per workflow speaking the DELTA-worthy truth (count · last run · state), failures itemized
+  // individually (a failure is a delta; a repeat success is not). "Open" points at the
+  // DELIVERABLE — the latest document artifact on the task thread — never at a chat page. ──
+  const done = runs.filter(r => r.status !== 'awaiting_approval' && r.status !== 'queued' && r.status !== 'running');
+  const threadIds = [...new Set(done.map(r => r.thread_id).filter(Boolean))] as string[];
+  const artsByThread = new Map<string, Array<{ id: string; title: string; generated_at?: string }>>();
+  if (threadIds.length) {
+    const { data: ths } = await supabase.from('work_threads').select('id, artifacts').in('id', threadIds);
+    for (const t of (ths ?? []) as Array<{ id: string; artifacts: Array<{ id: string; title: string; generated_at?: string }> | null }>) {
+      artsByThread.set(t.id, Array.isArray(t.artifacts) ? t.artifacts : []);
+    }
+  }
+  const byWf = new Map<string, typeof done>();
+  for (const r of done) {
+    const arr = byWf.get(r.workflow_id) ?? [];
+    arr.push(r); byWf.set(r.workflow_id, arr);
+  }
+  const recent = [...byWf.entries()].map(([wfId, rs]) => {
+    const latest = rs[0]; // runs are newest-first
+    const latestOk = rs.find(r => r.status === 'succeeded');
+    const arts = latestOk?.thread_id ? (artsByThread.get(latestOk.thread_id) ?? []) : [];
+    const latestArt = [...arts].sort((a, b) => String(b.generated_at ?? '').localeCompare(String(a.generated_at ?? '')))[0] ?? null;
+    return {
+      workflowId: wfId,
+      workflowName: wfById.get(wfId)?.name ?? 'Workflow',
+      count: rs.length,
+      lastAt: latest.completed_at ?? latest.created_at,
+      lastStatus: latest.status,
+      deliverable: latestOk?.thread_id && latestArt
+        ? { threadId: latestOk.thread_id, artifactId: latestArt.id, title: latestArt.title }
+        : null,
+      failures: rs.filter(r => r.status === 'failed').slice(0, 3)
+        .map(r => ({ at: r.completed_at ?? r.created_at, error: (r.error ?? '').slice(0, 140) })),
+      held: rs.filter(r => r.status === 'rejected').length,
+    };
+  }).sort((a, b) => String(b.lastAt).localeCompare(String(a.lastAt)));
 
   // The presenter roster (coworker = presenter only; the workflow stays system-owned).
   const workers = ((workerRes.data ?? []) as Array<{ id: string; name: string; worker_role: string }>)
