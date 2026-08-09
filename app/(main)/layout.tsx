@@ -1,7 +1,10 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { getSessionUser } from '@/lib/supabase/get-session-user';
-import SidebarNav from '@/components/sidebar-nav';
+// THE SHELL (Arc 3 S1 — the fold, wholesale): the one-surface sidebar replaces the icon rail
+// app-wide. Workers/Chat/Drive keep their ROUTES; their nav seats are gone (Settings carries the
+// Team + Knowledge doors). components/sidebar-nav.tsx is retired with the old shell.
+import SidebarNav from '@/components/one/one-sidebar';
 import { getMyWorkspace, getMyProfile } from '@/lib/workspace/features';
 import { WorkspaceProvider } from '@/context/workspace-context';
 import { DEFAULT_FEATURES } from '@/lib/workspace/types';

@@ -14,6 +14,10 @@ export interface GeneratedWorkflowConfig {
   steps: Array<Record<string, unknown>>;
   output_config: Record<string, unknown>;
   worker_instructions?: string | null;
+  /** THE DUP-AWARENESS NOTE: set when the request substantially overlaps an existing task —
+   *  one sentence naming it, so the door can surface "you already have a Tuesday briefing
+   *  covering this" instead of silently minting a twin. */
+  overlap_note?: string | null;
 }
 
 const SYSTEM = `You are a workflow pipeline architect for a business automation platform. Given a plain-language description, generate a complete, production-quality workflow as a JSON object.
@@ -27,8 +31,11 @@ JSON shape:
   "trigger": { "type": "manual" },
   "steps": [],
   "output_config": { "destination": "message", "report_mode": "each_run" },
-  "worker_instructions": null
+  "worker_instructions": null,
+  "overlap_note": null
 }
+
+"overlap_note" is null by default. Only set it when an [EXISTING TASKS] block is provided AND the request substantially overlaps one of those tasks (same deliverable + same or overlapping schedule/topic): one short sentence naming the existing task, e.g. "Overlaps 'Weekly market briefing' (every Monday) — consider updating that task instead of running two." Still generate the full workflow either way — the note informs, it never blocks.
 
 "worker_instructions" is null by default. Only set it when the request explicitly describes a task-specific tone, persona, style, or audience that differs from the worker's general identity (e.g. "in the style of a German journalist", "formal legal tone", "for a Portuguese-speaking audience"). Keep it concise: 1–3 sentences. Never repeat the worker's core identity here — only what's different for this task.
 
@@ -36,8 +43,10 @@ JSON shape:
 
 { "type": "manual" }
 { "type": "schedule", "cron": "0 9 * * 1", "timezone": "Europe/Lisbon", "label": "Every Monday at 9am" }
+{ "type": "reaction", "when": "a new public tender matching the client's construction profile arrives", "label": "When a matching tender lands" }
 
 Use schedule whenever the request mentions timing. Infer the most natural timezone from context (company, sources, language).
+Use reaction when the request says the workflow should fire WHEN/WHENEVER something happens ("when a matching tender lands", "whenever a client emails about pricing") — "when" states the condition in plain words (it is judged against each new arriving event), "label" is the short human rendering. A reaction workflow receives the triggering event as its first context block — its steps should work FROM that event (summarize, enrich, respond, produce), never re-fetch broad news/feeds the event doesn't call for.
 
 ━━━ STEP TYPES ━━━
 
@@ -46,6 +55,25 @@ Tool step — fetches data, always before AI steps:
 
 AI step — synthesises all previous outputs, always last and always exactly one:
 { "type": "ai", "id": "step_010", "label": "3–5 word label", "prompt": "...", "output_format": "markdown", "model_tier": "reasoning" }
+
+Verify step — the STRUCTURAL VERIFICATION GATE (built into the engine, versioned): treats the
+previous step's output as THE DRAFT and everything before it as SOURCE MATERIAL — recomputes
+the draft's numbers BY CODE, deletes/corrects ungrounded claims, fixes citations, keeps
+structure exactly, never modernizes dates. Output = the corrected draft:
+{ "type": "verify", "id": "step_008", "label": "Verify against sources", "instruction": "optional extra domain rules" }
+RULE: ALWAYS place one verify step directly after the final synthesis AI step when the
+pipeline gathers external material (news, web, feeds, research, tenders) or states numbers.
+Do NOT write verification instructions into the AI step's own prompt — the verify step IS the
+gate; duplicating it in prose creates two competing verifiers.
+
+Approval step — a HUMAN GATE: the run pauses here and waits for the user's explicit approve
+before continuing (the deliverable shows for review; approve resumes, reject holds it back):
+{ "type": "approval", "id": "step_009", "label": "Your approval", "instruction": "one line: what the user is deciding" }
+RULE: when the task's words ask for review/approval before delivery ("send it to me for
+approval first", "let me check before it goes out"), place ONE approval step directly before
+the delivery. When the user says it should run fully automatically, use none. When neither is
+said and the output goes to EXTERNAL recipients (not the user themselves), prefer including it
+— a held send is recoverable, an unwanted one is not.
 
 ━━━ AVAILABLE TOOLS ━━━
 
@@ -130,6 +158,27 @@ export async function generateWorkflowConfig(
     if (off.length) parts.push(`These tools are OFF for this workspace — do NOT use them in any step: ${off.join(', ')}.`);
   } catch { /* non-fatal */ }
 
+  // THE ENTITY EDGE — grounded drafting: a request that NAMES a registered project drafts over
+  // that project's room page (sources, people, language known before a step is written).
+  try {
+    const { workflowDraftGrounding } = await import('@/lib/workflows/entity-edge');
+    const g = await workflowDraftGrounding(supabase, userId, description);
+    if (g) parts.push(g.block);
+  } catch { /* non-fatal */ }
+
+  // THE DUP-AWARENESS READ — the model sees what already runs, so a twin gets named, not minted.
+  try {
+    const { data: existing } = await supabase.from('workflows')
+      .select('name, description, trigger, status')
+      .eq('user_id', userId).in('status', ['active', 'paused'])
+      .order('updated_at', { ascending: false }).limit(30);
+    if (existing?.length) {
+      const lines = (existing as Array<{ name: string; description: string | null; trigger: { label?: string; cron?: string } | null; status: string }>)
+        .map(w => `- "${w.name}"${w.trigger?.label ? ` (${w.trigger.label})` : w.trigger?.cron ? ` (cron ${w.trigger.cron})` : ''}${w.status === 'paused' ? ' [paused]' : ''}${w.description ? ` — ${w.description.slice(0, 100)}` : ''}`);
+      parts.push(`[EXISTING TASKS — the user already runs these]\n${lines.join('\n')}`);
+    }
+  } catch { /* non-fatal */ }
+
   const w = options?.workerContext;
   if (w) {
     const workerBlock = [`This workflow belongs to worker "${w.name}" (${w.description ?? 'AI colleague'}). The final AI step must be written in this worker's voice.\nWorker identity:\n${w.instructions ?? ''}`];
@@ -186,5 +235,8 @@ export async function generateWorkflowConfig(
       report_mode: 'each_run',
     },
     worker_instructions: workerInstructions,
+    overlap_note: typeof generated.overlap_note === 'string' && generated.overlap_note.trim()
+      ? generated.overlap_note.trim()
+      : null,
   };
 }

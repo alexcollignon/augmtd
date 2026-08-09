@@ -914,8 +914,11 @@ function ActionBar({ primaryLabel, primaryActive, onPrimary, children }: { prima
 // follow-up, invite, forward — raises in this same overlay over the truth pane. Title row + ✕,
 // scrollable body. The host stays mounted beneath; ✕ lowers it without losing state.
 function StageOverlay({ title, onClose, children }: { title: React.ReactNode; onClose: () => void; children: React.ReactNode }) {
+  // THE STAGE IS A SHEET, NOT A CURTAIN (owner, Aug 7 — "wouldn't it make sense to show the
+  // thread too?"): the summoned stage rises from the BOTTOM of the truth pane and caps at ~72%
+  // — the source thread stays visible and scrollable above it. Context and the letter, together.
   return (
-    <div className="absolute inset-0 z-20 bg-white flex flex-col">
+    <div className="absolute inset-x-0 bottom-0 z-20 max-h-[72%] bg-white border-t border-neutral-200 rounded-t-2xl shadow-[0_-16px_48px_-20px_rgba(23,23,23,0.35)] flex flex-col">
       <div className="flex items-center gap-2 px-7 py-3.5 border-b border-neutral-100 flex-shrink-0">
         <h2 className="text-[13px] font-semibold text-neutral-800">{title}</h2>
         <button
@@ -1114,11 +1117,11 @@ export type ItemKind = 'email' | 'meeting' | 'commitment' | 'followup';
 
 // ── Top-level router — reads `kind` and renders the right variant inside the shared shell. Email is
 // the default (the current behaviour + a hard visit with no `kind`).
-export function ItemDetail({ id, angle, kind = 'email', embedded = false }: { id: string; angle?: string | null; kind?: ItemKind; embedded?: boolean }) {
+export function ItemDetail({ id, angle, kind = 'email', embedded = false, initialStage, stageSignal, hideArtifactCards }: { id: string; angle?: string | null; kind?: ItemKind; embedded?: boolean; initialStage?: 'reply' | 'forward' | 'invite'; stageSignal?: number; hideArtifactCards?: boolean }) {
   if (kind === 'meeting') return <MeetingDetail id={id} embedded={embedded} />;
   if (kind === 'commitment') return <CommitmentDetail id={id} embedded={embedded} />;
   if (kind === 'followup') return <FollowUpDetail id={id} embedded={embedded} />;
-  return <EmailDetail id={id} angle={angle} embedded={embedded} />;
+  return <EmailDetail id={id} angle={angle} embedded={embedded} initialStage={initialStage} stageSignal={stageSignal} hideArtifactCards={hideArtifactCards} />;
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1317,7 +1320,7 @@ function EmailActionPalette({
 // direction offers; the stage is purely read/edit/send. The /api/items/reply-directions route
 // serves the exchange.)
 
-function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: string | null; embedded?: boolean }) {
+function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, hideArtifactCards = false }: { id: string; angle?: string | null; embedded?: boolean; initialStage?: 'reply' | 'forward' | 'invite'; stageSignal?: number; hideArtifactCards?: boolean }) {
   const router = useRouter();
   // Instant-load: hydrate the thread from the last-known localStorage snapshot (no skeleton flash on a
   // re-open), then refresh in the background below. Keyed per item id so each deep-dive restores its own.
@@ -1547,6 +1550,21 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
     setInviteOpen(false);
   };
 
+  // OPEN LANDS ON THE PREPARED THING (owner, Aug 7 — "clicked Open and I don't see anything
+  // written by our system"): a host that focuses this item WITH a stage intent (the merged
+  // action card, the room's onStage) gets the stage RAISED on arrival — the prepared work is
+  // the first thing seen, the source thread visible beneath it (the summoned-stage law: this
+  // raise is still user-initiated — their click carried the intent).
+  // RE-FIREABLE (found live, Aug 7 — the rail button went dead on the SECOND click): the intent
+  // rides a SIGNAL, not a mount — every bump re-raises, no remount, no refetch.
+  useEffect(() => {
+    if (!initialStage) return;
+    if (initialStage === 'forward') { setForwarding(true); setComposerOpen(false); setInviteOpen(false); }
+    else if (initialStage === 'invite') { setInviteOpen(true); setComposerOpen(false); setForwarding(false); }
+    else { composerTouchedRef.current = true; setComposerOpen(true); setForwarding(false); setInviteOpen(false); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stageSignal]);
+
   // THE REPLY EXCHANGE (Aug 4 — the room talks like a person): "Reply" opens a DIALOGUE, not a
   // surface. The offer turn lands in the conversation with the grounded directions ("I'll put the
   // reply together — which direction?"); a pick becomes the user's turn, the ack shows, the draft
@@ -1768,8 +1786,11 @@ function EmailDetail({ id, angle, embedded = false }: { id: string; angle?: stri
           </div>
         )}
         {/* EMBEDDED (no own rail): the prepared-artifact cards render in-stage — the room said
-            "drafted" and the focused item showed nothing (found live, Aug 4). */}
-        {embedded && artifactList.map((art) => (
+            "drafted" and the focused item showed nothing (found live, Aug 4). SUPPRESSED when
+            the room's rail already carries the merged action card for THIS item (owner, Aug 7:
+            "isn't it redundant to have the same buttons in both panels?") — one deed, one object,
+            across panes too. */}
+        {embedded && !hideArtifactCards && artifactList.map((art) => (
           <div key={art.key} className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-3 py-2.5 flex items-center gap-2.5">
             <span className="min-w-0 flex-1 text-[12.5px] text-neutral-800">
               <span className="font-medium">{art.label}</span>
@@ -2754,13 +2775,18 @@ function PreparedLead({ prepared }: { prepared: ItemViewData['prepared'] | null 
             <button onClick={() => setOpenId(open ? null : d.id)} className="w-full flex items-baseline gap-2 text-left">
               <span className="text-[11px] font-semibold text-indigo-500 flex-shrink-0">{d.by ? `Prepared by ${d.by.split(' ')[0]}` : 'Prepared'}</span>
               <span className="text-[13px] font-medium text-neutral-800 truncate min-w-0 flex-1">{d.title || 'Deliverable'}</span>
+              {/* THE PROVENANCE CHIP (truth made visible): renders ONLY from the structural
+                  `computed` marker the sandbox stamps — never inferred from the content. */}
+              {prov?.computed && (
+                <span title={prov.computed} className="flex-shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-semibold text-emerald-700">✓ computed in code</span>
+              )}
               <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-400 flex-shrink-0 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
             </button>
             {open && (
               <div className="mt-2">
                 {prov && (
                   <p className="mb-1.5 text-[11px] text-neutral-400">
-                    from: {[prov.item, prov.entity, prov.who].filter(Boolean).join(' · ')}
+                    from: {[prov.item, prov.entity, prov.who].filter(Boolean).join(' · ')}{prov.computed ? ` · ${prov.computed}` : ''}
                   </p>
                 )}
                 <div className="text-[13px] text-neutral-700 leading-relaxed whitespace-pre-wrap max-h-[320px] overflow-y-auto [scrollbar-width:thin]">{d.content}</div>

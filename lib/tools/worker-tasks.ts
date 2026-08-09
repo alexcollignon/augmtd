@@ -335,8 +335,19 @@ export async function executeCreateTask(
   }
 
   const row = workflow as { id: string; name: string; trigger: { type: string; cron?: string; label?: string } };
+
+  // THE ENTITY EDGE — a task that names a registered project is linked to it at birth
+  // (deterministic recognition; non-fatal; a later human re-file outranks it).
+  let linkedLine = '';
+  try {
+    const { adoptWorkflowEntity } = await import('@/lib/workflows/entity-edge');
+    const linked = await adoptWorkflowEntity(adminClient, userId, row.id, `${generated.name}. ${description}`);
+    if (linked) linkedLine = `\nLinked to project: **${linked.name}** — runs will know where that work stands.`;
+  } catch { /* non-fatal */ }
+
+  const overlapLine = generated.overlap_note ? `\n⚠ ${generated.overlap_note}` : '';
   const schedule = formatSchedule(row.trigger);
-  return `Task created: **${row.name}** — ${schedule}\nID: ${row.id}\n\nI've built a full pipeline for this. It runs on its schedule if set, and you can run it on demand anytime — the setup's saved so neither of us rebuilds it. Edit the steps anytime in the Tasks tab → Advanced settings.`;
+  return `Task created: **${row.name}** — ${schedule}\nID: ${row.id}${linkedLine}${overlapLine}\n\nI've built a full pipeline for this. It runs on its schedule if set, and you can run it on demand anytime — the setup's saved so neither of us rebuilds it. Edit the steps anytime in the Tasks tab → Advanced settings.`;
 }
 
 export async function executeGetTask(

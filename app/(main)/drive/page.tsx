@@ -1,39 +1,8 @@
-import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
-import DriveClient from '@/app/drive/drive-client';
-import { guardFeaturePage } from '@/lib/workspace/guards';
 
-export default async function DrivePage() {
-  await guardFeaturePage('drive');
-
-  const supabase = await createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
-
-  const { data: sources } = await supabase
-    .from('knowledge_sources')
-    .select('*')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false });
-
-  const { data: connections } = await supabase
-    .from('connections')
-    .select('id, provider, metadata')
-    .eq('user_id', user.id)
-    .eq('status', 'active')
-    .in('provider', ['gmail', 'outlook']);
-
-  return (
-    <main className="flex-1 overflow-hidden flex flex-col">
-      <DriveClient
-        initialSources={sources ?? []}
-        connections={(connections ?? []).map((c) => ({
-          id: c.id,
-          provider: c.provider as 'gmail' | 'outlook',
-          email: c.metadata?.email ?? '',
-        }))}
-      />
-    </main>
-  );
+// THE DRIVE DEMOTION (one-surface plan): the folder grid died; Knowledge is a SETTINGS section
+// (grounded in the Settings nav — the owner's law, Aug 6). /drive survives only so old links
+// keep landing somewhere true.
+export default function DrivePage() {
+  redirect('/settings?tab=knowledge');
 }

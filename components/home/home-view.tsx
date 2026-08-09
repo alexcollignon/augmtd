@@ -12,7 +12,7 @@ import { WorkRow as DoRow, useExit, useCommitmentAct, EffortDate, InitiativeTag,
 import { createClient } from '@/lib/supabase/client';
 import {
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon, ClockIcon, UsersIcon, FolderIcon,
-  ChevronRightIcon, ArrowRightIcon, BoltIcon, EyeIcon, BellAlertIcon, ChatBubbleLeftRightIcon,
+  ChevronRightIcon, ArrowRightIcon, EyeIcon, BellAlertIcon, ChatBubbleLeftRightIcon,
   FolderPlusIcon, EyeSlashIcon, ArrowUturnLeftIcon,
 } from '@heroicons/react/24/outline';
 import ActivityPanel from '@/components/activity/activity-panel';
@@ -20,8 +20,10 @@ import { onProjectsUpdated } from '@/lib/projects/broadcast';
 import { ROLE_AVATARS, ROLE_LABELS } from '@/lib/workers/roles';
 import { RiseIn } from '@/components/home/rise-in';
 import { ExpandableRows } from '@/components/home/expandable-rows';
-import { useBriefingNavigate, type Briefing as ReasonedBriefing } from '@/components/briefing/briefing-view';
+import { type Briefing as ReasonedBriefing } from '@/components/briefing/briefing-view';
 import HomeAsk from '@/components/home/home-ask';
+import { AllConversations } from '@/components/one/all-conversations';
+import { OneHomeHeader, OneDeck } from '@/components/one/one-home';
 import ViewSwitcher, { type HomeView as HomeViewLens } from '@/components/home/view-switcher';
 import {
   buildAgenda, coveredIds, type Agenda, type DoItem, type DoSource, type DeckEntry,
@@ -30,6 +32,7 @@ import {
 import { cleanTitle } from '@/lib/work-items/report';
 import TimelineGantt from '@/components/timeline/timeline-gantt';
 import PortfolioView from '@/components/entities/portfolio-view';
+import WorkflowsLedger from '@/components/workflows/workflows-ledger';
 
 // Priority / SlippingDeal / DoItem / DeckEntry / bundling / sorting now live in lib/home/agenda.ts —
 // the ONE agenda spine the deck, the day ring, and the brief composer all project from (Living-Home S1).
@@ -844,61 +847,6 @@ function brainRefHref(ref: string | null | undefined): string | null {
 // The ONE momentum vocabulary — lib/work-items/states.ts (same dot = same meaning on every surface).
 const MOMENTUM = MOMENTUM_TOKENS;
 
-// ── MOVING · nothing needed — the calm reassurance tier. Initiatives that are progressing but need nothing
-// from you right now (active / waiting). Collapsed by default (one summary line: "N moving · nothing needed
-// from you") so it never competes with "what needs you"; expands to per-initiative rows (momentum + where it
-// stands, opens the project/deep-dive). This is the ambient half of the chief-of-staff view, kept quiet.
-function MovingTier({ exclude }: { exclude?: Set<string> }) {
-  const [open, setOpen] = useState(false);
-  const router = useRouter();
-  // ONE BRAIN (Blocker A): read the entity PORTFOLIO (the same registry Projects/Timeline read) instead of
-  // the retired /api/initiatives/states. Instant-load from the shared portfolio cache, background refresh.
-  const [ents, setEnts] = useState<Array<{ id: string; name: string; status: string; momentum: string; summary: string | null; nextMove: { title: string; entityRef: string | null } | null }>>(
-    () => (loadLS<{ entities?: Array<{ id: string; name: string; status: string; momentum: string; summary: string | null; nextMove: { title: string; entityRef: string | null } | null }> }>('aug-portfolio-v1')?.entities ?? []));
-  useEffect(() => {
-    let alive = true;
-    fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => { if (alive && d?.entities) { setEnts(d.entities); saveLS('aug-portfolio-v1', d); } }).catch(() => {});
-    return () => { alive = false; };
-  }, []);
-  // Progressing work that needs nothing now — AND isn't already surfaced as an action in the deck above
-  // (the `exclude` entity-id set), so "nothing needed from you" can never contradict "What needs you".
-  const moving = ents.filter((e) => e.status === 'active' && (e.momentum === 'active' || e.momentum === 'waiting') && e.summary && !exclude?.has(e.id));
-  if (!moving.length) return null;
-  return (
-    <section className="mt-8">
-      <button onClick={() => setOpen((v) => !v)} className="group w-full flex items-center gap-2 text-left">
-        <span className="inline-flex -space-x-1">
-          {moving.slice(0, 4).map((e) => <span key={e.id} className={`w-2 h-2 rounded-full ring-2 ring-white ${(MOMENTUM[e.momentum as BrainState['momentum']] ?? MOMENTUM.unknown).dot}`} />)}
-        </span>
-        <span className="text-[12px] font-medium text-neutral-500">{moving.length} moving · nothing needed from you</span>
-        <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-300 group-hover:text-neutral-500 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} />
-      </button>
-      <Collapse open={open}>
-        <div className="space-y-1.5 pt-3">
-          {moving.map((e) => {
-            const m = MOMENTUM[e.momentum as BrainState['momentum']] ?? MOMENTUM.unknown;
-            const href = e.nextMove ? brainRefHref(e.nextMove.entityRef) : null;
-            const go = () => href ? router.push(href) : undefined;
-            return (
-              <button key={e.id} onClick={go} className="group w-full flex items-start gap-2.5 rounded-lg border border-neutral-200/50 bg-white/50 px-3 py-2 text-left transition-all duration-200 hover:bg-white hover:border-neutral-300">
-                <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${m.dot}`} title={m.label} />
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-2">
-                    <span className="text-[12.5px] font-medium text-neutral-700 truncate">{e.name}</span>
-                    <span className={`text-[10px] font-semibold uppercase tracking-wide flex-shrink-0 ${m.text}`}>{m.label}</span>
-                  </span>
-                  {e.summary && <span className="block text-[11.5px] text-neutral-400 truncate mt-0.5">{e.summary}</span>}
-                </span>
-                <ChevronRightIcon className="flex-shrink-0 w-3.5 h-3.5 text-neutral-300 group-hover:text-indigo-400 transition-colors mt-0.5" />
-              </button>
-            );
-          })}
-        </div>
-      </Collapse>
-    </section>
-  );
-}
-
 // ── B3b (iterated July 24) — THIS WEEK: the calendar rides BESIDE the task list as the second
 // column — day-grouped, deal-chipped, deterministic (zero AI). The "To prep" card was REMOVED
 // (the prep pass still prepares; its briefs live in the deal rooms). Cache-read lives in the
@@ -1329,7 +1277,6 @@ export function HomeView() {
   // The briefing's struck-refs: anything acted on this session (strike-and-collapse; the background
   // re-reason re-authors the prose on the next shape change).
   const actedIds = useMemo(() => new Set([...dismissed, ...clearedIds]), [dismissed, clearedIds]);
-  const briefNav = useBriefingNavigate((v) => setView(v as HomeViewLens));
   const [sessionCleared, setSessionCleared] = useState(0); // this session's Done/Dismiss/Send → ring `cleared`
   // LENS PREFETCH (instant-feel): warm the Timeline payload in the background once the dashboard
   // has settled, so switching lenses hydrates from localStorage instead of a skeleton.
@@ -1344,6 +1291,28 @@ export function HomeView() {
   }, []);
 
   const [activityOpen, setActivityOpen] = useState(false); // right-side Activity slide-over
+  // THE PAGE TAKEOVER: a live Home conversation owns the page (the deck steps aside; the floor's
+  // thread fills). Driven by the panel's own state via one event — no prop drilling.
+  const [chatActive, setChatActive] = useState(false);
+  // The takeover EASES (owner, Aug 6 — the instant deck→chat swap read as a glitch): entering
+  // fades the deck out for a beat before it unmounts; leaving remounts instantly (returning
+  // content never needs a wait). chatFading drives the opacity, chatActive the unmount.
+  const [chatFading, setChatFading] = useState(false);
+  const chatFadeTm = useRef<number | null>(null);
+  useEffect(() => {
+    const on = (e: Event) => {
+      const active = !!(e as CustomEvent).detail?.active;
+      if (chatFadeTm.current) { window.clearTimeout(chatFadeTm.current); chatFadeTm.current = null; }
+      if (active) {
+        setChatFading(true);
+        chatFadeTm.current = window.setTimeout(() => { setChatActive(true); chatFadeTm.current = null; }, 180);
+      } else {
+        setChatActive(false); setChatFading(false);
+      }
+    };
+    window.addEventListener('aug:chat-active', on);
+    return () => { window.removeEventListener('aug:chat-active', on); if (chatFadeTm.current) window.clearTimeout(chatFadeTm.current); };
+  }, []);
   // Initiative Brain state — joined into the deck so a bundle (an initiative) shows WHERE IT STANDS + its ONE
   // next move (the "across your work" data, unified INTO the one list — no separate second list). Keyed by
   // normalized label to match the bundle key (i:<normKey>). Instant-load cached.
@@ -1358,7 +1327,7 @@ export function HomeView() {
   // survives refresh, and the switch feels instant (never "navigating to another screen").
   useEffect(() => {
     const v = new URLSearchParams(window.location.search).get('view');
-    if (v === 'timeline' || v === 'projects') setViewState(v);
+    if (v === 'timeline' || v === 'projects' || v === 'conversations' || v === 'workflows' || v === 'runs') setViewState(v);
   }, []);
   // THE ROOM-DOOR LAW (Aug 3): a soft nav to /home?view=… (deck row → project room, "Open project",
   // any deep-link) changes ONLY the query — the mount effect above never re-fires. React to real
@@ -1367,8 +1336,13 @@ export function HomeView() {
   const searchParams = useSearchParams();
   useEffect(() => {
     const v = searchParams.get('view');
-    if (v === 'timeline' || v === 'projects') setViewState(v);
+    if (v === 'timeline' || v === 'projects' || v === 'conversations' || v === 'workflows' || v === 'runs') setViewState(v);
   }, [searchParams]);
+  // THE LENS ANNOUNCER — replaceState is invisible to useSearchParams subscribers, so the
+  // sidebar mirrors the active lens through this event (fires on every lens change, any path).
+  useEffect(() => {
+    try { window.dispatchEvent(new CustomEvent('aug:view-changed', { detail: { view } })); } catch { /* SSR-safe */ }
+  }, [view]);
   const setView = useCallback((v: HomeViewLens) => {
     setViewState(v);
     const url = new URL(window.location.href);
@@ -1380,7 +1354,16 @@ export function HomeView() {
   useEffect(() => {
     const reset = () => setView('dashboard');
     window.addEventListener('augmtd:home-reset', reset);
-    return () => window.removeEventListener('augmtd:home-reset', reset);
+    // THE CHAT LIVES ON THE DASHBOARD LENS (owner, Aug 9 — "new chat not working"): opening a
+    // new/past chat from ANY other lens (Workflows, Projects…) must bring the dashboard forward,
+    // or the panel opens invisibly behind a lens that doesn't render it.
+    window.addEventListener('aug:new-chat', reset);
+    window.addEventListener('aug:open-chat', reset);
+    return () => {
+      window.removeEventListener('augmtd:home-reset', reset);
+      window.removeEventListener('aug:new-chat', reset);
+      window.removeEventListener('aug:open-chat', reset);
+    };
   }, [setView]);
   // Sync-status indicator state (3 bits): `syncing` = a background load(true) is in flight; `lastUpdatedAt`
   // = when the last load succeeded (drives "Updated Nm ago"); `realtimeConnected` = the postgres_changes
@@ -1969,7 +1952,9 @@ export function HomeView() {
         {/* Header + narration + live status chips. HIDDEN when a project deep-dive is open — a project
             detail owns the screen (its own back-link + title header), like the item deep-dive, so the day
             greeting shouldn't sit above it. */}
-        {!projectDetailOpen && (
+        {/* The greeting header steps aside WITH the deck (owner, Aug 7 — "the top things clear
+            for conversation"): a live conversation owns the WHOLE page, not just the deck rows. */}
+        {!projectDetailOpen && !chatActive && view !== 'workflows' && view !== 'runs' && (
         <RiseIn>
           {/* Living orb — abstract morphing glow in the brand spectrum, signalling the brief is
               continuously alive. Sits left so the greeting + narrative use the full width. */}
@@ -1984,50 +1969,17 @@ export function HomeView() {
             @keyframes fadeIn{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}
             @keyframes augDeckIn{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:translateX(0)}}
           `}</style>
-          <div className="flex items-start gap-5">
-            <div className="relative flex-shrink-0 w-[72px] h-[72px] mt-1" aria-hidden="true">
-              {/* outer breathing glow */}
-              <div className="absolute -inset-3 rounded-full bg-[radial-gradient(circle,rgba(124,58,237,0.5),transparent_70%)] blur-xl will-change-transform" style={{ animation: 'augBreathe 4s ease-in-out infinite' }} />
-              {/* energy sphere */}
-              <div className="relative w-[72px] h-[72px] rounded-full overflow-hidden bg-[radial-gradient(circle_at_35%_28%,#c4b5fd,#6366f1_38%,#312e81_80%,#1e1b4b)] shadow-[0_10px_30px_-6px_rgba(99,102,241,0.6)]">
-                {/* rotating neural energy swirls (counter-rotating) */}
-                <div className="absolute -inset-4 bg-[conic-gradient(from_0deg,transparent,rgba(167,139,250,0.85),transparent_30%,rgba(96,165,250,0.7),transparent_60%,rgba(244,114,182,0.6),transparent)] will-change-transform" style={{ animation: 'augSpin 9s linear infinite' }} />
-                <div className="absolute -inset-4 mix-blend-screen bg-[conic-gradient(from_120deg,transparent,rgba(99,102,241,0.6),transparent_40%,rgba(167,139,250,0.5),transparent)] will-change-transform" style={{ animation: 'augSpinR 13s linear infinite' }} />
-                {/* drifting plasma cores */}
-                <span className="absolute left-2 top-3 h-9 w-9 rounded-full bg-fuchsia-400/80 blur-md mix-blend-screen will-change-transform" style={{ animation: 'augM1 5s ease-in-out infinite' }} />
-                <span className="absolute left-8 top-6 h-8 w-8 rounded-full bg-sky-400/75 blur-md mix-blend-screen will-change-transform" style={{ animation: 'augM2 6.5s ease-in-out infinite' }} />
-                <span className="absolute left-4 top-2 h-7 w-7 rounded-full bg-violet-200/80 blur-md mix-blend-screen will-change-transform" style={{ animation: 'augM3 7.5s ease-in-out infinite' }} />
-                {/* sphere shine + 3D depth */}
-                <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_30%_24%,rgba(255,255,255,0.55),transparent_38%)]" />
-                <div className="absolute inset-0 rounded-full shadow-[inset_0_-7px_16px_rgba(30,27,75,0.7),inset_0_2px_6px_rgba(255,255,255,0.25)]" />
-              </div>
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400 mb-1.5">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
-              <h1 className="text-[27px] font-semibold tracking-tight text-neutral-900 leading-tight">{greeting()}{b?.firstName ? `, ${b.firstName}` : ''}</h1>
-              {/* ONE tight summary line — the teaser (else the briefLine). No bullets, no "Don't miss"
-                  banner, no status chips: the sections + their Label counts already carry the numbers,
-                  and the first emphasized digest row IS the focal "start here". Straight into the brief. */}
-              {!b?.briefing && (b?.tldr?.teaser || b?.briefLine) ? (
-                <p className="mt-2 text-[14.5px] text-neutral-500 leading-relaxed max-w-[760px]">{b?.tldr?.teaser || b?.briefLine}</p>
-              ) : null}
-              {/* TODAY STRIP (5A.7) — one slim line from the EXISTING schedule read; nothing new computed. */}
-              {(b?.schedule?.length ?? 0) > 0 && (
-                <p className="mt-1.5 flex items-center gap-1.5 text-[12.5px] text-neutral-400">
-                  <CalendarDaysIcon className="w-3.5 h-3.5 flex-shrink-0" />
-                  <span className="tabular-nums">{b!.schedule![0].localTime ?? b!.schedule![0].time}</span>
-                  <span className="text-neutral-500 truncate max-w-[380px]">{b!.schedule![0].title}</span>
-                  {(b!.schedule!.length > 1) && <span className="flex-shrink-0">· {b!.schedule!.length - 1} more</span>}
-                </p>
-              )}
-              {/* KPI strip removed (July 13) — it duplicated the per-section counts + a vanity "N filtered".
-                  Counts now live only on the section headers + the day-cleared ring. */}
-            </div>
-            {/* Top-right of the header, opposite the greeting: ONE tidy cluster — the "day cleared"
-                progress ring (how much of what needs you is handled today — live) + a quiet, matching
-                Activity affordance. Both share the same soft low-chrome treatment and sit on one
-                evenly-spaced row, aligned to the date eyebrow. */}
-            <div className="flex-shrink-0 flex items-center gap-2 self-start mt-0.5">
+          {/* THE CENTER EXTRACTION (Arc 3 — Aug 6): the composition lives in
+              components/one/one-home.tsx; this host supplies data + the stateful cluster.
+              NO PROSE ON THE HOME (owner law, said twice): the deck IS the day; the composed
+              briefing still powers ordering + de-dup (sentencedIds), it never re-speaks. */}
+          <OneHomeHeader
+            name={b?.firstName ?? null}
+            greeting={greeting()}
+            todayLine={(b?.schedule?.length ?? 0) > 0
+              ? { time: b!.schedule![0].localTime ?? b!.schedule![0].time, title: b!.schedule![0].title, more: b!.schedule!.length - 1 }
+              : null}
+            right={<>
               <SyncStatus syncing={syncing} lastUpdatedAt={lastUpdatedAt} realtimeConnected={realtimeConnected} />
               {showRing && <DayClearedRing cleared={ringCleared} rows={agenda.rows} atoms={agenda.atoms} />}
               <button
@@ -2039,8 +1991,8 @@ export function HomeView() {
                 <ClockIcon className="w-4 h-4" />
                 <span className="hidden sm:inline">Activity</span>
               </button>
-            </div>
-          </div>
+            </>}
+          />
         </RiseIn>
         )}
 
@@ -2049,26 +2001,38 @@ export function HomeView() {
             the dashboard (never an abrupt swap). */}
         {view === 'timeline' && <RiseIn key="lens-timeline"><TimelineGantt onDetailChange={setProjectDetailOpen} /></RiseIn>}
 
+        {/* ALL CONVERSATIONS (the shell) — sidebar-reached lens; a chat row loads into the ONE
+            Home chat panel (never a second chat surface). */}
+        {view === 'conversations' && (
+          <RiseIn key="lens-conversations">
+            <AllConversations onOpenChat={(key) => {
+              try { localStorage.setItem('aug-home-chat-key', key); sessionStorage.setItem('aug-open-chat-intent', '1'); } catch { /* no LS */ }
+              window.dispatchEvent(new CustomEvent('aug:open-chat', { detail: { key } }));
+              setView('dashboard');
+            }} />
+          </RiseIn>
+        )}
+
         {/* PROJECTS lens — initiatives grouping your work (goals + rules your coworkers respect).
             onDetailChange lets a project deep-dive hide the Home greeting above (deep-dive framing). */}
         {view === 'projects' && <RiseIn key="lens-projects"><PortfolioView onDetailChange={setProjectDetailOpen} /></RiseIn>}
 
-        {view === 'dashboard' && (<>
+        {/* WORKFLOWS lens (the production ledger) + its RUNS side — the island's contextual pill
+            switches between them (owner, Aug 9: the island, not in-page tabs). */}
+        {(view === 'workflows' || view === 'runs') && (
+          <RiseIn key="lens-workflows">
+            <WorkflowsLedger tab={view === 'runs' ? 'activity' : 'workflows'} />
+          </RiseIn>
+        )}
+
+        {view === 'dashboard' && !chatActive && (
+        <div className={`transition-opacity duration-200 ease-out ${chatFading ? 'opacity-0' : 'opacity-100'}`}>
         {/* AMBIENT "also happening" pills removed for now (AmbientStrip kept below for easy restore). */}
 
-        {/* ── THE ASK ZONE — ALWAYS PRESENT (the entry to the brain is the front door; a brand-new
-            user with zero synced data can still talk, create tasks, found projects — the LESS data
-            there is, the MORE the chat is the thing to do). ── */}
-        <div className="mt-9 mb-6">
-          <HomeAsk
-            suggestions={(() => {
-              const s: string[] = ['Add a task…', 'Plan my week', "What's slipping?"];
-              if ((b?.schedule?.length ?? 0) > 0) s.push('Prep my next meeting');
-              else s.push('What did I miss?');
-              return s;
-            })()}
-          />
-        </div>
+        {/* THE ASK ZONE moved to the shell's FLOOR (the Claude anatomy — see the sticky block at
+            the end of this column): the conversation is always at hand, opening UPWARD. When the
+            conversation is LIVE it OWNS the page — this whole content block steps aside
+            (aug:chat-active), Claude's arrival feel. */}
 
         {/* THE EMPTY STATE tells the truth — three different situations, three different messages:
             nothing connected → the connect CTA; first sync in flight → the honest syncing state
@@ -2159,92 +2123,25 @@ export function HomeView() {
                 else if (e.kind === 'priority') flat.push({ item: priorityToItem(e.p) });
                 else flat.push({ item: dealToItem(e.deal), dealKey: e.deal.key });
               }
-              const todayISO = new Date().toISOString().slice(0, 10);
-              const weekISO = new Date(Date.now() + 6 * 86_400_000).toISOString().slice(0, 10);
-              const groups = [
-                { key: 'overdue', label: 'Overdue', rows: flat.filter((r) => !!r.item.dueDate && r.item.dueDate < todayISO) },
-                { key: 'today', label: 'Due today', rows: flat.filter((r) => r.item.dueDate === todayISO) },
-                { key: 'week', label: 'This week', rows: flat.filter((r) => !!r.item.dueDate && r.item.dueDate > todayISO && r.item.dueDate <= weekISO) },
-                { key: 'rest', label: 'When you can', rows: flat.filter((r) => !r.item.dueDate || r.item.dueDate > weekISO) },
-              ].filter((g) => g.rows.length > 0);
-              const totalRows = flat.length;
-              let firstRow = true;
+              // THE CENTER EXTRACTION (Aug 6): the deck's COMPOSITION lives in one-home.tsx;
+              // this host only flattens the judged entries and hands over state + handlers.
               return (
               <RiseIn delay={60}>
-                <section>
-                  <div className="flex items-center justify-between gap-3">
-                    <Label count={totalRows} icon={BoltIcon}>What needs you</Label>
-                    {totalRows > 0 && (
-                      <div className="flex items-center rounded-lg border border-neutral-200 p-0.5">
-                        {(['time', 'project'] as const).map((m) => (
-                          <button key={m} onClick={() => setDoGroupMode(m)}
-                            className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-all duration-150 ${doGroupMode === m ? 'bg-neutral-100 text-neutral-800' : 'text-neutral-400 hover:text-neutral-600'}`}
-                          >{m === 'time' ? 'Tasks' : 'By project'}</button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  {totalRows === 0 ? (
-                    <SectionCleared line="All handled — nothing else needs you." />
-                  ) : (
-                    <div className="space-y-4 mt-1">
-                      {(doGroupMode === 'project'
-                        ? (() => {
-                            const by = new Map<string, FlatRow[]>();
-                            // trackedLookup hoisted above (shared with the bundle-title fallback);
-                            // untracked labels fold under "No project".
-                            for (const r of flat) {
-                              const raw = r.item.initiative ?? null;
-                              const k = raw ? (trackedLookup.get(raw.toLowerCase()) ?? 'No project') : 'No project';
-                              (by.get(k) ?? by.set(k, []).get(k)!).push(r);
-                            }
-                            return [...by.entries()]
-                              .sort((a, b) => (a[0] === 'No project' ? 1 : 0) - (b[0] === 'No project' ? 1 : 0))
-                              .map(([k, rows]) => ({ key: `p-${k}`, label: k, rows }));
-                          })()
-                        : groups
-                      ).map((g) => {
-                        // URGENT groups (Overdue · Due today) are always open — they're why the
-                        // section exists. The CALM groups (This week · When you can · project
-                        // groups) rest COLLAPSED to header + count, expand smoothly on hover
-                        // (the one grid transition), and CLICK PINS them open (persisted — hover
-                        // alone is fragile and touch needs the tap). Hover-expand was briefly
-                        // removed July 29 and REINSTATED July 30 by the owner's call: the preview
-                        // is wanted; the "vanishing row" it was blamed for was stale-cache paint.
-                        const alwaysOpen = g.key === 'overdue' || g.key === 'today';
-                        const isOpen = alwaysOpen || pinnedGroups.has(g.key) || hoverGroup === g.key;
-                        return (
-                        <div key={g.key}
-                          onMouseEnter={() => { if (!alwaysOpen) setHoverGroup(g.key); }}
-                          onMouseLeave={() => setHoverGroup((h) => (h === g.key ? null : h))}>
-                          <button
-                            onClick={() => { if (!alwaysOpen) togglePinnedGroup(g.key); }}
-                            className={`flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wide mb-1.5 ${g.key === 'overdue' ? 'text-rose-500' : g.key === 'today' ? 'text-amber-500' : 'text-neutral-400 hover:text-neutral-600'} transition-colors`}
-                          >
-                            {g.label} · {g.rows.length}
-                            {!alwaysOpen && <ChevronRightIcon className={`w-3 h-3 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`} />}
-                          </button>
-                          <div className={`grid transition-all duration-300 ease-out ${isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
-                            <div className="overflow-hidden min-h-0">
-                              {/* ONE container per group — rows separated by hairlines. A LONG group
-                                  folds past 8 rows behind the ONE expander idiom (ExpandableRows —
-                                  "N more ⌄ / See less ⌃"), so a 29-row Overdue never floods the deck;
-                                  nothing hidden, just folded (July 31). */}
-                              <div className="rounded-xl border border-neutral-200/70 bg-white divide-y divide-neutral-100 overflow-hidden">
-                                <ExpandableRows items={g.rows} limit={8} toggleClass="px-3 py-2 pl-[2.6rem]" render={(r) => { const em = firstRow; firstRow = false; return (
-                                  <DoRow key={r.item.key} item={r.item} flat emphasis={em}
-                                    dismissOverride={r.dealKey ? () => dismissDeal(r.dealKey!) : undefined}
-                                    onDismissInbox={onDismiss} onClearedCommitment={onCleared} onUndoInbox={toastInbox} onUndoCommitment={toastCommitment} />
-                                ); }} />
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </section>
+                <OneDeck
+                  flat={flat}
+                  groupMode={doGroupMode}
+                  onGroupMode={setDoGroupMode}
+                  projectLookup={trackedLookup}
+                  pinnedGroups={pinnedGroups}
+                  hoverGroup={hoverGroup}
+                  onHoverGroup={setHoverGroup}
+                  onTogglePin={togglePinnedGroup}
+                  handlers={{
+                    dismissDeal,
+                    onDismissInbox: onDismiss, onClearedCommitment: onCleared,
+                    onUndoInbox: toastInbox, onUndoCommitment: toastCommitment,
+                  }}
+                />
               </RiseIn>
               );
             })()}
@@ -2258,12 +2155,31 @@ export function HomeView() {
                 IN the deck above (as bundle cards carrying momentum + next move); this collapsed strip holds
                 only the ones that are progressing but need nothing from you, so the Home reads as ONE
                 initiative-aware list, not two competing rollups. Renders nothing until states populate. */}
-            {!b?.briefing?.pulse && <RiseIn><MovingTier exclude={new Set(b?.deckEntityIds ?? [])} /></RiseIn>}
+            {/* The MovingTier ("N moving · nothing needed") DIED (owner call, Aug 6): the deck IS
+                the day — an ambient reassurance line floating below it read as clutter. Momentum
+                lives in the sidebar's Projects + the portfolio. */}
 
             </div>{/* ── end ACTION content ── */}
           </div>
         )}
-        </>)}
+        </div>)}
+
+        {/* ── THE COMPOSER IS THE FLOOR (the shell — Claude's anatomy): ALWAYS PRESENT on the
+            dashboard lens, docked to the bottom, the conversation takeover opening UPWARD. The
+            front door never hides behind data — a brand-new user with zero synced data can still
+            talk, create tasks, found projects (P19); other lenses keep their own grammars. ── */}
+        {view === 'dashboard' && !projectDetailOpen && (
+          <div className="sticky bottom-0 mt-auto pt-8 pb-5 bg-gradient-to-t from-[#fbfbfd] via-[#fbfbfd]/95 to-transparent">
+            <HomeAsk
+              suggestions={(() => {
+                const s: string[] = ['Add a task…', 'Plan my week', "What's slipping?"];
+                if ((b?.schedule?.length ?? 0) > 0) s.push('Prep my next meeting');
+                else s.push('What did I miss?');
+                return s;
+              })()}
+            />
+          </div>
+        )}
       </div>
       </div>{/* ── end MAIN scrolling column ── */}
 

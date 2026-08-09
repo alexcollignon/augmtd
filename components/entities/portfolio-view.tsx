@@ -24,7 +24,7 @@ import {
 import { toast } from 'sonner';
 import { broadcastProjectsUpdated } from '@/lib/projects/broadcast';
 import { RiseIn } from '@/components/home/rise-in';
-import EntityRoom from '@/components/entities/entity-room';
+import EntityRoom, { warmEntityRoom, cancelWarmEntityRoom } from '@/components/entities/entity-room';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { useLiveRefresh } from '@/hooks/use-live-refresh';
 import { MOMENTUM as MOMENTUM_TOKENS } from '@/lib/work-items/states';
@@ -94,7 +94,8 @@ function Row({ e, onAction, onOpen, others = [] }: { e: Entity; onAction: (id: s
   const stateWord = e.momentum !== 'active' && e.momentum !== 'unknown'
     ? `${m.label}${e.momentum === 'gone_quiet' && e.quietDays ? ` · ${e.quietDays}d` : ''}` : null;
   return (
-    <div className="group rounded-xl border border-neutral-200/70 bg-white transition-all duration-200 hover:border-neutral-300">
+    <div className="group rounded-xl border border-neutral-200/70 bg-white transition-all duration-200 hover:border-neutral-300"
+      onMouseEnter={() => warmEntityRoom(e.id)} onMouseLeave={() => cancelWarmEntityRoom(e.id)}>
       {/* COLLAPSED — competitor restraint: one dot · name · pin · chevron. One muted subline for scent. */}
       <div className="flex items-center gap-3 px-4 py-3">
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${m.dot}`} title={`${m.label}${e.momentum === 'gone_quiet' && e.quietDays ? ` · ${e.quietDays}d quiet` : ''}`} />

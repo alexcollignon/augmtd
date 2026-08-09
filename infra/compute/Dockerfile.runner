@@ -1,0 +1,19 @@
+# The RUNNER image — the locked room a compute job executes in. No network at runtime
+# (--network none is applied by the service), so everything a script may need is baked in.
+# Data-work stdlib: spreadsheets, PDFs, docs, CSVs, dates, math.
+FROM python:3.12-slim
+
+RUN pip install --no-cache-dir \
+    pandas==2.2.* \
+    numpy==2.* \
+    openpyxl==3.1.* \
+    xlsxwriter==3.2.* \
+    pypdf==5.* \
+    python-docx==1.1.* \
+    chardet==5.* \
+    python-dateutil==2.9.*
+
+# Non-root: the job owns nothing but /job/out (mounted rw) and /tmp (tmpfs).
+RUN useradd -m -u 10001 jobrunner
+USER jobrunner
+WORKDIR /job

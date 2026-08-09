@@ -45,6 +45,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!shouldDraftReply(item as any)) {
     return NextResponse.json({ draft: '', skipped: 'not_a_reply' });
   }
+  // THE INSTANT SERVE (Aug 7, found live — the card said "drafted by Clara", the stage said
+  // "drafting…" for seconds): a STORED prepared draft serves on the CACHED judgment alone —
+  // ONE read, no re-judge, no resolution pass. The P2 gate holds: a cached non-reply verdict
+  // refuses here exactly as the full gate would (apply-verdict strips contradicted artifacts
+  // anyway); an ABSENT cache falls through to the full judge below — never a gate bypass.
+  if (!fresh && sd.draft?.body) {
+    const { data: jrow } = await supabase.from('item_plans').select('tasks')
+      .eq('user_id', user.id).eq('kind', 'judgment').eq('entity_id', `inbox:${id}`).maybeSingle();
+    const cachedWork = ((jrow?.tasks ?? null) as { verdict?: { work?: string } } | null)?.verdict?.work;
+    if (cachedWork === 'reply' || cachedWork === 'send_file') {
+      return NextResponse.json({ draft: sd.draft.body as string });
+    }
+    if (cachedWork && cachedWork !== 'reply' && cachedWork !== 'send_file') {
+      return NextResponse.json({ draft: '', skipped: 'judged_none' });
+    }
+  }
+
   // THE ONE GATE (promise fix #1): drafting — even on-demand from the deep-dive — happens only
   // when THE judged verdict says the work is a reply. Cached on the item, so this costs a read.
   let artifactTruth: string | null = null;

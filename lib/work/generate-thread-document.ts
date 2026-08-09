@@ -135,8 +135,35 @@ export async function generateThreadDocument(
     });
   }
 
+  // ── THE VERIFY LOOP ON CHAT DOCUMENTS (Aug 8, production-floor step 3): the arithmetic floor
+  // runs on EVERY chat-produced document — computable claims recomputed BY CODE (the same
+  // verify-claims channel the prepare pass uses). A mismatch never blocks delivery (the work
+  // arrives) but is STAMPED on the artifact (qa_report, persisted with it) and SAID in the
+  // summary the coworker speaks — flagged, never silent. Failure of the floor itself speaks no
+  // verdict (an outage is not a pass). ──
+  let qaNote = '';
+  try {
+    const { verifyComputableClaims } = await import('@/lib/prepare/verify-claims');
+    const text = typeof artifact.content === 'string' ? artifact.content : JSON.stringify(artifact.content ?? '');
+    const mismatches = await verifyComputableClaims(adminClient, userId, text);
+    if (mismatches.length) {
+      artifact.qa_report = {
+        issues: mismatches.map((m) => ({
+          type: 'fabricated_data' as const, severity: 'error' as const,
+          description: `Stated ${m.stated} but the document's own figures compute to ${m.expected} ("${m.quote.slice(0, 80)}")`,
+        })),
+        score: Math.max(0, 100 - 20 * mismatches.length),
+        summary: `${mismatches.length} number(s) don't match what the document's own figures compute to.`,
+      };
+      await adminClient.from('work_threads')
+        .update({ artifacts: updated, artifact, updated_at: new Date().toISOString() })
+        .eq('id', threadId);
+      qaNote = ` One check: ${mismatches.length === 1 ? 'a number' : `${mismatches.length} numbers`} in the document didn't verify against its own figures (stated ${mismatches[0].stated}, computes to ${mismatches[0].expected}) — worth a look before it goes anywhere.`;
+    }
+  } catch { /* the floor is an enhancement — no verdict on outage */ }
+
   return {
     artifact: artifact.id ? { id: artifact.id, type: artifact.type, title: artifact.title } : null,
-    summary: `Created ${deliverableType}: ${artifact.title}`,
+    summary: `Created ${deliverableType}: ${artifact.title}.${qaNote}`,
   };
 }

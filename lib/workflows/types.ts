@@ -7,7 +7,7 @@ export type { DocumentArtifact };
 
 // ── Triggers ───────────────────────────────────────────────────────────────────
 
-export type TriggerType = 'manual' | 'schedule';
+export type TriggerType = 'manual' | 'schedule' | 'reaction';
 
 export interface ManualTrigger {
   type: 'manual';
@@ -20,11 +20,22 @@ export interface ScheduleTrigger {
   label?: string;        // human-readable: "Every Monday at 9am Lisbon"
 }
 
-export type WorkflowTrigger = ManualTrigger | ScheduleTrigger;
+// STANDING REACTION (production arc step 6) — the brain as a trigger: a judged condition over
+// the event stream ("when a tender matching the client's profile lands"). The reasoning sits at
+// the trigger EDGE; what fires is the fixed pipeline. Judged conservatively at the sync tail
+// (lib/workflows/reactions.ts); scope = the workflow's entity edge; exactly-once per event;
+// honest daily cap.
+export interface ReactionTrigger {
+  type: 'reaction';
+  when: string;          // the condition, in plain words — judged against each new event
+  label?: string;        // human-readable: "When a matching tender lands"
+}
+
+export type WorkflowTrigger = ManualTrigger | ScheduleTrigger | ReactionTrigger;
 
 // ── Steps ──────────────────────────────────────────────────────────────────────
 
-export type StepType = 'tool' | 'ai' | 'agent';
+export type StepType = 'tool' | 'ai' | 'agent' | 'approval' | 'verify';
 
 // Tool step — deterministic data fetch via the MCP registry or a built-in tool id.
 export interface ToolStep {
@@ -59,7 +70,36 @@ export interface AgentStep {
   prompt: string;                  // what we're asking this agent to do this step
 }
 
-export type WorkflowStep = ToolStep | AIStep | AgentStep;
+// Approval step — THE HUMAN GATE (production arc step 2, the Executor-validated shape): the run
+// PARKS here (`awaiting_approval`, outputs snapshotted), the ask lands in the standing
+// commitment's room + on the deck as due-today debt, and an explicit approve RESUMES the run
+// where it stopped; reject ends it honestly. OPT-IN BY CONSTRUCTION (the pilot outcome
+// contract): only a workflow that explicitly CONTAINS this step ever pauses — never
+// retrofitted onto existing steps, never implied by a send.
+export interface ApprovalStep {
+  type: 'approval';
+  id: string;
+  label: string;
+  /** What the approver is deciding — rendered on the ask ("Review the briefing before it goes to the client list"). */
+  instruction?: string;
+}
+
+// Verify step — THE STRUCTURAL VERIFICATION GATE (production arc step 3): the AHK arc's
+// hand-built gate promoted into the ENGINE — one implementation, versioned, never copy-pasted
+// into workflow prompts again. The step treats the PREVIOUS output as THE DRAFT and everything
+// before it as SOURCE MATERIAL: the arithmetic floor recomputes the draft's computable claims
+// BY CODE first, then one persona-free reasoned pass deletes/corrects ungrounded claims, fixes
+// citations to real source URLs, keeps structure EXACTLY, and never modernizes dates. Output =
+// the corrected draft (feeds delivery/approval).
+export interface VerifyStep {
+  type: 'verify';
+  id: string;
+  label: string;
+  /** Optional extra domain rules for this workflow ("cite only .gov sources", …). */
+  instruction?: string;
+}
+
+export type WorkflowStep = ToolStep | AIStep | AgentStep | ApprovalStep | VerifyStep;
 
 // ── Output ─────────────────────────────────────────────────────────────────────
 

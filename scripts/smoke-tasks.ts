@@ -205,8 +205,8 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
     check('5A.6 · room width + Tasks default tab + INTENT as one full-width band (the emptied two-column grid died with the next-move card — experience-spec seat cleanup)',
       er2.includes('max-w-[1000px]') && er2.includes("useState<'work'") &&
       er2.includes('md:grid-cols-2 gap-x-8') && !er2.includes('lg:grid-cols-[minmax(0,1fr)_280px]'));
-    check('5A.7 · Home today-strip from the existing schedule read',
-      hv2.includes('TODAY STRIP') && hv2.includes('b!.schedule![0].time'));
+    check('5A.7 · Home today-strip from the existing schedule read (todayLine wired host→one-home since the Aug 6 extraction)',
+      hv2.includes('b!.schedule![0].time') && readFileSync('components/one/one-home.tsx', 'utf8').includes('todayLine &&'));
   }
 
   // ══ 5B — the Preparation Pass over tasks. ══

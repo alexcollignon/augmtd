@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
-import SidebarNav from '@/components/sidebar-nav';
+import SidebarNav from '@/components/one/one-sidebar';
 import InviteAcceptClient from './invite-accept-client';
 
 interface Props {

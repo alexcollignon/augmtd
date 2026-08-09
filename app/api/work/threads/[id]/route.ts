@@ -33,7 +33,8 @@ export async function GET(
   }
 }
 
-// PATCH /api/work/threads/[id] — update thread title
+// PATCH /api/work/threads/[id] — update thread title, or archive/restore (soft delete — the
+// UNDOABLE conversation delete; the hard DELETE below stays for true destruction).
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -48,18 +49,18 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const { title } = body;
+    const { title, status } = body as { title?: string; status?: string };
 
-    if (!title || typeof title !== 'string' || !title.trim()) {
-      return NextResponse.json({ error: 'Title is required' }, { status: 400 });
+    const updates: Record<string, string> = { updated_at: new Date().toISOString() };
+    if (typeof title === 'string' && title.trim()) updates.title = title.trim().substring(0, 200);
+    if (status === 'archived' || status === 'active') updates.status = status;
+    if (!updates.title && !updates.status) {
+      return NextResponse.json({ error: 'Title or status is required' }, { status: 400 });
     }
 
     const { data: thread, error } = await supabase
       .from('work_threads')
-      .update({
-        title: title.trim().substring(0, 200),
-        updated_at: new Date().toISOString(),
-      })
+      .update(updates)
       .eq('id', threadId)
       .eq('user_id', user.id)
       .select()

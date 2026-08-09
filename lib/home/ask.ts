@@ -10,6 +10,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { resolveFileUniversal } from '@/lib/knowledge/resolve';
 import { getTodaySchedule, renderScheduleBlock } from '@/lib/calendar/today-schedule';
+import { GENERIC_WORK_WORDS } from '@/lib/entities/recognize';
 
 export type AskRef = { id: string; kind: 'entity' | 'inbox_item' | 'commitment' | 'meeting' | 'file'; label: string; href: string | null };
 export type AskAnswer = { answer: string; refs: AskRef[] };
@@ -17,16 +18,45 @@ export type AskTurn = { role: 'user' | 'assistant'; text: string };
 
 const entHref = (id: string) => `/home?view=projects&entity=${id}`;
 
+// ── THE FOCUS MATCH (one-surface § the one grounding, Aug 5): which registered entity does an
+// unscoped question NAME? Strict by design — ≥1 distinctive token of the entity's name/aliases
+// must appear in the question (an all-generic name never matches; namesOverlap's trust-the-judge
+// fallback would make "AI Assessment" match every question). Longest matched-token weight wins.
+// Pure + exported for the deterministic gate. ──
+export function findEntityFocus(
+  question: string,
+  ents: Array<{ id: string; name: string; aliases?: string[] | null }>,
+): { id: string; name: string } | null {
+  const q = ` ${question.toLowerCase()} `;
+  let best: { id: string; name: string; score: number } | null = null;
+  for (const e of ents) {
+    const names = [e.name, ...(Array.isArray(e.aliases) ? e.aliases : [])].filter(Boolean);
+    let score = 0;
+    for (const n of names) {
+      const tokens = String(n).toLowerCase().split(/[^a-z0-9]+/)
+        .filter((t) => t.length >= 3 && !GENERIC_WORK_WORDS.has(t) && !/^(ai|ia|ml)$/.test(t));
+      const matched = tokens.filter((t) => q.includes(t));
+      if (matched.length) score = Math.max(score, matched.reduce((a, t) => a + t.length, 0));
+    }
+    if (score > 0 && (!best || score > best.score)) best = { id: e.id, name: e.name, score };
+  }
+  return best ? { id: best.id, name: best.name } : null;
+}
+
 /** Assemble a compact, bounded snapshot of the brain — everything the answer may reason over.
- *  Exported: the converse core grounds global-scope open turns on the SAME read. */
-export async function buildBrainSnapshot(supabase: SupabaseClient, userId: string): Promise<{ text: string; refs: Map<string, AskRef> }> {
+ *  Exported: the converse core grounds global-scope open turns on the SAME read.
+ *  With `focusQuery` (THE ONE-GROUNDING UNIFICATION): when the question NAMES a registered
+ *  entity, that entity's FULL room grounding — the same assembled page the room itself reads —
+ *  is appended as the FOCUSED WORK block, so an answer from the Home and an answer from the
+ *  room structurally cannot disagree. */
+export async function buildBrainSnapshot(supabase: SupabaseClient, userId: string, focusQuery?: string): Promise<{ text: string; refs: Map<string, AskRef> }> {
   const refs = new Map<string, AskRef>();
   const parts: string[] = [];
   const nowMs = Date.now();
 
   // Active bodies of work (entities) — the spine. State + next move + who-owes + category.
   const { data: ents } = await supabase.from('work_entities')
-    .select('id, name, state, next_move, priority, last_event_at')
+    .select('id, name, aliases, state, next_move, priority, last_event_at')
     .eq('user_id', userId).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null)
     .order('last_event_at', { ascending: false }).limit(60);
   const sorted = (ents ?? []).map((e) => e as Record<string, unknown>)
@@ -70,13 +100,37 @@ export async function buildBrainSnapshot(supabase: SupabaseClient, userId: strin
   const mr = ((items ?? []) as Array<Record<string, unknown>>).filter((it) => it.status !== 'completed' && it.status !== 'dismissed' && (it.rule_type === 'needs_reply' || (it.source_data as { understanding?: { relevance?: string } } | null)?.understanding?.relevance === 'reply')).slice(0, 12);
   if (mr.length) parts.push(`REPLIES YOU OWE (reference as [R#]):\n${mr.map((it, i) => { const id = `R${i + 1}`; const sd = (it.source_data ?? {}) as { from_name?: string }; refs.set(id, { id: it.id as string, kind: 'inbox_item', label: String(it.work_title || '').slice(0, 50), href: `/item/${it.id}?kind=email` }); return `[${id}] ${sd.from_name ?? ''} · ${it.work_title}`; }).join('\n')}`);
 
+  // ── THE ONE-GROUNDING UNIFICATION (one-surface arc, Aug 5): a question that NAMES a body of
+  // work gets that entity's FULL room grounding appended — the same assembled page the room's
+  // brief/responder/agent loop read, so "status on X?" from the Home and from X's room are the
+  // same answer by construction. The block's own [L#]/[F#] tags are STRIPPED (they would collide
+  // with the snapshot's tag space and mint wrong links); the entity's [E#] chip carries the link.
+  // Non-fatal: a grounding failure serves the plain snapshot (the pre-unification status quo). ──
+  if (focusQuery?.trim()) {
+    try {
+      const focus = findEntityFocus(focusQuery, (ents ?? []) as Array<{ id: string; name: string; aliases?: string[] | null }>);
+      if (focus) {
+        const { assembleRoomGrounding } = await import('@/lib/room/grounding');
+        const g = await assembleRoomGrounding(supabase, userId, { kind: 'entity', entityId: focus.id });
+        const eTag = [...refs.entries()].find(([, r]) => r.kind === 'entity' && r.id === focus.id)?.[0];
+        if (!eTag) refs.set('E0', { id: focus.id, kind: 'entity', label: focus.name, href: entHref(focus.id) });
+        parts.push(
+          `THE FOCUSED WORK — the question names "${focus.name}"${eTag ? ` (reference as [${eTag}])` : ' (reference as [E0])'}. ` +
+          `This is its full current page — deeper and MORE CURRENT than its one-line summary above; ` +
+          `prefer it for anything about this work:\n` +
+          g.text.replace(/\[(?:L|F)\d+\]\s?/g, '').slice(0, 3200),
+        );
+      }
+    } catch { /* the focus is an enhancement — the plain snapshot still answers */ }
+  }
+
   return { text: parts.join('\n\n') || '(nothing active right now)', refs };
 }
 
 export async function answerHomeQuestion(
   supabase: SupabaseClient, userId: string, question: string, history: AskTurn[] = [],
 ): Promise<AskAnswer> {
-  const { text: snapshot, refs } = await buildBrainSnapshot(supabase, userId);
+  const { text: snapshot, refs } = await buildBrainSnapshot(supabase, userId, question);
   // FILE LANE via THE ONE RESOLVER (single-source #2): question-driven retrieval across pool → KB →
   // connected drives, so "do we have the deck?" is answerable. Top hits ride as [F#] refs. Non-fatal.
   let fileBlock = '';

@@ -18,8 +18,10 @@ import Link from 'next/link';
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { DocumentIcon, PaperAirplaneIcon, PaperClipIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
+import { DocumentIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
+import { WorkerMentionInput } from '@/components/workers/worker-mention-input';
 import { ROLE_AVATARS } from '@/lib/workers/roles';
+import { moveTargetId, mergedArtifactKey, stageOfArtifactKey } from '@/lib/room/presentation';
 import { DecisionCard } from '@/components/work/decision-card';
 
 // 'entity' = the PROJECT DOOR (P7c-c2): the same rail inside the project room — id is the entity
@@ -77,7 +79,13 @@ type Turn =
       turnId?: string; proceeded?: boolean;
       /** UX arc — the turn's dedupe key: the structural handle folding rules key on (a `prep:*`
        *  narration collapses into the artifact card it narrates; never content-matching). */
-      dkey?: string };
+      dkey?: string;
+      /** THE SPEC CARD (Arc 2): a proposed standing task awaiting the user's explicit confirm —
+       *  the card IS the commit surface (saying prepared it; confirming creates it). */
+      standingSpec?: { name: string; deliverable: string; cadenceLabel: string; ownerName: string; firstRun?: string | null; status: string; workflowId?: string | null };
+      /** THE APPROVAL ASK (production arc step 2): a run parked at its approval step — Approve
+       *  resumes it (the guarded send fires through the normal path), Hold back ends it. */
+      approval?: { runId: string; name: string; instruction?: string; preview?: string; decided?: 'approved' | 'rejected' } };
 
 // THE ROOM (P7c-c1 → one-room R1): the conversation is PER-DEAL, not per-item — navigating between
 // a deal's artifacts keeps the chat. The module store is now only the LIVE RENDER CACHE; the durable
@@ -227,6 +235,13 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   const ent = view.entity;
   const sib = view.siblings;
   const inRoom = kind === 'entity';
+  // ONE DEED ONE OBJECT — derived from THE PRESENTATION LAW (lib/room/presentation, the one
+  // composition every pane consumes): the responder block promotes the matched artifact into
+  // the action card; the stream suppresses its duplicate; the truth pane yields (its host reads
+  // the same law).
+  const respMove = (ent?.brief || view.brief) ? (ent?.move ?? view.move ?? null) : null;
+  const respMoveTargetId = moveTargetId(respMove?.ref ?? null);
+  const mergedArtKey = mergedArtifactKey(respMove, artifacts);
   // ONE-NAVIGATION LAW: every rail link goes through here — the host's in-room opener first
   // (focus/summoned stage), page navigation only when unhandled.
   const go = (href: string) => { if (onOpenHref?.(href)) return; router.push(href); };
@@ -268,6 +283,20 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
               turn.turnId = t.id;
               turn.proceeded = !!t.component.state?.proceeded;
             }
+            // THE SPEC CARD (Arc 2): the durable proposal re-renders until confirmed (the confirm
+            // route flips the stored component in place; the card then reads as the record).
+            if (turn.role === 'system' && t.component?.key === 'approval' && (t.component.state as { runId?: string } | undefined)?.runId) {
+              const st = t.component.state as unknown as { runId: string; name?: string; instruction?: string; preview?: string };
+              turn.approval = { runId: String(st.runId), name: String(st.name ?? 'this run'), instruction: st.instruction || undefined, preview: st.preview || undefined };
+              turn.turnId = t.id;
+            }
+            if (turn.role === 'system' && t.component?.key === 'standing_spec' && t.component.state) {
+              const st = t.component.state as unknown as { name?: string; deliverable?: string; cadenceLabel?: string; ownerName?: string; firstRun?: string | null; status?: string; workflowId?: string | null };
+              if (st.name) {
+                turn.standingSpec = { name: String(st.name), deliverable: String(st.deliverable ?? ''), cadenceLabel: String(st.cadenceLabel ?? ''), ownerName: String(st.ownerName ?? 'a coworker'), firstRun: st.firstRun ?? null, status: String(st.status ?? 'pending'), workflowId: st.workflowId ?? null };
+                turn.turnId = t.id;
+              }
+            }
             return turn;
           });
         setTurnsRaw((local) => {
@@ -285,15 +314,12 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
     return () => window.removeEventListener('aug:deal-turn', onTurn);
   }, [roomKey]);
   const [showEarlier, setShowEarlier] = useState(false); // history folds — the room reads ONE thing
-  const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   // History (Claude-style): archived sessions of THIS room; viewing one is read-only.
   const [historyOpen, setHistoryOpen] = useState(false);
   const [sessions, setSessions] = useState<Array<{ at: string; count: number; firstText: string }> | null>(null);
   const [viewingSession, setViewingSession] = useState<{ at: string; turns: Turn[] } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [turns, busy]);
@@ -381,11 +407,9 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
     } finally { setBusy(false); }
   };
 
-  const send = async (raw?: string) => {
-    const t = (raw ?? text).trim();
+  const send = async (raw: string) => {
+    const t = raw.trim();
     if (!t || busy) return;
-    setText('');
-    if (inputRef.current) inputRef.current.style.height = 'auto';
     addTurn({ role: 'user', text: t });
     setBusy(true);
     try {
@@ -422,11 +446,16 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           const handled = onStage?.(d.openStage.stage, d.openStage.itemId);
           if (!handled) go(`/item/${d.openStage.itemId}?kind=email`); // the stage lives on the item view
         }
+        // ARTIFACTS-INTO-ORIGIN (Aug 9): a dispatched deliverable rides back as a chip on THIS
+        // turn — the room that asked holds the door to the document, never a bare pointer.
+        const artRef = d.artifact?.id && d.artifact?.threadId
+          ? [{ label: `📄 ${String(d.artifact.title ?? 'Document').slice(0, 60)}`, href: `/workers?worker=${encodeURIComponent(String(d.delegated?.agentId ?? ''))}&thread=${encodeURIComponent(String(d.artifact.threadId))}` }]
+          : [];
         setTurns((prev) => [...prev, {
           role: 'system',
           // Refs render as chips below — the raw [L4]/[F2] markers must never sit in the prose.
           text: String(d.say || d.answer || 'Done.').replace(/\s*\[[LF]?\d+(?:\s*,\s*[LF]?\d+)*\]/g, ''),
-          refs: Array.isArray(d.refs) ? d.refs.map((r: { label?: string; href?: string | null }) => ({ label: String(r.label ?? ''), href: r.href ?? null })) : [],
+          refs: [...artRef, ...(Array.isArray(d.refs) ? d.refs.map((r: { label?: string; href?: string | null }) => ({ label: String(r.label ?? ''), href: r.href ?? null })) : [])],
           files: Array.isArray(d.files) ? d.files : undefined,
         }]);
       }
@@ -483,8 +512,11 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
               } catch { setSessions([]); }
             }}
             className="text-[11px] font-medium text-neutral-300 hover:text-neutral-500 transition-colors"
-            title="Past conversations on this work"
-          >History</button>
+            title="Reopen a past session of this conversation — nothing is ever deleted"
+          >Earlier sessions</button>
+          {/* SPEAK CONSEQUENCE (owner, Aug 7 — ""Clear" reads as delete"): the verb says what
+              happens — a NEW SESSION starts, the old one files under Earlier sessions. The
+              pair is self-explanatory: new session ↔ earlier sessions. */}
           {turns.length > 0 && !viewingSession && (
             <button
               onClick={() => {
@@ -493,8 +525,8 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
                 fetch(`/api/room/turns?key=${encodeURIComponent(roomKey)}`, { method: 'DELETE' }).catch(() => {});
               }}
               className="text-[11px] font-medium text-neutral-300 hover:text-neutral-500 transition-colors"
-              title="Archive this conversation (find it again under History; the brain's memory is untouched)"
-            >Clear</button>
+              title="Start a fresh session — this one files under Earlier sessions (nothing is deleted; the brain's memory is untouched)"
+            >New session</button>
           )}
           {historyOpen && (
             <div className="absolute top-6 right-0 z-30 w-60 max-h-64 overflow-y-auto rounded-xl border border-neutral-200 bg-white shadow-lg p-1">
@@ -557,7 +589,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
                 one place. The stitched fields (summary + debt lines) are ONLY the fallback until
                 the first compose lands. */}
             {ent?.brief
-              ? <p>{ent.brief}</p>
+              ? <p className="font-voice text-[14.5px] leading-[1.65] text-neutral-800">{ent.brief}</p>
               : ent?.summary
                 ? <p>{ent.summary}</p>
                 : turns.length === 0
@@ -575,7 +607,9 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           {/* THE ONE-VOICE BRIEF on the deep-dive door too (Aug 3): when composed (entity room's
               or the loose room's own), the paragraph IS the opening — the anchor stitch below is
               only the fallback until the first compose lands. */}
-          {(ent?.brief || view.brief) ? <p>{ent?.brief ?? view.brief}</p> : (() => {
+          {/* THE VOICE (Arc 3 design language): the room's authored opening is the TEAM speaking —
+              serif, a touch larger; chrome stays sans. */}
+          {(ent?.brief || view.brief) ? <p className="font-voice text-[14.5px] leading-[1.65] text-neutral-800">{ent?.brief ?? view.brief}</p> : (() => {
             const a = view.anchor;
             const who = a?.who ? spokenName(a.who) : null;
             const ask = a?.ask ? a.ask.charAt(0).toLowerCase() + a.ask.slice(1).replace(/\.+$/, '') : null;
@@ -661,6 +695,13 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
             next-move line only until the responder's first compose lands. ═══ */}
         {!viewingSession && (() => {
           const resp = ent?.brief || view.brief ? { move: ent?.move ?? view.move ?? null, offers: ent?.offers ?? view.offers ?? [] } : null;
+          // ═══ ONE DEED, ONE OBJECT (owner, Aug 7 — "CTA to check, action buttons, then again
+          // check CTA"): when the MOVE's target IS a prepared artifact on this rail, the two
+          // renderers MERGE — the artifact card becomes the action surface (the move's label as
+          // its primary verb, the offers as its quiet variants ON the card), and the separate
+          // banner + chips row + duplicate card all cease to exist. The last dedupe the Aug 5
+          // one-responder rework didn't reach (responder × board card lived in different layers). ═══
+          const mergedArt = mergedArtKey ? (artifacts ?? []).find((a) => a.key === mergedArtKey) ?? null : null;
           if (!resp) {
             // Pre-compose fallback: the legacy next-move line (plain, deed-only).
             if (!(ent?.nextMove && !echoesAnchor(ent.nextMove, view.anchor?.ask ?? null))) return null;
@@ -684,10 +725,39 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           const selfTarget = !inRoom && !!href && href.includes(`/item/${id}`);
           const moveClick = resp.move
             ? () => {
+                // The merged card's click carries the STAGE INTENT — Open lands on the prepared
+                // thing (the host raises the stage), never the bare thread.
+                if (mergedArt && respMoveTargetId && onStage?.(stageOfArtifactKey(mergedArt.key), respMoveTargetId)) return;
                 if (selfTarget) { if (!onStage?.('reply', id)) { /* the stage host isn't mounted — nothing to do */ } return; }
                 if (href) go(href);
               }
             : null;
+          if (resp.move && mergedArt && moveClick) {
+            // THE ONE ACTION CARD: object + primary verb + quiet variants, one surface.
+            return (
+              <AssistantRow>
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 overflow-hidden">
+                  <div className="px-3.5 pt-2.5 pb-1.5 text-[12.5px] text-neutral-800">
+                    <span className="font-medium">{mergedArt.label}</span>
+                    {mergedArt.by && <span className="text-[11px] text-indigo-500 font-semibold ml-1.5">by {mergedArt.by.split(' ')[0]}</span>}
+                  </div>
+                  <div className="flex items-center gap-2 px-2 pb-2">
+                    <button onClick={moveClick}
+                      className="flex items-center gap-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 px-3.5 py-2 text-left transition-colors">
+                      <span className="text-[12.5px] font-medium text-white">{resp.move.label}</span>
+                      <span className="text-white/80" aria-hidden>→</span>
+                    </button>
+                    {resp.offers.slice(0, 2).map((o, j) => (
+                      <button key={j} onClick={() => send(o.say)} disabled={busy}
+                        className="rounded-lg px-2.5 py-2 text-[12px] font-medium text-neutral-500 hover:text-indigo-700 hover:bg-white/70 transition-colors disabled:opacity-50">
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </AssistantRow>
+            );
+          }
           return (
             <>
               {resp.move && (
@@ -782,13 +852,16 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           // A COMPONENT IS A TURN: cards whose anchor turn is VISIBLE seat there (the narration
           // becomes the card); the rest append at the stream's end (never above later conversation).
           const visibleDkeys = new Set(visible.map((t) => (t.role === 'system' ? t.dkey : undefined)).filter(Boolean) as string[]);
+          // ONE DEED ONE OBJECT: the artifact promoted into the action card above never renders
+          // a second time in the stream.
+          const streamArts = (viewingSession ? [] : artifacts ?? []).filter((a) => a.key !== mergedArtKey);
           const anchoredByKey = new Map<string, NonNullable<typeof artifacts>>();
-          for (const a of (viewingSession ? [] : artifacts ?? [])) {
+          for (const a of streamArts) {
             if (a.anchorKey && visibleDkeys.has(a.anchorKey)) {
               anchoredByKey.set(a.anchorKey, [...(anchoredByKey.get(a.anchorKey) ?? []), a]);
             }
           }
-          const endArtifacts = (viewingSession ? [] : artifacts ?? []).filter((a) => !(a.anchorKey && visibleDkeys.has(a.anchorKey)));
+          const endArtifacts = streamArts.filter((a) => !(a.anchorKey && visibleDkeys.has(a.anchorKey)));
           return (
             <>
               {earlier > 0 && (
@@ -889,6 +962,90 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
                 )}
               </div>
             )}
+            {/* THE SPEC CARD (Arc 2): the standing-task proposal — explicit fields, ONE Confirm.
+                Saying prepared it; only this click (or the user's explicit word) creates anything.
+                Confirmed → the card flips in place and reads as the record. */}
+            {t.standingSpec && (
+              <div className="mt-1.5 rounded-xl border border-neutral-200 px-3.5 py-2.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[12.5px] font-semibold text-neutral-800 truncate">{t.standingSpec.name}</span>
+                  {t.standingSpec.status === 'confirmed' && (
+                    <span className="flex-shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-semibold text-emerald-700">✓ standing</span>
+                  )}
+                </div>
+                <p className="mt-0.5 text-[12px] text-neutral-500">{t.standingSpec.deliverable}</p>
+                <p className="mt-1 text-[11.5px] text-neutral-400">
+                  {t.standingSpec.cadenceLabel} · {t.standingSpec.ownerName.split(' ')[0]} owns it{t.standingSpec.firstRun ? ` · first run ${String(t.standingSpec.firstRun).slice(0, 10)}` : ''}
+                  {/* Studio DEMOTED to the method editor (Arc 2): a deep-dive behind the standing
+                      object, never a destination — the quiet link is its only door from here. */}
+                  {t.standingSpec.status === 'confirmed' && t.standingSpec.workflowId && (
+                    <> · <a href={`/studio?workflow=${t.standingSpec.workflowId}`} className="text-neutral-400 underline decoration-neutral-300 hover:text-indigo-600 transition-colors">method</a></>
+                  )}
+                </p>
+                {t.standingSpec.status === 'pending' && t.dkey && (
+                  <button
+                    onClick={async () => {
+                      const dk = t.dkey!;
+                      const res = await fetch('/api/tasks/standing', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ roomKey, dedupeKey: dk }),
+                      }).catch(() => null);
+                      const d = res?.ok ? await res.json().catch(() => null) : null;
+                      if (d?.ok) {
+                        setTurns((prev) => prev.map((x) => (x.role === 'system' && x.dkey === dk && x.standingSpec
+                          ? { ...x, standingSpec: { ...x.standingSpec, status: 'confirmed', firstRun: d.firstRun ?? x.standingSpec.firstRun } } : x)));
+                      }
+                    }}
+                    disabled={busy}
+                    className="mt-2 rounded-lg bg-indigo-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                  >Confirm — start it</button>
+                )}
+              </div>
+            )}
+            {/* THE APPROVAL CARD (production arc step 2): a parked run's human gate — Approve
+                RESUMES it (the guarded delivery fires through the normal path), Hold back ends
+                it honestly. The decision flips the card in place; both routes speak. */}
+            {t.approval && (
+              <div className="mt-1.5 rounded-xl border border-amber-200/70 bg-amber-50/40 px-3.5 py-2.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[12.5px] font-semibold text-neutral-800 truncate">{t.approval.name}</span>
+                  {t.approval.decided === 'approved' && <span className="flex-shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-semibold text-emerald-700">✓ approved — delivering</span>}
+                  {t.approval.decided === 'rejected' && <span className="flex-shrink-0 rounded-full bg-neutral-100 px-2 py-0.5 text-[10.5px] font-semibold text-neutral-500">held back</span>}
+                  {!t.approval.decided && <span className="flex-shrink-0 rounded-full bg-amber-100/80 px-2 py-0.5 text-[10.5px] font-semibold text-amber-700">waiting on you</span>}
+                </div>
+                {t.approval.instruction && <p className="mt-0.5 text-[12px] text-neutral-500">{t.approval.instruction}</p>}
+                {t.approval.preview && !t.approval.decided && (
+                  <p className="mt-1 text-[11.5px] text-neutral-400 line-clamp-3">{t.approval.preview}</p>
+                )}
+                {!t.approval.decided && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      onClick={async () => {
+                        const runId = t.approval!.runId;
+                        setTurns((prev) => prev.map((x) => (x.role === 'system' && x.approval?.runId === runId ? { ...x, approval: { ...x.approval!, decided: 'approved' as const } } : x)));
+                        const res = await fetch(`/api/workflows/runs/${runId}/resume`, {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approve: true }),
+                        }).catch(() => null);
+                        if (!res?.ok) setTurns((prev) => prev.map((x) => (x.role === 'system' && x.approval?.runId === runId ? { ...x, approval: { ...x.approval!, decided: undefined } } : x)));
+                      }}
+                      disabled={busy}
+                      className="rounded-lg bg-indigo-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                    >Approve — deliver it</button>
+                    <button
+                      onClick={async () => {
+                        const runId = t.approval!.runId;
+                        setTurns((prev) => prev.map((x) => (x.role === 'system' && x.approval?.runId === runId ? { ...x, approval: { ...x.approval!, decided: 'rejected' as const } } : x)));
+                        await fetch(`/api/workflows/runs/${runId}/resume`, {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approve: false }),
+                        }).catch(() => null);
+                      }}
+                      disabled={busy}
+                      className="rounded-lg px-3 py-1.5 text-[12px] font-medium text-neutral-500 hover:text-neutral-700 hover:bg-white/70 transition-colors disabled:opacity-50"
+                    >Hold back</button>
+                  </div>
+                )}
+              </div>
+            )}
             {/* O5: the commit line is a DECISION, not buttons. ≥2 routes → the numbered options
                 idiom (the brain's judged route first, "Leave it with me" always last); a single
                 offer stays one calm chip. */}
@@ -954,44 +1111,32 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
         {busy && <AssistantRow><TypingDots /></AssistantRow>}
       </div>
 
-      {/* Composer — the shared idiom (hidden while viewing a past session — read-only). */}
+      {/* THE ONE COMPOSER (workstream 3, the rail fold): the SAME WorkerMentionInput as the Home
+          floor and the worker surfaces — @ picks Coworkers/Tasks/Documents, attach feeds the
+          room's INGEST FUNNEL (the pool — immediate, the room's law), Enter sends through the
+          one steer core. A coworker mention becomes the ADDRESS in the sent words (the delegate
+          path already speaks names); task/document mentions ride as grounding hints. Hidden
+          while viewing a past session — read-only. */}
+      {/* The hidden file input stays — the checklist asks' attach buttons share it. */}
+      <input ref={fileRef} type="file" className="hidden"
+        accept=".pdf,.docx,.txt,.csv,.xlsx,.pptx"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) attach(f); }} />
       {!viewingSession && (
       <div className="flex-shrink-0 px-3 pb-3 pt-2">
-        <div className="flex items-end gap-2 rounded-2xl border border-neutral-200 bg-white shadow-sm px-3 py-2">
-          <textarea
-            ref={inputRef}
-            value={text}
-            onChange={(e) => {
-              setText(e.target.value);
-              e.target.style.height = 'auto';
-              e.target.style.height = `${e.target.scrollHeight}px`;
+        <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
+          <WorkerMentionInput
+            frameless
+            onSubmit={(t, mentions) => {
+              const cw = mentions.find((m) => m.type === 'coworker');
+              const hints = mentions.filter((m) => m.type !== 'coworker').map((m) => m.label);
+              let out = cw ? `${cw.label.split(' ')[0]}, ${t}` : t;
+              if (hints.length) out += ` (about: ${hints.join('; ')})`;
+              void send(out);
             }}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+            disabled={busy}
             placeholder="Ask, correct, or hand off…"
-            rows={1}
-            disabled={busy}
-            className="flex-1 text-[12px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none min-w-0 disabled:opacity-50 resize-none overflow-hidden leading-relaxed"
-            style={{ maxHeight: '120px', overflowY: 'auto' }}
+            onAttach={(files) => { void (async () => { for (const f of files) await attach(f); })(); }}
           />
-          <input ref={fileRef} type="file" className="hidden"
-            accept=".pdf,.docx,.txt,.csv,.xlsx,.pptx"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) attach(f); }} />
-          <button
-            onClick={() => fileRef.current?.click()}
-            disabled={busy}
-            className="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 disabled:opacity-40 transition-colors mb-px"
-            title="Attach a file"
-          >
-            <PaperClipIcon className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => send()}
-            disabled={busy || !text.trim()}
-            className="flex-shrink-0 w-7 h-7 bg-indigo-600 rounded-full flex items-center justify-center disabled:opacity-40 transition-opacity mb-px"
-            title="Send"
-          >
-            <PaperAirplaneIcon className="w-3.5 h-3.5 text-white" />
-          </button>
         </div>
       </div>
       )}

@@ -57,24 +57,86 @@ export function warmProjectPicker(): void {
   }).catch(() => {}).then(() => { pickerEntsInflight = null; });
 }
 
-function RowProjectPicker({ itemKind, itemId, onAttached }: { itemKind: 'inbox_item' | 'commitment'; itemId: string; onAttached?: (name: string, tracked: boolean) => void }) {
-  const [open, setOpen] = useState(false);
+// THE ONE PICKER GRAMMAR, extracted (Aug 6 — the scope chip is the newest door): search leads,
+// "Start a new project…" on top (query pre-fills), YOUR tracked projects first name-sorted, the
+// recognized-but-untracked tail below "Suggested". Every add-to-project door renders THIS panel;
+// only the select/create consequences differ per door.
+export function ProjectPickerPanel({ onSelect, onCreateProject, onClear, clearLabel }: {
+  onSelect: (e: { id: string; name: string; tracked: boolean }) => void;
+  onCreateProject: (name: string) => void;
+  /** When set, a "remove" row leads the list — hosts whose subject can be UN-filed pass it. */
+  onClear?: () => void;
+  clearLabel?: string;
+}) {
   const [ents, setEnts] = useState<PickEnt[]>([]);
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
-  const [busy, setBusy] = useState(false);
-  const boxRef = useRef<HTMLSpanElement>(null);
   useEffect(() => {
-    if (!open) { setQuery(''); setCreating(false); setNewName(''); return; }
     // INSTANT: memory first (warmed on hover), LS second — a fetch only refreshes in the background.
     setEnts(pickerEntsMemo ?? sortPickEnts((loadLS<{ entities?: PickEnt[] }>('aug-portfolio-v1')?.entities ?? []) as PickEnt[]));
     fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => {
       if (d?.entities) { pickerEntsMemo = sortPickEnts(d.entities as PickEnt[]); setEnts(pickerEntsMemo); saveLS('aug-portfolio-v1', d); }
     }).catch(() => {});
-  }, [open]);
+  }, []);
   const q = query.trim().toLowerCase();
   const filtered = q ? ents.filter((e) => e.name.toLowerCase().includes(q)) : ents;
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-white shadow-lg p-1 cursor-default">
+      {creating ? (
+        <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter' && newName.trim()) onCreateProject(newName.trim()); if (e.key === 'Escape') { setCreating(false); setNewName(''); } }}
+          placeholder="New project name…"
+          className="w-full rounded-lg border border-indigo-200 px-2 py-1.5 text-[12.5px] text-neutral-800 outline-none" />
+      ) : (
+        <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter' && filtered.length === 1) onSelect({ id: filtered[0].id, name: filtered[0].name, tracked: !!filtered[0].tracked }); }}
+          placeholder="Search projects…"
+          className="w-full rounded-lg border border-neutral-200 px-2 py-1.5 text-[12.5px] text-neutral-800 outline-none focus:border-indigo-300" />
+      )}
+      {!creating && (
+        <button onClick={() => { setNewName(query.trim()); setCreating(true); }}
+          className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 mt-1 text-left text-[12.5px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors">
+          <PlusIcon className="w-3 h-3 flex-shrink-0" />{q && filtered.length === 0 ? `Start "${query.trim()}"…` : 'Start a new project…'}
+        </button>
+      )}
+      {!creating && onClear && (
+        <button onClick={onClear}
+          className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700 transition-colors">
+          <span className="w-3 h-3 flex-shrink-0 text-center leading-3">×</span>{clearLabel ?? 'Remove from project'}
+        </button>
+      )}
+      <div className="max-h-52 overflow-y-auto border-t border-neutral-100 mt-1 pt-1">
+        {(() => {
+          const byName = (a: PickEnt, b: PickEnt) => a.name.localeCompare(b.name);
+          const trackedList = filtered.filter((e) => e.tracked).sort(byName);
+          const suggestedList = filtered.filter((e) => !e.tracked).sort(byName);
+          const row = (e: PickEnt) => (
+            <button key={e.id} onClick={() => onSelect({ id: e.id, name: e.name, tracked: !!e.tracked })}
+              className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-neutral-700 hover:bg-indigo-50 transition-colors">
+              <FolderIcon className="w-3 h-3 flex-shrink-0 text-neutral-400" /><span className="min-w-0 flex-1 truncate">{e.name}</span>
+            </button>
+          );
+          return (
+            <>
+              {trackedList.map(row)}
+              {suggestedList.length > 0 && (
+                <p className="px-2 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400 border-t border-neutral-100 mt-1">Suggested</p>
+              )}
+              {suggestedList.map(row)}
+              {filtered.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">{q ? 'No match — start it above.' : 'Nothing yet.'}</p>}
+            </>
+          );
+        })()}
+      </div>
+    </div>
+  );
+}
+
+function RowProjectPicker({ itemKind, itemId, onAttached }: { itemKind: 'inbox_item' | 'commitment'; itemId: string; onAttached?: (name: string, tracked: boolean) => void }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const boxRef = useRef<HTMLSpanElement>(null);
   const attach = async (entityId: string, name: string, tracked: boolean) => {
     setBusy(true); setOpen(false);
     try {
@@ -87,8 +149,7 @@ function RowProjectPicker({ itemKind, itemId, onAttached }: { itemKind: 'inbox_i
       try { window.dispatchEvent(new CustomEvent('aug:membership-changed', { detail: { kind: itemKind, id: itemId } })); } catch { /* SSR-safe */ }
     } catch { toast.error('Could not add'); } finally { setBusy(false); }
   };
-  const createAndAttach = async () => {
-    const n = newName.trim();
+  const createAndAttach = async (n: string) => {
     if (!n || busy) return;
     setBusy(true); setOpen(false);
     try {
@@ -109,51 +170,10 @@ function RowProjectPicker({ itemKind, itemId, onAttached }: { itemKind: 'inbox_i
           transform-animated sections — an in-flow absolute panel gets clipped and layered under
           the right rail. AnchoredPopover escapes to <body>. */}
       <AnchoredPopover anchorRef={boxRef} open={open} onClose={() => setOpen(false)} align="right" width={240}>
-        <div className="rounded-xl border border-neutral-200 bg-white shadow-lg p-1 cursor-default">
-          {creating ? (
-            <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') createAndAttach(); if (e.key === 'Escape') { setCreating(false); setNewName(''); } }}
-              placeholder="New project name…"
-              className="w-full rounded-lg border border-indigo-200 px-2 py-1.5 text-[12.5px] text-neutral-800 outline-none" />
-          ) : (
-            <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') setOpen(false); if (e.key === 'Enter' && filtered.length === 1) attach(filtered[0].id, filtered[0].name, !!filtered[0].tracked); }}
-              placeholder="Search projects…"
-              className="w-full rounded-lg border border-neutral-200 px-2 py-1.5 text-[12.5px] text-neutral-800 outline-none focus:border-indigo-300" />
-          )}
-          {!creating && (
-            <button onClick={() => { setNewName(query.trim()); setCreating(true); }}
-              className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 mt-1 text-left text-[12.5px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors">
-              <PlusIcon className="w-3 h-3 flex-shrink-0" />{q && filtered.length === 0 ? `Start "${query.trim()}"…` : 'Start a new project…'}
-            </button>
-          )}
-          <div className="max-h-52 overflow-y-auto border-t border-neutral-100 mt-1 pt-1">
-            {/* ONE PICKER GRAMMAR (July 31): YOUR projects lead (name-sorted — stable across the
-                cache→fetch swap, no reorder flicker); the recognized-but-untracked tail sits
-                below a "Suggested" divider. Same sections in every add-to-project door. */}
-            {(() => {
-              const byName = (a: PickEnt, b: PickEnt) => a.name.localeCompare(b.name);
-              const trackedList = filtered.filter((e) => e.tracked).sort(byName);
-              const suggestedList = filtered.filter((e) => !e.tracked).sort(byName);
-              const row = (e: PickEnt) => (
-                <button key={e.id} onClick={() => attach(e.id, e.name, !!e.tracked)}
-                  className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-neutral-700 hover:bg-indigo-50 transition-colors">
-                  <FolderIcon className="w-3 h-3 flex-shrink-0 text-neutral-400" /><span className="min-w-0 flex-1 truncate">{e.name}</span>
-                </button>
-              );
-              return (
-                <>
-                  {trackedList.map(row)}
-                  {suggestedList.length > 0 && (
-                    <p className="px-2 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400 border-t border-neutral-100 mt-1">Suggested</p>
-                  )}
-                  {suggestedList.map(row)}
-                  {filtered.length === 0 && <p className="px-2 py-1.5 text-[12px] text-neutral-400">{q ? 'No match — start it above.' : 'Nothing yet.'}</p>}
-                </>
-              );
-            })()}
-          </div>
-        </div>
+        <ProjectPickerPanel
+          onSelect={(e) => attach(e.id, e.name, e.tracked)}
+          onCreateProject={(n) => { void createAndAttach(n); }}
+        />
       </AnchoredPopover>
     </span>
   );
@@ -271,8 +291,12 @@ export const isReadonlyWorkItem = (w: WorkItem): boolean =>
 // THE ROW — one component for everything you owe. A leading TYPE ICON carries the species; the body
 // is one line (who · ask) + an optional second line; controls appear only on hover.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-export function WorkRow({ item, emphasis = false, hideInitiative = false, readonly = false, evidence = false, flat = false, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment, dismissOverride }: {
+export function WorkRow({ item, emphasis = false, hideInitiative = false, readonly = false, evidence = false, flat = false, variant = 'row', onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment, dismissOverride }: {
   item: DoItem; emphasis?: boolean; hideInitiative?: boolean;
+  /** THE CARD VARIANT (Arc 3 shell, owner-triggered Aug 6 — the mockup's deck grammar for the
+   *  HOME only): state dot · sentence · sub-line · one CTA row. Other surfaces keep the
+   *  one-line row anatomy; same handlers either way (one logic, two skins). */
+  variant?: 'row' | 'card';
   /** flat = the row lives inside a GROUP CONTAINER (hairline dividers own the chrome) — no border,
    *  no rounding, no shadow of its own. The one-container-per-group anatomy. */
   flat?: boolean;
@@ -326,6 +350,58 @@ export function WorkRow({ item, emphasis = false, hideInitiative = false, readon
   const iconTone = isCommit && item.overdue ? 'text-rose-500' : text;
   const badge = item.overdue ? 'Overdue' : item.dueToday ? 'Today' : (isCommit && item.dueDate) ? fmtDue(item.dueDate) : null;
   const busy = acting || commit.acting;
+
+  if (variant === 'card') {
+    // The state dot IS the judgment (semantic, never decorative): overdue → rose · prepared →
+    // indigo (something awaits your sign-off) · due today → amber · else quiet.
+    const dot = item.overdue ? 'bg-rose-400' : item.prepared ? 'bg-indigo-400' : item.dueToday ? 'bg-amber-400' : 'bg-neutral-300';
+    // The CTA speaks the JUDGED state, never a promise: "Review & send" only when a prepared
+    // draft truly exists (server truth — the July "See X's work" lesson honored); it opens the
+    // same room the row itself opens.
+    const cta = item.prepared
+      ? (item.source === 'reply' ? 'Review & send →' : 'Review →')
+      : (isDeal ? 'Open project →' : 'Open →');
+    const sub = [
+      !hideInitiative && shownInitiative ? shownInitiative : null,
+      item.second && item.second !== 'Action needed' ? item.second : null,
+      !item.overdue && !item.dueToday && item.dueDate ? `due ${fmtDue(item.dueDate)}` : null,
+    ].filter(Boolean).join(' · ');
+    return (
+      // COMPACT (owner: "the cards are too big"): TWO lines, tight — title+badge · verb+context.
+      <div onMouseEnter={prefetch} onFocus={prefetch} onMouseDown={prefetch} onTouchStart={prefetch}
+        className={`group rounded-[10px] border bg-white transition-all duration-300 ease-out ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${emphasis ? 'border-indigo-200' : 'border-neutral-200/70 hover:border-indigo-200'}`}>
+        <div role="button" tabIndex={0} onClick={open}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
+          className="w-full flex items-start gap-2.5 px-3.5 py-2 text-left cursor-pointer">
+          <span className={`flex-shrink-0 mt-[7px] w-1.5 h-1.5 rounded-full ${dot}`} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline gap-2">
+              <h3 className={`min-w-0 truncate text-[13px] leading-snug ${evidence ? 'font-normal text-neutral-500' : 'font-medium text-neutral-900'}`}>
+                {item.primary}{item.primary && item.ask && <span className="font-normal text-neutral-400"> — </span>}{item.ask && <span className={evidence ? 'font-normal' : 'font-medium text-neutral-800'}>{item.ask}</span>}
+              </h3>
+              {(item.overdue || item.dueToday) && (
+                <span className={`flex-shrink-0 ml-auto text-[10px] font-semibold uppercase tracking-wide ${item.overdue ? 'text-rose-500' : 'text-amber-500'}`}>{item.overdue ? 'Overdue' : 'Today'}</span>
+              )}
+            </div>
+            <div className="mt-[3px] flex items-center gap-2 min-w-0">
+              <span className="flex-shrink-0 text-[12px] font-semibold text-indigo-600 group-hover:text-indigo-700 transition-colors">{cta}</span>
+              {item.prepared && <span className="flex-shrink-0 text-[10.5px] font-semibold text-indigo-400">ready</span>}
+              {sub && <span className="min-w-0 truncate text-[11.5px] text-neutral-400">{sub}</span>}
+              <span className="ml-auto flex-shrink-0 flex items-center gap-2.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                {!readonly && !isDeal && <RowAction label="Mark done" hoverTone="hover:text-emerald-600" disabled={busy} onClick={done}>✓</RowAction>}
+                {!readonly && <RowAction label="Dismiss" hoverTone="hover:text-rose-600" disabled={busy} onClick={drop}>✕</RowAction>}
+                {!readonly && !isDeal && item.entityId && (
+                  <RowProjectPicker itemKind={isCommit ? 'commitment' : 'inbox_item'} itemId={item.entityId}
+                    onAttached={(name, tracked) => { if (tracked) setLocalTag(name); }} />
+                )}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     // ONE LINE PER ROW (work-surface correction — the real list-wise anatomy, not padding): the
     // SECOND LINE IS DEAD. Everything a row says fits one truncating line — [icon] primary · ask

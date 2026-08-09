@@ -13,6 +13,8 @@ interface StudioPageClientProps {
   initialAgents?: SidebarAgent[];
   initialWorkflows?: Workflow[];
   assignWorkerId?: string | null;
+  /** Where Back/Close return to — the Workflows ledger when the user came from there (owner, Aug 9: Back landed on the retired /workers page). */
+  backTo?: string | null;
 }
 
 // The Studio overview/grid was removed — tasks are managed from each worker's
@@ -24,6 +26,7 @@ export function StudioPageClient({
   initialAgents = [],
   initialWorkflows = [],
   assignWorkerId = null,
+  backTo = null,
 }: StudioPageClientProps) {
   const router = useRouter();
 
@@ -73,15 +76,18 @@ export function StudioPageClient({
     return () => { cancelled = true; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const close = () => router.push('/workers');
+  const dest = backTo ?? '/workers';
+  const close = () => router.push(dest);
 
   // Backing out of a freshly-created, never-edited blank pipeline removes it so
   // it doesn't litter the worker's task list.
   const back = () => {
-    if (workflow && workflow.name === 'Untitled routine' && (!workflow.steps || workflow.steps.length === 0) && !workflow.description) {
+    // A never-edited blank ('Untitled routine' from the Tasks tab, 'Untitled workflow' from the
+    // ledger's from-scratch door) is abandoned scaffolding — remove it so it never litters a list.
+    if (workflow && ['Untitled routine', 'Untitled workflow'].includes(workflow.name) && (!workflow.steps || workflow.steps.length === 0) && !workflow.description) {
       fetch(`/api/workflows/${workflow.id}`, { method: 'DELETE' }).catch(() => {});
     }
-    router.push('/workers');
+    router.push(dest);
   };
 
   if (loading || !workflow) {

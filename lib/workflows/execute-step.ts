@@ -14,9 +14,9 @@ import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-con
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { buildSkillsBlock, buildSkillsBlockByIds } from '@/lib/work/worker-skills-context';
 import { composeSlackMessage } from './slack-message';
-import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext, executeSlackReadMessages, executeSlackPostMessage, executeSendCalendarInvite, executeForwardEmail, executeFindTeamWork } from '@/lib/tools';
-import type { SendCalendarInviteConfig, ForwardEmailConfig } from '@/lib/tools';
-import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep } from './types';
+import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext, executeSlackReadMessages, executeSlackPostMessage, executeSendCalendarInvite, executeForwardEmail, executeFindTeamWork, executeRunCompute } from '@/lib/tools';
+import type { SendCalendarInviteConfig, ForwardEmailConfig, ComputeConfig } from '@/lib/tools';
+import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep, VerifyStep } from './types';
 
 export interface StepContext {
   userId: string;
@@ -31,6 +31,12 @@ export interface StepContext {
   isLastStep?: boolean;       // true for the final step in the ordered list
   workerInstructions?: string | null; // task-specific tone/persona, injected between KB and step prompt
   skillIds?: string[];        // task-pinned skill IDs (selector); empty/undefined → fall back to the worker's assigned skills
+  /** THE ENTITY EDGE — the scoped project's current room page (workflowRunGrounding). Injected
+   *  into AI steps only; a verify gate (use_worker_identity: false) never sees it. */
+  projectGrounding?: string | null;
+  /** STANDING REACTIONS — the triggering event block. Unlike projectGrounding this IS source
+   *  material, so the verify gate sees it too (a claim about the trigger must be checkable). */
+  triggerEvent?: string | null;
 }
 
 // ── Public entrypoint ─────────────────────────────────────────────────────────
@@ -43,6 +49,10 @@ export async function executeStep(step: WorkflowStep, ctx: StepContext): Promise
       case 'tool':  output = await executeToolStep(step, ctx); break;
       case 'ai':    output = await executeAIStep(step, ctx); break;
       case 'agent': output = await executeAgentStep(step, ctx); break;
+      // The APPROVAL step is handled by the RUN LOOP (pause/resume in run-workflow) — reaching
+      // it here means a caller bypassed the loop; pass through harmlessly, never park.
+      case 'approval': output = '[Approval gate — handled by the run loop]'; break;
+      case 'verify': output = await executeVerifyStep(step, ctx); break;
       default: {
         // exhaustiveness check
         const _never: never = step;
@@ -93,7 +103,17 @@ function formatPreviousOutputs(outputs: StepOutput[], maxChars?: number): string
 
 // ── Tool step ─────────────────────────────────────────────────────────────────
 
+// THE REGISTRY GATE (production arc step 1, Aug 8): a pipeline tool without a workflow-exposed
+// registry row does not run — parity enforced at RUNTIME, not just review (the workflow engine
+// was the last consumer of the pre-registry flat toolkit). Legacy ids predating the registry
+// keep running for existing tasks but are never pickable.
+const LEGACY_STEP_TOOLS = new Set(['linkedin_post', 'get_urgent_emails']);
+
 async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string> {
+  const { isWorkflowStepTool } = await import('@/lib/work/surface-registry');
+  if (!isWorkflowStepTool(step.tool) && !LEGACY_STEP_TOOLS.has(step.tool)) {
+    return `Tool step "${step.tool}" is not registered for workflows — it did not run. (Every step needs a workflow-exposed row in the capability registry.)`;
+  }
   switch (step.tool) {
     case 'get_emails':        return await executeGetEmails(step.config, ctx.userId, ctx.supabase);
     case 'get_urgent_emails': return await executeGetEmails({ mode: 'urgent', ...step.config }, ctx.userId, ctx.supabase);
@@ -109,6 +129,7 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
     case 'slack_send':         return await toolSlackSend(step, ctx);
     case 'send_calendar_invite': return await executeSendCalendarInvite(step.config as unknown as SendCalendarInviteConfig, ctx.userId, ctx.supabase);
     case 'forward_email':     return await executeForwardEmail(step.config as unknown as ForwardEmailConfig, ctx.userId, ctx.supabase);
+    case 'run_compute':       return await executeRunCompute(step.config as unknown as ComputeConfig, ctx.userId, ctx.supabase);
     case 'linkedin_post':     return await executeLinkedInPost(step.config, {
       userId: ctx.userId,
       supabase: ctx.supabase,
@@ -206,6 +227,59 @@ async function toolReadKbFile(
 
 
 // ── AI step ───────────────────────────────────────────────────────────────────
+
+// ── THE STRUCTURAL VERIFICATION GATE (production arc step 3) ─────────────────────────────────
+// The AHK arc's hand-built gate promoted into the engine: ONE implementation, versioned — never
+// copy-pasted into workflow prompts again. Order matters: the ARITHMETIC FLOOR runs first (code
+// recomputes the draft's computable claims; its findings become MUST-FIX lines the reasoned pass
+// cannot ignore), then one persona-free reasoned pass verifies the draft against the sources.
+export const VERIFY_GATE_VERSION = 1;
+
+function verifyGatePrompt(instruction?: string): string {
+  return (
+    `THE VERIFICATION GATE (v${VERIFY_GATE_VERSION}). The LAST previous-step output below is THE DRAFT. ` +
+    `Everything before it is SOURCE MATERIAL. Your ONLY job is to verify the draft against the sources ` +
+    `and return the CORRECTED DRAFT — nothing else.\n` +
+    `Rules:\n` +
+    `1. Every factual claim must be grounded in the source material. DELETE or CORRECT any claim the ` +
+    `sources do not support — never keep an ungrounded claim because it sounds plausible.\n` +
+    `2. Citations must point at REAL URLs from the source material — fix wrong ones; remove unfixable ones.\n` +
+    `3. Keep the draft's structure EXACTLY: every section and heading stays; a section emptied by ` +
+    `deletions keeps its header with an honest empty line; never renumber, reorder, or add sections.\n` +
+    `4. Dates are sacred: never shift a date, year, or figure toward the present; source material older ` +
+    `than the task's window is HISTORICAL and must read as such.\n` +
+    `5. Respect the draft's own language and style rules; change wording only where correction requires it.\n` +
+    `6. Return ONLY the corrected draft — no commentary, no preamble, no list of changes.` +
+    (instruction?.trim() ? `\nWorkflow-specific rules:\n${instruction.trim()}` : '')
+  );
+}
+
+async function executeVerifyStep(step: VerifyStep, ctx: StepContext): Promise<string> {
+  const prev = ctx.previousOutputs;
+  const rawDraft = prev.length ? prev[prev.length - 1]?.output : null;
+  const draft = typeof rawDraft === 'string' ? rawDraft : JSON.stringify(rawDraft ?? '');
+  if (!draft.trim()) return '[Verification gate: nothing to verify — no prior step output]';
+  // 1 — the arithmetic floor (deterministic; an outage speaks no verdict and the reasoned gate still runs).
+  let mismatchBlock = '';
+  try {
+    const { verifyComputableClaims } = await import('@/lib/prepare/verify-claims');
+    const mismatches = await verifyComputableClaims(ctx.supabase, ctx.userId, draft.slice(0, 12000));
+    if (mismatches.length) {
+      mismatchBlock =
+        `\n\nCOMPUTED BY CODE — these numbers in the draft are WRONG and MUST be corrected ` +
+        `(recomputed deterministically from the draft's own figures):\n` +
+        mismatches.map((m) => `- "${m.quote.slice(0, 100)}" states ${m.stated}; the correct value is ${m.expected}`).join('\n');
+    }
+  } catch { /* enhancement only */ }
+  // 2 — the reasoned gate, persona-free, through the ONE AI-step executor (clock, language,
+  // previous-outputs context, and the use_worker_identity:false contract all ride along).
+  const gate: AIStep = {
+    type: 'ai', id: step.id, label: step.label || 'Verification gate',
+    model_tier: 'reasoning', output_format: 'markdown', use_worker_identity: false,
+    prompt: verifyGatePrompt(step.instruction) + mismatchBlock,
+  };
+  return executeAIStep(gate, ctx);
+}
 
 async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
   // Task type (NOT the company's billing tier — see resolved.tier below for that).
@@ -328,7 +402,16 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
     } catch { /* non-fatal */ }
   }
 
+  // THE ENTITY EDGE — scope inheritance: the linked project's current state rides every AI
+  // step EXCEPT the verify gate (use_worker_identity === false), which must judge the draft
+  // against the run's own sources alone — outside knowledge would let it "correct" the draft
+  // from memory instead of from the material.
+  if (ctx.projectGrounding && step.use_worker_identity !== false) {
+    systemPrompt += `\n\n${ctx.projectGrounding}`;
+  }
+
   const userPrompt = [
+    ctx.triggerEvent ? `<triggering_event>\n${ctx.triggerEvent}\n</triggering_event>` : null,
     previousBlock,
     `<instruction>\n${step.prompt}${formatNote}\n</instruction>`,
   ].filter(Boolean).join('\n\n');

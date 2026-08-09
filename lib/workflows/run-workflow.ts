@@ -9,6 +9,7 @@ import { executeStep } from './execute-step';
 import { nextRunFromTrigger } from './schedule';
 import { sendCoworkerEmail } from '@/lib/tools/coworker-email';
 import { buildArtifactFile, getFileExt, getMimeType } from '@/lib/artifacts/builders';
+import { textToDocContent, uploadArtifact } from '@/lib/workflows/doc-content';
 import { indexArtifact } from '@/lib/knowledge/indexer';
 import { normalizeOutput } from './types';
 import { generateReportBack, fallbackReport, type ReportFacts } from './report-back';
@@ -71,67 +72,6 @@ async function draftEmailCoverBody(
 }
 
 // ── Markdown → DocContent (lightweight, for artifact output) ─────────────────
-
-function textToDocContent(title: string, body: string): DocContent {
-  const sections: DocSection[] = [];
-
-  // Split on H2 (##) headings; anything before the first heading becomes an untitled intro.
-  const lines = body.split('\n');
-  let currentHeading: string | null = null;
-  let buffer: string[] = [];
-
-  const flush = () => {
-    if (buffer.length === 0 && !currentHeading) return;
-    const paragraphs = buffer.join('\n').split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
-    sections.push({
-      heading: currentHeading ?? 'Summary',
-      level: 1,
-      paragraphs,
-    });
-    buffer = [];
-  };
-
-  for (const rawLine of lines) {
-    const h2 = rawLine.match(/^##\s+(.+)$/);
-    const h1 = rawLine.match(/^#\s+(.+)$/);
-    if (h1 || h2) {
-      flush();
-      currentHeading = (h1 ?? h2)![1].trim();
-      continue;
-    }
-    buffer.push(rawLine);
-  }
-  flush();
-
-  if (sections.length === 0) {
-    sections.push({ heading: 'Summary', level: 1, paragraphs: [body.trim()] });
-  }
-
-  return { title, sections };
-}
-
-// ── Storage upload for artifacts ─────────────────────────────────────────────
-
-async function uploadArtifact(
-  admin: SupabaseClient,
-  userId: string,
-  threadId: string,
-  artifactId: string,
-  type: DeliverableType,
-  content: DocContent,
-): Promise<{ storagePath: string }> {
-  const buffer = await buildArtifactFile(type, content);
-  const ext = getFileExt(type);
-  const mime = getMimeType(type);
-  const storagePath = `${userId}/${threadId}/${artifactId}.${ext}`;
-
-  const { error } = await admin.storage
-    .from('work-artifacts')
-    .upload(storagePath, buffer, { contentType: mime, upsert: true });
-
-  if (error) throw new Error(`Artifact upload failed: ${error.message}`);
-  return { storagePath };
-}
 
 // ── Materialise final output ─────────────────────────────────────────────────
 
@@ -322,11 +262,18 @@ export interface RunWorkflowOptions {
   isTest?: boolean;
   /** If triggered from a chat thread, post a completion message back into this thread. */
   sourceThreadId?: string;
+  /** THE APPROVAL RESUME (production arc step 2): this run was parked `awaiting_approval` —
+   *  seed the completed step outputs from the run row and continue PAST the approval step
+   *  that parked it. Requires runId. */
+  resumeFromApproval?: boolean;
+  /** STANDING REACTIONS (production arc step 6): the triggering event's context block — rides
+   *  every AI step (including the verify gate, for which it is legitimate source material). */
+  triggerContext?: string;
 }
 
 export interface RunWorkflowResult {
   runId: string;
-  status: 'succeeded' | 'failed';
+  status: 'succeeded' | 'failed' | 'awaiting_approval';
   threadId: string | null;
   error?: string;
 }
@@ -395,12 +342,67 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
   const steps = (workflow.steps || []) as Workflow['steps'];
   const stepOutputs: StepOutput[] = [];
   let runError: string | null = null;
+  // THE APPROVAL RESUME: seed the already-completed outputs and note WHICH approval step the
+  // park happened at (the first approval step at/after the seeded boundary) — that one passes
+  // as approved; any later approval step parks again, naturally.
+  let resumeApprovalAt = -1;
+  if (opts.resumeFromApproval && runId) {
+    const { data: parked } = await admin.from('workflow_runs').select('step_outputs, status').eq('id', runId).maybeSingle();
+    const seeded = (parked?.step_outputs ?? []) as StepOutput[];
+    stepOutputs.push(...seeded);
+    for (let j = stepOutputs.length; j < steps.length; j++) {
+      if ((steps[j] as { type?: string }).type === 'approval') { resumeApprovalAt = j; break; }
+    }
+  }
   const workerAgentId = (workflow as Workflow & { agent_id?: string }).agent_id ?? undefined;
   const workerInstructions = (workflow as Workflow & { worker_instructions?: string | null }).worker_instructions ?? null;
   const skillIds = (workflow as Workflow & { skill_ids?: string[] }).skill_ids ?? undefined;
 
-  for (let i = 0; i < steps.length; i++) {
+  // THE ENTITY EDGE — scope inheritance at run time: a workflow linked to a project runs with
+  // that project's CURRENT room page (the same one grounding every other reasoner reads).
+  // Loaded once per run; injected into AI steps only (never the verify gate — it judges draft
+  // vs sources alone). Non-fatal: a missing edge changes nothing.
+  let projectGrounding: string | null = null;
+  try {
+    const { workflowRunGrounding } = await import('@/lib/workflows/entity-edge');
+    projectGrounding = await workflowRunGrounding(admin, workflow.user_id, workflow.id);
+  } catch { /* non-fatal */ }
+
+  for (let i = stepOutputs.length; i < steps.length; i++) {
     const step = steps[i];
+    // ── THE APPROVAL STEP (production arc step 2 — pause/resume, the Executor-validated
+    // shape). OPT-IN BY CONSTRUCTION: only a workflow that explicitly CONTAINS this step ever
+    // parks (the pilot outcome contract — an existing pilot can never hit this branch). ──
+    if ((step as { type?: string }).type === 'approval') {
+      const instruction = String((step as { instruction?: string }).instruction ?? '').slice(0, 300);
+      if (opts.isTest) {
+        // Test/cadence-simulation runs never park (a paused simulation proves nothing).
+        stepOutputs.push({ step_id: step.id, step_type: 'approval', label: step.label || 'Approval', output: '[Approval gate — auto-passed in test mode]' });
+        continue;
+      }
+      if (i === resumeApprovalAt) {
+        // The approve that resumed this run passes exactly THIS gate — once.
+        stepOutputs.push({ step_id: step.id, step_type: 'approval', label: step.label || 'Approval', output: `[Approved by the user${instruction ? ` — ${instruction}` : ''}]` });
+        continue;
+      }
+      // PARK: snapshot the completed outputs, mark the run, surface the ask, and stop.
+      // LOUD ON FAILURE (found live: a status CHECK constraint silently refused the park and
+      // the run pretended to wait): a park that cannot persist is a FAILED run, never a lie.
+      const { error: parkErr } = await admin.from('workflow_runs').update({
+        status: 'awaiting_approval', step_outputs: stepOutputs,
+      }).eq('id', runId);
+      if (parkErr) {
+        runError = `Approval step could not park the run (${parkErr.message}). Apply migration 20260808_workflow_runs_approval_status.sql.`;
+        break;
+      }
+      try {
+        const { narrateApprovalAsk } = await import('@/lib/workflows/standing');
+        const prev = stepOutputs[stepOutputs.length - 1]?.output;
+        const preview = (typeof prev === 'string' ? prev : JSON.stringify(prev ?? '')).slice(0, 400);
+        await narrateApprovalAsk(admin, workflow, { runId: runId!, instruction, preview });
+      } catch { /* the parked status is the source of truth; the ask is a surface */ }
+      return { runId: runId!, status: 'awaiting_approval', threadId };
+    }
     const out = await executeStep(step, {
       userId: workflow.user_id,
       runnerId,
@@ -414,8 +416,15 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       isLastStep: i === steps.length - 1,
       workerInstructions,
       skillIds,
+      projectGrounding,
+      triggerEvent: opts.triggerContext ?? null,
     });
     stepOutputs.push(out);
+    // THE CHECKPOINT (durable-execution practice, Aug 8): completed step outputs persist as the
+    // run advances — the ledger reads live progress, a crash leaves evidence of exactly where,
+    // and the approval snapshot stops being the only mid-run truth. Best-effort: a failed
+    // checkpoint never fails the step it records.
+    await admin.from('workflow_runs').update({ step_outputs: stepOutputs }).eq('id', runId).then(() => {}, () => {});
     if (out.error) {
       runError = `Step "${out.label}" failed: ${out.error}`;
       break;
@@ -430,6 +439,21 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       completed_at: new Date().toISOString(),
     }).eq('id', runId);
     await admin.from('workflows').update({ last_run_at: new Date().toISOString() }).eq('id', workflow.id);
+
+    // THE MISSED PROMISE (Arc 2): a failed run narrates honestly into the standing commitment's
+    // room AND stamps its due_date to today — the debt SHOWS (the dispatcher already advanced
+    // next_run_at, which would otherwise hide the failure forever).
+    if (!opts.isTest) {
+      try {
+        const { narrateStandingRun } = await import('@/lib/workflows/standing');
+        await narrateStandingRun(admin, {
+          id: workflow.id, user_id: workflow.user_id, name: workflow.name, status: workflow.status,
+          trigger: workflow.trigger as { type?: string } | null,
+          next_run_at: workflow.next_run_at ?? null,
+          agent_id: (workflow as Workflow & { agent_id?: string }).agent_id ?? null,
+        }, { ok: false, runId, threadId, workerName: 'Your coworker', error: runError });
+      } catch { /* bookkeeping — never breaks the failure path */ }
+    }
 
     // Still write the partial outputs into the thread as an assistant message for debugging.
     const debug = stepOutputs.map(o =>
@@ -642,6 +666,21 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       last_run_at: completedAt.toISOString(),
       next_run_at: nextRun ? nextRun.toISOString() : null,
     }).eq('id', workflow.id);
+
+    // THE STANDING BINDING (Arc 2): a successful run advances the standing commitment's due_date
+    // to the next scheduled run (fromSuccessfulRun — the only key that unlocks a PAST due date),
+    // and THE RUN LANDS IN THE ROOM: the standing commitment's room gets the narration + link.
+    try {
+      const { syncStandingCommitment, narrateStandingRun } = await import('@/lib/workflows/standing');
+      const wfRow = {
+        id: workflow.id, user_id: workflow.user_id, name: workflow.name, status: workflow.status,
+        trigger: workflow.trigger as { type?: string } | null,
+        next_run_at: nextRun ? nextRun.toISOString() : null,
+        agent_id: (workflow as Workflow & { agent_id?: string }).agent_id ?? null,
+      };
+      await syncStandingCommitment(admin, wfRow, worker?.name ?? null, { fromSuccessfulRun: true });
+      await narrateStandingRun(admin, wfRow, { ok: true, runId, threadId, workerName: worker?.name ?? 'Your coworker' });
+    } catch { /* bookkeeping — never breaks a run */ }
 
     // ── Auto-pause: don't keep producing output nobody reads ──
     // Runs AFTER the next_run_at write above so the pause's null isn't overwritten.

@@ -377,7 +377,9 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   check('structural · the correction CASCADES (membership re-homes the item\'s engine turns) + a room reset exists',
     src('lib/entities/membership.ts').includes("from('room_turns').update({ room_key: newRoomKey })") &&
     src('app/api/room/turns/route.ts').includes('export async function DELETE') &&
-    src('components/home/item-rail.tsx').includes('Archive this conversation'));
+    // Aug 7 (speak-consequence): "Clear" became "New session" — the reset survives, the verb
+    // says what happens (a fresh session; the old one files under Earlier sessions).
+    src('components/home/item-rail.tsx').includes('Start a fresh session'));
   check('structural · membership changes broadcast; every reader refetches (chip↔rail coherence)',
     src('components/entities/add-to-work-control.tsx').includes('aug:membership-changed') &&
     src('components/home/item-detail.tsx').includes("addEventListener('aug:membership-changed'"));

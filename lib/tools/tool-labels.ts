@@ -38,6 +38,7 @@ export const TOOL_LABELS: Record<string, string> = {
   apply_skill: 'Apply skill',
   request_clarification: 'Ask for clarification',
   present_linkedin_post: 'Present LinkedIn post',
+  run_compute: 'Run computation',
 };
 
 export function humanizeToolName(name: string): string {

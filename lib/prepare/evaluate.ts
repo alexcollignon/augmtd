@@ -60,6 +60,23 @@ export async function evaluateDeliverable(admin: SupabaseClient, userId: string,
       }
     }
 
+    // ── THE ARITHMETIC FLOOR (Arc 1 — computed numbers, never asserted): claims the artifact
+    // itself makes that code can recompute ARE recomputed (totals, % changes, date↔weekday).
+    // Only a code-confirmed mismatch speaks — and it revises with the exact numbers, so the
+    // regeneration knows precisely what to fix. Quote-law-guarded; outage speaks no verdict. ──
+    {
+      const { verifyComputableClaims } = await import('@/lib/prepare/verify-claims');
+      const mismatches = await verifyComputableClaims(admin, userId, args.content);
+      if (mismatches.length) {
+        return {
+          verdict: 'revise',
+          objection: `The numbers don't check out — recompute and fix: ${mismatches
+            .map((m) => `"${m.quote}" states ${m.stated} but the correct value is ${m.expected}`)
+            .join('; ')}`.slice(0, 300),
+        };
+      }
+    }
+
     // ── The deal's constraints (goals/rules) — the review judges against declared intent. ──
     let dealBlock = '';
     if (args.entityId) {

@@ -169,6 +169,34 @@ def generate_document(
 
 
 @tool
+def run_compute(
+    run_context: RunContext,
+    description: str,
+    script: str,
+    file_ids: Optional[list] = None,
+) -> str:
+    """Run a Python script in a locked sandbox over files the user already has
+    (spreadsheets, PDFs, CSVs, documents) or inline data — to parse, reconcile,
+    verify numbers, transform data, or produce a data file (xlsx/csv/docx).
+    The sandbox has NO network and cannot send anything. Available libraries:
+    pandas, numpy, openpyxl, xlsxwriter, pypdf, python-docx, chardet, dateutil.
+    CONTRACT: read inputs from /job/inputs/<filename> (read-only), write every
+    output file to /job/out/, print your checks and findings to stdout. Use this
+    instead of doing arithmetic or data transformation in your head — computed
+    numbers are trustworthy, asserted ones are not.
+
+    Args:
+        description: One line — what this computation does.
+        script: The Python script (reads /job/inputs, writes /job/out, prints checks).
+        file_ids: Knowledge-base file ids to mount as inputs (from search_knowledge_base results).
+    """
+    config: dict = {"description": description, "script": script}
+    if file_ids:
+        config["file_ids"] = file_ids
+    return _call("run_compute", run_context, config)
+
+
+@tool
 def find_team_work(run_context: RunContext, query: str = "", coworker: str = "", limit: int = 10) -> str:
     """Find a teammate's recent work — documents/outputs other coworkers produced.
     Use this to build on a colleague's output (e.g. find Max's research) instead of
@@ -204,5 +232,5 @@ def read_team_work(run_context: RunContext, id: str) -> str:
 DATA_TOOLS = [
     get_emails, get_meeting_context, search_knowledge_base,
     web_search, fetch_url, deep_research, generate_document,
-    find_team_work, read_team_work,
+    run_compute, find_team_work, read_team_work,
 ]

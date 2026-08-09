@@ -9,7 +9,7 @@ import {
   PlusIcon,
   ChevronRightIcon,
   ChevronDownIcon,
-  HomeIcon,
+  VideoCameraIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { Button } from '@/components/ui';
@@ -173,7 +173,8 @@ export default function MeetingsLeftPanel({
   };
 
   return (
-    <div className="w-[220px] flex-shrink-0 flex flex-col bg-neutral-50 p-2 pl-0">
+    // Width aligned with the inbox folder rail (196+chrome ≈ 204) — one sub-panel system.
+    <div className="w-[204px] flex-shrink-0 flex flex-col bg-neutral-50 p-2 pl-0">
       <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
 
         {/* Search */}
@@ -243,7 +244,8 @@ export default function MeetingsLeftPanel({
             </div>
           ) : (
             <>
-              {/* Home — primary nav, always first */}
+              {/* "All meetings" — the section's own root. NEVER "Home" (the app sidebar owns that
+                  word; two Homes side-by-side read as redundancy — owner call, Aug 6). */}
               <div className="px-2 pt-2 pb-1">
                 <button
                   onClick={onNavigateHome}
@@ -251,15 +253,18 @@ export default function MeetingsLeftPanel({
                     isHome ? 'bg-indigo-50 text-indigo-700' : 'text-neutral-600 hover:bg-neutral-50'
                   }`}
                 >
-                  <HomeIcon className={`w-3.5 h-3.5 flex-shrink-0 ${isHome ? 'text-indigo-600' : 'text-neutral-400'}`} />
-                  <span className="text-[12px]">Home</span>
+                  <VideoCameraIcon className={`w-3.5 h-3.5 flex-shrink-0 ${isHome ? 'text-indigo-600' : 'text-neutral-400'}`} />
+                  <span className="text-[12px]">All meetings</span>
                 </button>
               </div>
 
               {/* Divider */}
               <div className="border-t border-neutral-100 mx-2 my-1" />
 
-              {/* Projects — the one organizer (same projects as Home). Filing a meeting here is sticky. */}
+              {/* Projects — the one organizer (same projects as Home). Filing a meeting here is
+                  sticky. De-noised (sources harmonization, Aug 6): when empty, the section is
+                  just its one-line header (the + stays as the create door) — an empty inventory
+                  never narrates its own emptiness. */}
               <div className="px-2 pt-1 pb-1">
                 <div className="flex items-center justify-between px-1 mb-1.5">
                   <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">
@@ -363,9 +368,6 @@ export default function MeetingsLeftPanel({
                   );
                 })}
 
-                {!projects.some((p) => transcripts.some((t) => t.projectId === p.id)) && !newProjectOpen && (
-                  <p className="text-[11px] text-neutral-400 px-1">No projects with recordings yet</p>
-                )}
               </div>
 
               {/* Suggested — labeled initiatives (with meetings) not yet tracked. Track = it becomes a project. */}

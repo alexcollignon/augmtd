@@ -10,6 +10,8 @@ import CompanyPending from '@/app/company/company-pending';
 import CompanyAIOperationsSection from '@/components/settings/company-ai-operations-section';
 import CompanyStrategySection from '@/components/settings/company-strategy-section';
 import MemorySection from '@/components/settings/memory-section';
+import KnowledgePanel from '@/components/knowledge/knowledge-panel';
+import TeamSection from '@/components/settings/team-section';
 import EmailSettings from '@/components/settings/email-settings';
 import IntegrationsSection from '@/components/settings/integrations-section';
 import { getMyCompany } from '@/lib/company/get-my-company';
@@ -141,6 +143,22 @@ export default async function SettingsPage({ searchParams }: Props) {
 
             {tab === 'memory' && (
               <MemorySection />
+            )}
+
+            {/* THE SLIM KNOWLEDGE PANEL — a real Settings section (grounded in this nav, never a
+                standalone ejection); /drive redirects here. */}
+            {tab === 'knowledge' && (
+              <div className="flex-1 overflow-y-auto">
+                <KnowledgePanel />
+              </div>
+            )}
+
+            {/* SETTINGS → TEAM — the /workers kill list item 1: team CONFIG grounded here (the
+                same tab components the worker page mounts — one truth). */}
+            {tab === 'team' && (
+              <div className="flex-1 overflow-y-auto">
+                <TeamSection />
+              </div>
             )}
 
             {tab === 'connections' && (

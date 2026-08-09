@@ -106,6 +106,27 @@ export async function GET(request: NextRequest) {
     });
   }
 
+  // THE STANDING BINDING's convergent door (Arc 2): every hourly tick re-syncs all standing
+  // commitments — idempotent, self-healing. A workflow that silently died (null next_run_at,
+  // stalled dispatcher) keeps its past due_date and stands as an OVERDUE DEBT on the deck.
+  after(async () => {
+    try {
+      const { syncAllStandingCommitments } = await import('@/lib/workflows/standing');
+      await syncAllStandingCommitments(supabase);
+    } catch { /* bookkeeping — never breaks the dispatcher */ }
+  });
+
+  // STANDING REACTIONS backstop (production arc step 6): an event-run still queued after 10
+  // minutes lost its inline attempt (crashed tail, missing request scope) — re-fire it with its
+  // stored trigger context. A crashed tail never silently eats an event.
+  after(async () => {
+    try {
+      const { refireStaleEventRuns } = await import('@/lib/workflows/reactions');
+      const refired = await refireStaleEventRuns(supabase);
+      if (refired.length) console.log(`[workflows-dispatch] re-fired ${refired.length} stale event run(s)`);
+    } catch { /* bookkeeping — never breaks the dispatcher */ }
+  });
+
   return NextResponse.json({
     ok: true,
     now: now.toISOString(),

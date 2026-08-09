@@ -196,3 +196,12 @@ body {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+
+/* THE VOICE (Arc 3 design language — one-surface plan / the mockup's signature move): the TEAM'S
+   words — the Home brief, a room's opening — are set in serif; all chrome stays sans. The
+   colleague sounds like a person; the machine stays quiet. One class, applied at the voice
+   surfaces only — never on controls, cards, or labels. */
+.font-voice {
+  font-family: Charter, 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  letter-spacing: 0.002em;
+}

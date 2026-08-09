@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { UserIcon, BuildingOffice2Icon, Squares2X2Icon, EnvelopeIcon } from '@heroicons/react/24/outline';
+import { UserIcon, BuildingOffice2Icon, Squares2X2Icon, EnvelopeIcon, FolderIcon, UserGroupIcon } from '@heroicons/react/24/outline';
 
 function BrainIcon({ className }: { className?: string }) {
   return (
@@ -23,6 +23,14 @@ const NAV_ITEMS = [
   { id: 'email', label: 'Email', Icon: EnvelopeIcon },
   { id: 'company', label: 'Company', Icon: BuildingOffice2Icon },
   { id: 'connections', label: 'Connections', Icon: Squares2X2Icon },
+  // THE DRIVE DEMOTION (Arc 3): Knowledge is a real SETTINGS SECTION (owner correction, Aug 6 —
+  // the door must stay GROUNDED in the Settings nav, never eject to a standalone page). The slim
+  // panel renders inside this shell; /drive survives only as a redirect here.
+  { id: 'knowledge', label: 'Knowledge', Icon: FolderIcon },
+  // THE FOLD's config door (Arc 3, grounded Aug 6): team CONFIG (roster · per-worker tools ·
+  // skills) is a real Settings section — coworkers themselves are executors IN the work, talked
+  // to from any conversation, never a destination.
+  { id: 'team', label: 'Team', Icon: UserGroupIcon },
   { id: 'memory', label: 'Memory', Icon: BrainIcon },
 ];
 
@@ -130,7 +138,7 @@ export default function SettingsLeftPanel({ activeTab, companyRole }: { activeTa
             }
 
             return (
-              <Link key={item.id} href={`/settings?tab=${item.id}`} className={itemClass(isActive)}>
+              <Link key={item.id} href={'href' in item && item.href ? item.href : `/settings?tab=${item.id}`} className={itemClass(isActive)}>
                 <item.Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-indigo-500' : 'text-neutral-400'}`} />
                 {item.label}
               </Link>

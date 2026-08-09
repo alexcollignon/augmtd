@@ -72,7 +72,7 @@ function Prose({ text, refs, clearedIds, onNavigate, className }: {
  *  ResizeObserver keeps it honest as prose re-composes), so the motion has true, even timing in both
  *  directions — no max-height guessing. The fade is an overlay whose opacity animates in step. */
 const COLLAPSED_PX = 84;
-export function BriefingBlock({ briefing, clearedIds, onNavigate, flat = false }: { briefing: Briefing; clearedIds: Set<string>; onNavigate: (r: BriefingRef) => void; flat?: boolean }) {
+export function BriefingBlock({ briefing, clearedIds, onNavigate, flat = false, leadOnly = false }: { briefing: Briefing; clearedIds: Set<string>; onNavigate: (r: BriefingRef) => void; flat?: boolean; leadOnly?: boolean }) {
   const [open, setOpen] = React.useState(false);
   const [contentH, setContentH] = React.useState(0);
   const innerRef = React.useRef<HTMLDivElement>(null);
@@ -90,22 +90,31 @@ export function BriefingBlock({ briefing, clearedIds, onNavigate, flat = false }
   // as the assistant's first turn.
   const collapsible = !flat && contentH > COLLAPSED_PX + 24; // short briefs just show whole (no fade, no button)
   const expanded = open || !collapsible;
+  // LEAD-ONLY (the shell's Home opener — the July lesson relearned Aug 6: the FULL prose brief
+  // duplicates the deck sitting right under it; the opening is ONE short paragraph of the day's
+  // shape, refs live, and the deck carries the inventory).
+  if (leadOnly) {
+    return (
+      <Prose text={briefing.lead.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
+        className="font-voice text-[15.5px] text-neutral-700 leading-[1.7]" />
+    );
+  }
   if (flat) {
     // The brief is one continuous message — uniform size and an even, readable tone throughout. The lead
     // sits a touch stronger; the rest share ONE colour (no progressive fade to near-invisible, no shrink).
     return (
       <div className="space-y-2">
         <Prose text={briefing.lead.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
-          className="text-[14.5px] text-neutral-800 leading-[1.75]" />
+          className="font-voice text-[15.5px] text-neutral-800 leading-[1.75]" />
         <Prose text={briefing.action.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
-          className="text-[14.5px] text-neutral-600 leading-[1.75]" />
+          className="font-voice text-[15.5px] text-neutral-600 leading-[1.75]" />
         {briefing.watchlist && (
           <Prose text={briefing.watchlist.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
-            className="text-[14.5px] text-neutral-600 leading-[1.75]" />
+            className="font-voice text-[15.5px] text-neutral-600 leading-[1.75]" />
         )}
         {briefing.pulse && (
           <Prose text={briefing.pulse.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
-            className="text-[14.5px] text-neutral-600 leading-[1.75]" />
+            className="font-voice text-[15.5px] text-neutral-600 leading-[1.75]" />
         )}
       </div>
     );
@@ -121,13 +130,13 @@ export function BriefingBlock({ briefing, clearedIds, onNavigate, flat = false }
       >
         <div ref={innerRef}>
           <Prose text={briefing.lead.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
-            className="text-[14.5px] text-neutral-800 leading-[1.8]" />
+            className="font-voice text-[15.5px] text-neutral-800 leading-[1.8]" />
           <Prose text={briefing.action.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
-            className="mt-3 text-[14.5px] text-neutral-600 leading-[1.8]" />
+            className="font-voice mt-3 text-[15.5px] text-neutral-600 leading-[1.8]" />
           {briefing.watchlist && (
             <div className="mt-3.5 border-l-2 border-amber-300/70 pl-3.5">
               <Prose text={briefing.watchlist.text} refs={briefing.refs} clearedIds={clearedIds} onNavigate={onNavigate}
-                className="text-[14.5px] text-neutral-500 leading-[1.8]" />
+                className="font-voice text-[15.5px] text-neutral-500 leading-[1.8]" />
             </div>
           )}
           {briefing.pulse && (

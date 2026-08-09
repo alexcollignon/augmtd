@@ -10,12 +10,29 @@
 
 import React, { useRef, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowUpIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
+import { EyeSlashIcon, FolderIcon } from '@heroicons/react/24/outline';
+import { WorkerMentionInput } from '@/components/workers/worker-mention-input';
+import { ProjectPickerPanel } from '@/components/work/work-row';
+import { AnchoredPopover } from '@/components/ui/anchored-popover';
+import { EmailDraftCard, type EmailDraftData } from '@/components/workers/email-draft-card';
+import { ThreadArtifactsPanel } from '@/components/work/chat-artifact-panel';
+import type { DocumentArtifact } from '@/lib/types/inbox';
 // (BriefingBlock removed from the chat — Phase 3 F2: the prose brief duplicated the deck; the
 // composeBriefing machinery survives as the deck's ordering anchor + the daily report.)
 
 type Ref = { id: string; kind: string; label: string; href: string | null };
-type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[] };
+type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
+  /** THE ABSORPTION (brick 1): a coworker's own reply carries their name — the one-narrator
+   *  law's attribution, now in the Home panel. */
+  author?: string;
+  /** Deliverables the coworker produced in THIS exchange (brick 3 — the one surface owns its
+   *  outputs): a DOCUMENT card opens the artifact panel HERE (art), a registry render still
+   *  points at its page (href); an EMAIL DRAFT mounts the editable send card INLINE. */
+  cards?: Array<{ label: string; sub?: string; href?: string; art?: { tid: string; id: string } }>;
+  drafts?: Array<{ draft: EmailDraftData; tid: string; agentId: string }>;
+  /** THE SENSIBLE ASK: one consequential decision as tappable options — a tap SPEAKS its `say`
+   *  through the composer. Ephemeral scaffolding (never persisted); consumed on tap. */
+  options?: Array<{ label: string; say: string }> };
 
 // TYPEWRITER — the same streaming feel as the coworker chats. The answer arrives whole (JSON + refs need
 // the full text), so we REVEAL it progressively: ~3 chars/frame, a partial trailing [ref tag is trimmed
@@ -68,19 +85,247 @@ function Answer({ text, refs, onOpen }: { text: string; refs: Ref[]; onOpen: (r:
   return (
     <div className="space-y-2.5">
       {paras.map((para, i) => (
-        <p key={i} className="text-[13.5px] text-neutral-700 leading-[1.7] whitespace-pre-line">{renderPara(para)}</p>
+        // THE VOICE (design language): the team's answers are the team speaking — serif.
+        <p key={i} className="font-voice text-[14.5px] text-neutral-700 leading-[1.7] whitespace-pre-line">{renderPara(para)}</p>
       ))}
     </div>
   );
 }
 
+// ── THE DURABLE HOME CHAT (Aug 6 — the fold's enabling brick; one-surface ladder rung 2 +
+// law 4: HISTORY IS THE DEFAULT). The Home conversation is a LOOSE ROOM (`chat:<uuid>` in
+// room_turns): every exchange persists, a reload rehydrates, "New" starts a fresh room while
+// the old one stays durable (the fold's future frame lists them). Persistence ≠ object
+// creation — no task/project is minted by chatting (ladder law 3). ──
+const CHAT_KEY_LS = 'aug-home-chat-key';
+function chatRoomKey(): string {
+  try {
+    const existing = localStorage.getItem(CHAT_KEY_LS);
+    if (existing?.startsWith('chat:')) return existing;
+    const fresh = `chat:${crypto.randomUUID()}`;
+    localStorage.setItem(CHAT_KEY_LS, fresh);
+    return fresh;
+  } catch { return `chat:${crypto.randomUUID()}`; }
+}
+
 export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   const router = useRouter();
   const [turns, setTurns] = useState<Turn[]>([]);
-  const [input, setInput] = useState('');
+  // Rehydrate the current chat room on mount (last-known conversation, the ChatGPT-parity habit) +
+  // the SHELL'S WIRES: the sidebar's "New chat" resets this panel; opening a past conversation
+  // from the sidebar / All-conversations view loads it here.
+  useEffect(() => {
+    try {
+      // THE SEAM DOOR: a project room's "Open the conversation" ref lands here with ?chat= —
+      // an explicit click, it outranks every other rehydration path.
+      const chatParam = new URLSearchParams(window.location.search).get('chat');
+      // A PRE-FILED NEW CHAT (the project room's "New chat" door): the intent carries the
+      // project — the fresh conversation starts already scoped, binding written up front.
+      const scopeIntent = sessionStorage.getItem('aug-new-chat-scope');
+      if (chatParam?.startsWith('chat:')) {
+        loadRoom(chatParam); setOpen(true);
+        try { window.history.replaceState(null, '', '/home'); } catch { /* no history */ }
+      } else if (scopeIntent) {
+        sessionStorage.removeItem('aug-new-chat-scope');
+        try {
+          const s = JSON.parse(scopeIntent) as { id?: string; name?: string };
+          if (s?.id && s?.name) {
+            setScope({ id: s.id, name: s.name });
+            setOpen(true);
+            void fetch('/api/rooms/adopt', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ roomKey: chatRoomKey(), entityId: s.id }),
+            }).catch(() => {});
+            setTimeout(() => focusComposer(), 120);
+          }
+        } catch { /* bad blob */ }
+      } else {
+        const key = localStorage.getItem(CHAT_KEY_LS);
+        if (key?.startsWith('chat:')) loadRoom(key); // loadRoom restores the scope binding itself
+        else if (key?.startsWith('worker:')) void loadWorkerRoom(key);
+      }
+      // A cross-page "open this conversation" intent (sidebar/All-conversations from another
+      // route): the panel must actually OPEN — loading turns into a closed card reads as a
+      // dead click (found live, Aug 6).
+      if (sessionStorage.getItem('aug-open-chat-intent')) {
+        sessionStorage.removeItem('aug-open-chat-intent');
+        setOpen(true);
+      }
+    } catch { /* no LS */ }
+    const onNew = () => { setTurns([]); setTemp(false); setScope(null); setScopeHint(null); workerRoomRef.current = null; setOpen(true); setTimeout(() => focusComposer(), 60); };
+    const onOpen = (e: Event) => {
+      const key = (e as CustomEvent).detail?.key as string | undefined;
+      if (key?.startsWith('chat:')) { loadRoom(key); setOpen(true); }
+      else if (key?.startsWith('worker:')) { void loadWorkerRoom(key); setOpen(true); }
+    };
+    // Warm the roster NOW — the submit-time address check must never wait on a cold endpoint
+    // (an 8s /api/workers/mentions was the "nothing happened" lag, found live Aug 6).
+    void getRoster();
+    // Sidebar "Home" IS the close (the idiom: you leave a chat by going home — no in-thread
+    // Close button); the conversation stays and re-opens on composer focus.
+    const onHomeReset = () => setOpen(false);
+    window.addEventListener('aug:new-chat', onNew);
+    window.addEventListener('aug:open-chat', onOpen);
+    window.addEventListener('augmtd:home-reset', onHomeReset);
+    return () => {
+      window.removeEventListener('aug:new-chat', onNew);
+      window.removeEventListener('aug:open-chat', onOpen);
+      window.removeEventListener('augmtd:home-reset', onHomeReset);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Load ANY chat room into the panel (mount rehydration + the History picker share this).
+  const mapServerTurns = (raw: Array<{ role: string; text: string; refs?: Array<{ label: string; href: string | null }> }>): Turn[] =>
+    raw.map((t) => ({
+      role: t.role === 'user' ? 'user' as const : 'assistant' as const,
+      text: t.text,
+      refs: (t.refs ?? []).map((r, i) => ({ id: `h${i}`, kind: 'link', label: r.label, href: r.href })),
+    }));
+  const loadRoom = (key: string) => {
+    workerRoomRef.current = null; // switching to a chief chat room leaves worker mode
+    if (key.startsWith('chat:')) {
+      setScope(null); setScopeHint(null);
+      // Scope is SERVER TRUTH (the binding) — per-conversation, survives devices; never a
+      // global local cache that bleeds across conversations.
+      fetch(`/api/rooms/adopt?key=${encodeURIComponent(key)}`).then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (d?.scope?.id) setScope({ id: d.scope.id, name: d.scope.name }); })
+        .catch(() => {});
+    }
+    fetch(`/api/room/turns?key=${encodeURIComponent(key)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!Array.isArray(d?.turns)) return;
+        setTurns(mapServerTurns(d.turns));
+        try { localStorage.setItem(CHAT_KEY_LS, key); } catch { /* no LS */ }
+      }).catch(() => {});
+  };
+  // ── THE ABSORPTION, BRICK 2 (Aug 6): a COWORKER conversation from Recent/All opens HERE — the
+  // one panel. `worker:<threadId>:<agentId>` loads the thread's own messages (work_messages IS
+  // its store — never copied into room_turns) with the coworker's attribution; the panel enters
+  // WORKER MODE: the next message continues in that SAME thread (the DM pointer re-aims), and
+  // chief persistence is structurally off while the mode holds. ──
+  const workerRoomRef = useRef<{ id: string; name: string } | null>(null);
+  const loadWorkerRoom = async (key: string) => {
+    const [, tid, agentId] = key.split(':');
+    if (!tid || !agentId) return;
+    try {
+      const d = await fetch(`/api/work/threads/${tid}/messages`).then((r) => (r.ok ? r.json() : null));
+      if (!Array.isArray(d?.messages)) return;
+      const roster = await getRoster();
+      const name = roster.find((x) => x.id === agentId)?.name
+        ?? String((d.thread as { title?: string } | null)?.title ?? 'Coworker').replace(/^Chat with /, '');
+      const loaded: Turn[] = (d.messages as Array<{ role: string; content: string }>)
+        .filter((m) => (m.role === 'user' || m.role === 'assistant') && String(m.content ?? '').trim())
+        .map((m) => (m.role === 'user'
+          ? { role: 'user' as const, text: m.content }
+          : { role: 'assistant' as const, text: m.content, author: name.split(' ')[0] }));
+      // Brick 3: the thread's documents ride along — openable HERE, never a page away.
+      const arts = ((d.thread as { artifacts?: Array<{ id?: string; title?: string }> } | null)?.artifacts ?? [])
+        .filter((a): a is { id: string; title: string } => !!a.id && !!a.title);
+      if (arts.length) {
+        loaded.push({
+          role: 'assistant', author: name.split(' ')[0], text: '',
+          cards: arts.map((a) => ({ label: a.title, sub: 'document', art: { tid, id: a.id } })),
+        });
+      }
+      setTurns(loaded);
+      workerRoomRef.current = { id: agentId, name };
+      setScope(null); setScopeHint(null); // a coworker DM is addressed, never project-scoped from here
+      try { localStorage.setItem(dmKey(agentId), tid); localStorage.setItem(CHAT_KEY_LS, key); } catch { /* no LS */ }
+    } catch { /* the click already opened the panel — an empty load stays honest */ }
+  };
+  // THE HISTORY PICKER DIED (owner, Aug 7): the SIDEBAR owns history — Recent + All
+  // conversations are the one thread list; a second picker inside the panel was redundant.
+  // ── THE ARTIFACT PANEL (brick 3 — the one surface owns its outputs): a document card opens
+  // the SAME ThreadArtifactsPanel the worker page uses, as a right-side overlay HERE — viewer,
+  // versions, download, delete, all without leaving the conversation. ──
+  const [artifactPanel, setArtifactPanel] = useState<{ thread: { id: string; title: string; artifacts?: DocumentArtifact[] }; initialId: string | null } | null>(null);
+  const openArtifact = async (tid: string, artifactId: string) => {
+    try {
+      const d = await fetch(`/api/work/threads/${tid}/messages`).then((r) => (r.ok ? r.json() : null));
+      const th = d?.thread as { id: string; title?: string; artifacts?: DocumentArtifact[] } | null;
+      if (!th) throw new Error();
+      setArtifactPanel({ thread: { id: th.id, title: th.title ?? 'Work', artifacts: th.artifacts ?? [] }, initialId: artifactId });
+    } catch {
+      setTurns((prev) => [...prev, { role: 'assistant', text: "Couldn't open that document just now — try again." }]);
+    }
+  };
+
+  // ── THE SCOPE CHIP + THE ADOPTION CASCADE (one-surface § context controls): the conversation
+  // header shows its scope ("No project · Add to…" / "<Project> ✓"), settable at ANY time.
+  // Adopting moves the conversation's turns INTO the project room (the one membership machinery
+  // — /api/rooms/adopt), and from then on the panel talks IN that room: turns persist to its
+  // key, answers ground on its full room page (converse entity scope). The chip when scoped is
+  // the DOOR to the room. ──
+  const [scope, setScope] = useState<{ id: string; name: string } | null>(null);
+  const [scopeOpen, setScopeOpen] = useState(false);
+  // THE RECOGNITION NUDGE: the ask response names the project the conversation is ABOUT
+  // (deterministic focus match) — the chip turns into an OFFER ("About X? · File it"); one
+  // click adopts, ✕ dismisses. A suggestion, never an auto-file.
+  const [scopeHint, setScopeHint] = useState<{ id: string; name: string } | null>(null);
+  const scopeChipRef = useRef<HTMLSpanElement>(null);
+  // File / re-file / un-file — one binding call (v2 link model: the conversation keeps its
+  // key and turns; the project holds the binding; all three are one upsert/delete).
+  const adopt = async (e: { id: string; name: string } | null) => {
+    setScopeOpen(false);
+    const prev = scope;
+    setScope(e); // optimistic — the binding call converges
+    try {
+      const res = await fetch('/api/rooms/adopt', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomKey: chatRoomKey(), entityId: e?.id ?? null }),
+      });
+      if (!res.ok) throw new Error();
+      window.dispatchEvent(new CustomEvent('aug:conversation-changed'));
+    } catch {
+      setScope(prev);
+      setTurns((p) => [...p, { role: 'assistant', text: "That project change didn't go through — try again." }]);
+    }
+  };
+  const createAndAdopt = async (name: string) => {
+    try {
+      const res = await fetch('/api/entities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.id) throw new Error();
+      await adopt({ id: d.id as string, name });
+    } catch {
+      setScopeOpen(false);
+      setTurns((prev) => [...prev, { role: 'assistant', text: "Couldn't create that project — try again." }]);
+    }
+  };
+  // TEMPORARY CHAT (one-surface ladder law 4's opt-out — the explicit ephemeral mode): nothing
+  // is persisted, no room is minted; the promise is honest ("won't be saved"). Armed before a
+  // conversation starts; locked once it has turns (past turns can't be retro-saved); reset by New.
+  const [temp, setTemp] = useState(false);
+  const persistTurn = (role: 'user' | 'system', text: string, refs?: Ref[]) => {
+    if (temp) return; // temporary: the conversation lives only in this session's memory
+    if (workerRoomRef.current) return; // worker mode: the thread's own store holds the conversation
+    try {
+      fetch('/api/room/turns', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          // v2 link model: turns ALWAYS live on the chat's own key — the binding, not the
+          // turns' address, says which project the conversation belongs to.
+          roomKey: chatRoomKey(), role, text,
+          refs: refs?.length ? refs.map((r) => ({ label: r.label, href: r.href })) : undefined,
+        }),
+      }).then(() => {
+        // The sidebar's Recent stays live (a new conversation appears as it starts).
+        if (role === 'user') window.dispatchEvent(new CustomEvent('aug:conversation-changed'));
+      }).catch(() => {});
+    } catch { /* persistence is an enhancement — the session still works */ }
+  };
   const [busy, setBusy] = useState(false);
+  // The live STAGE from the streaming ask ("Searching your files…") — the busy line speaks it.
+  const [stage, setStage] = useState<string | null>(null);
+  // THE ONE COMPOSER's state: prefill lands a suggestion INTO the textarea (user finishes the
+  // thought); pendingFiles buffer until send (the worker-chat pattern — upload rides the route).
+  const [prefill, setPrefill] = useState<string | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const endRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const composerWrapRef = useRef<HTMLDivElement>(null);
+  const focusComposer = () => composerWrapRef.current?.querySelector('textarea')?.focus();
   // Which assistant turn TYPES in live (only the newest — history never re-animates). Staged via a
   // ref from the setTurns updater (no setState-in-updater), committed by the effect below.
   const [animateIdx, setAnimateIdx] = useState<number | null>(null);
@@ -103,41 +348,291 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
 
   const openRef = (r: Ref) => { if ('href' in r && r.href) router.push(r.href); };
 
-  const ask = async (q: string) => {
-    const question = q.trim();
-    if (!question || busy) return;
-    setInput('');
-    const history = turns.map((t) => ({ role: t.role, text: t.text }));
-    setTurns((prev) => [...prev, { role: 'user', text: question }]);
-    setBusy(true);
+  // ── THE ABSORPTION, BRICK 1 (Aug 6 — the doc's verified contract): addressing a coworker
+  // ("Clara, …" / "@Clara …") routes the message through the WORKER ENGINE (full capability:
+  // tools, memory, skills) and STREAMS the reply into this panel with their attribution. The
+  // conversation lives in the worker's own store (work_threads/work_messages — never
+  // double-persisted into chat rooms); listing those conversations here is brick 2. ──
+  const rosterRef = useRef<Array<{ id: string; name: string }> | null>(null);
+  const [, rosterTick] = useState(0); // re-render once the roster lands (the @-row reads a ref)
+  const getRoster = async (): Promise<Array<{ id: string; name: string }>> => {
+    if (rosterRef.current) return rosterRef.current;
     try {
-      const res = await fetch('/api/home/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, history }) });
-      const d = await res.json();
-      setTurns((prev) => { pendingAnimate.current = prev.length; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [] }]; });
+      const d = await fetch('/api/workers/mentions?types=coworker').then((r) => (r.ok ? r.json() : null));
+      rosterRef.current = ((d?.results ?? []) as Array<{ type: string; id: string; label: string }>)
+        .filter((x) => x.type === 'coworker').map((x) => ({ id: x.id, name: x.label }));
+    } catch { rosterRef.current = []; }
+    rosterTick((t) => t + 1);
+    return rosterRef.current;
+  };
+  const detectAddress = (q: string, roster: Array<{ id: string; name: string }>) => {
+    const m = q.match(/^@?([A-Za-zÀ-ÿ]+)(?:[\s,:!—–-]|$)/);
+    if (!m) return null;
+    const w = m[1].toLowerCase();
+    return roster.find((r) => r.name.split(' ')[0].toLowerCase() === w) ?? null;
+  };
+  // Get-or-create the coworker's Home DM thread (cached; the worker's page shows the same thread).
+  // The DM pointer — v2 key: v1 took threads[0] (most-recent) and could GLUE the Home DM onto a
+  // delegation/report thread ("Handed to Clara: …", found live Aug 7). The DM is its own
+  // "Chat with <name>" thread — found by title, created if absent; old v1 keys are orphaned.
+  const dmKey = (agentId: string) => `aug-dm2-${agentId}`;
+  const dmThread = async (w: { id: string; name: string }): Promise<string | null> => {
+    const k = dmKey(w.id);
+    try { const c = localStorage.getItem(k); if (c) return c; } catch { /* no LS */ }
+    let id: string | null = null;
+    const title = `Chat with ${w.name.split(' ')[0]}`;
+    try {
+      const d = await fetch(`/api/work/threads?agent_id=${w.id}`).then((r) => (r.ok ? r.json() : null));
+      id = ((d?.threads ?? []) as Array<{ id: string; title?: string | null }>)
+        .find((t) => String(t.title ?? '').startsWith('Chat with'))?.id ?? null;
+      if (!id) {
+        const c = await fetch('/api/work/threads', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, agentId: w.id }),
+        }).then((r) => (r.ok ? r.json() : null));
+        id = (c?.thread?.id as string) ?? null;
+      }
+    } catch { /* honest failure below */ }
+    if (id) { try { localStorage.setItem(k, id); } catch { /* no LS */ } }
+    return id;
+  };
+  const askWorker = async (
+    question: string, w: { id: string; name: string },
+    extra?: { mentions?: Array<{ id: string; type: string; label: string }>; files?: File[]; echoed?: boolean },
+  ) => {
+    const fileNote = extra?.files?.length ? ` (attached: ${extra.files.map((f) => f.name).join(', ')})` : '';
+    setOpen(true);
+    if (!extra?.echoed) setTurns((prev) => [...prev, { role: 'user', text: question + fileNote }]);
+    setTurns((prev) => [...prev, { role: 'assistant', text: '', author: w.name }]);
+    setBusy(true);
+    const patchLast = (text: string) => setTurns((prev) => {
+      const next = [...prev];
+      const last = next[next.length - 1];
+      if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, text };
+      return next;
+    });
+    try {
+      const tid = await dmThread(w);
+      if (!tid) throw new Error('no thread');
+      // Buffered files upload NOW, to the addressed thread (the worker chat's own attach door).
+      let attachments: Array<{ id: string; name: string }> = [];
+      if (extra?.files?.length) {
+        try {
+          const fd = new FormData();
+          extra.files.forEach((f) => fd.append('file', f));
+          const up = await fetch(`/api/work/threads/${tid}/chat-attach`, { method: 'POST', body: fd });
+          attachments = up.ok
+            ? (((await up.json()).attachments ?? []) as Array<{ chatAttachId: string; filename: string }>).map((r) => ({ id: r.chatAttachId, name: r.filename }))
+            : [];
+        } catch { attachments = []; }
+      }
+      const res = await fetch(`/api/work/threads/${tid}/chat`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: question, agentId: w.id,
+          ...(extra?.mentions?.length ? { mentions: extra.mentions } : {}),
+          ...(attachments.length ? { attachments } : {}),
+        }),
+      });
+      if (!res.ok || !res.body) throw new Error('stream failed');
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let acc = ''; let lineBuffer = '';
+      const cards: NonNullable<Turn['cards']> = [];
+      const drafts: NonNullable<Turn['drafts']> = [];
+      const threadHref = `/workers?worker=${w.id}&thread=${tid}`;
+      const first = w.name.split(' ')[0];
+      // THE ARTIFACT ARRIVES OPEN + STAYS CURRENT (Aug 7-8): EVERY document arrival summons/
+      // refreshes the pane to the newest version — so "make it shorter" in the same exchange
+      // updates the open document in place (the Claude edit loop). The card stays the durable
+      // re-open affordance.
+      const setCards = () => setTurns((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, cards: [...cards], drafts: [...drafts] };
+        return next;
+      });
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        lineBuffer += decoder.decode(value, { stream: true });
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(line.slice(6)) as {
+              type?: string; delta?: string; label?: string; name?: string;
+              artifact?: { id?: string; title?: string; type?: string }; draft?: EmailDraftData;
+            };
+            if (event.type === 'text') { acc += event.delta ?? ''; patchLast(acc); }
+            else if (event.type === 'text_clear') { acc = ''; patchLast(acc); }
+            else if (event.type === 'tool_start') patchLast(`${acc}${acc ? '\n\n' : ''}· ${event.label ?? event.name ?? 'working'}…`);
+            else if (event.type === 'tool_result') patchLast(acc);
+            // THE DELIVERABLES SURFACE (brick 3 — the one surface owns its outputs): a document
+            // opens the artifact panel HERE; an email draft mounts the SAME editable send card
+            // the worker page uses, inline. Only registry renders still point at their page.
+            else if (event.type === 'artifact_ready' && event.artifact?.title && event.artifact.id) {
+              cards.push({ label: event.artifact.title, sub: `document · by ${first}`, art: { tid, id: event.artifact.id } }); setCards();
+              void openArtifact(tid, event.artifact.id);
+            }
+            else if (event.type === 'artifact' && event.artifact) {
+              cards.push({ label: event.artifact.title ?? event.artifact.type ?? 'Prepared work', sub: `by ${first}`, href: threadHref }); setCards();
+            }
+            else if (event.type === 'email_draft' && event.draft) {
+              drafts.push({ draft: event.draft, tid, agentId: w.id }); setCards();
+            }
+          } catch { /* partial frame */ }
+        }
+      }
+      patchLast(acc.trim() || (cards.length || drafts.length ? `${first} produced the work below.` : `${first} finished without a written reply.`));
+      if (cards.length || drafts.length) setCards();
     } catch {
-      setTurns((prev) => [...prev, { role: 'assistant', text: "Something went wrong reaching your brain — try again." }]);
+      patchLast(`Couldn't reach ${w.name.split(' ')[0]} right now — try again in a moment.`);
     } finally { setBusy(false); }
   };
 
+  // Chief-side attachments land in the KNOWLEDGE BASE (presign → PUT → confirm+index) so the
+  // brain can find/compute over them immediately — the lawful chief attach (files live with
+  // the knowledge, not in a chat blob). Returns the filenames that made it.
+  const uploadToKB = async (files: File[]): Promise<string[]> => {
+    try {
+      const pres = await fetch('/api/drive/upload/presign', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: files.map((f) => ({ filename: f.name, mimeType: f.type || 'application/octet-stream', size: f.size })) }),
+      }).then((r) => (r.ok ? r.json() : null));
+      const uploads = (pres?.uploads ?? []) as Array<{ signedUrl: string; storagePath: string; filename: string; mimeType: string }>;
+      const done: string[] = [];
+      for (const u of uploads) {
+        const f = files.find((x) => x.name === u.filename);
+        if (!f) continue;
+        const put = await fetch(u.signedUrl, { method: 'PUT', headers: { 'Content-Type': u.mimeType }, body: f });
+        if (!put.ok) continue;
+        const conf = await fetch('/api/drive/upload/confirm', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: u.storagePath, filename: u.filename, mimeType: u.mimeType }),
+        });
+        if (conf.ok) done.push(u.filename);
+      }
+      return done;
+    } catch { return []; }
+  };
+
+  // THE ONE ROUTING (the consolidation's brain): a coworker MENTION is the address; else the
+  // typed address; else the chief. Files follow the route — the addressed thread's attach door,
+  // or the knowledge base. Temporary mode: no worker routing, no uploads (both stores persist).
+  const handleSubmit = async (text: string, mentions: Array<{ id: string; type: 'coworker' | 'task' | 'document'; label: string }>) => {
+    const question = text.trim();
+    const files = pendingFiles;
+    if ((!question && !files.length) || busy) return;
+    if (temp && files.length) {
+      setPendingFiles([]);
+      setTurns((prev) => [...prev, { role: 'assistant', text: 'Attachments are off in a temporary chat (they would persist). Switch Temporary off to attach.' }]);
+      return;
+    }
+    setPendingFiles([]);
+    // THE INSTANT ECHO (owner, Aug 6 — "looked like nothing happened"): the submitted turn and
+    // the busy line land SYNCHRONOUSLY, before any routing/roster/upload awaits. Feedback is
+    // never gated on the network.
+    const fileNote = files.length ? ` (attached: ${files.map((f) => f.name).join(', ')})` : '';
+    const shown = (question || 'Attached files.') + fileNote;
+    setOpen(true);
+    setTurns((prev) => [...prev, { role: 'user', text: shown }]);
+    setBusy(true);
+    try {
+      if (!temp) {
+        // Address resolution: an explicit @-mention wins → the OPEN worker conversation continues
+        // (worker mode) → the typed address ("Clara, …") → else the chief.
+        const cw = mentions.find((m) => m.type === 'coworker');
+        const w = cw ? { id: cw.id, name: cw.label }
+          : (workerRoomRef.current ?? detectAddress(question, await getRoster()));
+        if (w) {
+          await askWorker(question || 'Here are the files.', w, {
+            mentions: mentions.filter((m) => !(m.type === 'coworker' && m.id === w.id)),
+            files, echoed: true,
+          });
+          return;
+        }
+      }
+      await askChief(question, files, mentions, shown);
+    } finally { setBusy(false); setStage(null); }
+  };
+
+  // Chief path — KB-upload files first; mention labels ride as grounding hints.
+  const askChief = async (
+    question: string, files: File[],
+    mentions: Array<{ id: string; type: 'coworker' | 'task' | 'document'; label: string }>, shown: string,
+  ) => {
+    let sendQ = question;
+    if (files.length) {
+      setStage('Adding the files to your knowledge base…');
+      const done = await uploadToKB(files);
+      if (done.length) { sendQ += `\n[Attached to the knowledge base just now: ${done.join(', ')}]`; }
+      else if (!question) { setTurns((prev) => [...prev, { role: 'assistant', text: 'The upload did not go through — try again, or use the Knowledge page.' }]); return; }
+    }
+    const hints = mentions.filter((m) => m.type !== 'coworker').map((m) => m.label);
+    if (hints.length) sendQ += ` (about: ${hints.join('; ')})`;
+    // History excludes the just-echoed user turn (it rides as `question`).
+    const history = turns.map((t) => ({ role: t.role, text: t.text }));
+    persistTurn('user', shown);
+    try {
+      // STREAMING ASK (Aug 6): SSE — `progress` events narrate the core's live stage (the busy
+      // line speaks them), `done` carries the answer. A non-SSE response (error JSON) falls back.
+      const res = await fetch('/api/home/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(scope ? { entityId: scope.id } : {}) }) });
+      let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string } } = {};
+      if (res.body && res.headers.get('content-type')?.includes('text/event-stream')) {
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const frames = buf.split('\n\n'); buf = frames.pop() ?? '';
+          for (const f of frames) {
+            const line = f.split('\n').find((l) => l.startsWith('data: '));
+            if (!line) continue;
+            try {
+              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string } };
+              if (ev.type === 'progress' && ev.label) setStage(ev.label);
+              else if (ev.type === 'done') d = ev;
+            } catch { /* partial frame */ }
+          }
+        }
+      } else {
+        d = await res.json();
+      }
+      // ARTIFACTS-INTO-ORIGIN (Aug 9): a dispatched deliverable's card rides the answer turn and
+      // the viewer opens HERE — the conversation that asked holds the work.
+      const artCard = d.artifact
+        ? { cards: [{ label: d.artifact.title, sub: `document · by ${d.artifact.agentName.split(' ')[0]}`, art: { tid: d.artifact.threadId, id: d.artifact.id } }] }
+        : {};
+      setTurns((prev) => { pendingAnimate.current = prev.length; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...artCard }]; });
+      if (d.artifact) void openArtifact(d.artifact.threadId, d.artifact.id);
+      if (d.answer) persistTurn('system', d.answer, d.refs ?? []);
+      if (d.focus && !scope && !temp) setScopeHint(d.focus);
+    } catch {
+      setTurns((prev) => [...prev, { role: 'assistant', text: "Something went wrong reaching your brain — try again." }]);
+    } finally { setBusy(false); setStage(null); }
+  };
+  const ask = (q: string) => { void handleSubmit(q, []); };
+
   const hasThread = turns.length > 0;
-  // GRANOLA PANEL (v2): at rest = pills + input only. HOVER (the chat block ONLY — not the page) slides a
-  // 2-line brief preview in TIGHT above the composer. FOCUS or a live thread morphs the block into an
-  // ELEVATED CARD (border + surface + shadow) holding brief → conversation → composer. One smooth motion.
-  const [hovered, setHovered] = useState(false);
-  const [focused, setFocused] = useState(false);
-  // The panel's OPEN state is explicit: focusing the input opens it; clicking OUTSIDE closes it smoothly.
-  // The conversation STATE persists (component state) — reopening restores it; a reload or "New" clears.
+  // THE CONVERSATION IS A PAGE (owner, Aug 6 — "conversation-focused page, not a component"; a
+  // hover-out must NEVER collapse a live conversation): once turns exist and the panel is open,
+  // the thread OWNS the page — no hover gating, no outside-click close. Leaving is EXPLICIT:
+  // Close (hands the dashboard back, the conversation stays and re-opens on focus), or New.
   const [open, setOpen] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
+  const showThread = hasThread && open;
+  // THE PAGE TAKEOVER (owner, Aug 6 — "doesn't transition to a chat page"): a live conversation
+  // OWNS the page — the host hides the deck behind it (Claude's arrival feel); closing hands the
+  // dashboard back.
   useEffect(() => {
-    const onDown = (ev: MouseEvent) => {
-      if (shellRef.current && !shellRef.current.contains(ev.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, []);
-  const expanded = focused || open;
-  const showThread = hasThread && (expanded || hovered);
+    window.dispatchEvent(new CustomEvent('aug:chat-active', { detail: { active: showThread } }));
+  }, [showThread]);
+  // Unmount (a lens switch) hands the page back — a stale takeover must never hide the header.
+  useEffect(() => () => { window.dispatchEvent(new CustomEvent('aug:chat-active', { detail: { active: false } })); }, []);
   // Re-pin to the latest turn when the thread reveals (the grid transition needs a beat).
   useEffect(() => { const tm = window.setTimeout(pinToEnd, 320); return () => window.clearTimeout(tm); }, [showThread]); // eslint-disable-line react-hooks/exhaustive-deps
   // THE CHAT CARD (final): standard chat anatomy — the CONVERSATION ABOVE, the INPUT AT THE BOTTOM
@@ -145,55 +640,164 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // the thread SMOOTHLY expands above it (grid-rows transition — the same Collapse idiom), the
   // input stays put as the card's floor, and the scroll container pins to the latest turn.
   return (
-    <section className="w-full">
-      <div ref={shellRef} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
-        className={`transition-all duration-300 ease-out ${showThread ? 'rounded-2xl border border-neutral-200 bg-white shadow-[0_12px_40px_-18px_rgba(23,23,23,0.16)] p-4' : ''}`}>
+    <section className={`w-full transition-[margin] duration-300 ease-out ${artifactPanel ? 'lg:mr-[608px]' : ''}`}>
+      {/* PAGE MODE: a live conversation renders directly on the page in a centered reading
+          column (Claude's anatomy) — never inside a floating card. With the artifact pane
+          docked, the column keeps reading-width beside it (the section margin makes room). */}
+      <div ref={shellRef}
+        className={`transition-all duration-300 ease-out ${showThread ? 'max-w-3xl mx-auto w-full' : ''}`}>
         {/* The thread — above the input, smooth open/close (grid-rows), bounded + self-scrolling. */}
         <div className={`grid transition-all duration-300 ease-out ${showThread ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
           <div className="overflow-hidden min-h-0">
-            <div className="flex items-center justify-end mb-1">
-              <button onClick={() => setTurns([])} className="inline-flex items-center gap-1 text-[11.5px] font-medium text-neutral-400 hover:text-neutral-700 transition-colors">
-                <ArrowPathIcon className="w-3.5 h-3.5" /> New
-              </button>
-            </div>
-            <div ref={scrollRef} className="space-y-4 max-h-[38vh] overflow-y-auto [scrollbar-width:thin] pr-1 pb-3">
+            {/* NO conversation chrome (owner, Aug 7 — "is New/Close best practice? that's not
+                how others do it"): the SIDEBAR is the navigation — Home shows the day, New chat
+                starts fresh, All conversations manages. The thread is just the thread. */}
+            {/* THE TAKEOVER (Claude-feel): a live conversation gets a CHAT'S room to breathe —
+                tall column, same smooth grid morph in, composer fixed as the floor. */}
+            <div ref={scrollRef} className="space-y-4 max-h-[calc(100vh-250px)] min-h-[40vh] overflow-y-auto [scrollbar-width:thin] pr-1 pb-3">
               {turns.map((t, i) => (
                 t.role === 'user' ? (
                   <div key={i} className="flex justify-end"><span className="rounded-2xl rounded-br-sm bg-neutral-100 px-3.5 py-2 text-[13.5px] text-neutral-800 max-w-[80%]">{t.text}</span></div>
                 ) : (
-                  <div key={i} className="pr-2"><AnimatedAnswer text={t.text} refs={t.refs ?? []} onOpen={openRef} animate={i === animateIdx} /></div>
+                  <div key={i} className="pr-2">
+                    {/* A coworker's reply wears THEIR name (the one-narrator law); it streams
+                        live, so no typewriter re-reveal. */}
+                    {t.author && <p className="mb-1 text-[11.5px] font-semibold text-indigo-600">{t.author.split(' ')[0]}</p>}
+                    <AnimatedAnswer text={t.text} refs={t.refs ?? []} onOpen={openRef} animate={!t.author && i === animateIdx} />
+                    {/* Deliverable cards at the exchange's now edge — a DOCUMENT opens the
+                        artifact panel HERE (brick 3); registry renders still point away. */}
+                    {t.cards?.map((c, j) => (
+                      <button key={j} onClick={() => { if (c.art) void openArtifact(c.art.tid, c.art.id); else if (c.href) router.push(c.href); }}
+                        className="mt-2 w-full flex items-center justify-between gap-2 rounded-xl border border-indigo-100 bg-indigo-50/40 px-3.5 py-2.5 text-left hover:border-indigo-300 transition-colors">
+                        <span className="min-w-0">
+                          <span className="block truncate text-[12.5px] font-medium text-neutral-800">{c.label}</span>
+                          {c.sub && <span className="block text-[11px] text-neutral-400">{c.sub}</span>}
+                        </span>
+                        <span className="flex-shrink-0 text-[12px] font-semibold text-indigo-600">Open →</span>
+                      </button>
+                    ))}
+                    {/* An email draft is the SAME editable send card the worker page uses —
+                        review, edit, and the user-gated Send, inline in this exchange. */}
+                    {t.drafts?.map((d, j) => (
+                      <EmailDraftCard key={d.draft.id ?? j} draft={d.draft} threadId={d.tid} agentId={d.agentId} />
+                    ))}
+                    {/* THE SENSIBLE ASK — a tap SPEAKS its message through the composer (clicks
+                        are utterances); the chips consume on tap (ephemeral scaffolding). */}
+                    {t.options && t.options.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {t.options.map((o, j) => (
+                          <button key={j} disabled={busy}
+                            onClick={() => {
+                              setTurns((prev) => prev.map((x) => (x === t ? { ...x, options: undefined } : x)));
+                              void handleSubmit(o.say, []);
+                            }}
+                            className="rounded-full border border-indigo-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-indigo-700 hover:bg-indigo-50 transition-colors disabled:opacity-50">
+                            {o.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )
               ))}
-              {busy && <div className="flex items-center gap-1.5 text-[13px] text-neutral-400"><span className="w-1.5 h-1.5 rounded-full bg-indigo-300 animate-pulse" />Thinking…</div>}
+              {busy && <div className="flex items-center gap-1.5 text-[13px] text-neutral-400"><span className="w-1.5 h-1.5 rounded-full bg-indigo-300 animate-pulse" />{stage ?? 'Thinking…'}</div>}
               <div ref={endRef} />
             </div>
           </div>
         </div>
-        {/* The input — the card's FLOOR, never moves once a conversation is live. */}
-        <div className={`flex items-center gap-2 rounded-2xl border px-3.5 py-2.5 transition-all duration-300 ${showThread
-          ? 'border-neutral-200 bg-neutral-50/70 focus-within:border-indigo-300'
-          : 'border-neutral-200 bg-white shadow-[0_4px_28px_-12px_rgba(23,23,23,0.22)] focus-within:border-indigo-300 focus-within:shadow-[0_4px_32px_-10px_rgba(79,70,229,0.28)]'}`}>
-          <input
-            value={input} onChange={(e) => setInput(e.target.value)}
-            onFocus={() => { setFocused(true); setOpen(true); }} onBlur={() => setFocused(false)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(input); } }}
-            placeholder="Ask anything about your work…"
-            className="flex-1 bg-transparent text-[14px] text-neutral-800 placeholder:text-neutral-400 outline-none py-1"
-          />
-          <button onClick={() => ask(input)} disabled={!input.trim() || busy} className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-30 disabled:hover:bg-indigo-600 text-white transition-colors">
-            <ArrowUpIcon className="w-4 h-4" />
-          </button>
-        </div>
+        {/* Suggestions ABOVE the input (the floor anatomy: nothing sits below the composer) +
+            the quiet TEMPORARY toggle, armable only before the conversation starts. */}
         {!hasThread && suggestions.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mt-2.5">
+          <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
             {suggestions.map((s) => (
-              // A trailing "…" chip PREFILLS the composer (a fill-in verb like "Add a task…");
-              // everything else asks immediately.
-              <button key={s} onClick={() => (s.endsWith('…') ? setInput(s.slice(0, -1) + ' ') : ask(s))} disabled={busy} className="rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-[12px] text-neutral-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-white transition-all duration-150">{s}</button>
+              <button key={s} onClick={() => (s.endsWith('…') ? (setPrefill(s.slice(0, -1) + ' '), focusComposer()) : ask(s))} disabled={busy} className="rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-[12px] text-neutral-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-white transition-all duration-150">{s}</button>
             ))}
+            <button onClick={() => setTemp((v) => !v)}
+              title={temp ? 'This conversation will NOT be saved' : 'Start a conversation that is never saved or remembered'}
+              className={`ml-auto flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors ${temp ? 'bg-amber-50 text-amber-600' : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'}`}>
+              <EyeSlashIcon className="w-3.5 h-3.5" /> Temporary
+            </button>
           </div>
         )}
+        {/* THE ONE COMPOSER (workstream 3 — the consolidation): WorkerMentionInput is the SAME
+            component the worker surfaces use — @ opens the Coworkers/Tasks/Documents picker,
+            📎 buffers files (uploaded on send), Enter submits. A coworker mention IS the address;
+            files route to the addressed thread (chat-attach) or into the knowledge base (chief). */}
+        <div
+          ref={composerWrapRef}
+          onFocusCapture={() => setOpen(true)}
+          className="rounded-2xl border overflow-hidden transition-all duration-300 border-neutral-200 bg-white shadow-[0_4px_28px_-12px_rgba(23,23,23,0.22)] focus-within:border-indigo-300 focus-within:shadow-[0_4px_32px_-10px_rgba(79,70,229,0.28)]">
+          <WorkerMentionInput
+            frameless
+            onSubmit={(text, mentions) => { void handleSubmit(text, mentions); }}
+            disabled={busy}
+            placeholder="Ask anything — @ mentions your team"
+            prefill={prefill}
+            onPrefillConsumed={() => setPrefill(null)}
+            onAttach={(files) => setPendingFiles((p) => [...p, ...files])}
+            attachments={pendingFiles.map((f, i) => ({ id: `${i}-${f.name}`, name: f.name, size: f.size }))}
+            onRemoveAttachment={(id) => setPendingFiles((p) => p.filter((f, i) => `${i}-${f.name}` !== id))}
+            accessory={temp ? (
+              <span className="flex items-center gap-1 px-2.5 py-1.5 text-[11.5px] font-medium text-amber-500" title="This conversation won't be saved and won't appear in your conversations">
+                <EyeSlashIcon className="w-3.5 h-3.5" />Temporary — not saved
+              </span>
+            ) : !workerRoomRef.current ? (
+              // THE SCOPE CHIP lives WITH the composer (owner, Aug 7): where the words are
+              // written is where their destination is set. Scoped, the chip is the room's door.
+              <span ref={scopeChipRef} className="relative inline-flex">
+                {scope ? (
+                  <span className="flex items-center rounded-lg hover:bg-indigo-50/60 transition-colors">
+                    <button onClick={() => router.push(`/home?view=projects&entity=${scope.id}`)} title="Open the project room"
+                      className="flex items-center gap-1 pl-2.5 pr-1 py-1.5 text-[12px] text-indigo-600 hover:text-indigo-800 transition-colors">
+                      <FolderIcon className="w-3.5 h-3.5" /> {scope.name} ✓
+                    </button>
+                    {/* Manage — change or remove the project (the binding is editable, any time). */}
+                    <button onClick={() => setScopeOpen((v) => !v)} title="Change or remove the project"
+                      className="pr-2 pl-0.5 py-1.5 text-[10px] text-indigo-300 hover:text-indigo-600 transition-colors">▾</button>
+                  </span>
+                ) : scopeHint ? (
+                  <span className="flex items-center rounded-lg bg-indigo-50/70">
+                    <button onClick={() => { const h = scopeHint; setScopeHint(null); void adopt(h); }}
+                      title={`File this conversation into ${scopeHint.name} — it moves into the project's room`}
+                      className="flex items-center gap-1 pl-2.5 pr-1 py-1.5 text-[12px] font-medium text-indigo-700 hover:text-indigo-900 transition-colors">
+                      <FolderIcon className="w-3.5 h-3.5" /> About {scopeHint.name}? · File it
+                    </button>
+                    <button onClick={() => setScopeHint(null)} title="Keep it loose"
+                      className="pr-2 pl-1 py-1.5 text-indigo-300 hover:text-indigo-600 transition-colors">×</button>
+                  </span>
+                ) : (
+                  <button onClick={() => setScopeOpen((v) => !v)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 transition-colors">
+                    <FolderIcon className="w-3.5 h-3.5" /> {hasThread ? 'No project' : 'Project'}
+                  </button>
+                )}
+                <AnchoredPopover anchorRef={scopeChipRef} open={scopeOpen} onClose={() => setScopeOpen(false)} align="left" width={240}>
+                  <ProjectPickerPanel
+                    onSelect={(e) => { void adopt(e); }}
+                    onCreateProject={(n) => { void createAndAdopt(n); }}
+                    {...(scope ? { onClear: () => { void adopt(null); }, clearLabel: `Remove from ${scope.name}` } : {})}
+                  />
+                </AnchoredPopover>
+              </span>
+            ) : undefined}
+          />
+        </div>
       </div>
+      {/* THE ARTIFACT PANE (brick 3, reworked Aug 8 — owner: "doesn't make sense to have an
+          overlay on top of chat; should be workable like Claude"): DOCKED, NON-MODAL — no dim,
+          no backdrop; the conversation shifts left (the section's margin) and BOTH stay live.
+          Editing is the conversation: "make it shorter" continues the same worker thread, the
+          new version arrives, and the pane refreshes to it. Close = the pane's own ✕. */}
+      {artifactPanel && (
+        <div className="fixed right-0 top-0 z-40 h-screen w-[min(720px,94vw)] border-l border-neutral-200 shadow-[-12px_0_40px_-24px_rgba(23,23,23,0.25)] bg-neutral-50">
+          <ThreadArtifactsPanel
+            thread={artifactPanel.thread}
+            onClose={() => setArtifactPanel(null)}
+            initialDetailId={artifactPanel.initialId}
+            onArtifactsUpdate={(arts) => setArtifactPanel((p) => (p ? { ...p, thread: { ...p.thread, artifacts: arts } } : p))}
+          />
+        </div>
+      )}
     </section>
   );
 }

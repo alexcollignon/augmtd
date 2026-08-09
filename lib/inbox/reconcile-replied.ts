@@ -19,7 +19,37 @@ import { resolveThreadOnReply } from './resolve-on-reply';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
 
+// THE RECONCILE THROTTLE (Aug 7 — found live: reconcile burned 36-43s INSIDE every brief load,
+// and concurrent surfaces each paid it again). This is a SELF-HEAL for missed sync events, not
+// a per-read necessity — the sync-time resolver (resolve-on-reply) still fires in real time; a
+// missed one now heals within TTL instead of on every read. Per-instance in-process throttle +
+// single-flight (concurrent callers share one run).
+const RECONCILE_TTL_MS = 10 * 60 * 1000;
+const reconcileLastRun = new Map<string, number>();
+const reconcileInflight = new Map<string, Promise<{ resolvedThreads: number }>>();
+
 export async function reconcileRepliedItems(
+  client: DBClient,
+  userId: string,
+  opts?: { bustBriefCache?: () => Promise<void>; force?: boolean },
+): Promise<{ resolvedThreads: number }> {
+  if (!opts?.force) {
+    const last = reconcileLastRun.get(userId);
+    if (last && Date.now() - last < RECONCILE_TTL_MS) return { resolvedThreads: 0 };
+    const inflight = reconcileInflight.get(userId);
+    if (inflight) return inflight;
+  }
+  const run = reconcileRepliedItemsNow(client, userId, opts);
+  reconcileInflight.set(userId, run);
+  try {
+    return await run;
+  } finally {
+    reconcileInflight.delete(userId);
+    reconcileLastRun.set(userId, Date.now());
+  }
+}
+
+async function reconcileRepliedItemsNow(
   client: DBClient,
   userId: string,
   opts?: { bustBriefCache?: () => Promise<void> },

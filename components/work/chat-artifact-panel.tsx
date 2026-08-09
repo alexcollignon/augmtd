@@ -57,33 +57,37 @@ function shortType(artifact: DocumentArtifact): string {
 
 // ── Previews ──────────────────────────────────────────────────────────────────
 
+// THE READER (owner, Aug 9): a delivered document is READ, not scanned like chat — reading
+// measure (~68ch), 15px/1.75 body, breathing room between sections, real heading scale.
 export function DocPreview({ content }: { content: DocContent }) {
   return (
-    <div className="space-y-4 text-[13.5px]">
-      <div>
-        <h1 className="text-[18px] font-bold text-neutral-900 leading-snug">{content.title}</h1>
+    <div className="mx-auto max-w-[68ch] text-[15px]">
+      <div className="mb-6">
+        <h1 className="text-[22px] font-bold text-neutral-900 leading-snug tracking-[-0.01em]">{content.title}</h1>
         {content.subtitle && (
-          <p className="text-[13px] text-neutral-500 mt-1">{content.subtitle}</p>
+          <p className="text-[14px] text-neutral-500 mt-1.5">{content.subtitle}</p>
         )}
       </div>
       {content.sections.map((section, i) => (
-        <div key={i} className="space-y-1.5">
+        <div key={i} className="mt-6 first:mt-0">
           {section.heading && (
             <h2
               className={
                 section.level === 1
-                  ? 'text-[14px] font-semibold text-neutral-800 border-b border-neutral-100 pb-1'
-                  : 'text-[13px] font-medium text-neutral-700'
+                  ? 'text-[16px] font-semibold text-neutral-900 border-b border-neutral-100 pb-1.5 mb-2.5'
+                  : 'text-[14.5px] font-semibold text-neutral-800 mb-2'
               }
             >
               {section.heading}
             </h2>
           )}
-          {section.paragraphs.map((p, pi) => (
-            <div key={pi} className="text-neutral-700 leading-relaxed text-[13.5px] prose prose-sm prose-neutral max-w-none">
-              <MarkdownText content={p} />
-            </div>
-          ))}
+          <div className="space-y-3">
+            {section.paragraphs.map((p, pi) => (
+              <div key={pi} className="text-neutral-700 text-[14.5px] leading-[1.75] prose prose-sm prose-neutral max-w-none prose-p:my-0 prose-li:my-0.5">
+                <MarkdownText content={p} />
+              </div>
+            ))}
+          </div>
         </div>
       ))}
     </div>
@@ -414,7 +418,7 @@ function ArtifactDetailView({ artifact, threadId, allArtifacts, onBack, onClose,
         </div>
 
         {/* Preview content */}
-        <div className="flex-1 overflow-y-auto px-4 py-4">
+        <div className="flex-1 overflow-y-auto px-6 py-6">
           {ct === 'doc' && artifact.content && <DocPreview content={artifact.content as DocContent} />}
           {ct === 'pptx' && artifact.content && <PptxPreview content={artifact.content as PptxContent} />}
           {ct === 'xlsx' && artifact.content && <XlsxPreview content={artifact.content as XlsxContent} />}
