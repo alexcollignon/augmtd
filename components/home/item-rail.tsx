@@ -23,6 +23,7 @@ import { WorkerMentionInput } from '@/components/workers/worker-mention-input';
 import { ROLE_AVATARS } from '@/lib/workers/roles';
 import { moveTargetId, mergedArtifactKey, stageOfArtifactKey } from '@/lib/room/presentation';
 import { DecisionCard } from '@/components/work/decision-card';
+import { WorkflowDraftCard, type WorkflowDraft } from '@/components/workflows/workflow-draft-card';
 
 // 'entity' = the PROJECT DOOR (P7c-c2): the same rail inside the project room — id is the entity
 // id, steer/ingest run in entity scope, the Overview chip hides (you're already there).
@@ -83,6 +84,9 @@ type Turn =
       /** THE SPEC CARD (Arc 2): a proposed standing task awaiting the user's explicit confirm —
        *  the card IS the commit surface (saying prepared it; confirming creates it). */
       standingSpec?: { name: string; deliverable: string; cadenceLabel: string; ownerName: string; firstRun?: string | null; status: string; workflowId?: string | null };
+      /** THE ONE CREATION CARD (Aug 10): a drafted workflow (any trigger type incl. reactions)
+       *  reviewing inline — Confirm fires the one create door. */
+      workflowDraft?: WorkflowDraft;
       /** THE APPROVAL ASK (production arc step 2): a run parked at its approval step — Approve
        *  resumes it (the guarded send fires through the normal path), Hold back ends it. */
       approval?: { runId: string; name: string; instruction?: string; preview?: string; decided?: 'approved' | 'rejected' } };
@@ -457,6 +461,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           text: String(d.say || d.answer || 'Done.').replace(/\s*\[[LF]?\d+(?:\s*,\s*[LF]?\d+)*\]/g, ''),
           refs: [...artRef, ...(Array.isArray(d.refs) ? d.refs.map((r: { label?: string; href?: string | null }) => ({ label: String(r.label ?? ''), href: r.href ?? null })) : [])],
           files: Array.isArray(d.files) ? d.files : undefined,
+          ...(d.workflowDraft ? { workflowDraft: d.workflowDraft as WorkflowDraft } : {}),
         }]);
       }
     } catch {
@@ -960,6 +965,13 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
                     className="mt-0.5 rounded-full border border-neutral-200 px-2.5 py-1 text-[11.5px] font-medium text-neutral-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors disabled:opacity-50"
                   >Go ahead with what&apos;s available →</button>
                 )}
+              </div>
+            )}
+            {/* THE ONE CREATION CARD (Aug 10): a drafted workflow — any trigger type incl.
+                reactions said in a room — reviews inline; Confirm fires the one create door. */}
+            {t.workflowDraft && (
+              <div className="mt-1.5">
+                <WorkflowDraftCard draft={t.workflowDraft} />
               </div>
             )}
             {/* THE SPEC CARD (Arc 2): the standing-task proposal — explicit fields, ONE Confirm.

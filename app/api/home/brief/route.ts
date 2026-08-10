@@ -1596,7 +1596,7 @@ export async function GET() {
     try {
       const { runAnticipationPass } = await import('@/lib/home/anticipation');
       const r = await runAnticipationPass(supabase, user.id);
-      if (r && (r.briefs || r.prepared)) console.log(`[anticipation] ${user.id.slice(0, 8)}: ${r.briefs} brief(s), ${r.prepared} early-prepare(s)`);
+      if (r && (r.briefs || r.prepared || r.chases)) console.log(`[anticipation] ${user.id.slice(0, 8)}: ${r.briefs} brief(s), ${r.prepared} early-prepare(s), ${r.chases} chase(s)`);
     } catch { /* the brief already served */ }
   });
 

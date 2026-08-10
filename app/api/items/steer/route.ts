@@ -54,6 +54,8 @@ export async function POST(request: NextRequest) {
       ...(turn.openStage ? { openStage: turn.openStage } : {}),
       // ARTIFACTS-INTO-ORIGIN (Aug 9): the dispatched deliverable's card rides into the room.
       ...(turn.artifact ? { artifact: turn.artifact } : {}),
+      // THE ONE CREATION CARD (Aug 10): a drafted standing task reviews inline in the room too.
+      ...(turn.workflowDraft ? { workflowDraft: turn.workflowDraft } : {}),
       ...(turn.options?.length ? { options: turn.options } : {}),
     });
   } catch (e) {

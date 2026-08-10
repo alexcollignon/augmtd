@@ -145,5 +145,28 @@ export async function GET() {
   const workers = ((workerRes.data ?? []) as Array<{ id: string; name: string; worker_role: string }>)
     .sort((a, b) => (a.worker_role === 'personal_assistant' ? -1 : b.worker_role === 'personal_assistant' ? 1 : a.name.localeCompare(b.name)));
 
-  return NextResponse.json({ ledger, awaiting, recent, workers });
+  // ── TEAMMATES' SHARED WORKFLOWS (trailing item, Aug 10): read-only rows — what the team
+  // runs, with owner attribution. RLS already grants read on sharing_mode='live' rows. ──
+  let team: Array<{ id: string; name: string; scheduleLabel: string | null; ownerName: string }> = [];
+  try {
+    const { data: shared } = await supabase.from('workflows')
+      .select('id, name, trigger, user_id, sharing_mode')
+      .neq('user_id', user.id).eq('sharing_mode', 'live').eq('status', 'active').limit(20);
+    const rows = (shared ?? []) as Array<{ id: string; name: string; trigger: { type?: string; label?: string; cron?: string; when?: string } | null; user_id: string }>;
+    if (rows.length) {
+      const ownerIds = [...new Set(rows.map((r) => r.user_id))];
+      const { data: profs } = await supabase.from('profiles').select('id, full_name, email').in('id', ownerIds);
+      const nameOf = new Map(((profs ?? []) as Array<{ id: string; full_name: string | null; email: string | null }>)
+        .map((p) => [p.id, p.full_name ?? p.email?.split('@')[0] ?? 'Teammate']));
+      team = rows.map((r) => ({
+        id: r.id, name: r.name,
+        scheduleLabel:
+          r.trigger?.type === 'schedule' ? (r.trigger.label ?? (r.trigger.cron ? `cron ${r.trigger.cron}` : null)) :
+          r.trigger?.type === 'reaction' ? (r.trigger.label ?? 'On event') : 'On demand',
+        ownerName: nameOf.get(r.user_id) ?? 'Teammate',
+      }));
+    }
+  } catch { /* the team section is an enhancement */ }
+
+  return NextResponse.json({ ledger, awaiting, recent, workers, team });
 }

@@ -410,6 +410,22 @@ export function ChatInputBar({
     e.target.value = '';
   }
 
+  // DRAG-AND-DROP ATTACH (Aug 10): same door as the paperclip, same cap, same accepted types.
+  const [dragOver, setDragOver] = useState(false);
+  const dragDepth = useRef(0);
+  const dragHasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+  function handleDrop(e: React.DragEvent) {
+    if (!onAttach) return;
+    e.preventDefault(); dragDepth.current = 0; setDragOver(false);
+    const ok = /\.(pdf|docx|txt|jpe?g|png|webp|zip)$/i;
+    const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => ok.test(f.name));
+    if (!files.length) return;
+    const remaining = MAX_ATTACHMENTS - attachments.length;
+    if (remaining <= 0) { toast.error(`You can attach up to ${MAX_ATTACHMENTS} files per message`); return; }
+    if (files.length > remaining) toast.error(`You can attach up to ${MAX_ATTACHMENTS} files per message`);
+    onAttach(files.slice(0, remaining));
+  }
+
   const canSend = value.trim().length > 0 && !disabled && !loading;
   const hasChips = attachments.length > 0 || allMentions.length > 0;
   const showMentionDropdown = mentionQuery !== null;
@@ -525,9 +541,20 @@ export function ChatInputBar({
     : null;
 
   return (
-    <div className="relative" ref={wrapperRef}>
+    <div className="relative" ref={wrapperRef}
+      onDragEnter={(e) => { if (onAttach && dragHasFiles(e)) { e.preventDefault(); dragDepth.current += 1; setDragOver(true); } }}
+      onDragOver={(e) => { if (onAttach && dragHasFiles(e)) e.preventDefault(); }}
+      onDragLeave={() => { if (onAttach) { dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDragOver(false); } }}
+      onDrop={handleDrop}>
       {/* Mention dropdown — portal to escape overflow:hidden ancestors */}
       {mentionDropdown}
+      {dragOver && onAttach && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-indigo-300 bg-indigo-50/90 pointer-events-none">
+          <span className="flex items-center gap-1.5 text-[13px] font-medium text-indigo-600">
+            <PaperClipIcon className="w-4 h-4" /> Drop files to attach
+          </span>
+        </div>
+      )}
 
       {/* Hidden file input */}
       <input
