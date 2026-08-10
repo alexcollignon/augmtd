@@ -793,7 +793,7 @@ const MOMENTUM = MOMENTUM_TOKENS;
 // column — day-grouped, deal-chipped, deterministic (zero AI). The "To prep" card was REMOVED
 // (the prep pass still prepares; its briefs live in the deal rooms). Cache-read lives in the
 // effect (the SSR'd-route rule — never in a useState initializer). ──
-type HorizonRow = { id: string; title: string; start: string; attendees: number; entity: { id: string; name: string } | null };
+type HorizonRow = { id: string; title: string; start: string; attendees: number; entity: { id: string; name: string } | null; prepReady?: boolean };
 function ThisWeekCard() {
   const [h, setH] = useState<{ thisWeek: HorizonRow[] } | null>(null);
   useEffect(() => {
@@ -861,6 +861,17 @@ function ThisWeekCard() {
                             <span className="block text-[12px] text-neutral-700 leading-snug line-clamp-2">{r.title}</span>
                             {r.entity && <span className="block text-[10.5px] text-indigo-500 truncate">{r.entity.name}</span>}
                           </span>
+                          {/* THE ANTICIPATION CHIP — the pass prepared this meeting's brief
+                              unprompted; the chip opens the room where the prep waits. */}
+                          {r.prepReady && r.entity && (
+                            <span
+                              role="button"
+                              onClick={(e) => { e.stopPropagation(); router.push(`/home?view=projects&entity=${r.entity!.id}`); }}
+                              className="flex-shrink-0 self-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors"
+                            >
+                              Prep ready
+                            </span>
+                          )}
                         </button>
                       ))}
                     </div>

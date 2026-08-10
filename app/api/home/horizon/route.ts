@@ -43,7 +43,11 @@ export async function GET() {
     }
 
     const weekCeil = new Date(now.getTime() + 7 * 86_400_000).toISOString();
-    const withEntity = rows.map((r) => ({ ...r, entity: entityByEvent.get(r.id) ?? null }));
+    // THE ANTICIPATION CHIP: which of these meetings already have a prep brief waiting in
+    // their room (the pass wrote it unprompted — the chip is its because made visible).
+    const { prepReadyEvents } = await import('@/lib/home/anticipation');
+    const prepReady = await prepReadyEvents(supabase, user.id, rows.map((r) => r.id));
+    const withEntity = rows.map((r) => ({ ...r, entity: entityByEvent.get(r.id) ?? null, prepReady: prepReady.has(r.id) }));
     return NextResponse.json({
       thisWeek: withEntity.filter((r) => r.start <= weekCeil).slice(0, 8),
       toPrep: withEntity.filter((r) => r.entity).slice(0, 6), // deal-linked = worth preparing

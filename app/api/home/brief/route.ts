@@ -1590,5 +1590,15 @@ export async function GET() {
   const taggedMustRespond = mustRespondOut
     ? { ...mustRespondOut, items: (mustRespondOut.items ?? []).map((m: { itemId: string; initiative?: string | null }) => ({ ...m, initiative: tagByAtom.get(m.itemId) ?? m.initiative ?? null })) }
     : mustRespondOut;
+  // THE ANTICIPATION PASS (initiative loop) — walks the near future in after(); self-gated to
+  // one run per 6h, hard-capped, judge-gated. Most runs fire nothing (silence is a verdict).
+  after(async () => {
+    try {
+      const { runAnticipationPass } = await import('@/lib/home/anticipation');
+      const r = await runAnticipationPass(supabase, user.id);
+      if (r && (r.briefs || r.prepared)) console.log(`[anticipation] ${user.id.slice(0, 8)}: ${r.briefs} brief(s), ${r.prepared} early-prepare(s)`);
+    } catch { /* the brief already served */ }
+  });
+
   return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => ({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null })), mustRespond: taggedMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments: commitments.map((c) => ({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null })), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, projectByAtom, briefing: cachedBriefing, trackedProjects, mail });
 }

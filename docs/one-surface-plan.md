@@ -468,6 +468,22 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+DD. **THE ANTICIPATION PASS (the initiative loop begins, Aug 10; gate AN1 — 111/111, build
+   green; E2E on the probe: a room-linked meeting tomorrow drew a grounded prep brief into
+   its room UNPROMPTED — because line leading, chip resolving, TTL + exactly-once holding,
+   and silence-as-verdict on the due-soon half).** Proactivity beyond arrivals: the pass
+   walks TIME, not the inbox. (1) MEETINGS (next 36h, linked to a room — anticipation
+   prepares WORK, it never invents projects): ONE reasoned pass over the room's page → the
+   prep brief narrated into the room, BECAUSE line first ("Prep for X (Tue 09:23) — because
+   this meeting is on your calendar and this room holds the work"); the "Prep ready" chip
+   on the Home's This-week card opens the room where the prep waits. (2) DUE-SOON (≤48h or
+   overdue, still unprepared): the SAME judge-gated prepareOneItem runs EARLY —
+   anticipation moves the clock, never bypasses the judge. THE TRUST RULES STRUCTURAL:
+   hard caps (2 briefs + 2 prepares/run), 6h self-gate (rides the brief route's after()),
+   exactly-once fire records (item_plans kind='anticipation'), silence is a valid verdict.
+   REMAINING IN THE LOOP: the silence watch (absence as an event → judged chase) → the
+   strategic ask + Settings→Autonomy (the outcome log finally spent) → the deck-row
+   because-chip generalized.
 CC. **THE CONVERGENCE KIT + THE DAY-STATE BLOCK (Aug 10, owner conversation on DM vs chief —
    "avoid redundancy… can't feel like multiple systems"; gate CS5 — 110/110, build green;
    live-verified).** The settled model: ONE chat surface, the conversation determines the

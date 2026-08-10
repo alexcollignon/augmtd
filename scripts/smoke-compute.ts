@@ -967,6 +967,15 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/home/home-ask.tsx').includes('New session') &&
     src('components/home/home-ask.tsx').includes('This is your direct line to'));
 
+  check('AN1: THE ANTICIPATION PASS (the initiative loop, Aug 10) — proactivity beyond arrivals: the pass walks TIME (meetings next 36h linked to a room → the prep brief EXISTS before the ask, one reasoned pass over the room page, narrated with its BECAUSE line leading; due-soon ≤48h unprepared → the SAME judge-gated prepareOneItem runs early — anticipation moves the clock, never bypasses the judge); trust rules structural: hard caps per run, 6h self-gate, exactly-once fire records, silence is a valid verdict; the "Prep ready" chip on This-week opens the room where the prep waits. E2E on the probe: brief fired + because leads + chip resolves + TTL gate + fire dedupe all held',
+    src('lib/home/anticipation.ts').includes('runAnticipationPass') &&
+    src('lib/home/anticipation.ts').includes('MAX_BRIEFS_PER_RUN') &&
+    src('lib/home/anticipation.ts').includes('because') &&
+    src('lib/home/anticipation.ts').includes('prepareOneItem') &&
+    src('app/api/home/brief/route.ts').includes('runAnticipationPass') &&
+    src('app/api/home/horizon/route.ts').includes('prepReadyEvents') &&
+    src('components/home/home-view.tsx').includes('Prep ready'));
+
   // ── AO · ARTIFACTS-INTO-ORIGIN (proactivity completion #1, Aug 9). ──
   check('AO1: THE DISPATCHED DELIVERABLE COMES HOME — substantial delegated production materializes as a REAL document artifact on the delegation thread (the SAME textToDocContent/uploadArtifact primitives as workflow runs — one shared module, run-workflow imports it too, never two diverging copies); the artifact rides the ConverseTurn back into the conversation that asked (Home chat renders its card AND opens the viewer; the room rail carries the door chip); a short answer or an ask stays text. E2E-proven live on the probe: real .docx in storage, card on the turn',
     src('lib/workflows/doc-content.ts').includes('export function textToDocContent') &&
