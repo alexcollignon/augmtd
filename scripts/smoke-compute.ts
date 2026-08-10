@@ -8,6 +8,7 @@ import { readFileSync, existsSync } from 'fs';
 const out: Array<[string, boolean, string]> = [];
 const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
 const src = (p: string) => readFileSync(p, 'utf8');
+const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; } catch { return false; } };
 
 (async () => {
   // ── C1 · REGISTRY TRUTH: one map row, parity lawful, the plan cache self-invalidates. ──
@@ -1092,7 +1093,31 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('app/platform-admin/platform-admin-client.tsx').includes("FEATURE_KEYS.filter(k => k !== 'home')") &&
     !src('app/platform-admin/platform-admin-client.tsx').includes('bg-primary-50') &&
     src('app/api/platform-admin/companies/[id]/route.ts').includes('branding') &&
-    src('app/api/platform-admin/companies/[id]/route.ts').includes('never replacing other settings'));
+    src('app/api/platform-admin/companies/[id]/route.ts').includes('never replacing other settings') &&
+    // THE LOGO UPLOAD: super-admin route → public `branding` bucket (raster only — a public SVG
+    // executes script on direct navigation), stamps settings.branding.logo_url in one motion;
+    // E2E: bucket create + upload + public fetch 200 verified live.
+    src('app/api/platform-admin/companies/[id]/logo/route.ts').includes("createBucket('branding', { public: true") &&
+    !src('app/api/platform-admin/companies/[id]/logo/route.ts').includes('svg') &&
+    src('app/platform-admin/platform-admin-client.tsx').includes('Upload logo'));
+
+  check('SV4: THE WORKSPACE DETAIL PAGE + HONEST SOVEREIGN COPY — (1) /platform-admin/workspaces/[id]: one page per workspace in current product language (identity · access & entry with the corporate toggle+explanation · branding with logo upload · features as explained switches: Email/Meetings/Knowledge/Coworkers/Workflows · members with roles+pending · danger zone with two-step delete); every mutation reuses the SAME platform-admin routes as the list (one behavior, two views); the list row\'s name links here; list labels aligned (Drive→Knowledge, Tasks→Workflows). (2) invite-send on a workspace with NO connection says honest words ("runs without connected calendars") instead of pointing at a Settings tab that does not exist — both invite doors. (3) Settings audit re-verified: no connect-email CTA outside the hidden Email tab',
+    src('app/(main)/platform-admin/workspaces/[id]/page.tsx').includes('WorkspaceDetail') &&
+    src('components/platform-admin/workspace-detail.tsx').includes('Corporate (sovereign) mode') &&
+    src('components/platform-admin/workspace-detail.tsx').includes("label: 'Knowledge'") &&
+    src('components/platform-admin/workspace-detail.tsx').includes("label: 'Workflows'") &&
+    src('components/platform-admin/workspace-detail.tsx').includes('Danger zone') &&
+    src('app/platform-admin/platform-admin-client.tsx').includes('/platform-admin/workspaces/${company.id}') &&
+    src('app/platform-admin/platform-admin-client.tsx').includes("drive:    'Knowledge'") &&
+    src('components/meetings/week-calendar.tsx').includes('runs without connected calendars') &&
+    src('components/meetings/new-meeting-modal.tsx').includes('runs without connected calendars'));
+
+  check('SV5: THE MEETING ASSISTANT (auto-join bot) UI RETIRED (owner call, Aug 10 — "we no longer use it") — the Settings card is gone (component deleted), the meeting page\'s Send-assistant affordance and state chips are gone, both platform-admin toggles (per-company, per-user) and their handlers are gone. KEPT DELIBERATELY: the bot API routes and Hetzner infra stay dormant (the SAME service runs in-person recording — the product), bot_manager\'s insight generation serves the recording pipeline, and DB columns (attendee_enabled) stay for stored data',
+    !fileExists('components/settings/meeting-assistant-card.tsx') &&
+    !src('app/(main)/settings/page.tsx').includes('MeetingAssistantCard') &&
+    !src('app/meetings/[id]/meeting-detail-client.tsx').includes('Send assistant') &&
+    !src('app/platform-admin/platform-admin-client.tsx').includes('MeetingAssistant') &&
+    src('app/meetings/[id]/meeting-detail-client.tsx').includes('UI RETIRED'));
 
   // ── Report ──
   let pass = 0;

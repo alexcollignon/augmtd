@@ -468,6 +468,28 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+OO. **THE MEETING ASSISTANT UI RETIRED (Aug 10, owner call — "we no longer use it"; gate
+   SV5 — 123/123, build green).** The auto-join Google Meet bot's user-facing surfaces
+   are gone: the Settings card (component deleted), the meeting page's Send-assistant
+   affordance + state chips, both platform-admin toggles (per-company, per-user) and
+   their handlers. KEPT DELIBERATELY: the bot API routes + Hetzner infra dormant (the
+   same service runs in-person recording — the product), bot_manager's insight
+   generation (the recording pipeline uses it), DB columns for stored data. Full infra
+   removal only if the box ever gets rebuilt.
+NN. **THE WORKSPACE DETAIL PAGE + HONEST SOVEREIGN COPY (Aug 10 latest; gate SV4 —
+   122/122, build green; the sovereign door arc CLOSES).** (1) /platform-admin/
+   workspaces/[id]: one page per workspace in current product language — identity ·
+   access & entry (the corporate toggle with its explanation, entry link, join code) ·
+   branding (logo upload inline) · features as EXPLAINED switches (Email / Meetings /
+   Knowledge / Coworkers / Workflows — each says what it turns on) · members with roles +
+   pending invites · danger zone (suspend, two-step cascade delete). Every mutation
+   reuses the SAME platform-admin routes as the list — one behavior, two views; the list
+   row's name links in; list labels aligned (Drive→Knowledge, Tasks→Workflows). (2) The
+   invite doors speak honestly on a connection-less workspace ("runs without connected
+   calendars — share the details in a message instead"), never pointing at a hidden
+   Settings tab. (3) Settings re-audited: no connect-email CTA outside the hidden Email
+   tab (DataManagement/Identity are read-only over existing connections). The deeper
+   list-page redesign remains tail-queued; the detail page is the aligned home.
 MM. **THE PLATFORM-ADMIN SOVEREIGN CONTROLS (Aug 10 late night, arc 3/4 of the sovereign
    door; gate SV3 — 121/121, build green; admin UI awaits the owner's superadmin eyeball —
    the dedicated superadmin account is not automatable).** Spinning up a corporate client
@@ -475,7 +497,10 @@ MM. **THE PLATFORM-ADMIN SOVEREIGN CONTROLS (Aug 10 late night, arc 3/4 of the s
    email OFF = sovereign; emerald shield state, plain tooltips both ways); THE
    BRANDED-ENTRY editor in the expanded row (entry link click-to-copy · logo URL ·
    tagline → PATCH merges settings.branding); alignment pass: vestigial Home pill hidden,
-   bg-primary tokens → the kit's indigo. REMAINING (small): honest invite-send copy on
+   bg-primary tokens → the kit's indigo. THE LOGO UPLOAD (owner: "where to upload?"):
+   an Upload-logo button in the editor → super-admin route → public `branding` bucket
+   (PNG/JPEG/WebP ≤2MB; no SVG — a public SVG executes script on direct navigation) →
+   stamps settings.branding.logo_url in one motion (E2E: upload + public fetch 200). REMAINING (small): honest invite-send copy on
    sovereign workspaces; the deeper admin redesign (workspace detail page, current-product
    information architecture) stays on the tail.
 LL. **THE BRANDED ENTRY + THE SAFE-DATA MARK (Aug 10 night, arc 2 of the sovereign door;

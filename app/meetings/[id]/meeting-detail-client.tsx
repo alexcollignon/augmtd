@@ -327,62 +327,9 @@ export default function MeetingDetailClient({
                   Join
                 </a>
               )}
-              {event.meeting_link?.includes('meet.google.com') && !transcript && (
-                localAssistantState === 'joining' ? (
-                  <span className="text-[11px] font-medium text-amber-600">Joining…</span>
-                ) : localAssistantState === 'recording' ? (
-                  <span className="text-[11px] font-medium text-red-600">● Recording</span>
-                ) : localAssistantState === 'done' ? (
-                  <span className="text-[11px] font-medium text-neutral-400">Done</span>
-                ) : localAssistantState === 'scheduled' ? (
-                  cancellingBot ? (
-                    <span className="text-[11px] font-medium text-neutral-400 animate-pulse">Removing assistant…</span>
-                  ) : (
-                  <span className="inline-flex items-center gap-2">
-                    <span className="text-[11px] font-medium text-emerald-600">Assistant scheduled ✓</span>
-                    <button
-                      onClick={async () => {
-                        setCancellingBot(true);
-                        let success = false;
-                        try {
-                          const res = await fetch(`/api/meetings/${event.id}/cancel-bot`, { method: 'DELETE' });
-                          success = res.ok;
-                        } finally {
-                          setCancellingBot(false);
-                        }
-                        if (success) { setLocalAssistantState(null); setLocalAttendeeState(null); }
-                      }}
-                      className="text-[11px] text-neutral-400 hover:text-red-500 transition-colors"
-                    >
-                      × Remove
-                    </button>
-                  </span>
-                  )
-                ) : schedulingBot ? (
-                  <span className="text-[11px] font-medium text-neutral-400 animate-pulse">Scheduling assistant…</span>
-                ) : (
-                  <button
-                    onClick={async () => {
-                      setSchedulingBot(true);
-                      try {
-                        const res = await fetch(`/api/meetings/${event.id}/schedule-bot`, { method: 'POST' });
-                        if (res.ok) {
-                          setLocalAssistantState('scheduled');
-                          setLocalAttendeeState('scheduled');
-                          // Don't reset schedulingBot — localAssistantState change handles the transition
-                        } else {
-                          setSchedulingBot(false);
-                        }
-                      } catch {
-                        setSchedulingBot(false);
-                      }
-                    }}
-                    className="text-[11px] font-medium text-indigo-600 hover:text-indigo-800"
-                  >
-                    Send assistant →
-                  </button>
-                )
-              )}
+              {/* THE MEETING ASSISTANT (auto-join bot) UI RETIRED (Aug 10, owner call — "we no
+                  longer use it"): the Send-assistant affordance and its state chips are gone.
+                  In-person recording is the product; the bot routes/infra stay dormant. */}
               {transcript && (
                 <span className="flex items-center gap-1">
                   <MicrophoneIcon className="w-3.5 h-3.5 text-emerald-500" />

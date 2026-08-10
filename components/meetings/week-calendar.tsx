@@ -166,6 +166,10 @@ function QuickCreatePopover({ quickCreate, onClose, onSuccess, style }: QuickCre
       if (!res.ok) {
         if (data?.error === 'calendar_scope_required') {
           setError(`Calendar write access needed. Reconnect ${data.provider === 'gmail' ? 'Google' : 'Outlook'} in Settings.`);
+        } else if (data?.error === 'No active email connection found') {
+          // Honest words on a sovereign workspace (no mailbox auth exists here by design) —
+          // never point at a Settings tab that doesn't exist.
+          setError('This workspace runs without connected calendars, so invites can’t be sent from here. Share the meeting details in a message instead.');
         } else {
           setError(data?.error ?? 'Failed to create meeting');
         }

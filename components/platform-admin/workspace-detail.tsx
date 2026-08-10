@@ -1,0 +1,340 @@
+'use client';
+
+// THE WORKSPACE DETAIL (platform-admin redesign, Aug 10) — one workspace, whole truth, current
+// product language. Sections: identity · access & entry (the sovereign door) · branding ·
+// features · members · danger. Every mutation reuses the SAME platform-admin API routes the
+// list page calls — one behavior, two views.
+
+import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import {
+  ArrowLeftIcon, ClipboardDocumentIcon, CheckIcon, ArrowPathIcon, ShieldCheckIcon,
+  ExclamationTriangleIcon,
+} from '@heroicons/react/24/outline';
+import type { WorkspaceFeatures, WorkspaceType, FeatureKey } from '@/lib/workspace/types';
+import type { TierType } from '@/lib/ai/types';
+
+type Company = {
+  id: string; name: string; slug: string; plan: string; type: WorkspaceType; status: string;
+  features: WorkspaceFeatures; join_code: string; ai_tier: TierType | null; created_at: string;
+  member_count: number;
+  settings?: { branding?: { logo_url?: string; tagline?: string } } | null;
+};
+type Member = { id: string; user_id: string; email: string; full_name: string | null; role: string };
+
+const TYPE_OPTIONS = ['company', 'pilot', 'beta', 'internal', 'personal'];
+const PLAN_OPTIONS = ['starter', 'pro', 'enterprise'];
+const AI_TIER_OPTIONS: { value: TierType | null; label: string }[] = [
+  { value: null, label: 'Standard (default)' },
+  { value: 'standard', label: 'Standard' },
+  { value: 'private_shared', label: 'Private Shared' },
+  { value: 'bedrock_private', label: 'Bedrock Private' },
+  { value: 'bedrock_optimised', label: 'Bedrock Optimised' },
+];
+
+// Current-product feature language — what each switch actually turns on for the members.
+const FEATURES: Array<{ key: FeatureKey; label: string; detail: string }> = [
+  { key: 'email', label: 'Email', detail: 'Mailbox connections, inbox triage, reply drafting. OFF = the sovereign mode (no mailbox auth anywhere).' },
+  { key: 'meetings', label: 'Meetings', detail: 'In-person recording, transcripts, calendar view.' },
+  { key: 'drive', label: 'Knowledge', detail: 'The knowledge base: uploads, indexing, semantic search.' },
+  { key: 'agents', label: 'Coworkers', detail: 'The agent team — chat, delegation, DMs, skills.' },
+  { key: 'studio', label: 'Workflows', detail: 'Standing workflows, the ledger, the Studio builder.' },
+];
+
+const card = 'rounded-2xl bg-white border border-neutral-200 p-5';
+const label = 'text-[11px] font-semibold uppercase tracking-wide text-neutral-400';
+const input = 'rounded-md border border-neutral-200 px-2.5 py-1.5 text-[12.5px] outline-none focus:border-indigo-300';
+
+export function WorkspaceDetail({ company: initial }: { company: Company }) {
+  const router = useRouter();
+  const [c, setC] = useState<Company>(initial);
+  const [members, setMembers] = useState<Member[] | null>(null);
+  const [pending, setPending] = useState<Array<{ email: string }>>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const [logo, setLogo] = useState(initial.settings?.branding?.logo_url ?? '');
+  const [tagline, setTagline] = useState(initial.settings?.branding?.tagline ?? '');
+  const [name, setName] = useState(initial.name);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const entryUrl = `${typeof window !== 'undefined' ? window.location.origin : 'https://app.augmtd.ai'}/${c.slug}`;
+  const sovereign = c.features.email === false;
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch(`/api/platform-admin/companies/${c.id}/members`);
+        const d = await res.json();
+        setMembers((d.members ?? []) as Member[]);
+        setPending((d.pendingInvites ?? []) as Array<{ email: string }>);
+      } catch { setMembers([]); }
+    })();
+  }, [c.id]);
+
+  const copy = (what: string, text: string) => {
+    void navigator.clipboard.writeText(text);
+    setCopied(what); setTimeout(() => setCopied(null), 1800);
+  };
+
+  const patch = async (updates: Record<string, unknown>, apply: (prev: Company) => Company) => {
+    setBusy('patch');
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${c.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates),
+      });
+      if (res.ok) setC(apply);
+    } finally { setBusy(null); }
+  };
+
+  const toggleFeature = async (key: FeatureKey, next: boolean) => {
+    setBusy(`feature:${key}`);
+    setC(prev => ({ ...prev, features: { ...prev.features, [key]: next } }));
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${c.id}/features`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [key]: next }),
+      });
+      if (!res.ok) setC(prev => ({ ...prev, features: { ...prev.features, [key]: !next } }));
+    } finally { setBusy(null); }
+  };
+
+  const regenCode = async () => {
+    setBusy('code');
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${c.id}/regenerate-join-code`, { method: 'POST' });
+      const d = await res.json();
+      if (res.ok && d.join_code) setC(prev => ({ ...prev, join_code: d.join_code }));
+    } finally { setBusy(null); }
+  };
+
+  const uploadLogo = async (file: File) => {
+    setBusy('logo');
+    try {
+      const fd = new FormData(); fd.append('file', file);
+      const res = await fetch(`/api/platform-admin/companies/${c.id}/logo`, { method: 'POST', body: fd });
+      const d = await res.json().catch(() => null);
+      if (res.ok && d?.url) setLogo(d.url);
+    } finally { setBusy(null); }
+  };
+
+  const saveBranding = () => patch(
+    { branding: { logo_url: logo.trim(), tagline: tagline.trim() } },
+    prev => ({ ...prev, settings: { ...(prev.settings ?? {}), branding: { ...(logo.trim() ? { logo_url: logo.trim() } : {}), ...(tagline.trim() ? { tagline: tagline.trim() } : {}) } } }),
+  );
+
+  const changeRole = async (userId: string, role: string) => {
+    setBusy(`role:${userId}`);
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${c.id}/members/${userId}/role`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role }),
+      });
+      if (res.ok) setMembers(prev => (prev ?? []).map(m => m.user_id === userId ? { ...m, role } : m));
+    } finally { setBusy(null); }
+  };
+
+  const toggleSuspend = async () => {
+    const endpoint = c.status === 'active' ? 'suspend' : 'unsuspend';
+    setBusy('suspend');
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${c.id}/${endpoint}`, { method: 'POST' });
+      if (res.ok) setC(prev => ({ ...prev, status: prev.status === 'active' ? 'suspended' : 'active' }));
+    } finally { setBusy(null); }
+  };
+
+  const cascadeDelete = async () => {
+    setBusy('delete');
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${c.id}/cascade-delete`, { method: 'POST' });
+      if (res.ok) router.push('/platform-admin');
+    } finally { setBusy(null); }
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto bg-neutral-50">
+      <div className="max-w-3xl mx-auto px-6 py-8 space-y-4">
+        {/* Header */}
+        <div>
+          <Link href="/platform-admin" className="inline-flex items-center gap-1.5 text-[12px] text-neutral-400 hover:text-neutral-700 transition-colors mb-3">
+            <ArrowLeftIcon className="w-3.5 h-3.5" /> All workspaces
+          </Link>
+          <div className="flex items-center gap-3">
+            <input value={name} onChange={e => setName(e.target.value)}
+              onBlur={() => { if (name.trim() && name !== c.name) void patch({ name: name.trim() }, prev => ({ ...prev, name: name.trim() })); }}
+              className="text-[22px] font-semibold text-neutral-900 bg-transparent outline-none border-b border-transparent focus:border-indigo-300 min-w-0" />
+            <span className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full capitalize ${c.status === 'active' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>{c.status}</span>
+            {sovereign && (
+              <span className="flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
+                <ShieldCheckIcon className="w-3.5 h-3.5" /> Corporate
+              </span>
+            )}
+          </div>
+          <p className="text-[12px] text-neutral-400 mt-1">
+            {c.slug} · {c.member_count} member{c.member_count === 1 ? '' : 's'} · created {new Date(c.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+          </p>
+        </div>
+
+        {/* Identity */}
+        <div className={card}>
+          <p className={label}>Identity</p>
+          <div className="flex items-center gap-4 mt-3">
+            {([['Type', c.type, TYPE_OPTIONS, (v: string) => patch({ type: v }, p => ({ ...p, type: v as WorkspaceType }))],
+               ['Plan', c.plan, PLAN_OPTIONS, (v: string) => patch({ plan: v }, p => ({ ...p, plan: v }))]] as const)
+              .map(([lab, val, opts, on]) => (
+              <label key={lab} className="flex flex-col gap-1">
+                <span className="text-[11px] text-neutral-400">{lab}</span>
+                <select value={val} onChange={e => void on(e.target.value)} className={`${input} capitalize`}>
+                  {opts.map(o => <option key={o} value={o} className="capitalize">{o}</option>)}
+                </select>
+              </label>
+            ))}
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-neutral-400">AI mode</span>
+              <select value={c.ai_tier ?? ''} onChange={e => void patch({ ai_tier: e.target.value || null }, p => ({ ...p, ai_tier: (e.target.value || null) as TierType | null }))} className={input}>
+                {AI_TIER_OPTIONS.map(o => <option key={o.value ?? 'null'} value={o.value ?? ''}>{o.label}</option>)}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        {/* Access & entry — the sovereign door */}
+        <div className={card}>
+          <p className={label}>Access & entry</p>
+          <div className="mt-3 space-y-3">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[13px] font-medium text-neutral-800 flex items-center gap-1.5">
+                  <ShieldCheckIcon className={`w-4 h-4 ${sovereign ? 'text-emerald-500' : 'text-neutral-300'}`} />
+                  Corporate (sovereign) mode
+                </p>
+                <p className="text-[12px] text-neutral-400 mt-0.5 max-w-md">
+                  No mailbox or calendar auth anywhere — members get the agent team, workflows, meetings recording,
+                  and the knowledge base. Workflow email sending to stated addresses still works.
+                </p>
+              </div>
+              <button onClick={() => void toggleFeature('email', !sovereign ? false : true)}
+                disabled={busy === 'feature:email'}
+                className={`relative w-10 h-6 rounded-full transition-colors flex-shrink-0 ${sovereign ? 'bg-emerald-500' : 'bg-neutral-200'}`}>
+                <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${sovereign ? 'left-[18px]' : 'left-0.5'}`} />
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-neutral-500 w-20 flex-shrink-0">Entry link</span>
+              <button onClick={() => copy('entry', entryUrl)} className="flex items-center gap-1.5 text-[12px] font-mono text-indigo-600 hover:text-indigo-800 truncate">
+                {copied === 'entry' ? <CheckIcon className="w-3.5 h-3.5" /> : <ClipboardDocumentIcon className="w-3.5 h-3.5" />}
+                {entryUrl}
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-neutral-500 w-20 flex-shrink-0">Join code</span>
+              <button onClick={() => copy('code', c.join_code)} className="flex items-center gap-1.5 text-[12px] font-mono font-semibold text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-md px-2 py-0.5 transition-colors">
+                {copied === 'code' ? <CheckIcon className="w-3.5 h-3.5" /> : <ClipboardDocumentIcon className="w-3.5 h-3.5" />}
+                {c.join_code}
+              </button>
+              <button onClick={() => void regenCode()} disabled={busy === 'code'} title="Regenerate (invalidates the old code)"
+                className="p-1 rounded text-neutral-400 hover:text-neutral-700 disabled:opacity-50">
+                <ArrowPathIcon className={`w-3.5 h-3.5 ${busy === 'code' ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Branding */}
+        <div className={card}>
+          <p className={label}>Branding — the entry page & sidebar co-brand</p>
+          <div className="flex items-center gap-2 mt-3">
+            {logo && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={logo} alt="logo" className="h-7 max-w-[64px] object-contain rounded flex-shrink-0" />
+            )}
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void uploadLogo(f); }} />
+            <button onClick={() => fileRef.current?.click()} disabled={busy === 'logo'}
+              className="text-[12px] font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 disabled:opacity-50 rounded-md px-2.5 py-1.5 transition-colors flex-shrink-0">
+              {busy === 'logo' ? 'Uploading…' : 'Upload logo'}
+            </button>
+            <input value={logo} onChange={e => setLogo(e.target.value)} placeholder="…or paste a logo URL" className={`${input} flex-1`} />
+            <input value={tagline} onChange={e => setTagline(e.target.value)} placeholder="Tagline (optional)" className={`${input} flex-1`} />
+            <button onClick={() => void saveBranding()} disabled={busy === 'patch'}
+              className="text-[12px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-md px-3 py-1.5 transition-colors">
+              Save
+            </button>
+          </div>
+        </div>
+
+        {/* Features */}
+        <div className={card}>
+          <p className={label}>Features</p>
+          <div className="mt-3 space-y-3">
+            {FEATURES.map(f => (
+              <div key={f.key} className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[13px] font-medium text-neutral-800">{f.label}</p>
+                  <p className="text-[12px] text-neutral-400 mt-0.5 max-w-md">{f.detail}</p>
+                </div>
+                <button onClick={() => void toggleFeature(f.key, !c.features[f.key])}
+                  disabled={busy === `feature:${f.key}`}
+                  className={`relative w-10 h-6 rounded-full transition-colors flex-shrink-0 ${c.features[f.key] ? 'bg-indigo-500' : 'bg-neutral-200'}`}>
+                  <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${c.features[f.key] ? 'left-[18px]' : 'left-0.5'}`} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Members */}
+        <div className={card}>
+          <p className={label}>Members</p>
+          <div className="mt-3 space-y-2">
+            {members === null ? (
+              <p className="text-[12px] text-neutral-400">Loading…</p>
+            ) : members.length === 0 ? (
+              <p className="text-[12px] text-neutral-400">No members yet — send the entry link and join code.</p>
+            ) : members.map(m => (
+              <div key={m.id} className="flex items-center gap-3 text-[12.5px]">
+                <span className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-[10px] font-semibold text-indigo-700 flex-shrink-0">
+                  {(m.full_name ?? m.email)[0]?.toUpperCase()}
+                </span>
+                <span className="flex-1 text-neutral-700 truncate">{m.full_name ? `${m.full_name} (${m.email})` : m.email}</span>
+                <select value={m.role} onChange={e => void changeRole(m.user_id, e.target.value)} disabled={busy === `role:${m.user_id}`}
+                  className="px-2 py-0.5 rounded-full text-[10.5px] font-semibold capitalize border-0 bg-neutral-100 text-neutral-600 cursor-pointer focus:outline-none">
+                  <option value="owner">Owner</option>
+                  <option value="admin">Admin</option>
+                  <option value="member">Member</option>
+                </select>
+              </div>
+            ))}
+            {pending.length > 0 && (
+              <p className="text-[11.5px] text-neutral-400 pt-1">Pending invites: {pending.map(p => p.email).join(', ')}</p>
+            )}
+          </div>
+        </div>
+
+        {/* Danger */}
+        <div className={`${card} border-red-100`}>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-red-400">Danger zone</p>
+          <div className="mt-3 flex items-center gap-3">
+            <button onClick={() => void toggleSuspend()} disabled={busy === 'suspend'}
+              className="text-[12px] font-medium text-amber-700 border border-amber-200 hover:bg-amber-50 disabled:opacity-50 rounded-md px-3 py-1.5 transition-colors">
+              {c.status === 'active' ? 'Suspend workspace' : 'Unsuspend workspace'}
+            </button>
+            {!confirmDelete ? (
+              <button onClick={() => setConfirmDelete(true)}
+                className="text-[12px] font-medium text-red-600 border border-red-200 hover:bg-red-50 rounded-md px-3 py-1.5 transition-colors">
+                Delete workspace…
+              </button>
+            ) : (
+              <span className="flex items-center gap-2">
+                <span className="flex items-center gap-1 text-[12px] text-red-600"><ExclamationTriangleIcon className="w-4 h-4" />Deletes the workspace and unlinks all members.</span>
+                <button onClick={() => void cascadeDelete()} disabled={busy === 'delete'}
+                  className="text-[12px] font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-md px-3 py-1.5 transition-colors">
+                  {busy === 'delete' ? 'Deleting…' : 'Confirm delete'}
+                </button>
+                <button onClick={() => setConfirmDelete(false)} className="text-[12px] text-neutral-400 hover:text-neutral-600">Cancel</button>
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
