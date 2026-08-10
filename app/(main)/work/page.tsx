@@ -1,131 +1,19 @@
 import { redirect } from 'next/navigation';
-import { createClient } from '@/lib/supabase/server';
-import { createClient as createAdminClient } from '@supabase/supabase-js';
-import { WorkPageClient } from '@/app/work/work-page-client';
-export const metadata = { title: 'Chat — AUGMTD' };
 
-export default async function WorkPage({
+// ─── /work IS RETIRED (Aug 10, owner call — "the chat from before") ──────────────────────────
+// The Home conversation now holds everything this page did: full thread memory (the panel
+// transcript), production (the hand-off + artifacts-into-origin), attachments (drag-and-drop +
+// the attached material), streaming. OLD DEEP LINKS KEEP WORKING: a ?thread&agent link lands in
+// the same conversation through the Home chat opener; a bare visit lands on the Home.
+// The client components (work-page-client, chat-input-bar, …) stay for one release as the
+// /workers sweep's companions — deleted together when the dead-component sweep runs.
+
+export default async function WorkRedirect({
   searchParams,
 }: {
-  searchParams: Promise<{ thread?: string; prompt?: string; agent?: string }>;
+  searchParams: Promise<{ thread?: string; agent?: string }>;
 }) {
-  const { thread: initialThreadId, prompt: initialChatInput, agent: initialAgentId } = await searchParams;
-  const supabase = await createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
-
-  // Cleanup stale temporary threads (fire-and-forget, non-blocking)
-  void supabase
-    .from('work_threads')
-    .delete()
-    .eq('user_id', user.id)
-    .eq('is_temporary', true);
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('email, full_name')
-    .eq('id', user.id)
-    .single();
-
-  const THREAD_COLS = 'id, title, plan, artifact, artifacts, status, auto_generated, saved_workflow_id, is_generating, created_at, updated_at, agent_id, workflow_id';
-
-  const [{ data: threads }, { data: savedWorkflowsData }, { data: agentsData }, { data: workerRows }, initialThreadResult] = await Promise.all([
-    supabase
-      .from('work_threads')
-      .select(THREAD_COLS)
-      .eq('user_id', user.id)
-      .eq('status', 'active')
-      .or('is_temporary.eq.false,is_temporary.is.null')
-      .is('workflow_id', null)
-      .order('updated_at', { ascending: false })
-      .limit(50),
-    supabase
-      .from('saved_workflows')
-      .select('id, name, prompt')
-      .eq('user_id', user.id)
-      .order('last_used_at', { ascending: false, nullsFirst: false })
-      .limit(10),
-    supabase
-      .from('custom_agents')
-      .select('id, user_id, name, description, color, icon, conversation_starters, web_enabled, shared_with_company')
-      .eq('is_active', true)
-      .or('is_worker.is.null,is_worker.eq.false')
-      .is('worker_role', null)
-      .order('created_at', { ascending: true }),
-    // Fetch worker IDs to filter them out of chat history
-    supabase
-      .from('custom_agents')
-      .select('id')
-      .eq('user_id', user.id)
-      .not('worker_role', 'is', null),
-    // If opening a specific thread (e.g. workflow run thread), fetch it directly
-    // — it won't appear in the main query which excludes workflow_id threads.
-    initialThreadId
-      ? supabase
-          .from('work_threads')
-          .select(THREAD_COLS)
-          .eq('id', initialThreadId)
-          .eq('user_id', user.id)
-          .single()
-      : Promise.resolve({ data: null }),
-  ]);
-
-  // Resolve owner names for shared agents owned by others
-  const agentRows = agentsData ?? [];
-  const foreignAgentUserIds = [...new Set(agentRows.filter((a: { user_id: string }) => a.user_id !== user.id).map((a: { user_id: string }) => a.user_id))];
-  const agentOwnerNames: Record<string, string> = {};
-  if (foreignAgentUserIds.length > 0) {
-    const { data: agentProfiles } = await supabase
-      .from('profiles')
-      .select('id, full_name, email')
-      .in('id', foreignAgentUserIds);
-    (agentProfiles ?? []).forEach((p: { id: string; full_name: string | null; email: string | null }) => {
-      agentOwnerNames[p.id] = p.full_name ?? p.email?.split('@')[0] ?? 'Teammate';
-    });
-    const stillMissingAgents = foreignAgentUserIds.filter(id => !agentOwnerNames[id] || agentOwnerNames[id] === 'Teammate');
-    if (stillMissingAgents.length > 0) {
-      const admin = createAdminClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        { auth: { autoRefreshToken: false, persistSession: false } },
-      );
-      await Promise.all(stillMissingAgents.map(async (uid) => {
-        const { data: { user: authUser } } = await admin.auth.admin.getUserById(uid);
-        if (authUser?.email) agentOwnerNames[uid] = authUser.email.split('@')[0];
-      }));
-    }
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const enrichedAgents = agentRows.map((a: any) => ({
-    ...a,
-    is_owned_by_me: a.user_id === user.id,
-    owner_name: (a.user_id !== user.id ? (agentOwnerNames[a.user_id] ?? 'Teammate') : null) as string | null,
-  }));
-
-  // Filter out worker threads from chat history
-  const workerAgentIds = new Set((workerRows ?? []).map((w: { id: string }) => w.id));
-  const nonWorkerThreads = (threads ?? []).filter(t => !t.agent_id || !workerAgentIds.has(t.agent_id));
-
-  // Merge the directly-fetched thread (e.g. a workflow run thread) into the list
-  // if it isn't already there (workflow run threads are excluded from the main query).
-  const baseThreads = nonWorkerThreads;
-  const extraThread = initialThreadResult?.data ?? null;
-  const mergedThreads = extraThread && !baseThreads.find(t => t.id === extraThread.id)
-    ? [extraThread, ...baseThreads]
-    : baseThreads;
-
-  return (
-    <WorkPageClient
-      userId={user.id}
-      userEmail={profile?.email || user.email}
-      userFullName={profile?.full_name}
-      initialThreads={mergedThreads}
-      initialActiveThreadId={initialThreadId || null}
-      initialChatInput={initialChatInput || null}
-      initialSavedWorkflows={savedWorkflowsData || []}
-      initialAgents={enrichedAgents}
-      initialAgentId={initialAgentId || null}
-    />
-  );
+  const { thread, agent } = await searchParams;
+  if (thread && agent) redirect(`/home?chat=worker:${thread}:${agent}`);
+  redirect('/home');
 }

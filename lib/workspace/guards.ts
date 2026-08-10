@@ -35,7 +35,7 @@ export async function guardFeaturePage(feature: FeatureKey | null): Promise<MyWo
     }
     if (feature && !workspace.features[feature]) {
       // Feature not enabled for this workspace — send to /work (always-on)
-      redirect('/work');
+      redirect('/home');
     }
   }
 

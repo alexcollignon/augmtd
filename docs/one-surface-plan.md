@@ -468,6 +468,25 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+JJ. **/work RETIRED (Aug 10, owner call) + THE SOVEREIGN DOOR (designed, awaiting the go).**
+   /work → redirect (?thread&agent → the Home conversation opener; six inbound links
+   repointed: agent-form ×3, join, oauth-complete, onboarding, workspace guards); client
+   components stay one release, deleted with the /workers dead-component sweep. THE
+   SOVEREIGN DOOR (the corporate tier — enterprise clients who refuse Google/Microsoft
+   OAuth; the iScore blocker class): (1) A CORPORATE WORKSPACE MODE — one flag
+   (companies.settings.sovereign or features.email=false as the trigger) that HIDES every
+   mailbox/calendar AUTH surface: the Home's Connect-inbox first-look (→ "Set up your
+   agent team" CTA instead), Settings connections, the Inbox/Meetings sources where
+   unowned — audit finding: features.email exists but NOTHING on the Home consults it
+   today, the leak is real. Workflow email SENDING (Resend, stated addresses) stays — the
+   boundary is auth connections only. (2) THE BRANDED ENTRY — /join/[code] already
+   exists; extend to a branded landing (client logo from companies.settings.branding),
+   email+password only, three steps: enter email → password+code → set up your agents.
+   (3) THE SAFE-DATA MARK — a visual sovereignty badge at the sidebar's foot (private
+   models · EU processing · no third-party OAuth), plus the client logo beside ours in
+   the navbar for co-branded workspaces. (4) THE PLATFORM-ADMIN REVAMP — align to the
+   current product: current feature names, the sovereign toggle + entry-link + logo
+   management per workspace, retire dead controls. /workers components sweep rides along.
 II. **THE ATTACHED MATERIAL + TOKEN STREAMING + THE FORMAT-FLOOR FIX (Aug 10 late; gate CH5 —
    118/118, build green; replay suite 6/6; drop cycle re-verified on the served page).**
    Three moves: (1) ATTACH → PRODUCTION: /api/home/extract-attach extracts attachment text

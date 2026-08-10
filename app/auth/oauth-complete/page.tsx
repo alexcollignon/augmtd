@@ -18,7 +18,7 @@ export default function OAuthCompletePage() {
       } catch (err) {
         console.error('[OAuthComplete] Finalize failed (non-fatal):', err);
       }
-      router.replace('/work');
+      router.replace('/home');
     }
 
     async function run() {
