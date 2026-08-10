@@ -82,6 +82,9 @@ export function buildDelegationPrompt(args: {
       `meaningless without the missing pieces — a partial deliverable with honest gaps beats a request list.`,
     `- Report back plainly: what you did, what you're handing over, and anything you couldn't do.`,
     `- Never invent facts to fill a gap — a named gap is honest; a fabricated fact is not.`,
+    `- INSIDE a deliverable (a filled-in form, questionnaire, or document), keep every original ` +
+      `section/question and where only the user can supply or verify a fact, write ` +
+      `"[CONFIRM: <what's needed>]" in its place — a marked slot beats a dropped question.`,
   ].join('\n');
 }
 

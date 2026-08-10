@@ -1036,6 +1036,17 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/work/chat-input-bar.tsx').includes('Drop files to attach') &&
     src('components/work/chat-input-bar.tsx').includes('MAX_ATTACHMENTS - attachments.length'));
 
+  check('CH4: THE PRODUCTION HAND-OFF (found live: a pasted questionnaire + "please fill this in" returned the bare "I couldn\'t finish that one." while a competitor returned a finished document) — (1) THE PASTE CEILING DIED: the Home ask door accepts 20k chars (was a silent slice(0,500) — the brain answered a request it never saw) and the steer door matches; route budget 180s so a synchronous hand-off is never killed; (2) production without a named coworker DELEGATES to the fit (classifier rule); (3) loop exhaustion = the work + full material handed to Sofia automatically, never a shrug; (4) the delegation prompt mandates [CONFIRM: …] slots inside deliverables — a marked slot beats a dropped question; (5) long pastes collapse in the bubble (presentation only); the filing nudge never decorates an empty answer. E2E replay T5: delegated=Sofia, real artifact, 27 [CONFIRM] marks',
+    src('app/api/home/ask/route.ts').includes('slice(0, 20000)') &&
+    src('app/api/home/ask/route.ts').includes('maxDuration = 180') &&
+    src('app/api/items/steer/route.ts').includes('slice(0, 20000)') &&
+    src('lib/converse/index.ts').includes('AND for PRODUCED work') &&
+    src('lib/converse/index.ts').includes('THE EXHAUSTION HAND-OFF') &&
+    src('lib/converse/index.ts').includes('exhausted: !applied.length') &&
+    src('lib/home/delegate.ts').includes('[CONFIRM: <what\'s needed>]') &&
+    src('components/home/home-ask.tsx').includes('function UserBubble') &&
+    src('app/api/home/ask/route.ts').includes('focus && turn.say?.trim()'));
+
   // ── Report ──
   let pass = 0;
   for (const [n, ok, d] of out) {

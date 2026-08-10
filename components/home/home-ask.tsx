@@ -95,6 +95,25 @@ function Answer({ text, refs, onOpen }: { text: string; refs: Ref[]; onOpen: (r:
   );
 }
 
+// A long paste must never render as an endless wall (Aug 10 — the pilot's questionnaire filled
+// the whole viewport): past ~700 chars the user bubble collapses to its head with an explicit
+// expand. The FULL text still went to the brain — this is presentation only.
+function UserBubble({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > 700;
+  return (
+    <span className="rounded-2xl rounded-br-sm bg-neutral-100 px-3.5 py-2 text-[13.5px] text-neutral-800 max-w-[80%] whitespace-pre-wrap">
+      {long && !open ? `${text.slice(0, 700)}…` : text}
+      {long && (
+        <button onClick={() => setOpen((v) => !v)}
+          className="mt-1 block text-[12px] font-medium text-indigo-600 hover:text-indigo-700">
+          {open ? 'Show less' : `Show all (${Math.round(text.length / 1000)}k characters)`}
+        </button>
+      )}
+    </span>
+  );
+}
+
 // ── THE DURABLE HOME CHAT (Aug 6 — the fold's enabling brick; one-surface ladder rung 2 +
 // law 4: HISTORY IS THE DEFAULT). The Home conversation is a LOOSE ROOM (`chat:<uuid>` in
 // room_turns): every exchange persists, a reload rehydrates, "New" starts a fresh room while
@@ -725,7 +744,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             <div ref={scrollRef} className="space-y-4 max-h-[calc(100vh-250px)] min-h-[40vh] overflow-y-auto [scrollbar-width:thin] pr-1 pb-3">
               {turns.map((t, i) => (
                 t.role === 'user' ? (
-                  <div key={i} className="flex justify-end"><span className="rounded-2xl rounded-br-sm bg-neutral-100 px-3.5 py-2 text-[13.5px] text-neutral-800 max-w-[80%]">{t.text}</span></div>
+                  <div key={i} className="flex justify-end"><UserBubble text={t.text} /></div>
                 ) : (
                   <div key={i} className="pr-2">
                     {/* A coworker's reply wears THEIR name (the one-narrator law); it streams
