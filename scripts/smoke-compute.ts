@@ -1074,6 +1074,17 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('lib/workspace/tool-capabilities.ts').includes("send_prepared_reply: 'email'") &&
     src('lib/converse/index.ts').includes('toolDefs = CHIEF_TOOL_DEFS.filter'));
 
+  check('SV2: THE BRANDED ENTRY + THE SAFE-DATA MARK — app.augmtd.ai/<slug> is a client\'s own front door (root catch-all; route precedence keeps real routes ahead; unknown slug → /login): co-branded header (client logo from companies.settings.branding × ours), email+password ONLY (no OAuth anywhere on the page), the three steps visible (email → password & workspace code → set up your agents); an authed non-member skips to the code step; a member bounces /home; signup email-confirm returns to the SAME landing (auth/callback ?next=, relative paths only). The sidebar carries the co-brand logo and the sovereign footer mark ("Private environment", email-feature-off workspaces). Verified live: unauthenticated 200 with name+steps+mark, unknown slug 307 → /login, authed non-member renders the code step (screenshot)',
+    src('app/[slug]/page.tsx').includes("ilike('slug', slug)") &&
+    src('app/[slug]/page.tsx').includes("mode = 'code'") &&
+    src('components/auth/corporate-entry.tsx').includes('Set up your agents') &&
+    !src('components/auth/corporate-entry.tsx').includes('signInWithOAuth') &&
+    src('components/auth/corporate-entry.tsx').includes('auth/callback?next=/') &&
+    src('app/auth/callback/route.ts').includes("next.startsWith('/') && !next.startsWith('//')") &&
+    src('components/one/one-sidebar.tsx').includes('brandLogo') &&
+    src('components/one/one-sidebar.tsx').includes('Private environment') &&
+    src('app/(main)/layout.tsx').includes('sovereign = features.email === false'));
+
   // ── Report ──
   let pass = 0;
   for (const [n, ok, d] of out) {

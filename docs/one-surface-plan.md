@@ -468,6 +468,22 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+LL. **THE BRANDED ENTRY + THE SAFE-DATA MARK (Aug 10 night, arc 2 of the sovereign door;
+   gate SV2 — 120/120, build green; verified live: unauth 200 with steps+mark, unknown
+   slug → /login, authed non-member → code step, screenshot).** app.augmtd.ai/<slug> is
+   a client's own front door — a root [slug] catch-all (real routes win by precedence):
+   co-branded header (companies.settings.branding.logo_url × augmtd), email+password
+   ONLY, the three steps visible (enter your email → password & workspace code → set up
+   your agents; step 3 completes on the Home's sovereign first look). Auth flow:
+   supabase signUp with emailRedirectTo back to the SAME landing (auth/callback gained
+   ?next=, relative-only); session-immediate signups join in one motion via the existing
+   /api/company/join; authed non-members skip to the code step; members bounce /home.
+   The SIDEBAR carries the co-brand (client logo beside the wordmark) and THE SAFE-DATA
+   MARK ("Private environment · 🛡" footer line, tooltip: private AI models · EU
+   processing · no third-party sign-in) on email-feature-off workspaces. Probe branding
+   furniture set on Probe Sovereign Co. REMAINING in the arc: the platform-admin revamp
+   (sovereign toggle · branding/logo management · entry-link surfacing · current naming ·
+   retire dead controls) + honest invite-send copy on sovereign workspaces.
 KK. **THE SOVEREIGN LEAK AUDIT (Aug 10 night — the corporate tier begins; gate SV1 — 119/119,
    build green; E2E: probe workspace flag-flip propagated + restored; recording stays IN
    the corporate tier by owner call).** features.email=false is THE sovereign trigger —

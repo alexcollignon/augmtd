@@ -40,6 +40,10 @@ export default async function MainLayout({ children, modal }: { children: React.
       .find((p: any) => typeof p === 'string' && p.length > 0) ?? null;
 
   const features = workspace?.features ?? DEFAULT_FEATURES;
+  // THE SOVEREIGN DOOR: co-brand + safe-data mark ride the workspace row (settings.branding;
+  // email feature OFF = the corporate mode).
+  const branding = ((workspace?.settings ?? {}) as { branding?: { logo_url?: string } }).branding ?? {};
+  const sovereign = features.email === false;
 
   return (
     <WorkspaceProvider workspace={workspace ?? null} isSuperAdmin={isSuperAdmin}>
@@ -49,6 +53,9 @@ export default async function MainLayout({ children, modal }: { children: React.
           avatarUrl={avatarUrl}
           isSuperAdmin={isSuperAdmin}
           features={features}
+          brandLogo={branding.logo_url ?? null}
+          brandName={workspace?.name ?? null}
+          sovereign={sovereign}
         />
         {children}
         {/* @modal parallel slot — filled only by the intercepting /item/[id] route (modal over Home) */}
