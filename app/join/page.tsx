@@ -20,7 +20,7 @@ export default async function JoinPage() {
 
   const workspace = await getMyWorkspace(user.id, supabase);
 
-  if (workspace && workspace.status === 'active') redirect('/work');
+  if (workspace && workspace.status === 'active') redirect('/home');
   if (workspace && workspace.status === 'suspended') redirect('/suspended');
 
   return <JoinClient userEmail={user.email ?? ''} initialCode={null} />;

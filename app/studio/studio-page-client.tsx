@@ -69,14 +69,15 @@ export function StudioPageClient({
       }
 
       // No target — the overview is gone; nothing to show here.
-      router.replace('/workers');
+      router.replace('/home?view=workflows');
     }
 
     init();
     return () => { cancelled = true; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const dest = backTo ?? '/workers';
+  // /workers is retired (slice #5) — the ledger is Studio's default way back.
+  const dest = backTo ?? '/home?view=workflows';
   const close = () => router.push(dest);
 
   // Backing out of a freshly-created, never-edited blank pipeline removes it so

@@ -16,6 +16,7 @@ import { WorkerKnowledgeTab } from '@/components/workers/tabs/worker-knowledge-t
 import { SkillsLibraryView } from '@/components/workers/skills-library-view';
 import { TabBar } from '@/components/ui';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { ROLE_AVATARS } from '@/lib/workers/roles';
 
 type Worker = { id: string; name: string; description: string | null; worker_role: string | null };
 const LS_KEY = 'aug-team-roster-v1';
@@ -27,8 +28,8 @@ function WorkerRow({ w }: { w: Worker }) {
   return (
     <div className="rounded-xl border border-neutral-200 bg-white overflow-hidden">
       <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-neutral-50/60 transition-colors">
-        {w.worker_role ? (
-          <Image src={`/workers/${w.worker_role}.png`} alt="" width={36} height={36} className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
+        {w.worker_role && ROLE_AVATARS[w.worker_role] ? (
+          <Image src={ROLE_AVATARS[w.worker_role]} alt="" width={36} height={36} className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
         ) : (
           <span className="w-9 h-9 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center text-[14px] font-semibold flex-shrink-0">{first[0]}</span>
         )}

@@ -9,7 +9,7 @@ export default async function OnboardingPage() {
   if (!user) redirect('/login');
 
   const workspace = await getMyWorkspace(user.id, supabase);
-  if (workspace) redirect('/work');
+  if (workspace) redirect('/home');
 
   return <OnboardingClient userEmail={user.email ?? ''} />;
 }

@@ -468,6 +468,89 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+DD. **THE ANTICIPATION PASS (the initiative loop begins, Aug 10; gate AN1 — 111/111, build
+   green; E2E on the probe: a room-linked meeting tomorrow drew a grounded prep brief into
+   its room UNPROMPTED — because line leading, chip resolving, TTL + exactly-once holding,
+   and silence-as-verdict on the due-soon half).** Proactivity beyond arrivals: the pass
+   walks TIME, not the inbox. (1) MEETINGS (next 36h, linked to a room — anticipation
+   prepares WORK, it never invents projects): ONE reasoned pass over the room's page → the
+   prep brief narrated into the room, BECAUSE line first ("Prep for X (Tue 09:23) — because
+   this meeting is on your calendar and this room holds the work"); the "Prep ready" chip
+   on the Home's This-week card opens the room where the prep waits. (2) DUE-SOON (≤48h or
+   overdue, still unprepared): the SAME judge-gated prepareOneItem runs EARLY —
+   anticipation moves the clock, never bypasses the judge. THE TRUST RULES STRUCTURAL:
+   hard caps (2 briefs + 2 prepares/run), 6h self-gate (rides the brief route's after()),
+   exactly-once fire records (item_plans kind='anticipation'), silence is a valid verdict.
+   REMAINING IN THE LOOP: the silence watch (absence as an event → judged chase) → the
+   strategic ask + Settings→Autonomy (the outcome log finally spent) → the deck-row
+   because-chip generalized.
+CC. **THE CONVERGENCE KIT + THE DAY-STATE BLOCK (Aug 10, owner conversation on DM vs chief —
+   "avoid redundancy… can't feel like multiple systems"; gate CS5 — 110/110, build green;
+   live-verified).** The settled model: ONE chat surface, the conversation determines the
+   addressee (unaddressed → the chief; "Clara, …" anywhere → Clara; her DM → a standing
+   addressed conversation). The DM's unique value = SUSTAINED coworker context (memory,
+   skills, iteration) + relationship history + her full toolset by words. THE LAW: **facts
+   are shared everywhere; depth stays with the role** — (1) THE DAY-STATE BLOCK (initiative
+   loop STEP 0): one compact judged state of the day (derived from the SAME spine the deck
+   renders — buildWorkItems; cached 10 min, ~500 chars) injected into BOTH worker runtimes,
+   so "what's slipping?" asked in a DM can never contradict the deck/chief; the deep
+   machinery (full board, ledger, dispatcher, scope binding) stays chief-only BY DESIGN
+   (role clarity, not cost). This object IS the anticipation pass's output format — built
+   once, two consumers. (2) DM MODE LEGIBILITY: persistent "Chat with X" header; "Message
+   X…" placeholder (mention copy says what @ does THERE: pulls a teammate's work/document
+   in); an empty DM opens with the narrator's line (found live: the facepile's Chat created
+   the thread and read as a dead click). (3) NEW SESSION in the DM (fresh thread, the
+   relationship + memory persist — memory lives on the agent, not the thread). NORTH STAR
+   noted: the full merge (chief as permanent router, coworker voices inside any
+   conversation, DMs optional) pairs with thread migration in the tail. NEXT: THE
+   INITIATIVE LOOP proper — the anticipation pass computes the day-state proactively +
+   THE BECAUSE-CHIP → silence watch → strategic ask + Settings→Autonomy.
+BB. **THE WORKFLOWS COHERENCE SLICE (designed Aug 10 with the owner — the /workers retirement
+   made concrete; COMPLETE Aug 10, gates CS1–CS4 — 109/109, tasks 72/72, build green).
+   /WORKERS IS RETIRED: the route redirects (old ?worker&thread deep links keep working —
+   they open the Home conversation), every link generator repointed to /home?chat=worker:…,
+   entry/fallback redirects land on /home, Studio's default way back is the ledger, and the
+   Home's "From your team" feed died (its jobs: Runs+badge · deck debt · conversations · the
+   facepile). Riders found live: THE SILENT-DRAFT FIX (Rene — 60s generator budget, loud
+   failures everywhere on the ledger, ONE GATE code-enforced) and THE GROUNDING BOUNDARY
+   (owner law: "ground at the moment the information changes the output" — draft-time =
+   identity-level ~400 chars; run-time = the full live page; the full-page-at-draft was
+   ballast). NOTE: the old /work chat hub still stands (separate decision, not this slice).** The laws settled in three owner conversations:
+   **ORIGIN DECIDES THE SURFACE** (the user's words started it → the result returns to that
+   conversation, which artifacts-into-origin already does; a schedule/trigger started it → the
+   result lives in Workflows→Runs, full stop — scheduled output NEVER touches conversations;
+   the Claude "Morning brief · 9 new" pattern, owner screenshot). **ONE INTENT → ONE CARD →
+   ONE HOME** (standing-sounding words anywhere — Home chat, coworker chat, room — draw the
+   SAME review card inline; confirm creates; the card collapses to a receipt linking the
+   ledger; coworker create_task goes BEHIND the confirm — saying prepares, committing stays
+   explicit; ambiguity defaults to once-now + a "make it standing?" offer chip; no redirects —
+   cards travel, objects don't). **YOU OWN IT, THE SYSTEM RUNS IT** (a coworker is the voice,
+   never the owner; ONE management home = the ledger; chat is a remote control on the one
+   registry, never a second ledger). Build order:
+   (1) RUNS AS THE ONE HOME — unread badge on the sidebar Workflows item (succeeded runs not
+       yet reviewed); opening the Runs lens / a deliverable stamps reviewed_at — REPAIRS THE
+       LIVE AUTO-PAUSE REGRESSION (reviewed_at was stamped ONLY by the old /workers chat
+       thread; threshold 3 → the AHK workflows would wrongly self-pause in 3 Wednesdays);
+       auto-pause speaks its reason in the ledger ("paused itself — runs went unopened ·
+       resume?"; resume clears auto_paused_at — verified already wired).
+   (2) THE ONE CREATION CARD — the review card componentized, rendered in both chat runtimes;
+       coworker create_task behind the confirm.
+   (3) SETTINGS→TEAM ABSORPTION — Roster · Tools · Skills config tabs move in.
+   (4) THE TEAM FACEPILE — sidebar FOOTER (global chrome, deliberately NOT the island — the
+       island shows views-of-here; the team is presence, not a view): small avatars + "Your
+       team" → a popover (face · role · ONE line of live state read from run checkpoints ·
+       Chat verb · Settings link). The last /workers job ("meet your team") rehomed; presence
+       makes proactivity legible and keeps the team fiction — the uncopyable differentiator —
+       visible hourly. The report-back feed does NOT migrate: it dissolves (deliverables →
+       Runs + badge; failures → deck debt; ad-hoc results → the conversation that asked).
+   (5) RETIREMENT MECHANICS — deep-link repoints (/workers?worker&thread → the Home
+       conversation opener), post-OAuth landing, /workers → redirect.
+   Queue after this slice: THE INITIATIVE LOOP (the proactivity redesign, settled Aug 10:
+   anticipation pass + THE BECAUSE-CHIP → silence watch → strategic ask + Settings→Autonomy;
+   the loop = notice → understand the delta → decide do/prepare/ask/schedule/SILENT → act at
+   the earned autonomy level → surface with proportion → learn; legible + proportionate, the
+   deck stays the one attention door, moves narrate into rooms, grounding carries them —
+   every part knows), then streaming, THE ONE VIEWER, perf.
 AA. **THE WORKFLOWS POLISH ARC — DONE (Aug 9 evening, four owner screenshot rounds; gates
    105/105, tasks 72/72, build green; every change live-verified).** (1) SIMPLE LANGUAGE
    everywhere ("Set one up once — it runs on its own and delivers to you" · "delivered by

@@ -239,7 +239,7 @@ export async function buildWorkItems(
         who: worker?.name || null,
         actor: 'team', state: 'done',
         when: { explicit: null, bucket: inferBucket({ explicit: null, waiting: false, ageDays: ageDaysOf(at, todayMs), todayStr }) },
-        source: 'deliverable', href: t.agent_id ? `/workers?worker=${t.agent_id}` : '/workers',
+        source: 'deliverable', href: '/home?view=runs',
         at, startAt: String(at).slice(0, 10), projectId: (t.project_id as string) || null, automated: false, initiative: null, effort: null,
         ...LEDGER_DEFAULTS,
       });

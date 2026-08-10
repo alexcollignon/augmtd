@@ -197,64 +197,6 @@ function SenderAvatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' 
 
 // Coworker avatar — the real worker headshot (role → /workers/*.png), falling back to an initial chip.
 // This is the ONE place the AI team gets a FACE on the Home, so they read as teammates, not gray rows.
-function CoworkerAvatar({ role, name, size = 'md' }: { role?: string | null; name?: string | null; size?: 'sm' | 'md' }) {
-  const [broken, setBroken] = useState(false);
-  const src = role ? ROLE_AVATARS[role] : undefined;
-  const dim = size === 'sm' ? 'w-6 h-6' : 'w-8 h-8';
-  if (src && !broken) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={src} alt="" className={`flex-shrink-0 ${dim} rounded-full object-cover ring-1 ring-indigo-100`} onError={() => setBroken(true)} aria-hidden="true" />;
-  }
-  return <SenderAvatar name={name || 'AI'} size={size} />;
-}
-
-// ── "From your team" — the AI coworkers' feed. DELIBERATELY differentiated from every other rail
-// section: coworkers are the only ACTIVE entities on the board (they did work, they report back in the
-// first person, you can hand more to them), so they get FACES, the indigo/agent accent, and a DM feel —
-// never a gray row twinned with newsletters. Kept simple + scannable: a few recent notes + what's ready.
-function TeamFeed({ messages, reviews }: { messages: TeamMsg[]; reviews: TeamReview[] }) {
-  const msgs = messages.slice(0, 3);
-  const revs = reviews.slice(0, 2);
-  const extra = (messages.length - msgs.length) + (reviews.length - revs.length);
-  const rowCls = 'group min-w-0 overflow-hidden flex items-start gap-2.5 rounded-xl bg-white/80 border border-indigo-100/70 px-3 py-2.5 transition-all duration-200 hover:border-indigo-200 hover:bg-white hover:shadow-[0_2px_12px_-6px_rgba(79,70,229,0.28)]';
-  return (
-    <section className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/60 to-white p-3.5">
-      <div className="flex items-center gap-1.5 mb-3">
-        <UsersIcon className="w-3.5 h-3.5 text-indigo-500" />
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-indigo-600/80">From your team</h2>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-        {msgs.map((m, i) => (
-          <Link key={`m${i}`} href={m.workerId ? `/workers?worker=${m.workerId}` : '/workers'} className={rowCls}>
-            <CoworkerAvatar role={m.workerRole} name={m.workerName} />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-[12.5px] font-semibold text-neutral-800 truncate">{m.workerName ?? 'A coworker'}</span>
-                {m.workerRole && ROLE_LABELS[m.workerRole] && <span className="text-[10.5px] text-indigo-400 truncate flex-shrink-0">{ROLE_LABELS[m.workerRole]}</span>}
-              </div>
-              {m.text && <p className="text-[12px] text-neutral-500 mt-0.5 line-clamp-2 leading-snug">{m.text}</p>}
-            </div>
-          </Link>
-        ))}
-        {revs.map((r, i) => (
-          <Link key={r.artifactId ?? r.threadId ?? `r${i}`} href={r.workerId ? `/workers?worker=${r.workerId}` : '/workers'} className={rowCls}>
-            <CoworkerAvatar role={r.workerRole} name={r.workerName} size="sm" />
-            <div className="min-w-0 flex-1">
-              <span className="text-[12.5px] text-neutral-800 truncate block">{r.title || 'Ready for you'}</span>
-              <p className="text-[11px] text-neutral-400">Ready for you{r.workerName ? ` · ${r.workerName}` : ''}</p>
-            </div>
-            <span className="flex-shrink-0 self-center text-[10px] font-semibold uppercase tracking-wide text-indigo-600 bg-indigo-50 rounded-full px-2 py-0.5">Ready</span>
-          </Link>
-        ))}
-      </div>
-      <Link href="/workers" className="mt-2.5 inline-flex items-center gap-1 text-[11.5px] font-medium text-indigo-600 hover:text-indigo-700 transition-colors">
-        {extra > 0 ? `View all · ${extra} more` : 'Open your team'}
-        <ChevronRightIcon className="w-3.5 h-3.5" />
-      </Link>
-    </section>
-  );
-}
-
 // (HeaderCounts KPI strip removed — it was dead since July 13; the agenda spine owns the counts now.)
 
 // ── "Day cleared" progress ring — a refined circular gauge for the Home header. Meaning:
@@ -851,7 +793,7 @@ const MOMENTUM = MOMENTUM_TOKENS;
 // column — day-grouped, deal-chipped, deterministic (zero AI). The "To prep" card was REMOVED
 // (the prep pass still prepares; its briefs live in the deal rooms). Cache-read lives in the
 // effect (the SSR'd-route rule — never in a useState initializer). ──
-type HorizonRow = { id: string; title: string; start: string; attendees: number; entity: { id: string; name: string } | null };
+type HorizonRow = { id: string; title: string; start: string; attendees: number; entity: { id: string; name: string } | null; prepReady?: boolean };
 function ThisWeekCard() {
   const [h, setH] = useState<{ thisWeek: HorizonRow[] } | null>(null);
   useEffect(() => {
@@ -919,6 +861,17 @@ function ThisWeekCard() {
                             <span className="block text-[12px] text-neutral-700 leading-snug line-clamp-2">{r.title}</span>
                             {r.entity && <span className="block text-[10.5px] text-indigo-500 truncate">{r.entity.name}</span>}
                           </span>
+                          {/* THE ANTICIPATION CHIP — the pass prepared this meeting's brief
+                              unprompted; the chip opens the room where the prep waits. */}
+                          {r.prepReady && r.entity && (
+                            <span
+                              role="button"
+                              onClick={(e) => { e.stopPropagation(); router.push(`/home?view=projects&entity=${r.entity!.id}`); }}
+                              className="flex-shrink-0 self-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors"
+                            >
+                              Prep ready
+                            </span>
+                          )}
                         </button>
                       ))}
                     </div>
@@ -1834,7 +1787,9 @@ export function HomeView() {
 
   // "From your team" — folded into the ambient bar as a plain count for now (the richer coworker treatment
   // is deferred until their role is clearer). Chip → the existing TeamFeed on expand.
-  if (hasTeam) rail('team', 'From your team', (team!.messages.length + team!.needsReview.length) || null, <TeamFeed messages={team!.messages} reviews={team!.needsReview} />);
+  // "From your team" DIED with the /workers retirement (slice #5, origin-decides-the-surface):
+  // scheduled output lives in Workflows→Runs (+ the sidebar badge), failures are deck debt,
+  // ad-hoc results return to the conversation that asked, presence is the footer facepile.
 
   if (hasEye) rail('eye', 'Keep an eye on', eyeLive, (
     eyeLive === 0

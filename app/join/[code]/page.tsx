@@ -28,7 +28,7 @@ export default async function JoinWithCodePage({
 
   const workspace = await getMyWorkspace(user.id, supabase);
   if (workspace && workspace.status === 'active') {
-    redirect('/work');
+    redirect('/home');
   }
   if (workspace && workspace.status === 'suspended') {
     redirect('/suspended');

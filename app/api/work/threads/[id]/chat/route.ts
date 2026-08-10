@@ -516,6 +516,14 @@ export async function POST(
           const pageBlock = await focusedProjectGrounding(adminClient, user.id, content, { excludeName: agent.name ?? null });
           if (pageBlock) contextParts.push(pageBlock);
         } catch { /* non-fatal */ }
+        // THE DAY-STATE BLOCK (initiative loop step 0): the shared headline of the day — a DM
+        // answer about the day can never contradict the deck/chief (facts are shared everywhere;
+        // depth stays with the role).
+        try {
+          const { getSharedDayState } = await import('@/lib/home/day-state');
+          const dayBlock = await getSharedDayState(adminClient, user.id);
+          if (dayBlock) contextParts.push(dayBlock);
+        } catch { /* non-fatal */ }
       }
 
       if (agent.memory_text?.trim()) {
@@ -820,7 +828,8 @@ export async function POST(
     const allToolCalls: Array<{ name: string; summary: string; citations?: string[]; clarification?: object }> = [];
     const allArtifactIds: string[] = [];
     const allArtifactMeta: Record<string, { title: string; type: string }> = {};
-    const allEmailDrafts: EmailDraft[] = [];
+    const allWorkflowDrafts: Array<Record<string, unknown>> = [];
+          const allEmailDrafts: EmailDraft[] = [];
     const allArtifacts: Record<string, unknown>[] = [];
     // Accumulated across every streamed call this exchange makes (the tool loop can call the
     // model multiple times) — logged once at the end. Native-loop chat only; AgentOS-routed
@@ -1043,12 +1052,13 @@ export async function POST(
                     calledTools.add(dedupeKey);
 
                     send({ type: 'tool_start', name: tc.function.name, id: tc.id, label: toolLabel(tc.function.name) });
-                    const { result, summary, artifact, citations, clarification, stopStream, emailDraft, cardArtifact } = await executeChatTool(tc.function.name, toolInput, sources, runContext);
+                    const { result, summary, artifact, citations, clarification, stopStream, emailDraft, cardArtifact, workflowDraft } = await executeChatTool(tc.function.name, toolInput, sources, runContext);
                     send({ type: 'tool_result', name: tc.function.name, id: tc.id, summary, ...(citations?.length ? { citations } : {}) });
                     allToolCalls.push({ name: tc.function.name, summary, ...(citations?.length ? { citations } : {}) });
                     if (clarification) send({ type: 'clarification_request', ...(clarification as object) });
                     if (artifact?.id) { allArtifactIds.push(artifact.id); allArtifactMeta[artifact.id] = { title: artifact.title, type: artifact.type }; send({ type: 'artifact_ready', artifact: { id: artifact.id, type: artifact.type, title: artifact.title } }); }
                     if (emailDraft) { allEmailDrafts.push(emailDraft); send({ type: 'email_draft', draft: emailDraft }); }
+                    if (workflowDraft) { allWorkflowDrafts.push(workflowDraft); send({ type: 'workflow_draft', draft: workflowDraft }); }
                     if (cardArtifact) { allArtifacts.push(cardArtifact); send({ type: 'artifact', artifact: cardArtifact }); }
                     toolResultMessages.push({ role: 'tool', tool_call_id: tc.id, content: result });
                     toolResultCache.set(dedupeKey, result);
@@ -1126,7 +1136,7 @@ export async function POST(
 
                   send({ type: 'tool_start', name: tc.function.name, id: tc.id, label: toolLabel(tc.function.name) });
 
-                  const { result, summary, artifact, citations, clarification, stopStream, retryCorrection, emailDraft, cardArtifact } = await executeChatTool(
+                  const { result, summary, artifact, citations, clarification, stopStream, retryCorrection, emailDraft, cardArtifact, workflowDraft } = await executeChatTool(
                     tc.function.name,
                     toolInput,
                     sources,
@@ -1162,6 +1172,7 @@ export async function POST(
                   }
 
                   if (emailDraft) { allEmailDrafts.push(emailDraft); send({ type: 'email_draft', draft: emailDraft }); }
+                  if (workflowDraft) { allWorkflowDrafts.push(workflowDraft); send({ type: 'workflow_draft', draft: workflowDraft }); }
                   if (cardArtifact) { allArtifacts.push(cardArtifact); send({ type: 'artifact', artifact: cardArtifact }); }
 
                   toolResultMessages.push({
@@ -1286,6 +1297,7 @@ export async function POST(
                 artifact_ids: allArtifactIds,
                 ...(Object.keys(allArtifactMeta).length > 0 ? { artifact_meta: allArtifactMeta } : {}),
                 ...(allEmailDrafts.length > 0 ? { email_drafts: allEmailDrafts } : {}),
+                ...(allWorkflowDrafts.length > 0 ? { workflow_drafts: allWorkflowDrafts } : {}),
                 ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
                 ...(clarificationCall?.clarification ? { clarification: clarificationCall.clarification } : {}),
               },
@@ -1606,7 +1618,7 @@ async function executeChatTool(
   input: Record<string, unknown>,
   sources: string[],
   ctx: RunContext
-): Promise<{ result: string; summary: string; artifact?: DocumentArtifact; citations?: string[]; clarification?: object; stopStream?: boolean; retryCorrection?: string; emailDraft?: EmailDraft; cardArtifact?: Record<string, unknown> }> {
+): Promise<{ result: string; summary: string; artifact?: DocumentArtifact; citations?: string[]; clarification?: object; stopStream?: boolean; retryCorrection?: string; emailDraft?: EmailDraft; cardArtifact?: Record<string, unknown>; workflowDraft?: Record<string, unknown> }> {
   switch (name) {
     case 'compose_email': {
       const { result, draft } = await executeComposeEmail(input, ctx.userId, ctx.agentId, ctx.adminClient);
@@ -1996,8 +2008,15 @@ async function executeChatTool(
       if (!ctx.agentId) return { result: 'No worker context available.', summary: 'No worker' };
       const description = typeof input.description === 'string' ? input.description : '';
       const skillNames = Array.isArray(input.skill_names) ? (input.skill_names as string[]) : undefined;
-      const result = await executeCreateTask(description, ctx.agentId, ctx.userId, ctx.supabase, ctx.adminClient, skillNames);
-      return { result, summary: result.startsWith('Task created') ? 'Task created' : 'Task creation failed' };
+      const raw = await executeCreateTask(description, ctx.agentId, ctx.userId, ctx.supabase, ctx.adminClient, skillNames);
+      // THE ONE CREATION CARD: the tool DRAFTS; the marker becomes the review card runtime-side
+      // (the model never sees or echoes base64 — it gets the cleaned plan text).
+      const { parseWorkflowDraftMarker } = await import('@/lib/workflows/draft-marker');
+      const { draft, cleaned } = parseWorkflowDraftMarker(raw);
+      return {
+        result: cleaned, summary: draft ? 'Task drafted — awaiting your confirm' : 'Task creation failed',
+        ...(draft ? { workflowDraft: draft as unknown as Record<string, unknown> } : {}),
+      };
     }
 
     case 'get_task': {

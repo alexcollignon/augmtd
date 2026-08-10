@@ -501,7 +501,8 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
   const dmReports = Boolean((prof as { slack_dm_reports?: boolean } | null)?.slack_dm_reports);
 
   const APP_URL = (process.env.AUGMTD_WEBHOOK_BASE_URL || 'https://app.augmtd.ai').replace(/\/$/, '');
-  const threadLink = `${APP_URL}/workers?worker=${agentId ?? ''}&thread=${threadId}`;
+  // Retirement repoint (slice #5): run links open the conversation in the one surface.
+  const threadLink = `${APP_URL}/home?chat=worker:${threadId}:${agentId ?? ''}`;
   const nextRunAt = nextRunFromTrigger(workflow.trigger as { type: string; cron?: string; timezone?: string }, new Date());
   const nextRunLabel = nextRunAt
     ? new Date(nextRunAt as string | number | Date).toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' })

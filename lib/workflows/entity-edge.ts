@@ -103,19 +103,30 @@ export async function workflowDraftGrounding(
 ): Promise<{ block: string; entity: { id: string; name: string } } | null> {
   const found = await recognizeWorkflowEntity(client, userId, description);
   if (!found) return null;
-  let page = '';
+  // THE GROUNDING BOUNDARY (owner, Aug 10 — "boundaries on what brings actual value"):
+  // drafting decides STRUCTURE (steps, schedule, delivery) — it gets IDENTITY-level context
+  // (name · one-line state · goals/rules, ~400 chars), never the full room page (board/
+  // ledger/transcript — that's ~3k chars of content-time state, and content decisions happen
+  // at RUN time, where the full page already injects fresh). Ground at the moment the
+  // information changes the output.
+  let line = '';
   try {
-    const { assembleRoomGrounding } = await import('@/lib/room/grounding');
-    const g = await assembleRoomGrounding(client, userId, { kind: 'entity', entityId: found.id });
-    page = g?.text ? g.text.replace(/\[(?:L|F)\d+\]\s?/g, '').slice(0, 3000) : '';
-  } catch { /* the edge still counts without the page */ }
+    const { data: ent } = await client.from('work_entities')
+      .select('summary, state, goals, rules').eq('id', found.id).eq('user_id', userId).maybeSingle();
+    const st = (ent?.state ?? {}) as { summary?: string };
+    const parts = [
+      (st.summary ?? ent?.summary) ? `state: ${String(st.summary ?? ent?.summary).slice(0, 160)}` : null,
+      Array.isArray(ent?.goals) && ent.goals.length ? `goals: ${(ent.goals as string[]).join(' · ').slice(0, 120)}` : null,
+      Array.isArray(ent?.rules) && ent.rules.length ? `rules: ${(ent.rules as string[]).join(' · ').slice(0, 120)}` : null,
+    ].filter(Boolean);
+    line = parts.join('\n');
+  } catch { /* the edge still counts without the line */ }
   const block =
-    `[THE PROJECT THIS TASK SERVES — the request names "${found.name}", a registered project. ` +
-    `Its current state from the one brain:]\n${page || '(no further state on record yet)'}\n` +
-    `Ground the pipeline in this project: choose sources, queries, and output language that fit ` +
-    `its ACTUAL work above, and let the deliverable speak to where the project stands. Never ` +
-    `invent recipients or delivery channels from it — delivery still follows only the request.`;
-  return { block, entity: found };
+    `[THE PROJECT THIS TASK SERVES — the request names "${found.name}", a registered project.` +
+    `${line ? `\n${line}` : ''}]\n` +
+    `Fit the pipeline to this project (sources, queries, output language, its rules). Never ` +
+    `invent recipients or delivery channels from it — delivery follows only the request.`;
+  return { block: block.slice(0, 700), entity: found };
 }
 
 /** The run-time inheritance block: the scoped entity's CURRENT room page, compact, tags stripped

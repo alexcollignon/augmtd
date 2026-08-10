@@ -48,6 +48,8 @@ export async function POST(request: NextRequest) {
       ...(turn.options?.length ? { options: turn.options } : {}),
       // ARTIFACTS-INTO-ORIGIN (Aug 9): the dispatched deliverable's card rides the answer.
       ...(turn.artifact ? { artifact: turn.artifact } : {}),
+      // THE ONE CREATION CARD (Aug 10): the drafted standing task reviews inline.
+      ...(turn.workflowDraft ? { workflowDraft: turn.workflowDraft } : {}),
       ...(focus ? { focus } : {}),
     });
     if (body.stream === true) {

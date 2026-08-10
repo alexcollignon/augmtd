@@ -449,7 +449,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
         // ARTIFACTS-INTO-ORIGIN (Aug 9): a dispatched deliverable rides back as a chip on THIS
         // turn — the room that asked holds the door to the document, never a bare pointer.
         const artRef = d.artifact?.id && d.artifact?.threadId
-          ? [{ label: `📄 ${String(d.artifact.title ?? 'Document').slice(0, 60)}`, href: `/workers?worker=${encodeURIComponent(String(d.delegated?.agentId ?? ''))}&thread=${encodeURIComponent(String(d.artifact.threadId))}` }]
+          ? [{ label: `📄 ${String(d.artifact.title ?? 'Document').slice(0, 60)}`, href: `/home?chat=worker:${encodeURIComponent(String(d.artifact.threadId))}:${encodeURIComponent(String(d.delegated?.agentId ?? ''))}` }]
           : [];
         setTurns((prev) => [...prev, {
           role: 'system',

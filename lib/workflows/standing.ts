@@ -86,7 +86,7 @@ export async function narrateStandingRun(
     const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
     const roomKey = await roomKeyForItem(admin, wf.user_id, 'commitment', String(c.id));
     const first = run.workerName.split(' ')[0];
-    const threadHref = run.threadId ? `/workers?worker=${wf.agent_id ?? ''}&thread=${run.threadId}` : null;
+    const threadHref = run.threadId ? `/home?chat=worker:${run.threadId}:${wf.agent_id ?? ''}` : null;
     if (run.ok) {
       // ONE-NARRATOR LAW: third-person orchestration narration — the CoS voice, author absent.
       await writeRoomTurn(admin, wf.user_id, roomKey, {

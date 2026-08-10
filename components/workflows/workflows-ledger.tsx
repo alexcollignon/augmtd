@@ -101,7 +101,16 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
   // THE DELIVERABLE VIEWER — "open" on a run opens the document HERE (the same docked panel the
   // Home chat uses), never a chat page.
   const [artifactPanel, setArtifactPanel] = useState<{ thread: { id: string; title: string; artifacts?: DocumentArtifact[] }; initialId: string | null } | null>(null);
-  const openDeliverable = async (threadId: string, artifactId: string) => {
+  // THE SEEN SIGNAL (coherence slice #1): opening runs/deliverables here IS reviewing — the
+  // stamp feeds auto-pause honestly and clears the sidebar badge (one mechanic).
+  const markReviewed = useCallback((workflowId?: string) => {
+    void fetch('/api/workflows/runs/reviewed', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(workflowId ? { workflowId } : {}),
+    }).then(() => { try { window.dispatchEvent(new CustomEvent('aug:conversation-changed')); } catch { /* SSR */ } }).catch(() => {});
+  }, []);
+  const openDeliverable = async (threadId: string, artifactId: string, workflowId?: string) => {
+    if (workflowId) markReviewed(workflowId);
     try {
       const d = await fetch(`/api/work/threads/${threadId}/messages`).then((r) => (r.ok ? r.json() : null));
       const th = d?.thread as { id: string; title?: string; artifacts?: DocumentArtifact[] } | null;
@@ -123,6 +132,11 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
   }, []);
 
   useEffect(() => {
+    if (tab === 'activity') markReviewed();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  useEffect(() => {
     mounted.current = true;
     const cached = loadLS<LedgerPayload>(LS_KEY, { maxAgeMs: 15 * 60_000 });
     if (cached) { setData(cached); setLoading(false); void refresh(true); }
@@ -141,10 +155,14 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ description: desc }),
       });
-      const j = await r.json();
-      if (!r.ok || !j.workflow) { toast.error(j.error ?? 'Could not draft that — try naming the sources and the schedule.'); return; }
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j?.workflow) { toast.error(j?.error ?? 'Could not draft that — try naming the sources and the schedule.'); return; }
       setDraft(j.workflow as Draft);
       setPresenterId((prev) => prev ?? data?.workers?.[0]?.id ?? null);
+    } catch {
+      // Found live (Rene, Aug 10): a timed-out draft threw on the JSON parse and the spinner
+      // reset with NO message — "Draft it does nothing". Failure always speaks.
+      toast.error('Drafting took too long — try again, or simplify the description.');
     } finally { setDrafting(false); }
   }, [describe, drafting, data?.workers]);
 
@@ -161,12 +179,12 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
           agent_id: presenterId, worker_instructions: draft.worker_instructions ?? null,
         }),
       });
-      const j = await r.json();
-      if (!r.ok || !j.workflow) { toast.error(j.error ?? 'Could not create it.'); return; }
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j?.workflow) { toast.error(j?.error ?? 'Could not create it.'); return; }
       toast.success(`"${draft.name}" is live — ${draft.trigger.type === 'schedule' ? (draft.trigger.label ?? 'on its schedule') : draft.trigger.type === 'reaction' ? 'it fires when the condition is met' : 'run it anytime'}.`);
       setDraft(null); setDescribe('');
       void refresh(true);
-    } finally { setConfirming(false); }
+    } catch { toast.error('Could not create it — try again.'); } finally { setConfirming(false); }
   }, [draft, confirming, presenterId, refresh]);
 
   // ── THE STUDIO DOORS (owner, Aug 9): "Adjust in Studio" saves the draft AS A DRAFT (nothing
@@ -184,10 +202,10 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
           agent_id: presenterId, worker_instructions: draft.worker_instructions ?? null,
         }),
       });
-      const j = await r.json();
-      if (!r.ok || !j.workflow?.id) { toast.error('Could not open it in Studio.'); return; }
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j?.workflow?.id) { toast.error('Could not open it in Studio.'); return; }
       window.location.href = `/studio?workflow=${j.workflow.id}&from=workflows`;
-    } finally { setConfirming(false); }
+    } catch { toast.error('Could not open it in Studio — try again.'); } finally { setConfirming(false); }
   }, [draft, confirming, presenterId]);
 
   const startFromScratch = useCallback(async () => {
@@ -196,8 +214,8 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'Untitled workflow', status: 'draft', trigger: { type: 'manual' }, steps: [] }),
       });
-      const j = await r.json();
-      if (!r.ok || !j.workflow?.id) { toast.error('Could not open Studio.'); return; }
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j?.workflow?.id) { toast.error('Could not open Studio.'); return; }
       window.location.href = `/studio?workflow=${j.workflow.id}&from=workflows`;
     } catch { toast.error('Could not open Studio.'); }
   }, []);
@@ -211,7 +229,7 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
       toast.success(`"${w.name}" is running — the deliverable lands in ${HOME_WORD[w.home] ?? w.home}.`);
       setTimeout(() => void refresh(true), 4000);
       setTimeout(() => void refresh(true), 20000);
-    } finally { setBusy(null); }
+    } catch { toast.error('The run could not start — try again.'); } finally { setBusy(null); }
   }, [refresh]);
 
   const togglePause = useCallback(async (w: LedgerRow) => {
@@ -222,7 +240,7 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
       if (!r.ok) { toast.error('Could not change it.'); return; }
       toast.success(to === 'paused' ? `"${w.name}" is paused — nothing will run until you resume it.` : `"${w.name}" is back on its schedule.`);
       void refresh(true);
-    } finally { setBusy(null); }
+    } catch { toast.error('Could not change it — try again.'); } finally { setBusy(null); }
   }, [refresh]);
 
   const deleteWorkflow = useCallback(async (w: LedgerRow) => {
@@ -233,7 +251,7 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
       if (!r.ok) { toast.error('Could not delete it.'); return; }
       toast.success(`"${w.name}" is gone — it will not run again.`);
       void refresh(true);
-    } finally { setBusy(null); }
+    } catch { toast.error('Could not delete it — try again.'); } finally { setBusy(null); }
   }, [refresh]);
 
   const decide = useCallback(async (a: Awaiting, approve: boolean) => {
@@ -245,7 +263,7 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
       if (!r.ok) { toast.error('That decision did not land — try again.'); return; }
       toast.success(approve ? `Approved — "${a.workflowName}" is delivering.` : `Held back — nothing was delivered.`);
       void refresh(true);
-    } finally { setBusy(null); }
+    } catch { toast.error('That decision did not land — try again.'); } finally { setBusy(null); }
   }, [refresh]);
 
   const rows = data?.ledger ?? [];
@@ -394,7 +412,11 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                       ) : (
                         <><span className="text-neutral-300">·</span><span>hasn&apos;t run yet</span></>
                       )}
-                      {(w.status === 'paused' || w.autoPaused) && <><span className="text-neutral-300">·</span><span className="text-neutral-400">paused</span></>}
+                      {w.autoPaused ? (
+                        <><span className="text-neutral-300">·</span><span className="text-amber-600">paused itself — runs went unopened · press play to resume</span></>
+                      ) : w.status === 'paused' ? (
+                        <><span className="text-neutral-300">·</span><span className="text-neutral-400">paused</span></>
+                      ) : null}
                       {w.status === 'draft' && <><span className="text-neutral-300">·</span><span className="text-neutral-400">draft — finish it in Studio</span></>}
                     </div>
                   </div>
@@ -459,7 +481,7 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                   {g.deliverable && (
                     <span
                       role="button"
-                      onClick={(e) => { e.stopPropagation(); void openDeliverable(g.deliverable!.threadId, g.deliverable!.artifactId); }}
+                      onClick={(e) => { e.stopPropagation(); void openDeliverable(g.deliverable!.threadId, g.deliverable!.artifactId, g.workflowId); }}
                       className="text-[12px] font-medium text-indigo-600 hover:text-indigo-800"
                     >
                       see the latest
@@ -473,7 +495,7 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                 )}
                 {openRuns === g.workflowId && (
                   <div className="ml-6">
-                    <RunAudit workflowId={g.workflowId} onOpenDeliverable={openDeliverable} />
+                    <RunAudit workflowId={g.workflowId} onOpenDeliverable={(tid, aid) => openDeliverable(tid, aid, g.workflowId)} />
                   </div>
                 )}
               </div>
