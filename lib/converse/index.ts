@@ -594,6 +594,7 @@ async function dispatchCommand(
 // report-back; nothing external fires), so it acts directly — with visible attribution. ──
 async function runCoworkerDelegation(
   client: SupabaseClient, userId: string, scope: ConverseScope, coworkerWant: string, task: string, userText: string,
+  transcript = '',
 ): Promise<ConverseTurn> {
   try {
     const { createClient: createAdmin } = await import('@supabase/supabase-js');
@@ -610,7 +611,10 @@ async function runCoworkerDelegation(
       const prompt = buildDelegationPrompt({
         kind: scope.kind === 'item' ? scope.itemKind : 'email',
         itemContext: itemCtx?.text || '',
-        step: { text: task, detail: `The user asked for this in chat: "${userText}"` },
+        step: { text: task, detail: `The user asked for this in chat: "${userText}"` +
+          // The hand-off carries its conversation — a task worded as "do it" resolves against
+          // what was just discussed instead of arriving at the coworker as thin air.
+          (transcript ? `\nTHE CONVERSATION THIS CAME FROM (resolve "it"/"that" against it):\n${transcript.slice(0, 1500)}` : '') },
       });
       const out = await runDelegation({
         supabase: admin, userId, worker: { id: worker.id as string, name: String(worker.name), worker_role: (worker.worker_role as string) ?? null, is_worker: true },
@@ -652,6 +656,7 @@ const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition
 
 async function agentLoop(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string, grounding: string,
+  history?: ConverseHistoryTurn[],
   onProgress?: (label: string) => void,
 ): Promise<ConverseTurn> {
   const { toOpenAITool } = await import('@/lib/tools');
@@ -677,6 +682,10 @@ async function agentLoop(
       `impact) — NEVER to confirm reversible steps, never for what context already answers, at most one ` +
       `ask per turn. Asking for the sake of asking is a failure.\n\n` +
       `--- CONTEXT ---\n${grounding.slice(0, 4000)}` },
+    // THE PANEL CONVERSATION as real turns (Aug 10, the amnesia class): a follow-up ("yes
+    // please" · "in bullet points" · "ask Sofia to do it") resolves against what was just
+    // said — before this the loop saw ONLY the newest message and asked what "it" meant.
+    ...(history ?? []).slice(-8).map((t) => ({ role: t.role, content: t.text.slice(0, 1500) })),
     { role: 'user', content: text },
   ];
   for (let i = 0; i < 4; i++) {
@@ -691,11 +700,24 @@ async function agentLoop(
       // (no tool call), the denial bypassed the floor and the brain looked amnesiac about a
       // name it holds ("no information on the kiteschool assessment" beside a registered
       // "ZZ Kiteschool Pilot"). No denial leaves the loop without checking the registry.
-      if (/\b(?:don't|do not|no)\b[^.!?]{0,50}\b(?:information|record|data|details?|found|see|have)\b|couldn't find|does not (?:provide|have|contain)|not (?:available|found)/i.test(say)) {
+      const DENIAL_RE = /\b(?:don't|do not|no)\b[^.!?]{0,50}\b(?:information|record|data|details?|found|see|have)\b|couldn't find|does not (?:provide|have|contain)|not (?:available|found)/i;
+      if (DENIAL_RE.test(say)) {
         try {
           const mm = await registryMatches(client, userId, text, scope.kind === 'entity' ? scope.entityId : null);
-          if (mm) {
-            const pointer = `this looks like ${mm.replace(/^MEMORY MATCHES[^:]*: /, '')}. Its work lives on that project — open it, or tell me what to pull from it.`;
+          // THE MISFIRE GATE (Aug 10, found live): the pointer is a RECALL rescue — it fires only
+          // when the DENIAL SENTENCE itself names something the registry holds ("no information
+          // on the kiteschool assessment" beside a "Kiteschool Pilot"). A capability/format
+          // denial ("I don't have it in that exact format yet") whose message merely CONTAINS
+          // project names must never grow a project pointer — it read as a non-sequitur.
+          const names = mm ? [...mm.matchAll(/"([^"]+)"/g)].map((x) => x[1]) : [];
+          const denialSentences = say.split(/(?<=[.!?])\s+/).filter((s) => DENIAL_RE.test(s)).join(' ').toLowerCase();
+          const denialNamesEntity = names.some((n) => n.toLowerCase().split(/[^a-z0-9]+/)
+            .some((tok) => tok.length >= 4 && denialSentences.includes(tok)));
+          if (mm && denialNamesEntity) {
+            const many = names.length > 1;
+            const pointer = `this looks like ${mm.replace(/^MEMORY MATCHES[^:]*: /, '')}. ` +
+              (many ? 'Their work lives on those projects — open one, or tell me what to pull from it.'
+                : 'Its work lives on that project — open it, or tell me what to pull from it.');
             // A hedge inside a substantive answer ("I don't have the exact date, but the report
             // went out Tuesday…") must never DESTROY the answer — replace only a short pure
             // denial; a longer answer keeps its substance and the pointer rides along.
@@ -748,6 +770,19 @@ async function viewingExcerpt(client: SupabaseClient, userId: string, scope: Con
   } catch { return ''; }
 }
 
+/** THE PANEL TRANSCRIPT (Aug 10 — the amnesia class, found live): the chat panel's own
+ *  conversation, rendered for EVERY path — router, agent loop, delegation — not just the
+ *  question path. Global scope has no room turns (dialogueContext returns empty), so without
+ *  this the classifier and the loop saw ONLY the newest message: "yes please" arrived with no
+ *  yes-please-able thing in sight, and a reformat request couldn't see the answer it was
+ *  reformatting. Assistant turns keep more length — they're what follow-ups operate ON. */
+function panelTranscript(history: ConverseHistoryTurn[] | undefined): string {
+  if (!history?.length) return '';
+  const lines = history.slice(-8).map((t) =>
+    `[${t.role === 'user' ? 'user' : 'assistant'}] ${t.text.replace(/\s+/g, ' ').slice(0, t.role === 'assistant' ? 900 : 300)}`);
+  return `THE CHAT SO FAR (this panel, latest last):\n${lines.join('\n')}`;
+}
+
 /** THE entry — every chat surface calls this with its scope. */
 export async function converse(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string,
@@ -757,6 +792,9 @@ export async function converse(
     dialogueContext(client, userId, scope),
     viewingExcerpt(client, userId, scope),
   ]);
+  // ONE merged conversation view for every downstream reader (room narrations + the panel's own
+  // turns; global scope has only the latter — before this it had NEITHER on non-question paths).
+  const transcript = [dlg.transcript, panelTranscript(opts.history)].filter(Boolean).join('\n\n');
 
   // 0 — A STANDING INTERACTION is pending: first decide whether this note ANSWERS it (the Omantel
   // law — a person replying under a question is answering the question until proven otherwise).
@@ -771,7 +809,7 @@ export async function converse(
       const { aiCall } = await import('@/lib/ai/call');
       const res = await aiCall<{ responds?: boolean; option?: number | null; go_ahead?: boolean; unclear?: string | null }>({
         userId, supabase: client, shape: { output: 'json' }, temperature: 0, maxTokens: 150, source: 'brain_synthesis',
-        prompt: `${dlg.transcript ? `${dlg.transcript}\n\n` : ''}${pendingDesc}\n\nTHE USER JUST TYPED: "${text}"\n\n` +
+        prompt: `${transcript ? `${transcript}\n\n` : ''}${pendingDesc}\n\nTHE USER JUST TYPED: "${text}"\n\n` +
           `Is this note an ANSWER to the standing ${p.type === 'founding_proposal' ? 'proposal' : 'ask'} (accepting, choosing, scoping, or declining it) — or something else entirely?\n` +
           `JSON only: {"responds":true|false,${p.type === 'founding_proposal' ? '"option":<option number accepted, or null if declined/unclear>,' : '"go_ahead":true|false,'}"unclear":"<ONE short clarifying question anchored on the pending thing, ONLY if responds but you cannot act>"}`,
       });
@@ -822,7 +860,7 @@ export async function converse(
     } catch { /* the pending read is a refinement — the normal flow below still sees the transcript */ }
   }
 
-  const verdict = await classifyTurn(client, userId, scope, text, dlg.transcript);
+  const verdict = await classifyTurn(client, userId, scope, text, transcript);
 
   // THE ADDRESSED-COWORKER FLOOR (Aug 9, found live: "Sofia, put together a one-page overview…"
   // classified as create_task_item — the addressed hand-off became a to-do on the user's OWN
@@ -857,7 +895,7 @@ export async function converse(
 
   // 2 — DELEGATE: "have Max research X" → the real delegation engine (prepare + report back).
   if (verdict.delegate) {
-    return runCoworkerDelegation(client, userId, scope, verdict.delegate.coworker, verdict.delegate.task, text);
+    return runCoworkerDelegation(client, userId, scope, verdict.delegate.coworker, verdict.delegate.task, text, transcript);
   }
 
   // 3 — QUESTION: grounded answer from the scope's memory — the whole brain (global), the deal's
@@ -870,7 +908,7 @@ export async function converse(
     const matches = await registryMatches(client, userId, text, scopeEntity);
     const dialogueBlock = [
       'RULE: never claim something does not exist or cannot be seen if THE CONVERSATION or MEMORY MATCHES below name it — reference it instead.',
-      dlg.transcript, matches,
+      transcript, matches,
     ].filter(Boolean).join('\n');
     if (scope.kind === 'global') {
       opts.onProgress?.('Looking across your work…');
@@ -1008,5 +1046,9 @@ export async function converse(
     'RULE: never claim something does not exist or cannot be seen if THE CONVERSATION or MEMORY MATCHES below name it — reference it instead.',
     dlg.transcript, matches, viewing,
   ].filter(Boolean).join('\n\n');
-  return agentLoop(client, userId, scope, text, preamble ? `${preamble}\n\n${grounding}` : grounding, opts.onProgress);
+  // The PANEL conversation rides as REAL messages (not a squeezed grounding block) — a follow-up
+  // operates on the prior answer at full fidelity, the way any chat model expects. The room
+  // narration transcript stays in the preamble (room callers don't always carry panel history).
+  return agentLoop(client, userId, scope, text, preamble ? `${preamble}\n\n${grounding}` : grounding,
+    opts.history, opts.onProgress);
 }

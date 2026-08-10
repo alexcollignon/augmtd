@@ -7,6 +7,9 @@
 //      "Prep ready" chip on the Home's This-week card.
 //   2. DUE-SOON (≤48h, still unprepared): the existing prepare machinery runs EARLY — the same
 //      judge-gated prepareOneItem every other door uses; anticipation only moves the clock.
+//   3. THE SILENCE WATCH: absence as an event — a counterparty who OWES the user and has been
+//      quiet ≥7 days (no inbound on the thread, and no recent chase from the user either) gets
+//      the judge-gated chase machinery run on their item. Quiet ≠ settled.
 // THE TRUST RULES: legible (every move carries its because, grounded refs) and proportionate
 // (hard caps per run; silence is a valid verdict — most runs should fire nothing). Exactly-once
 // per (kind, id) via item_plans kind='anticipation' fire records; 6h self-gate.
@@ -19,8 +22,10 @@ const KIND = 'anticipation';
 const RUN_TTL_MS = 6 * 60 * 60_000;
 const MAX_BRIEFS_PER_RUN = 2;
 const MAX_PREPARES_PER_RUN = 2;
+const MAX_CHASES_PER_RUN = 2;
+const QUIET_DAYS = 7;
 
-export async function runAnticipationPass(client: DBClient, userId: string): Promise<{ briefs: number; prepared: number } | null> {
+export async function runAnticipationPass(client: DBClient, userId: string): Promise<{ briefs: number; prepared: number; chases: number } | null> {
   try {
     // Self-gate: one row read decides; every caller may invoke freely.
     const { data: last } = await client.from('item_plans').select('updated_at')
@@ -32,6 +37,7 @@ export async function runAnticipationPass(client: DBClient, userId: string): Pro
 
     let briefs = 0;
     let prepared = 0;
+    let chases = 0;
 
     // ── 1. MEETING PREP — the brief exists before the ask. ──
     const now = new Date();
@@ -89,18 +95,23 @@ export async function runAnticipationPass(client: DBClient, userId: string): Pro
       } catch { /* one meeting failing never stops the pass */ }
     }
 
+    // The work spine, built ONCE — due-soon and the silence watch both read it.
+    const todayStr = new Date().toISOString().slice(0, 10);
+    let items: unknown[] = [];
+    try {
+      const { buildWorkItems } = await import('@/lib/work-items/model');
+      items = await buildWorkItems(client, userId, { todayStr, skipReconcile: true }) as never[];
+    } catch { /* both walks degrade to no-ops */ }
+
     // ── 2. DUE-SOON — the existing machinery runs early; anticipation only moves the clock. ──
     try {
-      const todayStr = new Date().toISOString().slice(0, 10);
       const cutoff = new Date(now.getTime() + 48 * 60 * 60_000).toISOString().slice(0, 10);
-      const { buildWorkItems } = await import('@/lib/work-items/model');
-      const items = await buildWorkItems(client, userId, { todayStr, skipReconcile: true });
-      const dueSoon = items.filter((i: { state: string; actor: string; when: { explicit: string | null; bucket: string } }) =>
+      const dueSoon = (items as Array<{ id: string; state: string; actor: string; when: { explicit: string | null; bucket: string } }>).filter((i) =>
         i.state === 'todo' && i.actor === 'you' &&
         ((i.when.explicit && i.when.explicit.slice(0, 10) <= cutoff) || i.when.bucket === 'overdue'));
       for (const w of dueSoon) {
         if (prepared >= MAX_PREPARES_PER_RUN) break;
-        const fireKey = `due:${(w as { id: string }).id}`;
+        const fireKey = `due:${w.id}`;
         const { data: fired } = await client.from('item_plans').select('id')
           .eq('user_id', userId).eq('kind', KIND).eq('entity_id', fireKey).maybeSingle();
         if (fired) continue;
@@ -110,14 +121,55 @@ export async function runAnticipationPass(client: DBClient, userId: string): Pro
           await prepareOneItem(client, userId, w as never);
           await client.from('item_plans').insert({
             user_id: userId, kind: KIND, entity_id: fireKey,
-            tasks: { kind: 'due_soon', itemId: (w as { id: string }).id, because: `due ${(w as { when: { explicit: string | null } }).when.explicit?.slice(0, 10) ?? 'now'} with nothing prepared`, at: new Date().toISOString() },
+            tasks: { kind: 'due_soon', itemId: w.id, because: `due ${(w as unknown as { when: { explicit: string | null } }).when.explicit?.slice(0, 10) ?? 'now'} with nothing prepared`, at: new Date().toISOString() },
           });
           prepared++;
         } catch { /* one item failing never stops the pass */ }
       }
     } catch { /* the meetings half already ran */ }
 
-    return { briefs, prepared };
+    // ── 3. THE SILENCE WATCH — absence as an event. A counterparty who owes the user and has
+    // gone quiet gets the judge-gated chase machinery; quiet ≠ settled. Proportionate: skip if
+    // they spoke recently OR the user already chased recently; re-fire only after another
+    // QUIET_DAYS window; hard cap per run. ──
+    try {
+      const quietCutoffIso = new Date(now.getTime() - QUIET_DAYS * 86_400_000).toISOString();
+      const { data: awaiting } = await client.from('commitments')
+        .select('id, description, counterparty, due_date, thread_id, created_at')
+        .eq('user_id', userId).eq('status', 'open').eq('direction', 'awaiting')
+        .lt('created_at', quietCutoffIso)
+        .order('due_date', { ascending: true, nullsFirst: false }).limit(10);
+      for (const c of (awaiting ?? []) as Array<{ id: string; description: string; counterparty: string | null; due_date: string | null; thread_id: string | null }>) {
+        if (chases >= MAX_CHASES_PER_RUN) break;
+        const fireKey = `silence:${c.id}`;
+        const { data: fired } = await client.from('item_plans').select('tasks')
+          .eq('user_id', userId).eq('kind', KIND).eq('entity_id', fireKey).maybeSingle();
+        const lastFire = (fired?.tasks as { at?: string } | undefined)?.at;
+        if (lastFire && Date.now() - new Date(lastFire).getTime() < QUIET_DAYS * 86_400_000) continue;
+        // The quiet check is REAL, not a proxy: any voice on the thread inside the window skips.
+        if (c.thread_id) {
+          const { data: lastMsg } = await client.from('emails').select('received_at')
+            .eq('user_id', userId).eq('thread_id', c.thread_id)
+            .gte('received_at', quietCutoffIso).limit(1);
+          if (lastMsg?.length) continue; // someone spoke recently — not silence
+        }
+        const w = (items as Array<{ id: string }>).find((i) => i.id === `commit:${c.id}`);
+        if (!w) continue;
+        try {
+          const { prepareOneItem } = await import('@/lib/prepare/pass');
+          await prepareOneItem(client, userId, w as never);
+          const quietDays = Math.floor((Date.now() - new Date((c as unknown as { created_at: string }).created_at).getTime()) / 86_400_000);
+          await client.from('item_plans').upsert({
+            user_id: userId, kind: KIND, entity_id: fireKey,
+            tasks: { kind: 'silence', itemId: c.id, because: `${c.counterparty ?? 'they'} owe${c.counterparty ? 's' : ''} you and the thread has been quiet ~${Math.min(quietDays, 60)} days`, at: new Date().toISOString() },
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'user_id,kind,entity_id' });
+          chases++;
+        } catch { /* one commitment failing never stops the pass */ }
+      }
+    } catch { /* the earlier walks already ran */ }
+
+    return { briefs, prepared, chases };
   } catch { return null; }
 }
 

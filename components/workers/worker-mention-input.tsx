@@ -251,11 +251,44 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
     if (files.length) onAttach?.(files);
   }
 
+  // DRAG-AND-DROP ATTACH (Aug 10): dropping files anywhere on the composer attaches them through
+  // the SAME onAttach door the paperclip uses — one composer, so every chat box (Home chat, room
+  // rail, coworker DM) gets it at once. A depth counter survives child enter/leave churn.
+  const [dragOver, setDragOver] = useState(false);
+  const dragDepth = useRef(0);
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+  const onDragEnter = (e: React.DragEvent) => {
+    if (!onAttach || !hasFiles(e)) return;
+    e.preventDefault(); dragDepth.current += 1; setDragOver(true);
+  };
+  const onDragOver = (e: React.DragEvent) => { if (onAttach && hasFiles(e)) e.preventDefault(); };
+  const onDragLeave = () => {
+    if (!onAttach) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragOver(false);
+  };
+  const onDrop = (e: React.DragEvent) => {
+    if (!onAttach) return;
+    e.preventDefault(); dragDepth.current = 0; setDragOver(false);
+    // Same types the paperclip picker allows — the two attach doors behave identically.
+    const ok = /\.(pdf|docx|txt|jpe?g|png|webp|zip)$/i;
+    const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => ok.test(f.name));
+    if (files.length) onAttach(files);
+  };
+
   const hasChips = mentions.length > 0 || attachments.length > 0;
 
   return (
-    <div className="relative" ref={wrapRef}>
+    <div className="relative" ref={wrapRef}
+      onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
       {dropdown}
+      {dragOver && onAttach && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-indigo-300 bg-indigo-50/90 pointer-events-none">
+          <span className="flex items-center gap-1.5 text-[13px] font-medium text-indigo-600">
+            <PaperClipIcon className="w-4 h-4" /> Drop files to attach
+          </span>
+        </div>
+      )}
       <input ref={fileInputRef} type="file" multiple accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.webp,.zip" className="hidden" onChange={handleFileChange} />
       <div className={frameless ? '' : 'rounded-2xl bg-neutral-50 border border-neutral-200 overflow-hidden focus-within:border-neutral-300 focus-within:bg-white focus-within:shadow-sm transition-all duration-150'}>
         {hasChips && (

@@ -468,6 +468,36 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+GG. **THE PANEL TRANSCRIPT + DRAG-AND-DROP ATTACH (Aug 10 evening; gates CH1–CH3 — 116/116,
+   build green; E2E replay scripts/smoke-converse-history.ts 3/3; drop cycle verified on
+   the served page).** The pilot-found amnesia class ("somehow became less clever" vs the
+   old /work chat): the Home chat's history reached ONLY the question path — the router,
+   the agent loop, and delegation each saw just the newest message ("yes please" arrived
+   with nothing to say yes TO; a reformat couldn't see the answer it was reformatting;
+   "ask sofia to do it" couldn't resolve "it"; and the honesty-floor pointer rode a format
+   exchange as a "(a known body of work)" non-sequitur). THE FIX, one law: the panel's own
+   conversation reaches EVERY converse path — panelTranscript merges with the room
+   transcript for the router/pending check; the agent loop carries the last 8 turns as
+   REAL messages (full fidelity, never a squeezed grounding block; the old /work chat's
+   whole-thread memory, restored at the core); a delegation hand-off carries the
+   conversation so "do it" resolves. THE MISFIRE GATE on the honesty floor: the registry
+   pointer is a RECALL rescue — it fires only when the DENIAL SENTENCE itself names
+   something the registry holds; plural matches get plural grammar. Plus DRAG-AND-DROP
+   ATTACH on every chat box: the ONE composer (Home chat, room rail, coworker DM) and the
+   legacy /work ChatInputBar both accept dropped files through the SAME onAttach door as
+   the paperclip (same types, same cap, visible overlay, depth-counter enter/leave).
+FF. **THE SILENCE WATCH (the initiative loop continues, Aug 10; gate AN2 — 113/113, build
+   green; E2E on the probe: a 10-day-quiet awaiting commitment fired ONE chase with its
+   because — "Jordan Vale owes you and the thread has been quiet ~10 days" — and the
+   re-fire window held).** Absence as an event, the third walk of the anticipation pass:
+   a counterparty who OWES the user (direction='awaiting'), quiet ≥7 days, gets the
+   judge-gated chase machinery on their item — quiet ≠ settled. PROPORTIONATE BY
+   CONSTRUCTION: the quiet check is REAL (any voice on the thread inside the window
+   skips — a recent reply from them or a recent chase from the user both stand down);
+   re-fires only after another full quiet window; hard cap 2/run; the judge stays the
+   only gate to preparation. The work spine is built ONCE per pass (due-soon + silence
+   share it). REMAINING IN THE LOOP: the strategic ask + Settings→Autonomy (the outcome
+   log finally spent) → the deck-row because-chip generalized.
 EE. **DEPLOYED + THE WORKFLOWS TIDY (Aug 10 afternoon; gate CS6 — 112/112, tasks 72/72,
    build green).** The second prod deploy shipped everything since Saturday (retirement,
    Rene's fix, the creation card, facepile, badge/seen, convergence kit, anticipation) —

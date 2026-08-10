@@ -987,6 +987,14 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('infra/agentos/tools_tasks.py').includes('NEVER say') &&
     src('infra/agentos/tools_tasks.py').includes('DRAFT a scheduled automation task'));
 
+  check('AN2: THE SILENCE WATCH (the initiative loop, Aug 10) — absence as an event: a counterparty who OWES the user, quiet ≥7 days (the check is REAL — any voice on the thread inside the window skips, so a recent reply OR the user\'s own recent chase both stand down), gets the judge-gated chase machinery on their item (quiet ≠ settled; anticipation never bypasses the judge); re-fires only after another full quiet window; hard cap per run. E2E on the probe: a 10-day-quiet awaiting commitment fired one chase with its because ("owes you and the thread has been quiet ~10 days"); the re-fire window held',
+    src('lib/home/anticipation.ts').includes('THE SILENCE WATCH') &&
+    src('lib/home/anticipation.ts').includes('QUIET_DAYS') &&
+    src('lib/home/anticipation.ts').includes('MAX_CHASES_PER_RUN') &&
+    src('lib/home/anticipation.ts').includes("direction', 'awaiting'") &&
+    src('lib/home/anticipation.ts').includes('someone spoke recently') &&
+    src('lib/home/anticipation.ts').includes('quiet ~'));
+
   // ── AO · ARTIFACTS-INTO-ORIGIN (proactivity completion #1, Aug 9). ──
   check('AO1: THE DISPATCHED DELIVERABLE COMES HOME — substantial delegated production materializes as a REAL document artifact on the delegation thread (the SAME textToDocContent/uploadArtifact primitives as workflow runs — one shared module, run-workflow imports it too, never two diverging copies); the artifact rides the ConverseTurn back into the conversation that asked (Home chat renders its card AND opens the viewer; the room rail carries the door chip); a short answer or an ask stays text. E2E-proven live on the probe: real .docx in storage, card on the turn',
     src('lib/workflows/doc-content.ts').includes('export function textToDocContent') &&
@@ -1003,6 +1011,30 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('lib/converse/index.ts').includes('THE ADDRESSED-COWORKER FLOOR') &&
     src('lib/converse/index.ts').includes("eq('is_worker', true)") &&
     src('lib/converse/index.ts').includes('if (verdict.delegate) verdict.command = null;'));
+
+  // ── CH · CONVERSE HISTORY (the amnesia class, Aug 10 — found live: "yes please" → "I don't
+  // have enough context"; a reformat request couldn't see the answer it was reformatting; the
+  // honesty-floor pointer rode a format exchange as a non-sequitur). ──
+  check('CH1: THE PANEL TRANSCRIPT — the chat panel\'s own conversation reaches EVERY converse path, not just the question path: the router classifies with it, the agent loop carries it as REAL messages (full fidelity, never a squeezed grounding block), and a delegation hand-off carries the conversation so a task worded "do it" resolves. E2E replay of the live four-turn failure: scripts/smoke-converse-history.ts (reformat delivered · "yes please" resolved · "ask sofia to do it" delegated to Sofia)',
+    src('lib/converse/index.ts').includes('function panelTranscript') &&
+    src('lib/converse/index.ts').includes('[dlg.transcript, panelTranscript(opts.history)]') &&
+    src('lib/converse/index.ts').includes('classifyTurn(client, userId, scope, text, transcript)') &&
+    src('lib/converse/index.ts').includes('...(history ?? []).slice(-8).map((t) => ({ role: t.role, content:') &&
+    src('lib/converse/index.ts').includes('THE CONVERSATION THIS CAME FROM') &&
+    src('lib/converse/index.ts').includes('verdict.delegate.task, text, transcript)'));
+
+  check('CH2: THE HONESTY-FLOOR MISFIRE GATE — the registry pointer is a RECALL rescue: it fires only when the DENIAL SENTENCE itself names something the registry holds; a capability/format denial whose message merely contains project names never grows a "(a known body of work)" pointer; plural matches get plural grammar',
+    src('lib/converse/index.ts').includes('THE MISFIRE GATE') &&
+    src('lib/converse/index.ts').includes('denialNamesEntity') &&
+    src('lib/converse/index.ts').includes('DENIAL_RE.test(s)') &&
+    src('lib/converse/index.ts').includes('Their work lives on those projects'));
+
+  check('CH3: DRAG-AND-DROP ATTACH on every chat box — the ONE composer (WorkerMentionInput: Home chat, room rail, coworker DM) and the legacy /work ChatInputBar both accept dropped files through the SAME onAttach door as the paperclip (same accepted types, same cap), with a visible drop overlay; a depth counter survives child enter/leave churn',
+    src('components/workers/worker-mention-input.tsx').includes('DRAG-AND-DROP ATTACH') &&
+    src('components/workers/worker-mention-input.tsx').includes('Drop files to attach') &&
+    src('components/workers/worker-mention-input.tsx').includes('dragDepth') &&
+    src('components/work/chat-input-bar.tsx').includes('Drop files to attach') &&
+    src('components/work/chat-input-bar.tsx').includes('MAX_ATTACHMENTS - attachments.length'));
 
   // ── Report ──
   let pass = 0;
