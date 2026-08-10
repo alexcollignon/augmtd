@@ -744,309 +744,50 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                     </p>
                   ) : (
                     <div className="border border-neutral-200 rounded-2xl overflow-hidden divide-y divide-neutral-100">
-                      {filteredCompanies.map(company => (
-                        <div key={company.id}>
-                          {/* Workspace row */}
-                          <div className="flex items-center gap-3 px-5 py-3.5 hover:bg-neutral-50 transition-colors">
-                            {/* Expand toggle */}
-                            <button
-                              onClick={() => toggleMembers(company.id)}
-                              className="text-neutral-400 hover:text-neutral-600 flex-shrink-0 p-0.5 rounded-lg transition-colors"
-                            >
-                              {expandedId === company.id
-                                ? <ChevronDownIcon className="w-4 h-4" />
-                                : <ChevronRightIcon className="w-4 h-4" />}
-                            </button>
-
-                            {/* Initial circle */}
+                      {/* THE INDEX ROW (Aug 10 redesign — owner: "see how bad it looks"): the list
+                          is a clean read-only index; ALL editing lives on the workspace detail
+                          page. Name gets the room it never had; facts are quiet badges. */}
+                      {filteredCompanies.map(company => {
+                        const sovereign = company.features.email === false;
+                        const aiLabel = AI_TIER_OPTIONS.find(o => (o.value ?? '') === (company.ai_tier ?? ''))?.label ?? 'Standard';
+                        return (
+                          <Link key={company.id} href={`/platform-admin/workspaces/${company.id}`}
+                            className="flex items-center gap-4 px-5 py-3.5 hover:bg-neutral-50 transition-colors group">
                             <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-[12px] font-semibold text-indigo-700 flex-shrink-0">
                               {(company.name[0] ?? '?').toUpperCase()}
                             </div>
-
-                            {/* Name — inline edit or display */}
                             <div className="flex-1 min-w-0">
-                              {editingId === company.id ? (
-                                <div className="flex items-center gap-2">
-                                  <input
-                                    value={editingName}
-                                    onChange={e => setEditingName(e.target.value)}
-                                    onKeyDown={e => {
-                                      if (e.key === 'Enter') handleUpdateCompany(company.id, { name: editingName });
-                                      if (e.key === 'Escape') setEditingId(null);
-                                    }}
-                                    autoFocus
-                                    className="px-2 py-0.5 text-[13px] border border-indigo-300 rounded-lg focus:outline-none focus:border-indigo-500 w-48"
-                                  />
-                                  <button
-                                    onClick={() => handleUpdateCompany(company.id, { name: editingName })}
-                                    disabled={actionLoading === company.id}
-                                    className="text-[11px] text-indigo-600 hover:text-indigo-800 font-medium"
-                                  >
-                                    Save
-                                  </button>
-                                  <button onClick={() => setEditingId(null)} className="text-neutral-400 hover:text-neutral-600">
-                                    <XMarkIcon className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              ) : (
-                                <div className="flex items-center gap-2">
-                                  {/* The name opens THE WORKSPACE DETAIL PAGE — the row stays the quick-glance index. */}
-                                  <Link href={`/platform-admin/workspaces/${company.id}`}
-                                    className="text-[13px] font-medium text-neutral-800 truncate hover:text-indigo-600 hover:underline underline-offset-2 transition-colors">
-                                    {company.name}
-                                  </Link>
-                                  <span className="text-[11px] text-neutral-400 flex-shrink-0">{company.slug}</span>
-                                </div>
-                              )}
+                              <p className="flex items-center gap-2 text-[13.5px] font-medium text-neutral-800 truncate">
+                                {company.name}
+                                {sovereign && (
+                                  <span className="flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 flex-shrink-0">
+                                    <ShieldCheckIcon className="w-3 h-3" /> Corporate
+                                  </span>
+                                )}
+                              </p>
+                              <p className="text-[11.5px] text-neutral-400 truncate mt-0.5">
+                                {company.slug} · {company.member_count} member{company.member_count === 1 ? '' : 's'}
+                              </p>
                             </div>
-
-                            {/* Type badge */}
-                            <select
-                              value={company.type}
-                              onChange={e => handleUpdateCompany(company.id, { type: e.target.value })}
-                              disabled={actionLoading === company.id || editingId === company.id}
-                              title="Workspace type"
-                              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border-0 capitalize cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-300 ${TYPE_COLORS[company.type]}`}
-                            >
-                              {TYPE_OPTIONS.map(t => <option key={t} value={t} className="capitalize">{t}</option>)}
-                            </select>
-
-                            {/* Plan */}
-                            <select
-                              value={company.plan}
-                              onChange={e => handleUpdateCompany(company.id, { plan: e.target.value })}
-                              disabled={actionLoading === company.id || editingId === company.id}
-                              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border-0 capitalize cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-300 ${PLAN_COLORS[company.plan]}`}
-                            >
-                              {PLAN_OPTIONS.map(p => <option key={p} value={p} className="capitalize">{p}</option>)}
-                            </select>
-
-                            {/* AI Mode */}
-                            <select
-                              value={company.ai_tier ?? ''}
-                              onChange={e => handleUpdateCompany(company.id, { ai_tier: (e.target.value || null) as TierType | null })}
-                              disabled={actionLoading === company.id || editingId === company.id}
-                              title="AI mode for this workspace"
-                              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-300 ${AI_TIER_COLORS[company.ai_tier ?? 'standard']}`}
-                            >
-                              {AI_TIER_OPTIONS.map(o => <option key={o.value ?? 'null'} value={o.value ?? ''}>{o.label}</option>)}
-                            </select>
-
-                            {/* Status badge */}
-                            <span
-                              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full capitalize ${STATUS_COLORS[company.status] ?? 'bg-neutral-100 text-neutral-600'}`}
-                            >
-                              {company.status}
+                            <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full capitalize flex-shrink-0 ${TYPE_COLORS[company.type] ?? 'bg-neutral-100 text-neutral-500'}`}>{company.type}</span>
+                            <span className="text-[11px] text-neutral-400 capitalize w-16 flex-shrink-0">{company.plan}</span>
+                            <span className="text-[11px] text-neutral-400 w-36 flex-shrink-0 truncate">{aiLabel}</span>
+                            <span className={`flex items-center gap-1.5 text-[11px] w-20 flex-shrink-0 ${company.status === 'active' ? 'text-emerald-600' : 'text-red-500'}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${company.status === 'active' ? 'bg-emerald-500' : 'bg-red-400'}`} />
+                              <span className="capitalize">{company.status}</span>
                             </span>
-
-                            {/* THE CORPORATE SWITCH (the sovereign door): one click = the
-                                sovereign mode (email feature OFF → no mailbox-auth surface
-                                anywhere; the Home pivots to the agent-team first look). */}
                             <button
-                              onClick={() => handleToggleFeature(company.id, 'email', company.features.email === false)}
-                              disabled={featureLoading === `${company.id}:email`}
-                              title={company.features.email === false
-                                ? 'Corporate (sovereign) — no mailbox auth anywhere. Click to allow email connections again.'
-                                : 'Make this a corporate (sovereign) workspace — hides every mailbox/calendar auth surface.'}
-                              className={`flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md transition-opacity disabled:opacity-50 ${
-                                company.features.email === false ? 'bg-emerald-50 text-emerald-700' : 'bg-neutral-100 text-neutral-400 hover:opacity-75'
-                              }`}
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCopyJoinCode(company.id, company.join_code); }}
+                              title={`Join code: ${company.join_code} — click to copy`}
+                              className="text-[10.5px] font-mono font-semibold px-2 py-0.5 rounded-md bg-neutral-100 text-neutral-600 hover:bg-neutral-200 transition-colors flex items-center gap-1 flex-shrink-0"
                             >
-                              <ShieldCheckIcon className="w-3 h-3" />
-                              Corporate
+                              {codeCopiedId === company.id ? <CheckIcon className="w-3 h-3" /> : <ClipboardDocumentIcon className="w-3 h-3" />}
+                              {company.join_code}
                             </button>
-
-                            {/* Feature toggles — compact pills ('home' is vestigial: nothing
-                                gates on it; hidden here, key kept for stored data). */}
-                            <div className="flex items-center gap-1">
-                              {FEATURE_KEYS.filter(k => k !== 'home').map(key => {
-                                const on = company.features[key];
-                                const loading = featureLoading === `${company.id}:${key}`;
-                                return (
-                                  <button
-                                    key={key}
-                                    onClick={() => handleToggleFeature(company.id, key, !on)}
-                                    disabled={loading}
-                                    title={`${FEATURE_LABEL[key]} — click to ${on ? 'disable' : 'enable'}`}
-                                    className={`text-[10px] font-medium px-2 py-0.5 rounded-md transition-opacity disabled:opacity-50 ${
-                                      on ? 'bg-indigo-50 text-indigo-700' : 'bg-neutral-100 text-neutral-400'
-                                    } ${loading ? 'opacity-60' : 'hover:opacity-75'}`}
-                                  >
-                                    {FEATURE_LABEL[key]}
-                                  </button>
-                                );
-                              })}
-                            </div>
-
-                            {/* Join code — click to copy, shift+click to regenerate */}
-                            <div className="flex items-center gap-0.5">
-                              <button
-                                onClick={() => handleCopyJoinCode(company.id, company.join_code)}
-                                title={`Join code: ${company.join_code} — click to copy`}
-                                className="text-[10.5px] font-mono font-semibold px-2 py-0.5 rounded-md bg-neutral-100 text-neutral-600 hover:bg-neutral-200 transition-colors flex items-center gap-1"
-                              >
-                                {codeCopiedId === company.id ? <CheckIcon className="w-3 h-3" /> : <ClipboardDocumentIcon className="w-3 h-3" />}
-                                {company.join_code}
-                              </button>
-                              <button
-                                onClick={() => handleRegenerateCode(company.id)}
-                                disabled={regenLoading === company.id}
-                                title="Regenerate code (invalidates old one)"
-                                className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors disabled:opacity-50"
-                              >
-                                <svg width="11" height="11" viewBox="0 0 20 20" fill="currentColor">
-                                  <path fillRule="evenodd" d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z" clipRule="evenodd" />
-                                </svg>
-                              </button>
-                            </div>
-
-                            {/* Member count */}
-                            <span className="text-[11px] text-neutral-400 w-14 text-right flex-shrink-0">
-                              {company.member_count} {company.member_count === 1 ? 'member' : 'members'}
-                            </span>
-
-                            {/* Actions */}
-                            <div className="flex items-center gap-1 flex-shrink-0">
-                              <button
-                                onClick={() => { setEditingId(company.id); setEditingName(company.name); }}
-                                disabled={actionLoading === company.id}
-                                title="Edit name"
-                                className="p-1.5 rounded-lg text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50"
-                              >
-                                <PencilIcon className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => handleToggleSuspend(company)}
-                                disabled={actionLoading === company.id || company.status === 'deleting'}
-                                title={company.status === 'active' ? 'Suspend workspace' : 'Unsuspend workspace'}
-                                className={`p-1.5 rounded-lg transition-colors disabled:opacity-50 ${
-                                  company.status === 'active'
-                                    ? 'text-neutral-400 hover:text-amber-600 hover:bg-amber-50'
-                                    : 'text-neutral-400 hover:text-green-600 hover:bg-green-50'
-                                }`}
-                              >
-                                {company.status === 'active' ? <PauseIcon className="w-3.5 h-3.5" /> : <PlayIcon className="w-3.5 h-3.5" />}
-                              </button>
-                              <button
-                                onClick={() => openCascadeModal(company)}
-                                disabled={actionLoading === company.id || company.status === 'deleting'}
-                                title="Delete workspace (destructive — wipes all member accounts and data)"
-                                className="p-1.5 rounded-lg text-neutral-400 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
-                              >
-                                <TrashIcon className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Expanded members + pending invites */}
-                          {expandedId === company.id && (
-                            <div className="bg-neutral-50 border-t border-neutral-100 px-12 py-4 space-y-3">
-                              {/* THE BRANDED ENTRY management — the workspace's own front door:
-                                  entry link (copy), client logo, tagline. Saves to
-                                  companies.settings.branding via the PATCH. */}
-                              <BrandingEditor
-                                company={company}
-                                onSaved={(branding) => setCompanies(prev => prev.map(c =>
-                                  c.id === company.id ? { ...c, settings: { ...(c.settings ?? {}), branding } } : c))}
-                              />
-                              {membersLoading === company.id ? (
-                                <p className="text-[12px] text-neutral-400 py-2">Loading…</p>
-                              ) : (
-                                <>
-                                  {/* Members */}
-                                  {(membersCache[company.id] ?? []).length === 0 ? (
-                                    <p className="text-[12px] text-neutral-400">No members yet.</p>
-                                  ) : (
-                                    <div className="space-y-2">
-                                      {(membersCache[company.id] ?? []).map(m => (
-                                        <div key={m.id} className="flex items-center gap-3 text-[12px]">
-                                          <div className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-[10px] font-semibold text-indigo-700 flex-shrink-0">
-                                            {getInitial(m.full_name, m.email)}
-                                          </div>
-                                          <span className="flex-1 text-neutral-700 truncate">
-                                            {m.full_name ? `${m.full_name} (${m.email})` : m.email}
-                                          </span>
-                                          <select
-                                            value={m.role}
-                                            onChange={e => handleChangeRole(company.id, m.user_id, e.target.value)}
-                                            disabled={roleLoading === m.user_id}
-                                            title="Change role"
-                                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-300 disabled:opacity-50 ${
-                                              m.role === 'owner' ? 'bg-indigo-50 text-indigo-700' :
-                                              m.role === 'admin' ? 'bg-amber-50 text-amber-700' :
-                                              'bg-neutral-100 text-neutral-600'
-                                            }`}
-                                          >
-                                            <option value="owner">Owner</option>
-                                            <option value="admin">Admin</option>
-                                            <option value="member">Member</option>
-                                          </select>
-                                          {/* Meeting-assistant (auto-join bot) toggle retired Aug 10. */}
-                                          <span className="text-neutral-400">Joined {formatDate(m.joined_at)}</span>
-                                          {confirmingId === m.user_id ? (
-                                            <div className="flex items-center gap-1.5">
-                                              <span className="text-[11px] text-red-500 font-medium">Delete?</span>
-                                              <button
-                                                onClick={() => handleDeleteMember(company.id, m.user_id)}
-                                                disabled={actionLoading === m.user_id}
-                                                className="px-2 py-0.5 rounded-lg text-[11px] font-semibold bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
-                                              >
-                                                Yes
-                                              </button>
-                                              <button
-                                                onClick={() => setConfirmingId(null)}
-                                                className="px-2 py-0.5 rounded-lg text-[11px] font-medium text-neutral-500 hover:bg-neutral-100 transition-colors"
-                                              >
-                                                Cancel
-                                              </button>
-                                            </div>
-                                          ) : (
-                                            <button
-                                              onClick={() => setConfirmingId(m.user_id)}
-                                              disabled={actionLoading === m.user_id}
-                                              title="Delete user"
-                                              className="p-1 rounded-lg text-neutral-300 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
-                                            >
-                                              <TrashIcon className="w-3.5 h-3.5" />
-                                            </button>
-                                          )}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-
-                                  {/* Pending invites */}
-                                  {(invitesCache[company.id] ?? []).length > 0 && (
-                                    <div className="border-t border-neutral-200 pt-3 space-y-2">
-                                      <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">Pending invitations</p>
-                                      {(invitesCache[company.id] ?? []).map(inv => (
-                                        <div key={inv.id} className="flex items-center gap-3 text-[12px]">
-                                          <span className="flex-1 text-neutral-500 truncate">{inv.email}</span>
-                                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize ${
-                                            inv.role === 'owner' ? 'bg-indigo-50 text-indigo-700' :
-                                            inv.role === 'admin' ? 'bg-amber-50 text-amber-700' :
-                                            'bg-neutral-100 text-neutral-600'
-                                          }`}>{inv.role}</span>
-                                          <span className="text-neutral-400">Expires {formatDate(inv.expires_at)}</span>
-                                          <button
-                                            onClick={() => handleCopyInvite(inv.id, inv.inviteUrl)}
-                                            className="flex items-center gap-1 px-2 py-1 rounded-lg border border-neutral-200 text-neutral-600 hover:bg-white transition-colors text-[11px]"
-                                          >
-                                            {copiedInviteId === inv.id
-                                              ? <><CheckIcon className="w-3 h-3" /> Copied</>
-                                              : <><ClipboardDocumentIcon className="w-3 h-3" /> Copy link</>
-                                            }
-                                          </button>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                            <ChevronRightIcon className="w-4 h-4 text-neutral-300 group-hover:text-neutral-500 transition-colors flex-shrink-0" />
+                          </Link>
+                        );
+                      })}
                     </div>
                   )}
                 </section>

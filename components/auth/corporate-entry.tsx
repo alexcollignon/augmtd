@@ -1,14 +1,17 @@
 'use client';
 
-// THE BRANDED ENTRY card (the sovereign door) — email+password only, no OAuth of any kind.
-// Three visible steps; step 3 ("Set up your agents") completes on the Home's sovereign first
-// look. Loud errors — an entry door must never fail silently.
+// THE BRANDED ENTRY (the sovereign door) — the NORMAL onboarding's split-screen idiom (owner,
+// Aug 10: "use the normal onboarding, the screen split looks cooler"): left = the white form
+// panel with the co-brand and big step headlines; right = the SAME animated AI-work preview
+// the standard onboarding renders (imported, never copied). Email+password only — no OAuth
+// anywhere on this page. Loud errors — an entry door must never fail silently.
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
-import { ShieldCheckIcon, ArrowRightIcon } from '@heroicons/react/24/outline';
+import { ShieldCheckIcon } from '@heroicons/react/24/outline';
+import { RightPanel } from '@/app/onboarding/onboarding-client';
 
 type Props = {
   company: { name: string; slug: string; logoUrl: string | null; tagline: string | null };
@@ -49,7 +52,6 @@ export function CorporateEntry({ company, mode, authedEmail }: Props) {
       });
       if (err) { setError(err.message); return; }
       if (data.session) {
-        // Confirmation off (or auto-confirmed) — finish in one motion.
         if (await join(code)) { router.push('/home'); router.refresh(); }
       } else {
         setStep('confirm');
@@ -66,101 +68,124 @@ export function CorporateEntry({ company, mode, authedEmail }: Props) {
     finally { setBusy(false); }
   };
 
-  const stepNo = step === 'email' ? 1 : 2;
-  const steps = [
-    { n: 1, label: 'Enter your email' },
-    { n: 2, label: 'Password & workspace code' },
-    { n: 3, label: 'Set up your agents' },
-  ];
-
-  const inputCls = 'w-full rounded-lg border border-neutral-200 bg-white px-3.5 py-2.5 text-[14px] text-neutral-800 placeholder:text-neutral-400 outline-none focus:border-indigo-300 transition-colors';
-  const btnCls = 'w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 px-4 py-2.5 text-[14px] font-medium text-white transition-colors';
+  const stepNo = step === 'email' ? 0 : 1;
+  const input = 'w-full px-4 py-3 text-[15px] border border-neutral-200 rounded-2xl focus:outline-none focus:border-neutral-400 placeholder:text-neutral-300 placeholder:text-[14px] transition-colors bg-neutral-50';
+  const button = 'w-full py-3 bg-neutral-900 text-white text-[14px] font-medium rounded-2xl hover:bg-neutral-800 disabled:opacity-40 active:scale-[0.99] transition-all';
 
   return (
-    <div className="min-h-screen bg-neutral-50 flex items-center justify-center px-4">
-      <div className="w-full max-w-md">
-        {/* Co-branded header: the client's mark leads on their own door; ours signs it. */}
-        <div className="flex items-center justify-center gap-3 mb-8">
-          {company.logoUrl && (
-            <>
-              {/* Client logos are external/user-supplied — plain img, never next/image domains. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={company.logoUrl} alt={company.name} className="h-8 max-w-[140px] object-contain" />
-              <span className="text-neutral-300">×</span>
-            </>
-          )}
-          <span className="flex items-center gap-2">
-            <Image src="/augmtd-logo.png" alt="AUGMTD" width={22} height={22} className="w-[22px] h-[22px]" />
-            <span className="text-[15px] font-semibold text-neutral-800 tracking-tight">augmtd</span>
-          </span>
-        </div>
+    <div className="fixed inset-0 flex">
+      {/* Left panel — the form, in the standard onboarding's language */}
+      <div className="w-full lg:w-1/2 flex flex-col bg-white overflow-y-auto">
+        <div className="flex-1 flex flex-col justify-center px-12 py-16 max-w-lg mx-auto w-full">
 
-        <div className="rounded-2xl bg-white border border-neutral-200 shadow-sm p-7">
-          <h1 className="text-[18px] font-semibold text-neutral-900 text-center">{company.name}</h1>
-          <p className="text-[12.5px] text-neutral-400 text-center mt-1">
-            {company.tagline ?? 'Your private AI workspace'}
-          </p>
+          {/* Co-brand: the client's mark leads on their own door; ours signs it. */}
+          <div className="mb-12 flex items-center gap-3">
+            {company.logoUrl && (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={company.logoUrl} alt={company.name} className="h-8 max-w-[150px] object-contain" />
+                <span className="text-neutral-300">×</span>
+              </>
+            )}
+            <span className="flex items-center gap-2">
+              <Image src="/augmtd-logo.png" alt="AUGMTD" width={24} height={24} className="w-6 h-6 opacity-80" />
+              <span className="text-[15px] font-semibold text-neutral-800 tracking-tight">augmtd</span>
+            </span>
+          </div>
 
-          {/* The three steps, always visible — the door tells you the whole walk. */}
-          <ol className="mt-5 mb-6 space-y-1.5">
-            {steps.map((s) => (
-              <li key={s.n} className={`flex items-center gap-2.5 text-[12.5px] ${s.n === stepNo ? 'text-neutral-800 font-medium' : s.n < stepNo ? 'text-neutral-400 line-through decoration-neutral-300' : 'text-neutral-400'}`}>
-                <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold ${s.n === stepNo ? 'bg-indigo-600 text-white' : s.n < stepNo ? 'bg-indigo-100 text-indigo-500' : 'bg-neutral-100 text-neutral-400'}`}>{s.n}</span>
-                {s.label}
-              </li>
+          {/* Step dots — three, the walk is visible */}
+          <div className="flex items-center gap-1.5 mb-6">
+            {[0, 1, 2].map(i => (
+              <span key={i} className={`h-1.5 rounded-full transition-all ${i === stepNo ? 'w-6 bg-neutral-900' : i < stepNo ? 'w-1.5 bg-neutral-400' : 'w-1.5 bg-neutral-200'}`} />
             ))}
-          </ol>
+          </div>
 
           {step === 'email' && (
-            <form onSubmit={(e) => { e.preventDefault(); if (email.trim()) setStep('password'); }} className="space-y-3">
-              <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@company.com" className={inputCls} autoFocus />
-              <button type="submit" className={btnCls}>Continue<ArrowRightIcon className="w-4 h-4" /></button>
-            </form>
+            <>
+              <h2 className="text-[26px] font-semibold text-neutral-900 leading-tight mb-2">
+                Welcome to <span className="text-indigo-600">{company.name}</span>
+              </h2>
+              <p className="text-[14px] text-neutral-500 mb-8 leading-relaxed">
+                {company.tagline ?? 'Your private AI workspace.'} Enter your work email to get started.
+              </p>
+              <form onSubmit={(e) => { e.preventDefault(); if (email.trim()) setStep('password'); }} className="space-y-3">
+                <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@company.com" className={input} autoFocus />
+                <button type="submit" className={button}>Continue</button>
+              </form>
+            </>
           )}
 
           {step === 'password' && (
-            <form onSubmit={(e) => { e.preventDefault(); if (password.length >= 8 && code.trim()) void submitSignup(); else setError(password.length < 8 ? 'Password needs at least 8 characters.' : 'Enter your workspace code.'); }} className="space-y-3">
-              <p className="text-[12px] text-neutral-400 -mb-1">{email}</p>
-              <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)}
-                placeholder="Choose a password (8+ characters)" className={inputCls} autoFocus />
-              <input type="text" required value={code} onChange={(e) => setCode(e.target.value)}
-                placeholder="Workspace code" className={`${inputCls} uppercase tracking-wider`} />
-              <button type="submit" disabled={busy} className={btnCls}>
-                {busy ? 'Creating your account…' : 'Create account'}<ArrowRightIcon className="w-4 h-4" />
-              </button>
-            </form>
+            <>
+              <h2 className="text-[26px] font-semibold text-neutral-900 leading-tight mb-2">
+                Choose a password
+              </h2>
+              <p className="text-[14px] text-neutral-500 mb-8 leading-relaxed">
+                For <span className="text-neutral-700">{email}</span> — plus the workspace code from your admin.
+              </p>
+              <form onSubmit={(e) => { e.preventDefault(); if (password.length >= 8 && code.trim()) void submitSignup(); else setError(password.length < 8 ? 'Password needs at least 8 characters.' : 'Enter your workspace code.'); }} className="space-y-3">
+                <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Password (8+ characters)" className={input} autoFocus />
+                <input type="text" required value={code} onChange={(e) => setCode(e.target.value.toUpperCase())}
+                  placeholder="Workspace code" maxLength={20}
+                  className={`${input} font-mono tracking-widest text-center placeholder:font-sans placeholder:tracking-normal`} />
+                <button type="submit" disabled={busy} className={button}>
+                  {busy ? 'Creating your account…' : 'Create account'}
+                </button>
+              </form>
+            </>
           )}
 
           {step === 'confirm' && (
-            <div className="text-center py-2">
-              <p className="text-[13.5px] text-neutral-700 font-medium">Check your inbox</p>
-              <p className="text-[12.5px] text-neutral-400 mt-1">
-                We sent a confirmation link to <span className="text-neutral-600">{email}</span>. Open it and
-                you&rsquo;ll land right back here to finish.
+            <>
+              <h2 className="text-[26px] font-semibold text-neutral-900 leading-tight mb-2">
+                Check your inbox
+              </h2>
+              <p className="text-[14px] text-neutral-500 leading-relaxed">
+                We sent a confirmation link to <span className="text-neutral-700">{email}</span>. Open it and
+                you&rsquo;ll land right back here to finish setting up.
               </p>
-            </div>
+            </>
           )}
 
           {step === 'code' && (
-            <form onSubmit={(e) => { e.preventDefault(); if (code.trim()) void submitJoin(); }} className="space-y-3">
-              {authedEmail && <p className="text-[12px] text-neutral-400 -mb-1">Signed in as {authedEmail}</p>}
-              <input type="text" required value={code} onChange={(e) => setCode(e.target.value)}
-                placeholder="Workspace code" className={`${inputCls} uppercase tracking-wider`} autoFocus />
-              <button type="submit" disabled={busy} className={btnCls}>
-                {busy ? 'Joining…' : 'Join workspace'}<ArrowRightIcon className="w-4 h-4" />
-              </button>
-            </form>
+            <>
+              <h2 className="text-[26px] font-semibold text-neutral-900 leading-tight mb-2">
+                Join <span className="text-indigo-600">{company.name}</span>
+              </h2>
+              <p className="text-[14px] text-neutral-500 mb-8 leading-relaxed">
+                {authedEmail ? <>Signed in as <span className="text-neutral-700">{authedEmail}</span>. </> : null}
+                Enter the workspace code from your admin.
+              </p>
+              <form onSubmit={(e) => { e.preventDefault(); if (code.trim()) void submitJoin(); }} className="space-y-3">
+                <input type="text" required value={code} onChange={(e) => setCode(e.target.value.toUpperCase())}
+                  placeholder="Workspace code" maxLength={20} autoFocus
+                  className={`${input} font-mono tracking-widest text-center placeholder:font-sans placeholder:tracking-normal`} />
+                <button type="submit" disabled={busy} className={button}>
+                  {busy ? 'Joining…' : 'Join workspace'}
+                </button>
+              </form>
+            </>
           )}
 
-          {error && <p className="mt-3 text-[12.5px] text-red-600 text-center">{error}</p>}
-        </div>
+          {error && (
+            <div className="mt-4 px-3 py-2.5 rounded-xl bg-red-50 border border-red-100">
+              <p className="text-[12px] text-red-600">{error}</p>
+            </div>
+          )}
 
-        {/* THE SAFE-DATA MARK on the door itself. */}
-        <p className="mt-5 flex items-center justify-center gap-1.5 text-[11.5px] text-neutral-400">
-          <ShieldCheckIcon className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-          <span>Private environment · private AI models · no third-party sign-in</span>
-        </p>
+          {/* THE SAFE-DATA MARK — on the door itself. */}
+          <p className="mt-10 flex items-center gap-1.5 text-[11.5px] text-neutral-400">
+            <ShieldCheckIcon className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+            <span>Private environment · private AI models · no third-party sign-in</span>
+          </p>
+        </div>
+      </div>
+
+      {/* Right panel — the SAME animated AI-work preview the standard onboarding shows. */}
+      <div className="hidden lg:flex flex-1 bg-neutral-50 items-center justify-center p-12 relative overflow-hidden">
+        <RightPanel step="code" />
       </div>
     </div>
   );

@@ -98,7 +98,9 @@ function AnimCard({ visible, done, fading, children }: {
   );
 }
 
-function RightPanel({ step }: { step: Step }) {
+// Exported (Aug 10): the BRANDED ENTRY (corporate door) renders the SAME preview — one
+// onboarding look, two doors, no divergence.
+export function RightPanel({ step }: { step: Step }) {
   const { displayed, done: typeDone } = useTypewriter(STEP_HEADLINES[step]);
   const animStep = useAnimLoop(step);
   const fading = animStep === 5;
