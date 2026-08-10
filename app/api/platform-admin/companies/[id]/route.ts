@@ -36,6 +36,19 @@ export async function PATCH(
   const updates: Record<string, any> = {};
 
   if (body.name?.trim()) updates.name = body.name.trim();
+  // BRANDED JOIN CODES (Aug 10, owner): the superadmin can set a memorable code (ISCORE26-style)
+  // instead of a random one. Uppercase alphanumeric, 4-20 chars, unique across workspaces.
+  if (body.join_code !== undefined) {
+    const code = String(body.join_code ?? '').trim().toUpperCase();
+    if (!/^[A-Z0-9]{4,20}$/.test(code)) {
+      return NextResponse.json({ error: 'Code must be 4-20 letters/numbers' }, { status: 400 });
+    }
+    const adminForCode = await getAdminClient();
+    const { data: clash } = await adminForCode.from('companies').select('id')
+      .ilike('join_code', code).neq('id', id).maybeSingle();
+    if (clash) return NextResponse.json({ error: 'That code is already in use' }, { status: 409 });
+    updates.join_code = code;
+  }
   // THE BRANDED ENTRY management (Aug 10): logo + tagline for the workspace's own front door
   // (app.augmtd.ai/<slug>) — merged into settings.branding, never replacing other settings.
   if (body.branding && typeof body.branding === 'object') {

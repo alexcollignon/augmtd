@@ -1078,7 +1078,13 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
   check('SV2: THE BRANDED ENTRY + THE SAFE-DATA MARK — app.augmtd.ai/<slug> is a client\'s own front door (root catch-all; route precedence keeps real routes ahead; unknown slug → /login): co-branded header (client logo from companies.settings.branding × ours), email+password ONLY (no OAuth anywhere on the page), the three steps visible (email → password & workspace code → set up your agents); an authed non-member skips to the code step; a member bounces /home; signup email-confirm returns to the SAME landing (auth/callback ?next=, relative paths only). The sidebar carries the co-brand logo and the sovereign footer mark ("Private environment", email-feature-off workspaces). Verified live: unauthenticated 200 with name+steps+mark, unknown slug 307 → /login, authed non-member renders the code step (screenshot)',
     src('app/[slug]/page.tsx').includes("ilike('slug', slug)") &&
     src('app/[slug]/page.tsx').includes("mode = 'code'") &&
-    src('components/auth/corporate-entry.tsx').includes('Set up your agents') &&
+    // RE-POINTED (Aug 10 late — owner: "use the normal onboarding, the screen split looks
+    // cooler"): the entry is the standard onboarding's SPLIT layout — white form panel left
+    // (co-brand, big step headlines, step dots), the SAME animated AI-work preview right
+    // (RightPanel IMPORTED from the onboarding, never copied). Same three-step walk.
+    src('components/auth/corporate-entry.tsx').includes("import { RightPanel } from '@/app/onboarding/onboarding-client'") &&
+    src('components/auth/corporate-entry.tsx').includes('lg:w-1/2') &&
+    src('app/onboarding/onboarding-client.tsx').includes('export function RightPanel') &&
     !src('components/auth/corporate-entry.tsx').includes('signInWithOAuth') &&
     src('components/auth/corporate-entry.tsx').includes('auth/callback?next=/') &&
     src('app/auth/callback/route.ts').includes("next.startsWith('/') && !next.startsWith('//')") &&
@@ -1087,11 +1093,18 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('app/(main)/layout.tsx').includes('sovereign = features.email === false'));
 
   check('SV3: THE PLATFORM-ADMIN SOVEREIGN CONTROLS — spinning up a corporate client is a two-minute operation: THE CORPORATE SWITCH per workspace row (one click = email feature OFF = the sovereign mode; emerald shield when on, with plain-language tooltips both ways); THE BRANDED-ENTRY editor in the expanded row (entry link app.augmtd.ai/<slug> click-to-copy · client logo URL · tagline → PATCH merges settings.branding, never clobbering other settings; logo validated URL-or-app-path); alignment: the vestigial Home feature pill hidden (nothing gates on it; key kept for stored data), bg-primary-* tokens replaced with the kit\'s indigo. NOTE: visually verified by the owner\'s superadmin login (the dedicated superadmin account is not available to automation)',
-    src('app/platform-admin/platform-admin-client.tsx').includes('THE CORPORATE SWITCH') &&
-    src('app/platform-admin/platform-admin-client.tsx').includes("handleToggleFeature(company.id, 'email', company.features.email === false)") &&
-    src('app/platform-admin/platform-admin-client.tsx').includes('function BrandingEditor') &&
-    src('app/platform-admin/platform-admin-client.tsx').includes("FEATURE_KEYS.filter(k => k !== 'home')") &&
+    // RE-POINTED (Aug 10 late — the list redesign): the list is a READ-ONLY INDEX (name gets
+    // the room, quiet badges, corporate shield, copyable code, whole row → the detail page);
+    // ALL editing — corporate toggle, branding, features, join code — lives on the detail page.
+    src('app/platform-admin/platform-admin-client.tsx').includes('THE INDEX ROW') &&
+    src('app/platform-admin/platform-admin-client.tsx').includes('read-only index') &&
     !src('app/platform-admin/platform-admin-client.tsx').includes('bg-primary-50') &&
+    src('components/platform-admin/workspace-detail.tsx').includes("toggleFeature('email'") &&
+    // BRANDED JOIN CODES: superadmin types a memorable code (ISCORE26-style); server validates
+    // format + uniqueness.
+    src('components/platform-admin/workspace-detail.tsx').includes('saveCode') &&
+    src('app/api/platform-admin/companies/[id]/route.ts').includes('A-Z0-9]{4,20}') &&
+    src('app/api/platform-admin/companies/[id]/route.ts').includes('already in use') &&
     src('app/api/platform-admin/companies/[id]/route.ts').includes('branding') &&
     src('app/api/platform-admin/companies/[id]/route.ts').includes('never replacing other settings') &&
     // THE LOGO UPLOAD: super-admin route → public `branding` bucket (raster only — a public SVG
@@ -1107,6 +1120,9 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('components/platform-admin/workspace-detail.tsx').includes("label: 'Knowledge'") &&
     src('components/platform-admin/workspace-detail.tsx').includes("label: 'Workflows'") &&
     src('components/platform-admin/workspace-detail.tsx').includes('Danger zone') &&
+    // FULL USER DELETE kept (owner): same route as before, two-step confirm on the member row.
+    src('components/platform-admin/workspace-detail.tsx').includes('Delete user entirely?') &&
+    src('components/platform-admin/workspace-detail.tsx').includes('/delete`, { method: \'POST\' }') &&
     src('app/platform-admin/platform-admin-client.tsx').includes('/platform-admin/workspaces/${company.id}') &&
     src('app/platform-admin/platform-admin-client.tsx').includes("drive:    'Knowledge'") &&
     src('components/meetings/week-calendar.tsx').includes('runs without connected calendars') &&

@@ -10,7 +10,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   ArrowLeftIcon, ClipboardDocumentIcon, CheckIcon, ArrowPathIcon, ShieldCheckIcon,
-  ExclamationTriangleIcon,
+  ExclamationTriangleIcon, TrashIcon,
 } from '@heroicons/react/24/outline';
 import type { WorkspaceFeatures, WorkspaceType, FeatureKey } from '@/lib/workspace/types';
 import type { TierType } from '@/lib/ai/types';
@@ -56,6 +56,8 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
   const [logo, setLogo] = useState(initial.settings?.branding?.logo_url ?? '');
   const [tagline, setTagline] = useState(initial.settings?.branding?.tagline ?? '');
   const [name, setName] = useState(initial.name);
+  const [codeDraft, setCodeDraft] = useState(initial.join_code);
+  const [codeErr, setCodeErr] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const entryUrl = `${typeof window !== 'undefined' ? window.location.origin : 'https://app.augmtd.ai'}/${c.slug}`;
@@ -103,7 +105,22 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
     try {
       const res = await fetch(`/api/platform-admin/companies/${c.id}/regenerate-join-code`, { method: 'POST' });
       const d = await res.json();
-      if (res.ok && d.join_code) setC(prev => ({ ...prev, join_code: d.join_code }));
+      if (res.ok && d.join_code) { setC(prev => ({ ...prev, join_code: d.join_code })); setCodeDraft(d.join_code); }
+    } finally { setBusy(null); }
+  };
+
+  // Branded join codes: save the typed code; a rejection (format/clash) shows and reverts.
+  const saveCode = async () => {
+    const code = codeDraft.trim().toUpperCase();
+    if (!code || code === c.join_code) { setCodeDraft(c.join_code); return; }
+    setBusy('code');
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${c.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ join_code: code }),
+      });
+      const d = await res.json().catch(() => null);
+      if (res.ok) { setC(prev => ({ ...prev, join_code: code })); setCodeDraft(code); }
+      else { setCodeErr(d?.error ?? 'Could not save code'); setCodeDraft(c.join_code); }
     } finally { setBusy(null); }
   };
 
@@ -121,6 +138,21 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
     { branding: { logo_url: logo.trim(), tagline: tagline.trim() } },
     prev => ({ ...prev, settings: { ...(prev.settings ?? {}), branding: { ...(logo.trim() ? { logo_url: logo.trim() } : {}), ...(tagline.trim() ? { tagline: tagline.trim() } : {}) } } }),
   );
+
+  // FULL USER DELETE (owner, Aug 10 — "keep user management as we had"): the SAME
+  // platform-admin route the old list expansion used; two-step confirm, row removed on success.
+  const [confirmingUser, setConfirmingUser] = useState<string | null>(null);
+  const deleteUser = async (userId: string) => {
+    setConfirmingUser(null);
+    setBusy(`del:${userId}`);
+    try {
+      const res = await fetch(`/api/platform-admin/members/${userId}/delete`, { method: 'POST' });
+      if (res.ok) {
+        setMembers(prev => (prev ?? []).filter(m => m.user_id !== userId));
+        setC(prev => ({ ...prev, member_count: Math.max(0, prev.member_count - 1) }));
+      }
+    } finally { setBusy(null); }
+  };
 
   const changeRole = async (userId: string, role: string) => {
     setBusy(`role:${userId}`);
@@ -226,14 +258,25 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[12px] text-neutral-500 w-20 flex-shrink-0">Join code</span>
-              <button onClick={() => copy('code', c.join_code)} className="flex items-center gap-1.5 text-[12px] font-mono font-semibold text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-md px-2 py-0.5 transition-colors">
+              {/* EDITABLE (owner, Aug 10): type a branded code (ISCORE26-style) and save on
+                  blur/Enter — uppercase alphanumeric, uniqueness enforced server-side. */}
+              <input
+                value={codeDraft}
+                onChange={e => { setCodeDraft(e.target.value.toUpperCase()); setCodeErr(''); }}
+                onBlur={() => void saveCode()}
+                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                spellCheck={false}
+                className="w-32 rounded-md border border-neutral-200 px-2 py-0.5 text-[12px] font-mono font-semibold uppercase tracking-wider text-neutral-700 outline-none focus:border-indigo-300"
+              />
+              <button onClick={() => copy('code', c.join_code)} title="Copy the current code"
+                className="p-1 rounded text-neutral-400 hover:text-neutral-700">
                 {copied === 'code' ? <CheckIcon className="w-3.5 h-3.5" /> : <ClipboardDocumentIcon className="w-3.5 h-3.5" />}
-                {c.join_code}
               </button>
-              <button onClick={() => void regenCode()} disabled={busy === 'code'} title="Regenerate (invalidates the old code)"
+              <button onClick={() => void regenCode()} disabled={busy === 'code'} title="Regenerate a random code (invalidates the old one)"
                 className="p-1 rounded text-neutral-400 hover:text-neutral-700 disabled:opacity-50">
                 <ArrowPathIcon className={`w-3.5 h-3.5 ${busy === 'code' ? 'animate-spin' : ''}`} />
               </button>
+              {codeErr && <span className="text-[11.5px] text-red-600">{codeErr}</span>}
             </div>
           </div>
         </div>
@@ -301,6 +344,21 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
                   <option value="admin">Admin</option>
                   <option value="member">Member</option>
                 </select>
+                {confirmingUser === m.user_id ? (
+                  <span className="flex items-center gap-1.5 flex-shrink-0">
+                    <span className="text-[11px] text-red-500 font-medium">Delete user entirely?</span>
+                    <button onClick={() => void deleteUser(m.user_id)} disabled={busy === `del:${m.user_id}`}
+                      className="text-[11px] font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded px-2 py-0.5 transition-colors">
+                      {busy === `del:${m.user_id}` ? '…' : 'Delete'}
+                    </button>
+                    <button onClick={() => setConfirmingUser(null)} className="text-[11px] text-neutral-400 hover:text-neutral-600">Cancel</button>
+                  </span>
+                ) : (
+                  <button onClick={() => setConfirmingUser(m.user_id)} title="Delete this user completely (account and data)"
+                    className="p-1 rounded text-neutral-300 hover:text-red-500 hover:bg-red-50 transition-colors flex-shrink-0">
+                    <TrashIcon className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
             ))}
             {pending.length > 0 && (

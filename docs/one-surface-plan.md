@@ -468,6 +468,25 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+QQ. **THE BRANDED ENTRY GOES SPLIT-SCREEN (Aug 10 last — owner: "use the normal
+   onboarding, the screen split looks cooler"; SV2 re-pointed, 123/123, build green,
+   screenshot-verified).** The corporate door now wears the standard onboarding's split:
+   LEFT the white form panel (co-brand top, big step headlines — "Welcome to <client>" /
+   "Choose a password" / "Check your inbox" / "Join <client>" — step dots, the
+   onboarding's rounded-2xl inputs + neutral-900 button, the safe-data mark at rest);
+   RIGHT the SAME animated AI-work preview (RightPanel EXPORTED from onboarding-client
+   and imported — one component, two doors, no copy to drift). Same three-step walk,
+   same auth flow, no OAuth anywhere on the page.
+PP. **THE ADMIN INDEX ROW + BRANDED JOIN CODES (Aug 10 latest — owner: "see how bad it
+   looks"; SV3 re-pointed, 123/123, build green).** The list page is a READ-ONLY INDEX:
+   the workspace name finally gets the room (it was squeezed to a sliver by six inline
+   selects), quiet badges (type · plan · AI mode · status dot · corporate shield ·
+   member count), copyable join code, the whole row opens the detail page. ALL editing
+   lives on the detail page — the two-views split made honest. BRANDED JOIN CODES
+   (owner, mid-review): the code is an editable field on the detail page (ISCORE26-style;
+   uppercase alphanumeric 4-20, uniqueness + format enforced server-side, rejection
+   shows and reverts); random regenerate stays beside it. Dead list-page code
+   (BrandingEditor copy, expansion handlers) rides the component sweep.
 OO. **THE MEETING ASSISTANT UI RETIRED (Aug 10, owner call — "we no longer use it"; gate
    SV5 — 123/123, build green).** The auto-join Google Meet bot's user-facing surfaces
    are gone: the Settings card (component deleted), the meeting page's Send-assistant
