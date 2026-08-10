@@ -976,6 +976,17 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('app/api/home/horizon/route.ts').includes('prepReadyEvents') &&
     src('components/home/home-view.tsx').includes('Prep ready'));
 
+  check('CS6: THE WORKFLOWS TIDY (trailing items, Aug 10) — workflow_notifications writes DIED with the feed that read them (deliveries → Runs + badge; failures → deck debt; the opted-in Slack DM stays); "digest" retired from generated configs (back-compat reads stay); a REACTION said in a project room falls through to the one creation card instead of a cron-only "can\'t set that up" (steer passes workflowDraft; the rail renders the same card); teammates\' shared workflows list read-only in the ledger with owner attribution; the box\'s create_task docstring says DRAFT-for-confirm (never "created")',
+    !src('lib/workflows/run-workflow.ts').includes("from('workflow_notifications').insert") &&
+    src('lib/workflows/generate-config.ts').includes('"digest" is retired') &&
+    src('lib/converse/index.ts').includes('falls through to the one creation card') &&
+    src('app/api/items/steer/route.ts').includes('turn.workflowDraft') &&
+    src('components/home/item-rail.tsx').includes('WorkflowDraftCard') &&
+    src('app/api/workflows/ledger/route.ts').includes('TEAMMATES') &&
+    src('components/workflows/workflows-ledger.tsx').includes('Team workflows') &&
+    src('infra/agentos/tools_tasks.py').includes('NEVER say') &&
+    src('infra/agentos/tools_tasks.py').includes('DRAFT a scheduled automation task'));
+
   // ── AO · ARTIFACTS-INTO-ORIGIN (proactivity completion #1, Aug 9). ──
   check('AO1: THE DISPATCHED DELIVERABLE COMES HOME — substantial delegated production materializes as a REAL document artifact on the delegation thread (the SAME textToDocContent/uploadArtifact primitives as workflow runs — one shared module, run-workflow imports it too, never two diverging copies); the artifact rides the ConverseTurn back into the conversation that asked (Home chat renders its card AND opens the viewer; the room rail carries the door chip); a short answer or an ask stays text. E2E-proven live on the probe: real .docx in storage, card on the turn',
     src('lib/workflows/doc-content.ts').includes('export function textToDocContent') &&

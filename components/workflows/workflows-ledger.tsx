@@ -41,7 +41,7 @@ type RecentGroup = {
   failures: Array<{ at: string; error: string }>; held: number;
 };
 type Worker = { id: string; name: string; worker_role: string };
-type LedgerPayload = { ledger: LedgerRow[]; awaiting: Awaiting[]; recent: RecentGroup[]; workers: Worker[] };
+type LedgerPayload = { ledger: LedgerRow[]; awaiting: Awaiting[]; recent: RecentGroup[]; workers: Worker[]; team?: Array<{ id: string; name: string; scheduleLabel: string | null; ownerName: string }> };
 
 type DraftStep = { type: string; label?: string; tool?: string };
 type Draft = {
@@ -498,6 +498,23 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                     <RunAudit workflowId={g.workflowId} onOpenDeliverable={(tid, aid) => openDeliverable(tid, aid, g.workflowId)} />
                   </div>
                 )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Teammates' shared workflows — read-only, owner-attributed (their production, visible). ── */}
+      {tab === 'workflows' && (data?.team?.length ?? 0) > 0 && (
+        <div className="mt-8">
+          <h2 className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">Team workflows</h2>
+          <div className="mt-2 divide-y divide-neutral-100 rounded-2xl border border-neutral-200 bg-white">
+            {data!.team!.map((t) => (
+              <div key={t.id} className="flex items-center gap-3 px-4 py-2.5">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] text-neutral-800">{t.name}</span>
+                  <span className="block text-[12px] text-neutral-500">{t.scheduleLabel ?? 'On demand'} · run by {t.ownerName}</span>
+                </span>
               </div>
             ))}
           </div>

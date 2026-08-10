@@ -468,6 +468,19 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+EE. **DEPLOYED + THE WORKFLOWS TIDY (Aug 10 afternoon; gate CS6 — 112/112, tasks 72/72,
+   build green).** The second prod deploy shipped everything since Saturday (retirement,
+   Rene's fix, the creation card, facepile, badge/seen, convergence kit, anticipation) —
+   presence route live, /workers redirecting on prod. The trailing items closed:
+   workflow_notifications writes DIED (the feed that read them dissolved; the opted-in
+   Slack DM stays); "digest" retired from generated configs; a REACTION said in a project
+   ROOM falls through to the one creation card (steer passes workflowDraft; the rail
+   renders the same component — cron-only spec errors no longer dead-end); teammates'
+   shared workflows list read-only in the ledger with owner attribution; the box's
+   create_task docstring says DRAFT-for-confirm (box redeployed). DEFERRED with reason:
+   the dead /workers component sweep (worker-profile + tabs share types with
+   workers-page-client — a type-extraction refactor for zero runtime gain since the
+   routes are gone) and the /work chat hub (owner decision pending).
 DD. **THE ANTICIPATION PASS (the initiative loop begins, Aug 10; gate AN1 — 111/111, build
    green; E2E on the probe: a room-linked meeting tomorrow drew a grounded prep brief into
    its room UNPROMPTED — because line leading, chip resolving, TTL + exactly-once holding,

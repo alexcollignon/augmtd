@@ -422,7 +422,21 @@ async function dispatchCommand(
     }
     const { buildStandingSpec } = await import('@/lib/work/standing-spec');
     const spec = await buildStandingSpec(client, userId, request);
-    if ('error' in spec) return { say: `I can't set that up yet — ${spec.error}.`, refs: [] };
+    if ('error' in spec) {
+      // The spec validator is cron-only — a REACTION request said in a room ("whenever X
+      // happens…") falls through to the one creation card instead of a dead "can't set that
+      // up" (the card grammar covers every trigger type).
+      const { generateWorkflowConfig } = await import('@/lib/workflows/generate-config');
+      const g = await generateWorkflowConfig(request, userId, client);
+      if (g) {
+        return {
+          say: `Here's the plan for "${g.name}" — nothing runs until you confirm on the card.`,
+          refs: [],
+          workflowDraft: { ...g, token: crypto.randomUUID() },
+        };
+      }
+      return { say: `I can't set that up yet — ${spec.error}.`, refs: [] };
+    }
     let roomKey: string | null = null; let roomLabel = 'this room';
     if (scope.kind === 'entity') roomKey = scope.entityId;
     else if (scope.kind === 'item') {

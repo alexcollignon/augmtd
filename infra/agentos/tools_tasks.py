@@ -55,9 +55,11 @@ def list_tasks(run_context: RunContext) -> str:
 
 @tool
 def create_task(run_context: RunContext, description: str, skill_names: Optional[str] = None) -> str:
-    """Create a new scheduled automation task from a plain-language description.
-    Include sources, what to produce, and the schedule. The system builds the full
-    multi-step pipeline automatically.
+    """DRAFT a scheduled automation task from a plain-language description — nothing
+    runs until the user confirms on the review card that appears in the chat. Include
+    sources, what to produce, and the schedule; the system builds the full multi-step
+    pipeline for review. Tell the user the plan is ready for their confirm — NEVER say
+    the task was created (creation happens only on their click).
 
     Args:
         description: What the task does and when, e.g. "Every Monday 8am, scan my

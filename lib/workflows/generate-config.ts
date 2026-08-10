@@ -96,7 +96,7 @@ Pick ONE home for the deliverable (the app always keeps a record regardless):
 - "slack"    → posted to a Slack channel. Set slack_channel (e.g. "#marketing"), or "@me" to DM the user privately. ONLY if Slack is connected.
 - "email"    → emailed.
 
-report_mode: how proactively the coworker reports back — "each_run" (default), "digest", or "silent".
+report_mode: "each_run" (default) or "silent". ("digest" is retired — never emit it.)
 
 Examples:
 Recurring briefing → { "destination": "document", "artifact_type": "document", "title_template": "Briefing — {{week_of}}", "report_mode": "each_run" }

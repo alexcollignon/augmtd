@@ -240,13 +240,8 @@ async function maybeAutoPause(
   await admin.from('work_threads')
     .update({ updated_at: new Date().toISOString() })
     .eq('id', threadId);
-  await admin.from('workflow_notifications').insert({
-    workflow_run_id: runId,
-    workflow_id: workflow.id,
-    user_id: workflow.user_id,
-    title: workerName,                            // sender = the coworker (DM feel)
-    summary: pauseLine.slice(0, 280),
-  });
+  // (workflow_notifications write removed Aug 10 — the feed that read it dissolved; the thread
+  // message above + the ledger's "paused itself" copy carry the fact.)
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -636,16 +631,11 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     }
   }
 
-  // ── Report-back notification (DM from the coworker) — skip for tests / silent ──
+  // ── Report-back side effects — skip for tests / silent. (The workflow_notifications insert
+  // died Aug 10 with the feed that read it: deliveries live in Runs + the sidebar badge,
+  // failures are deck debt. The optional real Slack DM stays — the user opted into that.) ──
   if (!opts.isTest && out.reportMode !== 'silent') {
-    await admin.from('workflow_notifications').insert({
-      workflow_run_id: runId,
-      workflow_id: workflow.id,
-      user_id: runnerId,
-      title: worker.name,                          // sender = the coworker (DM feel)
-      summary: reportText.slice(0, 280),
-    });
-    // Optional: also ping the user with a real Slack DM from the coworker persona.
+    // Optional: ping the user with a real Slack DM from the coworker persona.
     // (Skip when the home was already a Slack DM, to avoid double-pinging.)
     if (dmReports && !(home === 'slack' && out.slackChannel && isDmTarget(out.slackChannel))) {
       await sendSlackDM(admin, runnerId, agentId, reportText).catch(() => {});
