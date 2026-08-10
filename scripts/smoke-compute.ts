@@ -1018,10 +1018,11 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('CH1: THE PANEL TRANSCRIPT — the chat panel\'s own conversation reaches EVERY converse path, not just the question path: the router classifies with it, the agent loop carries it as REAL messages (full fidelity, never a squeezed grounding block), and a delegation hand-off carries the conversation so a task worded "do it" resolves. E2E replay of the live four-turn failure: scripts/smoke-converse-history.ts (reformat delivered · "yes please" resolved · "ask sofia to do it" delegated to Sofia)',
     src('lib/converse/index.ts').includes('function panelTranscript') &&
     src('lib/converse/index.ts').includes('[dlg.transcript, panelTranscript(opts.history)]') &&
-    src('lib/converse/index.ts').includes('classifyTurn(client, userId, scope, text, transcript)') &&
+    src('lib/converse/index.ts').includes('classifyTurn(client, userId, scope,') &&
+    src('lib/converse/index.ts').includes('materialNames ? `${text}') &&
     src('lib/converse/index.ts').includes('...(history ?? []).slice(-8).map((t) => ({ role: t.role, content:') &&
     src('lib/converse/index.ts').includes('THE CONVERSATION THIS CAME FROM') &&
-    src('lib/converse/index.ts').includes('verdict.delegate.task, text, transcript)'));
+    src('lib/converse/index.ts').includes('verdict.delegate.task, text, transcript, material)'));
 
   check('CH2: THE HONESTY-FLOOR MISFIRE GATE — the registry pointer is a RECALL rescue: it fires only when the DENIAL SENTENCE itself names something the registry holds; a capability/format denial whose message merely contains project names never grows a "(a known body of work)" pointer; plural matches get plural grammar',
     src('lib/converse/index.ts').includes('THE MISFIRE GATE') &&
@@ -1032,7 +1033,7 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('CH3: DRAG-AND-DROP ATTACH on every chat box — the ONE composer (WorkerMentionInput: Home chat, room rail, coworker DM) and the legacy /work ChatInputBar both accept dropped files through the SAME onAttach door as the paperclip (same accepted types, same cap), with a visible drop overlay; a depth counter survives child enter/leave churn',
     src('components/workers/worker-mention-input.tsx').includes('DRAG-AND-DROP ATTACH') &&
     src('components/workers/worker-mention-input.tsx').includes('Drop files to attach') &&
-    src('components/workers/worker-mention-input.tsx').includes('dragDepth') &&
+    src('components/workers/worker-mention-input.tsx').includes('DROP_CLAIMED') &&
     src('components/work/chat-input-bar.tsx').includes('Drop files to attach') &&
     src('components/work/chat-input-bar.tsx').includes('MAX_ATTACHMENTS - attachments.length'));
 
@@ -1046,6 +1047,20 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('lib/home/delegate.ts').includes('[CONFIRM: <what\'s needed>]') &&
     src('components/home/home-ask.tsx').includes('function UserBubble') &&
     src('app/api/home/ask/route.ts').includes('focus && turn.say?.trim()'));
+
+  check('CH5: THE ATTACHED MATERIAL + TOKEN STREAMING + THE FORMAT-FLOOR FIX (Aug 10 night) — (1) attachment text extracts SYNCHRONOUSLY (/api/home/extract-attach) and rides the ask itself: the classifier sees the names, the loop carries the material as its own turn, a delegation carries it whole — never a race against KB background indexing (E2E T6: delegated with material); (2) the agent loop STREAMS its answer (content deltas → SSE token events → the live preview; done stays authoritative; NUL sentinel clears pre-tool preamble; 15s SSE ping keeps long hand-offs alive) — E2E T7 streams >40 chars through the loop\'s exact client+tools; (3) aiCreate strips response_format json_object for Anthropic endpoints (their compat API began rejecting it — 400 "Input should be json_schema" — which broke EVERY json-shaped call routed to Claude, incl. the Home question path); (4) attach doors accept everything the extractor reads (pptx/xlsx/csv/doc added server + composers + presign extension-fallback for unreliable browser mimes) and the WHOLE WINDOW is the drop zone (a missed drop never navigates away); rejected files say so out loud',
+    src('app/api/home/extract-attach/route.ts').includes('extractTextFromAttachment') &&
+    src('lib/converse/index.ts').includes('THE ATTACHED MATERIAL') &&
+    src('lib/converse/index.ts').includes('material I attached') &&
+    src('lib/converse/index.ts').includes('onToken(delta.content)') &&
+    src('app/api/home/ask/route.ts').includes("{ type: 'token', t }") &&
+    src('app/api/home/ask/route.ts').includes("send({ type: 'ping' })") &&
+    src('lib/ai/factory.ts').includes("includes('anthropic.com')") &&
+    src('app/api/work/threads/[id]/chat-attach/route.ts').includes('presentationml.presentation') &&
+    src('app/api/drive/upload/presign/route.ts').includes('MIME_BY_EXT') &&
+    src('components/workers/worker-mention-input.tsx').includes("window.addEventListener('drop'") &&
+    src('components/work/chat-input-bar.tsx').includes("window.addEventListener('drop'") &&
+    src('components/home/home-ask.tsx').includes('liveText'));
 
   // ── Report ──
   let pass = 0;

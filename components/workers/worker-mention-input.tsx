@@ -18,6 +18,10 @@ function formatBytes(b: number): string {
   return b < 1024 * 1024 ? `${Math.round(b / 1024)} KB` : `${(b / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// One window drop is claimed by exactly ONE mounted composer (module-level — two visible
+// composers must never double-attach the same drop).
+const DROP_CLAIMED = new WeakSet<Event>();
+
 const ICONS: Record<WorkerMention['type'], React.ElementType> = { coworker: UserCircleIcon, task: BoltIcon, document: DocumentTextIcon };
 const CHIP: Record<WorkerMention['type'], string> = {
   coworker: 'bg-indigo-50 text-indigo-700 border-indigo-200',
@@ -251,36 +255,52 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
     if (files.length) onAttach?.(files);
   }
 
-  // DRAG-AND-DROP ATTACH (Aug 10): dropping files anywhere on the composer attaches them through
-  // the SAME onAttach door the paperclip uses — one composer, so every chat box (Home chat, room
-  // rail, coworker DM) gets it at once. A depth counter survives child enter/leave churn.
+  // DRAG-AND-DROP ATTACH (Aug 10, hardened same day — "docx, pptx don't work"): the WHOLE
+  // WINDOW is the drop zone while this composer is mounted — a drop that misses the composer
+  // box must attach, never browser-navigate away and lose the conversation. Accepted types =
+  // everything the text-extractor reads (Office, CSV included); a rejected file says so out
+  // loud instead of vanishing silently. One composer, so every chat box gets all of it at once.
   const [dragOver, setDragOver] = useState(false);
-  const dragDepth = useRef(0);
-  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
-  const onDragEnter = (e: React.DragEvent) => {
-    if (!onAttach || !hasFiles(e)) return;
-    e.preventDefault(); dragDepth.current += 1; setDragOver(true);
-  };
-  const onDragOver = (e: React.DragEvent) => { if (onAttach && hasFiles(e)) e.preventDefault(); };
-  const onDragLeave = () => {
-    if (!onAttach) return;
-    dragDepth.current = Math.max(0, dragDepth.current - 1);
-    if (dragDepth.current === 0) setDragOver(false);
-  };
-  const onDrop = (e: React.DragEvent) => {
-    if (!onAttach) return;
-    e.preventDefault(); dragDepth.current = 0; setDragOver(false);
-    // Same types the paperclip picker allows — the two attach doors behave identically.
-    const ok = /\.(pdf|docx|txt|jpe?g|png|webp|zip)$/i;
-    const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => ok.test(f.name));
-    if (files.length) onAttach(files);
-  };
+  const ACCEPT_RE = /\.(pdf|docx?|xlsx|pptx|csv|txt|jpe?g|png|webp|zip)$/i;
+  useEffect(() => {
+    if (!onAttach || disabled) return;
+    let depth = 0;
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+    const visible = () => !!wrapRef.current && wrapRef.current.offsetParent !== null;
+    const enter = (e: DragEvent) => { if (!hasFiles(e) || !visible()) return; e.preventDefault(); depth += 1; setDragOver(true); };
+    const over = (e: DragEvent) => { if (hasFiles(e)) e.preventDefault(); };
+    const leave = (e: DragEvent) => { if (!hasFiles(e)) return; depth = Math.max(0, depth - 1); if (depth === 0) setDragOver(false); };
+    const drop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault(); depth = 0; setDragOver(false);
+      if (!visible() || DROP_CLAIMED.has(e)) return;
+      DROP_CLAIMED.add(e);
+      const all = Array.from(e.dataTransfer?.files ?? []);
+      const files = all.filter((f) => ACCEPT_RE.test(f.name));
+      const skipped = all.filter((f) => !ACCEPT_RE.test(f.name));
+      if (skipped.length) {
+        void import('sonner').then(({ toast }) =>
+          toast.error(`Not supported: ${skipped.map((f) => f.name).join(', ')} — PDF, Word, Excel, PowerPoint, CSV, text, images, or ZIP.`));
+      }
+      if (files.length) onAttach(files);
+    };
+    window.addEventListener('dragenter', enter);
+    window.addEventListener('dragover', over);
+    window.addEventListener('dragleave', leave);
+    window.addEventListener('drop', drop);
+    return () => {
+      window.removeEventListener('dragenter', enter);
+      window.removeEventListener('dragover', over);
+      window.removeEventListener('dragleave', leave);
+      window.removeEventListener('drop', drop);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onAttach, disabled]);
 
   const hasChips = mentions.length > 0 || attachments.length > 0;
 
   return (
-    <div className="relative" ref={wrapRef}
-      onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+    <div className="relative" ref={wrapRef}>
       {dropdown}
       {dragOver && onAttach && (
         <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-indigo-300 bg-indigo-50/90 pointer-events-none">
@@ -289,7 +309,7 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
           </span>
         </div>
       )}
-      <input ref={fileInputRef} type="file" multiple accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.webp,.zip" className="hidden" onChange={handleFileChange} />
+      <input ref={fileInputRef} type="file" multiple accept=".pdf,.doc,.docx,.xlsx,.pptx,.csv,.txt,.jpg,.jpeg,.png,.webp,.zip" className="hidden" onChange={handleFileChange} />
       <div className={frameless ? '' : 'rounded-2xl bg-neutral-50 border border-neutral-200 overflow-hidden focus-within:border-neutral-300 focus-within:bg-white focus-within:shadow-sm transition-all duration-150'}>
         {hasChips && (
           <div className="flex flex-wrap gap-1.5 px-4 pt-3">

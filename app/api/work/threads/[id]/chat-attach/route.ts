@@ -14,9 +14,16 @@ const ZIP_MIME_TYPES = [
   'application/x-zip',
 ];
 
+// Everything the text-extractor can actually read (Aug 10, found live: pptx/xlsx/csv/doc were
+// rejected HERE while lib/attachments/text-extractor.ts supported them all — the allowlist had
+// drifted below the extractor's real capability).
 const CONTENT_TYPES = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/csv',
   'text/plain',
   'image/jpeg',
   'image/jpg',
@@ -31,6 +38,10 @@ function mimeFromFilename(filename: string): string | null {
   const map: Record<string, string> = {
     pdf: 'application/pdf',
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    doc: 'application/msword',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    csv: 'text/csv',
     txt: 'text/plain',
     jpg: 'image/jpeg',
     jpeg: 'image/jpeg',
@@ -62,8 +73,13 @@ async function expandFiles(files: File[]): Promise<ContentFile[]> {
         const buffer = Buffer.from(await entry.async('arraybuffer'));
         result.push({ name: baseName, buffer, mimeType: entryMime });
       }
-    } else if (CONTENT_TYPES.includes(file.type)) {
-      result.push({ name: file.name, buffer: Buffer.from(await file.arrayBuffer()), mimeType: file.type });
+    } else {
+      // The browser's file.type is unreliable for dragged Office files (often empty or a
+      // vendor mime) — the extension is the truth of last resort, same map as zip entries.
+      const mime = CONTENT_TYPES.includes(file.type) ? file.type : mimeFromFilename(file.name);
+      if (mime && CONTENT_TYPES.includes(mime)) {
+        result.push({ name: file.name, buffer: Buffer.from(await file.arrayBuffer()), mimeType: mime });
+      }
     }
   }
   return result;
@@ -108,9 +124,9 @@ export async function POST(
         return NextResponse.json({ error: `File too large (max 10 MB): ${f.name}` }, { status: 400 });
       }
       const isZip = ZIP_MIME_TYPES.includes(f.type) || f.name.toLowerCase().endsWith('.zip');
-      if (!isZip && !CONTENT_TYPES.includes(f.type)) {
+      if (!isZip && !CONTENT_TYPES.includes(f.type) && !CONTENT_TYPES.includes(mimeFromFilename(f.name) ?? '')) {
         return NextResponse.json(
-          { error: `Unsupported file type: ${f.name}. Upload PDF, DOCX, TXT, image, or ZIP.` },
+          { error: `Unsupported file type: ${f.name}. Upload PDF, Word, Excel, PowerPoint, CSV, text, image, or ZIP.` },
           { status: 400 }
         );
       }

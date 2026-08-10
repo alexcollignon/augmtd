@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { converse, type ConverseHistoryTurn } from '@/lib/converse';
+import { converse, type ConverseHistoryTurn, type ConverseAttachment } from '@/lib/converse';
 
 // 180: a production hand-off (delegation runs synchronously, the artifact comes home) must
 // never be killed by the route budget — the 30s cap predates chat-borne production.
@@ -18,13 +18,19 @@ export async function POST(request: NextRequest) {
     const supabase = await createClient();
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    const body = (await request.json()) as { question?: string; history?: ConverseHistoryTurn[]; stream?: boolean; entityId?: string };
+    const body = (await request.json()) as { question?: string; history?: ConverseHistoryTurn[]; stream?: boolean; entityId?: string; attachments?: ConverseAttachment[] };
     // THE PASTE CEILING DIED (Aug 10, found live): a pilot pasted a full questionnaire and the
     // old slice(0, 500) silently discarded everything past character 500 — the brain answered a
     // request it never saw. Long input is the NORM for production asks; 20k chars ≈ a long doc.
     const q = String(body.question ?? '').trim().slice(0, 20000);
     if (!q) return NextResponse.json({ error: 'question required' }, { status: 400 });
     const history = Array.isArray(body.history) ? body.history : [];
+    // THE ATTACHED MATERIAL (the production hand-off): synchronously-extracted attachment text
+    // rides the ask itself — never a race against the KB's background indexing.
+    const attachments = (Array.isArray(body.attachments) ? body.attachments : [])
+      .slice(0, 5)
+      .map((a) => ({ name: String(a?.name ?? '').slice(0, 200), text: typeof a?.text === 'string' ? a.text.slice(0, 20000) : null }))
+      .filter((a) => a.name);
     // THE SCOPE CHIP (Aug 6): a scoped Home conversation converses IN the project's room scope —
     // full room grounding, the room's verbs — through the same one core. RLS scopes the read.
     const scope = body.entityId
@@ -66,21 +72,29 @@ export async function POST(request: NextRequest) {
           const send = (d: Record<string, unknown>) => {
             try { controller.enqueue(enc.encode(`data: ${JSON.stringify(d)}\n\n`)); } catch { /* client gone */ }
           };
+          // Keep-alive: a synchronous production hand-off can run 60-90s with no events — an
+          // idle SSE gets buffered/closed by proxies. Pings are ignored by the client.
+          const ping = setInterval(() => send({ type: 'ping' }), 15000);
           Promise.all([
             converse(supabase, user.id, scope, q, {
-              history, onProgress: (label) => send({ type: 'progress', label }),
+              history, attachments,
+              onProgress: (label) => send({ type: 'progress', label }),
+              // TOKEN STREAMING: the answer materializes live; `done` still carries the final
+              // authoritative payload (the honesty floor may amend the preview). The NUL
+              // sentinel clears the preview (pre-tool-call preamble text).
+              onToken: (t) => send(t === '\u0000' ? { type: 'token_reset' } : { type: 'token', t }),
             }),
             focusOf(),
           ]).then(([turn, focus]) => { send({ type: 'done', ...payloadOf(turn, focus) }); })
             .catch((e) => { console.error('[home/ask] stream error:', e); send({ type: 'error' }); })
-            .finally(() => { try { controller.close(); } catch { /* already closed */ } });
+            .finally(() => { clearInterval(ping); try { controller.close(); } catch { /* already closed */ } });
         },
       });
       return new Response(stream, {
         headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' },
       });
     }
-    const [turn, focus] = await Promise.all([converse(supabase, user.id, scope, q, { history }), focusOf()]);
+    const [turn, focus] = await Promise.all([converse(supabase, user.id, scope, q, { history, attachments }), focusOf()]);
     return NextResponse.json(payloadOf(turn, focus));
   } catch (e) {
     console.error('[home/ask] error:', e);

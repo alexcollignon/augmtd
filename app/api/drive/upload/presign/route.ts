@@ -6,6 +6,7 @@ const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 
 const ALLOWED_MIME_TYPES = new Set([
   'application/pdf',
+  'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
@@ -16,6 +17,17 @@ const ALLOWED_MIME_TYPES = new Set([
   'image/png',
   'image/webp',
 ]);
+
+// The extension is the truth of last resort — browsers report empty/odd mimes for dragged
+// Office files, and an octet-stream must not 400 a perfectly good .docx (found live).
+const MIME_BY_EXT: Record<string, string> = {
+  pdf: 'application/pdf', doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  csv: 'text/csv', txt: 'text/plain', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+  png: 'image/png', webp: 'image/webp',
+};
 
 const BUCKET = 'drive-uploads';
 
@@ -48,7 +60,11 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: `File too large (max 25 MB): ${f.filename}` }, { status: 400 });
       }
       if (!ALLOWED_MIME_TYPES.has(f.mimeType)) {
-        return NextResponse.json({ error: `Unsupported file type for: ${f.filename}` }, { status: 400 });
+        const byExt = MIME_BY_EXT[f.filename.split('.').pop()?.toLowerCase() ?? ''];
+        if (!byExt) {
+          return NextResponse.json({ error: `Unsupported file type for: ${f.filename}` }, { status: 400 });
+        }
+        f.mimeType = byExt; // repair the unreliable browser mime — the extension is the truth
       }
     }
 
