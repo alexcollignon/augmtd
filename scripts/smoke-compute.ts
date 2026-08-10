@@ -1062,6 +1062,18 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/work/chat-input-bar.tsx').includes("window.addEventListener('drop'") &&
     src('components/home/home-ask.tsx').includes('liveText'));
 
+  // ── SV · THE SOVEREIGN DOOR (the corporate tier, Aug 10 — leak audit first). ──
+  check('SV1: THE SOVEREIGN LEAK AUDIT — a workspace with the email feature OFF has NO mailbox-auth surface: the Home first look pivots to the agent-team CTA (brief serves mail.emailFeature; the connect-inbox branch requires it), Settings hides the Email tab AND bounces direct ?tab=email navigation, /inbox stays feature-guarded (guardFeaturePage), the sidebar Inbox source stays feature-gated, and the CHIEF\'S TOOLSET drops mailbox verbs (get_emails/send_prepared_reply/prepare_forward mapped to the email feature in the ONE map; agentLoop filters its defs) — the model cannot offer what the workspace does not hold. Workflow email SENDING (Resend, stated addresses) stays — the boundary is auth connections only. E2E on the probe workspace: flag flip propagated through getWorkspaceFeatures and restored',
+    src('app/api/home/brief/route.ts').includes('emailFeature: feats?.email !== false') &&
+    src('components/home/home-view.tsx').includes('mail.emailFeature === false') &&
+    src('components/home/home-view.tsx').includes('Set up your agent team') &&
+    src('app/(main)/settings/page.tsx').includes("tab === 'email' && !emailEnabled") &&
+    src('components/settings/settings-left-panel.tsx').includes("emailEnabled || item.id !== 'email'") &&
+    src('app/(main)/inbox/page.tsx').includes("guardFeaturePage('email')") &&
+    src('components/one/one-sidebar.tsx').includes('features.email && (') &&
+    src('lib/workspace/tool-capabilities.ts').includes("send_prepared_reply: 'email'") &&
+    src('lib/converse/index.ts').includes('toolDefs = CHIEF_TOOL_DEFS.filter'));
+
   // ── Report ──
   let pass = 0;
   for (const [n, ok, d] of out) {

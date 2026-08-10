@@ -28,6 +28,12 @@ export default async function SettingsPage({ searchParams }: Props) {
 
   const company = await getMyCompany(user.id, supabase);
   const isCompanyAdmin = company?.role === 'owner' || company?.role === 'admin';
+  // THE SOVEREIGN MODE (Aug 10 — the leak audit): a workspace with the email feature OFF has
+  // no mailbox-auth surface anywhere — the Email tab hides AND direct navigation bounces.
+  const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
+  const features = await getWorkspaceFeatures(user.id, supabase);
+  const emailEnabled = features?.email !== false;
+  if (tab === 'email' && !emailEnabled) redirect('/settings?tab=account');
   const section = rawSection ?? (tab === 'company' ? 'members' : 'connections');
 
   let members: any[] = [];
@@ -105,7 +111,7 @@ export default async function SettingsPage({ searchParams }: Props) {
   return (
     <SettingsPageClient>
       <>
-        <SettingsLeftPanel activeTab={tab} companyRole={company?.role ?? null} />
+        <SettingsLeftPanel activeTab={tab} companyRole={company?.role ?? null} emailEnabled={emailEnabled} />
 
         <div className="flex-1 overflow-hidden flex flex-col bg-neutral-50 p-2">
           <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">

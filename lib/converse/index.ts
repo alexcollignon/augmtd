@@ -674,6 +674,18 @@ async function agentLoop(
 ): Promise<ConverseTurn & { exhausted?: boolean }> {
   const { toOpenAITool } = await import('@/lib/tools');
   const { client: ai, model } = await getAIClient(userId, 'conversation', client);
+  // THE SOVEREIGN LEAK AUDIT (Aug 10): the chief's toolset respects workspace features — a
+  // corporate workspace (email off) never exposes mailbox verbs, so the model can't offer them.
+  let toolDefs = CHIEF_TOOL_DEFS;
+  try {
+    const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
+    const { TOOL_FEATURE } = await import('@/lib/workspace/tool-capabilities');
+    const feats = await getWorkspaceFeatures(userId, client) as unknown as Record<string, boolean>;
+    toolDefs = CHIEF_TOOL_DEFS.filter((d) => {
+      const req = TOOL_FEATURE[(d as { name: string }).name];
+      return !req || feats?.[req] !== false;
+    });
+  } catch { /* features unreadable → full set (fail open; the executors keep their own gates) */ }
   const applied: ConverseTurn['applied'] = [];
   const files: NonNullable<ConverseTurn['files']> = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -716,7 +728,7 @@ async function agentLoop(
       if (!onToken) throw new Error('no-stream');
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const stream: any = await ai.chat.completions.create({
-        model, max_tokens: 700, temperature: 0.2, messages, tools: CHIEF_TOOL_DEFS.map(toOpenAITool), stream: true,
+        model, max_tokens: 700, temperature: 0.2, messages, tools: toolDefs.map(toOpenAITool), stream: true,
       });
       const toolCalls: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> = [];
       let content = '';
@@ -734,7 +746,7 @@ async function agentLoop(
       }
       msg = { role: 'assistant', content: content || null, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) };
     } catch {
-      const res = await aiCreate(ai, { model, max_tokens: 700, temperature: 0.2, messages, tools: CHIEF_TOOL_DEFS.map(toOpenAITool) });
+      const res = await aiCreate(ai, { model, max_tokens: 700, temperature: 0.2, messages, tools: toolDefs.map(toOpenAITool) });
       msg = res.choices?.[0]?.message;
     }
     if (!msg) break;

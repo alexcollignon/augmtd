@@ -12,6 +12,10 @@ export const TOOL_FEATURE: Record<string, FeatureKey | null> = {
   get_emails: 'email',
   get_urgent_emails: 'email',
   get_email_body: 'email',
+  // The chief's mailbox verbs (Aug 10, the sovereign leak audit): sending/forwarding rides the
+  // user's CONNECTED mailbox — feature-gated like every other email tool.
+  send_prepared_reply: 'email',
+  prepare_forward: 'email',
 
   // ── Meetings / calendar ──
   get_meeting_context: 'meetings',

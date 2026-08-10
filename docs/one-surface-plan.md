@@ -468,6 +468,24 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+KK. **THE SOVEREIGN LEAK AUDIT (Aug 10 night — the corporate tier begins; gate SV1 — 119/119,
+   build green; E2E: probe workspace flag-flip propagated + restored; recording stays IN
+   the corporate tier by owner call).** features.email=false is THE sovereign trigger —
+   audit findings closed: the Home first look never consulted the flag (the "Connect your
+   inbox" CTA rendered regardless — now pivots to "Set up your agent team", which seeds
+   the coworkers idempotently and opens the first DM); Settings hides the Email tab AND
+   bounces direct ?tab=email navigation; the chief's toolset drops mailbox verbs
+   (send_prepared_reply/prepare_forward newly registered in the ONE map; agentLoop
+   filters its defs by workspace features — the model cannot offer what the workspace
+   does not hold). Already-sound and verified: /inbox guardFeaturePage('email'), the
+   sidebar's feature-gated Inbox source. The boundary law: AUTH connections only —
+   workflow email sending (Resend, stated addresses) untouched. Probe furniture: "Probe
+   Sovereign Co" workspace (all features on, owner=probe) for this arc's gates. NEXT in
+   the arc: the branded entry (/join/[code] landing, 3 steps, logo from
+   companies.settings.branding) + the safe-data mark + platform-admin revamp. NOTED for
+   arc 2: meeting-invite send flows error toward "Reconnect in Settings" copy on
+   sovereign workspaces (unreachable-in-practice today); Slack/Nango integrations tab is
+   a separate decision (not mailbox OAuth).
 JJ. **/work RETIRED (Aug 10, owner call) + THE SOVEREIGN DOOR (designed, awaiting the go).**
    /work → redirect (?thread&agent → the Home conversation opener; six inbound links
    repointed: agent-form ×3, join, oauth-complete, onboarding, workspace guards); client

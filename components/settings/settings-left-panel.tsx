@@ -41,7 +41,7 @@ const EMAIL_SECTIONS = [
   { id: 'todo', label: 'To-do capture' },
 ];
 
-export default function SettingsLeftPanel({ activeTab, companyRole }: { activeTab: string; companyRole?: string | null }) {
+export default function SettingsLeftPanel({ activeTab, companyRole, emailEnabled = true }: { activeTab: string; companyRole?: string | null; emailEnabled?: boolean }) {
   const searchParams = useSearchParams();
   const section = searchParams.get('section') || 'connections';
   const companySection = searchParams.get('section') || 'members';
@@ -66,7 +66,8 @@ export default function SettingsLeftPanel({ activeTab, companyRole }: { activeTa
           <h2 className="text-[13px] font-semibold text-neutral-700">Settings</h2>
         </div>
         <nav className="flex-1 p-2 space-y-0.5">
-          {NAV_ITEMS.map(item => {
+          {/* THE SOVEREIGN MODE: no mailbox auth in this workspace → no Email tab. */}
+          {NAV_ITEMS.filter(item => emailEnabled || item.id !== 'email').map(item => {
             const isActive = activeTab === item.id;
 
             // Email: clicking defaults to Connections; hovering (or being active) reveals sub-items.

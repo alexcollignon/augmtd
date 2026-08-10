@@ -13,7 +13,7 @@ import { createClient } from '@/lib/supabase/client';
 import {
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon, ClockIcon, UsersIcon, FolderIcon,
   ChevronRightIcon, ArrowRightIcon, EyeIcon, BellAlertIcon, ChatBubbleLeftRightIcon,
-  FolderPlusIcon, EyeSlashIcon, ArrowUturnLeftIcon,
+  FolderPlusIcon, EyeSlashIcon, ArrowUturnLeftIcon, UserGroupIcon,
 } from '@heroicons/react/24/outline';
 import ActivityPanel from '@/components/activity/activity-panel';
 import { onProjectsUpdated } from '@/lib/projects/broadcast';
@@ -89,8 +89,9 @@ type Brief = {
   bundles?: Record<string, { key: string; label: string }>; // server-side "what needs you" bundling (atomId → bundle)
   /** USER-CREATED ONLY: tracked project names+aliases — the ONLY names By-project may group under. */
   trackedProjects?: Array<{ name: string; aliases: string[] }>;
-  /** New-user honesty: active mail connections + whether a first sync is still in flight. */
-  mail?: { connections: number; syncing: boolean };
+  /** New-user honesty: active mail connections + whether a first sync is still in flight.
+      emailFeature=false → the sovereign first look (no mailbox auth in this workspace). */
+  mail?: { connections: number; syncing: boolean; emailFeature?: boolean };
   bundleNames?: Record<string, { name: string; why?: string }>; // reasoned name + grounded "why" per bundle key
   personCues?: Record<string, { label: string; tone: 'neutral' | 'amber' }>; // itemId → one quiet Person-Brain cue
   itemWeights?: Record<string, number>; // itemId → verdict weight (lib/brains/verdict.ts) — the "Important" order
@@ -1994,7 +1995,33 @@ export function HomeView() {
             (the Home's poll + realtime fill it in live); genuinely triaged-empty → all caught up. */}
         {nothing && (
           <RiseIn delay={80}>
-            {b?.mail && b.mail.connections === 0 ? (
+            {b?.mail && b.mail.emailFeature === false ? (
+              /* THE SOVEREIGN FIRST LOOK (Aug 10 — corporate workspaces, no mailbox auth):
+                 the door into the product is the AGENT TEAM, never a connect CTA. The button
+                 seeds the coworkers (idempotent) and opens the first DM. */
+              <div className="mt-4 rounded-2xl border border-dashed border-neutral-200 px-6 py-14 text-center">
+                <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center mx-auto mb-3">
+                  <UserGroupIcon className="w-6 h-6 text-indigo-500" />
+                </div>
+                <p className="text-[14px] font-medium text-neutral-700">Set up your agent team</p>
+                <p className="text-[12.5px] text-neutral-400 mt-0.5 max-w-md mx-auto">Your coworkers handle writing, research, documents, and standing workflows — everything runs in your private environment.</p>
+                <button
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        await fetch('/api/workers/init', { method: 'POST' });
+                        const r = await fetch('/api/workers/presence');
+                        const team = ((await r.json()).team ?? []) as Array<{ id: string; name: string }>;
+                        if (team[0]) window.dispatchEvent(new CustomEvent('aug:dm-worker', { detail: { agentId: team[0].id, name: team[0].name } }));
+                      } catch { /* the facepile stays the fallback door */ }
+                    })();
+                  }}
+                  className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 px-4 py-2 text-[13px] font-medium text-white transition-colors">
+                  Meet your team<ArrowRightIcon className="w-3.5 h-3.5" />
+                </button>
+                <p className="text-[11.5px] text-neutral-300 mt-3">Or record a meeting, or just ask anything above.</p>
+              </div>
+            ) : b?.mail && b.mail.connections === 0 ? (
               <div className="mt-4 rounded-2xl border border-dashed border-neutral-200 px-6 py-14 text-center">
                 <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center mx-auto mb-3">
                   <EnvelopeIcon className="w-6 h-6 text-indigo-500" />
