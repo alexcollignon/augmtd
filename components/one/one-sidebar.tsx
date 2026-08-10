@@ -22,6 +22,7 @@ import { useRecordingContext } from '@/context/recording-context';
 import type { WorkspaceFeatures } from '@/lib/workspace/types';
 import { DEFAULT_FEATURES } from '@/lib/workspace/types';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { ROLE_AVATARS, ROLE_LABELS } from '@/lib/workers/roles';
 import { AnchoredPopover } from '@/components/ui/anchored-popover';
 import { toast } from 'sonner';
 
@@ -331,17 +332,22 @@ export default function OneSidebar({
           in an office). Click = the one popover: live state per coworker · Chat · Settings. */}
       <div ref={teamRef} className="relative px-2 pt-1">
         {teamOpen && (
-          <div className="absolute bottom-full left-2 right-2 mb-1.5 bg-white border border-neutral-200 shadow-lg z-50 rounded-xl overflow-hidden">
+          <div className="absolute bottom-full left-2 mb-1.5 w-64 bg-white border border-neutral-200 shadow-lg z-50 rounded-xl overflow-hidden">
             <div className="py-1">
               {(team ?? []).map((w) => (
                 <div key={w.id} className="flex items-center gap-2.5 px-3 py-2">
-                  {w.worker_role ? (
-                    <Image src={`/workers/${w.worker_role}.png`} alt="" width={28} height={28} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                  {w.worker_role && ROLE_AVATARS[w.worker_role] ? (
+                    <Image src={ROLE_AVATARS[w.worker_role]} alt="" width={28} height={28} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
                   ) : (
                     <span className="w-7 h-7 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center text-[12px] font-semibold flex-shrink-0">{w.name[0]}</span>
                   )}
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[12.5px] font-medium text-neutral-800 leading-tight">{w.name.split(' ')[0]}</span>
+                    <span className="flex items-baseline gap-1.5 min-w-0">
+                      <span className="text-[12.5px] font-medium text-neutral-800 leading-tight">{w.name.split(' ')[0]}</span>
+                      {w.worker_role && ROLE_LABELS[w.worker_role] && (
+                        <span className="truncate text-[10.5px] text-neutral-400 leading-tight">{ROLE_LABELS[w.worker_role]}</span>
+                      )}
+                    </span>
                     <span className={`block truncate text-[11px] leading-tight ${w.state.startsWith('Running') ? 'text-indigo-600' : 'text-neutral-400'}`}>{w.state}</span>
                   </span>
                   <button onClick={() => dmWorker(w)}
@@ -363,8 +369,8 @@ export default function OneSidebar({
           className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 hover:bg-neutral-200/50 transition-colors">
           <span className="flex -space-x-1.5">
             {(team ?? []).slice(0, 4).map((w) => (
-              w.worker_role
-                ? <Image key={w.id} src={`/workers/${w.worker_role}.png`} alt="" width={20} height={20} className="w-5 h-5 rounded-full object-cover ring-2 ring-neutral-50" />
+              w.worker_role && ROLE_AVATARS[w.worker_role]
+                ? <Image key={w.id} src={ROLE_AVATARS[w.worker_role]} alt="" width={20} height={20} className="w-5 h-5 rounded-full object-cover ring-2 ring-neutral-50" />
                 : <span key={w.id} className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 ring-2 ring-neutral-50 flex items-center justify-center text-[9px] font-semibold">{w.name[0]}</span>
             ))}
             {(team === null || team.length === 0) && <span className="w-5 h-5 rounded-full bg-neutral-200 ring-2 ring-neutral-50" />}

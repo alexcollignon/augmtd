@@ -200,6 +200,13 @@ async function buildWorkerRunContext(
       if (pageBlock) parts.push(pageBlock)
     } catch { /* non-fatal */ }
   }
+  // THE DAY-STATE BLOCK (initiative loop step 0): shared headline facts — a DM never
+  // contradicts the deck/chief (facts are shared everywhere; depth stays with the role).
+  try {
+    const { getSharedDayState } = await import('@/lib/home/day-state')
+    const dayBlock = await getSharedDayState(adminClient, userId)
+    if (dayBlock) parts.push(dayBlock)
+  } catch { /* non-fatal */ }
 
   const routines = (routinesRes?.data ?? []) as Array<{
     name: string; trigger: { type: string; label?: string; cron?: string }; last_run_at: string | null

@@ -468,8 +468,38 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+CC. **THE CONVERGENCE KIT + THE DAY-STATE BLOCK (Aug 10, owner conversation on DM vs chief —
+   "avoid redundancy… can't feel like multiple systems"; gate CS5 — 110/110, build green;
+   live-verified).** The settled model: ONE chat surface, the conversation determines the
+   addressee (unaddressed → the chief; "Clara, …" anywhere → Clara; her DM → a standing
+   addressed conversation). The DM's unique value = SUSTAINED coworker context (memory,
+   skills, iteration) + relationship history + her full toolset by words. THE LAW: **facts
+   are shared everywhere; depth stays with the role** — (1) THE DAY-STATE BLOCK (initiative
+   loop STEP 0): one compact judged state of the day (derived from the SAME spine the deck
+   renders — buildWorkItems; cached 10 min, ~500 chars) injected into BOTH worker runtimes,
+   so "what's slipping?" asked in a DM can never contradict the deck/chief; the deep
+   machinery (full board, ledger, dispatcher, scope binding) stays chief-only BY DESIGN
+   (role clarity, not cost). This object IS the anticipation pass's output format — built
+   once, two consumers. (2) DM MODE LEGIBILITY: persistent "Chat with X" header; "Message
+   X…" placeholder (mention copy says what @ does THERE: pulls a teammate's work/document
+   in); an empty DM opens with the narrator's line (found live: the facepile's Chat created
+   the thread and read as a dead click). (3) NEW SESSION in the DM (fresh thread, the
+   relationship + memory persist — memory lives on the agent, not the thread). NORTH STAR
+   noted: the full merge (chief as permanent router, coworker voices inside any
+   conversation, DMs optional) pairs with thread migration in the tail. NEXT: THE
+   INITIATIVE LOOP proper — the anticipation pass computes the day-state proactively +
+   THE BECAUSE-CHIP → silence watch → strategic ask + Settings→Autonomy.
 BB. **THE WORKFLOWS COHERENCE SLICE (designed Aug 10 with the owner — the /workers retirement
-   made concrete; IN PROGRESS).** The laws settled in three owner conversations:
+   made concrete; COMPLETE Aug 10, gates CS1–CS4 — 109/109, tasks 72/72, build green).
+   /WORKERS IS RETIRED: the route redirects (old ?worker&thread deep links keep working —
+   they open the Home conversation), every link generator repointed to /home?chat=worker:…,
+   entry/fallback redirects land on /home, Studio's default way back is the ledger, and the
+   Home's "From your team" feed died (its jobs: Runs+badge · deck debt · conversations · the
+   facepile). Riders found live: THE SILENT-DRAFT FIX (Rene — 60s generator budget, loud
+   failures everywhere on the ledger, ONE GATE code-enforced) and THE GROUNDING BOUNDARY
+   (owner law: "ground at the moment the information changes the output" — draft-time =
+   identity-level ~400 chars; run-time = the full live page; the full-page-at-draft was
+   ballast). NOTE: the old /work chat hub still stands (separate decision, not this slice).** The laws settled in three owner conversations:
    **ORIGIN DECIDES THE SURFACE** (the user's words started it → the result returns to that
    conversation, which artifacts-into-origin already does; a schedule/trigger started it → the
    result lives in Workflows→Runs, full stop — scheduled output NEVER touches conversations;

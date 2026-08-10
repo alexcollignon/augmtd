@@ -24,7 +24,7 @@ export default async function EditAgentPage({
     .eq('user_id', user.id)
     .single();
 
-  if (!agent) redirect('/work');
+  if (!agent) redirect('/home');
 
   return (
     <div className="flex flex-col flex-1 min-h-0 bg-neutral-50 overflow-hidden">

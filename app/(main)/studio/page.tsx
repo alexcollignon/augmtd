@@ -18,7 +18,7 @@ export default async function StudioPage({
   if (!user) redirect('/login');
 
   const workspace = await getMyWorkspace(user.id, supabase);
-  if (!(workspace?.features.studio ?? true)) redirect('/work');
+  if (!(workspace?.features.studio ?? true)) redirect('/home');
 
   const { data: profile } = await supabase
     .from('profiles')

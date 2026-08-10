@@ -946,6 +946,27 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/settings/team-section.tsx').includes('WorkerToolsTab') &&
     src('components/settings/team-section.tsx').includes('SkillsLibraryView'));
 
+  check('CS4: /WORKERS IS RETIRED (coherence slice #5, Aug 10 — the kill list, closed) — the route redirects; OLD DEEP LINKS KEEP WORKING (?worker&thread → the Home conversation opener, so every report-back email ever sent still lands somewhere true); every link GENERATOR repointed (run links, standing narrations, the rail\'s artifact chip, the registry card) to /home?chat=worker:…; the seam door opens worker: keys; entry/fallback redirects land on /home (join · suspended · onboarding · feature gates); Studio\'s default way back is the ledger; the Home\'s "From your team" feed DIED (origin decides the surface — Runs+badge · deck debt · conversations · the facepile carry its jobs)',
+    src('app/(main)/workers/page.tsx').includes('redirect(`/home?chat=worker:') &&
+    src('components/home/home-ask.tsx').includes("chatParam?.startsWith('worker:')") &&
+    src('lib/workflows/run-workflow.ts').includes('/home?chat=worker:') &&
+    src('lib/workflows/standing.ts').includes('/home?chat=worker:') &&
+    src('components/home/item-rail.tsx').includes('/home?chat=worker:') &&
+    !src('components/home/home-view.tsx').includes('<TeamFeed') &&
+    src('app/studio/studio-page-client.tsx').includes("backTo ?? '/home?view=workflows'") &&
+    src('app/onboarding/page.tsx').includes("redirect('/home')"));
+
+  check('CS5: THE CONVERGENCE KIT + THE DAY-STATE BLOCK (initiative loop STEP 0, Aug 10 — "facts are shared everywhere; depth stays with the role") — ONE compact judged day-state (derived from the SAME spine the deck renders, cached 10 min, ~500 chars) injected into BOTH worker runtimes so a DM answer about the day can never contradict the deck/chief; DM mode is LEGIBLE (persistent "Chat with X" header · "Message X…" placeholder · mention copy says what it does there) and gets New session (fresh thread, relationship persists); an empty DM opens with the narrator line, never a dead click',
+    src('lib/home/day-state.ts').includes('getSharedDayState') &&
+    src('lib/home/day-state.ts').includes('buildWorkItems') &&
+    src('lib/home/day-state.ts').includes('day_state') &&
+    src('app/api/work/threads/[id]/chat/route.ts').includes('getSharedDayState') &&
+    src('lib/work/agentos-bridge.ts').includes('getSharedDayState') &&
+    src('components/home/home-ask.tsx').includes('Message Clara') === false && // dynamic, never hardcoded
+    src('components/home/home-ask.tsx').includes('workerRoomRef.current ? `Message ') &&
+    src('components/home/home-ask.tsx').includes('New session') &&
+    src('components/home/home-ask.tsx').includes('This is your direct line to'));
+
   // ── AO · ARTIFACTS-INTO-ORIGIN (proactivity completion #1, Aug 9). ──
   check('AO1: THE DISPATCHED DELIVERABLE COMES HOME — substantial delegated production materializes as a REAL document artifact on the delegation thread (the SAME textToDocContent/uploadArtifact primitives as workflow runs — one shared module, run-workflow imports it too, never two diverging copies); the artifact rides the ConverseTurn back into the conversation that asked (Home chat renders its card AND opens the viewer; the room rail carries the door chip); a short answer or an ask stays text. E2E-proven live on the probe: real .docx in storage, card on the turn',
     src('lib/workflows/doc-content.ts').includes('export function textToDocContent') &&

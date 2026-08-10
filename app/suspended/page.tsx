@@ -21,7 +21,7 @@ export default async function SuspendedPage() {
   // If no workspace, send to /join instead
   if (!workspace) redirect('/join');
   // If workspace is active, they shouldn't be here
-  if (workspace.status === 'active') redirect('/work');
+  if (workspace.status === 'active') redirect('/home');
 
   return (
     <SuspendedClient

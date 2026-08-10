@@ -128,6 +128,11 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       if (chatParam?.startsWith('chat:')) {
         loadRoom(chatParam); setOpen(true);
         try { window.history.replaceState(null, '', '/home'); } catch { /* no history */ }
+      } else if (chatParam?.startsWith('worker:')) {
+        // THE RETIREMENT REPOINT (slice #5): every link that used to say /workers?worker&thread
+        // now opens the coworker conversation HERE — one URL form for a conversation.
+        void loadWorkerRoom(chatParam); setOpen(true);
+        try { window.history.replaceState(null, '', '/home'); } catch { /* no history */ }
       } else if (scopeIntent) {
         sessionStorage.removeItem('aug-new-chat-scope');
         try {
@@ -246,7 +251,15 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           cards: arts.map((a) => ({ label: a.title, sub: 'document', art: { tid, id: a.id } })),
         });
       }
+      // A BRAND-NEW DM has zero messages — zero turns meant the panel never took over (found
+      // live: the facepile's Chat created the thread, loaded nothing, and read as a dead
+      // click). The narrator opens the room (the CoS voice, author absent — never fabricated
+      // coworker speech); not persisted.
+      if (loaded.length === 0) {
+        loaded.push({ role: 'assistant', text: `This is your direct line to ${name.split(' ')[0]} — ask for work, hand something off, or set up a standing task.` });
+      }
       setTurns(loaded);
+      setTimeout(() => focusComposer(), 120);
       workerRoomRef.current = { id: agentId, name };
       setScope(null); setScopeHint(null); // a coworker DM is addressed, never project-scoped from here
       try { localStorage.setItem(dmKey(agentId), tid); localStorage.setItem(CHAT_KEY_LS, key); } catch { /* no LS */ }
@@ -414,6 +427,28 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     if (id) { try { localStorage.setItem(k, id); } catch { /* no LS */ } }
     return id;
   };
+  // New session in a DM: a FRESH thread for the same relationship (the old one stays in All
+  // conversations); the scroll resets, the coworker's memory persists (it lives on the agent,
+  // not the thread).
+  const newDmSession = async () => {
+    const w = workerRoomRef.current;
+    if (!w) return;
+    try {
+      const c = await fetch('/api/work/threads', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: `Chat with ${w.name.split(' ')[0]}`, agentId: w.id }),
+      }).then((r) => (r.ok ? r.json() : null));
+      const tid = (c?.thread?.id as string) ?? null;
+      if (!tid) throw new Error();
+      try { localStorage.setItem(dmKey(w.id), tid); localStorage.setItem(CHAT_KEY_LS, `worker:${tid}:${w.id}`); } catch { /* no LS */ }
+      setTurns([{ role: 'assistant', text: `Fresh session with ${w.name.split(' ')[0]} — the old one is in All conversations.` }]);
+      window.dispatchEvent(new CustomEvent('aug:conversation-changed'));
+      setTimeout(() => focusComposer(), 120);
+    } catch {
+      setTurns((prev) => [...prev, { role: 'assistant', text: "Couldn't start a fresh session — try again." }]);
+    }
+  };
+
   const askWorker = async (
     question: string, w: { id: string; name: string },
     extra?: { mentions?: Array<{ id: string; type: string; label: string }>; files?: File[]; echoed?: boolean },
@@ -459,7 +494,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       const cards: NonNullable<Turn['cards']> = [];
       const drafts: NonNullable<Turn['drafts']> = [];
       const wfDrafts: WorkflowDraft[] = [];
-      const threadHref = `/workers?worker=${w.id}&thread=${tid}`;
+      const threadHref = `/home?chat=worker:${tid}:${w.id}`;
       const first = w.name.split(' ')[0];
       // THE ARTIFACT ARRIVES OPEN + STAYS CURRENT (Aug 7-8): EVERY document arrival summons/
       // refreshes the pane to the newest version — so "make it shorter" in the same exchange
@@ -676,6 +711,17 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                 starts fresh, All conversations manages. The thread is just the thread. */}
             {/* THE TAKEOVER (Claude-feel): a live conversation gets a CHAT'S room to breathe —
                 tall column, same smooth grid morph in, composer fixed as the floor. */}
+            {/* DM MODE IS LEGIBLE (owner, Aug 10 — "even in the DM we still have the mention
+                placeholder"): a quiet persistent header names the room; New session folds the
+                history (a new thread — the relationship persists, the scroll resets). */}
+            {workerRoomRef.current && (
+              <div className="flex items-center justify-between pb-2 mb-1 border-b border-neutral-100">
+                <span className="text-[12px] font-medium text-neutral-500">Chat with {workerRoomRef.current.name.split(' ')[0]}</span>
+                <button onClick={() => void newDmSession()} className="text-[12px] text-neutral-400 hover:text-indigo-600 transition-colors">
+                  New session
+                </button>
+              </div>
+            )}
             <div ref={scrollRef} className="space-y-4 max-h-[calc(100vh-250px)] min-h-[40vh] overflow-y-auto [scrollbar-width:thin] pr-1 pb-3">
               {turns.map((t, i) => (
                 t.role === 'user' ? (
@@ -760,7 +806,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             frameless
             onSubmit={(text, mentions) => { void handleSubmit(text, mentions); }}
             disabled={busy}
-            placeholder="Ask anything — @ mentions your team"
+            placeholder={workerRoomRef.current ? `Message ${workerRoomRef.current.name.split(' ')[0]}… — @ pulls a teammate's work or a document in` : "Ask anything — @ mentions your team"}
             prefill={prefill}
             onPrefillConsumed={() => setPrefill(null)}
             onAttach={(files) => setPendingFiles((p) => [...p, ...files])}

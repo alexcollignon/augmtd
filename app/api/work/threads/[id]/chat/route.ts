@@ -516,6 +516,14 @@ export async function POST(
           const pageBlock = await focusedProjectGrounding(adminClient, user.id, content, { excludeName: agent.name ?? null });
           if (pageBlock) contextParts.push(pageBlock);
         } catch { /* non-fatal */ }
+        // THE DAY-STATE BLOCK (initiative loop step 0): the shared headline of the day — a DM
+        // answer about the day can never contradict the deck/chief (facts are shared everywhere;
+        // depth stays with the role).
+        try {
+          const { getSharedDayState } = await import('@/lib/home/day-state');
+          const dayBlock = await getSharedDayState(adminClient, user.id);
+          if (dayBlock) contextParts.push(dayBlock);
+        } catch { /* non-fatal */ }
       }
 
       if (agent.memory_text?.trim()) {
