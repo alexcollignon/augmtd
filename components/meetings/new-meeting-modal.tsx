@@ -149,6 +149,13 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
           setFormState('error');
           return;
         }
+        if (data?.error === 'No active email connection found') {
+          // Honest words on a sovereign workspace — never point at a Settings tab that
+          // doesn't exist here.
+          setFormError('This workspace runs without connected calendars, so invites can’t be sent from here. Share the meeting details in a message instead.');
+          setFormState('error');
+          return;
+        }
         throw new Error(data?.error ?? 'Unknown error');
       }
       setFormState('sent');

@@ -1,6 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
-import MeetingAssistantCard from '@/components/settings/meeting-assistant-card';
 import DataManagementSection from '@/components/settings/data-management-section';
 import IdentitySection from '@/components/settings/identity-section';
 import SettingsLeftPanel from '@/components/settings/settings-left-panel';
@@ -28,6 +27,12 @@ export default async function SettingsPage({ searchParams }: Props) {
 
   const company = await getMyCompany(user.id, supabase);
   const isCompanyAdmin = company?.role === 'owner' || company?.role === 'admin';
+  // THE SOVEREIGN MODE (Aug 10 — the leak audit): a workspace with the email feature OFF has
+  // no mailbox-auth surface anywhere — the Email tab hides AND direct navigation bounces.
+  const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
+  const features = await getWorkspaceFeatures(user.id, supabase);
+  const emailEnabled = features?.email !== false;
+  if (tab === 'email' && !emailEnabled) redirect('/settings?tab=account');
   const section = rawSection ?? (tab === 'company' ? 'members' : 'connections');
 
   let members: any[] = [];
@@ -94,18 +99,17 @@ export default async function SettingsPage({ searchParams }: Props) {
 
     const { data: prof } = await supabase
       .from('profiles')
-      .select('full_name, attendee_enabled')
+      .select('full_name')
       .eq('id', user.id)
       .single();
     profile = prof;
   }
 
-  const selfHostedConfigured = !!process.env.MEETING_BOT_SERVICE_URL;
 
   return (
     <SettingsPageClient>
       <>
-        <SettingsLeftPanel activeTab={tab} companyRole={company?.role ?? null} />
+        <SettingsLeftPanel activeTab={tab} companyRole={company?.role ?? null} emailEnabled={emailEnabled} />
 
         <div className="flex-1 overflow-hidden flex flex-col bg-neutral-50 p-2">
           <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
@@ -120,17 +124,8 @@ export default async function SettingsPage({ searchParams }: Props) {
                   />
                 </section>
 
-                <section className="px-6 py-5 border-b border-neutral-100">
-                  <h3 className="text-[14px] font-semibold text-neutral-900 mb-1">Meeting Assistant</h3>
-                  <p className="text-[12px] text-neutral-400 mb-3">
-                    Automatically join meetings, capture transcripts, and generate action items.
-                  </p>
-                  <MeetingAssistantCard
-                    isEnabled={profile?.attendee_enabled || false}
-                    selfHostedConfigured={selfHostedConfigured}
-                  />
-                </section>
-
+                {/* Meeting Assistant (auto-join bot) UI retired Aug 10 — in-person recording is
+                    the product; routes/infra stay dormant. */}
                 <section className="px-6 py-5">
                   <DataManagementSection connections={connections} userEmail={user.email ?? ''} />
                 </section>

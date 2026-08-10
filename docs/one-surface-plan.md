@@ -468,6 +468,94 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+OO. **THE MEETING ASSISTANT UI RETIRED (Aug 10, owner call — "we no longer use it"; gate
+   SV5 — 123/123, build green).** The auto-join Google Meet bot's user-facing surfaces
+   are gone: the Settings card (component deleted), the meeting page's Send-assistant
+   affordance + state chips, both platform-admin toggles (per-company, per-user) and
+   their handlers. KEPT DELIBERATELY: the bot API routes + Hetzner infra dormant (the
+   same service runs in-person recording — the product), bot_manager's insight
+   generation (the recording pipeline uses it), DB columns for stored data. Full infra
+   removal only if the box ever gets rebuilt.
+NN. **THE WORKSPACE DETAIL PAGE + HONEST SOVEREIGN COPY (Aug 10 latest; gate SV4 —
+   122/122, build green; the sovereign door arc CLOSES).** (1) /platform-admin/
+   workspaces/[id]: one page per workspace in current product language — identity ·
+   access & entry (the corporate toggle with its explanation, entry link, join code) ·
+   branding (logo upload inline) · features as EXPLAINED switches (Email / Meetings /
+   Knowledge / Coworkers / Workflows — each says what it turns on) · members with roles +
+   pending invites · danger zone (suspend, two-step cascade delete). Every mutation
+   reuses the SAME platform-admin routes as the list — one behavior, two views; the list
+   row's name links in; list labels aligned (Drive→Knowledge, Tasks→Workflows). (2) The
+   invite doors speak honestly on a connection-less workspace ("runs without connected
+   calendars — share the details in a message instead"), never pointing at a hidden
+   Settings tab. (3) Settings re-audited: no connect-email CTA outside the hidden Email
+   tab (DataManagement/Identity are read-only over existing connections). The deeper
+   list-page redesign remains tail-queued; the detail page is the aligned home.
+MM. **THE PLATFORM-ADMIN SOVEREIGN CONTROLS (Aug 10 late night, arc 3/4 of the sovereign
+   door; gate SV3 — 121/121, build green; admin UI awaits the owner's superadmin eyeball —
+   the dedicated superadmin account is not automatable).** Spinning up a corporate client
+   is now a two-minute operation: THE CORPORATE SWITCH on each workspace row (one click =
+   email OFF = sovereign; emerald shield state, plain tooltips both ways); THE
+   BRANDED-ENTRY editor in the expanded row (entry link click-to-copy · logo URL ·
+   tagline → PATCH merges settings.branding); alignment pass: vestigial Home pill hidden,
+   bg-primary tokens → the kit's indigo. THE LOGO UPLOAD (owner: "where to upload?"):
+   an Upload-logo button in the editor → super-admin route → public `branding` bucket
+   (PNG/JPEG/WebP ≤2MB; no SVG — a public SVG executes script on direct navigation) →
+   stamps settings.branding.logo_url in one motion (E2E: upload + public fetch 200). REMAINING (small): honest invite-send copy on
+   sovereign workspaces; the deeper admin redesign (workspace detail page, current-product
+   information architecture) stays on the tail.
+LL. **THE BRANDED ENTRY + THE SAFE-DATA MARK (Aug 10 night, arc 2 of the sovereign door;
+   gate SV2 — 120/120, build green; verified live: unauth 200 with steps+mark, unknown
+   slug → /login, authed non-member → code step, screenshot).** app.augmtd.ai/<slug> is
+   a client's own front door — a root [slug] catch-all (real routes win by precedence):
+   co-branded header (companies.settings.branding.logo_url × augmtd), email+password
+   ONLY, the three steps visible (enter your email → password & workspace code → set up
+   your agents; step 3 completes on the Home's sovereign first look). Auth flow:
+   supabase signUp with emailRedirectTo back to the SAME landing (auth/callback gained
+   ?next=, relative-only); session-immediate signups join in one motion via the existing
+   /api/company/join; authed non-members skip to the code step; members bounce /home.
+   The SIDEBAR carries the co-brand (client logo beside the wordmark) and THE SAFE-DATA
+   MARK ("Private environment · 🛡" footer line, tooltip: private AI models · EU
+   processing · no third-party sign-in) on email-feature-off workspaces. Probe branding
+   furniture set on Probe Sovereign Co. REMAINING in the arc: the platform-admin revamp
+   (sovereign toggle · branding/logo management · entry-link surfacing · current naming ·
+   retire dead controls) + honest invite-send copy on sovereign workspaces.
+KK. **THE SOVEREIGN LEAK AUDIT (Aug 10 night — the corporate tier begins; gate SV1 — 119/119,
+   build green; E2E: probe workspace flag-flip propagated + restored; recording stays IN
+   the corporate tier by owner call).** features.email=false is THE sovereign trigger —
+   audit findings closed: the Home first look never consulted the flag (the "Connect your
+   inbox" CTA rendered regardless — now pivots to "Set up your agent team", which seeds
+   the coworkers idempotently and opens the first DM); Settings hides the Email tab AND
+   bounces direct ?tab=email navigation; the chief's toolset drops mailbox verbs
+   (send_prepared_reply/prepare_forward newly registered in the ONE map; agentLoop
+   filters its defs by workspace features — the model cannot offer what the workspace
+   does not hold). Already-sound and verified: /inbox guardFeaturePage('email'), the
+   sidebar's feature-gated Inbox source. The boundary law: AUTH connections only —
+   workflow email sending (Resend, stated addresses) untouched. Probe furniture: "Probe
+   Sovereign Co" workspace (all features on, owner=probe) for this arc's gates. NEXT in
+   the arc: the branded entry (/join/[code] landing, 3 steps, logo from
+   companies.settings.branding) + the safe-data mark + platform-admin revamp. NOTED for
+   arc 2: meeting-invite send flows error toward "Reconnect in Settings" copy on
+   sovereign workspaces (unreachable-in-practice today); Slack/Nango integrations tab is
+   a separate decision (not mailbox OAuth).
+JJ. **/work RETIRED (Aug 10, owner call) + THE SOVEREIGN DOOR (designed, awaiting the go).**
+   /work → redirect (?thread&agent → the Home conversation opener; six inbound links
+   repointed: agent-form ×3, join, oauth-complete, onboarding, workspace guards); client
+   components stay one release, deleted with the /workers dead-component sweep. THE
+   SOVEREIGN DOOR (the corporate tier — enterprise clients who refuse Google/Microsoft
+   OAuth; the iScore blocker class): (1) A CORPORATE WORKSPACE MODE — one flag
+   (companies.settings.sovereign or features.email=false as the trigger) that HIDES every
+   mailbox/calendar AUTH surface: the Home's Connect-inbox first-look (→ "Set up your
+   agent team" CTA instead), Settings connections, the Inbox/Meetings sources where
+   unowned — audit finding: features.email exists but NOTHING on the Home consults it
+   today, the leak is real. Workflow email SENDING (Resend, stated addresses) stays — the
+   boundary is auth connections only. (2) THE BRANDED ENTRY — /join/[code] already
+   exists; extend to a branded landing (client logo from companies.settings.branding),
+   email+password only, three steps: enter email → password+code → set up your agents.
+   (3) THE SAFE-DATA MARK — a visual sovereignty badge at the sidebar's foot (private
+   models · EU processing · no third-party OAuth), plus the client logo beside ours in
+   the navbar for co-branded workspaces. (4) THE PLATFORM-ADMIN REVAMP — align to the
+   current product: current feature names, the sovereign toggle + entry-link + logo
+   management per workspace, retire dead controls. /workers components sweep rides along.
 II. **THE ATTACHED MATERIAL + TOKEN STREAMING + THE FORMAT-FLOOR FIX (Aug 10 late; gate CH5 —
    118/118, build green; replay suite 6/6; drop cycle re-verified on the served page).**
    Three moves: (1) ATTACH → PRODUCTION: /api/home/extract-attach extracts attachment text

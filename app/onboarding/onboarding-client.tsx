@@ -368,7 +368,7 @@ export default function OnboardingClient({ userEmail }: { userEmail: string }) {
         });
         if (!res.ok) throw new Error('Failed to save name');
       }
-      router.push('/work?setup=1');
+      router.push('/home');
     } catch {
       setNameError('Failed to save — please try again');
       setNameLoading(false);

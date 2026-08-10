@@ -39,7 +39,7 @@ export default function JoinClient({
         setLoading(false);
         return;
       }
-      router.push('/work?setup=1');
+      router.push('/home');
     } catch {
       setError('Unable to join — please try again');
       setLoading(false);

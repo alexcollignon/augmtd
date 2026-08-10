@@ -37,7 +37,12 @@ function formatElapsed(secs: number) {
 
 export default function OneSidebar({
   userEmail, avatarUrl = null, isSuperAdmin = false, features = DEFAULT_FEATURES,
-}: { userEmail?: string; avatarUrl?: string | null; isSuperAdmin?: boolean; features?: WorkspaceFeatures }) {
+  brandLogo = null, brandName = null, sovereign = false,
+}: { userEmail?: string; avatarUrl?: string | null; isSuperAdmin?: boolean; features?: WorkspaceFeatures;
+  /** THE CO-BRAND (the sovereign door): the client's logo beside ours, from companies.settings.branding. */
+  brandLogo?: string | null; brandName?: string | null;
+  /** THE SAFE-DATA MARK: shown for corporate workspaces (no third-party auth). Visual only. */
+  sovereign?: boolean }) {
   const pathname = usePathname();
   const router = useRouter();
   const recording = useRecordingContext();
@@ -185,10 +190,19 @@ export default function OneSidebar({
 
   return (
     <div className="flex h-screen w-[212px] flex-col bg-neutral-50 flex-shrink-0 border-r border-neutral-200/60">
-      {/* Wordmark */}
+      {/* Wordmark — co-branded when the workspace carries a client logo (the sovereign door). */}
       <div className="flex h-12 items-center gap-2 px-4">
         <Image src="/augmtd-logo.png" alt="AUGMTD" width={18} height={18} className="w-[18px] h-[18px]" />
         <span className="text-[13px] font-semibold tracking-wide text-neutral-800 select-none">augmtd</span>
+        {brandLogo && (
+          <>
+            <span className="text-neutral-300 text-[11px] select-none">×</span>
+            {/* Client logos are user-supplied URLs — plain img, never next/image domain config. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={brandLogo} alt={brandName ?? 'Workspace'} title={brandName ?? undefined}
+              className="h-[18px] max-w-[64px] object-contain" />
+          </>
+        )}
       </div>
 
       <nav className="flex-1 overflow-y-auto py-2 px-2 [scrollbar-width:thin]">
@@ -379,6 +393,17 @@ export default function OneSidebar({
         </button>
       </div>
 
+      {/* THE SAFE-DATA MARK (the sovereign door) — quiet, always visible on corporate
+          workspaces: this environment holds no third-party sign-in. Visual only. */}
+      {sovereign && (
+        <div className="px-4 pb-1.5"
+          title="Private AI models · EU processing · No third-party sign-in">
+          <span className="flex items-center gap-1.5 text-[10.5px] text-neutral-400 select-none">
+            <ShieldCheckIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+            Private environment
+          </span>
+        </div>
+      )}
       {/* Footer: identity + Settings (Team + Knowledge live inside Settings — the fold's doors). */}
       <div ref={menuRef} className="relative px-2 pb-3 pt-1">
         {showUserMenu && (

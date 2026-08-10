@@ -32,9 +32,25 @@ export async function PATCH(
   if (!await isSuperAdmin(user.id, supabase)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const body = await request.json();
-  const updates: Record<string, string | null> = {};
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const updates: Record<string, any> = {};
 
   if (body.name?.trim()) updates.name = body.name.trim();
+  // THE BRANDED ENTRY management (Aug 10): logo + tagline for the workspace's own front door
+  // (app.augmtd.ai/<slug>) — merged into settings.branding, never replacing other settings.
+  if (body.branding && typeof body.branding === 'object') {
+    const logo = String(body.branding.logo_url ?? '').trim().slice(0, 500);
+    const tagline = String(body.branding.tagline ?? '').trim().slice(0, 120);
+    if (logo && !/^(https?:\/\/|\/)/.test(logo)) {
+      return NextResponse.json({ error: 'Logo must be a URL (https://…) or an app path (/…)' }, { status: 400 });
+    }
+    const adminClient0 = await getAdminClient();
+    const { data: cur } = await adminClient0.from('companies').select('settings').eq('id', id).maybeSingle();
+    updates.settings = {
+      ...((cur?.settings ?? {}) as Record<string, unknown>),
+      branding: { ...(logo ? { logo_url: logo } : {}), ...(tagline ? { tagline } : {}) },
+    };
+  }
   if (body.plan) {
     if (!VALID_PLANS.includes(body.plan)) return NextResponse.json({ error: 'Invalid plan' }, { status: 400 });
     updates.plan = body.plan;

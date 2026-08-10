@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import {
   BuildingOfficeIcon,
   UsersIcon,
@@ -15,6 +16,7 @@ import {
   PauseIcon,
   PlayIcon,
   ClipboardDocumentListIcon,
+  ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 import type { WorkspaceFeatures, WorkspaceType, FeatureKey } from '@/lib/workspace/types';
 import { FEATURE_KEYS } from '@/lib/workspace/types';
@@ -33,6 +35,7 @@ interface CompanyRow {
   created_at: string;
   member_count: number;
   meeting_assistant: boolean;
+  settings?: { branding?: { logo_url?: string; tagline?: string } } | null;
 }
 
 interface MemberRow {
@@ -90,12 +93,13 @@ const STATUS_COLORS: Record<string, string> = {
 // Labels reflect current product naming. Underlying keys ('agents'/'studio') are kept
 // for back-compat (no migration): 'agents' gates the Coworkers section, 'studio' gates
 // the Tasks/automation builder that now lives inside it.
+// Current-product naming (Aug 10 alignment): the KB is Knowledge, standing tasks are Workflows.
 const FEATURE_LABEL: Record<FeatureKey, string> = {
   email:    'Email',
   meetings: 'Meetings',
-  drive:    'Drive',
+  drive:    'Knowledge',
   agents:   'Coworkers',
-  studio:   'Tasks',
+  studio:   'Workflows',
   home:     'Home',
 };
 const ROLE_COLORS: Record<string, string> = {
@@ -136,6 +140,91 @@ interface AuditEntry {
   created_at: string;
 }
 
+// THE BRANDED ENTRY editor (the sovereign door): entry link + logo + tagline per workspace —
+// what used to mean hand-editing jsonb is a two-field form. The entry link is live the moment
+// the slug exists; branding only decorates it.
+function BrandingEditor({ company, onSaved }: {
+  company: CompanyRow;
+  onSaved: (branding: { logo_url?: string; tagline?: string }) => void;
+}) {
+  const [logo, setLogo] = useState(company.settings?.branding?.logo_url ?? '');
+  const [tagline, setTagline] = useState(company.settings?.branding?.tagline ?? '');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
+  const entryUrl = `${typeof window !== 'undefined' ? window.location.origin : 'https://app.augmtd.ai'}/${company.slug}`;
+
+  // Direct logo UPLOAD (public `branding` bucket via the super-admin route) — the URL field
+  // stays for logos already hosted elsewhere; upload stamps settings.branding in one motion.
+  const uploadLogo = async (file: File) => {
+    setBusy(true); setNote('');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch(`/api/platform-admin/companies/${company.id}/logo`, { method: 'POST', body: fd });
+      const d = await res.json().catch(() => null);
+      if (!res.ok) { setNote(d?.error ?? 'Upload failed'); return; }
+      setLogo(d.url);
+      onSaved({ logo_url: d.url, ...(tagline.trim() ? { tagline: tagline.trim() } : {}) });
+      setNote('Logo uploaded');
+      setTimeout(() => setNote(''), 2500);
+    } catch { setNote('Upload failed'); }
+    finally { setBusy(false); }
+  };
+
+  const save = async () => {
+    setBusy(true); setNote('');
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${company.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branding: { logo_url: logo.trim(), tagline: tagline.trim() } }),
+      });
+      const d = await res.json().catch(() => null);
+      if (!res.ok) { setNote(d?.error ?? 'Save failed'); return; }
+      onSaved({ ...(logo.trim() ? { logo_url: logo.trim() } : {}), ...(tagline.trim() ? { tagline: tagline.trim() } : {}) });
+      setNote('Saved');
+      setTimeout(() => setNote(''), 2000);
+    } catch { setNote('Save failed'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="rounded-lg border border-neutral-200 bg-white px-3.5 py-3">
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Branded entry</span>
+        <button
+          onClick={() => { void navigator.clipboard.writeText(entryUrl); setNote('Link copied'); setTimeout(() => setNote(''), 2000); }}
+          className="text-[11px] font-mono text-indigo-600 hover:text-indigo-800 truncate"
+          title="The workspace's own front door — click to copy"
+        >
+          {entryUrl}
+        </button>
+      </div>
+      <div className="flex items-center gap-2">
+        {logo && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={logo} alt="logo" className="h-6 max-w-[56px] object-contain rounded flex-shrink-0" />
+        )}
+        <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void uploadLogo(f); }} />
+        <button onClick={() => fileRef.current?.click()} disabled={busy}
+          className="text-[11.5px] font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 disabled:opacity-50 rounded-md px-2.5 py-1.5 transition-colors flex-shrink-0">
+          {busy ? 'Uploading…' : 'Upload logo'}
+        </button>
+        <input value={logo} onChange={e => setLogo(e.target.value)} placeholder="…or paste a logo URL"
+          className="flex-1 rounded-md border border-neutral-200 px-2.5 py-1.5 text-[12px] outline-none focus:border-indigo-300" />
+        <input value={tagline} onChange={e => setTagline(e.target.value)} placeholder="Tagline (optional)"
+          className="flex-1 rounded-md border border-neutral-200 px-2.5 py-1.5 text-[12px] outline-none focus:border-indigo-300" />
+        <button onClick={() => void save()} disabled={busy}
+          className="text-[11.5px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-md px-3 py-1.5 transition-colors">
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+        {note && <span className={`text-[11px] ${note.includes('fail') ? 'text-red-600' : 'text-emerald-600'}`}>{note}</span>}
+      </div>
+    </div>
+  );
+}
+
 export default function PlatformAdminClient({ initialCompanies }: { initialCompanies: CompanyRow[] }) {
   const [tab, setTab] = useState<'companies' | 'users' | 'audit'>('companies');
 
@@ -163,7 +252,6 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
   const [copied, setCopied] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
-  const [meetingAssistantLoading, setMeetingAssistantLoading] = useState<string | null>(null);
   const [featureLoading, setFeatureLoading] = useState<string | null>(null);
   const [codeCopiedId, setCodeCopiedId] = useState<string | null>(null);
   const [regenLoading, setRegenLoading] = useState<string | null>(null);
@@ -474,52 +562,6 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
     }
   }
 
-  // ── Meeting assistant handlers ─────────────────────────────────────────────
-  async function handleToggleCompanyMeetingAssistant(companyId: string, enabled: boolean) {
-    setMeetingAssistantLoading(companyId);
-    try {
-      const res = await fetch(`/api/platform-admin/companies/${companyId}/meeting-assistant`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled }),
-      });
-      if (res.ok) {
-        setCompanies(prev => prev.map(c => c.id === companyId ? { ...c, meeting_assistant: enabled } : c));
-        // Update cached members for this company if loaded
-        setMembersCache(prev => {
-          const members = prev[companyId];
-          if (!members) return prev;
-          return { ...prev, [companyId]: members.map(m => ({ ...m, attendee_enabled: enabled })) };
-        });
-      }
-    } finally {
-      setMeetingAssistantLoading(null);
-    }
-  }
-
-  async function handleToggleUserMeetingAssistant(userId: string, enabled: boolean) {
-    setMeetingAssistantLoading(userId);
-    try {
-      const res = await fetch(`/api/platform-admin/members/${userId}/meeting-assistant`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled }),
-      });
-      if (res.ok) {
-        setUsers(prev => prev.map(u => u.id === userId ? { ...u, attendee_enabled: enabled } : u));
-        // Also update cached member rows across all companies
-        setMembersCache(prev => {
-          const updated: typeof prev = {};
-          for (const [cid, members] of Object.entries(prev)) {
-            updated[cid] = members.map(m => m.user_id === userId ? { ...m, attendee_enabled: enabled } : m);
-          }
-          return updated;
-        });
-      }
-    } finally {
-      setMeetingAssistantLoading(null);
-    }
-  }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   function formatDate(d: string) {
@@ -748,7 +790,11 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                                 </div>
                               ) : (
                                 <div className="flex items-center gap-2">
-                                  <span className="text-[13px] font-medium text-neutral-800 truncate">{company.name}</span>
+                                  {/* The name opens THE WORKSPACE DETAIL PAGE — the row stays the quick-glance index. */}
+                                  <Link href={`/platform-admin/workspaces/${company.id}`}
+                                    className="text-[13px] font-medium text-neutral-800 truncate hover:text-indigo-600 hover:underline underline-offset-2 transition-colors">
+                                    {company.name}
+                                  </Link>
                                   <span className="text-[11px] text-neutral-400 flex-shrink-0">{company.slug}</span>
                                 </div>
                               )}
@@ -793,9 +839,27 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                               {company.status}
                             </span>
 
-                            {/* Feature toggles — compact pills */}
+                            {/* THE CORPORATE SWITCH (the sovereign door): one click = the
+                                sovereign mode (email feature OFF → no mailbox-auth surface
+                                anywhere; the Home pivots to the agent-team first look). */}
+                            <button
+                              onClick={() => handleToggleFeature(company.id, 'email', company.features.email === false)}
+                              disabled={featureLoading === `${company.id}:email`}
+                              title={company.features.email === false
+                                ? 'Corporate (sovereign) — no mailbox auth anywhere. Click to allow email connections again.'
+                                : 'Make this a corporate (sovereign) workspace — hides every mailbox/calendar auth surface.'}
+                              className={`flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md transition-opacity disabled:opacity-50 ${
+                                company.features.email === false ? 'bg-emerald-50 text-emerald-700' : 'bg-neutral-100 text-neutral-400 hover:opacity-75'
+                              }`}
+                            >
+                              <ShieldCheckIcon className="w-3 h-3" />
+                              Corporate
+                            </button>
+
+                            {/* Feature toggles — compact pills ('home' is vestigial: nothing
+                                gates on it; hidden here, key kept for stored data). */}
                             <div className="flex items-center gap-1">
-                              {FEATURE_KEYS.map(key => {
+                              {FEATURE_KEYS.filter(k => k !== 'home').map(key => {
                                 const on = company.features[key];
                                 const loading = featureLoading === `${company.id}:${key}`;
                                 return (
@@ -805,7 +869,7 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                                     disabled={loading}
                                     title={`${FEATURE_LABEL[key]} — click to ${on ? 'disable' : 'enable'}`}
                                     className={`text-[10px] font-medium px-2 py-0.5 rounded-md transition-opacity disabled:opacity-50 ${
-                                      on ? 'bg-primary-50 text-primary-700' : 'bg-neutral-100 text-neutral-400'
+                                      on ? 'bg-indigo-50 text-indigo-700' : 'bg-neutral-100 text-neutral-400'
                                     } ${loading ? 'opacity-60' : 'hover:opacity-75'}`}
                                   >
                                     {FEATURE_LABEL[key]}
@@ -877,6 +941,14 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                           {/* Expanded members + pending invites */}
                           {expandedId === company.id && (
                             <div className="bg-neutral-50 border-t border-neutral-100 px-12 py-4 space-y-3">
+                              {/* THE BRANDED ENTRY management — the workspace's own front door:
+                                  entry link (copy), client logo, tagline. Saves to
+                                  companies.settings.branding via the PATCH. */}
+                              <BrandingEditor
+                                company={company}
+                                onSaved={(branding) => setCompanies(prev => prev.map(c =>
+                                  c.id === company.id ? { ...c, settings: { ...(c.settings ?? {}), branding } } : c))}
+                              />
                               {membersLoading === company.id ? (
                                 <p className="text-[12px] text-neutral-400 py-2">Loading…</p>
                               ) : (
@@ -909,16 +981,7 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                                             <option value="admin">Admin</option>
                                             <option value="member">Member</option>
                                           </select>
-                                          <button
-                                            onClick={() => handleToggleUserMeetingAssistant(m.user_id, !m.attendee_enabled)}
-                                            disabled={meetingAssistantLoading === m.user_id}
-                                            title={m.attendee_enabled ? 'Disable meeting assistant' : 'Enable meeting assistant'}
-                                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold hover:opacity-75 transition-opacity disabled:opacity-50 ${
-                                              m.attendee_enabled ? 'bg-violet-50 text-violet-700' : 'bg-neutral-100 text-neutral-400'
-                                            }`}
-                                          >
-                                            {meetingAssistantLoading === m.user_id ? '…' : m.attendee_enabled ? 'Mtg on' : 'Mtg off'}
-                                          </button>
+                                          {/* Meeting-assistant (auto-join bot) toggle retired Aug 10. */}
                                           <span className="text-neutral-400">Joined {formatDate(m.joined_at)}</span>
                                           {confirmingId === m.user_id ? (
                                             <div className="flex items-center gap-1.5">
@@ -1112,19 +1175,7 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                               )}
                             </div>
 
-                            {/* Meeting assistant toggle */}
-                            <div className="w-24 flex-shrink-0">
-                              <button
-                                onClick={() => handleToggleUserMeetingAssistant(u.id, !u.attendee_enabled)}
-                                disabled={meetingAssistantLoading === u.id || u.is_super_admin}
-                                title={u.attendee_enabled ? 'Disable meeting assistant' : 'Enable meeting assistant'}
-                                className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full hover:opacity-75 transition-opacity disabled:opacity-50 ${
-                                  u.attendee_enabled ? 'bg-violet-50 text-violet-700' : 'bg-neutral-100 text-neutral-400'
-                                }`}
-                              >
-                                {meetingAssistantLoading === u.id ? '…' : u.attendee_enabled ? 'Active' : 'Off'}
-                              </button>
-                            </div>
+                            {/* Meeting-assistant (auto-join bot) toggle retired Aug 10. */}
 
                             {/* Joined */}
                             <span className="w-28 text-[11px] text-neutral-400 flex-shrink-0">

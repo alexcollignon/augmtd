@@ -262,7 +262,7 @@ export function AgentForm({ initial, mode }: Props) {
           body: JSON.stringify({ name, description, instructions, color, icon, conversation_starters: startersToSend, web_enabled: webEnabled, sharing_mode: sharingMode, shared_with_company: sharingMode !== null }),
         });
       }
-      router.push('/work');
+      router.push('/home');
     } catch (err) {
       setError(String(err));
     } finally {
@@ -288,7 +288,7 @@ export function AgentForm({ initial, mode }: Props) {
     setDeleting(true);
     try {
       await fetch(`/api/agents/${initial.id}`, { method: 'DELETE' });
-      router.push('/work');
+      router.push('/home');
     } finally {
       setDeleting(false);
     }
@@ -338,7 +338,7 @@ export function AgentForm({ initial, mode }: Props) {
           {!confirmingDelete && (
             <button
               type="button"
-              onClick={() => router.push('/work')}
+              onClick={() => router.push('/home')}
               className="px-3 py-1.5 rounded-lg text-[12px] text-neutral-600 hover:bg-neutral-100 transition-colors"
             >
               Cancel

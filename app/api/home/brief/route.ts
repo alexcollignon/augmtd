@@ -1570,11 +1570,20 @@ export async function GET() {
   // trackedProjects was loaded early (before clusterTag) — served for By-project grouping.
   // MAIL STATE (new-user honesty): the Home's empty state must distinguish "nothing connected" /
   // "first sync in flight" / "genuinely all clear" — one cheap query, no AI.
-  let mail = { connections: 0, syncing: false };
+  let mail = { connections: 0, syncing: false, emailFeature: true };
   try {
     const { data: conns } = await supabase.from('connections').select('id, last_sync')
       .eq('user_id', user.id).in('provider', ['gmail', 'outlook']).eq('status', 'active');
-    mail = { connections: conns?.length ?? 0, syncing: (conns ?? []).some((c) => !c.last_sync) };
+    // THE SOVEREIGN MODE bit (Aug 10 — the leak audit): a corporate workspace with the email
+    // feature OFF must never be invited to connect a mailbox — the empty state pivots to the
+    // agent-team CTA. One flag read; the client renders from it.
+    const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
+    const feats = await getWorkspaceFeatures(user.id, supabase);
+    mail = {
+      connections: conns?.length ?? 0,
+      syncing: (conns ?? []).some((c) => !c.last_sync),
+      emailFeature: feats?.email !== false,
+    };
   } catch { /* non-fatal */ }
   // THE ROW TAG on the SERVED payload (July 30 — the invisible-EG-Bank bug, take 2: the client
   // builds the deck from THESE lanes, not from the server-side agenda): every deck lane carries its

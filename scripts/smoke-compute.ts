@@ -8,6 +8,7 @@ import { readFileSync, existsSync } from 'fs';
 const out: Array<[string, boolean, string]> = [];
 const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
 const src = (p: string) => readFileSync(p, 'utf8');
+const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; } catch { return false; } };
 
 (async () => {
   // ── C1 · REGISTRY TRUTH: one map row, parity lawful, the plan cache self-invalidates. ──
@@ -1061,6 +1062,62 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/workers/worker-mention-input.tsx').includes("window.addEventListener('drop'") &&
     src('components/work/chat-input-bar.tsx').includes("window.addEventListener('drop'") &&
     src('components/home/home-ask.tsx').includes('liveText'));
+
+  // ── SV · THE SOVEREIGN DOOR (the corporate tier, Aug 10 — leak audit first). ──
+  check('SV1: THE SOVEREIGN LEAK AUDIT — a workspace with the email feature OFF has NO mailbox-auth surface: the Home first look pivots to the agent-team CTA (brief serves mail.emailFeature; the connect-inbox branch requires it), Settings hides the Email tab AND bounces direct ?tab=email navigation, /inbox stays feature-guarded (guardFeaturePage), the sidebar Inbox source stays feature-gated, and the CHIEF\'S TOOLSET drops mailbox verbs (get_emails/send_prepared_reply/prepare_forward mapped to the email feature in the ONE map; agentLoop filters its defs) — the model cannot offer what the workspace does not hold. Workflow email SENDING (Resend, stated addresses) stays — the boundary is auth connections only. E2E on the probe workspace: flag flip propagated through getWorkspaceFeatures and restored',
+    src('app/api/home/brief/route.ts').includes('emailFeature: feats?.email !== false') &&
+    src('components/home/home-view.tsx').includes('mail.emailFeature === false') &&
+    src('components/home/home-view.tsx').includes('Set up your agent team') &&
+    src('app/(main)/settings/page.tsx').includes("tab === 'email' && !emailEnabled") &&
+    src('components/settings/settings-left-panel.tsx').includes("emailEnabled || item.id !== 'email'") &&
+    src('app/(main)/inbox/page.tsx').includes("guardFeaturePage('email')") &&
+    src('components/one/one-sidebar.tsx').includes('features.email && (') &&
+    src('lib/workspace/tool-capabilities.ts').includes("send_prepared_reply: 'email'") &&
+    src('lib/converse/index.ts').includes('toolDefs = CHIEF_TOOL_DEFS.filter'));
+
+  check('SV2: THE BRANDED ENTRY + THE SAFE-DATA MARK — app.augmtd.ai/<slug> is a client\'s own front door (root catch-all; route precedence keeps real routes ahead; unknown slug → /login): co-branded header (client logo from companies.settings.branding × ours), email+password ONLY (no OAuth anywhere on the page), the three steps visible (email → password & workspace code → set up your agents); an authed non-member skips to the code step; a member bounces /home; signup email-confirm returns to the SAME landing (auth/callback ?next=, relative paths only). The sidebar carries the co-brand logo and the sovereign footer mark ("Private environment", email-feature-off workspaces). Verified live: unauthenticated 200 with name+steps+mark, unknown slug 307 → /login, authed non-member renders the code step (screenshot)',
+    src('app/[slug]/page.tsx').includes("ilike('slug', slug)") &&
+    src('app/[slug]/page.tsx').includes("mode = 'code'") &&
+    src('components/auth/corporate-entry.tsx').includes('Set up your agents') &&
+    !src('components/auth/corporate-entry.tsx').includes('signInWithOAuth') &&
+    src('components/auth/corporate-entry.tsx').includes('auth/callback?next=/') &&
+    src('app/auth/callback/route.ts').includes("next.startsWith('/') && !next.startsWith('//')") &&
+    src('components/one/one-sidebar.tsx').includes('brandLogo') &&
+    src('components/one/one-sidebar.tsx').includes('Private environment') &&
+    src('app/(main)/layout.tsx').includes('sovereign = features.email === false'));
+
+  check('SV3: THE PLATFORM-ADMIN SOVEREIGN CONTROLS — spinning up a corporate client is a two-minute operation: THE CORPORATE SWITCH per workspace row (one click = email feature OFF = the sovereign mode; emerald shield when on, with plain-language tooltips both ways); THE BRANDED-ENTRY editor in the expanded row (entry link app.augmtd.ai/<slug> click-to-copy · client logo URL · tagline → PATCH merges settings.branding, never clobbering other settings; logo validated URL-or-app-path); alignment: the vestigial Home feature pill hidden (nothing gates on it; key kept for stored data), bg-primary-* tokens replaced with the kit\'s indigo. NOTE: visually verified by the owner\'s superadmin login (the dedicated superadmin account is not available to automation)',
+    src('app/platform-admin/platform-admin-client.tsx').includes('THE CORPORATE SWITCH') &&
+    src('app/platform-admin/platform-admin-client.tsx').includes("handleToggleFeature(company.id, 'email', company.features.email === false)") &&
+    src('app/platform-admin/platform-admin-client.tsx').includes('function BrandingEditor') &&
+    src('app/platform-admin/platform-admin-client.tsx').includes("FEATURE_KEYS.filter(k => k !== 'home')") &&
+    !src('app/platform-admin/platform-admin-client.tsx').includes('bg-primary-50') &&
+    src('app/api/platform-admin/companies/[id]/route.ts').includes('branding') &&
+    src('app/api/platform-admin/companies/[id]/route.ts').includes('never replacing other settings') &&
+    // THE LOGO UPLOAD: super-admin route → public `branding` bucket (raster only — a public SVG
+    // executes script on direct navigation), stamps settings.branding.logo_url in one motion;
+    // E2E: bucket create + upload + public fetch 200 verified live.
+    src('app/api/platform-admin/companies/[id]/logo/route.ts').includes("createBucket('branding', { public: true") &&
+    !src('app/api/platform-admin/companies/[id]/logo/route.ts').includes('svg') &&
+    src('app/platform-admin/platform-admin-client.tsx').includes('Upload logo'));
+
+  check('SV4: THE WORKSPACE DETAIL PAGE + HONEST SOVEREIGN COPY — (1) /platform-admin/workspaces/[id]: one page per workspace in current product language (identity · access & entry with the corporate toggle+explanation · branding with logo upload · features as explained switches: Email/Meetings/Knowledge/Coworkers/Workflows · members with roles+pending · danger zone with two-step delete); every mutation reuses the SAME platform-admin routes as the list (one behavior, two views); the list row\'s name links here; list labels aligned (Drive→Knowledge, Tasks→Workflows). (2) invite-send on a workspace with NO connection says honest words ("runs without connected calendars") instead of pointing at a Settings tab that does not exist — both invite doors. (3) Settings audit re-verified: no connect-email CTA outside the hidden Email tab',
+    src('app/(main)/platform-admin/workspaces/[id]/page.tsx').includes('WorkspaceDetail') &&
+    src('components/platform-admin/workspace-detail.tsx').includes('Corporate (sovereign) mode') &&
+    src('components/platform-admin/workspace-detail.tsx').includes("label: 'Knowledge'") &&
+    src('components/platform-admin/workspace-detail.tsx').includes("label: 'Workflows'") &&
+    src('components/platform-admin/workspace-detail.tsx').includes('Danger zone') &&
+    src('app/platform-admin/platform-admin-client.tsx').includes('/platform-admin/workspaces/${company.id}') &&
+    src('app/platform-admin/platform-admin-client.tsx').includes("drive:    'Knowledge'") &&
+    src('components/meetings/week-calendar.tsx').includes('runs without connected calendars') &&
+    src('components/meetings/new-meeting-modal.tsx').includes('runs without connected calendars'));
+
+  check('SV5: THE MEETING ASSISTANT (auto-join bot) UI RETIRED (owner call, Aug 10 — "we no longer use it") — the Settings card is gone (component deleted), the meeting page\'s Send-assistant affordance and state chips are gone, both platform-admin toggles (per-company, per-user) and their handlers are gone. KEPT DELIBERATELY: the bot API routes and Hetzner infra stay dormant (the SAME service runs in-person recording — the product), bot_manager\'s insight generation serves the recording pipeline, and DB columns (attendee_enabled) stay for stored data',
+    !fileExists('components/settings/meeting-assistant-card.tsx') &&
+    !src('app/(main)/settings/page.tsx').includes('MeetingAssistantCard') &&
+    !src('app/meetings/[id]/meeting-detail-client.tsx').includes('Send assistant') &&
+    !src('app/platform-admin/platform-admin-client.tsx').includes('MeetingAssistant') &&
+    src('app/meetings/[id]/meeting-detail-client.tsx').includes('UI RETIRED'));
 
   // ── Report ──
   let pass = 0;
