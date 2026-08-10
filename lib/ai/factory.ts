@@ -198,6 +198,16 @@ export async function aiCreate(
   const MAX_429_RETRIES = 3
   let attempt = 0
 
+  // Anthropic's OpenAI-compat endpoint stopped accepting response_format {type:'json_object'}
+  // (400 "Input should be 'json_schema'" — observed live Aug 10, broke EVERY json-shaped call
+  // routed to Claude). Claude emits clean-or-fenced JSON when the prompt asks; the parsers
+  // already strip fences (the Bedrock-Haiku lesson). One transport-layer strip fixes all sites.
+  if (String((client as { baseURL?: string }).baseURL ?? '').includes('anthropic.com')
+    && (params as { response_format?: { type?: string } }).response_format?.type === 'json_object') {
+    params = { ...params }
+    delete (params as { response_format?: unknown }).response_format
+  }
+
   while (true) {
     try {
       return await client.chat.completions.create({ ...params, stream: false }) as OpenAI.Chat.ChatCompletion

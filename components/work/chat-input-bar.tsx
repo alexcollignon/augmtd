@@ -410,21 +410,45 @@ export function ChatInputBar({
     e.target.value = '';
   }
 
-  // DRAG-AND-DROP ATTACH (Aug 10): same door as the paperclip, same cap, same accepted types.
+  // DRAG-AND-DROP ATTACH (Aug 10, hardened same day): the whole window is the drop zone —
+  // a missed drop attaches, never browser-navigates away. Office/CSV accepted (everything
+  // the extractor reads); rejected files say so out loud.
   const [dragOver, setDragOver] = useState(false);
-  const dragDepth = useRef(0);
-  const dragHasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
-  function handleDrop(e: React.DragEvent) {
+  useEffect(() => {
     if (!onAttach) return;
-    e.preventDefault(); dragDepth.current = 0; setDragOver(false);
-    const ok = /\.(pdf|docx|txt|jpe?g|png|webp|zip)$/i;
-    const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => ok.test(f.name));
-    if (!files.length) return;
-    const remaining = MAX_ATTACHMENTS - attachments.length;
-    if (remaining <= 0) { toast.error(`You can attach up to ${MAX_ATTACHMENTS} files per message`); return; }
-    if (files.length > remaining) toast.error(`You can attach up to ${MAX_ATTACHMENTS} files per message`);
-    onAttach(files.slice(0, remaining));
-  }
+    let depth = 0;
+    const ok = /\.(pdf|docx?|xlsx|pptx|csv|txt|jpe?g|png|webp|zip)$/i;
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+    const visible = () => !!wrapperRef.current && wrapperRef.current.offsetParent !== null;
+    const enter = (e: DragEvent) => { if (!hasFiles(e) || !visible()) return; e.preventDefault(); depth += 1; setDragOver(true); };
+    const over = (e: DragEvent) => { if (hasFiles(e)) e.preventDefault(); };
+    const leave = (e: DragEvent) => { if (!hasFiles(e)) return; depth = Math.max(0, depth - 1); if (depth === 0) setDragOver(false); };
+    const drop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault(); depth = 0; setDragOver(false);
+      if (!visible()) return;
+      const all = Array.from(e.dataTransfer?.files ?? []);
+      const files = all.filter((f) => ok.test(f.name));
+      const skipped = all.filter((f) => !ok.test(f.name));
+      if (skipped.length) toast.error(`Not supported: ${skipped.map((f) => f.name).join(', ')} — PDF, Word, Excel, PowerPoint, CSV, text, images, or ZIP.`);
+      if (!files.length) return;
+      const remaining = MAX_ATTACHMENTS - attachments.length;
+      if (remaining <= 0) { toast.error(`You can attach up to ${MAX_ATTACHMENTS} files per message`); return; }
+      if (files.length > remaining) toast.error(`You can attach up to ${MAX_ATTACHMENTS} files per message`);
+      onAttach(files.slice(0, remaining));
+    };
+    window.addEventListener('dragenter', enter);
+    window.addEventListener('dragover', over);
+    window.addEventListener('dragleave', leave);
+    window.addEventListener('drop', drop);
+    return () => {
+      window.removeEventListener('dragenter', enter);
+      window.removeEventListener('dragover', over);
+      window.removeEventListener('dragleave', leave);
+      window.removeEventListener('drop', drop);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onAttach, attachments.length]);
 
   const canSend = value.trim().length > 0 && !disabled && !loading;
   const hasChips = attachments.length > 0 || allMentions.length > 0;
@@ -541,11 +565,7 @@ export function ChatInputBar({
     : null;
 
   return (
-    <div className="relative" ref={wrapperRef}
-      onDragEnter={(e) => { if (onAttach && dragHasFiles(e)) { e.preventDefault(); dragDepth.current += 1; setDragOver(true); } }}
-      onDragOver={(e) => { if (onAttach && dragHasFiles(e)) e.preventDefault(); }}
-      onDragLeave={() => { if (onAttach) { dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDragOver(false); } }}
-      onDrop={handleDrop}>
+    <div className="relative" ref={wrapperRef}>
       {/* Mention dropdown — portal to escape overflow:hidden ancestors */}
       {mentionDropdown}
       {dragOver && onAttach && (
@@ -561,7 +581,7 @@ export function ChatInputBar({
         ref={fileInputRef}
         type="file"
         multiple
-        accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.webp,.zip"
+        accept=".pdf,.doc,.docx,.xlsx,.pptx,.csv,.txt,.jpg,.jpeg,.png,.webp,.zip"
         className="hidden"
         onChange={handleFileChange}
       />

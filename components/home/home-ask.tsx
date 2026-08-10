@@ -368,6 +368,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   const [busy, setBusy] = useState(false);
   // The live STAGE from the streaming ask ("Searching your files…") — the busy line speaks it.
   const [stage, setStage] = useState<string | null>(null);
+  // TOKEN STREAMING (Aug 10): the answer materializing live while the core writes it — replaced
+  // by the authoritative `done` payload (which may differ: the honesty floor can amend it).
+  const [liveText, setLiveText] = useState('');
+  const liveTextRef = useRef('');
   // THE ONE COMPOSER's state: prefill lands a suggestion INTO the textarea (user finishes the
   // thought); pendingFiles buffer until send (the worker-chat pattern — upload rides the route).
   const [prefill, setPrefill] = useState<string | null>(null);
@@ -568,6 +572,23 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     } finally { setBusy(false); }
   };
 
+  // The browser's File.type is unreliable for dragged Office files (often empty) — the
+  // extension is the truth of last resort. An octet-stream mime made the presign 400 and the
+  // attach VANISH silently (found live: "docx, pptx don't work").
+  const mimeFor = (f: File): string => {
+    if (f.type) return f.type;
+    const ext = f.name.split('.').pop()?.toLowerCase() ?? '';
+    const map: Record<string, string> = {
+      pdf: 'application/pdf', doc: 'application/msword',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      csv: 'text/csv', txt: 'text/plain', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+      png: 'image/png', webp: 'image/webp',
+    };
+    return map[ext] ?? 'application/octet-stream';
+  };
+
   // Chief-side attachments land in the KNOWLEDGE BASE (presign → PUT → confirm+index) so the
   // brain can find/compute over them immediately — the lawful chief attach (files live with
   // the knowledge, not in a chat blob). Returns the filenames that made it.
@@ -575,7 +596,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     try {
       const pres = await fetch('/api/drive/upload/presign', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files: files.map((f) => ({ filename: f.name, mimeType: f.type || 'application/octet-stream', size: f.size })) }),
+        body: JSON.stringify({ files: files.map((f) => ({ filename: f.name, mimeType: mimeFor(f), size: f.size })) }),
       }).then((r) => (r.ok ? r.json() : null));
       const uploads = (pres?.uploads ?? []) as Array<{ signedUrl: string; storagePath: string; filename: string; mimeType: string }>;
       const done: string[] = [];
@@ -631,7 +652,20 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         }
       }
       await askChief(question, files, mentions, shown);
-    } finally { setBusy(false); setStage(null); }
+    } finally { setBusy(false); setStage(null); setLiveText(''); liveTextRef.current = ''; }
+  };
+
+  // THE ATTACHED MATERIAL (Aug 10, the production hand-off): extract the files' text NOW so it
+  // rides the ask itself — the KB upload (durable copy) indexes in the background and a
+  // "fill this in" must never race it. Best-effort; the KB note still lands either way.
+  const extractAttachments = async (files: File[]): Promise<Array<{ name: string; text: string | null }>> => {
+    try {
+      const fd = new FormData();
+      files.forEach((f) => fd.append('file', f));
+      const res = await fetch('/api/home/extract-attach', { method: 'POST', body: fd });
+      if (!res.ok) return [];
+      return ((await res.json()).attachments ?? []) as Array<{ name: string; text: string | null }>;
+    } catch { return []; }
   };
 
   // Chief path — KB-upload files first; mention labels ride as grounding hints.
@@ -640,11 +674,19 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     mentions: Array<{ id: string; type: 'coworker' | 'task' | 'document'; label: string }>, shown: string,
   ) => {
     let sendQ = question;
+    let attachments: Array<{ name: string; text: string | null }> = [];
     if (files.length) {
-      setStage('Adding the files to your knowledge base…');
-      const done = await uploadToKB(files);
+      setStage('Reading the files…');
+      const [done, extracted] = await Promise.all([uploadToKB(files), extractAttachments(files)]);
+      attachments = extracted;
       if (done.length) { sendQ += `\n[Attached to the knowledge base just now: ${done.join(', ')}]`; }
       else if (!question) { setTurns((prev) => [...prev, { role: 'assistant', text: 'The upload did not go through — try again, or use the Knowledge page.' }]); return; }
+      // A partial failure says so OUT LOUD — a vanished attachment reads as "it doesn't work".
+      const failed = files.filter((f) => !done.includes(f.name));
+      if (failed.length) {
+        void import('sonner').then(({ toast }) =>
+          toast.error(`Could not attach: ${failed.map((f) => f.name).join(', ')}`));
+      }
     }
     const hints = mentions.filter((m) => m.type !== 'coworker').map((m) => m.label);
     if (hints.length) sendQ += ` (about: ${hints.join('; ')})`;
@@ -654,7 +696,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     try {
       // STREAMING ASK (Aug 6): SSE — `progress` events narrate the core's live stage (the busy
       // line speaks them), `done` carries the answer. A non-SSE response (error JSON) falls back.
-      const res = await fetch('/api/home/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(scope ? { entityId: scope.id } : {}) }) });
+      const res = await fetch('/api/home/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(attachments.length ? { attachments } : {}), ...(scope ? { entityId: scope.id } : {}) }) });
       let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string }; workflowDraft?: WorkflowDraft } = {};
       if (res.body && res.headers.get('content-type')?.includes('text/event-stream')) {
         const reader = res.body.getReader();
@@ -671,6 +713,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             try {
               const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string }; workflowDraft?: WorkflowDraft };
               if (ev.type === 'progress' && ev.label) setStage(ev.label);
+              else if (ev.type === 'token' && (ev as unknown as { t?: string }).t) { liveTextRef.current += (ev as unknown as { t: string }).t; setLiveText(liveTextRef.current); }
+              else if (ev.type === 'token_reset') { liveTextRef.current = ''; setLiveText(''); }
               else if (ev.type === 'done') d = ev;
             } catch { /* partial frame */ }
           }
@@ -683,13 +727,14 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       const artCard = d.artifact
         ? { cards: [{ label: d.artifact.title, sub: `document · by ${d.artifact.agentName.split(' ')[0]}`, art: { tid: d.artifact.threadId, id: d.artifact.id } }] }
         : {};
-      setTurns((prev) => { pendingAnimate.current = prev.length; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...artCard }]; });
+      // A token-streamed answer already revealed itself — the typewriter must not re-type it.
+      setTurns((prev) => { pendingAnimate.current = liveTextRef.current ? -1 : prev.length; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...artCard }]; });
       if (d.artifact) void openArtifact(d.artifact.threadId, d.artifact.id);
       if (d.answer) persistTurn('system', d.answer, d.refs ?? []);
       if (d.focus && !scope && !temp) setScopeHint(d.focus);
     } catch {
       setTurns((prev) => [...prev, { role: 'assistant', text: "Something went wrong reaching your brain — try again." }]);
-    } finally { setBusy(false); setStage(null); }
+    } finally { setBusy(false); setStage(null); setLiveText(''); liveTextRef.current = ''; }
   };
   const ask = (q: string) => { void handleSubmit(q, []); };
 
@@ -794,7 +839,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                   </div>
                 )
               ))}
-              {busy && <div className="flex items-center gap-1.5 text-[13px] text-neutral-400"><span className="w-1.5 h-1.5 rounded-full bg-indigo-300 animate-pulse" />{stage ?? 'Thinking…'}</div>}
+              {busy && liveText && (
+                <div className="pr-2 text-[13.5px] leading-relaxed text-neutral-800 whitespace-pre-wrap">{liveText}<span className="inline-block w-0.5 h-4 ml-0.5 align-text-bottom bg-indigo-400 animate-pulse" /></div>
+              )}
+              {busy && !liveText && <div className="flex items-center gap-1.5 text-[13px] text-neutral-400"><span className="w-1.5 h-1.5 rounded-full bg-indigo-300 animate-pulse" />{stage ?? 'Thinking…'}</div>}
               <div ref={endRef} />
             </div>
           </div>

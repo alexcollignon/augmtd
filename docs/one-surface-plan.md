@@ -468,6 +468,26 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+II. **THE ATTACHED MATERIAL + TOKEN STREAMING + THE FORMAT-FLOOR FIX (Aug 10 late; gate CH5 —
+   118/118, build green; replay suite 6/6; drop cycle re-verified on the served page).**
+   Three moves: (1) ATTACH → PRODUCTION: /api/home/extract-attach extracts attachment text
+   SYNCHRONOUSLY and it rides the ask itself (classifier sees names · the loop carries the
+   material as its own turn · a delegation carries it whole) — a "fill this in" never races
+   the KB's background indexing again. (2) TOKEN STREAMING on the agent-loop path (the
+   long-wait path): content deltas → SSE token events → the live materializing preview;
+   `done` stays authoritative; NUL sentinel clears pre-tool preamble; 15s SSE ping keeps a
+   90s hand-off alive. The question path (one fast call + typewriter) stays non-streamed
+   BY DESIGN — its JSON contract; revisit only if it ever feels slow. (3) FOUND LIVE while
+   testing: Anthropic's OpenAI-compat endpoint began rejecting response_format
+   {type:'json_object'} (400 "Input should be 'json_schema'") — EVERY json-shaped call
+   routed to Claude was failing, including the Home question path ON PROD. One
+   transport-layer strip in aiCreate fixes all 13 call sites (Claude emits fenced JSON,
+   the parsers already strip fences — the Bedrock-Haiku lesson). Plus the drag-drop
+   hardening ("docx, pptx don't work"): the chat-attach allowlist had drifted below the
+   extractor's real capability (pptx/xlsx/csv/doc added), browser mimes are unreliable for
+   dragged Office files (extension fallback at chat-attach + presign + the chief client),
+   the WHOLE WINDOW is the drop zone (a missed drop attached nothing and navigated the tab
+   away), and rejected files toast instead of vanishing.
 HH. **THE PRODUCTION HAND-OFF (Aug 10 night; gate CH4 — 117/117, build green; E2E replay T5:
    a pasted questionnaire + "fill this in" → delegated to Sofia, real artifact, 27
    [CONFIRM] marks in the deliverable).** The second pilot comparison ("look how much

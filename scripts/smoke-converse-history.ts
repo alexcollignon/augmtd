@@ -70,6 +70,38 @@ async function main() {
   const t5ok = !/couldn't finish that one/i.test(t5.say) && (!!t5.delegated || /\[CONFIRM/i.test(t5.say));
   console.log(`T5 production hand-off: ${t5ok ? 'PASS' : 'FAIL'} delegated=${t5.delegated?.agentName ?? 'none'} artifact=${t5.artifact ? 'yes' : 'no'} len=${questionnaire.length}\n---\n${t5.say.slice(0, 700)}\n---`);
 
-  process.exit(t2ok && t3ok && t4ok && t5ok ? 0 : 1);
+  // TURN 6 — THE ATTACHED MATERIAL: a file attached WITH the message rides the hand-off whole
+  // (never a race against KB indexing). The distinctive token from the material must surface in
+  // the produced work.
+  const t6 = await converse(admin as never, userId, { kind: 'global' },
+    'Please fill in this onboarding form for the vendor and prepare it for my review.',
+    { history: [], attachments: [{ name: 'vendor-onboarding-form.docx', text:
+      'VENDOR ONBOARDING FORM — Zephyrline Logistics BV\nCompany name:\nRegistration number:\nPrimary contact:\nBank details:\nInsurance certificate reference:\nQuality certifications held:\nDelivery lead time commitment:\n' }] });
+  const t6ok = !!t6.delegated && !/couldn't finish/i.test(t6.say);
+  console.log(`T6 attached material: ${t6ok ? 'PASS' : 'FAIL'} delegated=${t6.delegated?.agentName ?? 'none'} artifact=${t6.artifact ? 'yes' : 'no'}\n---\n${t6.say.slice(0, 500)}\n---`);
+
+  // TURN 7 — TOKEN STREAMING, the loop's exact mechanics tested deterministically (which path
+  // the classifier picks varies; the mechanism must not): the conversation client + tool defs
+  // + stream:true yields content deltas. This is precisely what agentLoop runs per iteration;
+  // the question path (one fast call + typewriter) stays non-streamed by design.
+  let t7ok = false;
+  try {
+    const { getAIClient } = await import('../lib/ai/factory');
+    const { findFileDefinition, readActionHistoryDefinition, toOpenAITool } = await import('../lib/tools');
+    const { client: ai, model } = await getAIClient(userId, 'conversation', admin as never);
+    const stream = await ai.chat.completions.create({
+      model, max_tokens: 150, temperature: 0.2, stream: true,
+      messages: [{ role: 'user', content: 'No tools needed — two sentences on what a calm workday looks like.' }],
+      tools: [findFileDefinition, readActionHistoryDefinition].map(toOpenAITool),
+    } as never);
+    let content = '';
+    for await (const chunk of stream as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string } }> }>) {
+      const t = chunk.choices?.[0]?.delta?.content; if (t) content += t;
+    }
+    t7ok = content.length > 40;
+    console.log(`T7 token streaming: ${t7ok ? 'PASS' : 'FAIL'} streamedChars=${content.length}`);
+  } catch (e) { console.log(`T7 token streaming: FAIL threw=${String((e as Error).message).slice(0, 120)}`); }
+
+  process.exit(t2ok && t3ok && t4ok && t5ok && t6ok && t7ok ? 0 : 1);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

@@ -81,6 +81,11 @@ export type ConverseScope =
 
 export type ConverseHistoryTurn = { role: 'user' | 'assistant'; text: string };
 
+/** THE ATTACHED MATERIAL (Aug 10, the production hand-off): synchronously-extracted text of
+ *  files the user attached WITH this message — rides the turn itself, so a "fill this in"
+ *  never races the KB's background indexing. */
+export type ConverseAttachment = { name: string; text: string | null };
+
 // ── THE PROGRESS CHANNEL (streaming ask, Aug 6): human labels for what the core is DOING right
 // now — surfaced live over SSE so a long agent loop never reads as a dead "Thinking…". Labels
 // speak consequence in the user's words (law 4), never tool names. One map — a new chief tool
@@ -598,7 +603,7 @@ async function dispatchCommand(
 // report-back; nothing external fires), so it acts directly — with visible attribution. ──
 async function runCoworkerDelegation(
   client: SupabaseClient, userId: string, scope: ConverseScope, coworkerWant: string, task: string, userText: string,
-  transcript = '',
+  transcript = '', material = '',
 ): Promise<ConverseTurn> {
   try {
     const { createClient: createAdmin } = await import('@supabase/supabase-js');
@@ -618,7 +623,9 @@ async function runCoworkerDelegation(
         step: { text: task, detail: `The user asked for this in chat: "${userText}"` +
           // The hand-off carries its conversation — a task worded as "do it" resolves against
           // what was just discussed instead of arriving at the coworker as thin air.
-          (transcript ? `\nTHE CONVERSATION THIS CAME FROM (resolve "it"/"that" against it):\n${transcript.slice(0, 4000)}` : '') },
+          (transcript ? `\nTHE CONVERSATION THIS CAME FROM (resolve "it"/"that" against it):\n${transcript.slice(0, 4000)}` : '') +
+          // …and the user's attached material rides WHOLE — the work is usually ON these files.
+          (material ? `\n\nTHE ATTACHED MATERIAL (the user attached these files with the request — work on their actual content):\n${material.slice(0, 18000)}` : '') },
       });
       const out = await runDelegation({
         supabase: admin, userId, worker: { id: worker.id as string, name: String(worker.name), worker_role: (worker.worker_role as string) ?? null, is_worker: true },
@@ -662,6 +669,8 @@ async function agentLoop(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string, grounding: string,
   history?: ConverseHistoryTurn[],
   onProgress?: (label: string) => void,
+  material = '',
+  onToken?: (t: string) => void,
 ): Promise<ConverseTurn & { exhausted?: boolean }> {
   const { toOpenAITool } = await import('@/lib/tools');
   const { client: ai, model } = await getAIClient(userId, 'conversation', client);
@@ -690,13 +699,49 @@ async function agentLoop(
     // please" · "in bullet points" · "ask Sofia to do it") resolves against what was just
     // said — before this the loop saw ONLY the newest message and asked what "it" meant.
     ...(history ?? []).slice(-8).map((t) => ({ role: t.role, content: t.text.slice(0, 4000) })),
+    // THE ATTACHED MATERIAL rides as its own turn — full fidelity, never squeezed into the
+    // grounding budget (the work is usually ON these files).
+    ...(material ? [{ role: 'user', content: `Here is the material I attached:\n\n${material}` }] : []),
     { role: 'user', content: text },
   ];
   for (let i = 0; i < 4; i++) {
-    const res = await aiCreate(ai, { model, max_tokens: 700, temperature: 0.2, messages, tools: CHIEF_TOOL_DEFS.map(toOpenAITool) });
-    const msg = res.choices?.[0]?.message;
+    // TOKEN STREAMING (Aug 10 — the answer materializes live, the Claude idiom): each iteration
+    // streams; content deltas flow to the client as they land. A message that turns out to be a
+    // tool call streams no content (the models emit one or the other), and the final `done`
+    // payload always replaces the preview — the honesty floor can still amend it. Any streaming
+    // failure falls back to the plain call; streaming is presentation, never correctness.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let msg: any = null;
+    try {
+      if (!onToken) throw new Error('no-stream');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const stream: any = await ai.chat.completions.create({
+        model, max_tokens: 700, temperature: 0.2, messages, tools: CHIEF_TOOL_DEFS.map(toOpenAITool), stream: true,
+      });
+      const toolCalls: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> = [];
+      let content = '';
+      for await (const chunk of stream) {
+        const delta = chunk.choices?.[0]?.delta;
+        if (!delta) continue;
+        if (delta.content) { content += delta.content; onToken(delta.content); }
+        for (const tc of delta.tool_calls ?? []) {
+          const ti = tc.index ?? 0;
+          if (!toolCalls[ti]) toolCalls[ti] = { id: '', type: 'function', function: { name: '', arguments: '' } };
+          if (tc.id) toolCalls[ti].id = tc.id;
+          if (tc.function?.name) toolCalls[ti].function.name += tc.function.name;
+          if (tc.function?.arguments) toolCalls[ti].function.arguments += tc.function.arguments;
+        }
+      }
+      msg = { role: 'assistant', content: content || null, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) };
+    } catch {
+      const res = await aiCreate(ai, { model, max_tokens: 700, temperature: 0.2, messages, tools: CHIEF_TOOL_DEFS.map(toOpenAITool) });
+      msg = res.choices?.[0]?.message;
+    }
     if (!msg) break;
     const calls = (msg.tool_calls ?? []) as Array<{ id: string; function: { name: string; arguments: string } }>;
+    // Preamble text before a tool call ("Let me check that…") must not linger under the real
+    // answer — the NUL sentinel tells the client to clear its preview.
+    if (calls.length && msg.content && onToken) onToken('\u0000');
     if (!calls.length) {
       let say = (msg.content ?? '').trim() || 'Done.';
       // THE HONESTY FLOOR AT THE ANSWER DOOR (Aug 4, found by the P30 gate): registryMatches
@@ -714,7 +759,7 @@ async function agentLoop(
           // denial ("I don't have it in that exact format yet") whose message merely CONTAINS
           // project names must never grow a project pointer — it read as a non-sequitur.
           const names = mm ? [...mm.matchAll(/"([^"]+)"/g)].map((x) => x[1]) : [];
-          const denialSentences = say.split(/(?<=[.!?])\s+/).filter((s) => DENIAL_RE.test(s)).join(' ').toLowerCase();
+          const denialSentences = say.split(/(?<=[.!?])\s+/).filter((s: string) => DENIAL_RE.test(s)).join(' ').toLowerCase();
           const denialNamesEntity = names.some((n) => n.toLowerCase().split(/[^a-z0-9]+/)
             .some((tok) => tok.length >= 4 && denialSentences.includes(tok)));
           if (mm && denialNamesEntity) {
@@ -792,8 +837,15 @@ function panelTranscript(history: ConverseHistoryTurn[] | undefined): string {
 /** THE entry — every chat surface calls this with its scope. */
 export async function converse(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string,
-  opts: { history?: ConverseHistoryTurn[]; onProgress?: (label: string) => void } = {},
+  opts: { history?: ConverseHistoryTurn[]; attachments?: ConverseAttachment[]; onProgress?: (label: string) => void; onToken?: (t: string) => void } = {},
 ): Promise<ConverseTurn> {
+  // THE ATTACHED MATERIAL, rendered once for every consumer (classifier note · loop message ·
+  // delegation prompt). Full fidelity where it matters; the classifier only needs the names.
+  const material = (opts.attachments ?? [])
+    .filter((a) => a.text?.trim())
+    .map((a) => `[ATTACHED FILE: ${a.name}]\n${a.text!.slice(0, 15000)}`)
+    .join('\n\n');
+  const materialNames = (opts.attachments ?? []).map((a) => a.name).join(', ');
   const [dlg, viewing] = await Promise.all([
     dialogueContext(client, userId, scope),
     viewingExcerpt(client, userId, scope),
@@ -866,7 +918,10 @@ export async function converse(
     } catch { /* the pending read is a refinement — the normal flow below still sees the transcript */ }
   }
 
-  const verdict = await classifyTurn(client, userId, scope, text, transcript);
+  // The classifier sees the attachment NAMES (a fill-in/produce ask over attached files IS
+  // produced work); the full text stays with the paths that do the work.
+  const verdict = await classifyTurn(client, userId, scope,
+    materialNames ? `${text}\n(THE USER ATTACHED FILES WITH THIS MESSAGE: ${materialNames})` : text, transcript);
 
   // THE ADDRESSED-COWORKER FLOOR (Aug 9, found live: "Sofia, put together a one-page overview…"
   // classified as create_task_item — the addressed hand-off became a to-do on the user's OWN
@@ -901,7 +956,7 @@ export async function converse(
 
   // 2 — DELEGATE: "have Max research X" → the real delegation engine (prepare + report back).
   if (verdict.delegate) {
-    return runCoworkerDelegation(client, userId, scope, verdict.delegate.coworker, verdict.delegate.task, text, transcript);
+    return runCoworkerDelegation(client, userId, scope, verdict.delegate.coworker, verdict.delegate.task, text, transcript, material);
   }
 
   // 3 — QUESTION: grounded answer from the scope's memory — the whole brain (global), the deal's
@@ -1056,7 +1111,7 @@ export async function converse(
   // operates on the prior answer at full fidelity, the way any chat model expects. The room
   // narration transcript stays in the preamble (room callers don't always carry panel history).
   const loopTurn = await agentLoop(client, userId, scope, text, preamble ? `${preamble}\n\n${grounding}` : grounding,
-    opts.history, opts.onProgress);
+    opts.history, opts.onProgress, material, opts.onToken);
   // THE EXHAUSTION HAND-OFF (Aug 10, found live: the loop's old bare "I couldn't finish that
   // one." beside a competitor's finished document): when the inline loop can't land the work,
   // the work — WITH the user's full material and the conversation — goes to the production
@@ -1065,7 +1120,7 @@ export async function converse(
   if (loopTurn.exhausted) {
     opts.onProgress?.('This needs real production — handing it to the team…');
     const handed = await runCoworkerDelegation(client, userId, scope, 'sofia',
-      text.replace(/\s+/g, ' ').slice(0, 80), text, transcript);
+      text.replace(/\s+/g, ' ').slice(0, 80), text, transcript, material);
     if (handed.delegated) return handed;
     return { say: "I couldn't finish this one inline, and the hand-off didn't go through either — try again in a moment, or name a coworker (\"Sofia: …\") to take it.", refs: [] };
   }
