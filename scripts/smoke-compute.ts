@@ -1085,6 +1085,15 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/one/one-sidebar.tsx').includes('Private environment') &&
     src('app/(main)/layout.tsx').includes('sovereign = features.email === false'));
 
+  check('SV3: THE PLATFORM-ADMIN SOVEREIGN CONTROLS — spinning up a corporate client is a two-minute operation: THE CORPORATE SWITCH per workspace row (one click = email feature OFF = the sovereign mode; emerald shield when on, with plain-language tooltips both ways); THE BRANDED-ENTRY editor in the expanded row (entry link app.augmtd.ai/<slug> click-to-copy · client logo URL · tagline → PATCH merges settings.branding, never clobbering other settings; logo validated URL-or-app-path); alignment: the vestigial Home feature pill hidden (nothing gates on it; key kept for stored data), bg-primary-* tokens replaced with the kit\'s indigo. NOTE: visually verified by the owner\'s superadmin login (the dedicated superadmin account is not available to automation)',
+    src('app/platform-admin/platform-admin-client.tsx').includes('THE CORPORATE SWITCH') &&
+    src('app/platform-admin/platform-admin-client.tsx').includes("handleToggleFeature(company.id, 'email', company.features.email === false)") &&
+    src('app/platform-admin/platform-admin-client.tsx').includes('function BrandingEditor') &&
+    src('app/platform-admin/platform-admin-client.tsx').includes("FEATURE_KEYS.filter(k => k !== 'home')") &&
+    !src('app/platform-admin/platform-admin-client.tsx').includes('bg-primary-50') &&
+    src('app/api/platform-admin/companies/[id]/route.ts').includes('branding') &&
+    src('app/api/platform-admin/companies/[id]/route.ts').includes('never replacing other settings'));
+
   // ── Report ──
   let pass = 0;
   for (const [n, ok, d] of out) {

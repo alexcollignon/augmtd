@@ -15,6 +15,7 @@ import {
   PauseIcon,
   PlayIcon,
   ClipboardDocumentListIcon,
+  ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 import type { WorkspaceFeatures, WorkspaceType, FeatureKey } from '@/lib/workspace/types';
 import { FEATURE_KEYS } from '@/lib/workspace/types';
@@ -33,6 +34,7 @@ interface CompanyRow {
   created_at: string;
   member_count: number;
   meeting_assistant: boolean;
+  settings?: { branding?: { logo_url?: string; tagline?: string } } | null;
 }
 
 interface MemberRow {
@@ -134,6 +136,62 @@ interface AuditEntry {
   workspace_id: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
+}
+
+// THE BRANDED ENTRY editor (the sovereign door): entry link + logo + tagline per workspace —
+// what used to mean hand-editing jsonb is a two-field form. The entry link is live the moment
+// the slug exists; branding only decorates it.
+function BrandingEditor({ company, onSaved }: {
+  company: CompanyRow;
+  onSaved: (branding: { logo_url?: string; tagline?: string }) => void;
+}) {
+  const [logo, setLogo] = useState(company.settings?.branding?.logo_url ?? '');
+  const [tagline, setTagline] = useState(company.settings?.branding?.tagline ?? '');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+  const entryUrl = `${typeof window !== 'undefined' ? window.location.origin : 'https://app.augmtd.ai'}/${company.slug}`;
+
+  const save = async () => {
+    setBusy(true); setNote('');
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${company.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branding: { logo_url: logo.trim(), tagline: tagline.trim() } }),
+      });
+      const d = await res.json().catch(() => null);
+      if (!res.ok) { setNote(d?.error ?? 'Save failed'); return; }
+      onSaved({ ...(logo.trim() ? { logo_url: logo.trim() } : {}), ...(tagline.trim() ? { tagline: tagline.trim() } : {}) });
+      setNote('Saved');
+      setTimeout(() => setNote(''), 2000);
+    } catch { setNote('Save failed'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="rounded-lg border border-neutral-200 bg-white px-3.5 py-3">
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Branded entry</span>
+        <button
+          onClick={() => { void navigator.clipboard.writeText(entryUrl); setNote('Link copied'); setTimeout(() => setNote(''), 2000); }}
+          className="text-[11px] font-mono text-indigo-600 hover:text-indigo-800 truncate"
+          title="The workspace's own front door — click to copy"
+        >
+          {entryUrl}
+        </button>
+      </div>
+      <div className="flex items-center gap-2">
+        <input value={logo} onChange={e => setLogo(e.target.value)} placeholder="Client logo URL (https://… or /path)"
+          className="flex-1 rounded-md border border-neutral-200 px-2.5 py-1.5 text-[12px] outline-none focus:border-indigo-300" />
+        <input value={tagline} onChange={e => setTagline(e.target.value)} placeholder="Tagline (optional)"
+          className="flex-1 rounded-md border border-neutral-200 px-2.5 py-1.5 text-[12px] outline-none focus:border-indigo-300" />
+        <button onClick={() => void save()} disabled={busy}
+          className="text-[11.5px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-md px-3 py-1.5 transition-colors">
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+        {note && <span className={`text-[11px] ${note.includes('fail') ? 'text-red-600' : 'text-emerald-600'}`}>{note}</span>}
+      </div>
+    </div>
+  );
 }
 
 export default function PlatformAdminClient({ initialCompanies }: { initialCompanies: CompanyRow[] }) {
@@ -793,9 +851,27 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                               {company.status}
                             </span>
 
-                            {/* Feature toggles — compact pills */}
+                            {/* THE CORPORATE SWITCH (the sovereign door): one click = the
+                                sovereign mode (email feature OFF → no mailbox-auth surface
+                                anywhere; the Home pivots to the agent-team first look). */}
+                            <button
+                              onClick={() => handleToggleFeature(company.id, 'email', company.features.email === false)}
+                              disabled={featureLoading === `${company.id}:email`}
+                              title={company.features.email === false
+                                ? 'Corporate (sovereign) — no mailbox auth anywhere. Click to allow email connections again.'
+                                : 'Make this a corporate (sovereign) workspace — hides every mailbox/calendar auth surface.'}
+                              className={`flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md transition-opacity disabled:opacity-50 ${
+                                company.features.email === false ? 'bg-emerald-50 text-emerald-700' : 'bg-neutral-100 text-neutral-400 hover:opacity-75'
+                              }`}
+                            >
+                              <ShieldCheckIcon className="w-3 h-3" />
+                              Corporate
+                            </button>
+
+                            {/* Feature toggles — compact pills ('home' is vestigial: nothing
+                                gates on it; hidden here, key kept for stored data). */}
                             <div className="flex items-center gap-1">
-                              {FEATURE_KEYS.map(key => {
+                              {FEATURE_KEYS.filter(k => k !== 'home').map(key => {
                                 const on = company.features[key];
                                 const loading = featureLoading === `${company.id}:${key}`;
                                 return (
@@ -805,7 +881,7 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                                     disabled={loading}
                                     title={`${FEATURE_LABEL[key]} — click to ${on ? 'disable' : 'enable'}`}
                                     className={`text-[10px] font-medium px-2 py-0.5 rounded-md transition-opacity disabled:opacity-50 ${
-                                      on ? 'bg-primary-50 text-primary-700' : 'bg-neutral-100 text-neutral-400'
+                                      on ? 'bg-indigo-50 text-indigo-700' : 'bg-neutral-100 text-neutral-400'
                                     } ${loading ? 'opacity-60' : 'hover:opacity-75'}`}
                                   >
                                     {FEATURE_LABEL[key]}
@@ -877,6 +953,14 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                           {/* Expanded members + pending invites */}
                           {expandedId === company.id && (
                             <div className="bg-neutral-50 border-t border-neutral-100 px-12 py-4 space-y-3">
+                              {/* THE BRANDED ENTRY management — the workspace's own front door:
+                                  entry link (copy), client logo, tagline. Saves to
+                                  companies.settings.branding via the PATCH. */}
+                              <BrandingEditor
+                                company={company}
+                                onSaved={(branding) => setCompanies(prev => prev.map(c =>
+                                  c.id === company.id ? { ...c, settings: { ...(c.settings ?? {}), branding } } : c))}
+                              />
                               {membersLoading === company.id ? (
                                 <p className="text-[12px] text-neutral-400 py-2">Loading…</p>
                               ) : (

@@ -468,6 +468,16 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+MM. **THE PLATFORM-ADMIN SOVEREIGN CONTROLS (Aug 10 late night, arc 3/4 of the sovereign
+   door; gate SV3 — 121/121, build green; admin UI awaits the owner's superadmin eyeball —
+   the dedicated superadmin account is not automatable).** Spinning up a corporate client
+   is now a two-minute operation: THE CORPORATE SWITCH on each workspace row (one click =
+   email OFF = sovereign; emerald shield state, plain tooltips both ways); THE
+   BRANDED-ENTRY editor in the expanded row (entry link click-to-copy · logo URL ·
+   tagline → PATCH merges settings.branding); alignment pass: vestigial Home pill hidden,
+   bg-primary tokens → the kit's indigo. REMAINING (small): honest invite-send copy on
+   sovereign workspaces; the deeper admin redesign (workspace detail page, current-product
+   information architecture) stays on the tail.
 LL. **THE BRANDED ENTRY + THE SAFE-DATA MARK (Aug 10 night, arc 2 of the sovereign door;
    gate SV2 — 120/120, build green; verified live: unauth 200 with steps+mark, unknown
    slug → /login, authed non-member → code step, screenshot).** app.augmtd.ai/<slug> is
