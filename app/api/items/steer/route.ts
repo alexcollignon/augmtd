@@ -27,7 +27,8 @@ export async function POST(request: NextRequest) {
     const body = (await request.json()) as { kind?: SteerKind; id?: string; text?: string };
     const kind = body.kind && VALID.includes(body.kind) ? body.kind : null;
     const id = body.id?.trim();
-    const text = (body.text ?? '').trim().slice(0, 1000);
+    // Same paste ceiling as the Home door — pasted source material must reach the brain whole.
+    const text = (body.text ?? '').trim().slice(0, 20000);
     if (!kind || !id || !text) return NextResponse.json({ error: 'kind, id and text required' }, { status: 400 });
 
     const scope: ConverseScope = kind === 'entity'

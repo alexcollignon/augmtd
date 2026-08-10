@@ -267,7 +267,11 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
     `send_prepared_reply {}; "forward this to Rita" → prepare_forward {"to":"Rita"}). Ambiguous / multi-step → null.\n` +
     `- "question" = the note primarily ASKS (status/info/advice). A correction/instruction is NOT a question.\n` +
     `- "facts" = durable constraints/preferences/numbers to remember; a one-off phrasing tweak is NOT one.\n` +
-    `- "delegate" ONLY when a named coworker/assistant is explicitly asked.\n` +
+    `- "delegate" when a named coworker/assistant is explicitly asked — AND for PRODUCED work ` +
+    `(fill in / complete a document, draft a report or long deliverable, write up material from ` +
+    `pasted source) even when no coworker is named: pick the fit — Sofia (writing, documents), ` +
+    `Max (research, analysis), Luca (LinkedIn), Clara (ops, admin) — and put the WHOLE job in ` +
+    `"task". A question, a quick command, or a short reply tweak is NOT produced work.\n` +
     (inItem ? `- A DRAFT INSTRUCTION (rewrite/shorten/soften/add something to the reply or follow-up being drafted here) is a CORRECTION, not open — return command:null, question:false, open:false; the draft is reworked on that path.\n` : '') +
     `- "open" = true when the note needs COMPOSITION (several actions, or an action the registry doesn't list).\n` +
     `THE NOTE: ${text}`;
@@ -614,7 +618,7 @@ async function runCoworkerDelegation(
         step: { text: task, detail: `The user asked for this in chat: "${userText}"` +
           // The hand-off carries its conversation — a task worded as "do it" resolves against
           // what was just discussed instead of arriving at the coworker as thin air.
-          (transcript ? `\nTHE CONVERSATION THIS CAME FROM (resolve "it"/"that" against it):\n${transcript.slice(0, 1500)}` : '') },
+          (transcript ? `\nTHE CONVERSATION THIS CAME FROM (resolve "it"/"that" against it):\n${transcript.slice(0, 4000)}` : '') },
       });
       const out = await runDelegation({
         supabase: admin, userId, worker: { id: worker.id as string, name: String(worker.name), worker_role: (worker.worker_role as string) ?? null, is_worker: true },
@@ -658,7 +662,7 @@ async function agentLoop(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string, grounding: string,
   history?: ConverseHistoryTurn[],
   onProgress?: (label: string) => void,
-): Promise<ConverseTurn> {
+): Promise<ConverseTurn & { exhausted?: boolean }> {
   const { toOpenAITool } = await import('@/lib/tools');
   const { client: ai, model } = await getAIClient(userId, 'conversation', client);
   const applied: ConverseTurn['applied'] = [];
@@ -685,7 +689,7 @@ async function agentLoop(
     // THE PANEL CONVERSATION as real turns (Aug 10, the amnesia class): a follow-up ("yes
     // please" · "in bullet points" · "ask Sofia to do it") resolves against what was just
     // said — before this the loop saw ONLY the newest message and asked what "it" meant.
-    ...(history ?? []).slice(-8).map((t) => ({ role: t.role, content: t.text.slice(0, 1500) })),
+    ...(history ?? []).slice(-8).map((t) => ({ role: t.role, content: t.text.slice(0, 4000) })),
     { role: 'user', content: text },
   ];
   for (let i = 0; i < 4; i++) {
@@ -743,7 +747,9 @@ async function agentLoop(
       messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(out ?? { error: 'tool unavailable in this context' }).slice(0, 1500) });
     }
   }
-  return { say: applied.length ? 'Done.' : "I couldn't finish that one.", refs: [], applied, files: files.length ? files : undefined };
+  // Loop exhausted without a final answer: NEVER the bare shrug (found live: "I couldn't finish
+  // that one." beside a competitor's finished document). The caller hands the work off instead.
+  return { say: applied.length ? 'Done.' : '', refs: [], applied, files: files.length ? files : undefined, exhausted: !applied.length };
 }
 
 /** THE VIEWING ANCHOR (P7a, structural): whatever the user is looking at is ALWAYS in the grounding —
@@ -779,7 +785,7 @@ async function viewingExcerpt(client: SupabaseClient, userId: string, scope: Con
 function panelTranscript(history: ConverseHistoryTurn[] | undefined): string {
   if (!history?.length) return '';
   const lines = history.slice(-8).map((t) =>
-    `[${t.role === 'user' ? 'user' : 'assistant'}] ${t.text.replace(/\s+/g, ' ').slice(0, t.role === 'assistant' ? 900 : 300)}`);
+    `[${t.role === 'user' ? 'user' : 'assistant'}] ${t.text.replace(/\s+/g, ' ').slice(0, t.role === 'assistant' ? 900 : 1200)}`);
   return `THE CHAT SO FAR (this panel, latest last):\n${lines.join('\n')}`;
 }
 
@@ -1049,6 +1055,19 @@ export async function converse(
   // The PANEL conversation rides as REAL messages (not a squeezed grounding block) — a follow-up
   // operates on the prior answer at full fidelity, the way any chat model expects. The room
   // narration transcript stays in the preamble (room callers don't always carry panel history).
-  return agentLoop(client, userId, scope, text, preamble ? `${preamble}\n\n${grounding}` : grounding,
+  const loopTurn = await agentLoop(client, userId, scope, text, preamble ? `${preamble}\n\n${grounding}` : grounding,
     opts.history, opts.onProgress);
+  // THE EXHAUSTION HAND-OFF (Aug 10, found live: the loop's old bare "I couldn't finish that
+  // one." beside a competitor's finished document): when the inline loop can't land the work,
+  // the work — WITH the user's full material and the conversation — goes to the production
+  // engine instead. Failure = delegation, never a dead end. Sofia is the produce default
+  // (writing/documents); a named coworker would have taken the fast-path long before here.
+  if (loopTurn.exhausted) {
+    opts.onProgress?.('This needs real production — handing it to the team…');
+    const handed = await runCoworkerDelegation(client, userId, scope, 'sofia',
+      text.replace(/\s+/g, ' ').slice(0, 80), text, transcript);
+    if (handed.delegated) return handed;
+    return { say: "I couldn't finish this one inline, and the hand-off didn't go through either — try again in a moment, or name a coworker (\"Sofia: …\") to take it.", refs: [] };
+  }
+  return loopTurn;
 }

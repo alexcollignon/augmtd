@@ -468,6 +468,24 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+HH. **THE PRODUCTION HAND-OFF (Aug 10 night; gate CH4 — 117/117, build green; E2E replay T5:
+   a pasted questionnaire + "fill this in" → delegated to Sofia, real artifact, 27
+   [CONFIRM] marks in the deliverable).** The second pilot comparison ("look how much
+   worse we look compared to Claude"): the same fill-in-this-document task returned our
+   bare "I couldn't finish that one." beside Claude's finished .docx. Root causes fixed
+   as a class: (1) THE PASTE CEILING DIED — the Home ask door silently sliced input at
+   500 chars (the brain answered a request it never saw); now 20k, steer door matches,
+   route budget 180s; (2) PRODUCTION ROUTES TO THE ENGINE — produced work without a
+   named coworker delegates to the fit from the classifier (Sofia default), where there
+   is no token ceiling and the artifact comes home (artifacts-into-origin); (3) THE
+   EXHAUSTION HAND-OFF — loop exhaustion hands the work + the user's full material to
+   Sofia automatically; failure = delegation, never a dead end; (4) [CONFIRM] SLOTS —
+   the delegation prompt mandates every original section kept, user-only facts marked
+   "[CONFIRM: …]" (the marked-slot-beats-dropped-question law, matching what the pilot
+   saw Claude do); (5) chrome honesty — long pastes collapse in the bubble (full text
+   still reaches the brain), the filing nudge never decorates an empty answer. Note:
+   the competitor run needed the user to hand over context manually; ours had it — the
+   gap was the production runtime, not the brain.
 GG. **THE PANEL TRANSCRIPT + DRAG-AND-DROP ATTACH (Aug 10 evening; gates CH1–CH3 — 116/116,
    build green; E2E replay scripts/smoke-converse-history.ts 3/3; drop cycle verified on
    the served page).** The pilot-found amnesia class ("somehow became less clever" vs the

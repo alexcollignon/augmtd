@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { converse, type ConverseHistoryTurn } from '@/lib/converse';
 
-export const maxDuration = 30;
+// 180: a production hand-off (delegation runs synchronously, the artifact comes home) must
+// never be killed by the route budget — the 30s cap predates chat-borne production.
+export const maxDuration = 180;
 
 // POST /api/home/ask — the Home chat, a THIN wrapper over THE ONE conversation core (lib/converse).
 // Questions answer from the brain snapshot (answerHomeQuestion, unchanged); commands ("find the deck"),
@@ -17,7 +19,10 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const body = (await request.json()) as { question?: string; history?: ConverseHistoryTurn[]; stream?: boolean; entityId?: string };
-    const q = String(body.question ?? '').trim().slice(0, 500);
+    // THE PASTE CEILING DIED (Aug 10, found live): a pilot pasted a full questionnaire and the
+    // old slice(0, 500) silently discarded everything past character 500 — the brain answered a
+    // request it never saw. Long input is the NORM for production asks; 20k chars ≈ a long doc.
+    const q = String(body.question ?? '').trim().slice(0, 20000);
     if (!q) return NextResponse.json({ error: 'question required' }, { status: 400 });
     const history = Array.isArray(body.history) ? body.history : [];
     // THE SCOPE CHIP (Aug 6): a scoped Home conversation converses IN the project's room scope —
@@ -50,7 +55,9 @@ export async function POST(request: NextRequest) {
       ...(turn.artifact ? { artifact: turn.artifact } : {}),
       // THE ONE CREATION CARD (Aug 10): the drafted standing task reviews inline.
       ...(turn.workflowDraft ? { workflowDraft: turn.workflowDraft } : {}),
-      ...(focus ? { focus } : {}),
+      // The filing nudge never decorates a failed/empty answer (found live: a wrong "File it"
+      // chip beside a dead reply compounds the miss).
+      ...(focus && turn.say?.trim() ? { focus } : {}),
     });
     if (body.stream === true) {
       const enc = new TextEncoder();
