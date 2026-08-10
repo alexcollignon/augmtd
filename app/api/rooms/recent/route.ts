@@ -205,7 +205,19 @@ export async function GET(request: NextRequest) {
       .sort((a, b) => new Date(b.at ?? 0).getTime() - new Date(a.at ?? 0).getTime())
       .slice(0, all ? 40 : 8);
 
-    return NextResponse.json({ pinned, recent, chats, conversations });
+    // THE RUNS BADGE (coherence slice #1 — the Claude "9 new" pattern): succeeded runs the user
+    // hasn't opened yet. Same fact that feeds auto-pause (reviewed_at) — one mechanic, not three.
+    let workflowsUnread = 0;
+    try {
+      const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+      const { count } = await supabase.from('workflow_runs')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id).eq('status', 'succeeded')
+        .is('reviewed_at', null).gte('created_at', since);
+      workflowsUnread = count ?? 0;
+    } catch { /* the badge is an enhancement */ }
+
+    return NextResponse.json({ pinned, recent, chats, conversations, workflowsUnread });
   } catch (e) {
     console.error('[rooms/recent]', e);
     return NextResponse.json({ pinned: [], recent: [] });

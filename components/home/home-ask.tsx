@@ -15,6 +15,7 @@ import { WorkerMentionInput } from '@/components/workers/worker-mention-input';
 import { ProjectPickerPanel } from '@/components/work/work-row';
 import { AnchoredPopover } from '@/components/ui/anchored-popover';
 import { EmailDraftCard, type EmailDraftData } from '@/components/workers/email-draft-card';
+import { WorkflowDraftCard, type WorkflowDraft } from '@/components/workflows/workflow-draft-card';
 import { ThreadArtifactsPanel } from '@/components/work/chat-artifact-panel';
 import type { DocumentArtifact } from '@/lib/types/inbox';
 // (BriefingBlock removed from the chat — Phase 3 F2: the prose brief duplicated the deck; the
@@ -30,6 +31,8 @@ type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
    *  points at its page (href); an EMAIL DRAFT mounts the editable send card INLINE. */
   cards?: Array<{ label: string; sub?: string; href?: string; art?: { tid: string; id: string } }>;
   drafts?: Array<{ draft: EmailDraftData; tid: string; agentId: string }>;
+  /** THE ONE CREATION CARD — a drafted workflow awaiting the user's confirm, inline. */
+  workflowDrafts?: Array<WorkflowDraft>;
   /** THE SENSIBLE ASK: one consequential decision as tappable options — a tap SPEAKS its `say`
    *  through the composer. Ephemeral scaffolding (never persisted); consumed on tap. */
   options?: Array<{ label: string; say: string }> };
@@ -164,10 +167,22 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     // Sidebar "Home" IS the close (the idiom: you leave a chat by going home — no in-thread
     // Close button); the conversation stays and re-opens on composer focus.
     const onHomeReset = () => setOpen(false);
+    // THE FACEPILE'S CHAT VERB (coherence slice #4): open the coworker's DM conversation
+    // (find-or-create the "Chat with" thread) — same door as addressing them by name.
+    const onDm = (e: Event) => {
+      const d = (e as CustomEvent).detail as { agentId?: string; name?: string } | undefined;
+      if (!d?.agentId || !d?.name) return;
+      setOpen(true);
+      void dmThread({ id: d.agentId, name: d.name }).then((tid) => {
+        if (tid) void loadWorkerRoom(`worker:${tid}:${d.agentId}`);
+      });
+    };
+    window.addEventListener('aug:dm-worker', onDm);
     window.addEventListener('aug:new-chat', onNew);
     window.addEventListener('aug:open-chat', onOpen);
     window.addEventListener('augmtd:home-reset', onHomeReset);
     return () => {
+      window.removeEventListener('aug:dm-worker', onDm);
       window.removeEventListener('aug:new-chat', onNew);
       window.removeEventListener('aug:open-chat', onOpen);
       window.removeEventListener('augmtd:home-reset', onHomeReset);
@@ -214,11 +229,14 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       const roster = await getRoster();
       const name = roster.find((x) => x.id === agentId)?.name
         ?? String((d.thread as { title?: string } | null)?.title ?? 'Coworker').replace(/^Chat with /, '');
-      const loaded: Turn[] = (d.messages as Array<{ role: string; content: string }>)
-        .filter((m) => (m.role === 'user' || m.role === 'assistant') && String(m.content ?? '').trim())
+      const loaded: Turn[] = (d.messages as Array<{ role: string; content: string; metadata?: { workflow_drafts?: WorkflowDraft[] } }>)
+        .filter((m) => (m.role === 'user' || m.role === 'assistant') && (String(m.content ?? '').trim() || m.metadata?.workflow_drafts?.length))
         .map((m) => (m.role === 'user'
           ? { role: 'user' as const, text: m.content }
-          : { role: 'assistant' as const, text: m.content, author: name.split(' ')[0] }));
+          : {
+              role: 'assistant' as const, text: m.content, author: name.split(' ')[0],
+              ...(m.metadata?.workflow_drafts?.length ? { workflowDrafts: m.metadata.workflow_drafts } : {}),
+            }));
       // Brick 3: the thread's documents ride along — openable HERE, never a page away.
       const arts = ((d.thread as { artifacts?: Array<{ id?: string; title?: string }> } | null)?.artifacts ?? [])
         .filter((a): a is { id: string; title: string } => !!a.id && !!a.title);
@@ -440,6 +458,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       let acc = ''; let lineBuffer = '';
       const cards: NonNullable<Turn['cards']> = [];
       const drafts: NonNullable<Turn['drafts']> = [];
+      const wfDrafts: WorkflowDraft[] = [];
       const threadHref = `/workers?worker=${w.id}&thread=${tid}`;
       const first = w.name.split(' ')[0];
       // THE ARTIFACT ARRIVES OPEN + STAYS CURRENT (Aug 7-8): EVERY document arrival summons/
@@ -449,7 +468,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       const setCards = () => setTurns((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
-        if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, cards: [...cards], drafts: [...drafts] };
+        if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, cards: [...cards], drafts: [...drafts], workflowDrafts: [...wfDrafts] };
         return next;
       });
       while (true) {
@@ -482,11 +501,14 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             else if (event.type === 'email_draft' && event.draft) {
               drafts.push({ draft: event.draft, tid, agentId: w.id }); setCards();
             }
+            else if (event.type === 'workflow_draft' && event.draft) {
+              wfDrafts.push(event.draft as unknown as WorkflowDraft); setCards();
+            }
           } catch { /* partial frame */ }
         }
       }
-      patchLast(acc.trim() || (cards.length || drafts.length ? `${first} produced the work below.` : `${first} finished without a written reply.`));
-      if (cards.length || drafts.length) setCards();
+      patchLast(acc.trim() || (cards.length || drafts.length || wfDrafts.length ? `${first} produced the work below.` : `${first} finished without a written reply.`));
+      if (cards.length || drafts.length || wfDrafts.length) setCards();
     } catch {
       patchLast(`Couldn't reach ${w.name.split(' ')[0]} right now — try again in a moment.`);
     } finally { setBusy(false); }
@@ -579,7 +601,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // STREAMING ASK (Aug 6): SSE — `progress` events narrate the core's live stage (the busy
       // line speaks them), `done` carries the answer. A non-SSE response (error JSON) falls back.
       const res = await fetch('/api/home/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(scope ? { entityId: scope.id } : {}) }) });
-      let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string } } = {};
+      let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string }; workflowDraft?: WorkflowDraft } = {};
       if (res.body && res.headers.get('content-type')?.includes('text/event-stream')) {
         const reader = res.body.getReader();
         const dec = new TextDecoder();
@@ -593,7 +615,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             const line = f.split('\n').find((l) => l.startsWith('data: '));
             if (!line) continue;
             try {
-              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string } };
+              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string }; workflowDraft?: WorkflowDraft };
               if (ev.type === 'progress' && ev.label) setStage(ev.label);
               else if (ev.type === 'done') d = ev;
             } catch { /* partial frame */ }
@@ -607,7 +629,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       const artCard = d.artifact
         ? { cards: [{ label: d.artifact.title, sub: `document · by ${d.artifact.agentName.split(' ')[0]}`, art: { tid: d.artifact.threadId, id: d.artifact.id } }] }
         : {};
-      setTurns((prev) => { pendingAnimate.current = prev.length; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...artCard }]; });
+      setTurns((prev) => { pendingAnimate.current = prev.length; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...artCard }]; });
       if (d.artifact) void openArtifact(d.artifact.threadId, d.artifact.id);
       if (d.answer) persistTurn('system', d.answer, d.refs ?? []);
       if (d.focus && !scope && !temp) setScopeHint(d.focus);
@@ -680,6 +702,13 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                         review, edit, and the user-gated Send, inline in this exchange. */}
                     {t.drafts?.map((d, j) => (
                       <EmailDraftCard key={d.draft.id ?? j} draft={d.draft} threadId={d.tid} agentId={d.agentId} />
+                    ))}
+                    {/* THE ONE CREATION CARD — a drafted workflow reviews INLINE; Confirm fires
+                        the one create door; the card collapses to a receipt linking the ledger. */}
+                    {t.workflowDrafts?.map((wd, j) => (
+                      <div key={wd.token ?? j} className="mt-2">
+                        <WorkflowDraftCard draft={wd} />
+                      </div>
                     ))}
                     {/* THE SENSIBLE ASK — a tap SPEAKS its message through the composer (clicks
                         are utterances); the chips consume on tap (ephemeral scaffolding). */}

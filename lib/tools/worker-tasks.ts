@@ -297,57 +297,32 @@ export async function executeCreateTask(
     return 'Could not generate a task from that description. Try being more specific — include what sources to use, what to produce, and when to run it.';
   }
 
-  // Compute next_run_at for scheduled triggers
-  let nextRunAt: string | null = null;
-  const trigger = generated.trigger as { type: string; cron?: string; timezone?: string };
-  if (trigger.type === 'schedule' && trigger.cron) {
-    const d = computeNextRun(trigger.cron, trigger.timezone);
-    if (d) nextRunAt = d.toISOString();
-  }
-
   // Resolve any pinned skill names → ids (omit → task uses the worker's assigned skills)
   const skillIds = skillNames !== undefined
     ? await resolveSkillIdsByName(adminClient, userId, normalizeSkillNames(skillNames))
     : [];
 
-  const { data: workflow, error } = await adminClient
-    .from('workflows')
-    .insert({
-      user_id: userId,
-      company_id: (membership as { company_id?: string } | null)?.company_id ?? null,
-      agent_id: agentId,
-      name: generated.name,
-      description: generated.description,
-      icon: 'bolt',
-      color: 'indigo',
-      status: 'active',
-      trigger: generated.trigger,
-      steps: generated.steps,
-      output_config: generated.output_config,
-      next_run_at: nextRunAt,
-      ...(skillIds.length > 0 ? { skill_ids: skillIds } : {}),
-    })
-    .select('id, name, trigger')
-    .single();
-
-  if (error || !workflow) {
-    return 'Task pipeline was generated but could not be saved. Please try again.';
-  }
-
-  const row = workflow as { id: string; name: string; trigger: { type: string; cron?: string; label?: string } };
-
-  // THE ENTITY EDGE — a task that names a registered project is linked to it at birth
-  // (deterministic recognition; non-fatal; a later human re-file outranks it).
-  let linkedLine = '';
-  try {
-    const { adoptWorkflowEntity } = await import('@/lib/workflows/entity-edge');
-    const linked = await adoptWorkflowEntity(adminClient, userId, row.id, `${generated.name}. ${description}`);
-    if (linked) linkedLine = `\nLinked to project: **${linked.name}** — runs will know where that work stands.`;
-  } catch { /* non-fatal */ }
-
-  const overlapLine = generated.overlap_note ? `\n⚠ ${generated.overlap_note}` : '';
-  const schedule = formatSchedule(row.trigger);
-  return `Task created: **${row.name}** — ${schedule}\nID: ${row.id}${linkedLine}${overlapLine}\n\nI've built a full pipeline for this. It runs on its schedule if set, and you can run it on demand anytime — the setup's saved so neither of us rebuilds it. Edit the steps anytime in the Tasks tab → Advanced settings.`;
+  // THE ONE CREATION CARD (coherence slice #2, Aug 10) — saying prepares, committing stays
+  // explicit: create_task no longer inserts. It DRAFTS, and the draft rides a marker the chat
+  // runtimes turn into the review card; the user's Confirm fires the ONE create door
+  // (POST /api/workflows — where entity adoption and everything else already lives).
+  const { encodeWorkflowDraftMarker } = await import('@/lib/workflows/draft-marker');
+  const { randomUUID } = await import('crypto');
+  const schedule = formatSchedule(generated.trigger as { type: string; cron?: string; label?: string });
+  const overlapLine = generated.overlap_note ? `\nOne heads-up: ${generated.overlap_note}` : '';
+  const marker = encodeWorkflowDraftMarker({
+    name: generated.name,
+    description: generated.description ?? null,
+    trigger: generated.trigger as { type: string; cron?: string; label?: string; timezone?: string; when?: string },
+    steps: generated.steps as Array<{ type: string; label?: string; tool?: string }>,
+    output_config: generated.output_config,
+    worker_instructions: generated.worker_instructions ?? null,
+    overlap_note: generated.overlap_note ?? null,
+    ...(skillIds.length > 0 ? { skill_ids: skillIds } : {}),
+    agent_id: agentId,
+    token: randomUUID(),
+  });
+  return `Here's the plan for **${generated.name}** — ${schedule}. Nothing runs until you confirm on the card.${overlapLine}\n${marker}`;
 }
 
 export async function executeGetTask(

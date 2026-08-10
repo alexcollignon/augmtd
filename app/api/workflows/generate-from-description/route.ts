@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { generateWorkflowConfig } from '@/lib/workflows/generate-config';
 
-export const maxDuration = 30;
+// 60s: since the entity edge, generation assembles room grounding + the existing-tasks read
+// before the model call — 30s starved real accounts (found live: a silent 504 read as
+// "Draft it does nothing").
+export const maxDuration = 60;
 
 // POST /api/workflows/generate-from-description
 // Accepts a plain-language description, returns a full Workflow config (no id/timestamps).

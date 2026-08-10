@@ -1,0 +1,135 @@
+'use client';
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE ONE CREATION CARD (coherence slice #2, Aug 10) — the single review card every door renders:
+// the Workflows page, the Home chief, a coworker conversation. Standing-sounding words anywhere
+// draw THIS card inline; "Confirm — it goes live" fires the ONE create door (POST /api/workflows,
+// where entity adoption lives); the card collapses to a receipt linking the ledger. Cards travel,
+// objects don't — the conversation is a door, never the home. Saying prepares, committing stays
+// explicit (Arc-2 law, now enforced on every path incl. coworker create_task).
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
+import { CheckIcon, ShieldCheckIcon, BoltIcon } from '@heroicons/react/24/outline';
+import { Button } from '@/components/ui';
+
+export type WorkflowDraft = {
+  name: string;
+  description?: string | null;
+  trigger: { type: string; cron?: string; label?: string; timezone?: string; when?: string };
+  steps: Array<{ type: string; label?: string; tool?: string; [k: string]: unknown }>;
+  output_config: Record<string, unknown>;
+  worker_instructions?: string | null;
+  overlap_note?: string | null;
+  skill_ids?: string[];
+  /** The coworker whose conversation drafted it — becomes the delivery voice. */
+  agent_id?: string | null;
+  /** Idempotence token: a confirmed card renders as a receipt, never a second Confirm. */
+  token?: string;
+};
+
+const HOME_WORD: Record<string, string> = { message: 'a message', document: 'a document', slack: 'Slack', email: 'your inbox' };
+const triggerWord = (t: WorkflowDraft['trigger']): string =>
+  t.type === 'schedule' ? (t.label ?? `cron ${t.cron}`) :
+  t.type === 'reaction' ? (t.label ?? (t.when ? `When ${t.when}` : 'On event')) :
+  'Runs on demand';
+const stepWord = (s: WorkflowDraft['steps'][number]): string => {
+  if (s.type === 'verify') return 'Verify against sources';
+  if (s.type === 'approval') return 'Your approval';
+  return s.label || s.tool || s.type;
+};
+
+const consumedKey = (token: string) => `aug-wfdraft-done:${token}`;
+
+export function WorkflowDraftCard({
+  draft, onCreated, onDiscard, extraActions,
+}: {
+  draft: WorkflowDraft;
+  onCreated?: (workflowId: string) => void;
+  onDiscard?: () => void;
+  /** Extra door(s) the hosting surface adds (the ledger passes Adjust in Studio / Redraft). */
+  extraActions?: React.ReactNode;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  // A confirmed card stays a receipt across reloads (the stored chat message still carries the
+  // draft — without this, a reload would re-offer Confirm on an already-created workflow).
+  useEffect(() => {
+    if (draft.token) {
+      try { setCreatedId(localStorage.getItem(consumedKey(draft.token))); } catch { /* no LS */ }
+    }
+  }, [draft.token]);
+
+  const confirm = async () => {
+    if (confirming || createdId) return;
+    setConfirming(true);
+    try {
+      const r = await fetch('/api/workflows', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: draft.name, description: draft.description ?? null, trigger: draft.trigger,
+          steps: draft.steps, output_config: draft.output_config, status: 'active',
+          agent_id: draft.agent_id ?? null, worker_instructions: draft.worker_instructions ?? null,
+          ...(draft.skill_ids?.length ? { skill_ids: draft.skill_ids } : {}),
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.workflow?.id) { toast.error(j.error ?? 'Could not create it.'); return; }
+      setCreatedId(j.workflow.id as string);
+      if (draft.token) { try { localStorage.setItem(consumedKey(draft.token), j.workflow.id); } catch { /* no LS */ } }
+      toast.success(`"${draft.name}" is live.`);
+      try { window.dispatchEvent(new CustomEvent('aug:conversation-changed')); } catch { /* SSR */ }
+      onCreated?.(j.workflow.id as string);
+    } finally { setConfirming(false); }
+  };
+
+  if (createdId) {
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 px-4 py-3 text-[13px] text-neutral-700">
+        <span className="font-medium">“{draft.name}”</span> is live — {triggerWord(draft.trigger).toLowerCase()}.{' '}
+        <a href="/home?view=workflows" className="text-indigo-600 hover:text-indigo-800 font-medium">See it in Workflows</a>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-1.5 text-[14px] font-semibold text-neutral-900">
+            <BoltIcon className="w-4 h-4 text-indigo-500" />{draft.name}
+          </div>
+          <div className="mt-0.5 text-[12px] text-neutral-500">
+            {triggerWord(draft.trigger)}
+            {' · delivers to '}{HOME_WORD[String((draft.output_config as { destination?: string }).destination ?? 'message')] ?? 'a message'}
+          </div>
+        </div>
+        {onDiscard && (
+          <button onClick={onDiscard} className="text-[12px] text-neutral-400 hover:text-neutral-600">Discard</button>
+        )}
+      </div>
+      <ol className="mt-2.5 space-y-1">
+        {draft.steps.map((s, i) => (
+          <li key={i} className="flex items-center gap-2 text-[13px] text-neutral-700">
+            <span className="w-4 text-right text-[11px] text-neutral-400">{i + 1}</span>
+            {s.type === 'verify' && <ShieldCheckIcon className="w-3.5 h-3.5 text-emerald-600" />}
+            {s.type === 'approval' && <CheckIcon className="w-3.5 h-3.5 text-amber-600" />}
+            <span>{stepWord(s)}</span>
+          </li>
+        ))}
+      </ol>
+      {draft.overlap_note && (
+        <div className="mt-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+          {draft.overlap_note}
+        </div>
+      )}
+      <div className="mt-3 flex items-center gap-3">
+        <Button size="sm" onClick={() => void confirm()} disabled={confirming}>
+          {confirming ? 'Creating…' : 'Confirm — it goes live'}
+        </Button>
+        {extraActions}
+      </div>
+    </div>
+  );
+}

@@ -90,6 +90,15 @@ function parseArtifactMarker(result: unknown): { id: string; type: string; title
   return { id: m[1], type: m[2], title: m[3] }
 }
 
+// create_task returns a [[workflow_draft:<base64 json>]] marker — decode it to the review card
+// (THE ONE CREATION CARD, coherence slice #2 — tool-result-based like email, never model-echoed).
+function parseWorkflowDraftMarkerB(result: unknown): Record<string, unknown> | null {
+  if (typeof result !== 'string') return null
+  const m = result.match(/\[\[workflow_draft:([A-Za-z0-9+/=]+)\]\]/)
+  if (!m) return null
+  try { return JSON.parse(Buffer.from(m[1], 'base64').toString('utf8')) } catch { return null }
+}
+
 // compose_email returns a [[email_draft:<base64 json>]] marker — decode it to the draft.
 function parseEmailDraftMarker(result: unknown): Record<string, unknown> | null {
   if (typeof result !== 'string') return null
@@ -366,6 +375,7 @@ export async function streamWorkerViaAgentOS({
   const toolCalls: Array<{ name: string; summary: string }> = []
   const artifactMeta: Record<string, { title: string; type: string }> = {}
   const emailDrafts: Record<string, unknown>[] = []
+  const workflowDrafts: Record<string, unknown>[] = []
   const cardArtifacts: Record<string, unknown>[] = []
   let runMetrics: AgnoMetrics | null = null
   let runModel: string | undefined
@@ -434,6 +444,8 @@ export async function streamWorkerViaAgentOS({
               }
               const draft = parseEmailDraftMarker(tool.result)
               if (draft) { emailDrafts.push(draft); send({ type: 'email_draft', draft }) }
+              const wfDraft = parseWorkflowDraftMarkerB(tool.result)
+              if (wfDraft) { workflowDrafts.push(wfDraft); send({ type: 'workflow_draft', draft: wfDraft }) }
               // Rich render-registry cards (e.g. linkedin_post) — display-only artifacts.
               for (const card of parseCardMarkers(tool.result)) {
                 cardArtifacts.push(card)
@@ -470,6 +482,7 @@ export async function streamWorkerViaAgentOS({
                 ? { artifact_ids: Object.keys(artifactMeta), artifact_meta: artifactMeta }
                 : {}),
               ...(emailDrafts.length > 0 ? { email_drafts: emailDrafts } : {}),
+              ...(workflowDrafts.length > 0 ? { workflow_drafts: workflowDrafts } : {}),
               ...(cardArtifacts.length > 0 ? { artifacts: cardArtifacts } : {}),
             },
           })

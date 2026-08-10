@@ -83,6 +83,7 @@ import { toast } from 'sonner';
 import { WorkerMentionInput, type WorkerMention } from '@/components/workers/worker-mention-input';
 import type { AttachmentChip } from '@/components/work/chat-input-bar';
 import { EmailDraftCard, type EmailDraftData } from '@/components/workers/email-draft-card';
+import { WorkflowDraftCard, type WorkflowDraft } from '@/components/workflows/workflow-draft-card';
 import { ArtifactRenderer, type WorkArtifact } from '@/components/work/artifacts/registry';
 import { WorkerHomeView } from '@/components/workers/worker-home-view';
 import type { Worker, WorkerThread } from '@/app/workers/workers-page-client';
@@ -605,6 +606,7 @@ function ActiveWorkerChat({
       // Extra metadata for artifact chips that came via get_worker_document
       const accArtifactMeta: Map<string, { title: string; versionLabel: string; type?: string }> = new Map();
       let accEmailDrafts: EmailDraftData[] = [];
+      let accWorkflowDrafts: WorkflowDraft[] = [];
       let accArtifacts: WorkArtifact[] = [];
       let lineBuffer = '';
 
@@ -660,6 +662,10 @@ function ActiveWorkerChat({
               // Coworker drafted an email — render an editable card for the user to send.
               if (event.draft) accEmailDrafts = [...accEmailDrafts, event.draft as EmailDraftData];
 
+            } else if (event.type === 'workflow_draft') {
+              // THE ONE CREATION CARD — the drafted task reviews inline; Confirm creates.
+              if (event.draft) accWorkflowDrafts = [...accWorkflowDrafts, event.draft as WorkflowDraft];
+
             } else if (event.type === 'artifact') {
               // Coworker presented a typed render-registry card (e.g. linkedin_post) — display-only.
               if (event.artifact) accArtifacts = [...accArtifacts, event.artifact as WorkArtifact];
@@ -713,6 +719,7 @@ function ActiveWorkerChat({
                     ...(Object.keys(artifactMeta).length > 0 ? { artifact_meta: artifactMeta } : {}),
                   } : {}),
                   ...(accEmailDrafts.length > 0 ? { email_drafts: accEmailDrafts } : {}),
+                  ...(accWorkflowDrafts.length > 0 ? { workflow_drafts: accWorkflowDrafts } : {}),
                   ...(accArtifacts.length > 0 ? { artifacts: accArtifacts } : {}),
                 },
               };
@@ -854,6 +861,7 @@ function ActiveWorkerChat({
               const isLastAssistant = msg.role === 'assistant' && !isStreaming &&
                 idx === arr.map((m, i) => m.role === 'assistant' ? i : -1).filter(i => i >= 0).at(-1);
               const drafts = (msg.metadata as { email_drafts?: EmailDraftData[] } | undefined)?.email_drafts ?? [];
+              const wfDrafts = (msg.metadata as { workflow_drafts?: WorkflowDraft[] } | undefined)?.workflow_drafts ?? [];
               const artifacts = (msg.metadata as { artifacts?: WorkArtifact[] } | undefined)?.artifacts ?? [];
               return (
                 <div key={msg.id}>
@@ -865,6 +873,11 @@ function ActiveWorkerChat({
                   />
                   {drafts.map((d, i) => (
                     <EmailDraftCard key={`${msg.id}-email-${i}`} draft={d} threadId={thread.id} agentId={worker.id} />
+                  ))}
+                  {wfDrafts.map((wd, i) => (
+                    <div key={`${msg.id}-wf-${i}`} className="mt-2">
+                      <WorkflowDraftCard draft={wd} />
+                    </div>
                   ))}
                   {artifacts.map((a, i) => (
                     <ArtifactRenderer key={`${msg.id}-art-${i}`} artifact={a} ctx={{ threadId: thread.id, agentId: worker.id, messageId: msg.id }} />

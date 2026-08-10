@@ -468,6 +468,43 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+BB. **THE WORKFLOWS COHERENCE SLICE (designed Aug 10 with the owner — the /workers retirement
+   made concrete; IN PROGRESS).** The laws settled in three owner conversations:
+   **ORIGIN DECIDES THE SURFACE** (the user's words started it → the result returns to that
+   conversation, which artifacts-into-origin already does; a schedule/trigger started it → the
+   result lives in Workflows→Runs, full stop — scheduled output NEVER touches conversations;
+   the Claude "Morning brief · 9 new" pattern, owner screenshot). **ONE INTENT → ONE CARD →
+   ONE HOME** (standing-sounding words anywhere — Home chat, coworker chat, room — draw the
+   SAME review card inline; confirm creates; the card collapses to a receipt linking the
+   ledger; coworker create_task goes BEHIND the confirm — saying prepares, committing stays
+   explicit; ambiguity defaults to once-now + a "make it standing?" offer chip; no redirects —
+   cards travel, objects don't). **YOU OWN IT, THE SYSTEM RUNS IT** (a coworker is the voice,
+   never the owner; ONE management home = the ledger; chat is a remote control on the one
+   registry, never a second ledger). Build order:
+   (1) RUNS AS THE ONE HOME — unread badge on the sidebar Workflows item (succeeded runs not
+       yet reviewed); opening the Runs lens / a deliverable stamps reviewed_at — REPAIRS THE
+       LIVE AUTO-PAUSE REGRESSION (reviewed_at was stamped ONLY by the old /workers chat
+       thread; threshold 3 → the AHK workflows would wrongly self-pause in 3 Wednesdays);
+       auto-pause speaks its reason in the ledger ("paused itself — runs went unopened ·
+       resume?"; resume clears auto_paused_at — verified already wired).
+   (2) THE ONE CREATION CARD — the review card componentized, rendered in both chat runtimes;
+       coworker create_task behind the confirm.
+   (3) SETTINGS→TEAM ABSORPTION — Roster · Tools · Skills config tabs move in.
+   (4) THE TEAM FACEPILE — sidebar FOOTER (global chrome, deliberately NOT the island — the
+       island shows views-of-here; the team is presence, not a view): small avatars + "Your
+       team" → a popover (face · role · ONE line of live state read from run checkpoints ·
+       Chat verb · Settings link). The last /workers job ("meet your team") rehomed; presence
+       makes proactivity legible and keeps the team fiction — the uncopyable differentiator —
+       visible hourly. The report-back feed does NOT migrate: it dissolves (deliverables →
+       Runs + badge; failures → deck debt; ad-hoc results → the conversation that asked).
+   (5) RETIREMENT MECHANICS — deep-link repoints (/workers?worker&thread → the Home
+       conversation opener), post-OAuth landing, /workers → redirect.
+   Queue after this slice: THE INITIATIVE LOOP (the proactivity redesign, settled Aug 10:
+   anticipation pass + THE BECAUSE-CHIP → silence watch → strategic ask + Settings→Autonomy;
+   the loop = notice → understand the delta → decide do/prepare/ask/schedule/SILENT → act at
+   the earned autonomy level → surface with proportion → learn; legible + proportionate, the
+   deck stays the one attention door, moves narrate into rooms, grounding carries them —
+   every part knows), then streaming, THE ONE VIEWER, perf.
 AA. **THE WORKFLOWS POLISH ARC — DONE (Aug 9 evening, four owner screenshot rounds; gates
    105/105, tasks 72/72, build green; every change live-verified).** (1) SIMPLE LANGUAGE
    everywhere ("Set one up once — it runs on its own and delivers to you" · "delivered by

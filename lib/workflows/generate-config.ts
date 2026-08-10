@@ -211,11 +211,22 @@ export async function generateWorkflowConfig(
     return null;
   }
 
-  const steps = (generated.steps as Array<Record<string, unknown>>).map((s, i) => ({
+  let steps: Array<Record<string, unknown>> = (generated.steps as Array<Record<string, unknown>>).map((s, i) => ({
     ...s,
     id: typeof s.id === 'string' && s.id ? s.id : makeStepId(),
     label: typeof s.label === 'string' ? s.label : `Step ${i + 1}`,
   }));
+
+  // ONE GATE, CODE-ENFORCED (found live: a generated pipeline carried TWO approval steps —
+  // ai,approval,ai,approval,ai — despite the prompt's one-gate rule; a run that pauses twice
+  // is permission theater). Keep only the LAST approval step; same for verify.
+  for (const gateType of ['approval', 'verify'] as const) {
+    const gates = steps.filter((s) => s.type === gateType);
+    if (gates.length > 1) {
+      const keep = gates[gates.length - 1];
+      steps = steps.filter((s) => s.type !== gateType || s === keep);
+    }
+  }
 
   // If caller passed an explicit override, use it; otherwise use model-generated value.
   const workerInstructions =

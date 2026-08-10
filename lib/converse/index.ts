@@ -126,6 +126,9 @@ export type ConverseTurn = {
   /** THE SENSIBLE ASK (Aug 8): ONE consequential decision as tappable options — each tap SPEAKS
    *  its `say` through the composer (clicks are utterances). Ephemeral scaffolding, never persisted. */
   options?: Array<{ label: string; say: string }>;
+  /** THE ONE CREATION CARD (Aug 10): a drafted standing task reviews INLINE in this
+   *  conversation — Confirm fires the one create door; nothing runs until then. */
+  workflowDraft?: Record<string, unknown> | null;
   /** ARTIFACTS-INTO-ORIGIN (Aug 9): the dispatched deliverable's REAL artifact rides back into
    *  the conversation that asked — the surface renders its card and opens the viewer, instead of
    *  pointing the user at another conversation. */
@@ -403,8 +406,21 @@ async function dispatchCommand(
     // THE SPEC CARD (Arc 2): saying prepares — the spec lands as a durable card in the work's
     // room; NOTHING is created until the user confirms on it. Room resolution: this room, the
     // item's room, or (global) the entity the request names.
-    const { buildStandingSpec } = await import('@/lib/work/standing-spec');
     const request = (String(args.request ?? '').trim() || userText).trim();
+    if (scope.kind === 'global') {
+      // THE ONE CREATION CARD (coherence slice #2): from the Home chat the draft reviews
+      // INLINE — no pointer to another room, no project required (cards travel, objects
+      // don't). The full generator drafts the real pipeline the card shows.
+      const { generateWorkflowConfig } = await import('@/lib/workflows/generate-config');
+      const g = await generateWorkflowConfig(request, userId, client);
+      if (!g) return { say: "I couldn't draft that — name the sources, the schedule, and what it should produce.", refs: [] };
+      return {
+        say: `Here's the plan for "${g.name}" — nothing runs until you confirm on the card.${g.overlap_note ? ` One heads-up: ${g.overlap_note}` : ''}`,
+        refs: [],
+        workflowDraft: { ...g, token: crypto.randomUUID() },
+      };
+    }
+    const { buildStandingSpec } = await import('@/lib/work/standing-spec');
     const spec = await buildStandingSpec(client, userId, request);
     if ('error' in spec) return { say: `I can't set that up yet — ${spec.error}.`, refs: [] };
     let roomKey: string | null = null; let roomLabel = 'this room';
@@ -431,10 +447,9 @@ async function dispatchCommand(
       dedupeKey,
       component: { key: 'standing_spec', state: { ...spec, status: 'pending' } },
     });
+    void roomLabel; // room scopes only now — global returns the inline card above
     return {
-      say: scope.kind === 'global'
-        ? `Set it up as "${spec.name}" — ${spec.cadenceLabel}, ${spec.ownerName.split(' ')[0]} producing it. The confirm card is in ${roomLabel}; it starts only when you confirm.`
-        : `Here's the setup: "${spec.name}" — ${spec.cadenceLabel}, ${spec.ownerName.split(' ')[0]} producing it. Confirm on the card and the first run lands ${spec.firstRun ? spec.firstRun.slice(0, 10) : 'on schedule'}.`,
+      say: `Here's the setup: "${spec.name}" — ${spec.cadenceLabel}, ${spec.ownerName.split(' ')[0]} producing it. Confirm on the card and the first run lands ${spec.firstRun ? spec.firstRun.slice(0, 10) : 'on schedule'}.`,
       refs: [],
     };
   }

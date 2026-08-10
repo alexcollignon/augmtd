@@ -744,6 +744,7 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/home/item-rail.tsx').includes('Approve — deliver it') &&
     src('components/home/item-rail.tsx').includes('Hold back') &&
     src('lib/workflows/generate-config.ts').includes('"type": "approval"') &&
+    src('lib/workflows/generate-config.ts').includes('ONE GATE, CODE-ENFORCED') && // found live: a generated pipeline carried two approval gates
     existsSync('supabase/migrations/20260808_workflow_runs_approval_status.sql'));
 
   check('PA3: THE STRUCTURAL VERIFICATION GATE (production arc step 3) — `verify` is a STEP TYPE built into the engine (one versioned implementation; the AHK hand-built gate never copy-pasted again): the ARITHMETIC FLOOR runs FIRST (code-recomputed claims become MUST-FIX lines) then one persona-free reasoned pass (use_worker_identity:false through the ONE AI-step executor — clock/context ride along); generate-config emits it after synthesis for external-material pipelines and bans duplicate prose verifiers; E2E: wrong sum corrected · ungrounded claim deleted · structure intact',
@@ -757,9 +758,11 @@ const src = (p: string) => readFileSync(p, 'utf8');
 
   // ── PA4 · THE ENTITY EDGE (production arc step 4) — workflows join the one brain. ──
   check('PA4a: the edge is wired at every seam (source parity) — both creation doors adopt (chat create_task + the builder save POST); generate-config drafts over the named project\'s room page AND the existing-tasks dup read (overlap_note informs, never blocks); run time inherits the scope into AI steps ONLY (the verify gate judges draft vs sources alone); the room\'s grounding lists its STANDING PRODUCTION (one section, visible to all reasoning)',
-    src('lib/tools/worker-tasks.ts').includes('adoptWorkflowEntity') &&
-    src('app/api/workflows/route.ts').includes('adoptWorkflowEntity') &&
+    src('app/api/workflows/route.ts').includes('adoptWorkflowEntity') && // the ONE create door adopts; every chat path creates THROUGH it since CS2
+
     src('lib/workflows/generate-config.ts').includes('workflowDraftGrounding') &&
+    src('lib/workflows/entity-edge.ts').includes('THE GROUNDING BOUNDARY') && // draft = identity-level (~400 chars); the full page injects at RUN time only
+    src('lib/workflows/entity-edge.ts').includes('block.slice(0, 700)') &&
     src('lib/workflows/generate-config.ts').includes('[EXISTING TASKS') &&
     src('lib/workflows/generate-config.ts').includes('overlap_note') &&
     src('lib/workflows/run-workflow.ts').includes('workflowRunGrounding') &&
@@ -909,6 +912,39 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/workflows/workflows-ledger.tsx').includes('from=workflows') &&
     src('app/studio/studio-page-client.tsx').includes('backTo') &&
     src('app/studio/studio-page-client.tsx').includes("'Untitled workflow'"));
+
+  check('CS1: THE SEEN SIGNAL MIGRATED + THE RUNS BADGE (coherence slice #1, Aug 10) — reviewed_at is stamped by the NEW surface (opening the Runs lens marks all; opening a deliverable marks that workflow) through ONE route, which also clears the sidebar unread badge (the same fact feeds auto-pause — one mechanic, not three); the badge is a QUIET count (indigo, never red — a delivered briefing is good news); auto-pause speaks its reason in the ledger ("paused itself — runs went unopened") instead of a generic "paused"; scheduled output NEVER touches conversations (origin decides the surface)',
+    src('app/api/workflows/runs/reviewed/route.ts').includes("is('reviewed_at', null)") &&
+    src('components/workflows/workflows-ledger.tsx').includes('markReviewed') &&
+    src('components/workflows/workflows-ledger.tsx').includes("tab === 'activity') markReviewed()") &&
+    src('components/workflows/workflows-ledger.tsx').includes('paused itself — runs went unopened') &&
+    src('app/api/rooms/recent/route.ts').includes('workflowsUnread') &&
+    src('components/one/one-sidebar.tsx').includes('workflowsUnread') &&
+    src('app/api/rooms/recent/route.ts').includes(".is('workflow_id', null)"));
+
+  check('CS2: THE ONE CREATION CARD (coherence slice #2, Aug 10) — one intent, one card, one home: coworker create_task DRAFTS (marker in the tool result — parsed runtime-side on BOTH runtimes, never model-echoed base64) and inserts NOTHING (saying prepares, committing stays explicit — E2E-proven on the probe: draft parsed, agent_id + token riding, zero rows); the Home chief\'s global propose renders the SAME card INLINE (no room pointer, no "which project?" dead end — cards travel, objects don\'t); Confirm fires the ONE create door (POST /api/workflows, where adoption lives); a confirmed card is a receipt across reloads (token-consumed), linking the ledger; the still-active /workers chat renders the card too',
+    src('lib/tools/worker-tasks.ts').includes('encodeWorkflowDraftMarker') &&
+    (() => { const wt = src('lib/tools/worker-tasks.ts');
+      const body = wt.slice(wt.indexOf('export async function executeCreateTask'), wt.indexOf('export async function executeGetTask'));
+      return body.includes('encodeWorkflowDraftMarker') && !body.includes('.insert('); })() &&
+    src('lib/workflows/draft-marker.ts').includes('parseWorkflowDraftMarker') &&
+    src('app/api/work/threads/[id]/chat/route.ts').includes("send({ type: 'workflow_draft'") &&
+    src('lib/work/agentos-bridge.ts').includes('parseWorkflowDraftMarkerB') &&
+    src('lib/converse/index.ts').includes('workflowDraft: { ...g, token:') &&
+    src('app/api/home/ask/route.ts').includes('turn.workflowDraft') &&
+    src('components/workflows/workflow-draft-card.tsx').includes('Confirm — it goes live') &&
+    src('components/workflows/workflow-draft-card.tsx').includes('aug-wfdraft-done') &&
+    src('components/home/home-ask.tsx').includes('WorkflowDraftCard') &&
+    src('components/workers/tabs/worker-chat-tab.tsx').includes('WorkflowDraftCard'));
+
+  check('CS3: THE TEAM FACEPILE (coherence slice #4, Aug 10) — presence in the sidebar FOOTER (global chrome; deliberately NOT the island — views-of-here — and NOT nav): facepile → ONE popover with a line of REAL state per coworker (read from run checkpoints: "Running X · step 3 of 13" / "Delivered N today" / "Ready"), a Chat verb (opens the DM conversation through the same door as addressing by name), and the Settings→Team door; Settings→Team already carries roster + per-worker Tools + Knowledge&skills + the library (slice #3, verified standing)',
+    src('app/api/workers/presence/route.ts').includes('step ') &&
+    src('components/one/one-sidebar.tsx').includes('Your team') &&
+    src('components/one/one-sidebar.tsx').includes('aug:dm-worker') &&
+    src('components/one/one-sidebar.tsx').includes('Manage in Settings') &&
+    src('components/home/home-ask.tsx').includes("addEventListener('aug:dm-worker'") &&
+    src('components/settings/team-section.tsx').includes('WorkerToolsTab') &&
+    src('components/settings/team-section.tsx').includes('SkillsLibraryView'));
 
   // ── AO · ARTIFACTS-INTO-ORIGIN (proactivity completion #1, Aug 9). ──
   check('AO1: THE DISPATCHED DELIVERABLE COMES HOME — substantial delegated production materializes as a REAL document artifact on the delegation thread (the SAME textToDocContent/uploadArtifact primitives as workflow runs — one shared module, run-workflow imports it too, never two diverging copies); the artifact rides the ConverseTurn back into the conversation that asked (Home chat renders its card AND opens the viewer; the room rail carries the door chip); a short answer or an ask stays text. E2E-proven live on the probe: real .docx in storage, card on the turn',
