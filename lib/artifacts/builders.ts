@@ -2,8 +2,10 @@ import {
   Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
   LevelFormat, convertInchesToTwip,
   Table, TableRow, TableCell, WidthType, BorderStyle, ShadingType,
+  Header, Footer, ImageRun,
 } from 'docx';
 import type { DeliverableType, DocContent, PptxContent, XlsxContent, ArtifactContent } from '@/lib/types/inbox';
+import type { DocTheme } from '@/lib/documents/theme';
 
 // Detect lines that are bullet items (start with "- ", "• ", "* ")
 function isBulletLine(line: string): boolean {
@@ -75,7 +77,11 @@ function buildTable(lines: string[]): Table {
   });
 }
 
-export function buildDocx(content: DocContent, options?: { pageSize?: 'letter' | 'a4' }): Promise<Buffer> {
+export function buildDocx(content: DocContent, options?: { pageSize?: 'letter' | 'a4'; theme?: DocTheme | null }): Promise<Buffer> {
+  // THE BRANDED KIT (DH4): the workspace theme brands every document — logo in the header,
+  // footer line, accent on the title. No theme → the house look, unchanged.
+  const theme = options?.theme ?? null;
+  const accent = theme?.accent ?? '111827';
   const isA4 = options?.pageSize === 'a4';
   const NUMBERING_REF = 'bullet-list';
   const ORDERED_REF = 'ordered-list';
@@ -113,7 +119,7 @@ export function buildDocx(content: DocContent, options?: { pageSize?: 'letter' |
   // Title
   children.push(
     new Paragraph({
-      children: [new TextRun({ text: content.title, bold: true, size: 48, font: 'Arial', color: '111827' })],
+      children: [new TextRun({ text: content.title, bold: true, size: 48, font: 'Arial', color: accent })],
       alignment: AlignmentType.LEFT,
       spacing: { after: 240 },
     })
@@ -220,6 +226,33 @@ export function buildDocx(content: DocContent, options?: { pageSize?: 'letter' |
             : { top: 1440, right: 1440, bottom: 1440, left: 1440 }, // ~1 inch
         },
       },
+      // The letterhead: logo top-right (true aspect, ~0.35in tall), footer line bottom-left.
+      ...(theme?.logo ? {
+        headers: {
+          default: new Header({
+            children: [new Paragraph({
+              alignment: AlignmentType.RIGHT,
+              children: [new ImageRun({
+                type: 'png',
+                data: Buffer.from(theme.logo.dataB64, 'base64'),
+                transformation: { height: 26, width: Math.max(26, Math.round(26 * (theme.logo.w / theme.logo.h))) },
+              })],
+            })],
+          }),
+        },
+      } : {}),
+      ...(theme?.footer || theme?.brandName ? {
+        footers: {
+          default: new Footer({
+            children: [new Paragraph({
+              children: [new TextRun({
+                text: [theme?.footer, theme?.brandName].filter(Boolean).join(' · '),
+                size: 16, color: '9CA3AF', font: 'Arial',
+              })],
+            })],
+          }),
+        },
+      } : {}),
       children,
     }],
   });
@@ -238,9 +271,17 @@ const BRAND = {
   textMid: '475569',
 };
 
-export async function buildPptx(content: PptxContent): Promise<Buffer> {
+export async function buildPptx(content: PptxContent, theme?: DocTheme | null): Promise<Buffer> {
   const pptxgen = (await import('pptxgenjs')).default;
   const pres = new pptxgen();
+
+  // THE BRANDED KIT (DH4): the workspace accent drives the deck's accent elements; the logo
+  // sits bottom-right of content slides; the footer line runs along the bottom. No theme →
+  // the house look, unchanged.
+  const ACCENT = theme?.accent ?? BRAND.indigo;
+  const logoDataUrl = theme?.logo ? `data:${theme.logo.mime};base64,${theme.logo.dataB64}` : null;
+  const logoH = 0.3;
+  const logoW = theme?.logo ? Math.max(0.3, Math.round(100 * logoH * (theme.logo.w / theme.logo.h)) / 100) : 0;
 
   pres.layout = 'LAYOUT_WIDE'; // 16:9
 
@@ -258,7 +299,7 @@ export async function buildPptx(content: PptxContent): Promise<Buffer> {
       // Indigo accent bar (left edge)
       s.addShape(pres.ShapeType.rect, {
         x: 0, y: 1.2, w: 0.08, h: 2.4,
-        fill: { color: BRAND.indigo },
+        fill: { color: ACCENT },
         line: { color: BRAND.indigo },
       });
 
@@ -304,7 +345,7 @@ export async function buildPptx(content: PptxContent): Promise<Buffer> {
       // Indigo accent bar (left side of header)
       s.addShape(pres.ShapeType.rect, {
         x: 0, y: 0, w: 0.08, h: 1.1,
-        fill: { color: BRAND.indigo },
+        fill: { color: ACCENT },
         line: { color: BRAND.indigo },
       });
 
@@ -315,7 +356,8 @@ export async function buildPptx(content: PptxContent): Promise<Buffer> {
         fontFace: 'Arial', align: 'left', valign: 'middle',
       });
 
-      // Bullet content
+      // Bullet content — half-width when a chart shares the slide.
+      const hasChart = !!slide.chart;
       if (slide.bullets && slide.bullets.length > 0) {
         const bulletItems = slide.bullets.map((b) => ({
           text: b,
@@ -329,8 +371,34 @@ export async function buildPptx(content: PptxContent): Promise<Buffer> {
         }));
 
         s.addText(bulletItems, {
-          x: 0.5, y: 1.3, w: 9, h: 5.4,
+          x: 0.5, y: 1.3, w: hasChart ? 5.2 : 9, h: 5.4,
           valign: 'top',
+        });
+      }
+
+      // NATIVE CHART (DH4 — the pptxgenjs unlock): code-validated data, accent-colored.
+      if (slide.chart) {
+        const c = slide.chart;
+        const chartType = c.type === 'pie' ? pres.ChartType.pie : c.type === 'line' ? pres.ChartType.line : pres.ChartType.bar;
+        const pos = slide.bullets?.length
+          ? { x: 6.0, y: 1.3, w: 6.8, h: 5.2 }
+          : { x: 0.8, y: 1.4, w: 11.7, h: 5.2 };
+        s.addChart(chartType, [{ name: c.title ?? slide.title, labels: c.labels, values: c.values }], {
+          ...pos,
+          chartColors: c.type === 'pie' ? undefined : [ACCENT],
+          showTitle: !!c.title, title: c.title, titleFontSize: 14,
+          catAxisLabelFontSize: 10, valAxisLabelFontSize: 10,
+          dataLabelFontSize: 10, showValue: c.type !== 'line',
+        });
+      }
+
+      // The letterhead corner: logo bottom-right + footer line bottom-left.
+      if (logoDataUrl) {
+        s.addImage({ data: logoDataUrl, x: 13.33 - logoW - 0.25, y: 7.5 - logoH - 0.15, w: logoW, h: logoH });
+      }
+      if (theme?.footer || theme?.brandName) {
+        s.addText([theme?.footer, theme?.brandName].filter(Boolean).join(' · '), {
+          x: 0.3, y: 7.15, w: 8, h: 0.3, fontSize: 9, color: '9CA3AF', fontFace: 'Arial', align: 'left',
         });
       }
     }
@@ -383,8 +451,8 @@ export function getMimeType(type: DeliverableType): string {
   return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 }
 
-export async function buildArtifactFile(type: DeliverableType, content: ArtifactContent, options?: { pageSize?: 'letter' | 'a4' }): Promise<Buffer> {
-  if (type === 'presentation') return buildPptx(content as PptxContent);
-  if (type === 'spreadsheet') return buildXlsx(content as XlsxContent);
+export async function buildArtifactFile(type: DeliverableType, content: ArtifactContent, options?: { pageSize?: 'letter' | 'a4'; theme?: DocTheme | null }): Promise<Buffer> {
+  if (type === 'presentation') return buildPptx(content as PptxContent, options?.theme);
+  if (type === 'spreadsheet') return buildXlsx(content as XlsxContent); // xlsx styling waits for the compiler (SheetJS community writes no cell styles)
   return buildDocx(content as DocContent, options);
 }

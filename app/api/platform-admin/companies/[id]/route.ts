@@ -54,14 +54,25 @@ export async function PATCH(
   if (body.branding && typeof body.branding === 'object') {
     const logo = String(body.branding.logo_url ?? '').trim().slice(0, 500);
     const tagline = String(body.branding.tagline ?? '').trim().slice(0, 120);
+    // THE BRANDED KIT (DH4): accent color + footer line feed the DOCUMENT THEME — every
+    // deliverable this workspace produces is born on its letterhead.
+    const accentRaw = String(body.branding.accent_color ?? '').trim().replace(/^#/, '');
+    const footer = String(body.branding.footer_line ?? '').trim().slice(0, 120);
     if (logo && !/^(https?:\/\/|\/)/.test(logo)) {
       return NextResponse.json({ error: 'Logo must be a URL (https://…) or an app path (/…)' }, { status: 400 });
+    }
+    if (accentRaw && !/^[0-9a-fA-F]{6}$/.test(accentRaw)) {
+      return NextResponse.json({ error: 'Accent color must be a 6-digit hex (e.g. 0E7490)' }, { status: 400 });
     }
     const adminClient0 = await getAdminClient();
     const { data: cur } = await adminClient0.from('companies').select('settings').eq('id', id).maybeSingle();
     updates.settings = {
       ...((cur?.settings ?? {}) as Record<string, unknown>),
-      branding: { ...(logo ? { logo_url: logo } : {}), ...(tagline ? { tagline } : {}) },
+      branding: {
+        ...(logo ? { logo_url: logo } : {}), ...(tagline ? { tagline } : {}),
+        ...(accentRaw ? { accent_color: accentRaw.toUpperCase() } : {}),
+        ...(footer ? { footer_line: footer } : {}),
+      },
     };
   }
   if (body.plan) {

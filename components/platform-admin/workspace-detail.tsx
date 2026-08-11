@@ -19,7 +19,7 @@ type Company = {
   id: string; name: string; slug: string; plan: string; type: WorkspaceType; status: string;
   features: WorkspaceFeatures; join_code: string; ai_tier: TierType | null; created_at: string;
   member_count: number;
-  settings?: { branding?: { logo_url?: string; tagline?: string } } | null;
+  settings?: { branding?: { logo_url?: string; tagline?: string; accent_color?: string; footer_line?: string } } | null;
 };
 type Member = { id: string; user_id: string; email: string; full_name: string | null; role: string };
 
@@ -55,6 +55,9 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
   const [copied, setCopied] = useState<string | null>(null);
   const [logo, setLogo] = useState(initial.settings?.branding?.logo_url ?? '');
   const [tagline, setTagline] = useState(initial.settings?.branding?.tagline ?? '');
+  // THE DOCUMENT THEME (DH4): accent + footer feed every deliverable's letterhead.
+  const [accent, setAccent] = useState(initial.settings?.branding?.accent_color ?? '');
+  const [footerLine, setFooterLine] = useState(initial.settings?.branding?.footer_line ?? '');
   const [name, setName] = useState(initial.name);
   const [codeDraft, setCodeDraft] = useState(initial.join_code);
   const [codeErr, setCodeErr] = useState('');
@@ -135,8 +138,12 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
   };
 
   const saveBranding = () => patch(
-    { branding: { logo_url: logo.trim(), tagline: tagline.trim() } },
-    prev => ({ ...prev, settings: { ...(prev.settings ?? {}), branding: { ...(logo.trim() ? { logo_url: logo.trim() } : {}), ...(tagline.trim() ? { tagline: tagline.trim() } : {}) } } }),
+    { branding: { logo_url: logo.trim(), tagline: tagline.trim(), accent_color: accent.trim(), footer_line: footerLine.trim() } },
+    prev => ({ ...prev, settings: { ...(prev.settings ?? {}), branding: {
+      ...(logo.trim() ? { logo_url: logo.trim() } : {}), ...(tagline.trim() ? { tagline: tagline.trim() } : {}),
+      ...(accent.trim() ? { accent_color: accent.trim().replace(/^#/, '').toUpperCase() } : {}),
+      ...(footerLine.trim() ? { footer_line: footerLine.trim() } : {}),
+    } } }),
   );
 
   // FULL USER DELETE (owner, Aug 10 — "keep user management as we had"): the SAME
@@ -297,6 +304,17 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
             </button>
             <input value={logo} onChange={e => setLogo(e.target.value)} placeholder="…or paste a logo URL" className={`${input} flex-1`} />
             <input value={tagline} onChange={e => setTagline(e.target.value)} placeholder="Tagline (optional)" className={`${input} flex-1`} />
+            <span className="flex items-center gap-1 flex-shrink-0">
+              {accent && /^#?[0-9a-fA-F]{6}$/.test(accent) && (
+                <span className="w-5 h-5 rounded border border-neutral-200 flex-shrink-0" style={{ backgroundColor: `#${accent.replace(/^#/, '')}` }} />
+              )}
+              <input value={accent} onChange={e => setAccent(e.target.value)} placeholder="Accent hex" maxLength={7}
+                title="Document theme accent — titles and deck accents in every deliverable"
+                className={`${input} w-24 font-mono`} />
+            </span>
+            <input value={footerLine} onChange={e => setFooterLine(e.target.value)} placeholder="Doc footer line (optional)"
+              title='Runs along the bottom of every document, e.g. "Prepared by Acme Consulting"'
+              className={`${input} flex-1`} />
             <button onClick={() => void saveBranding()} disabled={busy === 'patch'}
               className="text-[12px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-md px-3 py-1.5 transition-colors">
               Save

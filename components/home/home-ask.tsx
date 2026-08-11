@@ -685,7 +685,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // THE ATTACHED MATERIAL (Aug 10, the production hand-off): extract the files' text NOW so it
   // rides the ask itself — the KB upload (durable copy) indexes in the background and a
   // "fill this in" must never race it. Best-effort; the KB note still lands either way.
-  const extractAttachments = async (files: File[]): Promise<Array<{ name: string; text: string | null }>> => {
+  const extractAttachments = async (files: File[]): Promise<Array<{ name: string; text: string | null; image?: { dataB64: string; mime: string } }>> => {
     try {
       const fd = new FormData();
       files.forEach((f) => fd.append('file', f));
@@ -701,7 +701,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     mentions: Array<{ id: string; type: 'coworker' | 'task' | 'document'; label: string }>, shown: string,
   ) => {
     let sendQ = question;
-    let attachments: Array<{ name: string; text: string | null }> = [];
+    let attachments: Array<{ name: string; text: string | null; image?: { dataB64: string; mime: string } }> = [];
     if (files.length) {
       setStage('Reading the files…');
       const [done, extracted] = await Promise.all([uploadToKB(files), extractAttachments(files)]);

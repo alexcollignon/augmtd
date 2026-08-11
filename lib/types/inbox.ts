@@ -136,6 +136,8 @@ export interface PptxSlide {
   layout: 'title' | 'content';
   bullets?: string[];
   notes?: string;
+  /** Native tier-1 chart on the slide (DH4 — pptxgenjs renders it; data code-validated). */
+  chart?: { type: 'bar' | 'line' | 'pie'; labels: string[]; values: number[]; title?: string };
 }
 export interface PptxContent {
   title: string;

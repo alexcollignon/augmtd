@@ -83,8 +83,9 @@ export type ConverseHistoryTurn = { role: 'user' | 'assistant'; text: string };
 
 /** THE ATTACHED MATERIAL (Aug 10, the production hand-off): synchronously-extracted text of
  *  files the user attached WITH this message — rides the turn itself, so a "fill this in"
- *  never races the KB's background indexing. */
-export type ConverseAttachment = { name: string; text: string | null };
+ *  never races the KB's background indexing. Images carry BYTES (THE MOMENT THEME: "brand
+ *  this with the attached logo" builds the theme on the spot). */
+export type ConverseAttachment = { name: string; text: string | null; image?: { dataB64: string; mime: string } };
 
 // ── THE PROGRESS CHANNEL (streaming ask, Aug 6): human labels for what the core is DOING right
 // now — surfaced live over SSE so a long agent loop never reads as a dead "Thinking…". Labels
@@ -604,6 +605,7 @@ async function dispatchCommand(
 async function runCoworkerDelegation(
   client: SupabaseClient, userId: string, scope: ConverseScope, coworkerWant: string, task: string, userText: string,
   transcript = '', material = '',
+  themeOverride: import('@/lib/documents/theme').DocTheme | null = null,
 ): Promise<ConverseTurn> {
   try {
     const { createClient: createAdmin } = await import('@supabase/supabase-js');
@@ -631,6 +633,7 @@ async function runCoworkerDelegation(
         supabase: admin, userId, worker: { id: worker.id as string, name: String(worker.name), worker_role: (worker.worker_role as string) ?? null, is_worker: true },
         prompt, itemLabel: task.slice(0, 80),
         firstName: (prof?.full_name as string | undefined)?.split(' ')[0] ?? null,
+        ...(themeOverride ? { themeOverride } : {}),
         ...(scope.kind === 'item' ? { pool: { kind: scope.itemKind, entityId: scope.itemId }, provenance: { item: task.slice(0, 80), steered: true } } : {}),
       });
       // FIX 3 — a needs_input outcome is an ASK, not work in flight: say so plainly (the
@@ -858,6 +861,28 @@ export async function converse(
     .map((a) => `[ATTACHED FILE: ${a.name}]\n${a.text!.slice(0, 15000)}`)
     .join('\n\n');
   const materialNames = (opts.attachments ?? []).map((a) => a.name).join(', ');
+
+  // ── THE MOMENT THEME (owner, Aug 11 — "not a set-in-stone ask; could be for something
+  // specific in that moment"): a branding word + an attached image builds a theme ON THE SPOT
+  // for THIS request's deliverables; "always/from now on" ALSO saves it as the user's durable
+  // theme; "reset document branding" clears the saved one. Deterministic — no AI, no config. ──
+  let momentTheme: import('@/lib/documents/theme').DocTheme | null = null;
+  try {
+    const imgAtt = (opts.attachments ?? []).find((a) => a.image?.dataB64);
+    const brandIntent = /\b(brand(ing)?|logo|letterhead|our colou?rs|company colou?rs|house style)\b/i.test(text);
+    if (/\b(reset|remove|clear)\b.{0,24}\b(brand(ing)?|letterhead|document theme)\b/i.test(text)) {
+      const { saveUserTheme } = await import('@/lib/documents/theme');
+      await saveUserTheme(client, userId, null);
+      return { say: 'Document branding cleared — deliverables go back to the standard look.', refs: [], applied: [{ tool: 'set_document_theme', title: 'branding cleared' }] };
+    }
+    if (imgAtt?.image && brandIntent) {
+      const { themeFromLogoBuffer, saveUserTheme } = await import('@/lib/documents/theme');
+      momentTheme = await themeFromLogoBuffer(Buffer.from(imgAtt.image.dataB64, 'base64'), imgAtt.image.mime);
+      if (momentTheme && /\b(always|every (doc|report|deliverable)|from now on|going forward|by default)\b/i.test(text)) {
+        await saveUserTheme(client, userId, momentTheme);
+      }
+    }
+  } catch { /* theming is an overlay — the ask proceeds unthemed */ }
   const [dlg, viewing] = await Promise.all([
     dialogueContext(client, userId, scope),
     viewingExcerpt(client, userId, scope),
@@ -968,7 +993,7 @@ export async function converse(
 
   // 2 — DELEGATE: "have Max research X" → the real delegation engine (prepare + report back).
   if (verdict.delegate) {
-    return runCoworkerDelegation(client, userId, scope, verdict.delegate.coworker, verdict.delegate.task, text, transcript, material);
+    return runCoworkerDelegation(client, userId, scope, verdict.delegate.coworker, verdict.delegate.task, text, transcript, material, momentTheme);
   }
 
   // 3 — QUESTION: grounded answer from the scope's memory — the whole brain (global), the deal's
@@ -1132,7 +1157,7 @@ export async function converse(
   if (loopTurn.exhausted) {
     opts.onProgress?.('This needs real production — handing it to the team…');
     const handed = await runCoworkerDelegation(client, userId, scope, 'sofia',
-      text.replace(/\s+/g, ' ').slice(0, 80), text, transcript, material);
+      text.replace(/\s+/g, ' ').slice(0, 80), text, transcript, material, momentTheme);
     if (handed.delegated) return handed;
     return { say: "I couldn't finish this one inline, and the hand-off didn't go through either — try again in a moment, or name a coworker (\"Sofia: …\") to take it.", refs: [] };
   }

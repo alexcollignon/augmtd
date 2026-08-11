@@ -29,7 +29,14 @@ export async function POST(request: NextRequest) {
     // rides the ask itself — never a race against the KB's background indexing.
     const attachments = (Array.isArray(body.attachments) ? body.attachments : [])
       .slice(0, 5)
-      .map((a) => ({ name: String(a?.name ?? '').slice(0, 200), text: typeof a?.text === 'string' ? a.text.slice(0, 20000) : null }))
+      .map((a) => ({
+        name: String(a?.name ?? '').slice(0, 200),
+        text: typeof a?.text === 'string' ? a.text.slice(0, 20000) : null,
+        // THE MOMENT THEME: an attached image's bytes ride along (≤~1.4MB base64) so "brand
+        // this with the attached logo" can build the theme on the spot.
+        ...(a?.image && typeof a.image.dataB64 === 'string' && a.image.dataB64.length <= 1_500_000
+          ? { image: { dataB64: a.image.dataB64, mime: String(a.image.mime ?? 'image/png').slice(0, 40) } } : {}),
+      }))
       .filter((a) => a.name);
     // THE SCOPE CHIP (Aug 6): a scoped Home conversation converses IN the project's room scope —
     // full room grounding, the room's verbs — through the same one core. RLS scopes the read.

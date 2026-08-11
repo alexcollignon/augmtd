@@ -52,8 +52,20 @@ export async function uploadArtifact(
   artifactId: string,
   type: DeliverableType,
   content: ArtifactContent,
+  opts?: { theme?: import('@/lib/documents/theme').DocTheme | null },
 ): Promise<{ storagePath: string }> {
-  const buffer = await buildArtifactFile(type, content);
+  // THE BRANDED KIT (DH4): the theme rides EVERY artifact through this one door — both engines
+  // get letterhead for free. Hierarchy: an explicit per-request override (THE MOMENT THEME —
+  // "brand this with the attached logo") → the user's saved theme → the workspace theme →
+  // the house look. Fail-soft: a theme problem never blocks a deliverable.
+  let theme = opts?.theme ?? null;
+  if (opts?.theme === undefined) {
+    try {
+      const { getDocTheme } = await import('@/lib/documents/theme');
+      theme = await getDocTheme(admin, userId);
+    } catch { /* house look */ }
+  }
+  const buffer = await buildArtifactFile(type, content, { theme });
   const ext = getFileExt(type);
   const mime = getMimeType(type);
   const storagePath = `${userId}/${threadId}/${artifactId}.${ext}`;

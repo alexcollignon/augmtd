@@ -1027,7 +1027,7 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/converse/index.ts').includes('materialNames ? `${text}') &&
     src('lib/converse/index.ts').includes('...(history ?? []).slice(-8).map((t) => ({ role: t.role, content:') &&
     src('lib/converse/index.ts').includes('THE CONVERSATION THIS CAME FROM') &&
-    src('lib/converse/index.ts').includes('verdict.delegate.task, text, transcript, material)'));
+    src('lib/converse/index.ts').includes('verdict.delegate.task, text, transcript, material, momentTheme)'));
 
   check('CH2: THE HONESTY-FLOOR MISFIRE GATE — the registry pointer is a RECALL rescue: it fires only when the DENIAL SENTENCE itself names something the registry holds; a capability/format denial whose message merely contains project names never grows a "(a known body of work)" pointer; plural matches get plural grammar',
     src('lib/converse/index.ts').includes('THE MISFIRE GATE') &&
@@ -1198,6 +1198,32 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/home/delegate.ts').includes('TYPED_OUTPUT_RULE') &&
     src('lib/workflows/run-workflow.ts').includes('parseTypedDeliverable') &&
     src('lib/workflows/doc-content.ts').includes('content: ArtifactContent'));
+
+  check('DH4: THE BRANDED KIT + THE PPTXGENJS UNLOCK — ONE workspace document theme (logo from settings.branding · accent color · footer line; admin edits beside the entry branding; hex validated server-side) rides EVERY artifact through the ONE upload door (both engines get letterhead free; getDocTheme fail-soft — a theme problem never blocks a deliverable; no theme → the house look byte-identical): docx = logo in the header (true aspect from PNG IHDR, no image library) + footer line + accent title; pptx = accent bars + logo corner + footer + NATIVE CHARTS (bar/line/pie via the typed protocol, code-validated: matching lengths, finite numbers, ≤24 points — a malformed chart drops while the slide keeps its bullets); xlsx styling honestly deferred to the compiler (SheetJS community writes no cell styles). E2E 11/11 with zip/XML inspection incl. the no-theme-unchanged floor',
+    src('lib/documents/theme.ts').includes('export async function getDocTheme') &&
+    src('lib/documents/theme.ts').includes('export function pngDims') &&
+    src('lib/artifacts/builders.ts').includes('theme?.logo ? {') &&
+    src('lib/artifacts/builders.ts').includes('s.addChart(chartType') &&
+    src('lib/workflows/typed-output.ts').includes('chartOk') &&
+    src('lib/workflows/doc-content.ts').includes('getDocTheme(admin, userId)') &&
+    src('app/api/platform-admin/companies/[id]/route.ts').includes('accent_color') &&
+    src('components/platform-admin/workspace-detail.tsx').includes('footer_line') &&
+    // THE MOMENT THEME (owner correction — "not a set-in-stone ask; could be for something
+    // specific in that moment"): a branding word + an attached image builds the theme ON THE
+    // SPOT (palette EXTRACTED from the logo — nobody types hex; canvas, deterministic);
+    // "always/from now on" saves it per-user; "reset document branding" clears; hierarchy =
+    // request override → user saved → workspace → house. The coworker is told BRANDING IS
+    // HANDLED (found live: "no logo came through" turned a finished summary into an ask).
+    // LIVE E2E: "brand with the attached logo" → Sofia → real docx wearing the EXTRACTED
+    // accent (0E7490) with the logo embedded, verified in the stored artifact's XML.
+    src('lib/documents/theme.ts').includes('export async function extractPaletteAccent') &&
+    src('lib/documents/theme.ts').includes('export async function themeFromLogoBuffer') &&
+    src('lib/documents/theme.ts').includes('saveUserTheme') &&
+    src('lib/converse/index.ts').includes('THE MOMENT THEME') &&
+    src('lib/converse/index.ts').includes('momentTheme') &&
+    src('lib/home/delegate.ts').includes('BRANDING IS HANDLED') &&
+    src('lib/workflows/doc-content.ts').includes('opts?.theme ?? null') &&
+    src('app/api/home/extract-attach/route.ts').includes('dataB64'));
 
   // ── Report ──
   let pass = 0;

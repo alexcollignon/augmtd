@@ -45,12 +45,27 @@ export function parseTypedDeliverable(output: string): TypedDeliverable | null {
     const content: PptxContent = {
       title: String(raw.title ?? 'Presentation').slice(0, 120),
       ...(typeof raw.subtitle === 'string' ? { subtitle: raw.subtitle } : {}),
-      slides: slides.map((s: { title: string; layout?: unknown; bullets?: unknown; notes?: unknown }) => ({
-        title: String(s.title).slice(0, 160),
-        layout: s.layout === 'title' ? 'title' as const : 'content' as const,
-        ...(Array.isArray(s.bullets) ? { bullets: (s.bullets as unknown[]).map(String).slice(0, 12) } : {}),
-        ...(typeof s.notes === 'string' ? { notes: s.notes } : {}),
-      })),
+      slides: slides.map((s: { title: string; layout?: unknown; bullets?: unknown; notes?: unknown; chart?: unknown }) => {
+        // A chart is CODE-VALIDATED: matching label/value lengths, real numbers, sane size —
+        // a malformed chart drops (the slide keeps its bullets), never a broken deck.
+        const rc = s.chart as { type?: unknown; labels?: unknown; values?: unknown; title?: unknown } | undefined;
+        const chartOk = rc && ['bar', 'line', 'pie'].includes(String(rc.type))
+          && Array.isArray(rc.labels) && Array.isArray(rc.values)
+          && rc.labels.length > 0 && rc.labels.length === rc.values.length && rc.labels.length <= 24
+          && (rc.values as unknown[]).every((v) => typeof v === 'number' && Number.isFinite(v));
+        return {
+          title: String(s.title).slice(0, 160),
+          layout: s.layout === 'title' ? 'title' as const : 'content' as const,
+          ...(Array.isArray(s.bullets) ? { bullets: (s.bullets as unknown[]).map(String).slice(0, 12) } : {}),
+          ...(typeof s.notes === 'string' ? { notes: s.notes } : {}),
+          ...(chartOk ? { chart: {
+            type: rc!.type as 'bar' | 'line' | 'pie',
+            labels: (rc!.labels as unknown[]).map(String),
+            values: rc!.values as number[],
+            ...(typeof rc!.title === 'string' ? { title: rc!.title } : {}),
+          } } : {}),
+        };
+      }),
     };
     return { type: 'presentation', content, remainder };
   } catch { return null; }
