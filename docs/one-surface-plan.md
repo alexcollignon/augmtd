@@ -468,6 +468,38 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+AC. **THE DATA LANE HARDENED BY THE STC BENCHMARK (Aug 11 evening — the owner's second
+   Claude session added the recalibration dimension; 3/3 exact on the final loop).** The
+   multi-turn recalibration test ("we use these bands — adjust everything") found TWO
+   silent-wrongness classes inside the data-facts pass: (1) a generated script read 150
+   rows but banded 143 — wrong-but-plausible counts shipped → THE ROW-COUNT FLOOR
+   ("TOTAL ROWS: n", verified CODE-SIDE against the file's own line count); (2) the
+   user's own band definition ("0-39, 40-59") leaves GAPS for decimal scores — 7 rows
+   fell through boundaries the request itself implied → THE PARTITION FLOOR
+   ("CLASSIFIED: n" must equal total; gaps close half-open; the boundary rule is
+   DISCLOSED in a Note line — the same judgment-surfacing Claude did with the
+   80%-and-80% axis rule). Plus request coverage (counts asked → counts printed). A
+   pass that is still wrong after one repair returns NULL — wrong facts are worse than
+   none. STILL-OPEN test dimensions from the STC session (recorded, not built): dual-
+   logo co-branded covers (author + client), cover-page meta tables (tier-1 renderer has
+   no cover layout), and revision-in-place of a prior artifact (each turn currently
+   produces a new one).
+AB. **THE DOCUMENT HANDS — slice 5: THE DATA-BY-CODE LANE (Aug 11 late; gate DH5 —
+   131/131, build green; the 150-row credibility E2E passes end-to-end).** The EG Bank
+   benchmark's spine: every statistic in a deliverable is a COMPUTED fact. THE DATA-FACTS
+   PASS at the delegation door: tabular chat material → codegen (THE DATA PREVIEW: real
+   header+rows) → the sandbox (inline data → /job/inputs/data.txt) → COMPUTED FACTS ride
+   the material as AUTHORITATIVE (verbatim rule); one reasoned repair; honest null.
+   Deterministic and runtime-independent — REQUIRED, because the credibility test exposed
+   two truths: a small CSV produced model-arithmetic that merely LOOKED computed, and a
+   150-row CSV made the worker ask for data its own prompt contained. ⚠️ ARCHITECTURE
+   FINDING (recorded): the native executeAgentStep is a TOOLLESS single completion — the
+   AgentOS path holds tools, the fallback holds none; the data lane routes around it
+   deterministically; a real native tool loop is a DH6-adjacent item. Also: DATA
+   DISCIPLINE when facts are unavailable (computed-or-marked-unverified) + JUDGMENT
+   DISCLOSURE ("Decisions I made:") in every hand-back — the Claude-session craft made
+   law. E2E: 6 ground-truth means over 150 rows — the sandbox computed all exactly
+   (~340ms) and the delegated deliverable carries them verbatim.
 ZZ. **THE DOCUMENT HANDS — slice 4: THE BRANDED KIT + THE MOMENT THEME (Aug 11 night;
    gate DH4 — 130/130, build green; E2E 11/11 zip/XML + LIVE chain proven; owner
    corrected the frame mid-build: "general use case, not corporate-specific" and "not a

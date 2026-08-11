@@ -606,8 +606,22 @@ async function runCoworkerDelegation(
   client: SupabaseClient, userId: string, scope: ConverseScope, coworkerWant: string, task: string, userText: string,
   transcript = '', material = '',
   themeOverride: import('@/lib/documents/theme').DocTheme | null = null,
+  attachments: ConverseAttachment[] = [],
 ): Promise<ConverseTurn> {
   try {
+    // THE DATA-FACTS PASS (the data-by-code lane): tabular material gets its statistics computed
+    // IN THE SANDBOX before the coworker writes — the facts ride the material as the
+    // authoritative numbers. Deterministic; a compute failure just proceeds without facts.
+    try {
+      const tab = attachments.find((a) => a.text && (/\.(csv|xlsx)$/i.test(a.name) || /^[^,\n]{1,60}(,[^,\n]{1,60}){2,}\n/.test(a.text)));
+      if (tab?.text) {
+        const { computeDataFacts } = await import('@/lib/compute/data-facts');
+        const facts = await computeDataFacts(client, userId, { request: `${task} — ${userText.slice(0, 300)}`, csvText: tab.text, filename: tab.name });
+        if (facts) {
+          material += `\n\nCOMPUTED FACTS (sandboxed code ran over ${tab.name} — these numbers are AUTHORITATIVE; use them VERBATIM and never derive your own):\n${facts}`;
+        }
+      }
+    } catch { /* facts are an enhancement — the delegation proceeds */ }
     const { createClient: createAdmin } = await import('@supabase/supabase-js');
     const admin = createAdmin(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
     const { data: workers } = await client.from('custom_agents').select('id, name, worker_role').eq('user_id', userId).eq('is_worker', true);
@@ -993,7 +1007,7 @@ export async function converse(
 
   // 2 — DELEGATE: "have Max research X" → the real delegation engine (prepare + report back).
   if (verdict.delegate) {
-    return runCoworkerDelegation(client, userId, scope, verdict.delegate.coworker, verdict.delegate.task, text, transcript, material, momentTheme);
+    return runCoworkerDelegation(client, userId, scope, verdict.delegate.coworker, verdict.delegate.task, text, transcript, material, momentTheme, opts.attachments ?? []);
   }
 
   // 3 — QUESTION: grounded answer from the scope's memory — the whole brain (global), the deal's
@@ -1157,7 +1171,7 @@ export async function converse(
   if (loopTurn.exhausted) {
     opts.onProgress?.('This needs real production — handing it to the team…');
     const handed = await runCoworkerDelegation(client, userId, scope, 'sofia',
-      text.replace(/\s+/g, ' ').slice(0, 80), text, transcript, material, momentTheme);
+      text.replace(/\s+/g, ' ').slice(0, 80), text, transcript, material, momentTheme, opts.attachments ?? []);
     if (handed.delegated) return handed;
     return { say: "I couldn't finish this one inline, and the hand-off didn't go through either — try again in a moment, or name a coworker (\"Sofia: …\") to take it.", refs: [] };
   }
