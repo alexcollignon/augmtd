@@ -468,6 +468,22 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+UU. **THE AUTONOMY ARC — BUILT, THEN PARKED THE SAME DAY (Aug 11; gate AU1 now ENFORCES
+   the park — 126/126, build green). THE HUMAN-IN-THE-LOOP LAW (owner): "it's dangerous
+   territory to have stuff done without human approval — I don't want us to be that yet.
+   We should be human in the loop."** Every send in the product goes through a human
+   approval; autonomy is not a current feature. What was built and proven before the
+   call (recorded so the design survives): the outcome-log evidence read (≥5 unchanged
+   sends · ≥70% acceptance · 60d; autonomous sends excluded from their own evidence),
+   the once-only strategic ask with a sticking decline, Settings→Autonomy as a visible
+   revocable ledger, and the autonomous send behind five floors (grant · daily cap 3 ·
+   known-recipient · review-pass · commit door) with because-narration — decision layer
+   10/10 E2E on probe. WHAT REMAINS IN THE TREE: `lib/autonomy/{ledger,send}.ts` with ⚠️
+   PARKED headers, referenced by NOTHING (pass wiring, Home ask, Settings tab, API route
+   all removed); the outcome log keeps collecting as before (R1, collect-only). AU1
+   asserts the park structurally — re-activation is a deliberate owner decision, never a
+   refactor side-effect. If revisited someday, the likely first step is the ask/ledger
+   WITHOUT any send (insight before action).
 TT. **THE FRESH FLOOR (Aug 11, hardened twice same morning — owner: "clicking the chat
    opens the older one" / "placeholder doesn't update when clicking back in home"; F3
    re-pointed, 125/125, build green, both verified live with exact repros).** The landing
