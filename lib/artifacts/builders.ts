@@ -1,6 +1,7 @@
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
   LevelFormat, convertInchesToTwip,
+  Table, TableRow, TableCell, WidthType, BorderStyle, ShadingType,
 } from 'docx';
 import type { DeliverableType, DocContent, PptxContent, XlsxContent, ArtifactContent } from '@/lib/types/inbox';
 
@@ -9,18 +10,41 @@ function isBulletLine(line: string): boolean {
   return /^[-•*]\s/.test(line.trim());
 }
 
+// Numbered items ("1. " / "2) ") — rendered with a REAL ordered list, not fake bullets
+// (THE DOCUMENT HANDS slice 1, Aug 11 — the fill-in-a-form bar pilots measure against).
+function isNumberedLine(line: string): boolean {
+  return /^\d+[.)]\s/.test(line.trim());
+}
+function stripNumberPrefix(line: string): string {
+  return line.trim().replace(/^\d+[.)]\s+/, '');
+}
+// A markdown table block: consecutive |-delimited lines (with an optional |---| separator).
+function isTableLine(line: string): boolean {
+  const t = line.trim();
+  return t.startsWith('|') && t.endsWith('|') && t.length > 2;
+}
+function isTableSeparator(line: string): boolean {
+  return /^\|?[\s:|-]+\|?$/.test(line.trim()) && line.includes('-');
+}
+function parseTableCells(line: string): string[] {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+}
+
 function stripBulletPrefix(line: string): string {
   return line.trim().replace(/^[-•*]\s+/, '');
 }
 
 function markdownToRuns(text: string, size: number, color: string): TextRun[] {
   const runs: TextRun[] = [];
-  const re = /\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*/g;
+  // [CONFIRM: …] slots render DISTINCT (bold italic, amber) — a filled form must show at a
+  // glance which facts still need the human (the marked-slot-beats-dropped-question law).
+  const re = /\[CONFIRM:?[^\]]*\]|\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*/g;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) runs.push(new TextRun({ text: text.slice(last, m.index), size, font: 'Arial', color }));
-    if (m[1]) runs.push(new TextRun({ text: m[1], bold: true, italics: true, size, font: 'Arial', color }));
+    if (m[0].startsWith('[CONFIRM')) runs.push(new TextRun({ text: m[0], bold: true, italics: true, size, font: 'Arial', color: 'B45309' }));
+    else if (m[1]) runs.push(new TextRun({ text: m[1], bold: true, italics: true, size, font: 'Arial', color }));
     else if (m[2]) runs.push(new TextRun({ text: m[2], bold: true, size, font: 'Arial', color }));
     else if (m[3]) runs.push(new TextRun({ text: m[3], italics: true, size, font: 'Arial', color }));
     last = m.index + m[0].length;
@@ -29,9 +53,32 @@ function markdownToRuns(text: string, size: number, color: string): TextRun[] {
   return runs.length ? runs : [new TextRun({ text, size, font: 'Arial', color })];
 }
 
+// One markdown table block → a real docx Table (header row bold on a light fill; full width).
+function buildTable(lines: string[]): Table {
+  const rows = lines.filter((l) => !isTableSeparator(l)).map(parseTableCells);
+  const colCount = Math.max(...rows.map((r) => r.length), 1);
+  const border = { style: BorderStyle.SINGLE, size: 4, color: 'D1D5DB' };
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: rows.map((cells, ri) => new TableRow({
+      children: Array.from({ length: colCount }, (_, ci) => new TableCell({
+        borders: { top: border, bottom: border, left: border, right: border },
+        shading: ri === 0 ? { type: ShadingType.CLEAR, fill: 'F3F4F6' } : undefined,
+        margins: { top: 60, bottom: 60, left: 100, right: 100 },
+        children: [new Paragraph({
+          children: ri === 0
+            ? [new TextRun({ text: cells[ci] ?? '', bold: true, size: 22, font: 'Arial', color: '111827' })]
+            : markdownToRuns(cells[ci] ?? '', 22, '1F2937'),
+        })],
+      })),
+    })),
+  });
+}
+
 export function buildDocx(content: DocContent, options?: { pageSize?: 'letter' | 'a4' }): Promise<Buffer> {
   const isA4 = options?.pageSize === 'a4';
   const NUMBERING_REF = 'bullet-list';
+  const ORDERED_REF = 'ordered-list';
 
   const numberingConfig = {
     config: [{
@@ -46,10 +93,22 @@ export function buildDocx(content: DocContent, options?: { pageSize?: 'letter' |
           run: { font: 'Arial', size: 24 },
         },
       }],
+    }, {
+      reference: ORDERED_REF,
+      levels: [{
+        level: 0,
+        format: LevelFormat.DECIMAL,
+        text: '%1.',
+        alignment: AlignmentType.LEFT,
+        style: {
+          paragraph: { indent: { left: convertInchesToTwip(0.5), hanging: convertInchesToTwip(0.25) } },
+          run: { font: 'Arial', size: 24 },
+        },
+      }],
     }],
   };
 
-  const children: Paragraph[] = [];
+  const children: Array<Paragraph | Table> = [];
 
   // Title
   children.push(
@@ -83,9 +142,38 @@ export function buildDocx(content: DocContent, options?: { pageSize?: 'letter' |
       // Split on newlines in case AI packs multiple bullets into one paragraph
       const lines = para.split('\n').filter(Boolean);
 
-      for (const line of lines) {
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
         if (/^-{3,}$/.test(line.trim())) continue; // skip horizontal rules
-        if (isBulletLine(line)) {
+        // A markdown TABLE block (forms live in tables) — collect the run, emit a real Table.
+        if (isTableLine(line)) {
+          const block: string[] = [];
+          while (i < lines.length && isTableLine(lines[i])) { block.push(lines[i]); i++; }
+          i--;
+          if (block.filter((l) => !isTableSeparator(l)).length >= 1 && block.length >= 2) {
+            children.push(buildTable(block));
+            children.push(new Paragraph({ children: [], spacing: { after: 120 } }));
+            continue;
+          }
+        }
+        // H3 inside a section — a small bold heading (textToDocContent keeps ### lines inline).
+        const h3 = line.match(/^###\s+(.+)$/);
+        if (h3) {
+          children.push(new Paragraph({
+            children: [new TextRun({ text: h3[1].trim(), bold: true, size: 26, font: 'Arial', color: '111827' })],
+            spacing: { before: 200, after: 80 },
+          }));
+          continue;
+        }
+        if (isNumberedLine(line)) {
+          children.push(
+            new Paragraph({
+              numbering: { reference: ORDERED_REF, level: 0 },
+              children: markdownToRuns(stripNumberPrefix(line), 24, '1F2937'),
+              spacing: { after: 80 },
+            })
+          );
+        } else if (isBulletLine(line)) {
           children.push(
             new Paragraph({
               numbering: { reference: NUMBERING_REF, level: 0 },

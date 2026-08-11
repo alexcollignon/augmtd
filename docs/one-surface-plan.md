@@ -468,6 +468,18 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+VV. **THE DOCUMENT HANDS — slice 1: THE STRUCTURED RENDERER (the coworker capability arc
+   begins, Aug 11; gate DH1 — 127/127, build green; E2E 8/8 with XML inspection; demo
+   docx delivered to the owner).** The Claude bar René set ("fill in this document and
+   hand it back looking right") starts at the renderer: ONE shared builder serves every
+   document output (delegations · workflow runs · chat production), so one upgrade lifts
+   all. Markdown tables → REAL docx Tables (bold header on light fill, borders, full
+   width — forms live in tables); numbered lists → true ordered numbering; ### → small
+   bold headings; [CONFIRM: …] slots render bold-italic AMBER (a filled form shows at a
+   glance which facts still need the human — the marked-slot law made visible). NEXT
+   SLICES: docx-in→docx-out fidelity (fill the client's own file), xlsx generation,
+   pptx generation as chat/delegation outputs (builders already exist for both — the
+   wiring is the work).
 UU. **THE AUTONOMY ARC — BUILT, THEN PARKED THE SAME DAY (Aug 11; gate AU1 now ENFORCES
    the park — 126/126, build green). THE HUMAN-IN-THE-LOOP LAW (owner): "it's dangerous
    territory to have stuff done without human approval — I don't want us to be that yet.

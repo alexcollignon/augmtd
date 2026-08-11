@@ -1172,6 +1172,16 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     !fileExists('app/api/autonomy/route.ts') &&
     !fileExists('components/settings/autonomy-section.tsx'));
 
+  // ── DH · THE DOCUMENT HANDS (the coworker capability arc, Aug 11 — the Claude bar). ──
+  check('DH1: THE STRUCTURED DOCUMENT RENDERER — every document output (delegations, workflow runs, chat production — one shared builder, one upgrade lifts all) renders REAL structure: markdown tables → docx Tables (bold header on a light fill, bordered, full width), numbered lists → true ordered numbering (never fake bullets), ### → small bold headings, and [CONFIRM: …] slots styled DISTINCT (bold italic amber — a filled form shows at a glance which facts still need the human; the marked-slot law made visible). E2E 8/8: built a form-shaped docx, unzipped, asserted <w:tbl> + decimal numbering + amber CONFIRM runs + inline bold in the XML',
+    src('lib/artifacts/builders.ts').includes('function buildTable') &&
+    src('lib/artifacts/builders.ts').includes('isNumberedLine') &&
+    src('lib/artifacts/builders.ts').includes("ORDERED_REF = 'ordered-list'") &&
+    src('lib/artifacts/builders.ts').includes('LevelFormat.DECIMAL') &&
+    src('lib/artifacts/builders.ts').includes("startsWith('[CONFIRM')") &&
+    src('lib/artifacts/builders.ts').includes('B45309') &&
+    src('lib/artifacts/builders.ts').includes('^###\\s+'));
+
   // ── Report ──
   let pass = 0;
   for (const [n, ok, d] of out) {
