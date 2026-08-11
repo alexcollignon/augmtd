@@ -41,7 +41,7 @@ type RecentGroup = {
   failures: Array<{ at: string; error: string }>; held: number;
 };
 type Worker = { id: string; name: string; worker_role: string };
-type LedgerPayload = { ledger: LedgerRow[]; awaiting: Awaiting[]; recent: RecentGroup[]; workers: Worker[]; team?: Array<{ id: string; name: string; scheduleLabel: string | null; ownerName: string }> };
+type LedgerPayload = { ledger: LedgerRow[]; awaiting: Awaiting[]; recent: RecentGroup[]; workers: Worker[]; team?: Array<{ id: string; name: string; scheduleLabel: string | null; ownerName: string }>; emailFeature?: boolean };
 
 type DraftStep = { type: string; label?: string; tool?: string };
 type Draft = {
@@ -269,7 +269,12 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
   const rows = data?.ledger ?? [];
   const awaiting = data?.awaiting ?? [];
   const recent = data?.recent ?? [];
-  const gallery: Template[] = TEMPLATES.filter((t) => cat === 'all' || t.category === cat);
+  // THE SOVEREIGN GALLERY (Aug 11): mailbox-READING templates make no sense on the corporate
+  // tier (email feature off) — hidden with their category chip. Email DELIVERY of a briefing
+  // stays (Resend to stated addresses — the sovereign boundary is auth connections only).
+  const emailOn = data?.emailFeature !== false;
+  const visibleTemplates = TEMPLATES.filter((t) => emailOn || t.category !== 'email');
+  const gallery: Template[] = visibleTemplates.filter((t) => cat === 'all' || t.category === cat);
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-8">
@@ -526,7 +531,7 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
       <div className="mt-9">
         <h2 className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">Ideas to start from</h2>
         <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-          {CATEGORIES.map((c) => (
+          {CATEGORIES.filter((c) => emailOn || c.id !== 'email').map((c) => (
             <button key={c.id} onClick={() => setCat(c.id)}
               className={`rounded-full px-3 py-1 text-[12px] transition-colors ${cat === c.id ? 'bg-indigo-100 text-indigo-700' : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'}`}>
               {c.label}

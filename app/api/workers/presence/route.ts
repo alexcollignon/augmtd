@@ -11,10 +11,26 @@ export async function GET() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { data: workers } = await supabase.from('custom_agents')
+  let { data: workers } = await supabase.from('custom_agents')
     .select('id, name, description, worker_role')
     .eq('user_id', user.id).eq('is_worker', true).eq('is_active', true)
     .order('created_at', { ascending: true });
+  // THE SEEDING SELF-HEAL (Aug 11, found live: an iScore user with ZERO coworkers — seeding was
+  // coupled to the email bootstrap, which a sovereign user never triggers; the /workers page
+  // that used to backstop it is retired). Any authed visit with an empty roster seeds the team
+  // idempotently — the facepile can never again show a dead "no team" to a fresh member.
+  if (!workers?.length) {
+    try {
+      const { createClient: createAdmin } = await import('@supabase/supabase-js');
+      const admin = createAdmin(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+      const { ensureWorkers } = await import('@/lib/workers/seed');
+      await ensureWorkers(admin, user.id);
+      ({ data: workers } = await supabase.from('custom_agents')
+        .select('id, name, description, worker_role')
+        .eq('user_id', user.id).eq('is_worker', true).eq('is_active', true)
+        .order('created_at', { ascending: true }));
+    } catch { /* seeding is best-effort here — the join door and the Home CTA also seed */ }
+  }
   const roster = (workers ?? []) as Array<{ id: string; name: string; description: string | null; worker_role: string | null }>;
   if (!roster.length) return NextResponse.json({ team: [] });
 
