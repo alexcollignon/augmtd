@@ -63,7 +63,8 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
   const [codeErr, setCodeErr] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const entryUrl = `${typeof window !== 'undefined' ? window.location.origin : 'https://app.augmtd.ai'}/${c.slug}`;
+  // ONE generic corporate door — the workspace code identifies the company (old /<slug> links redirect).
+  const entryUrl = `${typeof window !== 'undefined' ? window.location.origin : 'https://app.augmtd.ai'}/enterprise`;
   const sovereign = c.features.email === false;
 
   useEffect(() => {
