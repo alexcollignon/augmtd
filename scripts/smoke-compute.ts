@@ -1080,17 +1080,18 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/converse/index.ts').includes('toolDefs = CHIEF_TOOL_DEFS.filter'));
 
   check('SV2: THE BRANDED ENTRY + THE SAFE-DATA MARK — app.augmtd.ai/<slug> is a client\'s own front door (root catch-all; route precedence keeps real routes ahead; unknown slug → /login): co-branded header (client logo from companies.settings.branding × ours), email+password ONLY (no OAuth anywhere on the page), the three steps visible (email → password & workspace code → set up your agents); an authed non-member skips to the code step; a member bounces /home; signup email-confirm returns to the SAME landing (auth/callback ?next=, relative paths only). The sidebar carries the co-brand logo and the sovereign footer mark ("Private environment", email-feature-off workspaces). Verified live: unauthenticated 200 with name+steps+mark, unknown slug 307 → /login, authed non-member renders the code step (screenshot)',
+    // RE-POINTED TWICE (Aug 10 late: the onboarding SPLIT layout; Aug 11: THE ENTERPRISE DOOR —
+    // per-slug branded landings retired for ONE generic /enterprise entry; the workspace code
+    // identifies the company, the sidebar co-brand carries the client's mark once inside).
+    // Legacy slug links keep working: a real slug redirects to /enterprise, junk → /login.
     src('app/[slug]/page.tsx').includes("ilike('slug', slug)") &&
-    src('app/[slug]/page.tsx').includes("mode = 'code'") &&
-    // RE-POINTED (Aug 10 late — owner: "use the normal onboarding, the screen split looks
-    // cooler"): the entry is the standard onboarding's SPLIT layout — white form panel left
-    // (co-brand, big step headlines, step dots), the SAME animated AI-work preview right
-    // (RightPanel IMPORTED from the onboarding, never copied). Same three-step walk.
-    src('components/auth/corporate-entry.tsx').includes("import { RightPanel } from '@/app/onboarding/onboarding-client'") &&
-    src('components/auth/corporate-entry.tsx').includes('lg:w-1/2') &&
+    src('app/[slug]/page.tsx').includes("redirect(company ? '/enterprise' : '/login')") &&
+    src('components/auth/enterprise-entry.tsx').includes("mode === 'code' ? 'code' : 'email'") &&
+    src('components/auth/enterprise-entry.tsx').includes("import { RightPanel } from '@/app/onboarding/onboarding-client'") &&
+    src('components/auth/enterprise-entry.tsx').includes('lg:w-1/2') &&
     src('app/onboarding/onboarding-client.tsx').includes('export function RightPanel') &&
-    !src('components/auth/corporate-entry.tsx').includes('signInWithOAuth') &&
-    src('components/auth/corporate-entry.tsx').includes('auth/callback?next=/') &&
+    !src('components/auth/enterprise-entry.tsx').includes('signInWithOAuth') &&
+    src('components/auth/enterprise-entry.tsx').includes('auth/callback?next=/') &&
     src('app/auth/callback/route.ts').includes("next.startsWith('/') && !next.startsWith('//')") &&
     src('components/one/one-sidebar.tsx').includes('brandLogo') &&
     src('components/one/one-sidebar.tsx').includes('Private environment') &&
@@ -1245,6 +1246,26 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/home/delegate.ts').includes('THE COMPUTED FACTS BLOCK IS AUTHORITATIVE') &&
     src('lib/home/delegate.ts').includes('unverified — needs a computed check') &&
     src('lib/home/delegate.ts').includes('DISCLOSE YOUR DECISIONS'));
+
+  check('DH6: THE DOCUMENT COMPILER (code-per-document, in the locked room) — the ceiling tier above the template renderers: a chart-naming request with tabular material gets its deliverable FILE built by GENERATED PYTHON in the sandbox (python-docx/pptx + matplotlib Agg charts embedded + our augmtd_docs helpers), behind THE RENDER-VERIFICATION GATE (LibreOffice-headless → PDF page count printed as "RENDERED PAGES: n"; an unrendered document never ships), TS-side structural validation (zip/PDF magic — a corrupt file never ships even if the script lied), the AGGREGATES-FROM-ROWS rule (found live: an "overall average" shipped as the unweighted mean of group means — 50.95 vs the true 50.53), and ONE reasoned repair carrying the ACTUAL stderr (a truncation SyntaxError repaired itself live) → honest null → the template tier is the floor, so the user always gets a document. Wired at the delegation door: converse passes {csvText, computedFacts, request}; runDelegation compiles only when the user\'s own words name a chart/graph/plot/visual (deck words → pptx). E2E proved: 150-row CSV → facts → branded charted docx, 2 rendered pages, chart+logo media embedded, computed numbers verbatim (50.53 weighted / 47.53 North)',
+    src('lib/compute/document-compiler.ts').includes('export async function compileDocument') &&
+    src('lib/compute/document-compiler.ts').includes('RENDERED PAGES') &&
+    src('lib/compute/document-compiler.ts').includes('render_verify') &&
+    src('lib/compute/document-compiler.ts').includes('0x504b') &&           // zip magic — structural validity
+    src('lib/compute/document-compiler.ts').includes('never derived from') && // aggregates-from-rows
+    src('lib/compute/data-facts.ts').includes('AGGREGATES COME FROM ROWS') &&
+    src('lib/tools/compute.ts').includes('export async function runComputeForOutputs') &&
+    src('infra/compute/helpers/augmtd_docs.py').includes('def render_verify') &&
+    src('infra/compute/helpers/augmtd_docs.py').includes('def clone_slide') &&
+    src('infra/compute/helpers/augmtd_docs.py').includes('UserInstallation=file:///tmp/lo_profile') && // the read-only-fs lesson (rc=77)
+    src('infra/compute/Dockerfile.runner').includes('libreoffice-writer') &&
+    src('infra/compute/Dockerfile.runner').includes('python-pptx') &&
+    src('infra/compute/Dockerfile.runner').includes('augmtd_docs.py') &&
+    src('lib/home/delegate.ts').includes('THE COMPILER TIER (DH6)') &&
+    src('lib/home/delegate.ts').includes('compileDocument') &&
+    // fail-soft: the template tier remains the floor — compile failure must fall through
+    src('lib/home/delegate.ts').includes('template tier below is the floor') &&
+    src('lib/converse/index.ts').includes('compile: { csvText: tab.text'));
 
   // ── Report ──
   let pass = 0;

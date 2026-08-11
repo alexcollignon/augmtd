@@ -612,13 +612,14 @@ async function runCoworkerDelegation(
     // THE DATA-FACTS PASS (the data-by-code lane): tabular material gets its statistics computed
     // IN THE SANDBOX before the coworker writes — the facts ride the material as the
     // authoritative numbers. Deterministic; a compute failure just proceeds without facts.
+    const tab = attachments.find((a) => a.text && (/\.(csv|xlsx)$/i.test(a.name) || /^[^,\n]{1,60}(,[^,\n]{1,60}){2,}\n/.test(a.text)));
+    let dataFacts: string | null = null;
     try {
-      const tab = attachments.find((a) => a.text && (/\.(csv|xlsx)$/i.test(a.name) || /^[^,\n]{1,60}(,[^,\n]{1,60}){2,}\n/.test(a.text)));
       if (tab?.text) {
         const { computeDataFacts } = await import('@/lib/compute/data-facts');
-        const facts = await computeDataFacts(client, userId, { request: `${task} — ${userText.slice(0, 300)}`, csvText: tab.text, filename: tab.name });
-        if (facts) {
-          material += `\n\nCOMPUTED FACTS (sandboxed code ran over ${tab.name} — these numbers are AUTHORITATIVE; use them VERBATIM and never derive your own):\n${facts}`;
+        dataFacts = await computeDataFacts(client, userId, { request: `${task} — ${userText.slice(0, 300)}`, csvText: tab.text, filename: tab.name });
+        if (dataFacts) {
+          material += `\n\nCOMPUTED FACTS (sandboxed code ran over ${tab.name} — these numbers are AUTHORITATIVE; use them VERBATIM and never derive your own):\n${dataFacts}`;
         }
       }
     } catch { /* facts are an enhancement — the delegation proceeds */ }
@@ -648,6 +649,9 @@ async function runCoworkerDelegation(
         prompt, itemLabel: task.slice(0, 80),
         firstName: (prof?.full_name as string | undefined)?.split(' ')[0] ?? null,
         ...(themeOverride ? { themeOverride } : {}),
+        // THE COMPILER TIER (DH6): a chart-naming request with tabular material compiles its
+        // deliverable file in the sandbox (render-verified); the template tier stays the floor.
+        ...(tab?.text ? { compile: { csvText: tab.text, computedFacts: dataFacts, request: `${task} — ${userText.slice(0, 500)}` } } : {}),
         ...(scope.kind === 'item' ? { pool: { kind: scope.itemKind, entityId: scope.itemId }, provenance: { item: task.slice(0, 80), steered: true } } : {}),
       });
       // FIX 3 — a needs_input outcome is an ASK, not work in flight: say so plainly (the

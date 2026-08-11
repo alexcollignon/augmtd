@@ -71,6 +71,37 @@ async function signedUrlFor(adminClient: SupabaseClient, storagePath: string): P
   return null;
 }
 
+// ── THE RAW JOB RUNNER (DH6, the document compiler) — same locked room, but the caller gets
+// the OUTPUT BYTES back (to materialize thread artifacts) instead of the KB-persist flow.
+// Self-contained on purpose: the classic executeRunCompute path stays byte-identical. ──
+export async function runComputeForOutputs(
+  config: { script: string; data?: string; extraFiles?: Array<{ name: string; content_b64: string }>; timeout_s?: number },
+): Promise<{ ok: boolean; stdout: string; stderr: string; outputs: Array<{ name: string; bytes: Buffer; mime: string }> } | null> {
+  const serviceUrl = process.env.COMPUTE_SERVICE_URL;
+  const secret = process.env.COMPUTE_SECRET;
+  if (!serviceUrl || !secret || !config.script.trim()) return null;
+  const files: Array<{ name: string; content_b64: string }> = [];
+  if (config.data?.trim()) files.push({ name: 'data.txt', content_b64: Buffer.from(config.data).toString('base64') });
+  for (const f of config.extraFiles ?? []) files.push(f);
+  const timeoutS = Math.min(Math.max(Math.round(config.timeout_s ?? 90), 5), 120);
+  try {
+    const res = await fetch(`${serviceUrl.replace(/\/$/, '')}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
+      body: JSON.stringify({ job_id: crypto.randomUUID(), script: config.script, files, timeout_s: timeoutS }),
+      signal: AbortSignal.timeout((timeoutS + 30) * 1000),
+    });
+    if (!res.ok) return null;
+    const out = await res.json() as { ok?: boolean; stdout?: string; stderr?: string; outputs?: Array<{ name: string; b64: string; mime: string }> };
+    return {
+      ok: !!out.ok,
+      stdout: (out.stdout ?? '').trim(),
+      stderr: (out.stderr ?? '').trim(),
+      outputs: (out.outputs ?? []).map((o) => ({ name: o.name, bytes: Buffer.from(o.b64, 'base64'), mime: o.mime || 'application/octet-stream' })),
+    };
+  } catch { return null; }
+}
+
 export async function executeRunCompute(
   config: ComputeConfig, userId: string, supabase: SupabaseClient,
 ): Promise<string> {
