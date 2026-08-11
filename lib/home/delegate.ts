@@ -124,6 +124,9 @@ export async function runDelegation(args: {
   prompt: string;
   itemLabel: string;             // short label for the thread title + report-back task name
   firstName?: string | null;
+  /** THE MOMENT THEME: a per-request document theme ("brand this with the attached logo") —
+   *  overrides the stored/workspace theme for THIS delegation's artifact only. */
+  themeOverride?: import('@/lib/documents/theme').DocTheme | null;
   // ── task-workflows S2: the item this delegation belongs to, so the coworker READS the per-item
   // deliverable pool (build on prior steps — engine-gap #1: was `previousOutputs: []`) and WRITES its
   // output back into the pool for downstream steps. Optional/back-compatible: absent → no pool wiring
@@ -133,7 +136,13 @@ export async function runDelegation(args: {
    *  the PreparedLead / entity ledger can show "from: <item> · <deal>" (trust is the product). */
   provenance?: Record<string, unknown>;
 }): Promise<DelegateResult> {
-  const { supabase, userId, worker, prompt, itemLabel, firstName, pool: poolScope } = args;
+  const { supabase, userId, worker, prompt: rawPrompt, itemLabel, firstName, pool: poolScope, themeOverride } = args;
+  // THE MOMENT THEME rides at MATERIALIZATION — the coworker must produce CONTENT and never
+  // treat the logo as a missing input (found live: "no logo came through" turned a finished
+  // summary into an ask, and the branded artifact never materialized).
+  const prompt = themeOverride
+    ? `${rawPrompt}\n- BRANDING IS HANDLED: the user's logo and brand colors are applied automatically when the document file is generated. Produce the CONTENT only — never ask for the logo, never mention branding as missing or pending.`
+    : rawPrompt;
 
   // ── Read the per-item deliverable pool so the coworker builds on what prior steps produced (S2 — the
   // engine-gap #1 fix). The pool is rendered into a SINGLE previousOutputs entry, which both the native
@@ -279,7 +288,7 @@ export async function runDelegation(args: {
       const artifactType = typed?.type ?? 'document';
       const doc = typed ? typed.content : textToDocContent(title, output);
       const artifactId = randomUUID();
-      const { storagePath } = await uploadArtifact(supabase, userId, threadId, artifactId, artifactType, doc);
+      const { storagePath } = await uploadArtifact(supabase, userId, threadId, artifactId, artifactType, doc, themeOverride !== undefined && themeOverride !== null ? { theme: themeOverride } : undefined);
       const row = {
         id: artifactId, title, type: artifactType,
         generated_at: new Date().toISOString(), storage_path: storagePath, content: doc,

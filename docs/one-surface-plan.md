@@ -468,6 +468,24 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+ZZ. **THE DOCUMENT HANDS — slice 4: THE BRANDED KIT + THE MOMENT THEME (Aug 11 night;
+   gate DH4 — 130/130, build green; E2E 11/11 zip/XML + LIVE chain proven; owner
+   corrected the frame mid-build: "general use case, not corporate-specific" and "not a
+   set-in-stone ask — could be for that moment").** Branding is a CHAT ACT, three ways:
+   (1) THE MOMENT THEME — "brand this with the attached logo and matching colors" + an
+   image attachment builds the theme ON THE SPOT: accent EXTRACTED from the logo's own
+   pixels (canvas, deterministic — nobody types hex), applied to THAT request's
+   deliverable only. LIVE-proven: converse → Sofia → the stored artifact's XML wears the
+   extracted accent with the logo embedded. The coworker is told BRANDING IS HANDLED
+   (found live: "no logo came through" turned a finished summary into an ask). (2)
+   DURABLE BY WORD — "always/from now on" saves it as the user's theme; "reset document
+   branding" clears it. (3) WORKSPACE FALLBACK — admin theme (logo · accent · footer
+   line on the workspace detail page) for the corporate tier. Hierarchy: request
+   override → user saved → workspace → house (no theme = byte-identical output).
+   Renderers: docx logo header/footer/accent title; pptx accent + logo corner + footer +
+   NATIVE CHARTS (typed protocol, code-validated; malformed chart drops, slide keeps
+   bullets). Images ride the attach doors as BYTES (≤1MB). Xlsx styling waits for the
+   compiler. NEXT: DH5 template-by-example → streaming remainder → DH6 the compiler.
 YY. **THE DOCUMENT HANDS — THE FULL ARC SPEC (owner-shaped, Aug 11 evening).** The bar:
    "as good as Claude on documents/charts/decks, plus memory and branding Claude can't
    do." The utterances that define it: "use the template from document X (Dropbox /
