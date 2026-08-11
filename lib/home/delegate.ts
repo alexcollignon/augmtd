@@ -140,9 +140,31 @@ export async function runDelegation(args: {
   // THE MOMENT THEME rides at MATERIALIZATION — the coworker must produce CONTENT and never
   // treat the logo as a missing input (found live: "no logo came through" turned a finished
   // summary into an ask, and the branded artifact never materialized).
-  const prompt = themeOverride
+  let prompt = themeOverride
     ? `${rawPrompt}\n- BRANDING IS HANDLED: the user's logo and brand colors are applied automatically when the document file is generated. Produce the CONTENT only — never ask for the logo, never mention branding as missing or pending.`
     : rawPrompt;
+  // THE DATA-BY-CODE LANE (document hands, Aug 11 — the EG Bank benchmark: Claude ran pandas,
+  // we must never eyeball): when the material carries tabular data, every statistic in the
+  // deliverable comes from run_compute output — computed facts, not read-off guesses. The
+  // arithmetic floor's law applied at the production door. Detection is cheap and structural.
+  const hasComputedFacts = prompt.includes('COMPUTED FACTS (sandboxed');
+  const looksTabular = /\[ATTACHED FILE:[^\]]*\.(csv|xlsx)\b/i.test(prompt)
+    || /\.(csv|xlsx)\b/i.test(prompt) && /,.*,.*,/.test(prompt)
+    || /\n[^,\n]{1,60},[^,\n]{1,60},[^,\n]{1,60},/.test(prompt);
+  if (hasComputedFacts) {
+    prompt += `\n- THE COMPUTED FACTS BLOCK IS AUTHORITATIVE: every statistic in your deliverable comes from ` +
+      `it VERBATIM. Never recompute, never derive your own numbers from the raw data, never round differently.`;
+  } else if (looksTabular) {
+    prompt += `\n- DATA DISCIPLINE: the material contains tabular data but no pre-computed facts. If you hold a ` +
+      `run_compute tool, use it for EVERY count/mean/percentage (pass the CSV via "data"; copy printed results ` +
+      `verbatim). If you cannot compute in code, keep numeric claims to what is directly readable, and mark ` +
+      `derived statistics as "(unverified — needs a computed check)" — an honest gap beats a guessed number.`;
+  }
+  // JUDGMENT DISCLOSURE (the Claude-session craft, made a rule): real scope/method choices are
+  // surfaced for the user to revisit — silently-made decisions are how trust erodes.
+  prompt += `\n- DISCLOSE YOUR DECISIONS: if you made judgment calls the user might reasonably revisit ` +
+    `(scope, method, grouping boundaries, exclusions), end the hand-back with a short "Decisions I made:" ` +
+    `list. Only real decisions — never pad this.`;
 
   // ── Read the per-item deliverable pool so the coworker builds on what prior steps produced (S2 — the
   // engine-gap #1 fix). The pool is rendered into a SINGLE previousOutputs entry, which both the native

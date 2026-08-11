@@ -1027,7 +1027,7 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/converse/index.ts').includes('materialNames ? `${text}') &&
     src('lib/converse/index.ts').includes('...(history ?? []).slice(-8).map((t) => ({ role: t.role, content:') &&
     src('lib/converse/index.ts').includes('THE CONVERSATION THIS CAME FROM') &&
-    src('lib/converse/index.ts').includes('verdict.delegate.task, text, transcript, material, momentTheme)'));
+    src('lib/converse/index.ts').includes('verdict.delegate.task, text, transcript, material, momentTheme, opts.attachments ?? [])'));
 
   check('CH2: THE HONESTY-FLOOR MISFIRE GATE — the registry pointer is a RECALL rescue: it fires only when the DENIAL SENTENCE itself names something the registry holds; a capability/format denial whose message merely contains project names never grows a "(a known body of work)" pointer; plural matches get plural grammar',
     src('lib/converse/index.ts').includes('THE MISFIRE GATE') &&
@@ -1224,6 +1224,27 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/home/delegate.ts').includes('BRANDING IS HANDLED') &&
     src('lib/workflows/doc-content.ts').includes('opts?.theme ?? null') &&
     src('app/api/home/extract-attach/route.ts').includes('dataB64'));
+
+  check('DH5: THE DATA-BY-CODE LANE (the EG Bank benchmark — every statistic in a deliverable is a COMPUTED fact) — THE DATA-FACTS PASS at the delegation door: tabular chat material (csv/xlsx name or CSV-shaped text) gets its statistics computed IN THE SANDBOX before the coworker writes (codegen with THE DATA PREVIEW — real header+rows, no guessed columns; ONE reasoned repair carrying the actual error; honest null on failure); the facts ride the material as AUTHORITATIVE (verbatim rule) — deterministic and runtime-independent, because the native executeAgentStep is a TOOLLESS single completion (found live: a 150-row CSV made a worker whose prompt CONTAINED the data ask for the data, and a small CSV produced model-arithmetic that merely LOOKED computed). No facts → DATA DISCIPLINE (compute if the tool exists, else mark derived stats unverified). + JUDGMENT DISCLOSURE ("Decisions I made:") in every hand-back. E2E: 150 rows, 6 ground-truth means — the facts pass computed ALL exactly (sandboxed, ~340ms) and the delegated deliverable carries them verbatim',
+    src('lib/compute/data-facts.ts').includes('export async function computeDataFacts') &&
+    src('lib/compute/data-facts.ts').includes('THE DATA PREVIEW') &&
+    src('lib/compute/data-facts.ts').includes('repairNote') &&
+    // HARDENED same evening (the STC recalibration test found two classes): THE ROW-COUNT
+    // FLOOR ("TOTAL ROWS: n" verified code-side — a script that read 150 rows but banded 143
+    // shipped wrong-but-plausible counts) + THE PARTITION FLOOR ("CLASSIFIED: n" must equal
+    // total — the user's own band definition "0-39, 40-59" leaves gaps for decimal scores;
+    // gaps close half-open + a disclosed boundary Note) + request coverage (counts asked →
+    // counts printed). Still-wrong after one repair → NULL: wrong facts are worse than none.
+    src('lib/compute/data-facts.ts').includes('THE ROW-COUNT FLOOR') &&
+    src('lib/compute/data-facts.ts').includes('THE PARTITION FLOOR') &&
+    src('lib/compute/data-facts.ts').includes('CLASSIFIED:') &&
+    src('lib/compute/data-facts.ts').includes('boundary rule') &&
+    src('lib/compute/data-facts.ts').includes('EVERY quantity the request explicitly names') &&
+    src('lib/converse/index.ts').includes('computeDataFacts') &&
+    src('lib/converse/index.ts').includes('COMPUTED FACTS (sandboxed code ran over') &&
+    src('lib/home/delegate.ts').includes('THE COMPUTED FACTS BLOCK IS AUTHORITATIVE') &&
+    src('lib/home/delegate.ts').includes('unverified — needs a computed check') &&
+    src('lib/home/delegate.ts').includes('DISCLOSE YOUR DECISIONS'));
 
   // ── Report ──
   let pass = 0;
