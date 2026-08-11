@@ -1144,6 +1144,15 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('app/api/workflows/ledger/route.ts').includes('emailFeature') &&
     src('lib/workflows/generate-config.ts').includes("off.push('get_emails')"));
 
+  check('DM1: THE USER-VOICE LAW ON WORKER THREADS + THE HONEST LANDING + DM HISTORY (Aug 11, owner: "recents show by system use, not user conversation" / "why is this default?" / "shouldn\'t there be a history button?") — (1) worker threads list in recents ONLY with a real user message (E2E: empty DM excluded, typed-in DM included; delegations already funnel to the title-excluded standing thread); (2) a silent LS rehydration never steals the page: no composer focus on restore (focus triggers the on-focus reopen — the takeover chain), and a greeting-only DM does not restore at all (stale key self-clears; the deck is the default landing) — verified live: emptyDmTakeover GONE, key cleared, dashboard landed; (3) THE DM HISTORY: /api/workers/dm-sessions (user-voice filtered, first-ask titles) + the header History popover beside New session — verified live: 3 sessions listed, click loads the thread',
+    src('app/api/rooms/recent/route.ts').includes('THE USER-VOICE LAW EXTENDED') &&
+    src('app/api/rooms/recent/route.ts').includes('spoke.has(t.id)') &&
+    src('components/home/home-ask.tsx').includes('opts.restore') &&
+    src('components/home/home-ask.tsx').includes("loadWorkerRoom(key, { restore: true })") &&
+    src('components/home/home-ask.tsx').includes('if (!opts.restore) setTimeout(() => focusComposer()') &&
+    src('app/api/workers/dm-sessions/route.ts').includes('firstAsk') &&
+    src('components/home/home-ask.tsx').includes('toggleDmHistory'));
+
   // ── Report ──
   let pass = 0;
   for (const [n, ok, d] of out) {

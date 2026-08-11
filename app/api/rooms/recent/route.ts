@@ -165,7 +165,19 @@ export async function GET(request: NextRequest) {
           // files (the "user" turns are engine-authored prompts) — never conversations.
           .not('title', 'like', 'Handed to %')
           .order('updated_at', { ascending: false }).limit(all ? 20 : 6);
-        workerConvos = ((wts ?? []) as Array<{ id: string; title: string | null; agent_id: string; updated_at: string | null }>)
+        // THE USER-VOICE LAW EXTENDED (Aug 11, owner: "recents show by system use, not user
+        // conversation"): room recents already required a user turn; worker threads listed by
+        // updated_at alone — an opened-but-never-typed-in DM (and any system-bumped thread)
+        // paraded as a conversation. Only threads holding a REAL user message list here.
+        const wtRows = (wts ?? []) as Array<{ id: string; title: string | null; agent_id: string; updated_at: string | null }>;
+        let spoke = new Set<string>();
+        if (wtRows.length) {
+          const { data: um } = await supabase.from('work_messages').select('thread_id')
+            .in('thread_id', wtRows.map((t) => t.id)).eq('role', 'user').limit(500);
+          spoke = new Set(((um ?? []) as Array<{ thread_id: string }>).map((m) => m.thread_id));
+        }
+        workerConvos = wtRows
+          .filter((t) => spoke.has(t.id))
           .map((t) => ({
             key: `worker:${t.id}:${t.agent_id}`, kind: 'coworker' as const,
             label: String(t.title || `Chat with ${nameOf.get(t.agent_id) ?? 'a coworker'}`).slice(0, 60),
