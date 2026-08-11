@@ -5,6 +5,42 @@ export type AttachmentMimeType =
   | 'text/plain'
   | string;
 
+// Deterministic HTML→markdown for mammoth's docx output (h1-h6 · p · ul/ol/li · table ·
+// strong/em · br). No dependency, no AI — structure either maps or degrades to plain text.
+export function htmlToMarkdown(html: string): string {
+  let h = html.replace(/\r/g, '');
+  const inner = (s: string) => s
+    .replace(/<strong>([\s\S]*?)<\/strong>/gi, '**$1**')
+    .replace(/<b>([\s\S]*?)<\/b>/gi, '**$1**')
+    .replace(/<em>([\s\S]*?)<\/em>/gi, '*$1*')
+    .replace(/<i>([\s\S]*?)<\/i>/gi, '*$1*')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .trim();
+  // Tables → markdown tables (header from the first row; forms live in tables).
+  h = h.replace(/<table[\s\S]*?<\/table>/gi, (tbl) => {
+    const rows = [...tbl.matchAll(/<tr[\s\S]*?<\/tr>/gi)].map((r) =>
+      [...r[0].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) => inner(c[1]).replace(/\n+/g, ' ')));
+    if (!rows.length) return '';
+    const md = [`| ${rows[0].join(' | ')} |`, `|${rows[0].map(() => '---').join('|')}|`,
+      ...rows.slice(1).map((r) => `| ${r.join(' | ')} |`)];
+    return `\n${md.join('\n')}\n`;
+  });
+  // Lists → markdown items (ordered numbering preserved).
+  h = h.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (_, body: string) => {
+    let n = 0;
+    return '\n' + body.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_m: string, li: string) => `${++n}. ${inner(li)}\n`) + '\n';
+  });
+  h = h.replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (_, body: string) =>
+    '\n' + body.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_m: string, li: string) => `- ${inner(li)}\n`) + '\n');
+  // Headings + paragraphs.
+  h = h.replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, lvl: string, body: string) =>
+    `\n${'#'.repeat(Math.min(Number(lvl), 6))} ${inner(body)}\n`);
+  h = h.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, (_, body: string) => `\n${inner(body)}\n`);
+  return inner(h).replace(/\n{3,}/g, '\n\n');
+}
+
 export async function extractTextFromAttachment(
   buffer: Buffer,
   mimeType: AttachmentMimeType,
@@ -22,7 +58,16 @@ export async function extractTextFromAttachment(
       mimeType ===
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     ) {
+      // THE FIDELITY CHAIN (document hands slice 2, Aug 11): raw-text extraction flattened
+      // headings, tables, and numbering — so a "fill this in" delegation never SAW the form's
+      // structure and couldn't mirror it. Convert to HTML and down to markdown so structure
+      // survives INTO the material; the structured renderer (slice 1) carries it back OUT.
       const mammoth = await import('mammoth');
+      try {
+        const html = await mammoth.convertToHtml({ buffer });
+        const md = htmlToMarkdown(html.value || '');
+        if (md.trim()) return md.trim();
+      } catch { /* fall through to raw text — structure is an enhancement, text is the floor */ }
       const result = await mammoth.extractRawText({ buffer });
       return result.value || null;
     }
