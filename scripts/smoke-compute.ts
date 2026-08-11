@@ -445,7 +445,11 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     !src('components/home/home-ask.tsx').includes('onMouseLeave={() => setHovered(false)}') &&
     src('components/home/home-ask.tsx').includes('max-w-3xl mx-auto') &&
     src('components/home/home-ask.tsx').includes('max-h-[calc(100vh-250px)]') &&
-    src('components/home/home-ask.tsx').includes('const onHomeReset = () => setOpen(false);') &&
+    // RE-POINTED (Aug 11, THE FRESH FLOOR): Home is still the close, AND it resets to the
+    // empty chief chat (DM mode/turns/scope/stored key clear — the placeholder can't stay
+    // "Message Clara…" on the deck; conversations stay durable behind explicit doors).
+    src('components/home/home-ask.tsx').includes('const onHomeReset = () => {') &&
+    src('components/home/home-ask.tsx').includes('workerRoomRef.current = null;\n      try { localStorage.removeItem(CHAT_KEY_LS); }') &&
     !src('components/home/home-ask.tsx').includes('> Close') &&
     src('components/home/home-ask.tsx').includes("CustomEvent('aug:chat-active'") &&
     src('components/home/home-view.tsx').includes("view === 'dashboard' && !chatActive") &&
@@ -1147,9 +1151,13 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
   check('DM1: THE USER-VOICE LAW ON WORKER THREADS + THE HONEST LANDING + DM HISTORY (Aug 11, owner: "recents show by system use, not user conversation" / "why is this default?" / "shouldn\'t there be a history button?") — (1) worker threads list in recents ONLY with a real user message (E2E: empty DM excluded, typed-in DM included; delegations already funnel to the title-excluded standing thread); (2) a silent LS rehydration never steals the page: no composer focus on restore (focus triggers the on-focus reopen — the takeover chain), and a greeting-only DM does not restore at all (stale key self-clears; the deck is the default landing) — verified live: emptyDmTakeover GONE, key cleared, dashboard landed; (3) THE DM HISTORY: /api/workers/dm-sessions (user-voice filtered, first-ask titles) + the header History popover beside New session — verified live: 3 sessions listed, click loads the thread',
     src('app/api/rooms/recent/route.ts').includes('THE USER-VOICE LAW EXTENDED') &&
     src('app/api/rooms/recent/route.ts').includes('spoke.has(t.id)') &&
-    src('components/home/home-ask.tsx').includes('opts.restore') &&
-    src('components/home/home-ask.tsx').includes("loadWorkerRoom(key, { restore: true })") &&
-    src('components/home/home-ask.tsx').includes('if (!opts.restore) setTimeout(() => focusComposer()') &&
+    // HARDENED same day (owner: "clicking the chat opens the older one"): THE FRESH FLOOR —
+    // NO implicit rehydration on landing at all; the stored key restores ONLY behind the
+    // explicit cross-page intent flag; otherwise it CLEARS (a fresh room, never a silent
+    // append to an unseen old one). The deck + an empty chief chat are the default.
+    src('components/home/home-ask.tsx').includes('THE FRESH FLOOR') &&
+    src('components/home/home-ask.tsx').includes('localStorage.removeItem(CHAT_KEY_LS)') &&
+    src('components/home/home-ask.tsx').includes("sessionStorage.getItem('aug-open-chat-intent')") &&
     src('app/api/workers/dm-sessions/route.ts').includes('firstAsk') &&
     src('components/home/home-ask.tsx').includes('toggleDmHistory'));
 

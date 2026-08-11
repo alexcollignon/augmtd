@@ -468,6 +468,17 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+TT. **THE FRESH FLOOR (Aug 11, hardened twice same morning — owner: "clicking the chat
+   opens the older one" / "placeholder doesn't update when clicking back in home"; F3
+   re-pointed, 125/125, build green, both verified live with exact repros).** The landing
+   law made absolute: NO implicit conversation rehydration at all — the deck + an EMPTY
+   chief chat are the default; the stored key restores ONLY behind the explicit
+   cross-page intent flag, otherwise it CLEARS (preventing the subtler bug: a "fresh"
+   chat silently appending to an unseen old room server-side). Sidebar Home resets
+   COMPLETELY (DM mode, turns, scope, stored key — the deck composer can never say
+   "Message Clara…"). Past conversations live durable behind explicit doors only:
+   sidebar recents, All conversations, the DM History popover, ?chat= links, the
+   facepile. The interim restore-quietly design (SS item 2) is superseded by this.
 SS. **THE USER-VOICE LAW ON WORKER THREADS + THE HONEST LANDING + DM HISTORY (Aug 11; gate
    DM1 — 125/125, build green, all three verified live).** Owner's three finds, one seam:
    (1) worker threads listed in recents by updated_at alone — the Aug-8 "a conversation

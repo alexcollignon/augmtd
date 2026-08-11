@@ -166,17 +166,21 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             setTimeout(() => focusComposer(), 120);
           }
         } catch { /* bad blob */ }
-      } else {
-        const key = localStorage.getItem(CHAT_KEY_LS);
-        if (key?.startsWith('chat:')) loadRoom(key); // loadRoom restores the scope binding itself
-        else if (key?.startsWith('worker:')) void loadWorkerRoom(key, { restore: true });
-      }
-      // A cross-page "open this conversation" intent (sidebar/All-conversations from another
-      // route): the panel must actually OPEN — loading turns into a closed card reads as a
-      // dead click (found live, Aug 6).
-      if (sessionStorage.getItem('aug-open-chat-intent')) {
+      } else if (sessionStorage.getItem('aug-open-chat-intent')) {
+        // A cross-page "open this conversation" intent (sidebar recents / All conversations /
+        // facepile from another route) — the ONLY landing path that restores the stored key:
+        // an explicit click, the panel opens with its conversation.
         sessionStorage.removeItem('aug-open-chat-intent');
-        setOpen(true);
+        const key = localStorage.getItem(CHAT_KEY_LS);
+        if (key?.startsWith('chat:')) { loadRoom(key); setOpen(true); }
+        else if (key?.startsWith('worker:')) { void loadWorkerRoom(key); setOpen(true); }
+      } else {
+        // THE FRESH FLOOR (Aug 11, owner — "clicking the chat opens the older one; it should
+        // just be the empty home chat"): NO implicit rehydration on landing. The deck is the
+        // default; the composer is a fresh chief chat; past conversations open ONLY through
+        // explicit doors (sidebar, All conversations, History, ?chat=). The stale key clears
+        // so the next persisted turn mints a fresh room, never appends to an unseen old one.
+        try { localStorage.removeItem(CHAT_KEY_LS); } catch { /* no LS */ }
       }
     } catch { /* no LS */ }
     const onNew = () => { setTurns([]); setTemp(false); setScope(null); setScopeHint(null); workerRoomRef.current = null; setOpen(true); setTimeout(() => focusComposer(), 60); };
@@ -189,8 +193,16 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     // (an 8s /api/workers/mentions was the "nothing happened" lag, found live Aug 6).
     void getRoster();
     // Sidebar "Home" IS the close (the idiom: you leave a chat by going home — no in-thread
-    // Close button); the conversation stays and re-opens on composer focus.
-    const onHomeReset = () => setOpen(false);
+    // Close button). THE FRESH FLOOR applies here too (Aug 11, owner: "placeholder doesn't
+    // update when clicking back in home"): leaving via Home resets to the EMPTY chief chat —
+    // DM mode, turns, scope, and the stored key all clear; the conversation stays durable
+    // and reachable through its explicit doors (sidebar, History, All conversations).
+    const onHomeReset = () => {
+      setOpen(false);
+      setTurns([]); setTemp(false); setScope(null); setScopeHint(null); setDmHistory(null);
+      workerRoomRef.current = null;
+      try { localStorage.removeItem(CHAT_KEY_LS); } catch { /* no LS */ }
+    };
     // THE FACEPILE'S CHAT VERB (coherence slice #4): open the coworker's DM conversation
     // (find-or-create the "Chat with" thread) — same door as addressing them by name.
     const onDm = (e: Event) => {
@@ -244,20 +256,14 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // WORKER MODE: the next message continues in that SAME thread (the DM pointer re-aims), and
   // chief persistence is structurally off while the mode holds. ──
   const workerRoomRef = useRef<{ id: string; name: string } | null>(null);
-  // `restore` = a silent LS rehydration on landing (Aug 11, owner: "why is this default?"):
-  // it must never steal the page — no composer focus (focus triggers the on-focus reopen),
-  // and an EMPTY DM (greeting-only) doesn't restore at all: the deck is the default landing;
-  // a conversation reclaims the page only when it holds the user's own turns.
-  const loadWorkerRoom = async (key: string, opts: { restore?: boolean } = {}) => {
+  // Always an EXPLICIT open (THE FRESH FLOOR, Aug 11): landings never call this implicitly —
+  // past conversations open only through deliberate doors (sidebar, History, ?chat=, facepile).
+  const loadWorkerRoom = async (key: string) => {
     const [, tid, agentId] = key.split(':');
     if (!tid || !agentId) return;
     try {
       const d = await fetch(`/api/work/threads/${tid}/messages`).then((r) => (r.ok ? r.json() : null));
       if (!Array.isArray(d?.messages)) return;
-      if (opts.restore && !(d.messages as Array<{ role: string }>).some((m) => m.role === 'user')) {
-        try { localStorage.removeItem(CHAT_KEY_LS); } catch { /* no LS */ }
-        return;
-      }
       const roster = await getRoster();
       const name = roster.find((x) => x.id === agentId)?.name
         ?? String((d.thread as { title?: string } | null)?.title ?? 'Coworker').replace(/^Chat with /, '');
@@ -286,7 +292,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         loaded.push({ role: 'assistant', text: `This is your direct line to ${name.split(' ')[0]} — ask for work, hand something off, or set up a standing task.` });
       }
       setTurns(loaded);
-      if (!opts.restore) setTimeout(() => focusComposer(), 120);
+      setTimeout(() => focusComposer(), 120);
       workerRoomRef.current = { id: agentId, name };
       setScope(null); setScopeHint(null); // a coworker DM is addressed, never project-scoped from here
       try { localStorage.setItem(dmKey(agentId), tid); localStorage.setItem(CHAT_KEY_LS, key); } catch { /* no LS */ }
