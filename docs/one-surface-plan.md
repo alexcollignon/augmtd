@@ -468,6 +468,17 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+WW. **THE DOCUMENT HANDS — slice 2: THE FIDELITY CHAIN (Aug 11; gate DH2 — 128/128, build
+   green; round-trip E2E 7/7 on a REAL docx).** The other half of the Claude bar: the
+   docx EXTRACTOR was flattening headings/tables/numbering to raw text, so a "fill this
+   in" delegation never saw the form's structure and couldn't mirror it. Now: mammoth
+   convertToHtml → deterministic htmlToMarkdown (h1-h6 · tables → | tables | · real ol
+   numbering · ul · strong/em; zero dependency, zero AI; raw text stays the fallback
+   floor) — structure survives INTO the material; the delegation prompt mandates
+   MIRRORING it; the structured renderer (DH1) carries it back OUT. The whole chain
+   proven: our renderer's docx → extractor → headings, table, numbering, [CONFIRM] all
+   survive as markdown. Every attach door benefits at once (chat, worker DM, extract-
+   attach — one extractor). NEXT: xlsx + pptx generation as chat/delegation outputs.
 VV. **THE DOCUMENT HANDS — slice 1: THE STRUCTURED RENDERER (the coworker capability arc
    begins, Aug 11; gate DH1 — 127/127, build green; E2E 8/8 with XML inspection; demo
    docx delivered to the owner).** The Claude bar René set ("fill in this document and

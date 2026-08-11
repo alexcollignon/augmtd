@@ -85,6 +85,10 @@ export function buildDelegationPrompt(args: {
     `- INSIDE a deliverable (a filled-in form, questionnaire, or document), keep every original ` +
       `section/question and where only the user can supply or verify a fact, write ` +
       `"[CONFIRM: <what's needed>]" in its place — a marked slot beats a dropped question.`,
+    `- MIRROR THE DOCUMENT'S OWN STRUCTURE: when the material carries headings, tables, or ` +
+      `numbered lists (markdown), your deliverable reproduces that structure in markdown — ` +
+      `same headings, tables as | tables |, numbering as numbering. The document you hand ` +
+      `back should look like the one you were handed, filled in.`,
   ].join('\n');
 }
 

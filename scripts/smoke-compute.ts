@@ -1182,6 +1182,13 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/artifacts/builders.ts').includes('B45309') &&
     src('lib/artifacts/builders.ts').includes('^###\\s+'));
 
+  check('DH2: THE FIDELITY CHAIN (docx in → docx out) — raw-text extraction flattened headings/tables/numbering, so a "fill this in" delegation never SAW the form\'s structure: the docx extractor now converts via mammoth HTML → deterministic htmlToMarkdown (h1-h6 · tables → | tables | · ol with real numbering · ul · strong/em; no dependency, no AI; raw-text stays the fallback floor); the delegation prompt mandates MIRRORING the material\'s structure; the structured renderer (DH1) carries it back out. Round-trip E2E 7/7: a REAL docx built by our renderer → extracted → headings, the table, the numbered list, and the [CONFIRM] slot all survive as markdown',
+    src('lib/attachments/text-extractor.ts').includes('export function htmlToMarkdown') &&
+    src('lib/attachments/text-extractor.ts').includes('convertToHtml({ buffer })') &&
+    src('lib/attachments/text-extractor.ts').includes('extractRawText') &&
+    src('lib/attachments/text-extractor.ts').includes('THE FIDELITY CHAIN') &&
+    src('lib/home/delegate.ts').includes("MIRROR THE DOCUMENT'S OWN STRUCTURE"));
+
   // ── Report ──
   let pass = 0;
   for (const [n, ok, d] of out) {
