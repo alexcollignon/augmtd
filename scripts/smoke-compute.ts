@@ -1135,6 +1135,15 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     !src('app/platform-admin/platform-admin-client.tsx').includes('MeetingAssistant') &&
     src('app/meetings/[id]/meeting-detail-client.tsx').includes('UI RETIRED'));
 
+  check('SV6: THE TEAM ARRIVES WITH THE MEMBERSHIP (found live: an iScore joiner had ZERO coworkers — seeding was coupled to the email bootstrap a sovereign user never triggers, and the retired /workers page had been the backstop) — (1) /api/company/join seeds the team in after() (joining IS "set up your agents"); (2) the presence route SELF-HEALS an empty roster on any authed visit (idempotent ensureWorkers; the facepile can never show a dead no-team again); (3) THE SOVEREIGN GALLERY: mailbox-READING workflow templates + their category chip hide when the email feature is off (email DELIVERY via Resend stays — the boundary is auth connections only); generate-config already excludes mailbox tools by feature. Live repair: the real iScore user seeded (Clara, Sofia, Luca, Max)',
+    src('app/api/company/join/route.ts').includes('ensureWorkers') &&
+    src('app/api/company/join/route.ts').includes('after(async () =>') &&
+    src('app/api/workers/presence/route.ts').includes('THE SEEDING SELF-HEAL') &&
+    src('components/workflows/workflows-ledger.tsx').includes("emailOn || t.category !== 'email'") &&
+    src('components/workflows/workflows-ledger.tsx').includes("emailOn || c.id !== 'email'") &&
+    src('app/api/workflows/ledger/route.ts').includes('emailFeature') &&
+    src('lib/workflows/generate-config.ts').includes("off.push('get_emails')"));
+
   // ── Report ──
   let pass = 0;
   for (const [n, ok, d] of out) {

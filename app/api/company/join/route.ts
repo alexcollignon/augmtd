@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logAudit, AUDIT_ACTIONS } from '@/lib/audit/log';
 
@@ -88,6 +89,16 @@ export async function POST(request: NextRequest) {
     targetId: user.id,
     workspaceId: company.id,
     metadata: { workspaceName: company.name, workspaceType: company.type },
+  });
+
+  // THE TEAM ARRIVES WITH THE MEMBERSHIP (Aug 11, found live: a sovereign joiner had zero
+  // coworkers — seeding was coupled to the email bootstrap they never trigger). Joining IS
+  // "set up your agents": seed idempotently, off the response path.
+  after(async () => {
+    try {
+      const { ensureWorkers } = await import('@/lib/workers/seed');
+      await ensureWorkers(adminClient, user.id);
+    } catch (e) { console.error('[company/join] worker seeding failed:', e); }
   });
 
   return NextResponse.json({ company });

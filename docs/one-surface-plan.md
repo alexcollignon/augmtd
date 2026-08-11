@@ -468,6 +468,17 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+RR. **THE TEAM ARRIVES WITH THE MEMBERSHIP + THE SOVEREIGN GALLERY (Aug 11 morning; gate
+   SV6 — 124/124, build green; live repair applied).** Found live day 1: the first real
+   iScore user had ZERO coworkers — worker seeding was coupled to the EMAIL bootstrap (a
+   sovereign user never connects a mailbox) and the retired /workers page had been the
+   silent backstop. Fixed as the class: (1) /api/company/join seeds the team in after()
+   — joining IS "set up your agents"; (2) the presence route self-heals an empty roster
+   on any authed visit (idempotent; the facepile can never again show a dead no-team);
+   (3) the workflow template gallery hides mailbox-READING templates + the Email chip on
+   email-off workspaces (delivery via Resend stays; generate-config already excluded
+   mailbox tools by feature). The real user was seeded immediately (Clara/Sofia/Luca/
+   Max) — prod-fixed ahead of the deploy.
 QQ. **THE BRANDED ENTRY GOES SPLIT-SCREEN (Aug 10 last — owner: "use the normal
    onboarding, the screen split looks cooler"; SV2 re-pointed, 123/123, build green,
    screenshot-verified).** The corporate door now wears the standard onboarding's split:

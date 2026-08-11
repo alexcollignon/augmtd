@@ -168,5 +168,14 @@ export async function GET() {
     }
   } catch { /* the team section is an enhancement */ }
 
-  return NextResponse.json({ ledger, awaiting, recent, workers, team });
+  // THE SOVEREIGN GALLERY (Aug 11, owner: mailbox-reading templates make no sense on the
+  // corporate tier): the client hides email-sourced templates when the feature is off.
+  let emailFeature = true;
+  try {
+    const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
+    const feats = await getWorkspaceFeatures(user.id, supabase);
+    emailFeature = feats?.email !== false;
+  } catch { /* default: show */ }
+
+  return NextResponse.json({ ledger, awaiting, recent, workers, team, emailFeature });
 }
