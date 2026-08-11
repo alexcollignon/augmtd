@@ -1189,6 +1189,16 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/attachments/text-extractor.ts').includes('THE FIDELITY CHAIN') &&
     src('lib/home/delegate.ts').includes("MIRROR THE DOCUMENT'S OWN STRUCTURE"));
 
+  check('DH3: TYPED DELIVERABLES (xlsx + pptx) — a coworker whose work is genuinely a SPREADSHEET or SLIDE DECK says so structurally (ONE fenced protocol: ```spreadsheet/```slides carrying XlsxContent/PptxContent JSON), parsed by ONE code-validating parser both production engines share (delegations + workflow runs — lib/workflows/typed-output.ts): bad shape/malformed JSON/empty sheets → null → the docx fallback (a broken fence never breaks the deliverable); typed outputs skip the length floor (a small sheet is still a sheet); the thread message shows the HAND-BACK NOTE, never the JSON fence; the prompt rule is conservative ("never force tabular shape onto prose"). E2E 8/8: parse → build → read back real xlsx cells + real pptx slide XML; all three validation floors hold',
+    src('lib/workflows/typed-output.ts').includes('export function parseTypedDeliverable') &&
+    src('lib/workflows/typed-output.ts').includes('TYPED_OUTPUT_RULE') &&
+    src('lib/workflows/typed-output.ts').includes("slice(0, 31)") &&
+    src('lib/home/delegate.ts').includes('parseTypedDeliverable') &&
+    src('lib/home/delegate.ts').includes('typed || output.length >= 600') &&
+    src('lib/home/delegate.ts').includes('TYPED_OUTPUT_RULE') &&
+    src('lib/workflows/run-workflow.ts').includes('parseTypedDeliverable') &&
+    src('lib/workflows/doc-content.ts').includes('content: ArtifactContent'));
+
   // ── Report ──
   let pass = 0;
   for (const [n, ok, d] of out) {

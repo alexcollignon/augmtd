@@ -5,7 +5,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { buildArtifactFile, getFileExt, getMimeType } from '@/lib/artifacts/builders';
-import type { DocContent, DocSection, DeliverableType } from '@/lib/types/inbox';
+import type { DocContent, DocSection, DeliverableType, ArtifactContent } from '@/lib/types/inbox';
 
 export function textToDocContent(title: string, body: string): DocContent {
   const sections: DocSection[] = [];
@@ -51,7 +51,7 @@ export async function uploadArtifact(
   threadId: string,
   artifactId: string,
   type: DeliverableType,
-  content: DocContent,
+  content: ArtifactContent,
 ): Promise<{ storagePath: string }> {
   const buffer = await buildArtifactFile(type, content);
   const ext = getFileExt(type);
