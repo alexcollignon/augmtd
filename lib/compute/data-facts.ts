@@ -42,8 +42,11 @@ export async function computeDataFacts(
           `'Note: boundary rule — <the rule you applied>'; also print "CLASSIFIED: <n>" (must equal TOTAL ROWS). ` +
           `Then compute the aggregates: EVERY quantity the request explicitly names must be printed (counts ` +
           `asked → counts printed, means asked → means printed) — plus whatever else it implies; print each ` +
-          `result as a clearly labeled line (e.g. "Operations mean: 49.6" / "Novice count: 55"). Standard ` +
-          `library only. No file writes. Return ONLY JSON: {"script": "<python>"}`,
+          `result as a clearly labeled line (e.g. "Operations mean: 49.6" / "Novice count: 55"). ` +
+          `AGGREGATES COME FROM ROWS: any overall/total/grand statistic is computed over the RAW rows — ` +
+          `never derived from group aggregates (an unweighted mean of group means is WRONG when groups ` +
+          `differ in size). If the request implies both group stats and an overall, print the overall too. ` +
+          `Standard library only. No file writes. Return ONLY JSON: {"script": "<python>"}`,
       });
       return res.json?.script?.trim() || null;
     };

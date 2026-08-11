@@ -1,7 +1,18 @@
 # The RUNNER image — the locked room a compute job executes in. No network at runtime
 # (--network none is applied by the service), so everything a script may need is baked in.
 # Data-work stdlib: spreadsheets, PDFs, docs, CSVs, dates, math.
+# THE DOCUMENT COMPILER (DH6, Aug 11): + decks (python-pptx), charts (matplotlib), OCR
+# (tesseract), and LibreOffice-headless — the RENDER-VERIFICATION GATE (convert to PDF inside
+# the locked room; page-count and non-blank checks) plus PDF export of any document.
 FROM python:3.12-slim
+
+# LibreOffice (writer+impress+calc, no GUI) + tesseract + fonts. --no-install-recommends keeps
+# it lean; fonts-dejavu-core gives a sane default face for renders.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libreoffice-writer libreoffice-impress libreoffice-calc \
+    tesseract-ocr tesseract-ocr-eng \
+    fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir \
     pandas==2.2.* \
@@ -10,8 +21,19 @@ RUN pip install --no-cache-dir \
     xlsxwriter==3.2.* \
     pypdf==5.* \
     python-docx==1.1.* \
+    python-pptx==1.0.* \
+    matplotlib==3.9.* \
+    pytesseract==0.3.* \
+    Pillow==11.* \
     chardet==5.* \
     python-dateutil==2.9.*
+
+# OUR DETERMINISTIC HELPERS (importable as `augmtd_docs`): the fragile primitives written ONCE —
+# slide cloning with relationship fixups, render verification — so generated code calls solid
+# building blocks instead of reinventing them per document.
+COPY helpers/augmtd_docs.py /opt/helpers/augmtd_docs.py
+ENV PYTHONPATH=/opt/helpers
+ENV MPLCONFIGDIR=/tmp/mpl
 
 # Non-root: the job owns nothing but /job/out (mounted rw) and /tmp (tmpfs).
 RUN useradd -m -u 10001 jobrunner

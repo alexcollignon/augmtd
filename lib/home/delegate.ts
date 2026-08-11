@@ -127,6 +127,12 @@ export async function runDelegation(args: {
   /** THE MOMENT THEME: a per-request document theme ("brand this with the attached logo") —
    *  overrides the stored/workspace theme for THIS delegation's artifact only. */
   themeOverride?: import('@/lib/documents/theme').DocTheme | null;
+  /** THE COMPILER TIER (DH6): when the request names charts/graphs and tabular material rode
+   *  along, the deliverable FILE is built by generated code in the sandbox (matplotlib charts
+   *  embedded, render-verified) instead of the template renderers. `request` = the user's own
+   *  words (the compile task); facts ride as the authoritative numbers. Fail-soft: a compile
+   *  failure falls back to the template tier — the user always gets a document. */
+  compile?: { csvText?: string | null; computedFacts?: string | null; request?: string | null };
   // ── task-workflows S2: the item this delegation belongs to, so the coworker READS the per-item
   // deliverable pool (build on prior steps — engine-gap #1: was `previousOutputs: []`) and WRITES its
   // output back into the pool for downstream steps. Optional/back-compatible: absent → no pool wiring
@@ -307,10 +313,38 @@ export async function runDelegation(args: {
       const { textToDocContent, uploadArtifact } = await import('@/lib/workflows/doc-content');
       const { randomUUID } = await import('crypto');
       const title = (typed?.content.title || itemLabel).slice(0, 120) || 'Delegated work';
-      const artifactType = typed?.type ?? 'document';
+      let artifactType: import('@/lib/types/inbox').DeliverableType = typed?.type ?? 'document';
       const doc = typed ? typed.content : textToDocContent(title, output);
       const artifactId = randomUUID();
-      const { storagePath } = await uploadArtifact(supabase, userId, threadId, artifactId, artifactType, doc, themeOverride !== undefined && themeOverride !== null ? { theme: themeOverride } : undefined);
+      // ── THE COMPILER TIER (DH6) — charts inside the document, built by code, render-verified.
+      // Triggered only when the user's own request names a visual AND tabular data rode along;
+      // any failure inside falls through to the template tier below (fail-soft by construction).
+      let storagePath: string | null = null;
+      const compileReq = args.compile?.request ?? '';
+      if (args.compile?.csvText && /\b(chart|graph|plot|visuali[sz]|diagram)\w*/i.test(compileReq)) {
+        try {
+          const ext = /\b(deck|slides?|presentation|pptx)\b/i.test(compileReq) ? 'pptx' as const : 'docx' as const;
+          let theme = themeOverride ?? null;
+          if (themeOverride === undefined) {
+            theme = await (await import('@/lib/documents/theme')).getDocTheme(supabase, userId).catch(() => null);
+          }
+          const { compileDocument } = await import('@/lib/compute/document-compiler');
+          const compiled = await compileDocument(supabase, userId, {
+            task: compileReq.slice(0, 800), ext,
+            csvText: args.compile.csvText, theme, computedFacts: args.compile.computedFacts ?? null,
+          });
+          if (compiled) {
+            artifactType = ext === 'pptx' ? 'presentation' : 'document';
+            const path = `${userId}/${threadId}/${artifactId}.${ext}`;
+            const { error } = await supabase.storage.from('work-artifacts')
+              .upload(path, compiled.bytes, { contentType: compiled.mime, upsert: true });
+            if (!error) storagePath = path; // the viewer shows the text hand-back; download serves the compiled file
+          }
+        } catch { /* the template tier below is the floor */ }
+      }
+      if (!storagePath) {
+        ({ storagePath } = await uploadArtifact(supabase, userId, threadId, artifactId, artifactType, doc, themeOverride !== undefined && themeOverride !== null ? { theme: themeOverride } : undefined));
+      }
       const row = {
         id: artifactId, title, type: artifactType,
         generated_at: new Date().toISOString(), storage_path: storagePath, content: doc,

@@ -468,6 +468,33 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+AD. **THE DOCUMENT HANDS — slice 6: THE DOCUMENT COMPILER (Aug 11 night; gate DH6 —
+   132/132; two live E2Es pass: the standalone proving run and the wired delegation
+   door).** Code-per-document, the ceiling tier above the template renderers: a chart-
+   naming request with tabular material gets its deliverable FILE built by GENERATED
+   PYTHON in the locked room. The runner image grew document hands (python-pptx,
+   matplotlib, LibreOffice writer/impress/calc, tesseract, and OUR `augmtd_docs` helpers
+   — clone_slide with relationship fixups, render_verify, ocr_image — the fragile
+   primitives written ONCE so generated code calls solid blocks). Three structural
+   gates in the compile path: THE RENDER-VERIFICATION GATE (the script must
+   LibreOffice-render its own output to PDF and print "RENDERED PAGES: n" — an
+   unrendered document never ships; the read-only-fs lesson: soffice needs
+   `-env:UserInstallation=file:///tmp/lo_profile` + HOME=/tmp, rc=77 otherwise),
+   TS-SIDE STRUCTURAL VALIDATION (zip/PDF magic — a corrupt file never ships even if
+   the script lied), and THE AGGREGATES-FROM-ROWS RULE (found live: an "overall
+   average" shipped as the unweighted mean of group means — 50.95 vs the true 50.53;
+   both codegen contracts now forbid deriving aggregates from aggregates). ONE
+   reasoned repair carrying the ACTUAL stderr (a maxTokens truncation SyntaxError and
+   an IndentationError both self-healed live) → honest null → the template tier is
+   the floor: the user ALWAYS gets a document, sometimes a plainer one. Wired at the
+   delegation door: converse passes {csvText, computedFacts, request}; runDelegation
+   compiles only when the user's own words name a chart/graph/plot/visual (deck words
+   → pptx); the compiled bytes land at the SAME artifact storage path so the
+   viewer/download machinery just works. Proof: 150-row CSV → facts → branded charted
+   docx (2 rendered pages, chart+logo media embedded, 50.53/47.53 verbatim); the
+   delegation run stored a 74KB docx with a 41KB chart PNG on the thread. STILL OPEN
+   (DH6+): multi-deliverable asks, revision-in-place, dual-logo covers, template-by-
+   example (DH5b), the native tool loop.
 AC. **THE DATA LANE HARDENED BY THE STC BENCHMARK (Aug 11 evening — the owner's second
    Claude session added the recalibration dimension; 3/3 exact on the final loop).** The
    multi-turn recalibration test ("we use these bands — adjust everything") found TWO
