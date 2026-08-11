@@ -468,6 +468,19 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+SS. **THE USER-VOICE LAW ON WORKER THREADS + THE HONEST LANDING + DM HISTORY (Aug 11; gate
+   DM1 — 125/125, build green, all three verified live).** Owner's three finds, one seam:
+   (1) worker threads listed in recents by updated_at alone — the Aug-8 "a conversation
+   requires the user's voice" law now extends to them (a real user message required; an
+   opened-never-typed DM or system-bumped thread can't parade as a conversation; E2E on
+   probe fixtures). (2) THE HONEST LANDING: the LS rehydration chain (loadWorkerRoom →
+   focusComposer → onFocusCapture → setOpen) made the last-open DM steal the page, and
+   the narrator greeting made an EMPTY DM count as conversation — restore now never
+   focuses, and a greeting-only DM doesn't restore (stale key self-clears); the deck is
+   the default landing; a conversation reclaims the page only with the user's own turns.
+   (3) THE DM HISTORY: /api/workers/dm-sessions (user-voice filtered, first-ask titles —
+   the chat rooms' titling law) + a History popover in the DM header beside New session;
+   click loads the session in place.
 RR. **THE TEAM ARRIVES WITH THE MEMBERSHIP + THE SOVEREIGN GALLERY (Aug 11 morning; gate
    SV6 — 124/124, build green; live repair applied).** Found live day 1: the first real
    iScore user had ZERO coworkers — worker seeding was coupled to the EMAIL bootstrap (a

@@ -169,7 +169,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       } else {
         const key = localStorage.getItem(CHAT_KEY_LS);
         if (key?.startsWith('chat:')) loadRoom(key); // loadRoom restores the scope binding itself
-        else if (key?.startsWith('worker:')) void loadWorkerRoom(key);
+        else if (key?.startsWith('worker:')) void loadWorkerRoom(key, { restore: true });
       }
       // A cross-page "open this conversation" intent (sidebar/All-conversations from another
       // route): the panel must actually OPEN — loading turns into a closed card reads as a
@@ -244,12 +244,20 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // WORKER MODE: the next message continues in that SAME thread (the DM pointer re-aims), and
   // chief persistence is structurally off while the mode holds. ──
   const workerRoomRef = useRef<{ id: string; name: string } | null>(null);
-  const loadWorkerRoom = async (key: string) => {
+  // `restore` = a silent LS rehydration on landing (Aug 11, owner: "why is this default?"):
+  // it must never steal the page — no composer focus (focus triggers the on-focus reopen),
+  // and an EMPTY DM (greeting-only) doesn't restore at all: the deck is the default landing;
+  // a conversation reclaims the page only when it holds the user's own turns.
+  const loadWorkerRoom = async (key: string, opts: { restore?: boolean } = {}) => {
     const [, tid, agentId] = key.split(':');
     if (!tid || !agentId) return;
     try {
       const d = await fetch(`/api/work/threads/${tid}/messages`).then((r) => (r.ok ? r.json() : null));
       if (!Array.isArray(d?.messages)) return;
+      if (opts.restore && !(d.messages as Array<{ role: string }>).some((m) => m.role === 'user')) {
+        try { localStorage.removeItem(CHAT_KEY_LS); } catch { /* no LS */ }
+        return;
+      }
       const roster = await getRoster();
       const name = roster.find((x) => x.id === agentId)?.name
         ?? String((d.thread as { title?: string } | null)?.title ?? 'Coworker').replace(/^Chat with /, '');
@@ -278,7 +286,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         loaded.push({ role: 'assistant', text: `This is your direct line to ${name.split(' ')[0]} — ask for work, hand something off, or set up a standing task.` });
       }
       setTurns(loaded);
-      setTimeout(() => focusComposer(), 120);
+      if (!opts.restore) setTimeout(() => focusComposer(), 120);
       workerRoomRef.current = { id: agentId, name };
       setScope(null); setScopeHint(null); // a coworker DM is addressed, never project-scoped from here
       try { localStorage.setItem(dmKey(agentId), tid); localStorage.setItem(CHAT_KEY_LS, key); } catch { /* no LS */ }
@@ -430,6 +438,18 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // delegation/report thread ("Handed to Clara: …", found live Aug 7). The DM is its own
   // "Chat with <name>" thread — found by title, created if absent; old v1 keys are orphaned.
   const dmKey = (agentId: string) => `aug-dm2-${agentId}`;
+
+  // THE DM HISTORY popover state + fetch (null = closed; [] = open, empty).
+  const [dmHistory, setDmHistory] = useState<Array<{ id: string; title: string; at: string | null }> | null>(null);
+  const toggleDmHistory = async () => {
+    if (dmHistory) { setDmHistory(null); return; }
+    const agent = workerRoomRef.current;
+    if (!agent) return;
+    try {
+      const d = await fetch(`/api/workers/dm-sessions?agent=${agent.id}`).then((r) => (r.ok ? r.json() : null));
+      setDmHistory((d?.sessions ?? []) as Array<{ id: string; title: string; at: string | null }>);
+    } catch { setDmHistory([]); }
+  };
   const dmThread = async (w: { id: string; name: string }): Promise<string | null> => {
     const k = dmKey(w.id);
     try { const c = localStorage.getItem(k); if (c) return c; } catch { /* no LS */ }
@@ -456,6 +476,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   const newDmSession = async () => {
     const w = workerRoomRef.current;
     if (!w) return;
+    setDmHistory(null);
     try {
       const c = await fetch('/api/work/threads', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -779,11 +800,35 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                 placeholder"): a quiet persistent header names the room; New session folds the
                 history (a new thread — the relationship persists, the scroll resets). */}
             {workerRoomRef.current && (
-              <div className="flex items-center justify-between pb-2 mb-1 border-b border-neutral-100">
+              <div className="relative flex items-center justify-between pb-2 mb-1 border-b border-neutral-100">
                 <span className="text-[12px] font-medium text-neutral-500">Chat with {workerRoomRef.current.name.split(' ')[0]}</span>
-                <button onClick={() => void newDmSession()} className="text-[12px] text-neutral-400 hover:text-indigo-600 transition-colors">
-                  New session
-                </button>
+                <span className="flex items-center gap-3">
+                  {/* THE DM HISTORY (Aug 11, owner ask): past sessions with THIS coworker,
+                      user-voice-law filtered, titled by their own first ask. */}
+                  <button onClick={() => void toggleDmHistory()} className="text-[12px] text-neutral-400 hover:text-indigo-600 transition-colors">
+                    History
+                  </button>
+                  <button onClick={() => void newDmSession()} className="text-[12px] text-neutral-400 hover:text-indigo-600 transition-colors">
+                    New session
+                  </button>
+                </span>
+                {dmHistory && (
+                  <div className="absolute right-0 top-full mt-1.5 w-80 max-h-72 overflow-y-auto bg-white border border-neutral-200 shadow-lg rounded-xl z-30 py-1">
+                    {dmHistory.length === 0 ? (
+                      <p className="px-3 py-2.5 text-[12px] text-neutral-400">No past sessions yet.</p>
+                    ) : dmHistory.map((s) => (
+                      <button key={s.id}
+                        onClick={() => {
+                          setDmHistory(null);
+                          if (workerRoomRef.current) void loadWorkerRoom(`worker:${s.id}:${workerRoomRef.current.id}`);
+                        }}
+                        className="w-full text-left px-3 py-2 hover:bg-neutral-50 transition-colors">
+                        <span className="block truncate text-[12.5px] text-neutral-700">{s.title}</span>
+                        {s.at && <span className="block text-[10.5px] text-neutral-400 mt-0.5">{new Date(s.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             <div ref={scrollRef} className="space-y-4 max-h-[calc(100vh-250px)] min-h-[40vh] overflow-y-auto [scrollbar-width:thin] pr-1 pb-3">
