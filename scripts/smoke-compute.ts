@@ -1161,6 +1161,17 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('app/api/workers/dm-sessions/route.ts').includes('firstAsk') &&
     src('components/home/home-ask.tsx').includes('toggleDmHistory'));
 
+  // ── AU · THE HUMAN-IN-THE-LOOP LAW (owner, Aug 11 — autonomy PARKED same day it was built). ──
+  check('AU1: THE HUMAN-IN-THE-LOOP LAW — "it\'s dangerous territory to have stuff done without human approval; we should be human in the loop." The autonomy arc (strategic ask · ledger · autonomous send; designed + 10/10 decision-layer E2E, plan entry UU) is PARKED: the modules stay in lib/autonomy with ⚠️ PARKED headers as the recorded design, but NOTHING references them — no pass wiring, no Home ask, no Settings tab, no API route. Every send in the product goes through a human approval. This gate enforces the park: re-activating is a deliberate owner decision, never a refactor side-effect',
+    src('lib/autonomy/ledger.ts').includes('PARKED (owner call, Aug 11') &&
+    src('lib/autonomy/send.ts').includes('PARKED (owner call, Aug 11') &&
+    !src('lib/prepare/pass.ts').includes('maybeAutonomousSend') &&
+    !src('app/api/home/brief/route.ts').includes('pendingAsk') &&
+    !src('components/home/home-view.tsx').includes('autonomyAsk') &&
+    !src('components/settings/settings-left-panel.tsx').includes("id: 'autonomy'") &&
+    !fileExists('app/api/autonomy/route.ts') &&
+    !fileExists('components/settings/autonomy-section.tsx'));
+
   // ── Report ──
   let pass = 0;
   for (const [n, ok, d] of out) {
