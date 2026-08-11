@@ -468,6 +468,49 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+YY. **THE DOCUMENT HANDS — THE FULL ARC SPEC (owner-shaped, Aug 11 evening).** The bar:
+   "as good as Claude on documents/charts/decks, plus memory and branding Claude can't
+   do." The utterances that define it: "use the template from document X (Dropbox /
+   attached / email attachment / KB)" · "brand it with our logo and colors" · "make one
+   slide per region like this one". REMAINING SLICES: **DH4 THE BRANDED KIT** —
+   workspace doc theme (logo — already in settings.branding — + accent color + footer
+   line) consumed by the builders; theme auto-applies once set (said once, every
+   deliverable born on letterhead); + the pptxgenjs unlock (brand masters, native tier-1
+   charts in decks). NOTE: SheetJS community cannot write xlsx cell styles — xlsx visual
+   branding waits for the compiler (openpyxl). **DH5 TEMPLATE-BY-EXAMPLE (structure)** —
+   "like document X": the universal resolver finds X anywhere, the fidelity chain
+   extracts its SKELETON, the delegation fills the skeleton, the renderer emits.
+   **DH6 THE COMPILER (the enabler)** — sandbox image + python-docx · openpyxl ·
+   python-pptx · matplotlib · LibreOffice-headless · pypdf · tesseract; the binary
+   file-output channel; OUR deterministic helpers baked in (clone_slide with
+   relationship fixups; preserve-what-you-can't-parse); THE RENDER-VERIFICATION GATE
+   (LibreOffice → images: right page/slide count, nothing blank — a corrupt file NEVER
+   ships); fallback ALWAYS lands (failed surgery → house-branded tier-1 + honest note).
+   Unlocks: in-place fill of the client's own docx/pptx (hand-made decks included — we
+   MUTATE their file, never imitate it, so design survives by construction) · PDF
+   export/forms/OCR · native Excel charts with LIVE FORMULAS (=SUM(), recalculating —
+   never dead numbers; chart data rides the arithmetic floor) · charted Word docs
+   (matplotlib → embedded images) · template-following decks. **DH7 CHART DISCIPLINE**
+   — house chart theme keyed to workspace brand. **DH8 THE TEMPLATE REGISTRY** — "save
+   this as our report template" (the document-shaped sibling of Skills). Viewer
+   previews for xlsx/pptx/pdf fold into THE ONE VIEWER. THE SOVEREIGN SENTENCE: all of
+   it in OUR locked room — no third-party document APIs, no files leaving. Honest v1
+   limits: client brand fonts substitute in render; aesthetic (vision) QA later —
+   render-sanity first. Sequencing: DH4 → streaming remainder → DH6 → DH5/7/8 cheap
+   behind it.
+XX. **THE DOCUMENT HANDS — slice 3: TYPED DELIVERABLES (Aug 11; gate DH3 — 129/129, build
+   green; E2E 8/8 — real xlsx cells and pptx slide XML read back).** The team can now
+   hand back SPREADSHEETS and SLIDE DECKS, not just documents: one fenced protocol
+   (```spreadsheet / ```slides carrying XlsxContent/PptxContent JSON), one
+   code-validating parser shared by BOTH production engines (delegations + workflow
+   runs); bad shape → the docx fallback, never a broken deliverable; typed outputs skip
+   the length floor; the thread shows the hand-back note while the artifact card carries
+   the file; the prompt rule is conservative (never force tabular shape onto prose).
+   The builders (pptxgenjs-era buildPptx/buildXlsx) existed since the artifact registry —
+   this wired them to the coworkers' hands. THE DOCUMENT HANDS ARC (DH1-3) now covers:
+   structured docx out · structure-preserving docx in · xlsx/pptx production. Remaining
+   candidates for later slices: in-place docx editing (true style preservation of the
+   client's own file), charts in decks/sheets.
 WW. **THE DOCUMENT HANDS — slice 2: THE FIDELITY CHAIN (Aug 11; gate DH2 — 128/128, build
    green; round-trip E2E 7/7 on a REAL docx).** The other half of the Claude bar: the
    docx EXTRACTOR was flattening headings/tables/numbering to raw text, so a "fill this

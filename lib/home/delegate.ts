@@ -4,6 +4,7 @@ import { generateReportBack, fallbackReport, type ReportFacts } from '@/lib/work
 import { getAIClient } from '@/lib/ai/factory';
 import type { AgentStep, StepOutput } from '@/lib/workflows/types';
 import type { ItemPlanKind, ItemPlanTask } from './item-plan';
+import { TYPED_OUTPUT_RULE } from '@/lib/workflows/typed-output';
 import { readPool, writeDeliverable, renderPoolForContext, type Deliverable } from './deliverable-pool';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -89,6 +90,7 @@ export function buildDelegationPrompt(args: {
       `numbered lists (markdown), your deliverable reproduces that structure in markdown — ` +
       `same headings, tables as | tables |, numbering as numbering. The document you hand ` +
       `back should look like the one you were handed, filled in.`,
+    `- ${TYPED_OUTPUT_RULE}`,
   ].join('\n');
 }
 
@@ -241,12 +243,16 @@ export async function runDelegation(args: {
       threadId = (thread?.id as string) ?? null;
     }
     if (threadId) {
+      // A typed deliverable's thread message shows the HAND-BACK NOTE, never the JSON fence —
+      // the artifact card beside it carries the sheet/deck itself.
+      const { parseTypedDeliverable } = await import('@/lib/workflows/typed-output');
+      const typedForMsg = parseTypedDeliverable(output);
       await supabase.from('work_messages').insert([
         { thread_id: threadId, role: 'user', content: prompt },
         {
           thread_id: threadId,
           role: 'assistant',
-          content: output,
+          content: typedForMsg ? (typedForMsg.remainder || `${typedForMsg.content.title} — attached as a ${typedForMsg.type === 'spreadsheet' ? 'spreadsheet' : 'slide deck'}.`) : output,
           metadata: { source: 'delegation', report_back: reportText },
         },
       ]);
@@ -261,16 +267,21 @@ export async function runDelegation(args: {
   // the viewer/download/versions machinery all just work. A short answer or an ask stays text
   // (not everything a coworker says is a document). Non-fatal: the delegation already landed. ──
   let artifact: DelegateResult['artifact'] = null;
-  if (threadId && deliverableOk && output.length >= 600) {
+  // THE TYPED DELIVERABLE (document hands slice 3): a genuinely tabular/deck output materializes
+  // as a REAL xlsx/pptx (code-validated fence; a malformed block falls back to the document
+  // path). Typed outputs skip the length floor — a small sheet is still a sheet.
+  const typed = deliverableOk ? (await import('@/lib/workflows/typed-output')).parseTypedDeliverable(output) : null;
+  if (threadId && deliverableOk && (typed || output.length >= 600)) {
     try {
       const { textToDocContent, uploadArtifact } = await import('@/lib/workflows/doc-content');
       const { randomUUID } = await import('crypto');
-      const title = itemLabel.slice(0, 120) || 'Delegated work';
-      const doc = textToDocContent(title, output);
+      const title = (typed?.content.title || itemLabel).slice(0, 120) || 'Delegated work';
+      const artifactType = typed?.type ?? 'document';
+      const doc = typed ? typed.content : textToDocContent(title, output);
       const artifactId = randomUUID();
-      const { storagePath } = await uploadArtifact(supabase, userId, threadId, artifactId, 'document', doc);
+      const { storagePath } = await uploadArtifact(supabase, userId, threadId, artifactId, artifactType, doc);
       const row = {
-        id: artifactId, title, type: 'document' as const,
+        id: artifactId, title, type: artifactType,
         generated_at: new Date().toISOString(), storage_path: storagePath, content: doc,
       };
       const { data: th } = await supabase.from('work_threads').select('artifacts').eq('id', threadId).single();

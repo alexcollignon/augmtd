@@ -119,6 +119,21 @@ async function materialiseOutput(
   }
 
   if ((out.home === 'document' && artifactType === 'document') || wantsAttachmentDoc) {
+    // THE TYPED DELIVERABLE (document hands slice 3): a workflow step whose output is genuinely
+    // tabular/deck (the one fenced protocol, code-validated) materializes as a real xlsx/pptx;
+    // everything else stays the structured document. One parser, both engines.
+    const { parseTypedDeliverable } = await import('@/lib/workflows/typed-output');
+    const typed = parseTypedDeliverable(finalText);
+    if (typed) {
+      const artifactId = randomUUID();
+      const { storagePath } = await uploadArtifact(admin, userId, threadId, artifactId, typed.type, typed.content);
+      const artifact: DocumentArtifact = {
+        id: artifactId, title: typed.content.title || title, type: typed.type,
+        generated_at: now.toISOString(), storage_path: storagePath,
+        content: typed.content,
+      } as unknown as DocumentArtifact;
+      return { text: typed.remainder || `${typed.content.title} — attached.`, artifact, title: typed.content.title || title };
+    }
     const doc = textToDocContent(title, finalText);
     const artifactId = randomUUID();
     const { storagePath } = await uploadArtifact(admin, userId, threadId, artifactId, 'document', doc);
