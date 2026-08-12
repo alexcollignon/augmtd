@@ -496,7 +496,7 @@ export default function MeetingsLeftPanel({
                   className="w-full"
                 >
                   <PlusIcon className="w-3.5 h-3.5 flex-shrink-0" />
-                  New note
+                  New meeting
                 </Button>
               </div>
             </>

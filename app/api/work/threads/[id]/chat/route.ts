@@ -1834,147 +1834,34 @@ async function executeChatTool(
       const type = input.type as string;
       const instructions = input.instructions as string;
 
-      const toolMap: Record<string, string> = {
-        word: 'generators__word',
-        excel: 'generators__xlsx',
-        pptx: 'generators__pptx',
-        email: 'generators__email_draft',
-      };
-      const deliverableTypeMap: Record<string, string> = {
-        word: 'document',
-        excel: 'spreadsheet',
-        pptx: 'presentation',
-        email: 'email',
-      };
-      const deliverableType = deliverableTypeMap[type] || 'document';
-      const generatorTool = toolMap[type] || 'generators__word';
-
-      const isEmail = type === 'email';
-      const steps = isEmail
-        ? [{ number: 1, action: instructions, tool: generatorTool, status: 'pending' }]
-        : [
-            {
-              number: 1,
-              action: `Analyse the requirements and prepare a detailed content outline. List specific sections, key data points, arguments, and exact content to include. Requirements: ${instructions.slice(0, 300)}`,
-              status: 'pending',
-            },
-            {
-              number: 2,
-              action: `Produce the complete ${deliverableType} based on the outline above`,
-              tool: generatorTool,
-              status: 'pending',
-            },
-          ];
-
-      const plan = {
-        deliverable_type: deliverableType,
-        deliverable_description: instructions,
-        inputs: [],
-        outputs: [{ name: instructions.slice(0, 60), deliverableType }],
-        steps,
-      };
-
-      const maxTokensMap: Record<string, number> = {
-        word: 5000,
-        excel: 3000,
-        pptx: 3000,
-        email: 800,
-      };
-
-      const userAttachments = ((ctx.thread.user_attachments || []) as Array<{
-        filename: string;
-        mimeType: string;
-        storagePath: string;
-        extractedText: string | null;
-      }>);
-
-      const toolRegistry = await buildToolRegistry(ctx.userId, ctx.supabase);
-
-      // If there's an existing document artifact, serialise its content so the
-      // generator modifies it rather than replacing it from scratch.
-      const existingDoc = ctx.existingArtifacts
-        .filter(a => a.type === 'document' && a.content)
-        .at(-1); // most recent document
-      const existingDocText = existingDoc?.content
-        ? serializeDocContent(existingDoc.content as import('@/lib/types/inbox').DocContent)
-        : null;
-
-      // Build grounded context: existing doc first (if any), then KB sources, then instructions
-      let groundedContext: string;
-      if (existingDocText) {
-        groundedContext =
-          `EXISTING DOCUMENT TO MODIFY — preserve all sections unless explicitly told to change or remove them:\n\n${existingDocText}\n\n---\n\nREQUESTED CHANGES: ${instructions}` +
-          (ctx.kbContext ? `\n\nADDITIONAL SOURCE MATERIAL:\n${ctx.kbContext}` : '');
-      } else {
-        groundedContext = ctx.kbContext
-          ? `SOURCE DOCUMENTS (from knowledge base — use this content as the primary source):\n\n${ctx.kbContext}\n\n---\n\nINSTRUCTIONS: ${instructions}`
-          : instructions;
-      }
-
-      const pipelineResult = await runFullPipeline({
+      // ── THE ONE PRODUCTION DOOR (plan AF): the native loop's inline generators pipeline is
+      // RETIRED — generation runs through the ONE shared function the AgentOS route already
+      // uses, which itself materializes through lib/documents/materialize (compiler for
+      // charts/revision/templates · typed protocol · branded template renderers, with the
+      // facts/content floors). Revision + tabular material auto-resolve from the thread
+      // INSIDE the function — one behaviour for both runtimes, by construction. ──
+      const { generateThreadDocument } = await import('@/lib/work/generate-thread-document');
+      const gen = await generateThreadDocument({
         userId: ctx.userId,
         threadId: ctx.threadId,
-        plan: plan as any,
-        emailAttachments: [],
-        userAttachments,
-        conversationContext: groundedContext,
-        userContext: ctx.userContextBlock || '',
+        type,
+        instructions,
         adminClient: ctx.adminClient,
-        toolRegistry,
-        maxGenerationTokens: maxTokensMap[type] ?? 3500,
+        groundingContext: ctx.kbContext || undefined,
+        userContext: ctx.userContextBlock || '',
+        isTemporary: ctx.isTemporary,
       });
-
-      const newArtifacts = pipelineResult.artifacts || [];
-      if (newArtifacts.length === 0) {
+      if (!gen.artifact) {
         return { result: 'Document generation failed.', summary: 'Generation failed' };
       }
-
-      const artifact = newArtifacts[0];
-      // Inherit parent title so version grouping works; tag parent_id for chain traversal
-      if (existingDoc) {
-        artifact.title = existingDoc.title;
-        artifact.parent_id = existingDoc.id;
-      } else {
-        artifact.title = instructions.slice(0, 60);
-      }
-
-      const { data: freshThread } = await ctx.adminClient
-        .from('work_threads')
-        .select('artifacts')
-        .eq('id', ctx.threadId)
-        .single();
-      const existing = ((freshThread?.artifacts as DocumentArtifact[]) || []);
-      // When editing an existing doc, keep all previous versions — just append.
-      // When generating fresh, remove prior artifacts of the same type (old behaviour).
-      const kept = existingDoc
-        ? existing
-        : existing.filter((a: DocumentArtifact) => !new Set(newArtifacts.map((n: DocumentArtifact) => n.type)).has(a.type));
-      const updated = [...kept, ...newArtifacts];
-
-      await ctx.adminClient
-        .from('work_threads')
-        .update({ artifacts: updated, artifact: artifact, updated_at: new Date().toISOString() })
-        .eq('id', ctx.threadId);
-
-      // Fire-and-forget: index generated artifacts into KB (skip for temporary threads)
-      if (!ctx.isTemporary) newArtifacts.forEach((a: DocumentArtifact) => {
-        if (!a.id) return;
-        indexArtifact({
-          artifactId: a.id,
-          storagePath: a.storage_path ?? null,
-          filename: `${a.title}.${getFileExt(a.type)}`,
-          mimeType: getMimeType(a.type),
-          userId: ctx.userId,
-          threadId: ctx.threadId,
-          emailBody: a.type === 'email' ? (a.content as { body?: string })?.body : undefined,
-        }, ctx.adminClient).catch(() => {});
-      });
-
       const typeLabels: Record<string, string> = {
         word: 'Word document', excel: 'spreadsheet', pptx: 'presentation', email: 'email draft',
       };
-      const summary = `${typeLabels[type] || 'Document'} created`;
-      return { result: `Document created successfully: ${artifact.title}`, summary, artifact };
+      return {
+        result: `Document created successfully: ${gen.artifact.title}${gen.summary.includes('One check:') ? ` — ${gen.summary.split('One check:')[1]}` : ''}`,
+        summary: `${typeLabels[type] || 'Document'} created`,
+        artifact: gen.artifact as unknown as DocumentArtifact,
+      };
     }
 
     case 'web_search': {

@@ -416,7 +416,7 @@ export default function MeetingsShell({
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[12px] font-medium transition-colors"
               >
                 <PlusIcon className="w-3.5 h-3.5" />
-                New note
+                New meeting
               </button>
             </div>
 

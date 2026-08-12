@@ -79,13 +79,20 @@ export type ConverseScope =
   | { kind: 'entity'; entityId: string }
   | { kind: 'global' };
 
-export type ConverseHistoryTurn = { role: 'user' | 'assistant'; text: string };
+export type ConverseHistoryTurn = {
+  role: 'user' | 'assistant'; text: string;
+  /** REVISION-IN-PLACE (DH7): an assistant turn that produced a document carries its card ref,
+   *  so "make the chart blue" resolves to THAT artifact and revises it instead of minting a
+   *  second one. The client sends what it already renders. */
+  artifact?: { id: string; threadId: string; title: string };
+};
 
 /** THE ATTACHED MATERIAL (Aug 10, the production hand-off): synchronously-extracted text of
  *  files the user attached WITH this message — rides the turn itself, so a "fill this in"
  *  never races the KB's background indexing. Images carry BYTES (THE MOMENT THEME: "brand
- *  this with the attached logo" builds the theme on the spot). */
-export type ConverseAttachment = { name: string; text: string | null; image?: { dataB64: string; mime: string } };
+ *  this with the attached logo" builds the theme on the spot). Office files ≤1MB ALSO carry
+ *  bytes (TEMPLATE-BY-EXAMPLE: "follow this template" needs the real file, not its text). */
+export type ConverseAttachment = { name: string; text: string | null; image?: { dataB64: string; mime: string }; file?: { dataB64: string; ext: string } };
 
 // ── THE PROGRESS CHANNEL (streaming ask, Aug 6): human labels for what the core is DOING right
 // now — surfaced live over SSE so a long agent loop never reads as a dead "Thinking…". Labels
@@ -241,7 +248,7 @@ type Verdict = {
   command: { tool: string; args: Record<string, unknown> } | null;
   question: boolean;
   facts: string[];
-  delegate: { coworker: string; task: string } | null;
+  delegate: { coworker: string; task: string; revises?: boolean } | null;
   open: boolean; // composite / doesn't fit → the agent loop
 };
 
@@ -260,7 +267,7 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
     `Return ONLY JSON:\n` +
     `{"command":{"tool":"<registry tool>","args":{...}}|null,` +
     `"question":true|false,"facts":["0-3 durable facts worth remembering on this deal"],` +
-    `"delegate":{"coworker":"<name>","task":"<what>"}|null,"open":true|false}\n` +
+    `"delegate":{"coworker":"<name>","task":"<what>","revises":true|false}|null,"open":true|false}\n` +
     `Rules:\n` +
     `- "command" ONLY for a plain single action the registry lists (e.g. "dismiss this" → resolve_inbox_item ` +
     `{"resolution":"dismiss"}; "mark it done" → {"resolution":"complete"}; "find the pricing deck" → find_file ` +
@@ -277,7 +284,9 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
     `(fill in / complete a document, draft a report or long deliverable, write up material from ` +
     `pasted source) even when no coworker is named: pick the fit — Sofia (writing, documents), ` +
     `Max (research, analysis), Luca (LinkedIn), Clara (ops, admin) — and put the WHOLE job in ` +
-    `"task". A question, a quick command, or a short reply tweak is NOT produced work.\n` +
+    `"task". A question, a quick command, or a short reply tweak is NOT produced work. ` +
+    `"revises" = true ONLY when the task MODIFIES the document this conversation just produced ` +
+    `(change a chart, add a section, rework the tone of "the report") — new work is revises:false.\n` +
     (inItem ? `- A DRAFT INSTRUCTION (rewrite/shorten/soften/add something to the reply or follow-up being drafted here) is a CORRECTION, not open — return command:null, question:false, open:false; the draft is reworked on that path.\n` : '') +
     `- "open" = true when the note needs COMPOSITION (several actions, or an action the registry doesn't list).\n` +
     `THE NOTE: ${text}`;
@@ -290,7 +299,9 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
       command: o.command?.tool ? { tool: String(o.command.tool), args: o.command.args ?? {} } : null,
       question: o.question === true,
       facts: Array.isArray(o.facts) ? o.facts.filter((f): f is string => typeof f === 'string' && !!f.trim()).slice(0, 3) : [],
-      delegate: o.delegate && typeof (o.delegate as { coworker?: string }).coworker === 'string' ? o.delegate as Verdict['delegate'] : null,
+      delegate: o.delegate && typeof (o.delegate as { coworker?: string }).coworker === 'string'
+        ? { coworker: String((o.delegate as { coworker: string }).coworker), task: String((o.delegate as { task?: string }).task ?? ''), revises: (o.delegate as { revises?: unknown }).revises === true }
+        : null,
       open: o.open === true,
     };
   } catch { return { command: null, question: false, facts: [], delegate: null, open: true }; }
@@ -602,11 +613,54 @@ async function dispatchCommand(
 // ── THE ONE DELEGATION EXECUTOR — shared by the named-coworker verdict path ("have Max…") and
 // the dispatcher's assign_to_coworker tool. Delegation is REVERSIBLE (work lands as a room
 // report-back; nothing external fires), so it acts directly — with visible attribution. ──
+const OFFICE_EXT = /\.(docx|pptx|xlsx)$/i;
+
+/** TEMPLATE-BY-EXAMPLE (DH5b): when the request says "follow this template / same format",
+ *  resolve the example FILE — an attached office file's bytes first (the common case), else a
+ *  named knowledge-base document ("use the template from <name>"). Null = no template. */
+async function resolveTemplateFile(
+  admin: SupabaseClient, userId: string, requestText: string, attachments: ConverseAttachment[],
+): Promise<{ bytes: Buffer; ext: 'docx' | 'pptx' | 'xlsx' } | null> {
+  try {
+    if (!/\btemplate\b|same (format|structure|layout|design)|follow(ing)? (the|this) (format|structure|layout|design|template)|like (the|this) (attached|example)/i.test(requestText)) return null;
+    // 1 — an attached office file with bytes IS the example.
+    const att = attachments.find((a) => a.file?.dataB64 && OFFICE_EXT.test(a.name));
+    if (att?.file) {
+      const ext = att.name.split('.').pop()!.toLowerCase() as 'docx' | 'pptx' | 'xlsx';
+      return { bytes: Buffer.from(att.file.dataB64, 'base64'), ext };
+    }
+    // 2 — a NAMED knowledge-base document ("the template from <name>"). Filename-token match,
+    // newest first; the file must be storage-backed (a drive-connector row has no bytes here).
+    const m = requestText.match(/template (?:from|of|in)\s+(?:the\s+)?["“']?([^"”'.,;\n]{3,60})/i);
+    if (!m) return null;
+    const tokens = m[1].trim().split(/\s+/).filter((t) => t.length > 2).slice(0, 4);
+    if (!tokens.length) return null;
+    let q = admin.from('knowledge_files').select('id, filename, storage_path')
+      .eq('user_id', userId).not('storage_path', 'is', null)
+      .order('created_at', { ascending: false }).limit(5);
+    for (const t of tokens) q = q.ilike('filename', `%${t}%`);
+    const { data: rows } = await q;
+    const row = (rows ?? []).find((r) => OFFICE_EXT.test(String(r.filename)));
+    if (!row?.storage_path) return null;
+    for (const bucket of ['drive-uploads', 'work-artifacts'] as const) {
+      const { data } = await admin.storage.from(bucket).download(String(row.storage_path));
+      if (data) {
+        const buf = Buffer.from(await data.arrayBuffer());
+        if (buf.length > 8 * 1024 * 1024) return null;
+        const ext = String(row.filename).split('.').pop()!.toLowerCase() as 'docx' | 'pptx' | 'xlsx';
+        return { bytes: buf, ext };
+      }
+    }
+    return null;
+  } catch { return null; }
+}
+
 async function runCoworkerDelegation(
   client: SupabaseClient, userId: string, scope: ConverseScope, coworkerWant: string, task: string, userText: string,
   transcript = '', material = '',
   themeOverride: import('@/lib/documents/theme').DocTheme | null = null,
   attachments: ConverseAttachment[] = [],
+  revisePrior: { id: string; threadId: string; title: string } | null = null,
 ): Promise<ConverseTurn> {
   try {
     // THE DATA-FACTS PASS (the data-by-code lane): tabular material gets its statistics computed
@@ -625,6 +679,27 @@ async function runCoworkerDelegation(
     } catch { /* facts are an enhancement — the delegation proceeds */ }
     const { createClient: createAdmin } = await import('@supabase/supabase-js');
     const admin = createAdmin(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    // REVISION-IN-PLACE (DH7): fetch the prior artifact's CURRENT bytes so the compile job opens
+    // and modifies the real file. Resolution failure just means a fresh build (never a dead turn).
+    let revise: { artifactId: string; threadId: string; title: string; bytes: Buffer; ext: 'docx' | 'pptx' | 'xlsx' } | null = null;
+    if (revisePrior) {
+      try {
+        // OWNERSHIP FLOOR: the ids arrive from the client — the thread must be THIS user's
+        // (admin client bypasses RLS; an unscoped read would let a crafted history revise
+        // another user's artifact).
+        const { data: th } = await admin.from('work_threads').select('artifacts').eq('id', revisePrior.threadId).eq('user_id', userId).single();
+        const row = (Array.isArray(th?.artifacts) ? (th!.artifacts as Array<{ id?: string; storage_path?: string }>) : [])
+          .find((r) => r?.id === revisePrior.id);
+        const ext = String(row?.storage_path ?? '').split('.').pop()?.toLowerCase();
+        if (row?.storage_path && (ext === 'docx' || ext === 'pptx' || ext === 'xlsx')) {
+          const { data: dl } = await admin.storage.from('work-artifacts').download(String(row.storage_path));
+          if (dl) revise = { artifactId: revisePrior.id, threadId: revisePrior.threadId, title: revisePrior.title, bytes: Buffer.from(await dl.arrayBuffer()), ext };
+        }
+      } catch { /* fresh build */ }
+    }
+    // TEMPLATE-BY-EXAMPLE (DH5b): an attached office file or a named KB document the request
+    // says to mirror. Never doubles as the revision target (current.* wins that seat).
+    const templateFile = revise ? null : await resolveTemplateFile(admin, userId, `${task} ${userText.slice(0, 400)}`, attachments);
     const { data: workers } = await client.from('custom_agents').select('id, name, worker_role').eq('user_id', userId).eq('is_worker', true);
     const want = coworkerWant.toLowerCase();
     const worker = (workers ?? []).find((w) => String(w.name).toLowerCase().startsWith(want) || String(w.worker_role ?? '').toLowerCase().includes(want));
@@ -649,9 +724,12 @@ async function runCoworkerDelegation(
         prompt, itemLabel: task.slice(0, 80),
         firstName: (prof?.full_name as string | undefined)?.split(' ')[0] ?? null,
         ...(themeOverride ? { themeOverride } : {}),
-        // THE COMPILER TIER (DH6): a chart-naming request with tabular material compiles its
-        // deliverable file in the sandbox (render-verified); the template tier stays the floor.
-        ...(tab?.text ? { compile: { csvText: tab.text, computedFacts: dataFacts, request: `${task} — ${userText.slice(0, 500)}` } } : {}),
+        // THE COMPILER TIER (DH6/DH7): charts, in-place revision, and template-following compile
+        // the deliverable file in the sandbox (render-verified); the template tier stays the floor.
+        ...(tab?.text || revise || templateFile
+          ? { compile: { csvText: tab?.text ?? null, computedFacts: dataFacts, request: `${task} — ${userText.slice(0, 500)}` } } : {}),
+        ...(revise ? { revise } : {}),
+        ...(templateFile ? { templateFile } : {}),
         ...(scope.kind === 'item' ? { pool: { kind: scope.itemKind, entityId: scope.itemId }, provenance: { item: task.slice(0, 80), steered: true } } : {}),
       });
       // FIX 3 — a needs_input outcome is an ASK, not work in flight: say so plainly (the
@@ -973,10 +1051,15 @@ export async function converse(
     } catch { /* the pending read is a refinement — the normal flow below still sees the transcript */ }
   }
 
+  // REVISION-IN-PLACE (DH7): the conversation's most recent document card — the classifier is
+  // told it exists (so "make the chart blue" reads as a revision, not new work), and the
+  // delegation door revises THAT artifact instead of minting a second one.
+  const prior = [...(opts.history ?? [])].reverse().find((h) => h.artifact)?.artifact ?? null;
   // The classifier sees the attachment NAMES (a fill-in/produce ask over attached files IS
   // produced work); the full text stays with the paths that do the work.
   const verdict = await classifyTurn(client, userId, scope,
-    materialNames ? `${text}\n(THE USER ATTACHED FILES WITH THIS MESSAGE: ${materialNames})` : text, transcript);
+    materialNames ? `${text}\n(THE USER ATTACHED FILES WITH THIS MESSAGE: ${materialNames})` : text,
+    prior ? `${transcript}\n(THIS CONVERSATION PRODUCED A DOCUMENT: "${prior.title}" — its card is still open in the panel.)` : transcript);
 
   // THE ADDRESSED-COWORKER FLOOR (Aug 9, found live: "Sofia, put together a one-page overview…"
   // classified as create_task_item — the addressed hand-off became a to-do on the user's OWN
@@ -1011,7 +1094,8 @@ export async function converse(
 
   // 2 — DELEGATE: "have Max research X" → the real delegation engine (prepare + report back).
   if (verdict.delegate) {
-    return runCoworkerDelegation(client, userId, scope, verdict.delegate.coworker, verdict.delegate.task, text, transcript, material, momentTheme, opts.attachments ?? []);
+    return runCoworkerDelegation(client, userId, scope, verdict.delegate.coworker, verdict.delegate.task, text, transcript, material, momentTheme, opts.attachments ?? [],
+      verdict.delegate.revises === true ? prior : null);
   }
 
   // 3 — QUESTION: grounded answer from the scope's memory — the whole brain (global), the deal's

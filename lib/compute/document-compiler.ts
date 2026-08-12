@@ -34,6 +34,10 @@ export async function compileDocument(
     extraFiles?: Array<{ name: string; bytes: Buffer }>;
     theme?: DocTheme | null;
     computedFacts?: string | null;
+    /** THE CONTENT FLOOR: the coworker's actual written deliverable — the document's text comes
+     *  from HERE (found live: a template-following compile invented its own content; structure
+     *  was perfect, every real fact was missing). */
+    contentText?: string | null;
   },
 ): Promise<CompiledDocument | null> {
   try {
@@ -58,10 +62,16 @@ export async function compileDocument(
           `THE TASK: ${args.task.slice(0, 800)}\n\n` +
           `${themeBlock}\n` +
           (args.computedFacts ? `\nCOMPUTED FACTS (authoritative numbers — use them verbatim):\n${args.computedFacts.slice(0, 2000)}\n` : '') +
+          (args.contentText ? `\nTHE CONTENT (authoritative — the document's text comes from THIS, formatted for the ` +
+            `document; NEVER invent facts, names, numbers, or sections of your own):\n${args.contentText.slice(0, 6000)}\n` : '') +
           (inputNames.length ? `\nINPUT FILES at /job/inputs/: ${inputNames.join(', ')}\n` : '') +
           (repairNote ? `\nYOUR PREVIOUS SCRIPT FAILED — fix the cause:\n${repairNote.slice(0, 800)}\n` : '') +
           `\nAVAILABLE: python-docx, python-pptx, openpyxl, matplotlib (Agg backend; save charts as PNG ` +
           `and embed them), pandas, pypdf, and \`from augmtd_docs import clone_slide, render_verify\`.\n` +
+          ((args.extraFiles ?? []).some((f) => f.name.startsWith('current.'))
+            ? `A file at /job/inputs/current.* is the document's CURRENT version: OPEN it and modify — never rebuild from scratch.\n` : '') +
+          ((args.extraFiles ?? []).some((f) => f.name.startsWith('template.'))
+            ? `A file at /job/inputs/template.* is a DESIGN EXAMPLE: mirror its structure/layout/design; for pptx use clone_slide(pres, slide) to duplicate slides preserving their design, then edit the clone's text.\n` : '') +
           `CONTRACT (all mandatory):\n` +
           `1. Write EXACTLY ONE output file: /job/out/deliverable.${args.ext}\n` +
           `2. Charts: matplotlib.use("Agg"); style them with the accent color; readable labels; save to ` +

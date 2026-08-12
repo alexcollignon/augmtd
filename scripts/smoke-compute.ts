@@ -522,7 +522,7 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('components/home/home-ask.tsx').includes("event.type === 'text'") &&
     src('components/home/home-ask.tsx').includes('never') &&
     src('components/home/home-ask.tsx').includes('if (!temp) {') &&
-    src('components/home/home-ask.tsx').includes('t.author && <p'));
+    src('components/home/home-ask.tsx').includes('t.author && (') /* re-pointed Aug 12: the name label grew the coworker FACE (WorkerFace) */);
 
   check('AB2: THE ONE COMPOSER (workstream 3) — the Home floor mounts the SAME WorkerMentionInput the worker surfaces use (@ Coworkers/Tasks/Documents picker, attach, suggestion prefill); a coworker MENTION is the address; files follow the route — chat-attach on the addressed thread, the KNOWLEDGE BASE on the chief path; temporary mode refuses uploads (they would persist)',
     src('components/home/home-ask.tsx').includes('<WorkerMentionInput') &&
@@ -970,7 +970,7 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('components/home/home-ask.tsx').includes('Message Clara') === false && // dynamic, never hardcoded
     src('components/home/home-ask.tsx').includes('workerRoomRef.current ? `Message ') &&
     src('components/home/home-ask.tsx').includes('New session') &&
-    src('components/home/home-ask.tsx').includes('This is your direct line to'));
+    src('components/home/home-ask.tsx').includes('workerIntroFor') /* re-pointed Aug 12: the narrator line became the coworker's OWN first-person intro + example chips */);
 
   check('AN1: THE ANTICIPATION PASS (the initiative loop, Aug 10) — proactivity beyond arrivals: the pass walks TIME (meetings next 36h linked to a room → the prep brief EXISTS before the ask, one reasoned pass over the room page, narrated with its BECAUSE line leading; due-soon ≤48h unprepared → the SAME judge-gated prepareOneItem runs early — anticipation moves the clock, never bypasses the judge); trust rules structural: hard caps per run, 6h self-gate, exactly-once fire records, silence is a valid verdict; the "Prep ready" chip on This-week opens the room where the prep waits. E2E on the probe: brief fired + because leads + chip resolves + TTL gate + fire dedupe all held',
     src('lib/home/anticipation.ts').includes('runAnticipationPass') &&
@@ -1027,7 +1027,7 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/converse/index.ts').includes('materialNames ? `${text}') &&
     src('lib/converse/index.ts').includes('...(history ?? []).slice(-8).map((t) => ({ role: t.role, content:') &&
     src('lib/converse/index.ts').includes('THE CONVERSATION THIS CAME FROM') &&
-    src('lib/converse/index.ts').includes('verdict.delegate.task, text, transcript, material, momentTheme, opts.attachments ?? [])'));
+    src('lib/converse/index.ts').includes('verdict.delegate.task, text, transcript, material, momentTheme, opts.attachments ?? [],'));
 
   check('CH2: THE HONESTY-FLOOR MISFIRE GATE — the registry pointer is a RECALL rescue: it fires only when the DENIAL SENTENCE itself names something the registry holds; a capability/format denial whose message merely contains project names never grows a "(a known body of work)" pointer; plural matches get plural grammar',
     src('lib/converse/index.ts').includes('THE MISFIRE GATE') &&
@@ -1071,7 +1071,7 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
   check('SV1: THE SOVEREIGN LEAK AUDIT — a workspace with the email feature OFF has NO mailbox-auth surface: the Home first look pivots to the agent-team CTA (brief serves mail.emailFeature; the connect-inbox branch requires it), Settings hides the Email tab AND bounces direct ?tab=email navigation, /inbox stays feature-guarded (guardFeaturePage), the sidebar Inbox source stays feature-gated, and the CHIEF\'S TOOLSET drops mailbox verbs (get_emails/send_prepared_reply/prepare_forward mapped to the email feature in the ONE map; agentLoop filters its defs) — the model cannot offer what the workspace does not hold. Workflow email SENDING (Resend, stated addresses) stays — the boundary is auth connections only. E2E on the probe workspace: flag flip propagated through getWorkspaceFeatures and restored',
     src('app/api/home/brief/route.ts').includes('emailFeature: feats?.email !== false') &&
     src('components/home/home-view.tsx').includes('mail.emailFeature === false') &&
-    src('components/home/home-view.tsx').includes('Set up your agent team') &&
+    src('components/home/home-view.tsx').includes('TeamReadyCard') /* re-pointed Aug 12 (round 2): the setup CTA became THE TEAM PRESENT (seeded at join, no assembly) */ &&
     src('app/(main)/settings/page.tsx').includes("tab === 'email' && !emailEnabled") &&
     src('components/settings/settings-left-panel.tsx').includes("emailEnabled || item.id !== 'email'") &&
     src('app/(main)/inbox/page.tsx').includes("guardFeaturePage('email')") &&
@@ -1086,7 +1086,7 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     // Legacy slug links keep working: a real slug redirects to /enterprise, junk → /login.
     src('app/[slug]/page.tsx').includes("ilike('slug', slug)") &&
     src('app/[slug]/page.tsx').includes("redirect(company ? '/enterprise' : '/login')") &&
-    src('components/auth/enterprise-entry.tsx').includes("mode === 'code' ? 'code' : 'email'") &&
+    src('components/auth/enterprise-entry.tsx').includes("mode === 'code' ? 'code' : 'signup'") /* re-pointed Aug 12 (round 2): one-screen signup */ &&
     src('components/auth/enterprise-entry.tsx').includes("import { RightPanel } from '@/app/onboarding/onboarding-client'") &&
     src('components/auth/enterprise-entry.tsx').includes('lg:w-1/2') &&
     src('app/onboarding/onboarding-client.tsx').includes('export function RightPanel') &&
@@ -1195,7 +1195,7 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/workflows/typed-output.ts').includes('TYPED_OUTPUT_RULE') &&
     src('lib/workflows/typed-output.ts').includes("slice(0, 31)") &&
     src('lib/home/delegate.ts').includes('parseTypedDeliverable') &&
-    src('lib/home/delegate.ts').includes('typed || output.length >= 600') &&
+    src('lib/home/delegate.ts').includes('output.length >= 600') && // the length floor (revise/template ride past it — DH7)
     src('lib/home/delegate.ts').includes('TYPED_OUTPUT_RULE') &&
     src('lib/workflows/run-workflow.ts').includes('parseTypedDeliverable') &&
     src('lib/workflows/doc-content.ts').includes('content: ArtifactContent'));
@@ -1262,10 +1262,48 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('infra/compute/Dockerfile.runner').includes('python-pptx') &&
     src('infra/compute/Dockerfile.runner').includes('augmtd_docs.py') &&
     src('lib/home/delegate.ts').includes('THE COMPILER TIER (DH6)') &&
-    src('lib/home/delegate.ts').includes('compileDocument') &&
+    src('lib/documents/materialize.ts').includes('compileDocument') && /* re-pointed Aug 12: the tiers live at THE ONE PRODUCTION DOOR */
     // fail-soft: the template tier remains the floor — compile failure must fall through
-    src('lib/home/delegate.ts').includes('template tier below is the floor') &&
-    src('lib/converse/index.ts').includes('compile: { csvText: tab.text'));
+    src('lib/documents/materialize.ts').includes('the tiers below are the floor') &&
+    src('lib/converse/index.ts').includes('compile: { csvText: tab?.text ?? null'));
+
+  check('DH7: REVISION-IN-PLACE + TEMPLATE-BY-EXAMPLE (the two gaps between us and the Claude document bar) — REVISION: an assistant turn that produced a document sends its card ref back in history ({id, threadId, title} — the client sends what it already renders); the classifier judges `revises` (the conversation is TOLD a document card is open); the delegation door fetches the prior artifact\'s CURRENT bytes behind an OWNERSHIP FLOOR (admin client + client-supplied ids → the thread must be THIS user\'s), mounts them at /job/inputs/current.<ext>, the coworker sees the current TEXT in its prompt (at the runDelegation door so EVERY caller gets it — a direct delegation once asked for the document its caller held), and the result materializes onto the SAME artifact id (row REPLACED never appended; revisions always materialize past the length floor; cacheControl 0 on BOTH upload doors — the 1h CDN default served the pre-revision file to the very click that asked for the change, found live). TEMPLATE: "follow this template" resolves the example FILE (attached office bytes ≤1MB ride ConverseAttachment.file; else a NAMED KB document, filename-token match, storage-backed only) and mounts it at /job/inputs/template.<ext> (clone_slide for pptx design fidelity). THE CONTENT FLOOR: the coworker\'s written deliverable IS the document\'s text — codegen formats, never authors (found live: a template compile had perfect structure and zero real facts). E2E: produce→revise kept the id, replaced the row, added the section, kept the chart; a template compile followed all four section names with the coworker\'s facts',
+    src('lib/converse/index.ts').includes('artifact?: { id: string; threadId: string; title: string }') &&
+    src('lib/converse/index.ts').includes('"revises":true|false') &&
+    src('lib/converse/index.ts').includes('THIS CONVERSATION PRODUCED A DOCUMENT') &&
+    src('lib/converse/index.ts').includes("eq('id', revisePrior.threadId).eq('user_id', userId)") && // the ownership floor
+    src('lib/converse/index.ts').includes('async function resolveTemplateFile') &&
+    src('lib/converse/index.ts').includes("file?: { dataB64: string; ext: string }") &&
+    src('lib/home/delegate.ts').includes('revise?: { artifactId: string; threadId: string; title: string; bytes: Buffer') &&
+    src('lib/home/delegate.ts').includes('templateFile?: { bytes: Buffer') &&
+    src('lib/home/delegate.ts').includes('you are REVISING') &&           // the current text rides at THIS door
+    src('lib/home/delegate.ts').includes('existing.map((r) => (r?.id === artifactId ? row : r))') && // replace, never append
+    src('lib/home/delegate.ts').includes('args.revise || args.templateFile || output.length >= 600') && // always materialize
+    src('lib/home/delegate.ts').includes("cacheControl: '0'") &&
+    src('lib/workflows/doc-content.ts').includes("cacheControl: '0'") &&
+    src('lib/documents/materialize.ts').includes('contentText: args.content') &&        // the content floor
+    src('lib/compute/document-compiler.ts').includes('NEVER invent facts') &&
+    src('lib/compute/document-compiler.ts').includes("current.* is the document's CURRENT version") &&
+    src('app/api/home/extract-attach/route.ts').includes('docx|pptx|xlsx') &&
+    src('app/api/home/ask/route.ts').includes('artifact: { id: h.artifact.id.slice(0, 40)') &&
+    src('components/home/home-ask.tsx').includes('artifact: { id: artCard.art.id'));
+
+  check('OP1: THE ONE PRODUCTION DOOR (plan AF) — every document any actor ships materializes through lib/documents/materialize.ts: the tier ladder (compiler for charts/revision/template-following → typed protocol → branded template renderers) and the deterministic floors (THE CONTENT FLOOR — the author\'s text is the document\'s text; THE FACTS FLOOR — tabular material without precomputed facts gets computeDataFacts AT THE DOOR, model discretion never decides; THE THEME — the one getDocTheme hierarchy) live in ONE module. Callers own only identity (ids, storage paths, rows): runDelegation (the chief\'s delegations), generateThreadDocument (coworker DMs — the legacy generators pipeline is RETIRED for documents; email drafts keep their card path; native + AgentOS both call the ONE function, and revision + tabular material AUTO-RESOLVE from the thread inside it so neither runtime can drift), and run-workflow (scheduled deliverables). THE INVARIANT: adding a document capability = one edit at the door, every actor upgrades at once',
+    src('lib/documents/materialize.ts').includes('export async function materializeDocument') &&
+    src('lib/documents/materialize.ts').includes("tier: 'compiler' | 'typed' | 'template'") &&
+    src('lib/documents/materialize.ts').includes('THE FACTS FLOOR') &&
+    src('lib/documents/materialize.ts').includes('computeDataFacts') &&
+    src('lib/documents/materialize.ts').includes('getDocTheme') &&
+    // the three actors route through the door
+    src('lib/home/delegate.ts').includes('materializeDocument') &&
+    src('lib/work/generate-thread-document.ts').includes('materializeDocument') &&
+    src('lib/workflows/run-workflow.ts').includes('materializeDocument') &&
+    // the DM's legacy generators pipeline is retired for documents (email drafts keep it)
+    !src('app/api/work/threads/[id]/chat/route.ts').includes("generatorTool = toolMap[type]") &&
+    src('app/api/work/threads/[id]/chat/route.ts').includes('generateThreadDocument') &&
+    src('lib/work/generate-thread-document.ts').includes('AUTO-RESOLUTION from the thread') &&
+    src('lib/work/generate-thread-document.ts').includes('parent_id: revise.artifactId') && // DM revision = version-append (panel chain survives)
+    src('lib/work/generate-thread-document.ts').includes('TYPED_OUTPUT_RULE'));
 
   // ── Report ──
   let pass = 0;

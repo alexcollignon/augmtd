@@ -35,6 +35,11 @@ export interface GenerateThreadDocumentParams {
   groundingContext?: string; // optional source material (e.g. KB content)
   userContext?: string;
   isTemporary?: boolean;
+  /** THE ONE PRODUCTION DOOR (plan AF): tabular material the document is over — the door's
+   *  facts floor computes its statistics in the sandbox before anything ships. */
+  csvText?: string | null;
+  /** REVISION-IN-PLACE for DMs: the thread's current artifact to modify (bytes + ext). */
+  revise?: { artifactId: string; bytes: Buffer; ext: 'docx' | 'pptx' | 'xlsx'; title?: string } | null;
 }
 
 export interface GenerateThreadDocumentResult {
@@ -48,72 +53,141 @@ export async function generateThreadDocument(
   const { userId, threadId, type, instructions, adminClient, groundingContext, userContext, isTemporary } = params;
 
   const deliverableType = TYPE_MAP[type] || 'document';
-  const generatorTool = TOOL_MAP[type] || 'generators__word';
   const isEmail = type === 'email';
 
-  const steps = isEmail
-    ? [{ number: 1, action: instructions, tool: generatorTool, status: 'pending' }]
-    : [
-        {
-          number: 1,
-          action: `Analyse the requirements and prepare a detailed content outline. List specific sections, key data points, arguments, and exact content to include. Requirements: ${instructions.slice(0, 300)}`,
-          status: 'pending',
-        },
-        {
-          number: 2,
-          action: `Produce the complete ${deliverableType} based on the outline above`,
-          tool: generatorTool,
-          status: 'pending',
-        },
-      ];
-
-  const plan = {
-    deliverable_type: deliverableType,
-    deliverable_description: instructions,
-    inputs: [],
-    outputs: [{ name: instructions.slice(0, 60), deliverableType }],
-    steps,
-  };
-
-  const groundedContext = groundingContext
-    ? `SOURCE MATERIAL (use as the primary source):\n\n${groundingContext}\n\n---\n\nINSTRUCTIONS: ${instructions}`
-    : instructions;
-
-  const toolRegistry = await buildToolRegistry(userId, adminClient);
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pipelineResult = await runFullPipeline({
-    userId,
-    threadId,
-    plan: plan as any,
-    emailAttachments: [],
-    userAttachments: [],
-    conversationContext: groundedContext,
-    userContext: userContext || '',
-    adminClient,
-    toolRegistry,
-    maxGenerationTokens: MAX_TOKENS[type] ?? 3500,
-  } as any);
-
-  const newArtifacts = (pipelineResult.artifacts || []) as DocumentArtifact[];
-  if (newArtifacts.length === 0) {
-    return { artifact: null, summary: 'Generation failed' };
+  // ── EMAIL DRAFTS keep their own path (a draft card, not a document file). ──
+  if (isEmail) {
+    const plan = {
+      deliverable_type: deliverableType,
+      deliverable_description: instructions,
+      inputs: [],
+      outputs: [{ name: instructions.slice(0, 60), deliverableType }],
+      steps: [{ number: 1, action: instructions, tool: TOOL_MAP.email, status: 'pending' }],
+    };
+    const toolRegistry = await buildToolRegistry(userId, adminClient);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pipelineResult = await runFullPipeline({
+      userId, threadId, plan: plan as any, emailAttachments: [], userAttachments: [],
+      conversationContext: groundingContext ? `SOURCE MATERIAL:\n\n${groundingContext}\n\n---\n\nINSTRUCTIONS: ${instructions}` : instructions,
+      userContext: userContext || '', adminClient, toolRegistry,
+      maxGenerationTokens: MAX_TOKENS.email,
+    } as any);
+    const emailArtifacts = (pipelineResult.artifacts || []) as DocumentArtifact[];
+    if (emailArtifacts.length === 0) return { artifact: null, summary: 'Generation failed' };
+    const a = emailArtifacts[0];
+    a.title = instructions.slice(0, 60);
+    const { data: t } = await adminClient.from('work_threads').select('artifacts').eq('id', threadId).single();
+    const upd = [...(((t?.artifacts as DocumentArtifact[]) || []).filter((x) => x.type !== a.type)), a];
+    await adminClient.from('work_threads').update({ artifacts: upd, artifact: a, updated_at: new Date().toISOString() }).eq('id', threadId);
+    return { artifact: a.id ? { id: a.id, type: a.type, title: a.title } : null, summary: `Created email draft: ${a.title}.` };
   }
 
-  const artifact = newArtifacts[0];
-  artifact.title = instructions.slice(0, 60);
+  // ── THE ONE PRODUCTION DOOR (plan AF): a DM-produced document goes through the SAME organs
+  // the chief's delegations use — the author writes the content (with the typed protocol so a
+  // real sheet/deck says so structurally), then materializeDocument owns every tier decision
+  // (compiler for charts/revision/templates · typed · template renderers) and every floor
+  // (facts-by-code, content-floor, the brand theme). The legacy generators pipeline is retired
+  // for documents — a DM's report is byte-equal in capability to a delegated one. ──
 
-  // Append to the thread's artifacts (fresh generation: drop prior artifacts of
-  // the same type, matching the native non-edit behaviour).
+  // 0 — AUTO-RESOLUTION from the thread (both routes get it free — callers stay thin):
+  // a word ask on a thread that already holds a document REVISES it (the pre-door native
+  // behaviour, kept: version-append with parent_id so the panel's version chain survives);
+  // the latest tabular chat attachment rides as csvText for the door's facts floor.
+  let revise = params.revise ?? null;
+  let csvText = params.csvText ?? null;
+  let currentDocText: string | null = null;
+  if (!revise || !csvText) {
+    try {
+      const { data: th } = await adminClient.from('work_threads')
+        .select('artifacts, user_attachments').eq('id', threadId).single();
+      if (!revise && type === 'word') {
+        const docs = ((th?.artifacts as DocumentArtifact[]) || []).filter((a) => a.type === 'document' && a.id);
+        const lastDoc = docs.at(-1);
+        if (lastDoc) {
+          // The current text grounds the writer (full revised text out, nothing lost); the
+          // bytes (when storage-backed, office ext) let the compiler revise IN PLACE.
+          if (lastDoc.content) {
+            try {
+              const c = lastDoc.content as { title?: string; sections?: Array<{ heading?: string; paragraphs?: string[] }> };
+              currentDocText = [c.title, ...(c.sections ?? []).flatMap((s) => [s.heading, ...(s.paragraphs ?? [])])]
+                .filter(Boolean).join('\n').slice(0, 12000);
+            } catch { /* text grounding is best-effort */ }
+          }
+          const ext = String(lastDoc.storage_path ?? '').split('.').pop()?.toLowerCase();
+          if (lastDoc.storage_path && (ext === 'docx' || ext === 'pptx' || ext === 'xlsx')) {
+            const { data: dl } = await adminClient.storage.from('work-artifacts').download(String(lastDoc.storage_path));
+            if (dl) revise = { artifactId: String(lastDoc.id), bytes: Buffer.from(await dl.arrayBuffer()), ext, title: lastDoc.title };
+          }
+        }
+      }
+      if (!csvText) {
+        const atts = ((th?.user_attachments as Array<{ filename?: string; extractedText?: string | null }>) || []);
+        const tab = [...atts].reverse().find((a) => a.extractedText
+          && (/\.(csv|xlsx)$/i.test(String(a.filename ?? '')) || /^[^,\n]{1,60}(,[^,\n]{1,60}){2,}\n/.test(String(a.extractedText))));
+        if (tab?.extractedText) csvText = tab.extractedText;
+      }
+    } catch { /* auto-resolution is an enhancement */ }
+  }
+
+  // 1 — the author writes the content (the coworker's task-tier model; typed rule attached).
+  const { getAIClient, aiCreate } = await import('@/lib/ai/factory');
+  const { TYPED_OUTPUT_RULE } = await import('@/lib/workflows/typed-output');
+  const { client: ai, model } = await getAIClient(userId, 'generation', adminClient);
+  const kindLine = type === 'excel' ? 'The deliverable is a SPREADSHEET — return it as the ```spreadsheet fence.'
+    : type === 'pptx' ? 'The deliverable is a SLIDE DECK — return it as the ```slides fence.'
+    : 'The deliverable is a written document.';
+  const res = await aiCreate(ai, {
+    model, max_tokens: MAX_TOKENS[type] ?? 3500, temperature: 0.3,
+    messages: [{
+      role: 'user',
+      content: `Write the complete deliverable described below. Output the deliverable ITSELF — no meta-commentary, no preamble.\n` +
+        `${kindLine}\n${TYPED_OUTPUT_RULE}\n` +
+        (userContext ? `\nCONTEXT ABOUT THE USER:\n${userContext.slice(0, 2000)}\n` : '') +
+        (groundingContext ? `\nSOURCE MATERIAL (the primary source — ground every fact here):\n${groundingContext.slice(0, 14000)}\n` : '') +
+        (revise ? `\nTHIS REVISES the existing document "${revise.title ?? 'the current version'}" — produce the FULL revised text: apply the requested changes, keep everything else.\n` +
+          (currentDocText ? `THE CURRENT DOCUMENT:\n${currentDocText}\n` : '') : '') +
+        `\nTHE DELIVERABLE: ${instructions}`,
+    }],
+  });
+  const content = (res.choices?.[0]?.message?.content ?? '').trim();
+  if (!content) return { artifact: null, summary: 'Generation failed' };
+
+  // 2 — the door: tiers + floors + theme, one place for every actor.
+  const { materializeDocument } = await import('@/lib/documents/materialize');
+  const m = await materializeDocument(adminClient, userId, {
+    title: instructions.slice(0, 60), content,
+    request: instructions,
+    csvText,
+    revise: revise ? { bytes: revise.bytes, ext: revise.ext, title: revise.title } : null,
+    forceType: deliverableType as import('@/lib/types/inbox').DeliverableType,
+  });
+
+  // 3 — storage + the thread's artifact list. A revision VERSION-APPENDS (new id, parent_id =
+  // the prior version, inherited title — the panel's version chain, the pre-door native
+  // behaviour); fresh work replaces the prior artifact of the same type (also pre-door).
+  const { randomUUID } = await import('crypto');
+  const artifactId = randomUUID();
+  const storagePath = `${userId}/${threadId}/${artifactId}.${m.ext}`;
+  const { error: upErr } = await adminClient.storage.from('work-artifacts')
+    .upload(storagePath, m.bytes, { contentType: m.mime, upsert: true, cacheControl: '0' });
+  if (upErr) return { artifact: null, summary: 'Generation failed' };
+  const artifact: DocumentArtifact = {
+    id: artifactId, type: m.type,
+    title: revise?.title ?? instructions.slice(0, 60),
+    ...(revise ? { parent_id: revise.artifactId } : {}),
+    generated_at: new Date().toISOString(), storage_path: storagePath, content: m.content,
+  } as DocumentArtifact;
+
   const { data: freshThread } = await adminClient
     .from('work_threads')
     .select('artifacts')
     .eq('id', threadId)
     .single();
   const existing = ((freshThread?.artifacts as DocumentArtifact[]) || []);
-  const newTypes = new Set(newArtifacts.map(n => n.type));
-  const kept = existing.filter((a: DocumentArtifact) => !newTypes.has(a.type));
-  const updated = [...kept, ...newArtifacts];
+  const updated = revise
+    ? [...existing, artifact]
+    : [...existing.filter((a: DocumentArtifact) => a.type !== artifact.type), artifact];
+  const newArtifacts: DocumentArtifact[] = [artifact];
 
   await adminClient
     .from('work_threads')

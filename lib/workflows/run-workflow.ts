@@ -119,33 +119,29 @@ async function materialiseOutput(
   }
 
   if ((out.home === 'document' && artifactType === 'document') || wantsAttachmentDoc) {
-    // THE TYPED DELIVERABLE (document hands slice 3): a workflow step whose output is genuinely
-    // tabular/deck (the one fenced protocol, code-validated) materializes as a real xlsx/pptx;
-    // everything else stays the structured document. One parser, both engines.
+    // ── THE ONE PRODUCTION DOOR (plan AF): workflow deliverables materialize through the SAME
+    // module the delegations and DMs use — typed protocol, the compiler tier (a scheduled run
+    // whose task names a chart gets a real charted file), the brand theme, every floor. One
+    // edit at the door upgrades scheduled production too. ──
+    const { materializeDocument } = await import('@/lib/documents/materialize');
     const { parseTypedDeliverable } = await import('@/lib/workflows/typed-output');
     const typed = parseTypedDeliverable(finalText);
-    if (typed) {
-      const artifactId = randomUUID();
-      const { storagePath } = await uploadArtifact(admin, userId, threadId, artifactId, typed.type, typed.content);
-      const artifact: DocumentArtifact = {
-        id: artifactId, title: typed.content.title || title, type: typed.type,
-        generated_at: now.toISOString(), storage_path: storagePath,
-        content: typed.content,
-      } as unknown as DocumentArtifact;
-      return { text: typed.remainder || `${typed.content.title} — attached.`, artifact, title: typed.content.title || title };
-    }
-    const doc = textToDocContent(title, finalText);
+    const m = await materializeDocument(admin, userId, {
+      title, content: finalText,
+      request: title,
+    });
     const artifactId = randomUUID();
-    const { storagePath } = await uploadArtifact(admin, userId, threadId, artifactId, 'document', doc);
+    const storagePath = `${userId}/${threadId}/${artifactId}.${m.ext}`;
+    const { error: upErr } = await admin.storage.from('work-artifacts')
+      .upload(storagePath, m.bytes, { contentType: m.mime, upsert: true, cacheControl: '0' });
+    if (upErr) throw new Error(`Artifact upload failed: ${upErr.message}`);
+    const outTitle = (typeof m.content === 'object' && m.content && 'title' in m.content && m.content.title) ? String(m.content.title) : title;
     const artifact: DocumentArtifact = {
-      id: artifactId,
-      title,
-      type: 'document',
-      generated_at: now.toISOString(),
-      storage_path: storagePath,
-      content: doc,
-    };
-    return { text: finalText, artifact, title };
+      id: artifactId, title: outTitle, type: m.type,
+      generated_at: now.toISOString(), storage_path: storagePath,
+      content: m.content,
+    } as unknown as DocumentArtifact;
+    return { text: typed ? (typed.remainder || `${outTitle} — attached.`) : finalText, artifact, title: outTitle };
   }
 
   // message / slack / email-body homes (and unsupported artifact types): just the text
