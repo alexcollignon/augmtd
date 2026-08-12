@@ -155,10 +155,16 @@ export default function OneSidebar({
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [teamOpen]);
-  // Cached roster for the collapsed facepile (avatars need no live state).
+  // Cached roster for the collapsed facepile (avatars need no live state). First visit on a
+  // fresh device has NO cache — fetch once so the faces show without a click (found live on
+  // iScore: the facepile sat grey until the popover was opened, which is where the only
+  // fetch lived). Subsequent visits hydrate from LS instantly.
   useEffect(() => {
     const cached = loadLS<TeamMate[]>('aug-team-presence-v1');
-    if (cached?.length) setTeam(cached);
+    if (cached?.length) { setTeam(cached); return; }
+    fetch('/api/workers/presence').then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (Array.isArray(d?.team) && d.team.length) setTeam(d.team); })
+      .catch(() => { /* the popover click remains the retry */ });
   }, []);
   useEffect(() => { if (team?.length) saveLS('aug-team-presence-v1', team); }, [team]);
   const dmWorker = (w: TeamMate) => {

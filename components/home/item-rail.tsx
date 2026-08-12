@@ -594,7 +594,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
                 one place. The stitched fields (summary + debt lines) are ONLY the fallback until
                 the first compose lands. */}
             {ent?.brief
-              ? <p className="font-voice text-[14.5px] leading-[1.65] text-neutral-800">{ent.brief}</p>
+              ? <p className="text-[14px] leading-[1.65] text-neutral-800">{ent.brief}</p>
               : ent?.summary
                 ? <p>{ent.summary}</p>
                 : turns.length === 0
@@ -614,7 +614,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
               only the fallback until the first compose lands. */}
           {/* THE VOICE (Arc 3 design language): the room's authored opening is the TEAM speaking —
               serif, a touch larger; chrome stays sans. */}
-          {(ent?.brief || view.brief) ? <p className="font-voice text-[14.5px] leading-[1.65] text-neutral-800">{ent?.brief ?? view.brief}</p> : (() => {
+          {(ent?.brief || view.brief) ? <p className="text-[14px] leading-[1.65] text-neutral-800">{ent?.brief ?? view.brief}</p> : (() => {
             const a = view.anchor;
             const who = a?.who ? spokenName(a.who) : null;
             const ask = a?.ask ? a.ask.charAt(0).toLowerCase() + a.ask.slice(1).replace(/\.+$/, '') : null;
