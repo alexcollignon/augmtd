@@ -20,11 +20,14 @@ type Props = {
   authedEmail: string | null;
 };
 
-type Step = 'email' | 'password' | 'confirm' | 'signin' | 'code' | 'intro';
+type Step = 'signup' | 'confirm' | 'signin' | 'code' | 'intro' | 'reset' | 'resetSent';
 
 export function EnterpriseEntry({ mode, authedEmail }: Props) {
   const router = useRouter();
-  const [step, setStep] = useState<Step>(mode === 'code' ? 'code' : 'email');
+  const [step, setStep] = useState<Step>(mode === 'code' ? 'code' : 'signup');
+  // The intro step re-asks the name ONLY when this mount never captured it (the confirm-email
+  // return path) — never right after a signup that just did.
+  const [askName, setAskName] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
@@ -54,11 +57,14 @@ export function EnterpriseEntry({ mode, authedEmail }: Props) {
       const { data, error: err } = await supabase.auth.signUp({
         email: email.trim(),
         password,
-        options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/enterprise` },
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=/enterprise`,
+          data: { full_name: fullName.trim() },
+        },
       });
       if (err) { setError(err.message); return; }
       if (data.session) {
-        if (await join(code)) setStep('intro');
+        if (await join(code)) { setAskName(false); setStep('intro'); }
       } else {
         setStep('confirm');
       }
@@ -78,10 +84,23 @@ export function EnterpriseEntry({ mode, authedEmail }: Props) {
     finally { setBusy(false); }
   };
 
+  const submitReset = async () => {
+    setBusy(true); setError('');
+    try {
+      const supabase = createClient();
+      const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/auth/callback?next=/enterprise/reset-password`,
+      });
+      if (err) { setError(err.message); return; }
+      setStep('resetSent');
+    } catch { setError('Something went wrong — try again.'); }
+    finally { setBusy(false); }
+  };
+
   const submitJoin = async () => {
     setBusy(true); setError('');
     try {
-      if (await join(code)) setStep('intro');
+      if (await join(code)) { setAskName(!fullName.trim()); setStep('intro'); }
     } catch { setError('Something went wrong — try again.'); }
     finally { setBusy(false); }
   };
@@ -101,8 +120,8 @@ export function EnterpriseEntry({ mode, authedEmail }: Props) {
 
   const goHome = () => { router.push('/home'); router.refresh(); };
 
-  const stepNo = step === 'email' ? 0 : step === 'intro' ? 2 : 1;
-  const showDots = step !== 'signin';
+  const stepNo = step === 'signup' ? 0 : step === 'intro' ? 2 : 1;
+  const showDots = step !== 'signin' && step !== 'reset' && step !== 'resetSent';
   const input = 'w-full px-4 py-3 text-[15px] border border-neutral-200 rounded-2xl focus:outline-none focus:border-neutral-400 placeholder:text-neutral-300 placeholder:text-[14px] transition-colors bg-neutral-50';
   const button = 'w-full py-3 bg-neutral-900 text-white text-[14px] font-medium rounded-2xl hover:bg-neutral-800 disabled:opacity-40 active:scale-[0.99] transition-all';
   const linkBtn = 'text-indigo-600 hover:text-indigo-800 font-medium';
@@ -127,37 +146,21 @@ export function EnterpriseEntry({ mode, authedEmail }: Props) {
             </div>
           )}
 
-          {step === 'email' && (
+          {step === 'signup' && (
             <>
               <h2 className="text-[26px] font-semibold text-neutral-900 leading-tight mb-2">
                 Welcome to your <span className="text-indigo-600">private workspace</span>
               </h2>
               <p className="text-[14px] text-neutral-500 mb-8 leading-relaxed">
-                Enter your work email to get started.
+                Create your account with the workspace code from your admin.
               </p>
-              <form onSubmit={(e) => { e.preventDefault(); if (email.trim()) setStep('password'); }} className="space-y-3">
+              <form onSubmit={(e) => { e.preventDefault(); if (!fullName.trim()) { setError('Enter your name.'); return; } if (!email.trim()) { setError('Enter your work email.'); return; } if (password.length < 8) { setError('Password needs at least 8 characters.'); return; } if (!code.trim()) { setError('Enter your workspace code.'); return; } void submitSignup(); }} className="space-y-3">
+                <input type="text" required value={fullName} onChange={(e) => setFullName(e.target.value)}
+                  placeholder="Your full name" className={input} autoFocus />
                 <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@company.com" className={input} autoFocus />
-                <button type="submit" className={button}>Continue</button>
-              </form>
-              <p className="mt-5 text-[13px] text-neutral-500">
-                Already have an account?{' '}
-                <button type="button" onClick={() => { setError(''); setStep('signin'); }} className={linkBtn}>Sign in</button>
-              </p>
-            </>
-          )}
-
-          {step === 'password' && (
-            <>
-              <h2 className="text-[26px] font-semibold text-neutral-900 leading-tight mb-2">
-                Choose a password
-              </h2>
-              <p className="text-[14px] text-neutral-500 mb-8 leading-relaxed">
-                For <span className="text-neutral-700">{email}</span> — plus the workspace code from your admin.
-              </p>
-              <form onSubmit={(e) => { e.preventDefault(); if (password.length >= 8 && code.trim()) void submitSignup(); else setError(password.length < 8 ? 'Password needs at least 8 characters.' : 'Enter your workspace code.'); }} className="space-y-3">
+                  placeholder="Work email — you@company.com" className={input} />
                 <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Password (8+ characters)" className={input} autoFocus />
+                  placeholder="Password (8+ characters)" className={input} />
                 <input type="text" required value={code} onChange={(e) => setCode(e.target.value.toUpperCase())}
                   placeholder="Workspace code" maxLength={20}
                   className={`${input} font-mono tracking-widest text-center placeholder:font-sans placeholder:tracking-normal`} />
@@ -165,6 +168,15 @@ export function EnterpriseEntry({ mode, authedEmail }: Props) {
                   {busy ? 'Creating your account…' : 'Create account'}
                 </button>
               </form>
+              <p className="mt-4 text-[11.5px] text-neutral-400 leading-relaxed">
+                By creating an account you agree to the{' '}
+                <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline hover:text-neutral-600">Terms</a> and{' '}
+                <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline hover:text-neutral-600">Privacy Policy</a>.
+              </p>
+              <p className="mt-5 text-[13px] text-neutral-500">
+                Already have an account?{' '}
+                <button type="button" onClick={() => { setError(''); setStep('signin'); }} className={linkBtn}>Sign in</button>
+              </p>
             </>
           )}
 
@@ -185,9 +197,48 @@ export function EnterpriseEntry({ mode, authedEmail }: Props) {
                   {busy ? 'Signing in…' : 'Sign in'}
                 </button>
               </form>
+              <div className="mt-5 flex items-center justify-between text-[13px] text-neutral-500">
+                <span>
+                  New here?{' '}
+                  <button type="button" onClick={() => { setError(''); setPassword(''); setStep('signup'); }} className={linkBtn}>Create your account</button>
+                </span>
+                <button type="button" onClick={() => { setError(''); setStep('reset'); }} className="text-neutral-400 hover:text-neutral-600">Forgot password?</button>
+              </div>
+            </>
+          )}
+
+          {step === 'reset' && (
+            <>
+              <h2 className="text-[26px] font-semibold text-neutral-900 leading-tight mb-2">
+                Reset your password
+              </h2>
+              <p className="text-[14px] text-neutral-500 mb-8 leading-relaxed">
+                We&rsquo;ll email you a link to choose a new one.
+              </p>
+              <form onSubmit={(e) => { e.preventDefault(); if (email.trim()) void submitReset(); }} className="space-y-3">
+                <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@company.com" className={input} autoFocus />
+                <button type="submit" disabled={busy} className={button}>
+                  {busy ? 'Sending…' : 'Send reset link'}
+                </button>
+              </form>
               <p className="mt-5 text-[13px] text-neutral-500">
-                New here?{' '}
-                <button type="button" onClick={() => { setError(''); setPassword(''); setStep('email'); }} className={linkBtn}>Create your account</button>
+                <button type="button" onClick={() => { setError(''); setStep('signin'); }} className={linkBtn}>Back to sign in</button>
+              </p>
+            </>
+          )}
+
+          {step === 'resetSent' && (
+            <>
+              <h2 className="text-[26px] font-semibold text-neutral-900 leading-tight mb-2">
+                Check your inbox
+              </h2>
+              <p className="text-[14px] text-neutral-500 leading-relaxed">
+                If an account exists for <span className="text-neutral-700">{email}</span>, a reset link is on
+                its way. Open it to choose a new password.
+              </p>
+              <p className="mt-5 text-[13px] text-neutral-500">
+                <button type="button" onClick={() => { setError(''); setStep('signin'); }} className={linkBtn}>Back to sign in</button>
               </p>
             </>
           )}
@@ -232,11 +283,13 @@ export function EnterpriseEntry({ mode, authedEmail }: Props) {
               <p className="text-[14px] text-neutral-500 mb-8 leading-relaxed">
                 Thirty seconds — so your AI team knows who it&rsquo;s working for.
               </p>
-              <form onSubmit={(e) => { e.preventDefault(); if (fullName.trim() && role.trim()) void submitIntro(); else setError(!fullName.trim() ? 'Enter your name.' : 'Enter your role.'); }} className="space-y-3">
-                <input type="text" required value={fullName} onChange={(e) => setFullName(e.target.value)}
-                  placeholder="Your full name" className={input} autoFocus />
+              <form onSubmit={(e) => { e.preventDefault(); if ((askName && !fullName.trim()) || !role.trim()) { setError(askName && !fullName.trim() ? 'Enter your name.' : 'Enter your role.'); return; } void submitIntro(); }} className="space-y-3">
+                {askName && (
+                  <input type="text" required value={fullName} onChange={(e) => setFullName(e.target.value)}
+                    placeholder="Your full name" className={input} autoFocus />
+                )}
                 <input type="text" required value={role} onChange={(e) => setRole(e.target.value)}
-                  placeholder="Your role — e.g. Head of Operations" className={input} />
+                  placeholder="Your role — e.g. Head of Operations" className={input} autoFocus={!askName} />
                 <input type="text" value={focus} onChange={(e) => setFocus(e.target.value)}
                   placeholder="What does your work mostly involve? (optional)" maxLength={240} className={input} />
                 <button type="submit" disabled={busy} className={button}>
