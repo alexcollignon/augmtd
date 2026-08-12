@@ -523,8 +523,8 @@ export default function MeetingsHome({
         inProgress.length === 0 && live.length === 0 && (
           <EmptyState
             icon={MicrophoneIcon}
-            title="No notes yet"
-            description={filterPersonEmail ? 'No meetings with this person.' : 'Use New Note to get started.'}
+            title="No meetings yet"
+            description={filterPersonEmail ? 'No meetings with this person.' : 'Use New meeting to get started.'}
           />
         )
       ) : (

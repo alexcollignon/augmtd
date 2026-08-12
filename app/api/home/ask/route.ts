@@ -24,7 +24,14 @@ export async function POST(request: NextRequest) {
     // request it never saw. Long input is the NORM for production asks; 20k chars ≈ a long doc.
     const q = String(body.question ?? '').trim().slice(0, 20000);
     if (!q) return NextResponse.json({ error: 'question required' }, { status: 400 });
-    const history = Array.isArray(body.history) ? body.history : [];
+    // REVISION-IN-PLACE (DH7): assistant turns may carry their document card's ref — sanitized
+    // to bare ids/titles (ownership is verified server-side at the revise door, never trusted).
+    const history = (Array.isArray(body.history) ? body.history : []).map((h) => ({
+      role: h?.role === 'user' ? 'user' as const : 'assistant' as const,
+      text: String(h?.text ?? '').slice(0, 8000),
+      ...(h?.artifact && typeof h.artifact.id === 'string' && typeof h.artifact.threadId === 'string'
+        ? { artifact: { id: h.artifact.id.slice(0, 40), threadId: h.artifact.threadId.slice(0, 40), title: String(h.artifact.title ?? '').slice(0, 140) } } : {}),
+    }));
     // THE ATTACHED MATERIAL (the production hand-off): synchronously-extracted attachment text
     // rides the ask itself — never a race against the KB's background indexing.
     const attachments = (Array.isArray(body.attachments) ? body.attachments : [])
@@ -36,6 +43,10 @@ export async function POST(request: NextRequest) {
         // this with the attached logo" can build the theme on the spot.
         ...(a?.image && typeof a.image.dataB64 === 'string' && a.image.dataB64.length <= 1_500_000
           ? { image: { dataB64: a.image.dataB64, mime: String(a.image.mime ?? 'image/png').slice(0, 40) } } : {}),
+        // TEMPLATE-BY-EXAMPLE (DH5b): an office file's bytes ride so "follow this template"
+        // mounts the real file into the compile job.
+        ...(a?.file && typeof a.file.dataB64 === 'string' && a.file.dataB64.length <= 1_500_000 && /^(docx|pptx|xlsx)$/.test(String(a.file.ext))
+          ? { file: { dataB64: a.file.dataB64, ext: String(a.file.ext) } } : {}),
       }))
       .filter((a) => a.name);
     // THE SCOPE CHIP (Aug 6): a scoped Home conversation converses IN the project's room scope —

@@ -70,9 +70,11 @@ export async function uploadArtifact(
   const mime = getMimeType(type);
   const storagePath = `${userId}/${threadId}/${artifactId}.${ext}`;
 
+  // cacheControl 0: a revision reuses its artifact's path — the default 1h CDN cache would
+  // serve the pre-revision file after an in-place update (found live in the DH7 E2E).
   const { error } = await admin.storage
     .from('work-artifacts')
-    .upload(storagePath, buffer, { contentType: mime, upsert: true });
+    .upload(storagePath, buffer, { contentType: mime, upsert: true, cacheControl: '0' });
 
   if (error) throw new Error(`Artifact upload failed: ${error.message}`);
   return { storagePath };

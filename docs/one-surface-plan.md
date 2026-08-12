@@ -468,6 +468,76 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+AF. **THE ONE PRODUCTION DOOR (designed AND BUILT Aug 12; gate OP1 — 134/134; E2E: DM
+   charted doc via auto-resolved CSV + DM revision (version-append, parent_id chain,
+   chart survived) + delegation regression + replay T2–T7 all PASS on the bedrock
+   probe).** The DM-parity finding generalized: three actors produce documents —
+   the chief's delegations (runDelegation: facts → compiler → typed → theme, the full
+   stack), coworker DMs (/api/work/threads/[id]/chat → generateThreadDocument → the OLD
+   generators pipeline: no facts floor, no compiler, no revision, no templates, NO
+   BRANDING), and workflow runs (typed + theme, no compiler/facts) — and every document
+   capability landed on whichever door was being fixed that day. Sofia asked the same
+   thing in her DM and through the chief produces two different grades of work — a
+   one-system violation (the same class the ONE GROUNDING fixed for answers). THE
+   DESIGN — actors stay different, organs become shared: (1) EXTRACT THE DOOR
+   (lib/documents/materialize.ts) — runDelegation's artifact block (facts-aware compiler
+   tier → typed protocol → template-renderer floor, theme, structural validation)
+   becomes a standalone module: content in → verified branded file out; runDelegation
+   is its first caller (pure refactor, DH gates keep holding). (2) PRE-WRITE LANES RIDE
+   THE DOOR — the deterministic floors (data-facts over tabular material, content-floor,
+   aggregates-from-rows) live WITH the door; model discretion never decides whether
+   numbers get computed. (3) DM PARITY = RE-ROUTE, NOT REWRITE — the chat loop keeps
+   its streaming reasoning/tools/memory (the "coworker thinking" feel); generate_document
+   just calls the door (native + AgentOS funnel through one internal seam). (4) DM
+   REVISION IS SIMPLER — the thread's own artifact list IS the current version; "make
+   the chart blue" resolves to the last artifact, no card-ref plumbing. (5) WORKFLOWS
+   CONVERGE LAST — run-workflow already shares uploadArtifact; pointing it at the door
+   gives scheduled runs (the AHK class) charts + facts free. THE INVARIANT BOUGHT:
+   adding a document capability = ONE edit at the door, every actor upgrades at once
+   (the tool-gating map's property, applied to production). RIDES ALONG: the DM first
+   contact becomes the coworker's OWN first-person intro (a self-introduction is the
+   coworker's honest speech — the one-narrator law guards engine narration, not
+   greetings) + coworker avatars on ALL authored DM bubbles (the Home panel renders a
+   bare name while worker page + email signatures wear the real headshot — a
+   same-visual-same-meaning violation). BUILD NOTES (Aug 12): the DM's generate_document
+   now writes content with the author model (typed rule attached) then calls the door;
+   email drafts keep their card path; DM revision VERSION-APPENDS (parent_id — the
+   panel's version chain survives, unlike the Home card's replace-in-place, each matching
+   its surface's idiom); the native chat route's inline generators copy is DELETED
+   (both runtimes call the ONE function; auto-resolution of revision + tabular material
+   happens INSIDE it so neither can drift); workflows materialize through the door
+   (compiler fires for scheduled runs once callers thread csvText). The intro copy is
+   benefit-led plain language ("I take the busywork off your plate"), spoken by the
+   coworker with their face on the bubble (WorkerFace: role png, initial-chip fallback).
+AE. **THE DOCUMENT HANDS — slice 7: REVISION-IN-PLACE + TEMPLATE-BY-EXAMPLE (Aug 11 late
+   night; gate DH7 — 133/133; both E2Es pass live).** The two remaining gaps to the
+   Claude document bar, sharing one plumbing (mounting a real file into the compile
+   job). REVISION: an assistant turn that produced a document sends its card ref back
+   in history (the client sends what it already renders — {id, threadId, title}); the
+   classifier judges `revises` (told a document card is open in the panel); the
+   delegation door fetches the prior artifact's CURRENT bytes behind an OWNERSHIP
+   FLOOR (client-supplied ids + admin client → the thread must be THIS user's, or a
+   crafted history could revise another user's artifact), mounts them at
+   /job/inputs/current.<ext>, and the result lands on the SAME artifact id — the row
+   REPLACES (never appends), the card the user has UPDATES. Three found-live fixes:
+   the coworker sees the current document's TEXT at the runDelegation door (not the
+   caller's — a direct delegation once asked for the document its caller held); a
+   revision always materializes past the 600-char length floor (a one-line hand-back
+   still updates the file); and cacheControl 0 on BOTH artifact upload doors — the
+   1h CDN default served the PRE-revision file to the very click that asked for the
+   change. TEMPLATE: "follow this template" resolves the example file — attached
+   office bytes ≤1MB now ride ConverseAttachment.file (extract-attach returns them;
+   the ask route guards them), else a NAMED KB document (filename-token match,
+   storage-backed only, ≤8MB) — mounted at /job/inputs/template.<ext>; clone_slide
+   keeps hand-made pptx design byte-faithful. THE CONTENT FLOOR (the arc's integrity
+   lesson, found live): a template compile produced PERFECT structure and ZERO real
+   facts — the codegen model authored its own content; now the coworker's written
+   deliverable rides compileDocument as THE CONTENT (authoritative; codegen formats,
+   never authors). E2E: produce→revise kept the id, replaced the row, added the
+   requested section, kept the chart; the template compile followed all four
+   distinctive section names carrying the coworker's real facts. ⚠️ MID-SESSION: the
+   Anthropic API key ran out of credits (standard-tier conversation/generation) —
+   the replay suite is unverified against these converse edits until topped up.
 AD. **THE DOCUMENT HANDS — slice 6: THE DOCUMENT COMPILER (Aug 11 night; gate DH6 —
    132/132; two live E2Es pass: the standalone proving run and the wired delegation
    door).** Code-per-document, the ceiling tier above the template renderers: a chart-

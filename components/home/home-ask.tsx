@@ -22,6 +22,23 @@ import type { DocumentArtifact } from '@/lib/types/inbox';
 // composeBriefing machinery survives as the deck's ordering anchor + the daily report.)
 
 type Ref = { id: string; kind: string; label: string; href: string | null };
+// The coworker's FACE beside their name — the real headshot when the name maps to a seeded
+// role (/public/workers/*.png), an initial chip otherwise. Never for the narrator (no author).
+const WORKER_PNG: Record<string, string> = { clara: '/workers/clara.png', sofia: '/workers/sofia.png', luca: '/workers/luca.png', max: '/workers/max.png' };
+function WorkerFace({ name }: { name: string }) {
+  const first = name.split(' ')[0];
+  const src = WORKER_PNG[first.toLowerCase()];
+  if (src) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={src} alt="" className="h-5 w-5 rounded-full object-cover" />;
+  }
+  return (
+    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-semibold text-indigo-700" aria-hidden="true">
+      {first.charAt(0).toUpperCase()}
+    </span>
+  );
+}
+
 type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
   /** THE ABSORPTION (brick 1): a coworker's own reply carries their name — the one-narrator
    *  law's attribution, now in the Home panel. */
@@ -256,6 +273,55 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // WORKER MODE: the next message continues in that SAME thread (the DM pointer re-aims), and
   // chief persistence is structurally off while the mode holds. ──
   const workerRoomRef = useRef<{ id: string; name: string } | null>(null);
+  // FIRST CONTACT: the coworker introduces THEMSELF (a self-introduction is the coworker's own
+  // honest speech — the one-narrator law guards engine narration, not greetings). Simple,
+  // benefit-led language ("what I take off your plate"), never product concepts. The team
+  // explainer appears exactly once (the flag), then a short greeting + chips.
+  const TEAM_INTRO_LS = 'aug-team-intro-v1';
+  const workerIntroFor = (first: string): { helps: string; examples: Array<{ label: string; say: string }> } => {
+    const byName: Record<string, { helps: string; examples: Array<{ label: string; say: string }> }> = {
+      clara: {
+        helps: 'I take the busywork off your plate — agendas, checklists, follow-ups, keeping things organized. Tell me what you need in plain words, like you would text a colleague.',
+        examples: [
+          { label: 'Draft a meeting agenda', say: 'Draft an agenda for a 30-minute kickoff meeting with a new client.' },
+          { label: 'Set up a weekly summary', say: 'Set up a weekly task: every Monday morning, summarize my open work for the week.' },
+          { label: 'Build a checklist', say: 'Make me a checklist for onboarding a new team member.' },
+        ],
+      },
+      sofia: {
+        helps: 'I do your writing — reports, summaries, announcements — so you start from a finished draft instead of a blank page. Attach a file and I can work directly on it.',
+        examples: [
+          { label: 'Draft a status report', say: 'Draft a one-page project status report — ask me for the key points you need.' },
+          { label: 'Write an announcement', say: 'Write a first draft of a short internal announcement about a process change.' },
+          { label: 'Summarize a document', say: 'I will attach a document — summarize it into one page of key takeaways.' },
+        ],
+      },
+      max: {
+        helps: 'I do the digging — research, comparisons, data analysis — so you get the answer without the hours of reading. Attach a spreadsheet and I can work the numbers.',
+        examples: [
+          { label: 'Research a topic', say: 'Research current best practices for quarterly business reviews and give me a structured summary.' },
+          { label: 'Compare options', say: 'Compare the pros and cons of three common approaches to team performance reviews.' },
+          { label: 'Analyze attached data', say: 'I will attach a spreadsheet — analyze it and tell me the three most important patterns.' },
+        ],
+      },
+      luca: {
+        helps: 'I keep your LinkedIn active — posts drafted, ideas planned — without it eating your week.',
+        examples: [
+          { label: 'Draft a LinkedIn post', say: 'Draft a LinkedIn post about a recent team milestone — professional but human.' },
+          { label: 'Plan a month of posts', say: 'Suggest five LinkedIn post ideas for this month based on what my company does.' },
+          { label: 'Rework my draft', say: 'I will paste a rough draft — rework it into a stronger LinkedIn post.' },
+        ],
+      },
+    };
+    return byName[first.toLowerCase()] ?? {
+      helps: 'I take real work off your plate — drafts, research, recurring tasks. Tell me what you need in plain words.',
+      examples: [
+        { label: 'Draft a document', say: 'Draft a one-page document — ask me what you need to get started.' },
+        { label: 'Set up a recurring task', say: 'Set up a weekly task that summarizes my open work every Monday morning.' },
+        { label: 'Work on a file', say: 'I will attach a file — read it and tell me what you can do with it.' },
+      ],
+    };
+  };
   // Always an EXPLICIT open (THE FRESH FLOOR, Aug 11): landings never call this implicitly —
   // past conversations open only through deliberate doors (sidebar, History, ?chat=, facepile).
   const loadWorkerRoom = async (key: string) => {
@@ -287,9 +353,24 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // A BRAND-NEW DM has zero messages — zero turns meant the panel never took over (found
       // live: the facepile's Chat created the thread, loaded nothing, and read as a dead
       // click). The narrator opens the room (the CoS voice, author absent — never fabricated
-      // coworker speech); not persisted.
+      // coworker speech); not persisted. FIRST CONTACT (pilot feedback, Aug 12: "I would not
+      // know what to do" — 99% of users have never had an agent team): the very first empty DM
+      // explains the concept ONCE (LS flag; never repeated after), and EVERY empty DM carries
+      // tappable example asks — affordances, not repeated prose (a chip is guidance that
+      // doesn't nag). A tap speaks through the composer (the word is the deed).
       if (loaded.length === 0) {
-        loaded.push({ role: 'assistant', text: `This is your direct line to ${name.split(' ')[0]} — ask for work, hand something off, or set up a standing task.` });
+        const first = name.split(' ')[0];
+        const intro = workerIntroFor(first);
+        let seenIntro = true;
+        try { seenIntro = localStorage.getItem(TEAM_INTRO_LS) === '1'; localStorage.setItem(TEAM_INTRO_LS, '1'); } catch { /* no LS */ }
+        // The coworker speaks for themself (author set → their avatar + name on the bubble).
+        loaded.push({
+          role: 'assistant', author: first,
+          text: seenIntro
+            ? `Hi — I'm ${first}. ${intro.helps} A few things I can do right now:`
+            : `Hi — I'm ${first}, one of the AI coworkers that comes with your workspace (there's a small team of us, each with a specialty). ${intro.helps} A few things I can do right now:`,
+          options: intro.examples,
+        });
       }
       setTurns(loaded);
       setTimeout(() => focusComposer(), 120);
@@ -685,7 +766,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // THE ATTACHED MATERIAL (Aug 10, the production hand-off): extract the files' text NOW so it
   // rides the ask itself — the KB upload (durable copy) indexes in the background and a
   // "fill this in" must never race it. Best-effort; the KB note still lands either way.
-  const extractAttachments = async (files: File[]): Promise<Array<{ name: string; text: string | null; image?: { dataB64: string; mime: string } }>> => {
+  const extractAttachments = async (files: File[]): Promise<Array<{ name: string; text: string | null; image?: { dataB64: string; mime: string }; file?: { dataB64: string; ext: string } }>> => {
     try {
       const fd = new FormData();
       files.forEach((f) => fd.append('file', f));
@@ -701,7 +782,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     mentions: Array<{ id: string; type: 'coworker' | 'task' | 'document'; label: string }>, shown: string,
   ) => {
     let sendQ = question;
-    let attachments: Array<{ name: string; text: string | null; image?: { dataB64: string; mime: string } }> = [];
+    let attachments: Array<{ name: string; text: string | null; image?: { dataB64: string; mime: string }; file?: { dataB64: string; ext: string } }> = [];
     if (files.length) {
       setStage('Reading the files…');
       const [done, extracted] = await Promise.all([uploadToKB(files), extractAttachments(files)]);
@@ -717,8 +798,16 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     }
     const hints = mentions.filter((m) => m.type !== 'coworker').map((m) => m.label);
     if (hints.length) sendQ += ` (about: ${hints.join('; ')})`;
-    // History excludes the just-echoed user turn (it rides as `question`).
-    const history = turns.map((t) => ({ role: t.role, text: t.text }));
+    // History excludes the just-echoed user turn (it rides as `question`). An assistant turn
+    // that produced a document sends its card ref along (REVISION-IN-PLACE: "make the chart
+    // blue" must resolve to THAT artifact, not mint a second one).
+    const history = turns.map((t) => {
+      const artCard = t.cards?.find((c) => c.art);
+      return {
+        role: t.role, text: t.text,
+        ...(artCard?.art ? { artifact: { id: artCard.art.id, threadId: artCard.art.tid, title: artCard.label } } : {}),
+      };
+    });
     persistTurn('user', shown);
     try {
       // STREAMING ASK (Aug 6): SSE — `progress` events narrate the core's live stage (the busy
@@ -843,9 +932,15 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                   <div key={i} className="flex justify-end"><UserBubble text={t.text} /></div>
                 ) : (
                   <div key={i} className="pr-2">
-                    {/* A coworker's reply wears THEIR name (the one-narrator law); it streams
-                        live, so no typewriter re-reveal. */}
-                    {t.author && <p className="mb-1 text-[11.5px] font-semibold text-indigo-600">{t.author.split(' ')[0]}</p>}
+                    {/* A coworker's reply wears THEIR name AND face (the one-narrator law +
+                        same-visual-same-meaning: the worker page and email signatures carry the
+                        headshot — the Home DM must too). Name → role png; initial chip fallback. */}
+                    {t.author && (
+                      <span className="mb-1 flex items-center gap-1.5">
+                        <WorkerFace name={t.author} />
+                        <span className="text-[11.5px] font-semibold text-indigo-600">{t.author.split(' ')[0]}</span>
+                      </span>
+                    )}
                     <AnimatedAnswer text={t.text} refs={t.refs ?? []} onOpen={openRef} animate={!t.author && i === animateIdx} />
                     {/* Deliverable cards at the exchange's now edge — a DOCUMENT opens the
                         artifact panel HERE (brick 3); registry renders still point away. */}

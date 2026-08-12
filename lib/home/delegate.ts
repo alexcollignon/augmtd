@@ -133,6 +133,14 @@ export async function runDelegation(args: {
    *  words (the compile task); facts ride as the authoritative numbers. Fail-soft: a compile
    *  failure falls back to the template tier — the user always gets a document. */
   compile?: { csvText?: string | null; computedFacts?: string | null; request?: string | null };
+  /** REVISION-IN-PLACE (DH7): the request MODIFIES an existing deliverable — its current bytes
+   *  mount at /job/inputs/current.<ext> and the result materializes back onto the SAME artifact
+   *  id (the card updates; a second card never appears). */
+  revise?: { artifactId: string; threadId: string; title: string; bytes: Buffer; ext: 'docx' | 'pptx' | 'xlsx' } | null;
+  /** TEMPLATE-BY-EXAMPLE (DH5b): a real example file whose structure/design the deliverable must
+   *  follow — mounted at /job/inputs/template.<ext> for the compile job to mirror (clone_slide
+   *  keeps hand-made pptx design byte-faithful). */
+  templateFile?: { bytes: Buffer; ext: 'docx' | 'pptx' | 'xlsx' } | null;
   // ── task-workflows S2: the item this delegation belongs to, so the coworker READS the per-item
   // deliverable pool (build on prior steps — engine-gap #1: was `previousOutputs: []`) and WRITES its
   // output back into the pool for downstream steps. Optional/back-compatible: absent → no pool wiring
@@ -165,6 +173,23 @@ export async function runDelegation(args: {
       `run_compute tool, use it for EVERY count/mean/percentage (pass the CSV via "data"; copy printed results ` +
       `verbatim). If you cannot compute in code, keep numeric claims to what is directly readable, and mark ` +
       `derived statistics as "(unverified — needs a computed check)" — an honest gap beats a guessed number.`;
+  }
+  // REVISION-IN-PLACE (DH7): the coworker revises CONTENT IT CAN SEE — the current document's
+  // text rides the prompt at THIS door (not the caller's), so every runDelegation caller gets
+  // it: the hand-back narrates the change, and the template-tier fallback (compile failure)
+  // rebuilds from the full revised content instead of losing every untouched section.
+  if (args.revise) {
+    try {
+      const { extractTextFromAttachment } = await import('@/lib/attachments/text-extractor');
+      const mime = args.revise.ext === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        : args.revise.ext === 'pptx' ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      const currentText = await extractTextFromAttachment(args.revise.bytes, mime as Parameters<typeof extractTextFromAttachment>[1], `current.${args.revise.ext}`);
+      if (currentText) {
+        prompt += `\n\nTHE CURRENT DOCUMENT (you are REVISING "${args.revise.title}" — produce the FULL revised ` +
+          `text: apply the requested changes and keep everything else exactly):\n${currentText.slice(0, 12000)}`;
+      }
+    } catch { /* the compile job still holds the real bytes */ }
   }
   // JUDGMENT DISCLOSURE (the Claude-session craft, made a rule): real scope/method choices are
   // surfaced for the user to revisit — silently-made decisions are how trust erodes.
@@ -308,53 +333,50 @@ export async function runDelegation(args: {
   // as a REAL xlsx/pptx (code-validated fence; a malformed block falls back to the document
   // path). Typed outputs skip the length floor — a small sheet is still a sheet.
   const typed = deliverableOk ? (await import('@/lib/workflows/typed-output')).parseTypedDeliverable(output) : null;
-  if (threadId && deliverableOk && (typed || output.length >= 600)) {
+  // A REVISION always materializes (the hand-back may be one line — "added the section" — but
+  // the artifact must still update), and so does a TEMPLATE ask (the file IS the deliverable);
+  // fresh plain work keeps the length floor.
+  if (threadId && deliverableOk && (typed || args.revise || args.templateFile || output.length >= 600)) {
     try {
-      const { textToDocContent, uploadArtifact } = await import('@/lib/workflows/doc-content');
       const { randomUUID } = await import('crypto');
-      const title = (typed?.content.title || itemLabel).slice(0, 120) || 'Delegated work';
-      let artifactType: import('@/lib/types/inbox').DeliverableType = typed?.type ?? 'document';
-      const doc = typed ? typed.content : textToDocContent(title, output);
-      const artifactId = randomUUID();
-      // ── THE COMPILER TIER (DH6) — charts inside the document, built by code, render-verified.
-      // Triggered only when the user's own request names a visual AND tabular data rode along;
-      // any failure inside falls through to the template tier below (fail-soft by construction).
-      let storagePath: string | null = null;
-      const compileReq = args.compile?.request ?? '';
-      if (args.compile?.csvText && /\b(chart|graph|plot|visuali[sz]|diagram)\w*/i.test(compileReq)) {
-        try {
-          const ext = /\b(deck|slides?|presentation|pptx)\b/i.test(compileReq) ? 'pptx' as const : 'docx' as const;
-          let theme = themeOverride ?? null;
-          if (themeOverride === undefined) {
-            theme = await (await import('@/lib/documents/theme')).getDocTheme(supabase, userId).catch(() => null);
-          }
-          const { compileDocument } = await import('@/lib/compute/document-compiler');
-          const compiled = await compileDocument(supabase, userId, {
-            task: compileReq.slice(0, 800), ext,
-            csvText: args.compile.csvText, theme, computedFacts: args.compile.computedFacts ?? null,
-          });
-          if (compiled) {
-            artifactType = ext === 'pptx' ? 'presentation' : 'document';
-            const path = `${userId}/${threadId}/${artifactId}.${ext}`;
-            const { error } = await supabase.storage.from('work-artifacts')
-              .upload(path, compiled.bytes, { contentType: compiled.mime, upsert: true });
-            if (!error) storagePath = path; // the viewer shows the text hand-back; download serves the compiled file
-          }
-        } catch { /* the template tier below is the floor */ }
-      }
-      if (!storagePath) {
-        ({ storagePath } = await uploadArtifact(supabase, userId, threadId, artifactId, artifactType, doc, themeOverride !== undefined && themeOverride !== null ? { theme: themeOverride } : undefined));
-      }
+      // REVISION-IN-PLACE (DH7): the revised deliverable keeps its artifact id + thread — the
+      // card the user already has UPDATES; a second card never appears.
+      const artifactId = args.revise?.artifactId ?? randomUUID();
+      const artifactThread = args.revise?.threadId ?? threadId;
+      // ── THE ONE PRODUCTION DOOR (plan AF): every tier decision — compiler (charts/revision/
+      // template-following) → typed → template renderers — plus the content/facts/theme floors
+      // lives in materializeDocument; this caller only owns identity (ids, storage path, row). ──
+      const { materializeDocument } = await import('@/lib/documents/materialize');
+      const m = await materializeDocument(supabase, userId, {
+        title: itemLabel, content: output,
+        request: args.compile?.request ?? null,
+        csvText: args.compile?.csvText ?? null,
+        computedFacts: args.compile?.computedFacts ?? null,
+        revise: args.revise ? { bytes: args.revise.bytes, ext: args.revise.ext, title: args.revise.title } : null,
+        templateFile: args.templateFile ?? null,
+        theme: themeOverride, // undefined → the door resolves the one hierarchy
+      });
+      const title = (args.revise?.title || (typeof m.content === 'object' && m.content && 'title' in m.content ? String(m.content.title) : '') || itemLabel).slice(0, 120) || 'Delegated work';
+      const path = `${userId}/${artifactThread}/${artifactId}.${m.ext}`;
+      // cacheControl 0: a REVISION overwrites the same path — the default 1h CDN cache would
+      // serve the pre-revision file to the very click that asked for the change.
+      const { error: upErr } = await supabase.storage.from('work-artifacts')
+        .upload(path, m.bytes, { contentType: m.mime, upsert: true, cacheControl: '0' });
+      if (upErr) throw new Error(`artifact upload failed: ${upErr.message}`);
       const row = {
-        id: artifactId, title, type: artifactType,
-        generated_at: new Date().toISOString(), storage_path: storagePath, content: doc,
+        id: artifactId, title, type: m.type,
+        generated_at: new Date().toISOString(), storage_path: path, content: m.content,
       };
-      const { data: th } = await supabase.from('work_threads').select('artifacts').eq('id', threadId).single();
-      const existing = Array.isArray(th?.artifacts) ? (th!.artifacts as unknown[]) : [];
+      const { data: th } = await supabase.from('work_threads').select('artifacts').eq('id', artifactThread).single();
+      const existing = Array.isArray(th?.artifacts) ? (th!.artifacts as Array<{ id?: string }>) : [];
+      // A revision REPLACES its row (same id, fresh generated_at); new work appends.
+      const replaced = existing.some((r) => r?.id === artifactId)
+        ? existing.map((r) => (r?.id === artifactId ? row : r))
+        : [...existing, row].slice(-20);
       await supabase.from('work_threads')
-        .update({ artifacts: [...existing, row].slice(-20), artifact: row, updated_at: new Date().toISOString() })
-        .eq('id', threadId);
-      artifact = { id: artifactId, title, threadId };
+        .update({ artifacts: replaced, artifact: row, updated_at: new Date().toISOString() })
+        .eq('id', artifactThread);
+      artifact = { id: artifactId, title, threadId: artifactThread };
     } catch (e) {
       console.error('[delegate] artifact materialization failed (non-fatal):', e);
     }

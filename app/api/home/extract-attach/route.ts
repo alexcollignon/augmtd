@@ -33,14 +33,15 @@ export async function POST(request: NextRequest) {
     const files = (formData.getAll('file') as File[]).slice(0, 5);
     if (!files.length) return NextResponse.json({ error: 'file is required' }, { status: 400 });
 
-    const attachments: Array<{ name: string; text: string | null; image?: { dataB64: string; mime: string } }> = [];
+    const attachments: Array<{ name: string; text: string | null; image?: { dataB64: string; mime: string }; file?: { dataB64: string; ext: string } }> = [];
     for (const f of files) {
       if (f.size > MAX_FILE_SIZE) { attachments.push({ name: f.name, text: null }); continue; }
       // The browser's mime is unreliable for dragged Office files — extension is the fallback.
       const extMime: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' };
+      const ext = f.name.split('.').pop()?.toLowerCase() ?? '';
       const mime = f.type && f.type !== 'application/octet-stream'
         ? f.type
-        : MIME_BY_EXT[f.name.split('.').pop()?.toLowerCase() ?? ''] ?? extMime[f.name.split('.').pop()?.toLowerCase() ?? ''] ?? f.type;
+        : MIME_BY_EXT[ext] ?? extMime[ext] ?? f.type;
       try {
         const buf = Buffer.from(await f.arrayBuffer());
         // AN IMAGE rides as BYTES (≤1MB) — THE MOMENT THEME needs the logo itself ("brand this
@@ -50,7 +51,11 @@ export async function POST(request: NextRequest) {
           continue;
         }
         const text = await extractTextFromAttachment(buf, mime as AttachmentMimeType, f.name);
-        attachments.push({ name: f.name, text: text ? text.slice(0, MAX_TEXT) : null });
+        // TEMPLATE-BY-EXAMPLE (DH5b): an office file ≤1MB ALSO carries its bytes — "follow this
+        // template" needs the real file mounted into the compile job, not just its text.
+        const file = /^(docx|pptx|xlsx)$/.test(ext) && buf.length <= 1024 * 1024
+          ? { file: { dataB64: buf.toString('base64'), ext } } : {};
+        attachments.push({ name: f.name, text: text ? text.slice(0, MAX_TEXT) : null, ...file });
       } catch { attachments.push({ name: f.name, text: null }); }
     }
     return NextResponse.json({ attachments });

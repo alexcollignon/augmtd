@@ -240,6 +240,21 @@ export default function OneSidebar({
           )}
         </Link>
 
+        {/* Inbox + Meetings sit WITH the primary nav (owner call, Aug 12 — a separate "Sources"
+            category read as taxonomy, not navigation; two items don't earn a section). */}
+        {features.email && (
+          <Link href="/inbox" className={item(pathname.startsWith('/inbox'))}>
+            <EnvelopeIcon className={`w-[17px] h-[17px] flex-shrink-0 ${pathname.startsWith('/inbox') ? 'text-indigo-500' : 'text-neutral-400'}`} />
+            Inbox
+          </Link>
+        )}
+        {features.meetings && (
+          <Link href="/meetings" className={item(pathname.startsWith('/meetings'))}>
+            <VideoCameraIcon className={`w-[17px] h-[17px] flex-shrink-0 ${pathname.startsWith('/meetings') ? 'text-indigo-500' : 'text-neutral-400'}`} />
+            Meetings
+          </Link>
+        )}
+
         {rooms.conversations.length > 0 && (
           <>
             <div className={sectionLabel}>Recent</div>
@@ -308,19 +323,6 @@ export default function OneSidebar({
           </>
         )}
 
-        <div className={sectionLabel}>Sources</div>
-        {features.email && (
-          <Link href="/inbox" className={item(pathname.startsWith('/inbox'))}>
-            <EnvelopeIcon className={`w-[17px] h-[17px] flex-shrink-0 ${pathname.startsWith('/inbox') ? 'text-indigo-500' : 'text-neutral-400'}`} />
-            Inbox
-          </Link>
-        )}
-        {features.meetings && (
-          <Link href="/meetings" className={item(pathname.startsWith('/meetings'))}>
-            <VideoCameraIcon className={`w-[17px] h-[17px] flex-shrink-0 ${pathname.startsWith('/meetings') ? 'text-indigo-500' : 'text-neutral-400'}`} />
-            Meetings
-          </Link>
-        )}
         {isSuperAdmin && (
           <Link href="/platform-admin" className={item(pathname.startsWith('/platform-admin'))}>
             <ShieldCheckIcon className="w-[17px] h-[17px] flex-shrink-0 text-neutral-400" />
