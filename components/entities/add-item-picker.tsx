@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from 'react';
 import { AnchoredPopover } from '@/components/ui/anchored-popover';
+import { useFeatures } from '@/context/workspace-context';
 
 export type LooseItem = { kind: 'inbox_item' | 'commitment' | 'meeting'; id: string; label: string; who: string | null; at: string | null };
 
@@ -20,6 +21,7 @@ export function AddItemPicker({ anchorRef, onPick, onClose, align = 'right' }: {
   anchorRef: React.RefObject<HTMLElement | null>;
   onPick: (it: LooseItem) => void; onClose: () => void; align?: 'left' | 'right';
 }) {
+  const features = useFeatures(); // sovereign copy law — email-off workspaces never read mailbox framing
   const [q, setQ] = useState('');
   const [items, setItems] = useState<LooseItem[] | null>(null);
   useEffect(() => {
@@ -35,7 +37,7 @@ export function AddItemPicker({ anchorRef, onPick, onClose, align = 'right' }: {
         <input
           autoFocus value={q} onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
-          placeholder="Search your loose emails, to-dos, meetings…"
+          placeholder={features.email === false ? 'Search your loose to-dos, meetings…' : 'Search your loose emails, to-dos, meetings…'}
           className="w-full rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[12px] text-neutral-700 placeholder:text-neutral-300 outline-none focus:border-indigo-300 transition-colors"
         />
         <div className="mt-1.5 max-h-[260px] overflow-y-auto">

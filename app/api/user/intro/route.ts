@@ -17,7 +17,10 @@ export async function POST(request: Request) {
   let body: { fullName?: string; role?: string; focus?: string };
   try { body = await request.json(); } catch { return NextResponse.json({ error: 'Invalid body' }, { status: 400 }); }
 
-  const fullName = String(body.fullName ?? '').trim().slice(0, 120);
+  // Name may already live in the signup metadata (the create-account form captures it) — the
+  // intro step only re-asks when the mount never saw it, so fall back before rejecting.
+  const fullName = (String(body.fullName ?? '').trim()
+    || String((user.user_metadata as Record<string, unknown> | null)?.full_name ?? '').trim()).slice(0, 120);
   const role = String(body.role ?? '').trim().slice(0, 120);
   const focus = String(body.focus ?? '').trim().slice(0, 240);
   if (!fullName) return NextResponse.json({ error: 'Name is required' }, { status: 400 });

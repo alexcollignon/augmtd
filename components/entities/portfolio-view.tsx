@@ -26,6 +26,7 @@ import { broadcastProjectsUpdated } from '@/lib/projects/broadcast';
 import { RiseIn } from '@/components/home/rise-in';
 import EntityRoom, { warmEntityRoom, cancelWarmEntityRoom } from '@/components/entities/entity-room';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { useFeatures } from '@/context/workspace-context';
 import { useLiveRefresh } from '@/hooks/use-live-refresh';
 import { MOMENTUM as MOMENTUM_TOKENS } from '@/lib/work-items/states';
 
@@ -214,6 +215,8 @@ function Row({ e, onAction, onOpen, others = [] }: { e: Entity; onAction: (id: s
 }
 
 export default function PortfolioView({ onDetailChange }: { onDetailChange?: (open: boolean) => void } = {}) {
+  // Sovereign copy law: an email-off workspace never reads mailbox framing ("as mail flows in").
+  const features = useFeatures();
   // SSR'd-route rule: initializer COLD; the cache hydrates pre-paint in a layout effect.
   const [data, setData] = useState<Portfolio | null>(null);
   useLayoutEffect(() => { const c = loadLS<Portfolio>('aug-portfolio-v1'); if (c) setData((prev) => prev ?? c); }, []);
@@ -309,15 +312,6 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
 
   if (selected) return <EntityRoom entityId={selected} onBack={closeDetail} />;
 
-  // A brand-new user converges via bootstrapMemory (a few Home loads) — until then, an honest empty state.
-  if (data && !data.hasMemory) {
-    return (
-      <div className="mt-10 text-center">
-        <h2 className="text-[16px] font-semibold text-neutral-700">Your work is being mapped</h2>
-        <p className="text-[13px] text-neutral-400 mt-1">As mail and meetings flow in, the memory recognizes your bodies of work — they&apos;ll appear here.</p>
-      </div>
-    );
-  }
   if (!data) {
     return (
       <div className="mt-7 animate-pulse">
@@ -399,7 +393,7 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
           <div className="absolute inset-0 bg-neutral-900/20 backdrop-blur-[2px]" />
           <div onClick={(e) => e.stopPropagation()} className="relative w-full max-w-md rounded-2xl border border-neutral-200 bg-white shadow-xl p-5">
             <h3 className="text-[15px] font-semibold text-neutral-900">New project</h3>
-            <p className="text-[12.5px] text-neutral-400 mt-0.5">A body of work to track. Emails and meetings about it attach automatically.</p>
+            <p className="text-[12.5px] text-neutral-400 mt-0.5">A body of work to track. {features.email === false ? 'Meetings and documents about it attach automatically.' : 'Emails and meetings about it attach automatically.'}</p>
             <div className="mt-4 space-y-3">
               <input
                 autoFocus value={newName} onChange={(e) => setNewName(e.target.value)}
@@ -422,6 +416,21 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
           </div>
         </div>
       ), document.body)}
+      {/* A brand-new user converges via bootstrapMemory — until then, an honest empty state that
+          still offers the door: creating a project must NEVER be gated on the memory having
+          bootstrapped (a sovereign account has no mailbox to bootstrap from — the old early-return
+          hid "New project" behind hasMemory and dead-ended corporate users). */}
+      {!data.hasMemory ? (
+        <div className="mt-14 text-center">
+          <h2 className="text-[16px] font-semibold text-neutral-700">Your work is being mapped</h2>
+          <p className="text-[13px] text-neutral-400 mt-1">
+            {features.email === false
+              ? 'As meetings, documents and conversations flow in, the memory recognizes your bodies of work — they’ll appear here.'
+              : 'As mail and meetings flow in, the memory recognizes your bodies of work — they’ll appear here.'}
+            {' '}You can also start one yourself with &ldquo;New project&rdquo;.
+          </p>
+        </div>
+      ) : (<>
       {/* Toolbar — instant search + filter chips. The Active status is the implicit default (no pill);
           Done/Archived/Muted appear only when they exist. */}
       <div className="mb-4 flex items-center gap-2 flex-wrap">
@@ -468,6 +477,7 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
               </div>
             ))}</div>)}
       </div>
+      </>)}
     </div>
   );
 }
