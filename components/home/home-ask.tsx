@@ -30,10 +30,10 @@ function WorkerFace({ name }: { name: string }) {
   const src = WORKER_PNG[first.toLowerCase()];
   if (src) {
     // eslint-disable-next-line @next/next/no-img-element
-    return <img src={src} alt="" className="h-5 w-5 rounded-full object-cover" />;
+    return <img src={src} alt="" className="h-7 w-7 rounded-full object-cover" />;
   }
   return (
-    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-semibold text-indigo-700" aria-hidden="true">
+    <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100 text-[12px] font-semibold text-indigo-700" aria-hidden="true">
       {first.charAt(0).toUpperCase()}
     </span>
   );
@@ -106,7 +106,7 @@ function Answer({ text, refs, onOpen }: { text: string; refs: Ref[]; onOpen: (r:
     <div className="space-y-2.5">
       {paras.map((para, i) => (
         // THE VOICE (design language): the team's answers are the team speaking — serif.
-        <p key={i} className="font-voice text-[14.5px] text-neutral-700 leading-[1.7] whitespace-pre-line">{renderPara(para)}</p>
+        <p key={i} className="text-[14px] text-neutral-700 leading-[1.65] whitespace-pre-line">{renderPara(para)}</p>
       ))}
     </div>
   );
@@ -936,9 +936,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                         same-visual-same-meaning: the worker page and email signatures carry the
                         headshot — the Home DM must too). Name → role png; initial chip fallback. */}
                     {t.author && (
-                      <span className="mb-1 flex items-center gap-1.5">
+                      <span className="mb-1.5 flex items-center gap-2">
                         <WorkerFace name={t.author} />
-                        <span className="text-[11.5px] font-semibold text-indigo-600">{t.author.split(' ')[0]}</span>
+                        <span className="text-[12.5px] font-semibold text-indigo-600">{t.author.split(' ')[0]}</span>
                       </span>
                     )}
                     <AnimatedAnswer text={t.text} refs={t.refs ?? []} onOpen={openRef} animate={!t.author && i === animateIdx} />
