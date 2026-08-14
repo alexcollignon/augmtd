@@ -468,6 +468,29 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+AR. **SOFIA RETIRED + LUCA = BRANDING EXPERT (Aug 14, owner call — "there's not much
+   value in Sofia as a coworker"; gate SR1, smoke-compute 151/151, replay suite T2–T7
+   green on the new roster: T4 delegates to Max, T5/T6 production lands at Clara).**
+   The architecture had been making the call quietly: document production is THE ONE
+   PRODUCTION DOOR's job — a persona whose identity IS the capability every actor
+   shares was roster noise. The seed ships THREE (Clara · Luca · Max); the produce
+   default + exhaustion hand-off re-pointed to Clara (the drafting assistant); every
+   fit map/team block speaks the new roster; sofia@ + slack-sofia dropped from the
+   identity registries; the sovereign intake's specialty map updated. Luca keeps
+   name, face, and internal role key (the identity is the person, the specialty is
+   what changed): Branding Expert — document themes, brand kits, palettes, on-brand
+   voice; LinkedIn stays in scope (the DocTheme/brand-kit capabilities finally have
+   an owner persona; linkedin_post was always a formatting pseudo-tool, deprecated
+   long ago). THE LIVE-ROSTER FILTER: every reader that offers/routes work now
+   filters is_active (route-suggestion · standing-spec · converse delegate lookup ·
+   mentions) — a retired worker is history, not a target; legacy avatar/title maps
+   stay so her past turns keep attribution. RUNBOOK (order matters): (1) deploy;
+   (2) `scripts/sweep-retire-sofia.ts --apply` (dry-run verified: zero workflows,
+   zero skills, every user has an active Clara) — running it BEFORE deploy would
+   break prod's old produce-default lookup; (3) AgentOS box redeploy (workers.py:
+   3 workers, Luca branding); (4) owner: delete the Sofia Slack app + uninstall
+   from workspaces, remove the slack-sofia Nango config, optionally update the
+   Luca app description.
 AQ. **THE FRAGMENTATION REVIEW FIXES (Aug 14, owner screenshots — a ghost "Clara
    drafted the reply… ready to review" with nothing to open beneath a decision card,
    and an overdue row wearing three claims at once; gate FR1, smoke-compute 150/150,

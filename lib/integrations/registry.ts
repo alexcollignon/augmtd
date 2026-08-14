@@ -29,9 +29,10 @@ export const INTEGRATION_PROVIDERS = INTEGRATIONS.map(i => i.provider);
 // ── Slack: one display integration, one Slack app per coworker ───────────────
 // Distinct bot identities → separate DM threads + real @mentions. Each coworker
 // role maps to its own Nango provider-config-key (one Slack app each).
+// content_manager (Sofia) RETIRED Aug 14 — her Slack app is deleted and the Nango config
+// removed; sweep-retire-sofia.ts drops any surviving integration_connections rows.
 export const SLACK_APP_BY_ROLE: Record<string, string> = {
   personal_assistant: 'slack-clara',
-  content_manager:    'slack-sofia',
   linkedin_drafter:   'slack-luca',
   research_analyst:   'slack-max',
 };
@@ -50,7 +51,6 @@ export function slackKeyForRole(role: string | null | undefined): string {
 export const COWORKER_EMAIL_DOMAIN = process.env.COWORKER_EMAIL_DOMAIN || 'team.augmtd.ai';
 export const EMAIL_LOCAL_BY_ROLE: Record<string, string> = {
   personal_assistant: 'clara',
-  content_manager:    'sofia',
   linkedin_drafter:   'luca',
   research_analyst:   'max',
 };

@@ -17,7 +17,6 @@ import sys
 
 EXPECTED = {
     "personal_assistant": "clara",
-    "content_manager": "sofia",
     "linkedin_drafter": "luca",
     "research_analyst": "max",
 }

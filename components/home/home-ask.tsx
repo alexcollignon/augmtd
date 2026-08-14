@@ -278,21 +278,14 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   const workerIntroFor = (first: string): { helps: string; examples: Array<{ label: string; say: string }> } => {
     const byName: Record<string, { helps: string; examples: Array<{ label: string; say: string }> }> = {
       clara: {
-        helps: 'I take the busywork off your plate — agendas, checklists, follow-ups, keeping things organized. Tell me what you need in plain words, like you would text a colleague.',
+        helps: 'I take the busywork off your plate — drafts, reports, agendas, follow-ups, keeping things organized. Tell me what you need in plain words, like you would text a colleague.',
         examples: [
           { label: 'Draft a meeting agenda', say: 'Draft an agenda for a 30-minute kickoff meeting with a new client.' },
           { label: 'Set up a weekly summary', say: 'Set up a weekly task: every Monday morning, summarize my open work for the week.' },
           { label: 'Build a checklist', say: 'Make me a checklist for onboarding a new team member.' },
         ],
       },
-      sofia: {
-        helps: 'I do your writing — reports, summaries, announcements — so you start from a finished draft instead of a blank page. Attach a file and I can work directly on it.',
-        examples: [
-          { label: 'Draft a status report', say: 'Draft a one-page project status report — ask me for the key points you need.' },
-          { label: 'Write an announcement', say: 'Write a first draft of a short internal announcement about a process change.' },
-          { label: 'Summarize a document', say: 'I will attach a document — summarize it into one page of key takeaways.' },
-        ],
-      },
+
       max: {
         helps: 'I do the digging — research, comparisons, data analysis — so you get the answer without the hours of reading. Attach a spreadsheet and I can work the numbers.',
         examples: [
@@ -302,11 +295,11 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         ],
       },
       luca: {
-        helps: 'I keep your LinkedIn active — posts drafted, ideas planned — without it eating your week.',
+        helps: 'I keep everything you ship on-brand — how your documents look, how your company sounds, and a LinkedIn presence that feels like you.',
         examples: [
+          { label: 'Theme my documents', say: 'I will attach our logo — build a brand kit and apply it to the documents the team produces.' },
+          { label: 'Review for brand fit', say: 'I will attach a draft — review it for brand consistency in tone and look, and fix what reads off.' },
           { label: 'Draft a LinkedIn post', say: 'Draft a LinkedIn post about a recent team milestone — professional but human.' },
-          { label: 'Plan a month of posts', say: 'Suggest five LinkedIn post ideas for this month based on what my company does.' },
-          { label: 'Rework my draft', say: 'I will paste a rough draft — rework it into a stronger LinkedIn post.' },
         ],
       },
     };
@@ -380,9 +373,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           // flag (a tester's LS must not mute it). Names come from the live roster; the
           // specialty line from the seeded-name map, silently omitted for custom workers.
           const specialty: Record<string, string> = {
-            sofia: 'writes your documents and reports',
             max: 'does the research and analysis',
-            luca: 'keeps your LinkedIn active',
+            luca: 'keeps everything you ship on-brand',
           };
           const mates = roster
             .map((x) => x.name.split(' ')[0])

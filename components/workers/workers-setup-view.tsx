@@ -45,13 +45,9 @@ const ROLE_COPY: Record<string, { description: string; bullets: [string, string]
     description: 'Keeps you on top of what needs attention.',
     bullets: ['Flags emails that need a reply', 'Preps you for upcoming meetings'],
   },
-  content_manager: {
-    description: 'Turns your work into polished written communications.',
-    bullets: ['Emails, reports, proposals, presentations', 'Your voice — not generic AI copy'],
-  },
   linkedin_drafter: {
-    description: 'Turns your real work into LinkedIn content worth reading.',
-    bullets: ['Sourced from meetings, emails, and decisions', 'Two variants: direct or narrative'],
+    description: 'Keeps everything you ship on-brand — look, voice, and presence.',
+    bullets: ['Document themes, brand kits, tone', 'LinkedIn content sourced from your real work'],
   },
   research_analyst: {
     description: 'Turns information into structured, actionable briefings.',

@@ -616,7 +616,7 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/work/chat-system-prompt.ts').includes('NEVER paste the full deliverable into chat') &&
     !src('lib/work/chat-system-prompt.ts').includes('Content type alone is never enough') &&
     src('infra/agentos/workers.py').includes('DELIVERABLE_GRAMMAR = """') &&
-    (src('infra/agentos/workers.py').match(/\+ DELIVERABLE_GRAMMAR\}/g)?.length ?? 0) === 4);
+    (src('infra/agentos/workers.py').match(/\+ DELIVERABLE_GRAMMAR\}/g)?.length ?? 0) === 3); // RE-POINTED: Sofia retired Aug 14 — three workers carry the grammar
 
   check('TM1: SETTINGS → TEAM GROUNDED (/workers kill-list item 1) — team CONFIG is a real Settings section (the grounded-door law: no href ejection); the roster expands per coworker into the SAME WorkerToolsTab/WorkerKnowledgeTab the worker page mounts (one truth), the skills library rides below; coworkers are talked to from conversations, configured here',
     !src('components/settings/settings-left-panel.tsx').includes("href: '/workers'") &&
@@ -1563,6 +1563,23 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/work/apply-verdict.ts').includes('THE NARRATION FOLLOWS ITS ARTIFACT — UNGATED') &&
     src('lib/work/apply-verdict.ts').includes('let narrationBacked = false') &&
     src('lib/work/apply-verdict.ts').includes("in('task_id', ['prepare-pass', 'decision-brief'])"));
+
+  check('SR1: SOFIA RETIRED + LUCA = BRANDING EXPERT (owner, Aug 14 — "there\'s not much value in Sofia as a coworker": document production is THE ONE PRODUCTION DOOR\'s job, a persona whose identity IS the capability every actor shares was roster noise; Luca\'s LinkedIn-only specialty widened to branding — the DocTheme/brand-kit capabilities finally have an owner persona). The seed ships THREE workers (Clara · Luca · Max); the produce-default and exhaustion hand-off re-pointed to Clara (the drafting assistant — a dead default would turn loop exhaustion into a dead end); every fit map speaks the new roster; the identity registries dropped sofia@ + slack-sofia; Luca keeps his NAME, FACE and internal role key (the identity is the person, the specialty is what changed) with Branding Expert instructions/title/starters on both runtimes (workers.py parity rides the box redeploy). THE LIVE-ROSTER FILTER: every reader that offers/routes work filters is_active (route-suggestion · standing-spec · converse delegate lookup · mentions) — a retired worker is history, not a target; legacy avatar/title maps stay for her past turns\' attribution. The guarded sweep (scripts/sweep-retire-sofia.ts, RUN ONLY AFTER DEPLOY — the old code\'s produce-default looks her up by name) deactivates rows, re-homes workflows to Clara, drops her skills + slack-sofia connections; dry-run across live users: zero workflows, zero skills, every user has an active Clara',
+    src('lib/workers/seed.ts').includes('Sofia (content_manager) RETIRED') &&
+    !src('lib/workers/seed.ts').includes("name: 'Sofia'") &&
+    src('lib/workers/seed.ts').includes('BRANDING_PROMPT') &&
+    src('lib/workers/seed.ts').includes('Keeps everything you ship on-brand') &&
+    src('lib/converse/index.ts').includes("runCoworkerDelegation(client, userId, scope, 'clara'") &&
+    !src('lib/converse/index.ts').includes("'sofia'") &&      // no live delegation target (found-live comments keep her name as history)
+    !src('lib/converse/index.ts').includes('Sofia — writing') && // no fit-map entry
+    !src('lib/integrations/registry.ts').includes('slack-sofia') &&
+    !src('lib/integrations/registry.ts').includes("'sofia'") &&
+    src('lib/prepare/route-suggestion.ts').includes(".eq('is_worker', true).eq('is_active', true)") &&
+    src('app/api/workers/mentions/route.ts').includes(".eq('is_active', true)") &&
+    !src('infra/agentos/workers.py').includes('Sofia') &&
+    src('infra/agentos/workers.py').includes("care a lot about how things look and sound") &&
+    src('scripts/sweep-retire-sofia.ts').includes('RUN ONLY AFTER') &&
+    src('lib/workers/roles.ts').includes("'Branding Expert'"));
 
   // ── Report ──
   let pass = 0;

@@ -28,7 +28,7 @@ export type SuggestedWorker = { id: string; name: string; role: string };
 /** The user's live roster — coworkers + their assigned skills (the judge's context). */
 export async function loadRoster(supabase: SupabaseClient, userId: string): Promise<RosterEntry[]> {
   const { data: workers } = await supabase.from('custom_agents')
-    .select('id, name, worker_role, description').eq('user_id', userId).eq('is_worker', true);
+    .select('id, name, worker_role, description').eq('user_id', userId).eq('is_worker', true).eq('is_active', true);
   const list = ((workers ?? []) as Array<Record<string, unknown>>).map((w) => ({
     id: w.id as string, name: String(w.name), role: String(w.worker_role ?? ''),
     description: String(w.description ?? ''), skills: [] as Array<{ name: string; whenToUse: string | null }>,

@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 
     // Coworkers
     if (types.includes('coworker')) {
-      let cq = supabase.from('custom_agents').select('id, name, worker_role').eq('user_id', user.id).eq('is_worker', true).limit(limit);
+      let cq = supabase.from('custom_agents').select('id, name, worker_role').eq('user_id', user.id).eq('is_worker', true).eq('is_active', true).limit(limit);
       if (q) cq = cq.ilike('name', like);
       const { data } = await cq;
       for (const a of (data ?? []) as Array<{ id: string; name: string; worker_role: string | null }>) {

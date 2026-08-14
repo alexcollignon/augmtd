@@ -16,7 +16,7 @@ const ROLE_AVATARS: Record<string, string> = {
 const ROLE_LABELS: Record<string, string> = {
   personal_assistant: 'Personal Assistant',
   content_manager:    'Content Strategist',
-  linkedin_drafter:   'LinkedIn Wizard',
+  linkedin_drafter:   'Branding Expert',
   research_analyst:   'Research Analyst',
 };
 // ─── Resize handle ───────────────────────────────────────────────────────────

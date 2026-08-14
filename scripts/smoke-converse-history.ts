@@ -41,8 +41,10 @@ async function main() {
   const t3ok = !/don't have enough context|what you'?re saying yes to/i.test(t3.say);
   console.log(`T3 "yes please": ${t3ok ? 'PASS' : 'FAIL'}\n---\n${t3.say.slice(0, 700)}\n---\n`);
 
-  // TURN 4 — "please ask sofia to do it." (failed live: "I need to know what task")
-  const t4 = await converse(admin as never, userId, { kind: 'global' }, 'please ask sofia to do it.', { history: history2 });
+  // TURN 4 — "please ask max to do it." (the live failure was "ask sofia…" — Sofia retired
+  // Aug 14; the class under test is a NAMED-coworker delegation resolving "it" from history,
+  // and the name is incidental to it)
+  const t4 = await converse(admin as never, userId, { kind: 'global' }, 'please ask max to do it.', { history: history2 });
   const t4ok = !/need to know what task|what would you like me to assign/i.test(t4.say);
   console.log(`T4 delegate "it": ${t4ok ? 'PASS' : 'FAIL'} delegated=${t4.delegated?.agentName ?? 'none'}\n---\n${t4.say.slice(0, 700)}\n---`);
 
