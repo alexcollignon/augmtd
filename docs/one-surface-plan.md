@@ -490,7 +490,19 @@ AR. **SOFIA RETIRED + LUCA = BRANDING EXPERT (Aug 14, owner call — "there's no
    break prod's old produce-default lookup; (3) AgentOS box redeploy (workers.py:
    3 workers, Luca branding); (4) owner: delete the Sofia Slack app + uninstall
    from workspaces, remove the slack-sofia Nango config, optionally update the
-   Luca app description.
+   Luca app description. EXECUTED same day (13 rows deactivated · 13 Lucas
+   rebranded IN PLACE — the seed is insert-only, a standing lesson · box
+   redeployed · owner did the dashboards). ADDENDUM: the role key RENAMED
+   `linkedin_drafter` → `branding_expert` (owner: the key should match the
+   specialty as more channels come — Instagram/X/blog ride the skills layer
+   later): code + `sweep-rename-branding-role.ts` in ONE release (the AgentOS
+   bridge routes /agents/{worker_role}/runs — DB rows and the box's ids must
+   agree; render maps keep the legacy alias so persisted turns keep their
+   face/title). The vertical-skills design recorded: know-how = seeded role
+   skill packs (existing skills system) · channel-shaped deliverables = typed
+   artifacts + render registry · computed visual assets = the sandbox (the
+   artifact factory, not the skill holder) · actual posting APIs = tools last,
+   behind prepare-and-approve.
 AQ. **THE FRAGMENTATION REVIEW FIXES (Aug 14, owner screenshots — a ghost "Clara
    drafted the reply… ready to review" with nothing to open beneath a decision card,
    and an overdue row wearing three claims at once; gate FR1, smoke-compute 150/150,
