@@ -468,6 +468,382 @@ J2. **THE FEEL PASS (Aug 6 evening, three owner corrections):** (1) the MovingTi
    the roster warms at mount; askWorker takes `echoed` so no double bubble. (3) the takeover
    EASES — entering fades the deck ~180ms before unmount (chatFading), leaving remounts
    instantly; the swap no longer reads as a glitch.
+AQ. **THE FRAGMENTATION REVIEW FIXES (Aug 14, owner screenshots — a ghost "Clara
+   drafted the reply… ready to review" with nothing to open beneath a decision card,
+   and an overdue row wearing three claims at once; gate FR1, smoke-compute 150/150,
+   one-room 85/85, promise 146/146).** The diagnosis EXONERATED the strip-narration
+   law (it exists and worked — the ghost died seconds after the screenshot when the
+   open finally re-judged; nothing had visited the item between the counterparty's
+   mail and the open: the pre-repair coverage gap) and found the render holes:
+   (1) **THE ORPHAN-PREP FOLD** — a prep:* narration whose artifact no longer
+   exists NEVER stands alone (card present → seats as the card; absent → folds
+   into "earlier (N)") — and this holds with the brief ABSENT, because a
+   ROOM_BRIEF_VERSION bump invalidates every cached brief and every fold rule
+   keyed on brief-presence switches off exactly then (the found window).
+   (2) **ONE CLAIM PER ROW** — the machine state arbitrates the row chrome: in an
+   ask-bearing state the prepared chip + send-flavored CTA yield to the
+   supply/decide word ("Review & send + ready + needs one thing from you" on one
+   line is dead; the ladder said the ask outranks the send — now the row obeys).
+   (3) **THE SURFACING DELTA** — an item first judged within 24h entering the
+   deck says "surfaced today" (judgedFirstAt rides the batch reader): the
+   coverage repair drains a months-old backlog, and old-but-open obligations must
+   read as the system catching up, never as random pop-ins. The "flapping"
+   overdue row was diagnosed as an ENTRY watched live (cached serve → fresh serve
+   with a judgment landing between them), and the item itself is genuinely open
+   per a fresh re-judgment — the owner's Dismiss is the honest verb if reality
+   says otherwise. SAME MORNING, second walk: (4) **THE MOVE YIELDS TO A RENDERED
+   DECISION** — the recomposed room showed the decision card (1/2/3) with a purple
+   "Decide: refund and resubscribe?" MOVE button restating it directly beneath —
+   two CTAs for one choice (law 7). The placement table now carries `showMove:
+   !hasDecision` (the card IS the primary; the move returns when the decision is
+   made/dismissed), the rail suppresses AT THE SOURCE (respMove — nulling only at
+   render left mergedArtKey excluding an artifact whose card no longer existed),
+   the editor prompt forbids authoring decide-flavored moves (ROOM_BRIEF_VERSION
+   6 — and the version-pin gates re-pointed to FLOORS, the recurring bump-break
+   class), and the code floor holds regardless of model drift. Universal by
+   construction: one placement table, one rail, both doors. Third walk, same
+   morning: (5) **SERVER TRUTH WINS — INCLUDING DELETIONS** — the ghost line the
+   owner expanded under "earlier (1)" had been DELETED from the database two
+   hours earlier (apply-verdict's strip); the rail's hydrate merge said "local
+   wins when LONGER", so the module-store copy from an earlier visit resurrected
+   it all session (a deletion makes the server SHORTER by design — length is not
+   recency). The merge now takes the server as truth and keeps local turns ONLY
+   for this session's own in-flight writes (no server timestamp, not present in
+   the response). The "earlier (N)" fold itself STAYS — it is the continuous
+   record's one compression (the containers law); this room simply has nothing
+   left to fold once deletions propagate. (6) **THE HISTORY DRAWER** (owner:
+   "shouldn't it be on top? not in the middle") — the fold moved to the TOP of
+   the room: past above present, expanding as a muted transcript ABOVE the
+   opening so chronology reads down into the now (it used to sit at the head of
+   the conversation stream, which with an empty stream dangled under the
+   decision card as a stray fragment). One fold computation lifted to component
+   scope, shared by the drawer and the stream; history renders as pure record
+   (bubbles + event lines — live components never fold, so no dead affordances).
+   (7) **THE NARRATION FOLLOWS ITS ARTIFACT — UNGATED** (the ghost's TRUE root,
+   found on the owner's fourth walk): the draft died through another door a day
+   earlier, apply-verdict's `changed` stayed false, and the narration delete
+   INSIDE that gate never fired — "drafted the reply, ready to review" survived
+   its draft into a decide verdict as a standing lie the drawer then preserved
+   as "history". Now a prep narration survives ONLY while the CURRENT verdict's
+   lane holds its artifact (sd lanes checked directly; produce/decide check the
+   pool row) — idempotent, ungated on `changed`; the pass re-narrates the
+   current lane on its next visit. The stray row deleted live. DIAGNOSIS
+   CONFESSION recorded in the gate: room_turns has NO updated_at column — two
+   "it was deleted" reads during the morning's diagnosis were silent
+   column-select errors (the recorded Supabase trap, hit again); the correct
+   read found the row alive the whole time. Rider: P25 caught the v16 prompt
+   diluting the revisit rule (a reconnect-after item judged "answered") — the
+   wait-until clamp added, JUDGE_VERSION 17.
+AP. **THE COVERAGE + ADOPTION ARC (Aug 14 — "the machine reaches everything and every
+   surface speaks it"; gates CV1–CV3, smoke-compute 149/149, promise 146/146,
+   one-room 85/85).** (1) **THE COVERAGE REPAIR** — the census's root cause FOUND:
+   18 profiles shared a 240s sweep budget SEQUENTIALLY with a 20s floor — 360s of
+   work in a 300s route; the route died mid-loop every run and tail users NEVER got
+   a pass (the owner's 22h gap; the pilot's ~5% coverage). The sweep now walks
+   ACTIVE users only (a mail connection OR recent items/meetings — the sovereign
+   tier has no mailbox, a connections-only filter would have silenced those
+   accounts entirely), LEAST-RECENTLY-SERVED first (a budget-killed run
+   self-balances instead of starving the same tail), a wall-clock guard stops
+   cleanly + reports usersLeftBehind, budget floor 30s/ceiling 120s over the REAL
+   active count. Measured live: one 120s pass on the owner attempted ~30
+   candidates, drained judged-none items out of the pool, left 151 honestly
+   counted; the ~180-candidate backlog drains in ~half a day of cron cycles.
+   (2) **TWO READERS, ONE LADDER** — the machine ladder extracted PURE
+   (deriveState); `workStatesFor` derives a whole deck from ~5 batched queries
+   (90 states in ~214ms live; callers pass prefetched rows); the pool-row mapping
+   extracted as the shared `poolRowsToArtifacts` (forking it is how a deck row and
+   a deep-dive disagree); commitments read their pool artifacts in the batch; the
+   batch staleness check is a DOCUMENTED approximation (last_activity vs the
+   prepared_from stamp) whose error direction is safe (over-stale renders "in
+   motion", never a wrong "ready to send"). (3) **EVERY SURFACE SPEAKS THE
+   MACHINE** (Opus conformance agent, reviewed): the brief route attaches optional
+   `machine {state, word}` per served row; the word folds into the row's EXISTING
+   muted second line (one grey, no chrome, no new affordance; silent states render
+   nothing; awaiting_approval suppresses when the prepared chip already says it);
+   the deep-dive serves machineState and the stage header meta line speaks the
+   same word; STATE_WORDS is the ONE mapping — no surface paraphrases. NOTE: the
+   agent correctly declined to edit out-of-bounds files (work-row.tsx/agenda.ts) —
+   the word rides `second`; a first-class row field is a one-line upgrade later.
+   PENDING OWNER EYES: the deck words on the served page (payload + render logic
+   verified; the visual walk is the owner's).
+AO. **THE GROUND LAW (Aug 13 — "something was done, and something else comes in that
+   changes it… it needs to keep checking its current state and reality"; spec'd in the
+   constitution first, built as orchestrator + two Opus conformance agents + one
+   read-only diagnosis agent; gates GL1+GL2, smoke-compute 145/145, one-room 85/85,
+   promise 146/146, NEW permanent suite scripts/smoke-ground.ts 15/15 live).**
+   THE LAW: every prepared thing records the ground it was prepared from (the newest
+   inbound at prep time); when the ground moves the work is superseded STRUCTURALLY —
+   the surface speaks the present, change is one delta line, the past folds. The key
+   insight (proved by the read-only diagnosis of the live Stratto room): the verdict
+   can stay identical while the content beneath it goes stale — reactivate-on-reply
+   stamps activity then stops; one post-inbound regeneration makes the last_activity
+   freshness clause permanently dead (age-only protection); the verdict-shaped
+   stripper kills wrong-verb artifacts, never wrong-content ones. THE BUILD:
+   (1) lib/prepare/ground.ts (groundOf/groundMoved, conservative — unstamped=exempt);
+   every lane stamps prepared_from (reply · nudge×2 · invite×2 · forward ·
+   delegation · decision). (2) Stale DERIVED at read (getPrepared) — machine treats
+   stale as not-prepared (walks back to preparing; no Send on a dead plan); nudge +
+   draft serving routes fall through to regeneration. (3) Ground-aware freshness
+   guards re-prepare + version the old row. (4) THE CONTENT HALF (caught by the
+   suite itself: a re-draft re-confirmed the OLD plan with a fresh stamp) —
+   generateReplyDraft answers the thread's PRESENT (newest inbound, top-message
+   stripped; founding message demotes to context) — one fix, every drafting door.
+   (5) ONE delta narration (narrateGroundMove, deduped per item+inbound).
+   (6) THE ON-OPEN TRIP — a served-stale view fires re-prep in after().
+   (7) NARRATION EXPIRES WITH THE BRIEF — engine narration older than briefAt joins
+   the earlier-fold on both doors. (8) THE EDITOR'S PRESENT-TENSE FLOOR — compose
+   sees MACHINE STATE + NEWEST MESSAGE (presentOf), the one-claim-about-what's-owed
+   law, sig gains the ground; ROOM_BRIEF_VERSION 5. Diagnosis riders fixed:
+   (9) THE ALREADY-BOOKED FLOOR — an invite whose attendee already has a calendar
+   event within ±12h prepares nothing AND strips the unsent duplicate (fired LIVE
+   on the owner's Stratto room: the prepared invite duplicated the already-accepted
+   meeting at a conflicting time — stripped, honest reason named the real event);
+   (10) THE RESCHEDULE RE-BRIEF — the anticipation fire key carries start_time, a
+   moved meeting earns a corrected brief replacing the old turn in place (the
+   bare-id key briefed once per event FOREVER). THE QUEUE, BUILT SAME DAY
+   (gate GL3; both PROVEN LIVE on the found case): (11) THE ONE-CLAIM LAW AT
+   STATE SYNTHESIS (STATE_PROMPT_VERSION 8) — the judge's standing verdicts are
+   FACTS the entity-state prose must never contradict; the verdict digest rides
+   the state sig so a verdict flip re-synthesizes (live: the found entity
+   re-synthesized, whoOwes.you emptied, "no reply needed yet" gone). (12) THE
+   BOOKED-CALENDAR FACT (JUDGE_VERSION 16) — the judge sees the user's real
+   bookings with the item's sender (attendees jsonb containment, −1d..+21d) +
+   the ALREADY-BOOKED rule (live: the found item re-judged schedule →
+   none/answered citing the real accepted event — the verdict that persisted
+   forever). (13) The stray fragment turn archived; a composer min-length/
+   in-flight guard DELIBERATELY REJECTED (any block harms legitimate rapid
+   steering — "ok", mid-flight corrections; the record tolerates a rare
+   fragment). STILL QUEUED: the deixis day-word ARITHMETIC slip (found during
+   the live proof: a Monday "Thursday" resolved to Friday's date in the stored
+   understanding and echoes through every downstream reader — the calendar row
+   is right, the prose is off by one; the deixis law resolves day-words but its
+   arithmetic needs a code-verified weekday check), gate version-pin hygiene
+   (exact `VERSION = N` pins in old gates break on every bump — re-point to
+   floors/version-log strings as they surface).
+AN. **THE SCENARIO MATRIX (Aug 13 — "did you go over different scenarios across users?
+   for different deliverables, requests, needs, lacking info from user?"; three Opus
+   agents — the verb-lane walk on the probe, the ask journey, the read-only pilot
+   census — every find fixed and re-verified; gates VL1 + RM1, smoke-compute 142/142,
+   smoke-one-room 85/85 with two stale R2 gates re-pointed to the lifted decision).**
+   THE VERB-LANE REPAIRS (all 7 lanes walked end-to-end; 5 defects): **B1** — a
+   send_file item whose document can't be found now RAISES the input_checklist ask
+   (askForFile in pass.ts, requirements-shape, dedupeKey requires:<id>) instead of a
+   silent none that read "preparing" forever — the one machine-state lie in the matrix;
+   verified live (ask landed, state awaiting_input). **B2** — the reader serves the
+   invite TIME (writer stores startISO; `.start` served timeless invites). **B3** —
+   the chase draft wears its coworker attribution like every sibling lane. **B4** —
+   a commitment's decision brief grounds on the COMMITMENT'S OWN row, never a phantom
+   inbox lookup (title-only grounding). **B5** — email extraction trims trailing
+   sentence punctuation in all three regex copies. THE MACHINE REPAIRS (the pilot
+   census found 63 actionable verdicts; the machine lied about most of them —
+   re-censused CONFIRMED after): (1) DECISION MATERIAL PARITY — the machine accepts
+   the verdict's own options, same fallback the door renders (6/6 decide items read
+   "preparing" 17 days while the door showed a live card → 6/6 awaiting_decision);
+   (2) THE ASK OUTRANKS THE SEND (12 of 19 live asks sat demoted behind a Send
+   button); (3) UNFIREABLE ≠ SEND-SHAPED — sendReady:false on timeless invites /
+   recipientless forwards → awaiting_input (the send door hard-rejects them);
+   (4) THE STALENESS FLOOR — a >48h judgment with nothing landed derives back to
+   unjudged ("preparing" is transient by spec, not a graveyard; 17→3); (5) THE
+   COMMITMENT LANE HOME — type:draft pool rows read as nudge_draft/reply_draft,
+   newest-only (repeat nudges ×4 stacked as documents → one send-shaped draft,
+   awaiting_approval). Spec updated FIRST (lifecycle section carries all five).
+   THE SUPPLY-LOOP REPAIRS (the ask-journey walk; 8 defects D1–D8, gate AJ2 —
+   smoke-compute 143/143; the deepest: awaiting_input was STRUCTURALLY UNREACHABLE
+   for coworker-executor produce items): **D1** — the coworker-supersedes delete in
+   delegate.ts fires ONLY when the coworker posted an ask of its OWN (unconditional
+   before: a [CONFIRM:]-shell delivery silently destroyed the engine ask AND the
+   go-ahead stamp — the user was never asked); **D2** — the evidence-quote law
+   gains a token-subset fallback, still code-verified (substring-only rejected the
+   RIGHT file ~2/3 of runs on word-order variance); **D3** — SUPPLY RE-OPENS THE
+   WORK (a require:* stage newer than the deliverable re-runs the delegation, prior
+   row versioned — attaching the exact file asked for no longer leaves the
+   pre-supply shell as the permanent answer); **D4** — the ingest funnel makes the
+   settleAsksForItem split (engine asks archive whole, coworker asks keep their
+   speech); **D5** — a user-supplied file / sent work is NOT prepared work (the
+   machine read `ready` the instant the user attached their own material); **D8** —
+   THE ASK-DIRECTION FLOOR, JUDGE_VERSION 15 (found live: the judge flipped
+   produce→chase and the pass drafted a nudge asking the counterparty to send the
+   deliverable WE owed HER — the engine's own unmet ask leaked into grounding as
+   the other side's debt). Walked live post-fix: supersession clean, re-delegation
+   blocks on the outstanding ask, supply re-opens. prepareOneItem's catch now logs
+   (a silent catch hid a real crash during verification — W2 failure honesty).
+   QUEUED from both sweeps: D6 (the honest-retry loop has no floor — every pass
+   burns a delegation, nothing lands, no escalation/cap/user-visible flag),
+   commitment sent-stamp (committed unreachable for commitments — comment in
+   machine.ts), judgment coverage ~5% of the pilot's pool (pass budget), ask
+   lifecycle (19 live asks, median ~10 days, none proceeded), draft age signal
+   (11 of 20 drafts >7 days old, oldest 49), language spot-check on non-EN drafts.
+AM. **THE CONTAINERS LAW (Aug 13 — sessions follow the relationship, not the chat-app
+   habit; gates re-pointed, 140/140; both surfaces walked).** The owner's question
+   ("sessions across project room, coworker DMs — or one continuous thread?") answered
+   by the machine's own distinction: DIALOGUE can be ephemeral; THE WORK RECORD never
+   is. Spec'd in the constitution (the containers law): a COWORKER is a person → ONE
+   continuous thread (the Slack model — no sessions, no history popover, scroll-back
+   is the history, date dividers the only separator; memory lives on the agent);
+   a ROOM is a place → the living state + one continuous record ("there is no new
+   session of reality"; folding is the only compression; per-topic threads exist
+   STRUCTURALLY as item rooms — Claude needs multiple chats per project because the
+   chat is its unit of work; ours is the item); the CHIEF chat is a scratchpad →
+   sessions stay (the fresh floor). THE BUILD (two Opus subagents, parallel,
+   reviewed): home-ask — DM history machinery + New session deleted, the one-thread
+   resolver documented against the API's newest-first sort, date dividers on loaded
+   turns (local-day, NaN-safe); item-rail — every viewingSession site eliminated
+   (state, banner, ten guards), Earlier sessions/New session buttons + popover +
+   the DELETE door gone from the surface (data-side untouched; All conversations
+   keeps deletion/restore). Walked: the DM opens as "Chat with Clara" with prior
+   history in the scroll-back; the room header carries the name only. NOTE:
+   /api/workers/dm-sessions is now caller-less (sweep later).
+AL. **THE MACHINE (Aug 13 — spec written, skeleton built, doors conformed and WALKED;
+   gate AL1 — 140/140).** The owner's diagnosis closed the week's arc: fixes kept
+   landing surface-by-surface because surfaces were conformed to EACH OTHER instead of
+   to a machine that didn't exist. THE SPEC (experience-spec "PART — THE MACHINE"):
+   the explicit work-item lifecycle (unjudged → preparing → ready / awaiting_input /
+   awaiting_decision → enacting → awaiting_approval → committed → settled; transitions
+   are buttons, conversations are text), the placement table (ONE renderer, every
+   door; conversation = exchange components, stage = filed truth), lane homes (a reply
+   NEVER materializes as a document), and the walked-journey law. THE SKELETON (kept
+   in-house): lib/work/machine.ts (workStateOf — read-time derivation over existing
+   truth) + lib/room/render-plan.ts (the placement table in code) + THE TRANSITION
+   FAST-PATH (the DECISION MADE sentinel routes item enactment straight to the
+   draft-rework lane — versioned, evaluated, composer-served — bypassing every path
+   that could answer a button with a question). THE CONFORMANCE (Opus subagent,
+   surgical, reviewed): the stage-hosted decision card DELETED; embedded items report
+   their decision UP (onDecision) and the host room's rail mounts it; item-rail
+   consumes panelPlan. WALKED — deep-dive: card left → click "Confirm the proposal" →
+   composer opened with the enacting reply (counterparty's language, signed) → Send
+   waiting; project room: card in the room's conversation under the brief → click →
+   draft landed, room recomposed forward ("Review Clara's reply draft · Approve and
+   send as-is"). OPEN (logged, pre-existing class): on the embedded door a
+   room-level remount (suspected portfolio refetch re-key) resets focus after the
+   transition, so the fresh draft is one MOVE-click away instead of auto-open — the
+   draft-injection plumbing is in place and fires when focus survives; trace the
+   remount next. Also noted live: the deck pool saturation warning fired on the
+   owner's account (250-cap), and the entity DELIVERABLES panel lists version rows
+   (reader skips them; the panel doesn't) — both queued.
+AK. **THE FORWARD-MOTION LAW (Aug 13 — the walked-journey correction; gate AK1 —
+   139/139; replay T2–T7 green; the journey re-walked live to a real draft).** The
+   owner walked the actions and found the loop: picking "Request clarifications or
+   modifications" from OUR OWN decision menu earned (a) a clarifying question BACK
+   ("are you asking me to… or asking what…"), (b) raw [F3][L3][L2] grounding tags in
+   the prose, (c) an empty reply composer, (d) a ghost "To finish this I need one
+   thing…" line from a settled ask — one click, four half-reactions, zero work.
+   ROOT CAUSE: the choice traveled as a bare text label, stripped of the contract the
+   system held when it authored the option. THE FIVE FIXES: (1) a menu click executes
+   its contract — the choice carries {option, tradeoff, why}; the steer route wraps
+   it as an execute-now instruction that names the deliverable shape (a clean
+   ready-to-send message — the first walk produced a working-doc-with-notes the
+   evaluator rejected; naming the shape fixed it); (2) no questions after structured
+   choices — a missing detail becomes a stated assumption or [CONFIRM] slot;
+   (3) THE REF-TAG FLOOR — unresolved grounding tags strip at the ONE core exit
+   (converse wrapper: converseInner + sanitize), no caller can leak notation;
+   (4) offers' say is EXECUTABLE — a self-contained instruction, never a bare label;
+   (5) settled ENGINE asks archive whole (their text is scaffolding; coworker asks
+   keep their speech) — 19 live ghost frames swept. PROCESS LAW EXTENDED (the miss
+   that let this ship): eyes-on = a WALKED JOURNEY — every primary action clicked
+   through to its outcome — never screenshot inspection of renders.
+AJ. **THE EDITOR (Aug 13 — one composition owns the page; gate AJ1 — 138/138; eyes-on
+   verified on the TECNICLIMA room).** The owner's diagnosis, with live proof: the room
+   simultaneously claimed the reply draft PREPARED (brief), MISSING (ask card), and
+   READY TO REVIEW (move) — "some components feel created on the side… it should feel
+   reasoned as a whole/team." Root cause: the ONE RESPONDER composed brief+move+offers,
+   but the ask checklist / decision card / artifact cards were ASSEMBLED — every
+   subsystem with data got a slot; the grounding saw everything, the composition owned
+   almost nothing. THE FIX (newspaper model — many reporters, ONE editor; inline
+   components stay per owner constraint): (1) the compose pass sees the components
+   that will render and returns keep/moot per ask — moot (prepared already holds it ·
+   verdict no longer needs it · it requests something the team itself produces) is
+   SETTLED at compose time; (2) coherence laws — the brief points at components
+   ("the choice is laid out below"), never restates them, never claims prepared+missing;
+   (3) THE ONE VOICE (lib/room/voice.ts TEAM_VOICE) injected into every room-prose
+   author — the register defined once (plain, "nine days ago" not "(sent Jul 3…)",
+   coworkers named only when the user must act on their work); (4) ASK–VERDICT
+   COHERENCE at the data layer (apply-verdict): a verdict whose work-class takes no
+   inputs settles the item's asks deterministically — the stale-ask class dies at the
+   source; (5) THE ONE FACE (worker-face.tsx): attribution rides the artifact as
+   face+name (prepared bylines + DM bubbles share the headshot); prose never
+   re-attributes. ROOM_BRIEF_VERSION 4. Informed by the Grok-Bot/Revo/Demi research:
+   competitors read coherent because one pass authors their (shallower) surface — the
+   editor is how our depth stops reading as a committee. NOTED, not chased: brief
+   date arithmetic is model-made ("nine days ago" was off by a few) — the arithmetic
+   floor doesn't run on briefs; a verify-claims pass over composed briefs is a
+   candidate hardening.
+AI. **THE DECISION HAS ONE SURFACE (Aug 12 late — owner correction on the served room;
+   gate TR2 — 137/137; eyes-on re-verified).** The owner's read of the TECNICLIMA/
+   ReadyStack rooms: "the left panel is too much... so many repeated things... it
+   doesn't feel like it was one system drafting that" — and the right-stage
+   "Prepared by Clara — Decision" card "not sure belongs there at all." The room was
+   saying the decision THREE ways (brief sentence · options card · narration line)
+   plus a fourth on the stage (the raw brief document, showing literal `**`). THE
+   CONVERGENCE: (1) the decision brief's depth renders IN the existing DecisionCard —
+   trade-off line under each option, a quiet "recommended" chip + the grounded why;
+   the brief's options SUPERSEDE the judge's bare labels when present (one component,
+   deepened — never a second surface); (2) the prepared strip FILTERS decision
+   artifacts (the card IS their surface); (3) brief content is PLAIN TEXT (consumers
+   render raw); (4) prep:*/meeting-prep:* narration lines NEVER render standalone
+   when the composed brief exists — the brief digests preparedness (its sig carries
+   the board digest), so echo lines under it are law-6 violations; the room_turns
+   ledger keeps them (Activity), the render drops them. The one reader + view route
+   carry the structured decision payload ({options[{label,tradeoff}], recommendation,
+   why}); first-gen briefs regenerated under the new shape.
+AH. **THE TRICHOTOMY LAW (Aug 12 evening — the prepared promise; gate TR1 — 136/136;
+   measured, fixed, and re-measured LIVE on the owner's account).** The owner's steer:
+   "the proactivity of preparing whatever was spotted the user needs to do — that's the
+   whole point." T1 measured the promise directly: 37 judged-actionable open items →
+   23 prepared · 2 asked · 12 in SILENT LIMBO (~32% of the promise undelivered, and
+   the silence was UNMEASURABLE — no record of why). THE LAW: every judged-actionable
+   item lands in exactly one honest state — PREPARED (the work staged) · ASKED (what's
+   missing, named — the owner's own point: "sure it's not also about missing info/docs
+   from users? system should understand that, ask for it") · PARKED (a date and a
+   reason); a fourth state is structurally dead. THE FIXES (each a class, found by
+   tracing the actual 12): (1) THE OUTCOME LEDGER — prep_outcome rows record every
+   candidate's did/reason (zero-migration); (2) THE DECISION BRIEF — `decide` was the
+   judge's last silent verb (5 live: "requires a go/no-go" → generic none): a grounded
+   pass lays out question/options-with-trade-offs/recommendation as a pool deliverable
+   + room narration; (3) THE READER READS EVERYTHING — getPrepared missed
+   prepared_invite/prepared_forward (a FRESH invite existed while every surface said
+   nothing was prepared — read-side truth gap); (4) CHASE NEVER SILENT — deterministic
+   counterparty chain (spine → sender → the "Waiting on <Name>:" title our own
+   extraction wrote → the item's words); (5) DELEGATION HONESTY — an evaluator-rejected
+   delegation reported 'delegated' with an EMPTY pool (a phantom prepared state; now an
+   honest retrying none); (6) NEVER-ATTEMPTED FIRST — the cron budget is 20-90s/user
+   and a 7-MINUTE run still left 70 behind; unreached items now outrank re-visits.
+   RESULT after three live passes: 41 prepared · 6 asked · every remainder carrying a
+   recorded reason. EYES-ON VERIFIED (owner's served account, localhost against prod
+   data): the ReadyStack decide item renders THE DECISION BRIEF as a numbered options
+   card in the room + "Prepared by Clara — Decision" on the stage + the narration
+   line; deck rows wear ready badges (incl. the ✦ stamp fix — pool-only preparations
+   were invisible on the row: prepareDecisionBrief now writes the same prepared_by
+   stamp delegatePrepare does, four live briefs backfilled); the responder recomposed
+   the room's MOVE to "Decide on the check-in" on its own once the brief hit the
+   board. T6 FIXED — the room label flicker: cached last-good paints, the fresh
+   recompose lands ~1s later with legitimately different wording, and the hard text
+   swap read as a glitch; THE SETTLE (globals `settle-in`, keyed on content) fades
+   new wording in over 380ms — the one update motion, reduced-motion honored —
+   applied to both brief renders and both MOVE-card renders. OPEN (logged): the
+   Max-fails-review retry churn on thin meeting action items ("identify a pilot use
+   case" — arguably needs-input asks, not delegations); attempted-item starvation
+   under high leftBehind (converges over the 12 daily cron cycles); the LatAm
+   judge-vs-floor coherence nit; the coverage gate on real accounts (smoke-promise)
+   as the standing scan.
+AG. **THE DUAL-LOGO COVER + MULTI-DELIVERABLE (Aug 12 afternoon; gate DL1 — 135/135;
+   both E2Es pass live).** The last STC-benchmark gaps, riding the door. DUAL-LOGO:
+   DocTheme grows `logo2` (author × client); TWO logos attached with a branding word
+   co-brand THE MOMENT THEME (`logoFromBuffer` for the second mark — accent still from
+   the first); the docx header seats mark one LEFT and mark two RIGHT (right tab stop),
+   pptx adds the second mark top-right of every slide, the compiler mounts logo2.png
+   with the co-brand directive — all three tiers from ONE theme field. E2E: 2 image
+   refs in the docx header, both marks in the pptx. MULTI-DELIVERABLE: "the report
+   AND the deck" — `parseTypedDeliverables` (plural; raw fences kept so the door
+   re-parses each), TYPED_OUTPUT_RULE says each deliverable gets its OWN fence, and
+   the delegation materializes EVERY fence as its own file PLUS substantial prose
+   around the fences as the report document (the found-live model shape: the deck
+   came back as a fence and the report as prose — one fence used to swallow the
+   report into a hand-back note). `artifact` stays the first for one-card callers;
+   `artifacts` carries all; the panel renders one card per file. E2E live: one
+   delegation → a real pptx deck + a docx report (2 artifacts, 2 cards). Gate
+   re-points: D4/F3 (the parallel serif-retirement — chat is app sans by owner call,
+   briefing-view keeps the voice pending the same call) + DH7's replace-row (the
+   multi-merge loop).
 AF. **THE ONE PRODUCTION DOOR (designed AND BUILT Aug 12; gate OP1 — 134/134; E2E: DM
    charted doc via auto-resolved CSV + DM revision (version-append, parent_id chain,
    chart survived) + delegation regression + replay T2–T7 all PASS on the bedrock

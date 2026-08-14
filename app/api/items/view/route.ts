@@ -106,6 +106,29 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    // ── THE GROUND LAW's on-open trip (Aug 13): the served view just derived that something
+    // prepared here is SUPERSEDED (a newer inbound moved the ground) — re-prepare in the
+    // background so the next poll serves work built from the present. Idempotent and cheap on
+    // repeat fires: every lane re-checks the ground itself and no-ops once re-prepared. ──
+    if (preparedArts.some((a) => a.stale) && (linkKind === 'inbox_item' || linkKind === 'commitment')) {
+      const uid = user.id;
+      const staleRow = (itemRowRes.data ?? null) as { work_title?: string; description?: string; created_at?: string } | null;
+      const staleTitle = String(staleRow?.work_title ?? staleRow?.description ?? 'this item');
+      const startAt = String(staleRow?.created_at ?? new Date().toISOString());
+      after(async () => {
+        try {
+          const { prepareOneItem } = await import('@/lib/prepare/pass');
+          await prepareOneItem(supabase, uid, {
+            id: `${linkKind === 'inbox_item' ? 'inbox' : 'commit'}:${id}`, entityId: id,
+            kind: linkKind === 'inbox_item' ? 'reply' : 'commitment', title: staleTitle,
+            state: 'todo', actor: 'you', automated: false, who: null, blockedOn: null,
+            startAt, when: { explicit: null, bucket: 'now' },
+            entity: linkRes.data?.entity_id ? { id: linkRes.data.entity_id as string, name: '' } : null,
+          } as never);
+        } catch { /* the pass cron is the backstop */ }
+      });
+    }
+
     const tasks = (Array.isArray(planRes.data?.tasks) ? planRes.data!.tasks : []) as ItemPlanTask[];
     // GAP only from a FRESH plan (P5b): a plan older than the item's latest thread activity describes a
     // conversation that has moved on — its unmet inputs (the stale "upload the X" class) must not
@@ -135,6 +158,7 @@ export async function GET(request: NextRequest) {
     let looseBrief: string | null = null;
     let looseMove: { label: string; ref: string | null } | null = null;
     let looseOffers: Array<{ label: string; say: string }> = [];
+    let looseBriefAt: string | null = null; // THE GROUND LAW: narration older than this folds
     if (linkRes.data?.entity_id) {
       const eid = linkRes.data.entity_id as string; const uid = user.id;
       after(async () => {
@@ -144,7 +168,7 @@ export async function GET(request: NextRequest) {
       const uid = user.id;
       const { readRoomResponse } = await import('@/lib/room/brief');
       const r = await readRoomResponse(supabase, uid, looseKey);
-      looseBrief = r?.text ?? null; looseMove = r?.move ?? null; looseOffers = r?.offers ?? [];
+      looseBrief = r?.text ?? null; looseMove = r?.move ?? null; looseOffers = r?.offers ?? []; looseBriefAt = r?.at ?? null;
       const looseTitle = linkKind === 'inbox_item'
         ? String(itemRow?.work_title || (itemRow?.source_data as Record<string, unknown> | undefined)?.subject || 'this email')
         : linkKind === 'commitment' ? String(itemRow?.description ?? 'this commitment') : String(itemRow?.title ?? 'this meeting');
@@ -155,6 +179,17 @@ export async function GET(request: NextRequest) {
     }
     const entity = room.entity;
     const siblings = room.siblings;
+    // THE MACHINE'S ONE WORD (experience-spec, Part "THE MACHINE"): the lifecycle this item stands in,
+    // derived from the same truth the door renders (judgment · prepared · live asks). Meetings have no
+    // work state; a failed derivation simply ships nothing — the header renders as before.
+    let machineState: { state: string; word: string | null } | null = null;
+    if (linkKind === 'inbox_item' || linkKind === 'commitment') {
+      try {
+        const { workStateOf, STATE_WORDS } = await import('@/lib/work/machine');
+        const st = await workStateOf(supabase, user.id, { kind: linkKind === 'inbox_item' ? 'inbox' : 'commitment', id });
+        machineState = { state: st.state, word: STATE_WORDS[st.state] };
+      } catch { /* non-fatal — the word is an enhancement */ }
+    }
     // J5 (multi-ask motion) — a commitment extracted as ONE motion carries its clauses as plan
     // steps; the deep-dive renders them as the checklist INSIDE the one composer (never N surfaces).
     const steps = kind === 'commitment' && tasks.length >= 2
@@ -165,6 +200,9 @@ export async function GET(request: NextRequest) {
       prepared: preparedArts.map((a, i) => ({
         id: `${a.kind}-${i}`, kind: a.kind, title: a.title, content: a.content,
         by: a.by, at: a.at, attachment: a.attachment, provenance: a.provenance,
+        // THE DECISION BRIEF's structured payload — the DecisionCard is its one surface
+        // (the strip filters it; the card renders trade-offs + the recommendation).
+        ...(a.decision ? { decision: a.decision } : {}),
       })),
       anchor,
       gap,
@@ -172,10 +210,12 @@ export async function GET(request: NextRequest) {
       steps,
       entity,
       siblings,
+      machineState,
       // THE ONE RESPONDER for a LOOSE room (linked rooms carry it on entity.brief/move/offers).
       brief: looseBrief,
       move: looseMove,
       offers: looseOffers,
+      briefAt: looseBriefAt,
       // THE VERB-SCOPE LAW (Aug 4): the item's SOURCE decides its verb strip — a meeting-extracted
       // action item has no thread; Reply must be structurally impossible on it.
       itemSource: linkKind === 'inbox_item' ? (itemRow?.source as string | undefined) ?? 'email' : null,

@@ -103,7 +103,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       const { data: dl } = await supabase.from('item_deliverables').select('id, entity_id, title, type, created_at, metadata')
         .eq('user_id', user.id).in('entity_id', memberIdsAll).order('created_at', { ascending: false }).limit(30);
       for (const d of (dl ?? []) as Array<Record<string, unknown>>) {
-        const meta = (d.metadata ?? {}) as { agentName?: string; worker?: string; review?: { objection?: string } };
+        const meta = (d.metadata ?? {}) as { agentName?: string; worker?: string; review?: { objection?: string }; version_of?: string; decisionBrief?: boolean };
+        // THE ONE READER'S RULES apply HERE too (owner, Aug 13: three "Reply draft — steered"
+        // lines + decision rows read as clutter): version rows are the LEDGER (the current reply
+        // lives on sd.draft, already surfaced as the item's prepared chip) — they never list, and
+        // their review objections never haunt the watch-outs (the stale "CUT OFF" warning was a
+        // superseded version's review). A decision brief's one surface is its CARD, never a file
+        // row. One panel, current deliverables only.
+        if (meta.version_of || meta.decisionBrief) continue;
         const by = meta.agentName ?? meta.worker ?? null;
         const eidRaw = d.entity_id as string;
         if (d.type === 'draft' || d.type === 'document') {

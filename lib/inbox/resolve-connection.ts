@@ -36,7 +36,7 @@ const EMAIL_RE = /[^\s<>"]+@[^\s<>"]+\.[^\s<>"]+/;
 function toBareEmail(v: unknown): string | null {
   if (typeof v !== 'string') return null;
   const m = v.match(EMAIL_RE);
-  return m ? m[0].toLowerCase() : null;
+  return m ? m[0].replace(/[.,;:!?)\]]+$/, '').toLowerCase() : null; // B5: trailing-punctuation trim
 }
 
 /**

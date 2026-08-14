@@ -77,6 +77,7 @@ export async function POST(request: NextRequest) {
       ...(turn.options?.length ? { options: turn.options } : {}),
       // ARTIFACTS-INTO-ORIGIN (Aug 9): the dispatched deliverable's card rides the answer.
       ...(turn.artifact ? { artifact: turn.artifact } : {}),
+      ...(turn.artifacts?.length ? { artifacts: turn.artifacts } : {}),
       // THE ONE CREATION CARD (Aug 10): the drafted standing task reviews inline.
       ...(turn.workflowDraft ? { workflowDraft: turn.workflowDraft } : {}),
       // The filing nudge never decorates a failed/empty answer (found live: a wrong "File it"

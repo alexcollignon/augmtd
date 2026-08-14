@@ -425,9 +425,13 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('components/home/home-ask.tsx').includes("addEventListener('aug:open-chat'") &&
     src('components/home/home-ask.tsx').includes("addEventListener('aug:new-chat'"));
   check('D4: THE VOICE — the team\'s words (Home brief + room openings) wear the serif voice class; ONE class in globals, never on chrome',
+    // RE-POINTED (Aug 12, owner call "keep it consistent — any AI chat"): the serif VOICE is
+    // RETIRED from chat/conversation text (home-ask + item-rail now app sans); briefing-view
+    // keeps it pending the same owner call. The class stays defined in globals.
     src('app/globals.css').includes('.font-voice') &&
     (src('components/briefing/briefing-view.tsx').match(/font-voice/g)?.length ?? 0) >= 6 &&
-    (src('components/home/item-rail.tsx').match(/font-voice/g)?.length ?? 0) >= 2);
+    (src('components/home/item-rail.tsx').match(/font-voice/g)?.length ?? 0) === 0 &&
+    (src('components/home/home-ask.tsx').match(/font-voice/g)?.length ?? 0) === 0);
 
   // ── F · THE FOLD's ENABLING BRICKS (Arc 3). ──
   const ha = src('components/home/home-ask.tsx');
@@ -456,7 +460,8 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('components/home/home-ask.tsx').includes('THE HISTORY PICKER DIED') &&
     !src('components/home/home-ask.tsx').includes('toggleHistory') &&
     src('components/home/home-view.tsx').includes('!projectDetailOpen && !chatActive') &&
-    src('components/home/home-ask.tsx').includes('font-voice text-[14.5px] text-neutral-700') &&
+    src('components/home/home-ask.tsx').includes('text-[14px] text-neutral-700 leading-[1.65]') && // serif retired Aug 12 (owner call) — the app-sans reading style
+
     src('app/api/rooms/recent/route.ts').includes('THE CHAT HISTORY') &&
     src('app/api/rooms/recent/route.ts').includes("k.startsWith('chat:')"));
 
@@ -629,8 +634,12 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('components/home/home-ask.tsx').includes('setScopeHint(null); void adopt(h)'));
 
   check('UX1: SPEAK CONSEQUENCE ON CONVERSATION VERBS (owner, Aug 7 — ""Clear" reads as delete; can he get it back?") — the room pair is self-explanatory (New session ↔ Earlier sessions, "Clear" dead); conversation delete is ARCHIVE with an Undo toast (chat: batch un-archive via /api/rooms/restore; coworker: soft status PATCH, never the hard DELETE)',
-    src('components/home/item-rail.tsx').includes('>New session</button>') &&
-    src('components/home/item-rail.tsx').includes('>Earlier sessions</button>') &&
+    // RE-POINTED (Aug 13, THE CONTAINERS LAW): the room is THE CONTINUOUS WORK RECORD — the
+    // session verbs died entirely ("there is no new session of reality"); deletion/restore
+    // stays on All conversations only.
+    !src('components/home/item-rail.tsx').includes('>New session</button>') &&
+    !src('components/home/item-rail.tsx').includes('>Earlier sessions</button>') &&
+    !src('components/home/item-rail.tsx').includes('viewingSession') &&
     !src('components/home/item-rail.tsx').includes('>Clear</button>') &&
     src('components/one/all-conversations.tsx').includes("toast('Conversation deleted'") &&
     src('components/one/all-conversations.tsx').includes("'/api/rooms/restore'") &&
@@ -1159,8 +1168,12 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('components/home/home-ask.tsx').includes('THE FRESH FLOOR') &&
     src('components/home/home-ask.tsx').includes('localStorage.removeItem(CHAT_KEY_LS)') &&
     src('components/home/home-ask.tsx').includes("sessionStorage.getItem('aug-open-chat-intent')") &&
-    src('app/api/workers/dm-sessions/route.ts').includes('firstAsk') &&
-    src('components/home/home-ask.tsx').includes('toggleDmHistory'));
+    // RE-POINTED (Aug 13, THE CONTAINERS LAW): a coworker DM is ONE CONTINUOUS THREAD (the
+    // Slack model) — the history popover + New session died; date dividers are the separator.
+    !src('components/home/home-ask.tsx').includes('toggleDmHistory') &&
+    !src('components/home/home-ask.tsx').includes('newDmSession') &&
+    src('components/home/home-ask.tsx').includes('ONE CONTINUOUS THREAD') &&
+    src('components/home/home-ask.tsx').includes('dayKey'));
 
   // ── AU · THE HUMAN-IN-THE-LOOP LAW (owner, Aug 11 — autonomy PARKED same day it was built). ──
   check('AU1: THE HUMAN-IN-THE-LOOP LAW — "it\'s dangerous territory to have stuff done without human approval; we should be human in the loop." The autonomy arc (strategic ask · ledger · autonomous send; designed + 10/10 decision-layer E2E, plan entry UU) is PARKED: the modules stay in lib/autonomy with ⚠️ PARKED headers as the recorded design, but NOTHING references them — no pass wiring, no Home ask, no Settings tab, no API route. Every send in the product goes through a human approval. This gate enforces the park: re-activating is a deliberate owner decision, never a refactor side-effect',
@@ -1277,7 +1290,7 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/home/delegate.ts').includes('revise?: { artifactId: string; threadId: string; title: string; bytes: Buffer') &&
     src('lib/home/delegate.ts').includes('templateFile?: { bytes: Buffer') &&
     src('lib/home/delegate.ts').includes('you are REVISING') &&           // the current text rides at THIS door
-    src('lib/home/delegate.ts').includes('existing.map((r) => (r?.id === artifactId ? row : r))') && // replace, never append
+    src('lib/home/delegate.ts').includes('merged.map((r) => (r?.id === row.id ? row as { id?: string } : r))') && // replace, never append (the multi-merge loop)
     src('lib/home/delegate.ts').includes('args.revise || args.templateFile || output.length >= 600') && // always materialize
     src('lib/home/delegate.ts').includes("cacheControl: '0'") &&
     src('lib/workflows/doc-content.ts').includes("cacheControl: '0'") &&
@@ -1304,6 +1317,252 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/work/generate-thread-document.ts').includes('AUTO-RESOLUTION from the thread') &&
     src('lib/work/generate-thread-document.ts').includes('parent_id: revise.artifactId') && // DM revision = version-append (panel chain survives)
     src('lib/work/generate-thread-document.ts').includes('TYPED_OUTPUT_RULE'));
+
+  check('DL1: THE DUAL-LOGO COVER + MULTI-DELIVERABLE (the last STC-benchmark gaps) — DUAL-LOGO: DocTheme grows logo2 (author × client); TWO logos attached with a branding word co-brand THE MOMENT THEME; docx header seats the first mark LEFT and the second RIGHT (right tab stop), pptx adds the second mark top-right of every slide, the compiler mounts logo2.png with the co-brand directive — all three tiers, one theme field. E2E: header carries 2 image refs, pptx carries both marks. MULTI-DELIVERABLE: parseTypedDeliverables (plural — raw fences kept so the door re-parses each); TYPED_OUTPUT_RULE tells the author each deliverable gets its OWN fence; the delegation materializes EVERY fence as its own file AND substantial prose around fences as the report document (the natural model shape — deck as fence, report as prose — used to swallow the report into a hand-back note); `artifact` stays the first for one-card callers, `artifacts` carries all, the panel renders one card each. E2E live: one delegation → a real pptx deck + a docx report (2 artifacts, 2 cards)',
+    src('lib/documents/theme.ts').includes('logo2?:') &&
+    src('lib/documents/theme.ts').includes('export async function logoFromBuffer') &&
+    src('lib/converse/index.ts').includes('momentTheme.logo2 = await logoFromBuffer') &&
+    src('lib/artifacts/builders.ts').includes('theme.logo2 ? new Paragraph({') &&      // docx co-brand header
+    src('lib/artifacts/builders.ts').includes('TabStopType.RIGHT') &&
+    src('lib/artifacts/builders.ts').includes('logo2DataUrl') &&                        // pptx second mark
+    src('lib/compute/document-compiler.ts').includes('logo2.png') &&                    // compiler tier
+    src('lib/workflows/typed-output.ts').includes('export function parseTypedDeliverables') &&
+    src('lib/workflows/typed-output.ts').includes('its OWN fenced block') &&
+    src('lib/home/delegate.ts').includes('parseTypedDeliverables') &&
+    src('lib/home/delegate.ts').includes('candidates.length >= 2 ? candidates') &&      // fence+prose = two files
+    src('lib/home/delegate.ts').includes('artifacts?: Array<{ id: string; title: string; threadId: string }>') &&
+    src('lib/converse/index.ts').includes('out.artifacts && out.artifacts.length > 1') &&
+    src('app/api/home/ask/route.ts').includes('turn.artifacts?.length') &&
+    src('components/home/home-ask.tsx').includes('d.artifacts?.length ? d.artifacts : d.artifact'));
+
+  check('TR1: THE TRICHOTOMY LAW (plan AH — the prepared promise) — every judged-actionable item lands PREPARED, ASKED, or PARKED; unmeasured silence is structurally dead. Measured live on the owner\'s account (T1): 37 actionable → 23 prepared · 2 asked · 12 SILENT; after the fixes and three passes: 41 prepared · 6 asked · every remainder carrying a RECORDED reason. The fixes, each a class: (1) THE OUTCOME LEDGER — the pass records every candidate\'s did/reason as prep_outcome rows (item_plans, zero-migration); silence became queryable. (2) THE DECISION BRIEF — `decide` was the judge\'s last silent verb (5 live: "requires a go/no-go", "you must now decide" → generic none): one grounded pass lays out {question, options with trade-offs, recommendation} as a pool deliverable + room narration; the material is the only ground. (3) THE READER READS EVERYTHING — getPrepared missed prepared_invite/prepared_forward (a FRESH invite existed while every consumer reported nothing prepared); sent artifacts stay excluded (done ≠ pending). (4) CHASE NEVER SILENT — counterparty fallback chain: spine who/blockedOn → the item\'s own sender → the "Waiting on <Name>:" our own extraction wrote → the item\'s words (user addresses it). (5) DELEGATION HONESTY — an evaluator-rejected delegation left NOTHING in the pool yet reported \'delegated\' (a phantom prepared state); an empty hand-back is now an honest none that retries. (6) NEVER-ATTEMPTED FIRST — under a tight budget (cron: 20-90s/user; 70 leftBehind at 7 MINUTES) unreached items outrank re-visits',
+    src('lib/prepare/pass.ts').includes("kind: 'prep_outcome'") &&
+    src('lib/prepare/pass.ts').includes('recordOutcome') &&
+    src('lib/prepare/pass.ts').includes('async function prepareDecisionBrief') &&
+    src('lib/prepare/pass.ts').includes("verdict.work === 'decide'") &&
+    src('lib/prepare/pass.ts').includes('"question":"…","options"') &&
+    src('lib/prepare/pass.ts').includes('EXCERPT_RULE') &&                       // the brief grounds honestly
+    src('lib/prepare/pass.ts').includes("r.did === 'decision'") &&               // narrated like every preparation
+    src('lib/prepare/read.ts').includes("kind: 'reply_draft' | 'nudge_draft' | 'deliverable' | 'invite' | 'forward'") &&
+    src('lib/prepare/read.ts').includes('!sd.prepared_invite.sent_at') &&        // sent ≠ pending
+    src('lib/prepare/pass.ts').includes('waiting (?:on|for)') &&                 // the chase fallback chain
+    src('lib/prepare/pass.ts').includes('a chase is never a silent none') &&
+    src('lib/prepare/pass.ts').includes("attempt didn't pass review — it will retry") && // delegation honesty
+    src('lib/prepare/pass.ts').includes('NEVER-ATTEMPTED FIRST') &&
+    src('lib/prepare/pass.ts').includes('attempted.has(keyOf(a))'));
+
+  check('TR2: THE DECISION HAS ONE SURFACE (owner correction, Aug 12 eve — "the left panel is too much... so many repeated things; it doesn\'t feel like one system"): the decision brief\'s depth renders IN the existing DecisionCard (trade-off line under each option, a quiet "recommended" chip + the grounded why — the brief\'s options SUPERSEDE the judge\'s bare labels when present), the prepared strip FILTERS decision artifacts (never a second document beside the card), the brief content is PLAIN TEXT (the stage once showed literal `**`), and prep:*/meeting-prep:* narration lines NEVER render standalone when the composed brief exists (the brief digests preparedness — three "Clara drafted/laid out…" echo lines under a brief saying the same thing read as spam, not narration; the ledger keeps the turns, law 6 rules the render)',
+    src('lib/prepare/read.ts').includes('decision?: { options: Array<{ label: string; tradeoff?: string | null }>') &&
+    src('lib/prepare/read.ts').includes('meta.decisionBrief ? { decision:') &&
+    src('app/api/items/view/route.ts').includes('...(a.decision ? { decision: a.decision } : {})') &&
+    src('components/work/decision-card.tsx').includes('tradeoff?: string | null') &&
+    src('components/work/decision-card.tsx').includes('recommended') &&
+    src('components/home/item-detail.tsx').includes('decisionBrief?.decision?.options.length') &&
+    src('components/home/item-detail.tsx').includes('!p.decision') &&                    // the strip filter
+    src('lib/prepare/pass.ts').includes('PLAIN TEXT') &&
+    !src('lib/prepare/pass.ts').includes('`**The decision:**') &&
+    src('components/home/item-rail.tsx').includes("|| ent?.brief || view.brief) && t.dkey && /^(prep:|meeting-prep:)/"));
+
+  check('AJ1: THE EDITOR — one composition owns the page (owner, Aug 13: "still doesn\'t feel like one system… some components feel created on the side"; the proof was a live contradiction — the brief claimed the reply prepared, an ask card said the same artifact was missing, the MOVE said review it). Inline components STAY (owner constraint); the responder becomes the page\'s EDITOR: (1) the compose pass SEES the components that will render (decision card, ask cards) and returns a keep/moot verdict per ask — a moot ask (the prepared column already holds it · the verdict no longer needs it · it requests something the team itself produces) is SETTLED at compose time (component stripped, ledger text kept); (2) COHERENCE laws in the prompt — the brief never restates what a component shows ("the choice is laid out below"), never claims prepared+missing, acknowledges a kept ask\'s gap exactly once; (3) THE ONE VOICE (lib/room/voice.ts TEAM_VOICE) injected into every room-prose author (brief + decision brief) — one register, defined once; (4) ASK–VERDICT COHERENCE at the data layer — a verdict whose work-class takes no inputs settles the item\'s asks deterministically (apply-verdict, no model); (5) THE ONE FACE (components/work/worker-face.tsx) — attribution rides the artifact as face+name (prepared bylines, DM bubbles — same visual, same meaning); the voice contract forbids re-attributing in prose. ROOM_BRIEF_VERSION 4. Eyes-on: the TECNICLIMA room went from three contradictory claims to one story',
+    /export const ROOM_BRIEF_VERSION = [5-9]/.test(src('lib/room/brief.ts')) && // RE-POINTED to a floor: ≥5 (GL2's present-tense editor; exact pins break on every bump)
+    src('lib/room/brief.ts').includes('COMPONENTS THAT WILL RENDER BENEATH YOUR BRIEF') &&
+    src('lib/room/brief.ts').includes('"verdict": "keep"|"moot"') &&
+    src('lib/room/brief.ts').includes("THE EDITOR'S SETTLE") &&
+    src('lib/room/brief.ts').includes('never restate what a component below already shows') &&
+    src('lib/room/brief.ts').includes('TEAM_VOICE') &&
+    src('lib/room/voice.ts').includes('export const TEAM_VOICE') &&
+    src('lib/prepare/pass.ts').includes('TEAM_VOICE') &&                       // the decision brief speaks the one voice
+    src('lib/work/apply-verdict.ts').includes('ASK–VERDICT COHERENCE') &&
+    src('lib/work/apply-verdict.ts').includes('settleAsksForItem') &&
+    src('lib/room/grounding.ts').includes('turnId: t.id ? String(t.id) : null') && // the editor can settle what it reads
+    src('components/work/worker-face.tsx').includes('export function WorkerFace') &&
+    src('components/home/item-detail.tsx').includes('<WorkerFace name={d.by}') &&
+    src('components/home/home-ask.tsx').includes("from '@/components/work/worker-face'"));
+
+  check('AK1: THE FORWARD-MOTION LAW (owner, Aug 13: "it almost looks and feels like a never ending loop with no meaningful value" — picking "Request clarifications" from OUR OWN decision menu earned a clarifying question back, raw [F3][L3][L2] grounding tags in the prose, an empty composer, and a ghost ask line). Five fixes, each a class: (1) A MENU CLICK EXECUTES ITS CONTRACT — the decision choice travels with {option, tradeoff, why} and the steer route wraps it as an execute-now instruction naming the deliverable shape (a clean ready-to-send message, no meta-commentary); walked live: choice → real drafted reply asking for the missing specifics. (2) NO QUESTIONS AFTER STRUCTURED CHOICES — "NEVER ask the user what they meant — we wrote the option; a missing detail becomes a stated assumption or [CONFIRM] slot". (3) THE REF-TAG FLOOR — unresolved grounding tags strip at the ONE core exit (converse wrapper), no caller can leak notation. (4) THE OFFERS SAY IS EXECUTABLE — a complete self-contained instruction, never a bare label needing re-interpretation. (5) SETTLED ENGINE ASKS ARCHIVE WHOLE — scaffolding text never survives as a ghost line (coworker asks keep their speech); 19 live ghosts swept. Replay T2–T7 green over the sanitizer wrapper',
+    src('app/api/items/steer/route.ts').includes('DECISION MADE — the user picked an option') &&
+    src('app/api/items/steer/route.ts').includes('NEVER ask the user what they meant') &&
+    src('app/api/items/steer/route.ts').includes('THE DELIVERABLE IS THE MESSAGE ITSELF') &&
+    src('components/home/item-detail.tsx').includes('decision: {') &&
+    src('components/home/item-detail.tsx').includes('tradeoff: decisionBrief?.decision?.options.find') &&
+    src('lib/converse/index.ts').includes('GROUNDING_TAG_RE') &&
+    src('lib/converse/index.ts').includes('turn.say = turn.say.replace(GROUNDING_TAG_RE') &&
+    src('lib/converse/index.ts').includes('async function converseInner') &&
+    src('lib/room/brief.ts').includes('THE SAY IS EXECUTABLE') &&
+    src('lib/room/turns.ts').includes('FORWARD-MOTION LAW #5') &&
+    src('lib/room/turns.ts').includes("archived_at: new Date().toISOString()") &&
+    src('lib/room/brief.ts').includes('an engine ask archives WHOLE'));
+
+  check('AL1: THE MACHINE (experience-spec Part "THE MACHINE" — the skeleton the organs hang on; both doors WALKED live). The spec: an explicit work-item lifecycle (unjudged → preparing → ready/awaiting_input/awaiting_decision → enacting → awaiting_approval → committed → settled), ONE placement table every door consumes, one home per deliverable kind, and the walked-journey law. THE BUILD: (1) lib/work/machine.ts `workStateOf` — the lifecycle derived at read time from existing truth (judgment cache + THE ONE READER + live asks + sent stamps), never a new table; walked live: awaiting_decision → transition → awaiting_approval. (2) lib/room/render-plan.ts `panelPlan` — the placement table in code; item-rail consumes plan.showOffers; a component renders left on every door by construction. (3) THE TRANSITION FAST-PATH — the DECISION MADE sentinel routes item-scope enactment STRAIGHT to the draft-rework lane (versioned, evaluated, composer-served), bypassing classification and every path that could answer a button with a question; walked: the choice produced a clean counterparty-language reply in source_data.draft. (4) THE LIFTED DECISION — an embedded item reports its decision UP (onDecision) and the HOST room\'s rail mounts it; the stage-hosted card is DELETED (was: left on the deep-dive, right in the project room). (5) draft INJECTION on the embedded transition (a remount raced the item\'s loads). Doors walked: deep-dive (card left → click → composer opened with the enacting draft → Send waiting) and project room (card in the room\'s conversation under the brief → click → draft landed, room recomposed forward)',
+    src('docs/experience-spec.md').includes('PART — THE MACHINE') &&
+    src('docs/experience-spec.md').includes('Transitions are buttons; conversations are text') &&
+    src('lib/work/machine.ts').includes('export async function workStateOf') &&
+    src('lib/work/machine.ts').includes("'awaiting_decision'") &&
+    src('lib/work/machine.ts').includes('getPrepared') &&                       // never a parallel derivation
+    src('lib/room/render-plan.ts').includes('export function panelPlan') &&
+    src('lib/room/render-plan.ts').includes('stageHostsDecision: false') &&
+    src('components/home/item-rail.tsx').includes('panelPlan({ hasDecision') &&
+    src('components/home/item-rail.tsx').includes('plan.showOffers') &&
+    src('lib/converse/index.ts').includes("text.startsWith('DECISION MADE — ')") &&
+    src('lib/converse/index.ts').includes('THE TRANSITION FAST-PATH') &&
+    src('components/home/item-detail.tsx').includes('export type ReportedDecision') &&
+    src('components/home/item-detail.tsx').includes('onDecision') &&
+    !src('components/home/item-detail.tsx').includes("import { DecisionCard }") &&  // the stage card is DEAD
+    src('components/entities/entity-room.tsx').includes('onDecision={setFocusDecision}') &&
+    src('components/entities/entity-room.tsx').includes('injectedDraft'));
+
+  check('VL1: THE VERB-LANE FIDELITY REPAIRS (the scenario matrix, Aug 13 — an Opus agent walked all 7 lanes end-to-end on the probe; five defects found and fixed, all verified live). B1 — a send_file item whose document can\'t be found RAISES the input_checklist ask in the room (askForFile mirrors the requirements.ts write shape, dedupeKey requires:<id>) instead of returning a silent none that left the machine in `preparing` forever (the one genuine machine-state lie in the matrix); verified live: ask landed, state read awaiting_input. B2 — the one reader serves the invite TIME (the writer stores startISO; reading `.start` served a timeless invite). B3 — the chase draft is ATTRIBUTED (prepared_by rides the nudge lane like every sibling). B4 — a commitment\'s decision brief grounds on the COMMITMENT\'S OWN row (description/counterparty/due_date), never a phantom inbox lookup. B5 — email extraction trims trailing sentence punctuation before validation in all three regex copies ("…to sam@acme.com." no longer yields the address twice, once broken)',
+    src('lib/prepare/pass.ts').includes('async function askForFile') &&
+    src('lib/prepare/pass.ts').includes("dedupeKey: `requires:${w.entityId}`") &&
+    src('lib/prepare/pass.ts').includes('asked in the room') &&
+    src('lib/prepare/read.ts').includes('sd.prepared_invite.startISO ?? sd.prepared_invite.start') &&
+    src('lib/prepare/read.ts').includes("content: sd.nudge_draft.body, by: sd.prepared_by?.worker ?? null") &&
+    src('lib/prepare/pass.ts').includes("if (poolKind === 'commitment')") &&
+    src('lib/prepare/pass.ts').includes('THE COMMITMENT: ') &&
+    src('lib/home/prepare-action.ts').includes("replace(/[.,;:!?)\\]]+$/, '')") &&
+    src('lib/home/item-context.ts').includes("replace(/[.,;:!?)\\]]+$/, '')") &&
+    src('lib/inbox/resolve-connection.ts').includes("replace(/[.,;:!?)\\]]+$/, '')"));
+
+  check('RM1: THE MACHINE REPAIRS FROM THE PILOT SWEEP (Aug 13 — a read-only Opus agent censused a real pilot account against the machine; every derivation lie found became a ladder fix, re-censused CONFIRMED on the same account). (1) DECISION MATERIAL PARITY — the machine accepts the verdict\'s own validated options as decision material, same fallback the door renders (6 of 6 decide items read "preparing" for 17 days while the deep-dive showed a live decision card; now 6/6 awaiting_decision). (2) THE ASK OUTRANKS THE SEND — an open input_checklist makes the primary supplying, never Send-with-known-holes (12 of 19 live asks sat demoted behind a Send button). (3) UNFIREABLE ≠ SEND-SHAPED — an invite with no time / a forward with no recipient carries sendReady:false from the one reader and derives awaiting_input (the send door hard-rejects them; a Send primary that cannot fire is a lie). (4) THE STALENESS FLOOR — a 48h-old judgment with nothing landed and nobody asked derives back to unjudged ("preparing" is transient by spec, not a 17-day graveyard; 17→3 on the account). (5) THE COMMITMENT LANE HOME — a commitment\'s type:draft pool row IS the chase/reply lane (nudge_draft/reply_draft by the pass\'s own title contract), newest-only (stacked repeat nudges collapsed); the machine reads them awaiting_approval with Send primary, per the lane table. Spec updated FIRST (the lifecycle section carries all five)',
+    src('lib/work/machine.ts').includes('const decisionMaterial = !!decisionBrief || (Array.isArray(v.options) && v.options.length >= 2)') &&
+    src('lib/work/machine.ts').includes("decisionMaterial && !sendShaped) return { state: 'awaiting_decision'") &&
+    src('lib/work/machine.ts').indexOf("if (liveAsk) return { state: 'awaiting_input'") < src('lib/work/machine.ts').indexOf("if (sendShaped) return { state: 'awaiting_approval'") &&
+    src('lib/work/machine.ts').includes('p.sendReady !== false') &&
+    src('lib/work/machine.ts').includes("if (sendBlocked) return { state: 'awaiting_input'") &&
+    src('lib/work/machine.ts').includes('48 * 3_600_000') &&
+    src('lib/prepare/read.ts').includes('sendReady?: boolean') &&
+    src('lib/prepare/read.ts').includes('sendReady: !!(sd.prepared_invite.startISO ?? sd.prepared_invite.start)') &&
+    src('lib/prepare/read.ts').includes('sendReady: (sd.prepared_forward.to ?? []).length > 0') &&
+    src('lib/prepare/read.ts').includes('sawCommitDraft') &&
+    src('lib/prepare/read.ts').includes("startsWith('Nudge — ') ? 'nudge_draft' : 'reply_draft'") &&
+    src('docs/experience-spec.md').includes('The open ask outranks the staged send') &&
+    src('docs/experience-spec.md').includes('a Send primary that cannot fire is a'));
+
+  check('AJ2: THE SUPPLY LOOP REPAIRS (the ask-journey walk, Aug 13 — an Opus agent walked ask→supply→go-ahead end-to-end on the probe; 8 defects; the deepest: awaiting_input was STRUCTURALLY UNREACHABLE for coworker-executor produce items). D1 — the coworker-supersedes delete fires ONLY when the coworker posted an ask of its OWN (it used to fire unconditionally: a [CONFIRM:]-shell delivery silently destroyed the engine ask AND the go-ahead stamp; the user was never asked). D2 — the evidence-quote law gains a token-subset fallback, still code-verified (substring-only rejected the RIGHT file ~2/3 of runs on word-order variance: "signed Schedule B addendum" vs "Schedule B addendum - signed"). D3 — SUPPLY RE-OPENS THE WORK: a require:* stage newer than the prepare-pass deliverable re-runs the delegation (prior row versioned, reader skips it) — attaching the exact file the ask named no longer leaves the pre-supply shell as the permanent deliverable. D4 — the ingest funnel makes the settleAsksForItem split: engine asks archive WHOLE (no ghost demand line), coworker asks strip component only (their speech stays). D5 — a user-supplied file (type:file) and sent work (type:sent) are NOT prepared work — the machine no longer reads `ready` the instant the user attaches their own material. D8 — THE ASK-DIRECTION FLOOR (JUDGE_VERSION 15): an open engine ask is OUR ask to the USER, never the counterparty\'s debt (found live: the judge flipped produce→chase and drafted a nudge asking the counterparty to send the deliverable WE owed HER). Walked live post-fix: coworker ask supersedes cleanly, re-delegation blocks on the outstanding ask, supply re-opens. QUEUED: D6 (the honest-retry loop has no floor — escalation/cap design) + D7 coverage rides D1/D3',
+    src('lib/home/delegate.ts').includes('if (needsInput?.length) {') &&
+    src('lib/home/delegate.ts').includes('ask-journey D1') &&
+    src('lib/prepare/requirements.ts').includes('evTokens.every((t) => candText.includes(t))') &&
+    src('lib/prepare/pass.ts').includes('SUPPLY RE-OPENS THE WORK') &&
+    src('lib/prepare/pass.ts').includes("like('task_id', 'require:%')") &&
+    src('lib/prepare/pass.ts').includes("movedPast && !fresherSupply ? 'superseded:ground-move' : 'superseded:require-supply'") && // RE-POINTED: GL1 — the supersede stamp names its cause (ground move vs supply)
+    src('app/api/items/ingest/route.ts').includes('archives WHOLE') &&
+    src('app/api/items/ingest/route.ts').includes('archived_at: new Date().toISOString()') &&
+    src('lib/prepare/read.ts').includes("if (d.type === 'file' || d.type === 'sent') continue;") &&
+    src('lib/work/judge.ts').includes('THIS ASK IS OURS, TO THE USER') &&
+    src('lib/work/surface-registry.ts').includes('15: THE ASK-DIRECTION FLOOR')); // RE-POINTED: the v15 rule survives in the version log; JUDGE_VERSION moved on (16: the booked-calendar fact)
+
+  check('GL1: THE GROUND LAW (experience-spec "The ground law"; suite scripts/smoke-ground.ts green LIVE on the probe across every honest branch — prepare → newer inbound → stale → machine walks back → re-prep from the PRESENT (deliverable, ask, or retry-flag) → ONE delta line on delivery → idempotent). Found live (the Stratto room): a counterparty moved a demo Monday→Thursday; the verdict stayed "reply/schedule" so no re-judging could catch it — THE VERDICT CAN STAY IDENTICAL WHILE THE CONTENT GOES STALE. The build: (1) THE WATERMARK — every lane (reply/nudge×2/invite×2/forward/delegation/decision) stamps prepared_from = the newest inbound at prep time (lib/prepare/ground.ts groundOf/groundMoved; conservative — unstamped/unresolvable = exempt). (2) STALE IS DERIVED, NEVER STORED — getPrepared compares each artifact\'s ground to the item\'s newest inbound; the machine treats stale as not-prepared (state walks back; a dead plan can never hold a Send primary); the nudge + draft serving routes fall through to regeneration instead of serving a superseded artifact. (3) SUPERSESSION RE-PREPARES — every lane\'s freshness guard is ground-aware (fresh-by-clock but stale-by-ground → re-prepare; pool lanes version the old row). (4) THE CONTENT HALF — generateReplyDraft answers the thread\'s PRESENT (newest inbound, top-message-stripped; founding message demotes to context) — caught by the suite itself: a re-draft re-confirmed the OLD plan with a fresh stamp. (5) THE DELTA IS ONE LINE — narrateGroundMove, deduped per (item, inbound), event grammar. (6) THE ON-OPEN TRIP — a served-stale view fires re-preparation in after(); the next poll shows the present',
+    src('lib/prepare/ground.ts').includes('export async function groundOf') &&
+    src('lib/prepare/ground.ts').includes('export function groundMoved') &&
+    src('lib/prepare/read.ts').includes('stale?: boolean') &&
+    src('lib/prepare/read.ts').includes('if (groundMoved(a.ground, current)) a.stale = true;') &&
+    src('lib/work/machine.ts').includes('const live = input.prepared.filter((p) => !p.stale)') && // RE-POINTED: the ladder became pure deriveState (CV2)
+    src('lib/work/machine.ts').includes("if (superseded) return { state: 'preparing'") &&
+    (src('lib/prepare/pass.ts').match(/prepared_from: currentGround/g)?.length ?? 0) >= 6 &&
+    (src('lib/prepare/pass.ts').match(/narrateGroundMove\(admin, userId, w, currentGround\)/g)?.length ?? 0) >= 6 &&
+    src('lib/home/delegate.ts').includes('preparedFrom?:') &&
+    src('lib/inbox/draft-reply.ts').includes('THE GROUND LAW, content half') &&
+    src('lib/inbox/draft-reply.ts').includes('topMessageOf') &&
+    src('app/api/items/view/route.ts').includes("preparedArts.some((a) => a.stale)") &&
+    src('app/api/inbox/[id]/draft/route.ts').includes('draftSuperseded') &&
+    src('app/api/commitments/[id]/nudge/route.ts').includes('!a.stale') &&
+    src('docs/experience-spec.md').includes('The ground law'));
+
+  check('GL2: THE GROUND LAW\'s surface half + the diagnosis riders (a read-only Opus census of the live Stratto room reconstructed the exact sleep: reactivate-on-reply stamps activity then STOPS; the one pass after the inbound was neutralized because a post-inbound regeneration made the last_activity guard permanently dead — age-only protection; the verdict-shaped stripper can kill a wrong-verb artifact but never a wrong-content one). (1) NARRATION EXPIRES WITH THE BRIEF — engine narration older than the brief\'s composition (briefAt on both doors) joins the "earlier (N)" fold; live-component turns and human speech always render (item-rail isExpiredNarration). (2) THE EDITOR\'S PRESENT-TENSE FLOOR — compose sees MACHINE STATE + NEWEST MESSAGE (presentOf, loose door), carries the ONE-CLAIM-ABOUT-WHAT\'S-OWED law, and the sig gains the ground so a new inbound recomposes; ROOM_BRIEF_VERSION 5. (3) THE ALREADY-BOOKED FLOOR — an invite whose attendee already has a calendar event within ±12h of the proposed time prepares NOTHING (found live: the lane prepared an invite duplicating a meeting the counterparty had ALREADY ACCEPTED, at a conflicting time). (4) THE RESCHEDULE RE-BRIEF — the anticipation fire key carries the event\'s start time, so a moved meeting earns a corrected prep brief that REPLACES the old turn in place (the bare-id key briefed once per event FOREVER — the Monday instructions stood for 3 days). QUEUED from the census: the frozen-entity-state contradiction (two caches, one page, neither invalidates the other), composer fragment guard (the lone "his" turn)',
+    src('components/home/item-rail.tsx').includes('isExpiredNarration') &&
+    src('components/home/item-rail.tsx').includes('briefAt') &&
+    src('lib/room/brief.ts').includes('async function presentOf') &&
+    src('lib/room/brief.ts').includes("ONE CLAIM ABOUT WHAT'S OWED") &&
+    /export const ROOM_BRIEF_VERSION = [5-9]/.test(src('lib/room/brief.ts')) &&
+    src('lib/room/brief.ts').includes('present.groundAt') &&
+    src('lib/entities/room-view.ts').includes('briefAt') &&
+    src('lib/prepare/pass.ts').includes('THE ALREADY-BOOKED FLOOR') &&
+    src('lib/prepare/pass.ts').includes('already on the calendar') &&
+    src('lib/home/anticipation.ts').includes('THE RESCHEDULE RE-BRIEF') &&
+    src('lib/home/anticipation.ts').includes('${String(ev.start_time).slice(0, 16)}'));
+
+  check('GL3: THE GROUND LAW\'s judgment half (the queued census finds, built + PROVEN LIVE on the found case). (1) THE ONE-CLAIM LAW AT STATE SYNTHESIS (STATE_PROMPT_VERSION 8) — the judge\'s standing verdicts are FACTS the entity-state prose must never contradict ("no reply needed yet" stood for days under a headline saying "confirm or propose" — two caches, one page, neither able to invalidate the other); the verdict digest rides the state sig so a verdict flip re-synthesizes; live re-synthesis on the found entity: whoOwes.you emptied, the contradiction gone. (2) THE BOOKED-CALENDAR FACT (JUDGE_VERSION 16) — the judge sees the user\'s real bookings with the item\'s sender (jsonb containment on attendees, −1d..+21d window) and the ALREADY-BOOKED rule judges scheduling work none/answered when the calendar shows the meeting booked; live re-judgment on the found item: schedule → none/answered citing the real event (the verdict that persisted forever while the lane floor burned an extraction per visit). (3) The stray-fragment turn archived; a composer min-length/in-flight guard was DELIBERATELY REJECTED — any block harms legitimate rapid steering ("ok", mid-flight corrections); the record tolerates a rare fragment. QUEUED FIND from the live proof: the deixis day-word arithmetic slip (a Monday "Thursday" resolved to Friday\'s date in the stored understanding, echoed by every downstream reader — the calendar row is right, the prose is off by one)',
+    src('lib/entities/state.ts').includes('export const STATE_PROMPT_VERSION = 8') &&
+    src('lib/entities/state.ts').includes("THE JUDGE'S STANDING VERDICTS") &&
+    src('lib/entities/state.ts').includes('verdictDigest') &&
+    src('lib/entities/state.ts').includes('${verdictDigest}') &&
+    src('lib/work/judge.ts').includes("ALREADY ON THE USER'S CALENDAR") &&
+    src('lib/work/judge.ts').includes('- ALREADY BOOKED:') &&
+    src('lib/work/judge.ts').includes("filter('attendees', 'cs'") &&
+    src('lib/work/surface-registry.ts').includes('16: THE BOOKED-CALENDAR FACT')); // RE-POINTED to the version log (pins break on bumps)
+
+  check('CV1: THE COVERAGE REPAIR (Aug 14 — the census\'s root cause found: 18 profiles shared a 240s budget SEQUENTIALLY with a 20s floor = 360s of work in a 300s route; the route died mid-loop every run and tail users NEVER got a pass — a 22h gap on the owner\'s live account, ~5% judged coverage on the pilot\'s). The sweep now: (1) walks ACTIVE users only — a mail connection OR recent work signal; the sovereign tier has no mailbox, so a connections-only filter would have silenced those accounts\' passes AND their entity-state maintenance entirely; (2) LEAST-RECENTLY-SERVED FIRST — the user longest without a pass leads, so a budget-killed run self-balances instead of starving the same tail forever; (3) a WALL-CLOCK GUARD stops cleanly before the 300s kill and reports usersLeftBehind (never a silent mid-loop death); (4) per-user budget floor 30s / ceiling 120s over the REAL active count. Measured live on the owner: one 120s pass attempted ~30 candidates (judge → trichotomy), drained judged-none items out of the pool, left 151 honestly counted for the next sweep',
+    src('app/api/cron/draft-sweep/route.ts').includes('THE COVERAGE REPAIR') &&
+    src('app/api/cron/draft-sweep/route.ts').includes('recentMeetings') &&
+    src('app/api/cron/draft-sweep/route.ts').includes('lastServed') &&
+    src('app/api/cron/draft-sweep/route.ts').includes('routeDeadline') &&
+    src('app/api/cron/draft-sweep/route.ts').includes('usersLeftBehind') &&
+    src('app/api/cron/draft-sweep/route.ts').includes('Math.min(120_000, Math.max(30_000'));
+
+  check('CV2: TWO READERS, ONE LADDER (machine adoption\'s data half, Aug 14): `deriveState` is the ONE pure ladder both readers call — `workStateOf` (single item, own queries) and `workStatesFor` (a whole deck from ~5 BATCHED queries, no per-item fan-out; callers pass prefetched rows). The pool-row mapping is the shared `poolRowsToArtifacts` (extracted from getPrepared — forking it is how a deck row and a deep-dive disagree about what\'s prepared); commitment rows read their pool artifacts in the batch too. STATE_WORDS is the ONE human mapping every surface speaks (never a per-surface paraphrase). The batch staleness check is a DOCUMENTED approximation (last_activity_at vs the prepared_from stamp — the exact ground check needs one emails query per thread, too hot for the deck) whose error direction is safe: over-stale renders "in motion", never a wrong "ready to send"',
+    src('lib/work/machine.ts').includes('export function deriveState') &&
+    src('lib/work/machine.ts').includes('export async function workStatesFor') &&
+    src('lib/work/machine.ts').includes('export const STATE_WORDS') &&
+    (src('lib/work/machine.ts').match(/deriveState\(\{/g)?.length ?? 0) >= 2 &&
+    src('lib/work/machine.ts').includes('poolRowsToArtifacts') &&
+    src('lib/prepare/read.ts').includes('export function poolRowsToArtifacts') &&
+    src('lib/work/machine.ts').includes('STALENESS APPROXIMATION'));
+
+  check('CV3: EVERY SURFACE SPEAKS THE MACHINE (adoption, Aug 14 — measured live: 90 deck states derived in ~214ms, one batched call). The deck: the brief route computes workStatesFor ONCE for all served actionable rows (inbox rows passed PREFETCHED — the batch refetches nothing) and attaches an optional `machine {state, word}` to mustRespond/actionNotices/commitments/priorities; a cached brief without the field renders exactly as before. The render: the word folds into the row\'s EXISTING muted second line (same grey, same size, no pill/icon/affordance — the row\'s click stays the door); silent states (preparing/unjudged/settled) render NOTHING; awaiting_approval suppresses when the prepared chip already says it (never both). The deep-dive: /api/items/view serves machineState (workStateOf, meetings skipped) and the stage header meta line speaks the same word under the same rules. ONE mapping (STATE_WORDS) — no surface paraphrases',
+    src('app/api/home/brief/route.ts').includes('workStatesFor') &&
+    src('app/api/home/brief/route.ts').includes('machineByAtom') &&
+    src('app/api/home/brief/route.ts').includes('STATE_WORDS[st.state]') &&
+    src('components/home/home-view.tsx').includes('MACHINE_SILENT') &&
+    src('components/home/home-view.tsx').includes('withMachineWord') &&
+    (src('components/home/home-view.tsx').match(/machineWord\(/g)?.length ?? 0) >= 4 &&
+    src('app/api/items/view/route.ts').includes('machineState') &&
+    src('components/home/item-detail.tsx').includes('machineWordOf'));
+
+  check('FR1: THE FRAGMENTATION REVIEW FIXES (owner screenshots, Aug 14 — a ghost "Clara drafted the reply… ready to review" line with nothing to open, and a deck row wearing three competing claims; diagnosis proved the strip-narration law already WORKED — the ghost died seconds after the screenshot when the open re-judged; what failed was rendering during the reach/transition windows). (1) THE ORPHAN-PREP FOLD — a prep:*/meeting-prep:* narration whose artifact no longer exists NEVER stands alone: with its card present it seats AS the card; without one it folds into "earlier (N)" — and this holds even when the brief is ABSENT (a ROOM_BRIEF_VERSION bump invalidates every cached brief, and every fold rule keyed on brief-presence switches off exactly then — the found window). (2) ONE CLAIM PER ROW — the machine state arbitrates the row chrome: in an ask-bearing state (awaiting_input/awaiting_decision) the prepared chip and its send-flavored CTA yield to the supply/decide word (the ladder already says the ask outranks the send; now the row obeys — "Review & send + ready + needs one thing from you" on one line is dead). (3) THE SURFACING DELTA — an item first judged within 24h entering the deck says "surfaced today" (the coverage repair drains a months-old backlog; without the delta, genuinely-open old obligations read as random pop-ins instead of the system catching up). judgedFirstAt rides the batch reader',
+    src('components/home/item-rail.tsx').includes('THE ORPHAN-PREP FOLD') &&
+    src('components/home/item-rail.tsx').includes('isOrphanPrep') &&
+    src('components/home/item-rail.tsx').includes('!isOrphanPrep(t)') &&
+    src('components/home/home-view.tsx').includes('ONE CLAIM PER ROW') &&
+    src('components/home/home-view.tsx').includes('oneClaimPrepared') &&
+    (src('components/home/home-view.tsx').match(/oneClaimPrepared\(/g)?.length ?? 0) >= 3 && // three lanes carry a prepared field (priority rows carry none)
+    src('components/home/home-view.tsx').includes("m.surfaced ? 'surfaced today' : null") &&
+    src('app/api/home/brief/route.ts').includes('THE SURFACING DELTA') &&
+    src('lib/work/machine.ts').includes('judgedFirstAt') &&
+    // (4) THE MOVE YIELDS TO A RENDERED DECISION (owner, same morning: the card said 1/2/3 and a
+    // purple "Decide: …?" button restated it directly beneath — two CTAs for one choice). The
+    // placement table carries it (showMove) and the rail suppresses AT THE SOURCE (respMove),
+    // so the merged-card/stream-dedupe derivations agree; the editor prompt forbids authoring
+    // decide-flavored moves, and the code floor holds regardless of model drift.
+    src('lib/room/render-plan.ts').includes('showMove: !input.hasDecision') &&
+    src('components/home/item-rail.tsx').includes('decisionIsPrimary') &&
+    src('components/home/item-rail.tsx').includes('&& !decisionIsPrimary ?') &&
+    src('lib/room/brief.ts').includes('NEVER a restatement of') &&
+    // (5) SERVER TRUTH WINS — INCLUDING DELETIONS (found live: apply-verdict deleted a ghost
+    // narration at 08:45 and the room still showed it at 10:36 — the hydrate's "local wins when
+    // LONGER" resurrected the module-store copy all session; a deletion makes the server SHORTER
+    // by design). Local survives only for this session's own in-flight writes.
+    src('components/home/item-rail.tsx').includes('SERVER TRUTH WINS — INCLUDING DELETIONS') &&
+    src('components/home/item-rail.tsx').includes('const inFlight = local.filter') &&
+    !src('components/home/item-rail.tsx').includes('if (local.length > server.length) return local;') &&
+    // (6) THE HISTORY DRAWER — past above present (owner: "shouldn't it be on top? not in the
+    // middle"): the "earlier (N)" fold sits at the TOP of the room and expands as a muted
+    // transcript ABOVE the opening (chronology reads down into the present); the mid-stream
+    // fold button is dead; live components never fold, so history is pure record.
+    src('components/home/item-rail.tsx').includes('THE HISTORY DRAWER') &&
+    src('components/home/item-rail.tsx').includes('historyTurns.length > 0') &&
+    src('components/home/item-rail.tsx').includes('const visibleTail = fresh.slice(-3)') &&
+    !src('components/home/item-rail.tsx').includes('earlier ({earlier})') &&
+    // (7) THE NARRATION FOLLOWS ITS ARTIFACT — UNGATED (the ghost's true root: the draft died
+    // through another door a day earlier, apply-verdict's `changed` stayed false, and the
+    // narration delete inside that gate never fired — "drafted the reply, ready to review"
+    // survived its draft into a decide verdict as a standing lie the drawer then preserved as
+    // "history"). A prep narration survives ONLY while the CURRENT verdict's lane holds its
+    // artifact (sd lanes checked directly; produce/decide check the pool); idempotent delete.
+    // Diagnosis lesson re-learned the hard way: room_turns has NO updated_at column — two
+    // "it was deleted" reads were silent column-select errors (the recorded Supabase trap).
+    src('lib/work/apply-verdict.ts').includes('THE NARRATION FOLLOWS ITS ARTIFACT — UNGATED') &&
+    src('lib/work/apply-verdict.ts').includes('let narrationBacked = false') &&
+    src('lib/work/apply-verdict.ts').includes("in('task_id', ['prepare-pass', 'decision-brief'])"));
 
   // ── Report ──
   let pass = 0;

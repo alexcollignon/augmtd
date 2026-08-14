@@ -13,7 +13,22 @@ export type DocTheme = {
   brandName: string | null;
   /** Fetched + embeddable logo (raster only), with real pixel dimensions. */
   logo: { dataB64: string; mime: string; w: number; h: number } | null;
+  /** THE DUAL-LOGO COVER (the STC-benchmark ask): a SECOND mark — author × client — placed
+   *  opposite the first (header right / cover right). Built when the user attaches two logos
+   *  with a branding word; null everywhere else (single-logo layouts unchanged). */
+  logo2?: { dataB64: string; mime: string; w: number; h: number } | null;
 };
+
+/** An embeddable logo record from raw bytes (dims read via canvas; png/jpg only). */
+export async function logoFromBuffer(buf: Buffer, mime: string): Promise<NonNullable<DocTheme['logo']> | null> {
+  try {
+    if (mime !== 'image/png' && mime !== 'image/jpeg') return null;
+    const { loadImage } = await import('canvas');
+    const img = await loadImage(buf);
+    if (!img.width || !img.height) return null;
+    return { dataB64: buf.toString('base64'), mime, w: img.width, h: img.height };
+  } catch { return null; }
+}
 
 export const HOUSE_ACCENT = '4F46E5'; // the app's indigo — the default when no theme is set
 

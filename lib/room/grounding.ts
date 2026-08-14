@@ -40,7 +40,7 @@ export type RoomGrounding = {
     goals: string[]; rules: string[]; sig: string | null;
   } | null;
   board: BoardEntry[];
-  asks: Array<{ items: string[]; since: string | null; proceeded: boolean }>;
+  asks: Array<{ items: string[]; since: string | null; proceeded: boolean; turnId: string | null; key: string | null }>;
   transcript: string;          // recent turns, rendered (the dialogue read)
   ledgerRefs: Map<string, { label: string; href: string | null }>; // [L#]/[F#] → link (ask consumers)
   /** THE rendered grounding block — the one page every reasoned call reads. */
@@ -180,14 +180,18 @@ export async function assembleRoomGrounding(
   }
 
   // ── Live asks + the transcript (the dialogue read, one renderer). ──
-  type TurnRow = { role: string; text: string; author?: { name?: string } | null; component?: { key?: string; state?: { items?: unknown[]; proceeded?: boolean } } | null; created_at?: string };
+  type TurnRow = { id?: string; key?: string; role: string; text: string; author?: { name?: string } | null; component?: { key?: string; state?: { items?: unknown[]; proceeded?: boolean } } | null; created_at?: string; createdAt?: string };
   const turns = (turnsRes ?? []) as TurnRow[];
   const asks = turns
     .filter((t) => t.component?.key === 'input_checklist' && Array.isArray(t.component.state?.items) && t.component.state!.items!.length)
     .map((t) => ({
       items: (t.component!.state!.items as unknown[]).map(String).filter(Boolean).slice(0, 4),
-      since: t.created_at ? String(t.created_at).slice(0, 10) : null,
+      since: (t.createdAt ?? t.created_at) ? String(t.createdAt ?? t.created_at).slice(0, 10) : null,
       proceeded: !!t.component?.state?.proceeded,
+      // THE EDITOR (plan AJ): the composer reconciles asks against the board — it needs the
+      // handle to SETTLE a stale one, not just read it.
+      turnId: t.id ? String(t.id) : null,
+      key: t.key ? String(t.key) : null,
     }));
   const transcript = turns.slice(-8).map((t) => {
     const who = t.role === 'user' ? 'user' : t.author?.name ? t.author.name.split(' ')[0] : 'assistant';

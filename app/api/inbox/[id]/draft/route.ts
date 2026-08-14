@@ -50,7 +50,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // ONE read, no re-judge, no resolution pass. The P2 gate holds: a cached non-reply verdict
   // refuses here exactly as the full gate would (apply-verdict strips contradicted artifacts
   // anyway); an ABSENT cache falls through to the full judge below — never a gate bypass.
-  if (!fresh && sd.draft?.body) {
+  // THE GROUND LAW: a stored draft whose ground moved (a newer inbound landed after it was
+  // prepared) is SUPERSEDED — serving it would offer a dead plan in the composer. Both serve
+  // points below fall through to regeneration instead.
+  const { groundOf, groundMoved } = await import('@/lib/prepare/ground');
+  const currentGround = await groundOf(supabase, user.id, { kind: 'inbox', id });
+  const draftSuperseded = !!sd.draft?.body && groundMoved(sd.draft?.prepared_from ?? null, currentGround);
+  if (!fresh && sd.draft?.body && !draftSuperseded) {
     const { data: jrow } = await supabase.from('item_plans').select('tasks')
       .eq('user_id', user.id).eq('kind', 'judgment').eq('entity_id', `inbox:${id}`).maybeSingle();
     const cachedWork = ((jrow?.tasks ?? null) as { verdict?: { work?: string } } | null)?.verdict?.work;
@@ -88,7 +94,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   // Serve a previously-generated draft (sweep or earlier open) unless a fresh one is requested — only
   // reached for items that genuinely owe a reply (gated above).
-  if (!fresh && sd.draft?.body) return NextResponse.json({ draft: sd.draft.body as string });
+  if (!fresh && sd.draft?.body && !draftSuperseded) return NextResponse.json({ draft: sd.draft.body as string });
 
   try {
     // Fix 3 — draft ↔ plan coherence: pass the item's LIVE Identified-tasks step summaries so the reply
@@ -97,7 +103,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const planSteps = await loadPlanStepSummaries(supabase, user.id, 'email', id).catch(() => []);
     const draft = await generateReplyDraft(user.id, sd, supabase, artifactTruth, planSteps);
     await supabase.from('inbox_items')
-      .update({ source_data: { ...sd, draft: { body: draft, generated_at: new Date().toISOString() } } })
+      .update({ source_data: { ...sd, draft: { body: draft, generated_at: new Date().toISOString(), prepared_from: currentGround } } })
       .eq('id', id).eq('user_id', user.id);
     return NextResponse.json({ draft });
   } catch {

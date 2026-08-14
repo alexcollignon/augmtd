@@ -160,8 +160,16 @@ export async function pickArtifacts(
     const cand = idx !== null ? eligible[idx] : undefined;
     const evidence = String(res.json?.evidence ?? '').trim();
     // Law #2, the CODE half: the quoted evidence must actually appear in the candidate's own text.
+    // Ask-journey D2 (Aug 13): substring-only rejected the RIGHT file ~2/3 of runs — the model
+    // quotes the ask's word order ("signed Schedule B addendum") against a file named "Schedule B
+    // addendum - signed". A token-subset fallback keeps the check code-verified (every evidence
+    // word must exist in the candidate's own text) while surviving word-order variance.
+    const candText = normText(`${cand?.filename ?? ''} ${cand?.snippet ?? ''}`);
+    const evNorm = normText(evidence);
+    const evTokens = evNorm.split(' ').filter((t) => t.length > 1);
     const evidenceReal = !!cand && evidence.length >= 3
-      && normText(`${cand.filename} ${cand.snippet}`).includes(normText(evidence));
+      && (candText.includes(evNorm)
+        || (evTokens.length >= 2 && evTokens.every((t) => candText.includes(t))));
     out.push(evidenceReal
       ? { label, candidate: cand!, evidence, suggestion: null }
       : { label, candidate: null, suggestion });

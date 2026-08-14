@@ -214,7 +214,14 @@ export async function settleAsksForItem(
         // Other live work still needs this artifact — the ask stays, minus this beneficiary.
         await client.from('room_turns').update({ component: { ...(t.component ?? {}), state: { ...state, covers } } }).eq('id', t.id);
       } else {
-        await client.from('room_turns').update({ component: null }).eq('id', t.id);
+        // FORWARD-MOTION LAW #5: an ENGINE ask's text is pure scaffolding ("To finish this I
+        // need…") — stripping only the checklist left a ghost line (found live). The whole turn
+        // archives; a COWORKER's ask keeps its text (their speech is conversation history).
+        const { data: full } = await client.from('room_turns').select('author').eq('id', t.id).maybeSingle();
+        const engineAsk = !((full?.author ?? null) as { name?: string } | null)?.name;
+        const upd = engineAsk ? { component: null, archived_at: new Date().toISOString() } : { component: null };
+        const { error: settleErr } = await client.from('room_turns').update(upd).eq('id', t.id);
+        if (settleErr && engineAsk) await client.from('room_turns').update({ component: null }).eq('id', t.id); // pre-migration: no archived_at column
         settled++;
       }
     }

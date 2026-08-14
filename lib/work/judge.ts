@@ -101,7 +101,9 @@ function coerceVerdict(raw: unknown, roster: RosterEntry[], ctx: TimeCtx): WorkV
   const out: WorkVerdict = {
     work: work as WorkVerdict['work'], component: component as WorkComponentKey,
     executor, gate: gateOf(component as WorkComponentKey),
-    reason: String(r.reason || '').slice(0, 240),
+    // Word-boundary clip — a raw slice served "…whether the proposal meets expect" to the
+    // decision card (found on the served room, Aug 12). The clip is honest: cut at a space.
+    reason: (() => { const t = String(r.reason || ''); if (t.length <= 240) return t; const c = t.slice(0, 240); return `${c.slice(0, Math.max(120, c.lastIndexOf(' ')))}…`; })(),
   };
   // The disposition is only meaningful on a none verdict (a live work item can't be moot).
   // STRUCTURAL COHERENCE on "expired" (the hallucinated-expiry class): the model must SHOW the
@@ -336,9 +338,28 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       if (ask && st?.items?.length) {
         askBlock = st.proceeded
           ? `AN ASK to the user stood on this item and they said GO AHEAD with what's available — the work proceeds around the gaps.\n`
-          : `AN OPEN ASK to the user has stood since ${String(ask.created_at).slice(0, 10)}: ${st.items.slice(0, 4).join('; ')}. They have not supplied these yet — the item is waiting on THEM, which does not make it moot.\n`;
+          : `AN OPEN ASK to the user has stood since ${String(ask.created_at).slice(0, 10)}: ${st.items.slice(0, 4).join('; ')}. They have not supplied these yet — the item is waiting on THEM, which does not make it moot. THIS ASK IS OURS, TO THE USER, for material WE need to produce THEIR deliverable — it is NEVER something the counterparty owes: do not flip the judgment to "chase" because of it, and never treat the missing input as the other side's debt (chasing the counterparty for the thing WE owe THEM inverts the obligation).\n`;
       }
     } catch { /* the ask fact is an enhancement */ }
+    // ── THE BOOKED-CALENDAR FACT (JUDGE v16, found live: a `schedule` verdict stood on a meeting
+    // the counterparty had ALREADY ACCEPTED on the real calendar — the lane floor caught the
+    // duplicate invite, but the verdict persisted and burned an extraction every pass visit).
+    // The judge sees the user's actual bookings with THIS counterparty as facts. ──
+    let calBlock = '';
+    if (whoEmail) {
+      try {
+        const { data: evs } = await client.from('calendar_events').select('title, start_time')
+          .eq('user_id', userId)
+          .filter('attendees', 'cs', JSON.stringify([{ email: whoEmail.toLowerCase() }]))
+          .gte('start_time', new Date(Date.now() - 24 * 3_600_000).toISOString())
+          .lte('start_time', new Date(Date.now() + 21 * 86_400_000).toISOString())
+          .order('start_time', { ascending: true }).limit(3);
+        if (evs?.length) {
+          calBlock = `ALREADY ON THE USER'S CALENDAR with this sender:\n` +
+            evs.map((e) => `- "${String(e.title ?? 'meeting').slice(0, 70)}" at ${String(e.start_time).slice(0, 16).replace('T', ' ')}`).join('\n') + '\n';
+        }
+      } catch { /* the calendar fact is an enhancement */ }
+    }
     const roster = await loadRoster(client, userId);
     const poolBlock = pool.length
       ? `ALREADY PREPARED (prefill, don't redo): ${pool.slice(0, 3).map((d) => `${d.kind}${d.by ? ` by ${d.by}` : ''}${d.attachment ? ` (+${d.attachment.filename})` : ''}`).join(' · ')}\n`
@@ -352,7 +373,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         // 12:30" reasoning from a bare ISO date made the model guess (real mootness misfires). All
         // in the USER'S zone: their day boundary, their hour.
         `RIGHT NOW for the user it is ${nowL.pretty} (${nowL.tz}); today's date is ${todayStr}. Times mentioned in items are in this zone unless they say otherwise. The item's last activity was ${activityAt.slice(0, 10) || 'unknown'}.\n\n` +
-        dealBlock + personBlock + poolBlock +
+        dealBlock + personBlock + poolBlock + calBlock +
         (u ? `UNDERSTANDING: relevance=${u.relevance} ownership=${u.ownership ?? '?'} kind=${u.mailKind ?? '?'}${u.ask ? ` ask="${u.ask}"` : ''}${u.deadline ? ` deadline=${u.deadline}` : ''}\n` : '') +
         `THE ITEM${who ? ` (from ${who})` : ''}: ${title.slice(0, 140)}\n${body ? `${body}\n` : ''}` +
         `${threadNow ? `\nWHERE THE THREAD STANDS NOW (newest last — judge THIS position, not the founding ask): \n${threadNow}\n` : ''}` +
@@ -367,6 +388,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         `- "schedule" when the real move is putting a meeting/call on the calendar (a proposed time to confirm, an ask to set up a call). A negotiation about WHICH time is still "reply"; "schedule" is for when the invite itself is the deliverable.\n` +
         `- COHERENCE: your work must MATCH your reason. If your reason says something is still owed, live, or "requires a response", work CANNOT be "none" — name the work that does it (a proposed call/times → "schedule" or "reply"; a stated either-way choice → "decide" with its options; an open question → "reply"). "none" is only for items where your reason says nothing is owed by anyone.\n` +
         `- A commitment with direction "awaiting" means the COUNTERPARTY owes the user — the natural work is "chase" (nudge what you're owed) unless it's moot or the item clearly says otherwise.\n` +
+        `- ALREADY BOOKED: when the item's work is scheduling/confirming a meeting and the calendar above ALREADY shows that meeting booked with this sender (same encounter — the time fits what the thread converged on), the scheduling work is DONE: work="none" with resolution="answered" (the calendar is the settled fact; a second invite would double-book). This rule applies ONLY when a calendar block appears above — never from the thread alone. A calendar entry does NOT settle a reply the sender still awaits — only the scheduling half. And a WAIT-UNTIL item ("reconnect after X", "circle back once Y lands", "not before <date>") is NEVER "answered" — nothing is settled, the moment is simply later: that is work="none" WITH "revisit" carrying the stated date.\n` +
         `- TIME: if the thing this asks about has ALREADY HAPPENED or its window has passed such that acting now is pointless (a meeting that took place, access for a past event, a "tomorrow" that has gone), work="none" with resolution="expired". Resolve RELATIVE deadlines ("by Thursday", "tomorrow", "end of week") FORWARD from the item's OWN date (its last-activity date above): "by Thursday" in a message from Monday July 27 means Thursday July 30 — a FUTURE date, still live. resolution="expired" requires CERTAINTY that the window truly passed: it needs a SPECIFIC time/date STATED IN THE ITEM whose passing you can point to — name it as "expired_on" (the stated date, resolved to an absolute YYYY-MM-DD, in the past) and, when the window passed EARLIER TODAY (a meeting/call/slot whose stated clock time is already behind the user's RIGHT NOW above), ALSO name "expired_time" (that stated time as HH:MM 24h — e.g. a 12:30 meeting when it is now 20:34: expired_on=today, expired_time="12:30"). An UNDATED request can NEVER be expired (there is no window to have passed; an open ask with no deadline is simply live work) — no expired_on, no expiry. A deadline that is TODAY or LATER is never expired, and when you are not sure of the dates, judge the work normally (wrongly resolving live work costs trust; judging it costs nothing). resolution="answered" is ONLY for items that ARE closures: the message itself announces settlement (a confirmation, "all set", a done-deal notice) and asks nothing of anyone anymore. If the item still ASKS the user for anything not yet given — a reply, a time, a decision, a document — it is NOT answered, it IS the live work ("not yet confirmed/settled" describes work to do, never a reason to file it). And "answered" never means the user merely HAS what's needed to act: an unfulfilled request ("please forward this", "please send X") still owes the doing. NOT every passed date is expired — an unpaid invoice or an unanswered substantive ask still needs the work; when acting late still has value, judge the work normally.\n` +
         `- REVISIT ("not yet"): when the item's OWN WORDS say the right move comes LATER — a stated get-back date ("I'll send the numbers next week"), "let's reconnect after the board meeting on X", "check back in once the pilot ends" — then work="none" with revisit={"after":"YYYY-MM-DD"} (the date resolved FORWARD from the item's own date; if only a rough window is stated, pick its earliest day). The item leaves the desk and RETURNS on that date. Only with a concrete stated basis; NEVER park work that can and should be done now (an ask due today or undated is live work, not a revisit).\n` +
         `- decide ONLY when the real move is a choice between 2-3 CONCRETE routes stated in the item (accept/decline/redirect) — then give options (short labels, ≤4; do NOT include a decline, the surface adds it).\n` +

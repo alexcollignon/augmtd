@@ -267,7 +267,12 @@ export async function prepareForward(
       }
     }
     // Recipient inference: ONLY a literal email address in the step text is trusted (never a name/role).
-    const to = (stepText || '').match(new RegExp(EMAIL_RE.source, 'g'))?.map((s) => s.trim()).filter((e) => EMAIL_RE.test(e)) ?? [];
+    // B5 (verb-lane sweep): the greedy tail swallowed sentence punctuation ("…to sam@acme.com."
+    // yielded the address WITH the period plus its clean duplicate) — trim trailing punctuation
+    // BEFORE the dedupe so both variants collapse to one valid address.
+    const to = (stepText || '').match(new RegExp(EMAIL_RE.source, 'g'))
+      ?.map((s) => s.trim().replace(/[.,;:!?)\]]+$/, ''))
+      .filter((e) => EMAIL_RE.test(e)) ?? [];
     return { type: 'forward', to: [...new Set(to)].slice(0, 10), subject: `Fwd: ${subject}`.trim(), forwardedBody, note: '' };
   } catch (e) {
     console.error('[prepare-action] prepareForward failed:', e);

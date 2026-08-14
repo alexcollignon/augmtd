@@ -17,7 +17,7 @@ import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 // VOICE (P5a): bump whenever the synthesis prompt/voice changes — threaded into the stored sig so every
 // cached state regenerates through the existing sig-gated paths (the alignment-cache lesson: a
 // prompt-driven cache must invalidate on the prompt itself, not only on the data).
-export const STATE_PROMPT_VERSION = 7; // 7: THE EXCERPT-HONESTY LAW — clipped gists declare themselves; a clip marker is never source truncation. 6: LAW 6 — settled ledger lines speak history-grammar, never open-debt grammar. 5: THE DEIXIS LAW — no relative day-words in cached prose; pre-today ledger events are the past. 4: the reasoned `scope` verdict.
+export const STATE_PROMPT_VERSION = 8; // 8: THE ONE-CLAIM LAW — the judge's standing verdicts are FACTS the prose must not contradict ("no reply needed yet" stood for days under a headline saying "confirm or propose" — two caches, one page, neither able to invalidate the other; found live). 7: THE EXCERPT-HONESTY LAW — clipped gists declare themselves; a clip marker is never source truncation. 6: LAW 6 — settled ledger lines speak history-grammar, never open-debt grammar. 5: THE DEIXIS LAW — no relative day-words in cached prose; pre-today ledger events are the past. 4: the reasoned `scope` verdict.
 
 // The BANNED machinery register — the system describing its own bookkeeping instead of the matter.
 // ONE definition: the synthesis self-checks against it (with a corrective retry) and the voice smoke
@@ -244,8 +244,38 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
         pastEvents = count ?? 0;
       }
     } catch { /* boundary detection is an enhancement */ }
-    const sig = `v${STATE_PROMPT_VERSION}:${ledgerSig}:ev${pastEvents}`;
-    if (!opts.force && ent.sig === sig) return; // unchanged ledger + unchanged voice + no event boundary → no AI
+    // THE ONE-CLAIM LAW (Aug 13, found live — the Stratto contradiction): the state prose once
+    // declared "no reply needed yet" while the item's judged verdict said a reply was owed, and
+    // NOTHING could force a re-read (two caches, one page). The judge is AUTHORITATIVE for what's
+    // owed; the state describes position and must never contradict a standing verdict. The
+    // verdict digest rides the sig, so a verdict flip re-synthesizes the state.
+    let verdictFacts: string[] = [];
+    let verdictDigest = '';
+    try {
+      const { data: links } = await supabase.from('entity_links').select('item_id, item_kind')
+        .eq('user_id', userId).eq('entity_id', entityId).in('item_kind', ['inbox_item', 'commitment']).limit(30);
+      const keys = ((links ?? []) as Array<{ item_id: string; item_kind: string }>)
+        .map((l) => `${l.item_kind === 'inbox_item' ? 'inbox' : 'commitment'}:${l.item_id}`);
+      if (keys.length) {
+        const { data: js } = await supabase.from('item_plans').select('entity_id, tasks')
+          .eq('user_id', userId).eq('kind', 'judgment').in('entity_id', keys);
+        const pairs: string[] = [];
+        for (const j of (js ?? []) as Array<{ entity_id: string; tasks: unknown }>) {
+          const v = (j.tasks as { verdict?: { work?: string; reason?: string } } | null)?.verdict;
+          if (!v?.work) continue;
+          pairs.push(`${j.entity_id}:${v.work}`);
+          if (v.work !== 'none' && verdictFacts.length < 6) {
+            verdictFacts.push(`- an open item here is judged "${v.work}"${v.reason ? ` (${String(v.reason).slice(0, 110)})` : ''}`);
+          }
+        }
+        pairs.sort();
+        let vh = 0; const vs = pairs.join('|');
+        for (let i = 0; i < vs.length; i++) vh = (vh * 31 + vs.charCodeAt(i)) | 0;
+        verdictDigest = pairs.length ? `:j${vh}` : '';
+      }
+    } catch { /* verdict facts are an enhancement — the ledger still grounds */ }
+    const sig = `v${STATE_PROMPT_VERSION}:${ledgerSig}:ev${pastEvents}${verdictDigest}`;
+    if (!opts.force && ent.sig === sig) return; // unchanged ledger + verdicts + no event boundary → no AI
 
     const userName = await getUserName(supabase, userId);
     const lines = ledger.map((l, i) => `[#${i + 1}] ${(l.at || '').slice(0, 10)} · ${l.kind}${l.who ? ` · ${l.who}` : ''}: ${l.text.slice(0, 200)}`).join('\n');
@@ -260,6 +290,9 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
       // EXCERPT-HONESTY (Aug 4): the ledger's quoted gists are clipped by US for length.
       `${EXCERPT_RULE} Never describe a message or document as truncated/cut-off/incomplete based on a clipped quote.\n` +
       `A ledger line marked DONE / (handled) / (dismissed) is HISTORY — the obligation is settled; NEVER present it as owed, due, or pending, whatever its original due date says. If everything is settled, say so plainly (the calm is earned).\n` +
+      (verdictFacts.length
+        ? `THE JUDGE'S STANDING VERDICTS (authoritative for what's owed — your prose must NEVER contradict them: never write "no reply needed", "you're all set", "nothing owed" while a verdict below says work is owed; describe the position, leave the obligation claim to the verdict):\n${verdictFacts.join('\n')}\n`
+        : '') +
       `Body of work: ${ent.name}${ent.summary ? ` — ${ent.summary}` : ''}\n` +
       `Days since last real touch: ${quietDays ?? 'unknown'}\n` +
       `STRUCTURAL FACTS (these CONSTRAIN your scope judgment):\n` +

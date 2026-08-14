@@ -108,6 +108,9 @@ export interface DelegateResult {
    *  document artifact on the delegation thread (same primitives as workflow runs) — the origin
    *  conversation renders its card and opens it, instead of pointing at a text wall elsewhere. */
   artifact?: { id: string; title: string; threadId: string } | null;
+  /** MULTI-DELIVERABLE: every file this delegation produced (a report AND a deck each get a
+   *  card); `artifact` stays the first for callers that render one. */
+  artifacts?: Array<{ id: string; title: string; threadId: string }>;
 }
 
 /**
@@ -149,6 +152,10 @@ export async function runDelegation(args: {
   /** PROVENANCE (Prepared-Work): what this work was grounded in — rides the deliverable's metadata so
    *  the PreparedLead / entity ledger can show "from: <item> · <deal>" (trust is the product). */
   provenance?: Record<string, unknown>;
+  /** THE GROUND LAW (Aug 13): the ground this work was prepared FROM — the newest inbound on the
+   *  item's thread at prep time. Stamped on the pool deliverable so the one reader derives its
+   *  staleness when the counterparty speaks again. Absent → unstamped, and therefore exempt. */
+  preparedFrom?: { emailId: string | null; receivedAt: string | null } | null;
 }): Promise<DelegateResult> {
   const { supabase, userId, worker, prompt: rawPrompt, itemLabel, firstName, pool: poolScope, themeOverride } = args;
   // THE MOMENT THEME rides at MATERIALIZATION — the coworker must produce CONTENT and never
@@ -336,49 +343,68 @@ export async function runDelegation(args: {
   // A REVISION always materializes (the hand-back may be one line — "added the section" — but
   // the artifact must still update), and so does a TEMPLATE ask (the file IS the deliverable);
   // fresh plain work keeps the length floor.
+  let artifacts: NonNullable<DelegateResult['artifacts']> = [];
   if (threadId && deliverableOk && (typed || args.revise || args.templateFile || output.length >= 600)) {
     try {
       const { randomUUID } = await import('crypto');
-      // REVISION-IN-PLACE (DH7): the revised deliverable keeps its artifact id + thread — the
-      // card the user already has UPDATES; a second card never appears.
-      const artifactId = args.revise?.artifactId ?? randomUUID();
-      const artifactThread = args.revise?.threadId ?? threadId;
-      // ── THE ONE PRODUCTION DOOR (plan AF): every tier decision — compiler (charts/revision/
-      // template-following) → typed → template renderers — plus the content/facts/theme floors
-      // lives in materializeDocument; this caller only owns identity (ids, storage path, row). ──
       const { materializeDocument } = await import('@/lib/documents/materialize');
-      const m = await materializeDocument(supabase, userId, {
-        title: itemLabel, content: output,
-        request: args.compile?.request ?? null,
-        csvText: args.compile?.csvText ?? null,
-        computedFacts: args.compile?.computedFacts ?? null,
-        revise: args.revise ? { bytes: args.revise.bytes, ext: args.revise.ext, title: args.revise.title } : null,
-        templateFile: args.templateFile ?? null,
-        theme: themeOverride, // undefined → the door resolves the one hierarchy
-      });
-      const title = (args.revise?.title || (typeof m.content === 'object' && m.content && 'title' in m.content ? String(m.content.title) : '') || itemLabel).slice(0, 120) || 'Delegated work';
-      const path = `${userId}/${artifactThread}/${artifactId}.${m.ext}`;
-      // cacheControl 0: a REVISION overwrites the same path — the default 1h CDN cache would
-      // serve the pre-revision file to the very click that asked for the change.
-      const { error: upErr } = await supabase.storage.from('work-artifacts')
-        .upload(path, m.bytes, { contentType: m.mime, upsert: true, cacheControl: '0' });
-      if (upErr) throw new Error(`artifact upload failed: ${upErr.message}`);
-      const row = {
-        id: artifactId, title, type: m.type,
-        generated_at: new Date().toISOString(), storage_path: path, content: m.content,
-      };
+      const artifactThread = args.revise?.threadId ?? threadId;
+      // ── MULTI-DELIVERABLE (plan AF tail): "the report AND the deck" — every typed fence
+      // becomes its own file, and substantial prose AROUND the fences becomes the report
+      // document (the natural model shape: deck as a fence, report as prose — one fence used
+      // to swallow the report into a hand-back note). Revisions stay single-artifact. ──
+      const { parseTypedDeliverables } = await import('@/lib/workflows/typed-output');
+      const multi = !args.revise ? parseTypedDeliverables(output) : { deliverables: [], remainder: '' };
+      const candidates: Array<{ content: string; isFence: boolean }> = [
+        ...multi.deliverables.map((d) => ({ content: d.raw, isFence: true })),
+        ...(multi.remainder.length >= 600 ? [{ content: multi.remainder, isFence: false }] : []),
+      ];
+      const parts = candidates.length >= 2 ? candidates : [{ content: output, isFence: false }];
+      const rows: Array<Record<string, unknown>> = [];
+      for (const part of parts) {
+        // ── THE ONE PRODUCTION DOOR (plan AF): every tier decision — compiler (charts/revision/
+        // template-following) → typed → template renderers — plus the content/facts/theme floors
+        // lives in materializeDocument; this caller only owns identity (ids, paths, rows). ──
+        const m = await materializeDocument(supabase, userId, {
+          title: itemLabel, content: part.content,
+          request: args.compile?.request ?? null,
+          // The data/template/revise inputs belong to the WHOLE ask, never a lone fence part.
+          csvText: part.isFence ? null : args.compile?.csvText ?? null,
+          computedFacts: part.isFence ? null : args.compile?.computedFacts ?? null,
+          revise: args.revise ? { bytes: args.revise.bytes, ext: args.revise.ext, title: args.revise.title } : null,
+          templateFile: part.isFence ? null : args.templateFile ?? null,
+          theme: themeOverride, // undefined → the door resolves the one hierarchy
+        });
+        // REVISION-IN-PLACE (DH7): the revised deliverable keeps its artifact id — the card
+        // the user already has UPDATES; a second card never appears.
+        const artifactId = args.revise?.artifactId ?? randomUUID();
+        const title = (args.revise?.title || (typeof m.content === 'object' && m.content && 'title' in m.content ? String(m.content.title) : '') || itemLabel).slice(0, 120) || 'Delegated work';
+        const path = `${userId}/${artifactThread}/${artifactId}.${m.ext}`;
+        // cacheControl 0: a REVISION overwrites the same path — the default 1h CDN cache would
+        // serve the pre-revision file to the very click that asked for the change.
+        const { error: upErr } = await supabase.storage.from('work-artifacts')
+          .upload(path, m.bytes, { contentType: m.mime, upsert: true, cacheControl: '0' });
+        if (upErr) throw new Error(`artifact upload failed: ${upErr.message}`);
+        rows.push({ id: artifactId, title, type: m.type, generated_at: new Date().toISOString(), storage_path: path, content: m.content });
+        artifacts.push({ id: artifactId, title, threadId: artifactThread });
+      }
       const { data: th } = await supabase.from('work_threads').select('artifacts').eq('id', artifactThread).single();
       const existing = Array.isArray(th?.artifacts) ? (th!.artifacts as Array<{ id?: string }>) : [];
       // A revision REPLACES its row (same id, fresh generated_at); new work appends.
-      const replaced = existing.some((r) => r?.id === artifactId)
-        ? existing.map((r) => (r?.id === artifactId ? row : r))
-        : [...existing, row].slice(-20);
+      let merged = existing;
+      for (const row of rows) {
+        merged = merged.some((r) => r?.id === row.id)
+          ? merged.map((r) => (r?.id === row.id ? row as { id?: string } : r))
+          : [...merged, row as { id?: string }].slice(-20);
+      }
       await supabase.from('work_threads')
-        .update({ artifacts: replaced, artifact: row, updated_at: new Date().toISOString() })
+        .update({ artifacts: merged, artifact: rows.at(-1), updated_at: new Date().toISOString() })
         .eq('id', artifactThread);
-      artifact = { id: artifactId, title, threadId: artifactThread };
+      artifact = artifacts[0] ?? null;
     } catch (e) {
       console.error('[delegate] artifact materialization failed (non-fatal):', e);
+      artifacts = artifacts.length ? artifacts : [];
+      artifact = artifacts[0] ?? null;
     }
   }
 
@@ -399,7 +425,7 @@ export async function runDelegation(args: {
       title: itemLabel.slice(0, 100),
       content: output.slice(0, 8000),
       gist,
-      metadata: { source: 'delegation', agentId: worker.id, agentName: worker.name, ...(args.provenance ? { provenance: args.provenance } : {}) },
+      metadata: { source: 'delegation', agentId: worker.id, agentName: worker.name, ...(args.preparedFrom ? { prepared_from: args.preparedFrom } : {}), ...(args.provenance ? { provenance: args.provenance } : {}) },
     }) ?? undefined;
   }
 
@@ -424,14 +450,20 @@ export async function runDelegation(args: {
         // reader sees it). Re-render on every load until satisfied; a re-run REPLACES (dedupeKey).
         ...(needsInput?.length ? { component: { key: 'input_checklist', state: { items: needsInput, taskId: poolScope.taskId ?? null } } } : {}),
       });
-      // THE COWORKER SUPERSEDES: whatever the outcome — a real deliverable OR the coworker's own
-      // ask — the engine's provisional requirements ask is now stale (the worker either did the
-      // work with what existed, or asked for exactly what it needs). One ask per item.
-      await supabase.from('room_turns').delete()
-        .eq('user_id', userId).eq('room_key', roomKey).eq('dedupe_key', `requires:${poolScope.entityId}`)
-        .then(() => {}, () => {});
+      // THE COWORKER SUPERSEDES — but ONLY with an ask of their own (ask-journey D1, Aug 13:
+      // this delete used to fire unconditionally, so a coworker delivering a [CONFIRM:]-shell
+      // deliverable silently destroyed the engine's requirements ask — awaiting_input was
+      // structurally unreachable for coworker-executor produce items, and the go-ahead stamp
+      // (state.proceeded) had no durable home. When the worker delivered WITHOUT asking, the
+      // engine ask stands: the material is still genuinely missing (resolution only posts the
+      // ask when it is), and THE EDITOR moots it at compose time if the deliverable covers it.
+      if (needsInput?.length) {
+        await supabase.from('room_turns').delete()
+          .eq('user_id', userId).eq('room_key', roomKey).eq('dedupe_key', `requires:${poolScope.entityId}`)
+          .then(() => {}, () => {});
+      }
     } catch { /* narration is an enhancement — the delegation already landed */ }
   }
 
-  return { output, agentName: worker.name, threadId, reportText, deliverable, poolSize: pool.length, artifact, ...(needsInput?.length ? { needsInput } : {}) };
+  return { output, agentName: worker.name, threadId, reportText, deliverable, poolSize: pool.length, artifact, ...(artifacts.length ? { artifacts } : {}), ...(needsInput?.length ? { needsInput } : {}) };
 }

@@ -146,6 +146,8 @@ export type ConverseTurn = {
    *  the conversation that asked — the surface renders its card and opens the viewer, instead of
    *  pointing the user at another conversation. */
   artifact?: { id: string; title: string; threadId: string; agentName: string } | null;
+  /** MULTI-DELIVERABLE: every file the hand-off produced (a report AND a deck each get a card). */
+  artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string }>;
 };
 
 const linkKindOf = (s: Extract<ConverseScope, { kind: 'item' }>): 'inbox_item' | 'commitment' | 'meeting' =>
@@ -749,6 +751,7 @@ async function runCoworkerDelegation(
           return {
             say, refs: [], delegated: { agentName: String(worker.name), agentId: String(worker.id) },
             artifact: { ...out.artifact, agentName: String(worker.name) },
+            ...(out.artifacts && out.artifacts.length > 1 ? { artifacts: out.artifacts.map((a) => ({ ...a, agentName: String(worker.name) })) } : {}),
           };
         }
         const say = report
@@ -945,8 +948,23 @@ function panelTranscript(history: ConverseHistoryTurn[] | undefined): string {
   return `THE CHAT SO FAR (this panel, latest last):\n${lines.join('\n')}`;
 }
 
+// THE REF-TAG FLOOR (forward-motion law #3, found live: "[F3] [L3] is waiting for your response
+// [L2]" reached the user's eyes): grounding notation is OURS — a tag the model echoed but nobody
+// resolved into a real link is stripped at the ONE core exit, so no caller can leak it. The
+// negative lookahead spares markdown links; [CONFIRM: …] doesn't match the letter+digits shape.
+const GROUNDING_TAG_RE = /\s?\[(?:[EFLCRKW]\d+)\](?!\()/g;
+
 /** THE entry — every chat surface calls this with its scope. */
 export async function converse(
+  client: SupabaseClient, userId: string, scope: ConverseScope, text: string,
+  opts: { history?: ConverseHistoryTurn[]; attachments?: ConverseAttachment[]; onProgress?: (label: string) => void; onToken?: (t: string) => void } = {},
+): Promise<ConverseTurn> {
+  const turn = await converseInner(client, userId, scope, text, opts);
+  if (turn?.say) turn.say = turn.say.replace(GROUNDING_TAG_RE, '');
+  return turn;
+}
+
+async function converseInner(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string,
   opts: { history?: ConverseHistoryTurn[]; attachments?: ConverseAttachment[]; onProgress?: (label: string) => void; onToken?: (t: string) => void } = {},
 ): Promise<ConverseTurn> {
@@ -972,8 +990,14 @@ export async function converse(
       return { say: 'Document branding cleared — deliverables go back to the standard look.', refs: [], applied: [{ tool: 'set_document_theme', title: 'branding cleared' }] };
     }
     if (imgAtt?.image && brandIntent) {
-      const { themeFromLogoBuffer, saveUserTheme } = await import('@/lib/documents/theme');
+      const { themeFromLogoBuffer, logoFromBuffer, saveUserTheme } = await import('@/lib/documents/theme');
       momentTheme = await themeFromLogoBuffer(Buffer.from(imgAtt.image.dataB64, 'base64'), imgAtt.image.mime);
+      // THE DUAL-LOGO COVER (the STC-benchmark ask): TWO attached logos + a branding word →
+      // author × client co-brand; the second mark sits opposite the first on header/cover.
+      const img2 = (opts.attachments ?? []).find((a) => a.image?.dataB64 && a !== imgAtt);
+      if (momentTheme && img2?.image) {
+        momentTheme.logo2 = await logoFromBuffer(Buffer.from(img2.image.dataB64, 'base64'), img2.image.mime);
+      }
       if (momentTheme && /\b(always|every (doc|report|deliverable)|from now on|going forward|by default)\b/i.test(text)) {
         await saveUserTheme(client, userId, momentTheme);
       }
@@ -987,11 +1011,18 @@ export async function converse(
   // turns; global scope has only the latter — before this it had NEITHER on non-question paths).
   const transcript = [dlg.transcript, panelTranscript(opts.history)].filter(Boolean).join('\n\n');
 
+  // 0a — THE TRANSITION FAST-PATH (THE MACHINE, experience-spec Part "THE MACHINE"): a structured
+  // action is a TRANSITION, never a conversation. The steer route stamps decision enactments with
+  // the DECISION MADE sentinel; on an item scope that routes STRAIGHT to the draft-rework lane
+  // (the reply/nudge home — versioned, evaluated, composer-served), bypassing classification,
+  // standing interactions, and every path that could answer a button with a question.
+  const isTransition = scope.kind === 'item' && text.startsWith('DECISION MADE — ');
+
   // 0 — A STANDING INTERACTION is pending: first decide whether this note ANSWERS it (the Omantel
   // law — a person replying under a question is answering the question until proven otherwise).
   // A yes executes through the SAME door as the button; ambiguity gets ONE clarifier ANCHORED on
   // the pending thing; a no falls through to the normal flow (which now sees the transcript).
-  if (dlg.pending) {
+  if (dlg.pending && !isTransition) {
     try {
       const p = dlg.pending;
       const pendingDesc = p.type === 'founding_proposal'
@@ -1056,8 +1087,11 @@ export async function converse(
   // delegation door revises THAT artifact instead of minting a second one.
   const prior = [...(opts.history ?? [])].reverse().find((h) => h.artifact)?.artifact ?? null;
   // The classifier sees the attachment NAMES (a fill-in/produce ask over attached files IS
-  // produced work); the full text stays with the paths that do the work.
-  const verdict = await classifyTurn(client, userId, scope,
+  // produced work); the full text stays with the paths that do the work. A TRANSITION skips
+  // classification entirely — its verdict is structural (the correction/rework branch).
+  const verdict = isTransition
+    ? { command: null, question: false, facts: [], delegate: null, open: false } as Verdict
+    : await classifyTurn(client, userId, scope,
     materialNames ? `${text}\n(THE USER ATTACHED FILES WITH THIS MESSAGE: ${materialNames})` : text,
     prior ? `${transcript}\n(THIS CONVERSATION PRODUCED A DOCUMENT: "${prior.title}" — its card is still open in the panel.)` : transcript);
 
@@ -1209,7 +1243,7 @@ export async function converse(
       }
     } catch { /* non-fatal — memory still landed */ }
     const bits: string[] = [];
-    if (turn.draft) bits.push('I reworked the draft with that');
+    if (turn.draft) bits.push(isTransition ? 'Done — the reply enacting your choice is ready to review' : 'I reworked the draft with that');
     if (turn.learned?.length) bits.push(turn.entityName ? `noted it on ${turn.entityName}` : 'noted it for next time');
     turn.say = bits.length ? `${bits.join(', ')}.` : 'Got it.';
     return turn;

@@ -15,7 +15,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ChevronLeftIcon, ChevronRightIcon, ArrowRightIcon, CheckIcon, XMarkIcon, ArchiveBoxIcon, BellSlashIcon, ArrowUturnLeftIcon, EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
 import { ItemRail, type RailView } from '@/components/home/item-rail';
-import { ItemDetail } from '@/components/home/item-detail';
+import { ItemDetail, type ReportedDecision } from '@/components/home/item-detail';
 import { RoomShell } from '@/components/room/room-shell';
 import { pushDealTurn } from '@/components/home/item-rail';
 import { railCoversItem } from '@/lib/room/presentation';
@@ -647,6 +647,15 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
   // state value fired nothing; found live Aug 7).
   const [focusStage, setFocusStage] = useState<'reply' | 'forward' | 'invite' | null>(null);
   const [stageNonce, setStageNonce] = useState(0);
+  // THE PLACEMENT TABLE (experience-spec "THE MACHINE"): the focused item's decision is an EXCHANGE
+  // component, so it renders in the room's CONVERSATION pane — the embedded item reports it up and
+  // the room's own rail hosts it. The stage used to grow a second card here (found live: left on
+  // the deep-dive, right in the project room — one component, two seats).
+  const [focusDecision, setFocusDecision] = useState<ReportedDecision | null>(null);
+  // A decision transition lands its draft in the ITEM's lane — the embedded detail holds its
+  // own fetches, so the room INJECTS the fresh draft down (found on the walked journey: the
+  // draft existed while the composer sat empty; a remount raced the item's loads and lost focus).
+  const [injectedDraft, setInjectedDraft] = useState<{ body: string; v: number } | null>(null);
   // THE ONE SYSTEM (Aug 5): openHref only FOCUSES. The click-echo narrations and "want me on
   // it?" offers that used to be pushed here were a parallel author — they contradicted the
   // responder's brief because they reasoned from a different slice at a different time. The
@@ -654,6 +663,7 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
   const openHref = (href: string | null, _narrate = false) => {
     const f = focusFromHref(href);
     setFocusStage(null); // a plain focus carries no stage intent (onStage re-sets after)
+    setInjectedDraft(null); // an injected draft belongs to the item it was made for
     if (f) setFocused(f);
     else if (href) router.push(href);
   };
@@ -761,6 +771,37 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
       full
       conversation={rail ? (
         <ItemRail kind="entity" id={entityId} view={rail}
+          // THE DECISION, HOSTED WHERE IT BELONGS: the focused item reported it (the placement
+          // table — conversation pane, every door). Same contract as the deep-dive's own rail: the
+          // choice travels WITH its option/tradeoff/why (THE FORWARD-MOTION LAW), lands as a user
+          // turn in the ROOM's conversation, and the answer follows. Silence after a click is a bug.
+          decision={focused?.kind === 'email' && focusDecision && focusDecision.options.length >= 2 ? {
+            ...focusDecision,
+            onChoose: async (label: string) => {
+              const itemId = focused.id;
+              pushDealTurn(entityId, label, { role: 'user' });
+              setFocusDecision(null);
+              const res = await fetch('/api/items/steer', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ kind: 'email', id: itemId, text: label, decision: {
+                  option: label,
+                  tradeoff: focusDecision.options.find((o) => o.label === label)?.tradeoff ?? null,
+                  why: focusDecision.recommendation?.label === label ? focusDecision.recommendation?.why ?? null : null,
+                } }),
+              }).catch(() => null);
+              const dd = res && res.ok ? await res.json().catch(() => ({})) : {};
+              // The consequence lands in the item's draft lane — the room re-reads so the focused
+              // item's composer shows it (the room owns the reads; the embedded item follows).
+              // The consequence must be VISIBLE (forward motion): the fresh draft is injected
+              // into the embedded item's composer, which opens on it — a click's work is never
+              // a further click away.
+              if (dd.draft) { refresh(); setInjectedDraft((p) => ({ body: String(dd.draft), v: (p?.v ?? 0) + 1 })); }
+              pushDealTurn(entityId,
+                String(dd.say || dd.answer || (dd.draft ? 'On it — the draft is on the right, updated for that.' : (res && res.ok ? 'Done.' : "I couldn't do that just now — try again or tell me more."))),
+                { key: `decide:${itemId}` });
+            },
+            onDismiss: () => setFocusDecision(null),
+          } : null}
           // THE ROOM'S ARTIFACT CARDS (Aug 4): prepared work renders in the CARD grammar here too
           // (it showed as bare text links while item rooms showed cards — same info, different
           // clothes, felt like a different product). Derived from the board's own prepared state;
@@ -812,11 +853,14 @@ export default function EntityRoom({ entityId, onBack, initialTab }: { entityId:
               <DeliverableFocus id={focused.id} title={focused.title}
                 meta={(d?.statusBrief?.deliverables ?? []).find((dv) => dv.ref === focused.id) ?? null} />
             ) : (
-              <ItemDetail key={`${focused.kind}-${focused.id}`} id={focused.id} kind={focused.kind} embedded
+              <ItemDetail key={`${focused.kind}-${focused.id}`} id={focused.id} kind={focused.kind} embedded injectedDraft={injectedDraft}
                 initialStage={focusStage ?? undefined} stageSignal={stageNonce}
                 // THE PRESENTATION LAW (lib/room/presentation): when the rail's merged action
                 // card covers this item, the truth pane never duplicates its buttons.
-                hideArtifactCards={railCoversItem(rail?.move?.ref, focused.id)} />
+                hideArtifactCards={railCoversItem(rail?.move?.ref, focused.id)}
+                // The decision rides UP to the room's rail (the placement table) — never a second
+                // card on this stage.
+                onDecision={setFocusDecision} />
             )}
           </div>
         ) : (

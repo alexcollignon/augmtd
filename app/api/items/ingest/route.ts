@@ -74,13 +74,22 @@ export async function POST(request: NextRequest) {
     // turn's text stays as history — the group-channel story is never erased. Clearing re-opens
     // the preparation pass, which re-resolves WITH the new pool content in view.
     try {
-      const { data: asks } = await supabase.from('room_turns').select('id')
+      const { data: asks } = await supabase.from('room_turns').select('id, author')
         .eq('user_id', user.id)
         .or(`dedupe_key.like.delegate:${id}:*,dedupe_key.eq.requires:${id}`)
         .filter('component->>key', 'eq', 'input_checklist');
       if (asks?.length) {
-        await supabase.from('room_turns').update({ component: null })
-          .in('id', asks.map((a) => a.id));
+        // Ask-journey D4 (Aug 13) — FORWARD-MOTION LAW #5 at the supply door too: an ENGINE ask
+        // ("To finish this I need…") archives WHOLE — with the affordance gone its text reads as
+        // a live demand, a ghost line. A COWORKER'S ask is their speech: the component strips,
+        // the words stay as history. Same split settleAsksForItem makes.
+        const engineIds = asks.filter((a) => !(a.author as { name?: string } | null)?.name).map((a) => a.id);
+        const coworkerIds = asks.filter((a) => !!(a.author as { name?: string } | null)?.name).map((a) => a.id);
+        if (coworkerIds.length) await supabase.from('room_turns').update({ component: null }).in('id', coworkerIds);
+        if (engineIds.length) {
+          const arch = await supabase.from('room_turns').update({ component: null, archived_at: new Date().toISOString() }).in('id', engineIds);
+          if (arch.error) await supabase.from('room_turns').update({ component: null }).in('id', engineIds); // pre-migration fallback
+        }
         // A satisfied requirements-ask makes the current draft stale — the next pass re-drafts
         // with the artifact staged (dropping generated_at trips the pass's freshness check).
         if (kind !== 'entity' && kind !== 'meeting') {

@@ -46,10 +46,12 @@ export async function compileDocument(
       ...(args.csvText ? ['data.txt (the CSV data)'] : []),
       ...(args.extraFiles ?? []).map((f) => f.name),
       ...(args.theme?.logo ? ['logo.png (the brand logo image)'] : []),
+      ...(args.theme?.logo2 ? ['logo2.png (the SECOND brand logo — the co-brand)'] : []),
     ];
     const themeBlock = args.theme
       ? `BRAND THEME (apply it): accent color #${args.theme.accent}; ` +
         `${args.theme.logo ? 'logo at /job/inputs/logo.png (place it on the cover/header); ' : ''}` +
+        `${args.theme.logo2 ? 'a SECOND logo at /job/inputs/logo2.png — a CO-BRANDED document: both marks on the cover/header, first left, second right; ' : ''}` +
         `${args.theme.footer ? `footer line "${args.theme.footer}"; ` : ''}` +
         `charts use the accent color.`
       : 'No brand theme — clean neutral design, dark text, one restrained accent.';
@@ -93,6 +95,7 @@ export async function compileDocument(
     const extraFiles = [
       ...(args.extraFiles ?? []).map((f) => ({ name: f.name, content_b64: f.bytes.toString('base64') })),
       ...(args.theme?.logo ? [{ name: 'logo.png', content_b64: args.theme.logo.dataB64 }] : []),
+      ...(args.theme?.logo2 ? [{ name: 'logo2.png', content_b64: args.theme.logo2.dataB64 }] : []),
     ];
 
     const validate = (r: Awaited<ReturnType<typeof runComputeForOutputs>>): string | null => {

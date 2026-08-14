@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { WorkerFace } from '@/components/work/worker-face';
 import { useRouter } from 'next/navigation';
 import {
   EnvelopeIcon,
@@ -25,7 +26,6 @@ import KbFilePicker from '@/components/inbox/kb-file-picker';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { fmtMonthDay, fmtDateTime, fmtWeekdayDate } from '@/lib/utils/format-date';
 import AddToProjectControl from '@/components/entities/add-to-work-control';
-import { DecisionCard } from '@/components/work/decision-card';
 import { ItemRail, pushDealTurn, type RailView } from '@/components/home/item-rail';
 
 // THE STRUCTURAL FRAME (UX arc): the room's two panes mount from frame one — before the view
@@ -957,10 +957,11 @@ function DeepDiveShell({ children, rail, embedded = false }: { children: React.R
 // Instant-load from localStorage, background refresh — no AI, no step data ever reaches the client.
 type ItemViewData = {
   prepared: Array<{
-    id: string; kind: 'reply_draft' | 'nudge_draft' | 'deliverable';
+    id: string; kind: 'reply_draft' | 'nudge_draft' | 'deliverable' | 'invite' | 'forward';
     title: string | null; content: string; by: string | null; at: string | null;
     attachment: { fileId: string; filename: string; source?: string } | null;
     provenance: Record<string, string> | null;
+    decision?: { options: Array<{ label: string; tradeoff?: string | null }>; recommendation: string | null; why: string | null } | null;
   }>;
   gap: string | null;
   inviteTaskId: string | null;
@@ -975,7 +976,22 @@ type ItemViewData = {
   inviteHasTime?: boolean | null;
   /** The verb-scope law: 'meeting' = a meeting-extracted action item (no thread — no Reply). */
   itemSource?: string | null;
+  /** THE MACHINE'S ONE WORD (experience-spec Part "THE MACHINE") — absent on meetings and on any
+   *  view cached before the field existed. */
+  machineState?: { state: string; word: string | null } | null;
 };
+
+// The word renders QUIET in the header's meta line — no chrome, no affordance (the stage already
+// carries the one CTA row). Silent for transient/terminal states, and silent when a send-shaped
+// artifact card is already on the stage saying the same thing.
+const MACHINE_SILENT = new Set(['preparing', 'unjudged', 'settled']);
+const SEND_SHAPED = ['reply_draft', 'nudge_draft', 'invite', 'forward'];
+function machineWordOf(view: ItemViewData | null): string | null {
+  const m = view?.machineState;
+  if (!m?.word || MACHINE_SILENT.has(m.state)) return null;
+  if (m.state === 'awaiting_approval' && (view?.prepared ?? []).some((p) => SEND_SHAPED.includes(p.kind))) return null;
+  return m.word;
+}
 
 function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'awareness', id: string): { view: ItemViewData | null; refresh: () => void } {
   const key = `aug-item-view-${kind}-${id}`;
@@ -1113,15 +1129,25 @@ function DraftByline({ by }: { by: string | null | undefined }) {
 
 export type ItemKind = 'email' | 'meeting' | 'commitment' | 'followup';
 
+/** THE LIFTED DECISION (experience-spec "THE MACHINE" — the placement table): the decision card is
+ *  an exchange component, so it belongs to the CONVERSATION pane on every door. An EMBEDDED item
+ *  has no rail of its own, so it reports its decision up and the host room mounts it on the room's
+ *  rail — instead of the stage growing a second card (found live in the project room). */
+export type ReportedDecision = {
+  title: string | null;
+  options: Array<{ label: string; tradeoff?: string | null }>;
+  recommendation: { label: string; why?: string | null } | null;
+};
+
 // (fmtWhen/fmtDate → the shared short-date grammar in lib/utils/format-date.)
 
 // ── Top-level router — reads `kind` and renders the right variant inside the shared shell. Email is
 // the default (the current behaviour + a hard visit with no `kind`).
-export function ItemDetail({ id, angle, kind = 'email', embedded = false, initialStage, stageSignal, hideArtifactCards }: { id: string; angle?: string | null; kind?: ItemKind; embedded?: boolean; initialStage?: 'reply' | 'forward' | 'invite'; stageSignal?: number; hideArtifactCards?: boolean }) {
+export function ItemDetail({ id, angle, kind = 'email', embedded = false, initialStage, stageSignal, hideArtifactCards, onDecision, injectedDraft }: { id: string; angle?: string | null; kind?: ItemKind; embedded?: boolean; initialStage?: 'reply' | 'forward' | 'invite'; stageSignal?: number; hideArtifactCards?: boolean; onDecision?: (d: ReportedDecision | null) => void; injectedDraft?: { body: string; v: number } | null }) {
   if (kind === 'meeting') return <MeetingDetail id={id} embedded={embedded} />;
   if (kind === 'commitment') return <CommitmentDetail id={id} embedded={embedded} />;
   if (kind === 'followup') return <FollowUpDetail id={id} embedded={embedded} />;
-  return <EmailDetail id={id} angle={angle} embedded={embedded} initialStage={initialStage} stageSignal={stageSignal} hideArtifactCards={hideArtifactCards} />;
+  return <EmailDetail id={id} angle={angle} embedded={embedded} initialStage={initialStage} stageSignal={stageSignal} hideArtifactCards={hideArtifactCards} onDecision={onDecision} injectedDraft={injectedDraft} />;
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1320,7 +1346,7 @@ function EmailActionPalette({
 // direction offers; the stage is purely read/edit/send. The /api/items/reply-directions route
 // serves the exchange.)
 
-function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, hideArtifactCards = false }: { id: string; angle?: string | null; embedded?: boolean; initialStage?: 'reply' | 'forward' | 'invite'; stageSignal?: number; hideArtifactCards?: boolean }) {
+function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, hideArtifactCards = false, onDecision, injectedDraft }: { id: string; angle?: string | null; embedded?: boolean; initialStage?: 'reply' | 'forward' | 'invite'; stageSignal?: number; hideArtifactCards?: boolean; onDecision?: (d: ReportedDecision | null) => void; injectedDraft?: { body: string; v: number } | null }) {
   const router = useRouter();
   // Instant-load: hydrate the thread from the last-known localStorage snapshot (no skeleton flash on a
   // re-open), then refresh in the background below. Keyed per item id so each deep-dive restores its own.
@@ -1367,6 +1393,9 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
   // none → message + chat, Dismiss leads). Cached server-side; cheap to fetch.
   const [verdict, setVerdict] = useState<{ work: string; component: string; executor: { kind: string; name?: string }; options?: Array<{ label: string }>; reason: string } | null>(null);
   const [decisionCleared, setDecisionCleared] = useState(false);
+  // THE DECISION BRIEF artifact (trichotomy T2) — its options/trade-offs/recommendation render
+  // in the ONE DecisionCard; the prepared strip filters it out (never a second document).
+  const decisionBrief = (view?.prepared ?? []).find((p) => p.decision && p.decision.options.length >= 2) ?? null;
   // The verdict OUTRANKS the thread's raw relevance: once it has seeded the surface, a
   // later-arriving thread load must not overwrite the judged mount (the verdict is cached and
   // usually lands first; without this guard the slower fetch wins the race).
@@ -1707,6 +1736,43 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
       onOpen: openForward, anchorKey: `prep:${id}`,
     }] : []),
   ];
+
+  // ── THE DECISION PAYLOAD, derived ONCE (the placement table: one component, one render). The
+  // deep-dive hands it to its own rail below; EMBEDDED, it is REPORTED UP so the host room mounts
+  // it on the room's rail — the conversation pane on every door, never the stage.
+  const decisionPayload: ReportedDecision | null =
+    !itemDismissed && !decisionCleared && verdict?.work === 'decide'
+      && ((decisionBrief?.decision?.options.length ?? 0) >= 2 || (verdict.options?.length ?? 0) >= 2)
+      ? {
+        title: verdict.reason || null,
+        // THE ONE SURFACE for the decision (owner, Aug 12): when THE DECISION BRIEF exists, its
+        // options (with trade-offs) SUPERSEDE the judge's bare labels, and its recommendation
+        // marks the pick — the brief's depth renders HERE, never as a second document.
+        options: (decisionBrief?.decision?.options.length ?? 0) >= 2 ? decisionBrief!.decision!.options : verdict.options!,
+        recommendation: decisionBrief?.decision?.recommendation
+          ? { label: decisionBrief.decision.recommendation, why: decisionBrief.decision.why }
+          : null,
+      }
+      : null;
+  // Report the decision upward (embedded doors). Keyed on the payload's VALUE — the object is
+  // rebuilt every render, so a reference dep would loop. Reports null on unmount/clear so a stale
+  // card can never outlive its item (the focus changes; the room's rail must follow).
+  const onDecisionRef = useRef(onDecision);
+  onDecisionRef.current = onDecision;
+  // THE INJECTED DRAFT (forward motion, embedded door): a decision transition ran in the HOST
+  // room's rail; the fresh draft arrives here by prop — seed the composer and open it on the
+  // work (versioned so each transition re-fires; never on mount when absent).
+  useEffect(() => {
+    if (!injectedDraft?.body) return;
+    setDraft(injectedDraft.body); setBodyHTML(''); setDraftV((v) => v + 1); setComposerOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [injectedDraft?.v]);
+  const decisionSig = decisionPayload ? JSON.stringify(decisionPayload) : '';
+  useEffect(() => {
+    onDecisionRef.current?.(decisionSig ? (JSON.parse(decisionSig) as ReportedDecision) : null);
+    return () => onDecisionRef.current?.(null);
+  }, [decisionSig]);
+
   return (
     // ONE-ROOM R2: the CONVERSATION is the center; this component's children are the STAGE (the
     // message + composer workspace). The judged DECISION and the draft's ARTIFACT CARD render
@@ -1716,9 +1782,8 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     // that later morphs into the room. Structure must not flip on data arrival.
     <DeepDiveShell embedded={embedded} rail={(
       <ItemRail kind="email" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }}
-        decision={!itemDismissed && !decisionCleared && verdict?.work === 'decide' && (verdict.options?.length ?? 0) >= 2 ? {
-          title: verdict.reason || null,
-          options: verdict.options!,
+        decision={decisionPayload ? {
+          ...decisionPayload,
           onChoose: async (label: string) => {
             // The word is the deed — AND THE DEED IS VISIBLE (promise fix #3): the choice lands as
             // a user turn, the steer's answer as the response turn. Silence after a click is a bug.
@@ -1727,7 +1792,13 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
             setDecisionCleared(true);
             const res = await fetch('/api/items/steer', {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ kind: 'email', id, text: label }),
+              // THE FORWARD-MOTION LAW (plan AK): the choice travels WITH its contract — the
+              // core executes the consequence, never re-interprets its own menu label.
+              body: JSON.stringify({ kind: 'email', id, text: label, decision: {
+                option: label,
+                tradeoff: decisionBrief?.decision?.options.find((o) => o.label === label)?.tradeoff ?? null,
+                why: decisionBrief?.decision?.recommendation === label ? decisionBrief?.decision?.why ?? null : null,
+              } }),
             }).catch(() => null);
             const d = res && res.ok ? await res.json().catch(() => ({})) : {};
             if (d.draft) { setDraft(d.draft); setBodyHTML(''); setDraftV((v) => v + 1); setComposerOpen(true); }
@@ -1756,6 +1827,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
         meta={
           <>
             {senderLine && <span className="min-w-0 truncate">From: {senderLine}</span>}
+            {machineWordOf(view) && <span className="flex-shrink-0 text-neutral-400">· {machineWordOf(view)}</span>}
             {thread?.receivedAt && (
               <span className="text-neutral-400 flex-shrink-0 tabular-nums ml-auto">{fmtDateTime(thread.receivedAt)}</span>
             )}
@@ -1816,32 +1888,11 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
             card's Open / the CTA row's Reply — the right pane holds the item's truth (the thread),
             never a docked send surface. Rendered below, after the scroll area. */}
 
-        {/* One-room R2 — the DECISION renders INLINE in the conversation stream (the rail's
-            `decision` prop, surface:'inline' per the registry). The stage keeps it ONLY when no
-            rail carries it: view not yet loaded, or EMBEDDED in the entity room (the room's own
-            rail doesn't receive this item's decision prop). */}
-        {(!railView || embedded) && !itemDismissed && !decisionCleared && verdict?.work === 'decide' && (verdict.options?.length ?? 0) >= 2 && (
-          <DecisionCard
-            title={verdict.reason || null}
-            options={verdict.options!}
-            onChoose={async (label) => {
-              // Promise fix #3 — the choice + the answer are VISIBLE turns in the room conversation.
-              const roomKey = railView?.entity?.id ?? `inbox:${id}`;
-              pushDealTurn(roomKey, label, { role: 'user' });
-              setDecisionCleared(true);
-              const res = await fetch('/api/items/steer', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ kind: 'email', id, text: label }),
-              }).catch(() => null);
-              const d = res && res.ok ? await res.json().catch(() => ({})) : {};
-              if (d.draft) { setDraft(d.draft); setBodyHTML(''); setDraftV((v) => v + 1); setComposerOpen(true); }
-              pushDealTurn(roomKey,
-                String(d.say || d.answer || (d.draft ? 'On it — the draft is updated for that.' : (res && res.ok ? 'Done.' : "I couldn't do that just now."))),
-                { key: `decide:${id}` });
-            }}
-            onDismissCard={() => setDecisionCleared(true)}
-          />
-        )}
+        {/* THE PLACEMENT TABLE (experience-spec "THE MACHINE"): the decision card is an EXCHANGE
+            component — it renders in the CONVERSATION pane on EVERY door and the stage never hosts
+            it (found live: left on the deep-dive, RIGHT on the project room's stage — the same
+            component in two seats). Embedded, the host room mounts it on its own rail via the
+            `onDecision` report below; not-yet-loaded is covered by the rail's pending state. */}
 
         {/* THE GAP LINE — in the rail when one exists; inline only for a rail-less item. */}
         {!railView && <GapLine text={view?.gap} />}
@@ -2353,6 +2404,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
           <>
             {data?.counterparty && <span>{data.direction === 'awaiting' ? 'Waiting on' : 'You owe'} {data.counterparty}</span>}
             {data?.dueDate && <span className={overdue ? 'text-red-500' : 'text-neutral-400'}>· Due {fmtWeekdayDate(data.dueDate)}</span>}
+            {machineWordOf(view) && <span className="text-neutral-400">· {machineWordOf(view)}</span>}
           </>
         }
       />
@@ -2606,7 +2658,12 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
         action={embedded ? undefined : <AddToProjectControl kind="inbox" id={id} compact />}
         title={title}
         titleClass="text-[19px] leading-snug"
-        meta={who ? <span>Waiting on {who}</span> : undefined}
+        meta={(who || machineWordOf(view)) ? (
+          <>
+            {who && <span>Waiting on {who}</span>}
+            {machineWordOf(view) && <span className="text-neutral-400">{who ? '· ' : ''}{machineWordOf(view)}</span>}
+          </>
+        ) : undefined}
       />
 
       {/* The one scroll area, in the Scape order: message card → the follow-up composer. */}
@@ -2763,7 +2820,7 @@ function MotionChecklist({ steps, commitmentId }: { steps: Array<{ id: string; t
 function PreparedLead({ prepared }: { prepared: ItemViewData['prepared'] | null }) {
   const [openId, setOpenId] = useState<string | null>(null);
   // Coworker deliverables only — the composer owns reply/nudge drafts (showing them twice duplicates).
-  const items = (prepared ?? []).filter((p) => p.kind === 'deliverable' && p.content);
+  const items = (prepared ?? []).filter((p) => p.kind === 'deliverable' && p.content && !p.decision);
   if (!items.length) return null;
   return (
     <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50/40 px-4 py-3">
@@ -2773,7 +2830,10 @@ function PreparedLead({ prepared }: { prepared: ItemViewData['prepared'] | null 
         return (
           <div key={d.id} className="py-1">
             <button onClick={() => setOpenId(open ? null : d.id)} className="w-full flex items-baseline gap-2 text-left">
-              <span className="text-[11px] font-semibold text-indigo-500 flex-shrink-0">{d.by ? `Prepared by ${d.by.split(' ')[0]}` : 'Prepared'}</span>
+              <span className="flex items-center gap-1.5 text-[11px] font-semibold text-indigo-500 flex-shrink-0">
+                {d.by && <WorkerFace name={d.by} size={16} />}
+                {d.by ? `Prepared by ${d.by.split(' ')[0]}` : 'Prepared'}
+              </span>
               <span className="text-[13px] font-medium text-neutral-800 truncate min-w-0 flex-1">{d.title || 'Deliverable'}</span>
               {/* THE PROVENANCE CHIP (truth made visible): renders ONLY from the structural
                   `computed` marker the sandbox stamps — never inferred from the content. */}

@@ -37,7 +37,9 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     // INSTANTLY (fresh <24h) instead of regenerating on every open.
     const { getPrepared } = await import('@/lib/prepare/read');
     const preparedArts = await getPrepared(supabase, user.id, { kind: 'commitment', id });
-    const freshDraft = preparedArts.find((a) => a.at && (Date.now() - Date.parse(a.at)) < 24 * 3_600_000);
+    // THE GROUND LAW: a stale artifact (its ground moved — a newer inbound landed) is superseded
+    // work; serving it as the prepared draft would offer a dead plan. Fall through to regenerate.
+    const freshDraft = preparedArts.find((a) => !a.stale && a.at && (Date.now() - Date.parse(a.at)) < 24 * 3_600_000);
     if (freshDraft) return NextResponse.json({ draft: freshDraft.content, prepared: true });
     // THE ONE GATE: an on-open nudge generation is ambient work — the judged verdict must say the
     // work is a chase (an expired/answered commitment gets no nudge). Cached — a read on repeats.

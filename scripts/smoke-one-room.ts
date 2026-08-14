@@ -108,9 +108,12 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('R2: the entity room inverts the same way (mounts the same RoomShell, launcher/artifact = the stage)',
     src('components/entities/entity-room.tsx').includes('<RoomShell'));
   const railSrc = src('components/home/item-rail.tsx');
+  // RE-POINTED (Aug 13, THE MACHINE plan AL): the stage-hosted card is DELETED — the rail is the
+  // ONE decision surface on every door; the deep-dive passes the payload (with the forward-motion
+  // contract in onChoose) and an embedded item LIFTS its decision to the host room via onDecision.
   check('R2: the DECISION mounts INLINE in the stream (the rail renders the shared DecisionCard)',
     railSrc.includes('decision?:') && railSrc.includes('<DecisionCard') &&
-    detail.includes('decision={!itemDismissed && !decisionCleared'));
+    detail.includes('decision={decisionPayload ? {'));
   // SUPERSEDED twice: ONE-COMMIT-LINE (UX arc), then the PREPARED-ACTION GRAMMAR (Aug 4) — the
   // card list carries EVERY prepared thing (reply/invite/forward), each Open summons its own
   // stage; the stage holds the ONLY Send. No commit callback exists on the card at all now.
@@ -127,8 +130,10 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('R2: LOOSE items get the conversation too (railView no longer gated on an entity)',
     detail.includes('const railView = view ? (view as RailView) : null') &&
     !detail.includes('view?.entity ? (view as RailView)'));
-  check('R2: the stage keeps the decision ONLY when no rail carries it (loading / embedded room)',
-    detail.includes('(!railView || embedded) && !itemDismissed && !decisionCleared'));
+  check('R2: the stage NEVER hosts the decision — the embedded door LIFTS it to the host room (onDecision) instead of a second stage card (panelPlan.stageHostsDecision is structurally false)',
+    !detail.includes("import { DecisionCard }") &&
+    detail.includes('onDecision') &&
+    src('lib/room/render-plan.ts').includes('stageHostsDecision: false'));
 
   // ── R3 STRUCTURAL — ONE shell both doors + the context strip (spatial, never conversational) ──
   const shell = src('components/room/room-shell.tsx');
@@ -390,7 +395,7 @@ const src = (p: string) => readFileSync(p, 'utf8');
       src('lib/inbox/reactivate-on-reply.ts').includes('clipForPrompt') &&
       src('app/api/items/reply-directions/route.ts').includes('clipForPrompt') &&
       /JUDGE_VERSION = 1[3-9]/.test(src('lib/work/surface-registry.ts')) && // ≥13 (the law landed at 13)
-      src('lib/entities/state.ts').includes('STATE_PROMPT_VERSION = 7') &&
+      /STATE_PROMPT_VERSION = [7-9]/.test(src('lib/entities/state.ts')) && // ≥7 (the law landed at 7; 8 = the one-claim law)
       src('lib/commitments/fulfillment.ts').includes('FULFILLMENT_LAW_VERSION = 3'));
     check('R9 · THE ONE-NAVIGATION LAW: in-room rail links route through the room opener (onOpenHref on refs + next-move; entity-room passes focusFromHref/openHref)',
       rail.includes('onOpenHref?: (href: string) => boolean') && rail.includes('const go = (href: string)') &&
@@ -462,7 +467,7 @@ const src = (p: string) => readFileSync(p, 'utf8');
   {
     check('R12 · a require is a THING: judge rule (v14) + the reasoned attachability floor at the ONE resolver (memoized, keep-all on failure) + word-boundary labels',
       src('lib/work/judge.ts').includes('NEVER a confirmation, approval, decision, answer, availability, or time') &&
-      src('lib/work/surface-registry.ts').includes('JUDGE_VERSION = 14') &&
+      src('lib/work/surface-registry.ts').includes('14: ATTACHABLE-REQUIRES') && // RE-POINTED: the v14 rule survives in the version log; JUDGE_VERSION moved on (15: the ask-direction floor)
       src('lib/prepare/requirements.ts').includes('async function attachableOnly') &&
       src('lib/prepare/requirements.ts').includes('requires = await attachableOnly(admin, userId, requires)') &&
       src('lib/prepare/requirements.ts').includes('return requires; // failure ≠ a verdict — keep all') &&
