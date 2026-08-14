@@ -1717,6 +1717,11 @@ export function HomeView() {
   const hasBody = bodyReplies.length > 0 || bodyCards.length > 0;
 
   const nothing = b && !b.priorities.length && !b.commitments.length && !b.waitingOn.length && !b.schedule.length && !(b.keepAnEyeOn?.items.length) && !(b.actionNotices?.length) && !(team?.messages.length || team?.needsReview.length) && !hasBody;
+  // THE SOVEREIGN CENTERPIECE (owner, Aug 14): on an email-off workspace with an empty deck, the
+  // conversation IS the front door — the team card + composer sit centered as one group (the
+  // Claude empty-state idiom) instead of a floating card over a floor-docked composer. Pure
+  // class/spacer toggles on the SAME mounts — the composer must never remount mid-conversation.
+  const sovereignCenter = !!nothing && b?.mail?.emailFeature === false && view === 'dashboard' && !chatActive && !projectDetailOpen;
 
   // ── THE AGENDA (Living-Home S1) — the ONE derivation of "what needs you" every surface projects
   // from: the deck renders `agenda.entries`, the ring shows `agenda.rows` (exactly what is visibly
@@ -2030,7 +2035,7 @@ export function HomeView() {
         )}
 
         {view === 'dashboard' && !chatActive && (
-        <div className={`transition-opacity duration-200 ease-out ${chatFading ? 'opacity-0' : 'opacity-100'}`}>
+        <div className={`transition-opacity duration-200 ease-out ${chatFading ? 'opacity-0' : 'opacity-100'}${sovereignCenter ? ' flex-1 flex flex-col justify-end' : ''}`}>
         {/* AMBIENT "also happening" pills removed for now (AmbientStrip kept below for easy restore). */}
 
         {/* THE ASK ZONE moved to the shell's FLOOR (the Claude anatomy — see the sticky block at
@@ -2178,9 +2183,18 @@ export function HomeView() {
             front door never hides behind data — a brand-new user with zero synced data can still
             talk, create tasks, found projects (P19); other lenses keep their own grammars. ── */}
         {view === 'dashboard' && !projectDetailOpen && (
-          <div className="sticky bottom-0 mt-auto pt-8 pb-5 bg-gradient-to-t from-[#fbfbfd] via-[#fbfbfd]/95 to-transparent">
+          /* THE SOVEREIGN CENTERPIECE: same mount, class toggle only — undocked from the floor so
+             the team card + composer read as ONE centered group; the sticky floor returns the
+             moment the chat goes live or the deck has rows. */
+          <div className={sovereignCenter
+            ? 'pt-7 pb-4'
+            : 'sticky bottom-0 mt-auto pt-8 pb-5 bg-gradient-to-t from-[#fbfbfd] via-[#fbfbfd]/95 to-transparent'}>
             <HomeAsk
               suggestions={(() => {
+                // Sovereign day-one chips: only work that needs NO mail/calendar context —
+                // standalone drafts, attach-a-file, web research ("Plan my week" with no
+                // calendar and "summarize" with no mail are hollow on an empty corporate account).
+                if (sovereignCenter) return ['Draft a document…', 'Set up a weekly research brief', 'What can the team do?'];
                 const s: string[] = ['Add a task…', 'Plan my week', "What's slipping?"];
                 if ((b?.schedule?.length ?? 0) > 0) s.push('Prep my next meeting');
                 else s.push('What did I miss?');
@@ -2189,6 +2203,7 @@ export function HomeView() {
             />
           </div>
         )}
+        {sovereignCenter && <div className="flex-1" aria-hidden />}
       </div>
       </div>{/* ── end MAIN scrolling column ── */}
 

@@ -37,6 +37,11 @@ export async function buildUserContextBlock(
     if (id.responsibilities?.length) {
       lines.push(`Responsibilities: ${id.responsibilities.join(', ')}`);
     }
+    // Durable context stated by the user in conversation (the intake lane) — team, company,
+    // market, constraints. The sovereign tier's main identity source.
+    if (Array.isArray(id.notes) && id.notes.length) {
+      lines.push(`Context: ${(id.notes as string[]).join('; ')}`);
+    }
     sections.push(lines.join('\n'));
   }
 

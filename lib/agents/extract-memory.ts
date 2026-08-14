@@ -45,6 +45,18 @@ export async function extractAgentMemory(
     .map((m: { role: string; content: string }) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
     .join('\n');
 
+  // THE USER-CONTEXT LANE (Aug 14): durable facts the user states about THEMSELF must reach
+  // user-level memory (context_profiles identity → the ABOUT-YOU block every prompt reads),
+  // never only this coworker's private memory. Self-gated (context-poor accounts only),
+  // fire-and-forget — rides the same seam both runtimes already call.
+  {
+    const userTexts = (messages as Array<{ role: string; content: string }>)
+      .filter((m) => m.role === 'user').map((m) => String(m.content ?? ''));
+    void import('@/lib/context/intake-memory')
+      .then(({ extractUserContext }) => extractUserContext(adminClient, userId, userTexts))
+      .catch(() => {});
+  }
+
   let existingMemory = '';
   if (isOwner) {
     existingMemory = (agent as { memory_text: string | null }).memory_text ?? '';

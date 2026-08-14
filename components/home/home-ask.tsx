@@ -18,6 +18,7 @@ import { EmailDraftCard, type EmailDraftData } from '@/components/workers/email-
 import { WorkflowDraftCard, type WorkflowDraft } from '@/components/workflows/workflow-draft-card';
 import { ThreadArtifactsPanel } from '@/components/work/chat-artifact-panel';
 import { WorkerFace } from '@/components/work/worker-face';
+import { useFeatures } from '@/context/workspace-context';
 import type { DocumentArtifact } from '@/lib/types/inbox';
 // (BriefingBlock removed from the chat — Phase 3 F2: the prose brief duplicated the deck; the
 // composeBriefing machinery survives as the deck's ordering anchor + the daily report.)
@@ -144,6 +145,7 @@ function chatRoomKey(): string {
 
 export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   const router = useRouter();
+  const features = useFeatures(); // the sovereign intake gate (Clara's first-contact question)
   const [turns, setTurns] = useState<Turn[]>([]);
   // Rehydrate the current chat room on mount (last-known conversation, the ChatGPT-parity habit) +
   // the SHELL'S WIRES: the sidebar's "New chat" resets this panel; opening a past conversation
@@ -362,14 +364,54 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         const intro = workerIntroFor(first);
         let seenIntro = true;
         try { seenIntro = localStorage.getItem(TEAM_INTRO_LS) === '1'; localStorage.setItem(TEAM_INTRO_LS, '1'); } catch { /* no LS */ }
+        // THE INTAKE (owner, Aug 14 — proactivity comes from the COWORKER, in their own voice):
+        // on an email-off workspace there is no mailbox to learn the user from, so Clara's first
+        // contact ASKS — her question is ordinary speech in her own bubble; the answer flows
+        // through the DM and the memory lane extracts it into user-level context every surface
+        // reads. Other coworkers keep their standard intros — one greeter, not four.
+        const intake = features.email === false && first.toLowerCase() === 'clara';
+        const base = seenIntro
+          ? `Hi — I'm ${first}. ${intro.helps}`
+          : `Hi — I'm ${first}, one of the AI coworkers that comes with your workspace (there's a small team of us, each with a specialty). ${intro.helps}`;
         // The coworker speaks for themself (author set → their avatar + name on the bubble).
-        loaded.push({
-          role: 'assistant', author: first,
-          text: seenIntro
-            ? `Hi — I'm ${first}. ${intro.helps} A few things I can do right now:`
-            : `Hi — I'm ${first}, one of the AI coworkers that comes with your workspace (there's a small team of us, each with a specialty). ${intro.helps} A few things I can do right now:`,
-          options: intro.examples,
-        });
+        if (intake) {
+          // Clara PLACES the whole team (owner, Aug 14): a corporate first contact meets
+          // everyone briefly — always in the intake flow, independent of the one-time explainer
+          // flag (a tester's LS must not mute it). Names come from the live roster; the
+          // specialty line from the seeded-name map, silently omitted for custom workers.
+          const specialty: Record<string, string> = {
+            sofia: 'writes your documents and reports',
+            max: 'does the research and analysis',
+            luca: 'keeps your LinkedIn active',
+          };
+          const mates = roster
+            .map((x) => x.name.split(' ')[0])
+            .filter((f) => f.toLowerCase() !== first.toLowerCase())
+            .map((f) => { const s = specialty[f.toLowerCase()]; return s ? `${f} ${s}` : f; });
+          const teamLine = mates.length
+            ? ` There's a small team of us — ${mates.length > 1 ? `${mates.slice(0, -1).join(', ')}, and ${mates[mates.length - 1]}` : mates[0]}. You can message any of us from the Home.`
+            : '';
+          // The QUESTION gets its own bubble — buried mid-paragraph it reads as boilerplate;
+          // alone it reads as a colleague actually asking. Chips ride the question turn and
+          // offer only work that needs NO ambient context (a day-one sovereign account has no
+          // mail/calendar to summarize or plan from — attach-a-file and standalone drafts do).
+          loaded.push({ role: 'assistant', author: first, text: `Hi — I'm ${first}. ${intro.helps}${teamLine}` });
+          loaded.push({
+            role: 'assistant', author: first,
+            text: `So the whole team starts with real context — what's your role, and what's the main thing on your plate this week? Anything you tell me here, we all remember. Or jump straight in:`,
+            options: [
+              { label: 'Draft a meeting agenda', say: 'Draft an agenda for a 30-minute kickoff meeting with a new client.' },
+              { label: 'Summarize a document I attach', say: 'I will attach a document — summarize it into one page of key takeaways.' },
+              { label: 'Build a checklist', say: 'Make me a checklist for onboarding a new team member.' },
+            ],
+          });
+        } else {
+          loaded.push({
+            role: 'assistant', author: first,
+            text: `${base} A few things I can do right now:`,
+            options: intro.examples,
+          });
+        }
       }
       setTurns(loaded);
       setTimeout(() => focusComposer(), 120);
@@ -894,7 +936,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                     {/* A coworker's reply wears THEIR name AND face (the one-narrator law +
                         same-visual-same-meaning: the worker page and email signatures carry the
                         headshot — the Home DM must too). Name → role png; initial chip fallback. */}
-                    {t.author && (
+                    {/* DM grouping: consecutive bubbles from the SAME coworker share one header
+                        (the Slack rule) — the face+name only marks a change of speaker. */}
+                    {t.author && (i === 0 || turns[i - 1]?.author !== t.author) && (
                       <span className="mb-1.5 flex items-center gap-2">
                         {/* size 28 — owner call, Aug 12 ("bigger coworker faces in chat"); the shared
                             WorkerFace defaults to 20 for inline bylines, chat headers stay larger. */}

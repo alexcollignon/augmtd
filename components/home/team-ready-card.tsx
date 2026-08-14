@@ -29,11 +29,8 @@ export function TeamReadyCard({ onTour }: { onTour: () => void }) {
   };
 
   return (
-    <div className="mt-4 rounded-2xl border border-dashed border-neutral-200 px-6 py-12 text-center">
+    <div className="rounded-2xl border border-dashed border-neutral-200 px-6 py-10 text-center">
       <p className="text-[14px] font-medium text-neutral-700">Your team is ready</p>
-      <p className="text-[12.5px] text-neutral-400 mt-0.5 max-w-md mx-auto">
-        Writing, research, documents and standing workflows — everything runs in your private environment.
-      </p>
       <div className="mt-6 flex items-start justify-center gap-7">
         {(team ?? []).slice(0, 4).map((w) => (
           <button key={w.id} onClick={() => dm(w)} className="group flex flex-col items-center gap-1.5" title={`Message ${w.name}`}>
@@ -58,8 +55,10 @@ export function TeamReadyCard({ onTour }: { onTour: () => void }) {
           </span>
         ))}
       </div>
+      {/* The proactive move belongs to the COWORKER, not this label (owner, Aug 14): Clara asks
+          her intake question in her own DM (first contact) — the Home card only opens doors. */}
       <p className="text-[11.5px] text-neutral-300 mt-6">
-        Say hello to any of them, record a meeting, or just ask anything above.{' '}
+        Say hello to any of them, or just ask anything below.{' '}
         <button onClick={onTour} className="text-neutral-400 hover:text-indigo-600 underline decoration-neutral-200 hover:decoration-indigo-300 transition-colors">Show me around</button>
       </p>
     </div>
