@@ -53,11 +53,11 @@ async function main() {
   // existing user's Luca keeps the LinkedIn-era instructions/description in the DB, which the
   // UI and the native loop read; worker instructions are not user-editable, so overwrite-safe). ──
   const { buildWorkers } = await import('@/lib/workers/seed');
-  const luca = buildWorkers('x').find((w) => w.worker_role === 'linkedin_drafter')!;
+  const luca = buildWorkers('x').find((w) => w.worker_role === 'branding_expert')!;
   const { data: lucas, error: lucaErr } = APPLY
     ? await sb.from('custom_agents')
         .update({ instructions: luca.instructions, description: luca.description, conversation_starters: luca.conversation_starters })
-        .eq('worker_role', 'linkedin_drafter').eq('is_worker', true).select('id')
+        .in('worker_role', ['linkedin_drafter', 'branding_expert']).eq('is_worker', true).select('id')
     : { data: [], error: null };
   if (lucaErr) console.log(`  ! luca rebrand: ${lucaErr.message}`);
   else if (APPLY) console.log(`  luca rows rebranded: ${lucas?.length ?? 0}`);

@@ -9,7 +9,8 @@ import type { Worker } from '@/app/workers/workers-page-client';
 const ROLE_AVATARS: Record<string, string> = {
   personal_assistant: '/workers/clara.png',
   content_manager:    '/workers/sofia.png',
-  linkedin_drafter:   '/workers/luca.png',
+  branding_expert:    '/workers/luca.png',
+  linkedin_drafter:   '/workers/luca.png', // legacy role key
   research_analyst:   '/workers/max.png',
 };
 

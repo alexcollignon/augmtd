@@ -33,7 +33,7 @@ export const INTEGRATION_PROVIDERS = INTEGRATIONS.map(i => i.provider);
 // removed; sweep-retire-sofia.ts drops any surviving integration_connections rows.
 export const SLACK_APP_BY_ROLE: Record<string, string> = {
   personal_assistant: 'slack-clara',
-  linkedin_drafter:   'slack-luca',
+  branding_expert:    'slack-luca',
   research_analyst:   'slack-max',
 };
 export const SLACK_APP_KEYS = Object.values(SLACK_APP_BY_ROLE);
@@ -51,7 +51,7 @@ export function slackKeyForRole(role: string | null | undefined): string {
 export const COWORKER_EMAIL_DOMAIN = process.env.COWORKER_EMAIL_DOMAIN || 'team.augmtd.ai';
 export const EMAIL_LOCAL_BY_ROLE: Record<string, string> = {
   personal_assistant: 'clara',
-  linkedin_drafter:   'luca',
+  branding_expert:    'luca',
   research_analyst:   'max',
 };
 export function coworkerEmailForRole(role: string | null | undefined): string {

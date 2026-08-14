@@ -77,9 +77,7 @@ export function buildWorkers(userId: string) {
       ],
     },
     {
-      // The internal role key predates the branding rebrand (Aug 14) — kept to avoid a data
-      // migration; the identity is the person, the specialty is what changed.
-      worker_role: 'linkedin_drafter',
+      worker_role: 'branding_expert',
       user_id: userId,
       name: 'Luca',
       description: 'Keeps everything you ship on-brand — look, voice, and presence.',

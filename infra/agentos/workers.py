@@ -85,7 +85,7 @@ WORKER_DEFS = [
     {"id": "personal_assistant", "name": "Clara",
      "description": "Watches your inbox, preps meetings, surfaces what matters.",
      "instructions": PA_PROMPT + DELIVERABLE_GRAMMAR},
-    {"id": "linkedin_drafter", "name": "Luca",
+    {"id": "branding_expert", "name": "Luca",
      "description": "Keeps everything you ship on-brand — look, voice, and presence.",
      "instructions": LINKEDIN_PROMPT + DELIVERABLE_GRAMMAR},
     {"id": "research_analyst", "name": "Max",
