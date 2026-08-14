@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createAdmin } from '@supabase/supabase-js';
 import { converse, type ConverseHistoryTurn, type ConverseAttachment } from '@/lib/converse';
 
 // 180: a production hand-off (delegation runs synchronously, the artifact comes home) must
@@ -54,6 +56,19 @@ export async function POST(request: NextRequest) {
     const scope = body.entityId
       ? ({ kind: 'entity', entityId: String(body.entityId) } as const)
       : ({ kind: 'global' } as const);
+    // THE USER-CONTEXT LANE (Aug 14): things the user states about themself in the general chat
+    // land in user-level memory (context_profiles identity → ABOUT YOU everywhere). The module
+    // self-gates on context-poverty (sovereign / unconnected accounts) — a warm mailbox account
+    // costs nothing here. Off the response path; failure never touches the conversation.
+    if (scope.kind === 'global') {
+      after(async () => {
+        try {
+          const admin = createAdmin(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+          const { extractUserContext } = await import('@/lib/context/intake-memory');
+          await extractUserContext(admin, user.id, [q]);
+        } catch { /* the lane never breaks the ask */ }
+      });
+    }
     // THE RECOGNITION NUDGE (Aug 7 — "will it suggest opening the project room?"): when an
     // UNSCOPED question NAMES a registered project (the same deterministic focus match the
     // grounding uses), the response carries the match so the panel can OFFER filing the
