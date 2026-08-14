@@ -44,7 +44,7 @@ export async function buildStandingSpec(
 ): Promise<StandingSpec | { error: string }> {
   try {
     const { data: workers } = await admin.from('custom_agents')
-      .select('id, name, worker_role').eq('user_id', userId).eq('is_worker', true).limit(10);
+      .select('id, name, worker_role').eq('user_id', userId).eq('is_worker', true).eq('is_active', true).limit(10);
     if (!workers?.length) return { error: 'no coworkers are set up yet — the team produces standing work' };
 
     const { aiCall } = await import('@/lib/ai/call');
@@ -59,7 +59,7 @@ export async function buildStandingSpec(
         `own intent (never embellished); "cron" = standard 5-field cron matching the STATED cadence ` +
         `(unstated time of day → 08:00; unstated weekday for "weekly" → Monday); "cadence_label" = the ` +
         `human phrasing ("every Monday 08:00"); "owner_role" = the team role whose CRAFT fits (research → ` +
-        `research_analyst, writing/reports → content_manager, admin/prep → personal_assistant).` +
+        `research_analyst, writing/reports/admin/prep → personal_assistant, branding/LinkedIn → linkedin_drafter).` +
         (repair ? `\nYOUR PREVIOUS CRON WAS INVALID (${repair}) — fix it.` : '') +
         `\nJSON only: {"name":"…","deliverable":"…","cron":"0 8 * * 1","cadence_label":"…","owner_role":"…"}`,
     });

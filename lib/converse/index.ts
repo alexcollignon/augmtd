@@ -56,7 +56,7 @@ const prepareForwardDefinition = {
 // routing; decisions reach the user ONLY when consequential and non-inferable. ──
 const assignToCoworkerDefinition = {
   name: 'assign_to_coworker',
-  description: "Assign a production task (a report, draft, research, analysis, post) to the best-fit coworker on the user's team and start the work NOW. Use when the user asks for produced work WITHOUT naming who — pick the obvious fit yourself (writing/documents/reports → Sofia · research/analysis → Max · ops/admin/inbox/calendar → Clara · LinkedIn → Luca). Reversible: the work reports back into this conversation; nothing external is sent.",
+  description: "Assign a production task (a report, draft, research, analysis, post) to the best-fit coworker on the user's team and start the work NOW. Use when the user asks for produced work WITHOUT naming who — pick the obvious fit yourself (writing/documents/reports/ops/admin/inbox/calendar → Clara · research/analysis → Max · branding/design/LinkedIn → Luca). Reversible: the work reports back into this conversation; nothing external is sent.",
   input_schema: { type: 'object', properties: {
     coworker: { type: 'string', description: 'first name or role of the coworker' },
     task: { type: 'string', description: "the task in one clear sentence, in the user's own terms" },
@@ -284,8 +284,8 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
     `- "facts" = durable constraints/preferences/numbers to remember; a one-off phrasing tweak is NOT one.\n` +
     `- "delegate" when a named coworker/assistant is explicitly asked — AND for PRODUCED work ` +
     `(fill in / complete a document, draft a report or long deliverable, write up material from ` +
-    `pasted source) even when no coworker is named: pick the fit — Sofia (writing, documents), ` +
-    `Max (research, analysis), Luca (LinkedIn), Clara (ops, admin) — and put the WHOLE job in ` +
+    `pasted source) even when no coworker is named: pick the fit — Clara (writing, documents, ops, admin), ` +
+    `Max (research, analysis), Luca (branding, design, LinkedIn) — and put the WHOLE job in ` +
     `"task". A question, a quick command, or a short reply tweak is NOT produced work. ` +
     `"revises" = true ONLY when the task MODIFIES the document this conversation just produced ` +
     `(change a chart, add a section, rework the tone of "the report") — new work is revises:false.\n` +
@@ -702,7 +702,7 @@ async function runCoworkerDelegation(
     // TEMPLATE-BY-EXAMPLE (DH5b): an attached office file or a named KB document the request
     // says to mirror. Never doubles as the revision target (current.* wins that seat).
     const templateFile = revise ? null : await resolveTemplateFile(admin, userId, `${task} ${userText.slice(0, 400)}`, attachments);
-    const { data: workers } = await client.from('custom_agents').select('id, name, worker_role').eq('user_id', userId).eq('is_worker', true);
+    const { data: workers } = await client.from('custom_agents').select('id, name, worker_role').eq('user_id', userId).eq('is_worker', true).eq('is_active', true);
     const want = coworkerWant.toLowerCase();
     const worker = (workers ?? []).find((w) => String(w.name).toLowerCase().startsWith(want) || String(w.worker_role ?? '').toLowerCase().includes(want));
     if (worker) {
@@ -800,8 +800,8 @@ async function agentLoop(
       `the user's own words explicitly say send; prepare_forward only prepares (the approve stays with the user). ` +
       `Ground every claim in the ` +
       `CONTEXT below; when it doesn't cover something, say so plainly. PLAIN PROSE, no markdown, 1-4 sentences.\n\n` +
-      `THE TEAM (assign production work with assign_to_coworker): Clara — ops, admin, inbox, calendar · ` +
-      `Sofia — writing, documents, reports · Max — research, analysis · Luca — LinkedIn. When the user asks ` +
+      `THE TEAM (assign production work with assign_to_coworker): Clara — ops, admin, inbox, calendar, ` +
+      `writing, documents, reports · Max — research, analysis · Luca — branding, design, LinkedIn. When the user asks ` +
       `for PRODUCED work (a report, draft, analysis, post) without naming who, assign the obvious fit ` +
       `YOURSELF and say who's on it — the work is reversible and reports back here; never ask permission ` +
       `for a hand-off. THE SENSIBLE ASK: offer_choices is for ONE genuinely consequential decision you ` +
@@ -1288,14 +1288,15 @@ async function converseInner(
   // THE EXHAUSTION HAND-OFF (Aug 10, found live: the loop's old bare "I couldn't finish that
   // one." beside a competitor's finished document): when the inline loop can't land the work,
   // the work — WITH the user's full material and the conversation — goes to the production
-  // engine instead. Failure = delegation, never a dead end. Sofia is the produce default
-  // (writing/documents); a named coworker would have taken the fast-path long before here.
+  // engine instead. Failure = delegation, never a dead end. Clara is the produce default
+  // (the drafting assistant — Sofia retired Aug 14, her lane folded into Clara); a named
+  // coworker would have taken the fast-path long before here.
   if (loopTurn.exhausted) {
     opts.onProgress?.('This needs real production — handing it to the team…');
-    const handed = await runCoworkerDelegation(client, userId, scope, 'sofia',
+    const handed = await runCoworkerDelegation(client, userId, scope, 'clara',
       text.replace(/\s+/g, ' ').slice(0, 80), text, transcript, material, momentTheme, opts.attachments ?? []);
     if (handed.delegated) return handed;
-    return { say: "I couldn't finish this one inline, and the hand-off didn't go through either — try again in a moment, or name a coworker (\"Sofia: …\") to take it.", refs: [] };
+    return { say: "I couldn't finish this one inline, and the hand-off didn't go through either — try again in a moment, or name a coworker (\"Max: …\") to take it.", refs: [] };
   }
   return loopTurn;
 }

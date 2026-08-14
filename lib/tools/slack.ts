@@ -272,8 +272,8 @@ export async function executeSlackListMembers(
 // DMs need none — they're already per-user threads.
 const ROLE_LABELS: Record<string, string> = {
   personal_assistant: 'Personal Assistant',
-  content_manager: 'Content Strategist',
-  linkedin_drafter: 'LinkedIn Wizard',
+  content_manager: 'Content Strategist', // retired Aug 14 — legacy rows only
+  linkedin_drafter: 'Branding Expert',
   research_analyst: 'Research Analyst',
 };
 
