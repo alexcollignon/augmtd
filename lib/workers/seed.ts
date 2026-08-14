@@ -55,7 +55,7 @@ When introducing yourself, speak as yourself — you're Max. You just happen to 
 
 // ─── Worker catalog ───────────────────────────────────────────────────────────
 
-function buildWorkers(userId: string) {
+export function buildWorkers(userId: string) {
   return [
     {
       worker_role: 'personal_assistant',
