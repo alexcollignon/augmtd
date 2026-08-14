@@ -1596,8 +1596,44 @@ export async function GET() {
   // (tracked-only, entity-link truth) so the door and the label can never disagree.
   const projectByAtom: Record<string, string> = {};
   for (const l of alinksRows) { if (trackedNameById.has(l.entity_id)) projectByAtom[l.item_id] = l.entity_id; }
+  // THE MACHINE'S ONE WORD (experience-spec, Part "THE MACHINE"): every actionable row carries the
+  // lifecycle state it already lives in — derived from truth that exists (the judgment cache · the one
+  // prepared reader · live asks), BATCHED for the whole deck in one call. The word is an ENHANCEMENT:
+  // the field is optional everywhere and a payload without it (a cached brief, a failed derivation)
+  // renders exactly as before. Meetings are out of scope — the machine speaks for inbox + commitments.
+  const machineByAtom = new Map<string, { state: string; word: string | null; surfaced?: boolean }>();
+  try {
+    const { workStatesFor, STATE_WORDS } = await import('@/lib/work/machine');
+    const rowById = new Map(items.map((it) => [String(it.id), it]));
+    const inboxIds = new Set<string>([
+      ...(mustRespondOut?.items ?? []).map((m: { itemId: string }) => m.itemId),
+      ...actionNotices.map((n) => n.itemId),
+      ...cappedPriorities.filter((p) => p.source === 'email' && p.itemId).map((p) => p.itemId as string),
+    ].filter(Boolean));
+    const states = await workStatesFor(supabase, user.id, [
+      // The route already holds the inbox rows (all pending by the query's own filter) — pass them
+      // so the batch never refetches what's in hand.
+      ...[...inboxIds].map((id) => {
+        const r = rowById.get(id);
+        return { kind: 'inbox' as const, id, row: r ? { status: 'pending', source_data: r.source_data, last_activity_at: (r.last_activity_at as string) ?? null } : undefined };
+      }),
+      ...commitments.map((c) => ({ kind: 'commitment' as const, id: c.id })),
+    ]);
+    // THE SURFACING DELTA (Aug 14, found live: as the coverage repair drains a months-old
+    // unjudged backlog, genuinely-open old obligations enter the deck mid-session — without a
+    // delta they read as random pop-ins, not the system catching up). First judged within 24h
+    // → the row carries "surfaced today" for its first day. Deltas, not events.
+    const dayAgo = Date.now() - 24 * 3_600_000;
+    for (const [key, st] of states) {
+      machineByAtom.set(key.slice(key.indexOf(':') + 1), {
+        state: st.state, word: STATE_WORDS[st.state],
+        ...(st.judgedFirstAt && Date.parse(st.judgedFirstAt) > dayAgo && !['settled', 'unjudged'].includes(st.state) ? { surfaced: true } : {}),
+      });
+    }
+  } catch { /* the word is an enhancement — the deck serves without it */ }
+  const machineOf = (id: string) => machineByAtom.get(id) ?? null;
   const taggedMustRespond = mustRespondOut
-    ? { ...mustRespondOut, items: (mustRespondOut.items ?? []).map((m: { itemId: string; initiative?: string | null }) => ({ ...m, initiative: tagByAtom.get(m.itemId) ?? m.initiative ?? null })) }
+    ? { ...mustRespondOut, items: (mustRespondOut.items ?? []).map((m: { itemId: string; initiative?: string | null }) => ({ ...m, initiative: tagByAtom.get(m.itemId) ?? m.initiative ?? null, machine: machineOf(m.itemId) })) }
     : mustRespondOut;
   // THE ANTICIPATION PASS (initiative loop) — walks the near future in after(); self-gated to
   // one run per 6h, hard-capped, judge-gated. Most runs fire nothing (silence is a verdict).
@@ -1609,5 +1645,5 @@ export async function GET() {
     } catch { /* the brief already served */ }
   });
 
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => ({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null })), mustRespond: taggedMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities, commitments: commitments.map((c) => ({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null })), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, projectByAtom, briefing: cachedBriefing, trackedProjects, mail });
+  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => ({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null, machine: machineOf(n.itemId) })), mustRespond: taggedMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities.map((p) => ({ ...p, machine: p.itemId ? machineOf(p.itemId) : null })), commitments: commitments.map((c) => ({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null, machine: machineOf(c.id) })), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, projectByAtom, briefing: cachedBriefing, trackedProjects, mail });
 }

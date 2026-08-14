@@ -21,7 +21,7 @@ export interface ItemContext {
 }
 
 const EMAIL_RE = /[^\s<>"]+@[^\s<>"]+\.[^\s<>"]+/;
-const extractEmail = (s?: string | null): string | null => (s ? (s.match(EMAIL_RE)?.[0] ?? null) : null);
+const extractEmail = (s?: string | null): string | null => (s ? (s.match(EMAIL_RE)?.[0]?.replace(/[.,;:!?)\]]+$/, '') ?? null) : null); // B5: trailing-punctuation trim
 
 // INITIATIVE CONTEXT (S5b) — the wider initiative this item belongs to, from the durable Initiative Brain
 // state (where it stands · whoOwes · stage). Read-only, cheap (a keyed lookup, no AI). Lets the planner reason

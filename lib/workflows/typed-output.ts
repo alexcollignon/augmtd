@@ -12,6 +12,24 @@ export type TypedDeliverable =
   | { type: 'presentation'; content: PptxContent; remainder: string };
 
 const FENCE_RE = /```(spreadsheet|slides)\s*\n([\s\S]*?)```/;
+const FENCE_RE_ALL = /```(spreadsheet|slides)\s*\n([\s\S]*?)```/g;
+
+/** MULTI-DELIVERABLE (plan AF tail): "the report AND the deck" — an output may carry SEVERAL
+ *  typed fences; each valid one becomes its own file (raw fence text kept so the door can
+ *  re-parse it), the prose around them the hand-back/report. Invalid fences drop individually
+ *  (the rest still materialize). */
+export function parseTypedDeliverables(output: string): { deliverables: Array<{ typed: TypedDeliverable; raw: string }>; remainder: string } {
+  const deliverables: Array<{ typed: TypedDeliverable; raw: string }> = [];
+  let remainder = output;
+  for (const m of output.matchAll(FENCE_RE_ALL)) {
+    const one = parseTypedDeliverable(m[0]);
+    if (one) {
+      deliverables.push({ typed: one, raw: m[0] });
+      remainder = remainder.replace(m[0], '');
+    }
+  }
+  return { deliverables: deliverables.slice(0, 4), remainder: remainder.trim() };
+}
 
 export function parseTypedDeliverable(output: string): TypedDeliverable | null {
   try {
@@ -79,4 +97,6 @@ export const TYPED_OUTPUT_RULE =
   `\`\`\`spreadsheet\n{"title":"…","sheets":[{"name":"…","headers":["…"],"rows":[["…"]]}]}\n\`\`\` or ` +
   `\`\`\`slides\n{"title":"…","slides":[{"title":"…","layout":"content","bullets":["…"]}]}\n\`\`\` — ` +
   `with your short hand-back note as plain text around it. Reports, briefs, forms, and prose ` +
-  `stay MARKDOWN (they become formatted documents). Never force tabular shape onto prose.`;
+  `stay MARKDOWN (they become formatted documents). Never force tabular shape onto prose. ` +
+  `If the request genuinely asks for SEVERAL deliverables (e.g. a report AND a deck), emit ` +
+  `each typed one as its OWN fenced block; report prose stays markdown alongside them.`;

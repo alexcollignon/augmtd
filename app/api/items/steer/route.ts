@@ -24,12 +24,33 @@ export async function POST(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const body = (await request.json()) as { kind?: SteerKind; id?: string; text?: string };
+    const body = (await request.json()) as {
+      kind?: SteerKind; id?: string; text?: string;
+      /** THE FORWARD-MOTION LAW (plan AK): a decision-card choice arrives WITH its contract —
+       *  the option, its trade-off, the recommendation's why — so the core executes the
+       *  consequence instead of re-interpreting its own menu label as ambiguous free text
+       *  (found live: picking "Request clarifications" earned a clarifying question BACK). */
+      decision?: { option?: string; tradeoff?: string | null; why?: string | null };
+    };
     const kind = body.kind && VALID.includes(body.kind) ? body.kind : null;
     const id = body.id?.trim();
     // Same paste ceiling as the Home door — pasted source material must reach the brain whole.
-    const text = (body.text ?? '').trim().slice(0, 20000);
+    let text = (body.text ?? '').trim().slice(0, 20000);
     if (!kind || !id || !text) return NextResponse.json({ error: 'kind, id and text required' }, { status: 400 });
+    if (body.decision?.option) {
+      const d = body.decision;
+      text =
+        `DECISION MADE — the user picked an option from the decision card WE authored on this item. ` +
+        `Their choice: "${String(d.option).slice(0, 160)}".` +
+        (d.tradeoff ? ` (Its stated trade-off: ${String(d.tradeoff).slice(0, 220)})` : '') +
+        (d.why ? ` (Context: ${String(d.why).slice(0, 260)})` : '') +
+        ` EXECUTE the consequence NOW — usually drafting the reply/communication that enacts this choice ` +
+        `on this item (e.g. a "request clarifications" choice means DRAFT the message asking the ` +
+        `counterparty for the missing specifics). THE DELIVERABLE IS THE MESSAGE ITSELF — a clean, ` +
+        `ready-to-send reply in the user's voice: no notes, no thinking process, no meta-commentary. ` +
+        `NEVER ask the user what they meant — we wrote the option. A genuinely missing detail becomes ` +
+        `a stated assumption or a [CONFIRM: …] slot in the draft, never a question back.`;
+    }
 
     const scope: ConverseScope = kind === 'entity'
       ? { kind: 'entity', entityId: id }

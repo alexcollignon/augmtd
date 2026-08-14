@@ -234,8 +234,11 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   check('P8 · verdict-first mount (composer starts closed; cached verdict hydrates pre-paint)',
     detail.includes('const [composerOpen, setComposerOpen] = useState(false)') &&
     detail.includes('aug-item-verdict-inbox-') && detail.includes('VERDICT-FIRST MOUNT'));
+  // RE-POINTED (Aug 13, THE MACHINE plan AL): the stage decision card is DELETED — ONE onChoose
+  // per door (the deep-dive's rail + the entity room's mirror), each echoing the pick as a user turn.
   check('P8 · choosing a decision option is VISIBLE (the choice + the answer land as room turns)',
-    (detail.match(/pushDealTurn\(roomKey, label, \{ role: 'user' \}\)/g)?.length ?? 0) >= 2);
+    (detail.match(/pushDealTurn\(roomKey, label, \{ role: 'user' \}\)/g)?.length ?? 0) >= 1 &&
+    src('components/entities/entity-room.tsx').includes("pushDealTurn(entityId, label, { role: 'user' })"));
   check('P8 · engine turns carry their item chip (a shared deal room is never ambiguous)',
     src('lib/prepare/pass.ts').includes('refs: [{ label: w.title.slice(0, 60)') &&
     src('lib/home/delegate.ts').includes('refs: [{ label: itemLabel.slice(0, 60)'));
@@ -377,9 +380,11 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   check('structural · the correction CASCADES (membership re-homes the item\'s engine turns) + a room reset exists',
     src('lib/entities/membership.ts').includes("from('room_turns').update({ room_key: newRoomKey })") &&
     src('app/api/room/turns/route.ts').includes('export async function DELETE') &&
-    // Aug 7 (speak-consequence): "Clear" became "New session" — the reset survives, the verb
-    // says what happens (a fresh session; the old one files under Earlier sessions).
-    src('components/home/item-rail.tsx').includes('Start a fresh session'));
+    // RE-POINTED (Aug 13, THE CONTAINERS LAW plan AM): the rail carries NO session chrome — a room
+    // is a continuous work record ("there is no new session of reality"); the reset door survives
+    // at the data layer (DELETE above) and All-conversations keeps deletion/restore.
+    !src('components/home/item-rail.tsx').includes('Start a fresh session') &&
+    !src('components/home/item-rail.tsx').includes('viewingSession'));
   check('structural · membership changes broadcast; every reader refetches (chip↔rail coherence)',
     src('components/entities/add-to-work-control.tsx').includes('aug:membership-changed') &&
     src('components/home/item-detail.tsx').includes("addEventListener('aug:membership-changed'"));
@@ -436,10 +441,10 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     src('lib/entities/adopt.ts').includes('adopted with') &&
     src('app/api/entities/adopt/route.ts').includes('adoptEntity') &&
     src('components/home/item-rail.tsx').includes("act: 'adopt'"));
-  check('P14 · conversation HISTORY: Clear archives (a session boundary, never a deletion); sessions listable',
+  check('P14 · conversation HISTORY: archive is a boundary, never a deletion (data-side survives); the ROOM rail carries no session chrome (THE CONTAINERS LAW — one continuous record; sessions live on the chief chat only)',
     src('lib/room/turns.ts').includes('archiveRoomTurns') && src('lib/room/turns.ts').includes('listRoomSessions') &&
     src('app/api/room/turns/route.ts').includes('archiveRoomTurns(') &&
-    src('components/home/item-rail.tsx').includes('Back to current'));
+    !src('components/home/item-rail.tsx').includes('Back to current'));
 
   // ═══ P15 · A DECK ROW NEVER WEARS AN UNTRACKED PROJECT'S NAME (row tags, slipping, bundle fallback) ═══
   check('P15 · row tags gate at the ONE derivation point (clusterTag → tracked canonical; slipping tracked-only; bundle-title fallback gated)',
@@ -993,7 +998,11 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   // truncated deliverables are machine-caught — and the REAL accounts carry zero violations. ═══
   check('P26 · the staging law is structural (provenance gate · code-checked evidence · one-file-one-label · shared verifier at every attach door · chip dedup · truncation floor)',
     src('lib/prepare/requirements.ts').includes('THE STAGING LAW') &&
-    src('lib/prepare/requirements.ts').includes('normText(`${cand.filename} ${cand.snippet}`).includes(normText(evidence))') &&
+    // RE-POINTED (Aug 13, ask-journey D2): the evidence check is still CODE-VERIFIED — every
+    // evidence token must exist in the candidate's own text — but survives word-order variance
+    // (substring-only rejected the RIGHT file ~2/3 of runs).
+    src('lib/prepare/requirements.ts').includes('candText.includes(evNorm)') &&
+    src('lib/prepare/requirements.ts').includes('evTokens.every((t) => candText.includes(t))') &&
     src('lib/prepare/requirements.ts').includes('one file, one label') &&
     (src('lib/prepare/pass.ts').match(/verifyArtifactMatch/g)?.length ?? 0) >= 2 &&
     src('lib/prepare/read.ts').includes('IDENTICAL artifacts collapse to one') &&

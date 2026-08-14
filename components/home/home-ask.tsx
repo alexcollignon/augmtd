@@ -17,28 +17,12 @@ import { AnchoredPopover } from '@/components/ui/anchored-popover';
 import { EmailDraftCard, type EmailDraftData } from '@/components/workers/email-draft-card';
 import { WorkflowDraftCard, type WorkflowDraft } from '@/components/workflows/workflow-draft-card';
 import { ThreadArtifactsPanel } from '@/components/work/chat-artifact-panel';
+import { WorkerFace } from '@/components/work/worker-face';
 import type { DocumentArtifact } from '@/lib/types/inbox';
 // (BriefingBlock removed from the chat — Phase 3 F2: the prose brief duplicated the deck; the
 // composeBriefing machinery survives as the deck's ordering anchor + the daily report.)
 
 type Ref = { id: string; kind: string; label: string; href: string | null };
-// The coworker's FACE beside their name — the real headshot when the name maps to a seeded
-// role (/public/workers/*.png), an initial chip otherwise. Never for the narrator (no author).
-const WORKER_PNG: Record<string, string> = { clara: '/workers/clara.png', sofia: '/workers/sofia.png', luca: '/workers/luca.png', max: '/workers/max.png' };
-function WorkerFace({ name }: { name: string }) {
-  const first = name.split(' ')[0];
-  const src = WORKER_PNG[first.toLowerCase()];
-  if (src) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={src} alt="" className="h-7 w-7 rounded-full object-cover" />;
-  }
-  return (
-    <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100 text-[12px] font-semibold text-indigo-700" aria-hidden="true">
-      {first.charAt(0).toUpperCase()}
-    </span>
-  );
-}
-
 type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
   /** THE ABSORPTION (brick 1): a coworker's own reply carries their name — the one-narrator
    *  law's attribution, now in the Home panel. */
@@ -52,7 +36,18 @@ type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
   workflowDrafts?: Array<WorkflowDraft>;
   /** THE SENSIBLE ASK: one consequential decision as tappable options — a tap SPEAKS its `say`
    *  through the composer. Ephemeral scaffolding (never persisted); consumed on tap. */
-  options?: Array<{ label: string; say: string }> };
+  options?: Array<{ label: string; say: string }>;
+  /** When this turn was SPOKEN (ISO, from work_messages.created_at). Only loaded history carries
+   *  it — a live turn has no timestamp until it is reloaded. ONE CONTINUOUS THREAD (the Slack
+   *  model, owner, Aug 13): time is the only separator, so a date divider renders where two
+   *  consecutive dated turns fall on different days. */
+  at?: string };
+
+// ONE CONTINUOUS THREAD (owner, Aug 13 — the Slack model): a DM is never cut into sessions, so
+// the DAY is the only separator. Both helpers read the user's LOCAL day (a timestamp is a moment;
+// which day it belongs to is the reader's, not UTC's).
+const dayKey = (iso: string): string => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toDateString(); };
+const dayLabel = (iso: string): string => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
 // TYPEWRITER — the same streaming feel as the coworker chats. The answer arrives whole (JSON + refs need
 // the full text), so we REVEAL it progressively: ~3 chars/frame, a partial trailing [ref tag is trimmed
@@ -213,10 +208,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     // Close button). THE FRESH FLOOR applies here too (Aug 11, owner: "placeholder doesn't
     // update when clicking back in home"): leaving via Home resets to the EMPTY chief chat —
     // DM mode, turns, scope, and the stored key all clear; the conversation stays durable
-    // and reachable through its explicit doors (sidebar, History, All conversations).
+    // and reachable through its explicit doors (sidebar recents, All conversations).
     const onHomeReset = () => {
       setOpen(false);
-      setTurns([]); setTemp(false); setScope(null); setScopeHint(null); setDmHistory(null);
+      setTurns([]); setTemp(false); setScope(null); setScopeHint(null);
       workerRoomRef.current = null;
       try { localStorage.removeItem(CHAT_KEY_LS); } catch { /* no LS */ }
     };
@@ -333,12 +328,16 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       const roster = await getRoster();
       const name = roster.find((x) => x.id === agentId)?.name
         ?? String((d.thread as { title?: string } | null)?.title ?? 'Coworker').replace(/^Chat with /, '');
-      const loaded: Turn[] = (d.messages as Array<{ role: string; content: string; metadata?: { workflow_drafts?: WorkflowDraft[] } }>)
+      // Each loaded turn carries its OWN moment (work_messages.created_at, ascending from the
+      // route) — ONE CONTINUOUS THREAD (the Slack model, owner, Aug 13): the scroll-back IS the
+      // history, so the day boundary is the only separator the render needs.
+      const loaded: Turn[] = (d.messages as Array<{ role: string; content: string; created_at?: string; metadata?: { workflow_drafts?: WorkflowDraft[] } }>)
         .filter((m) => (m.role === 'user' || m.role === 'assistant') && (String(m.content ?? '').trim() || m.metadata?.workflow_drafts?.length))
         .map((m) => (m.role === 'user'
-          ? { role: 'user' as const, text: m.content }
+          ? { role: 'user' as const, text: m.content, ...(m.created_at ? { at: m.created_at } : {}) }
           : {
               role: 'assistant' as const, text: m.content, author: name.split(' ')[0],
+              ...(m.created_at ? { at: m.created_at } : {}),
               ...(m.metadata?.workflow_drafts?.length ? { workflowDrafts: m.metadata.workflow_drafts } : {}),
             }));
       // Brick 3: the thread's documents ride along — openable HERE, never a page away.
@@ -526,17 +525,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // "Chat with <name>" thread — found by title, created if absent; old v1 keys are orphaned.
   const dmKey = (agentId: string) => `aug-dm2-${agentId}`;
 
-  // THE DM HISTORY popover state + fetch (null = closed; [] = open, empty).
-  const [dmHistory, setDmHistory] = useState<Array<{ id: string; title: string; at: string | null }> | null>(null);
-  const toggleDmHistory = async () => {
-    if (dmHistory) { setDmHistory(null); return; }
-    const agent = workerRoomRef.current;
-    if (!agent) return;
-    try {
-      const d = await fetch(`/api/workers/dm-sessions?agent=${agent.id}`).then((r) => (r.ok ? r.json() : null));
-      setDmHistory((d?.sessions ?? []) as Array<{ id: string; title: string; at: string | null }>);
-    } catch { setDmHistory([]); }
-  };
+  // ONE CONTINUOUS THREAD (owner, Aug 13 — the Slack model): a coworker is a PERSON, the
+  // relationship is continuous, and time is the only separator. The DM-history popover and
+  // "New session" are gone — scroll-back is the history; the sidebar's All conversations still
+  // lists the thread. No session chrome sits between the user and their colleague.
   const dmThread = async (w: { id: string; name: string }): Promise<string | null> => {
     const k = dmKey(w.id);
     try { const c = localStorage.getItem(k); if (c) return c; } catch { /* no LS */ }
@@ -544,6 +536,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     const title = `Chat with ${w.name.split(' ')[0]}`;
     try {
       const d = await fetch(`/api/work/threads?agent_id=${w.id}`).then((r) => (r.ok ? r.json() : null));
+      // Past "New session" clicks may have left SEVERAL "Chat with <name>" threads behind; the
+      // continuous thread is the NEWEST one. `/api/work/threads` orders `updated_at` DESC (see
+      // app/api/work/threads/route.ts GET), so the first title match IS the most recent — the
+      // sort is the assumption this .find() rides on.
       id = ((d?.threads ?? []) as Array<{ id: string; title?: string | null }>)
         .find((t) => String(t.title ?? '').startsWith('Chat with'))?.id ?? null;
       if (!id) {
@@ -557,28 +553,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     if (id) { try { localStorage.setItem(k, id); } catch { /* no LS */ } }
     return id;
   };
-  // New session in a DM: a FRESH thread for the same relationship (the old one stays in All
-  // conversations); the scroll resets, the coworker's memory persists (it lives on the agent,
-  // not the thread).
-  const newDmSession = async () => {
-    const w = workerRoomRef.current;
-    if (!w) return;
-    setDmHistory(null);
-    try {
-      const c = await fetch('/api/work/threads', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: `Chat with ${w.name.split(' ')[0]}`, agentId: w.id }),
-      }).then((r) => (r.ok ? r.json() : null));
-      const tid = (c?.thread?.id as string) ?? null;
-      if (!tid) throw new Error();
-      try { localStorage.setItem(dmKey(w.id), tid); localStorage.setItem(CHAT_KEY_LS, `worker:${tid}:${w.id}`); } catch { /* no LS */ }
-      setTurns([{ role: 'assistant', text: `Fresh session with ${w.name.split(' ')[0]} — the old one is in All conversations.` }]);
-      window.dispatchEvent(new CustomEvent('aug:conversation-changed'));
-      setTimeout(() => focusComposer(), 120);
-    } catch {
-      setTurns((prev) => [...prev, { role: 'assistant', text: "Couldn't start a fresh session — try again." }]);
-    }
-  };
+  // (A DM has no "new session" door — see the one-continuous-thread law above.)
 
   const askWorker = async (
     question: string, w: { id: string; name: string },
@@ -813,7 +788,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // STREAMING ASK (Aug 6): SSE — `progress` events narrate the core's live stage (the busy
       // line speaks them), `done` carries the answer. A non-SSE response (error JSON) falls back.
       const res = await fetch('/api/home/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(attachments.length ? { attachments } : {}), ...(scope ? { entityId: scope.id } : {}) }) });
-      let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string }; workflowDraft?: WorkflowDraft } = {};
+      let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string }>; workflowDraft?: WorkflowDraft } = {};
       if (res.body && res.headers.get('content-type')?.includes('text/event-stream')) {
         const reader = res.body.getReader();
         const dec = new TextDecoder();
@@ -827,7 +802,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             const line = f.split('\n').find((l) => l.startsWith('data: '));
             if (!line) continue;
             try {
-              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string }; workflowDraft?: WorkflowDraft };
+              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string }>; workflowDraft?: WorkflowDraft };
               if (ev.type === 'progress' && ev.label) setStage(ev.label);
               else if (ev.type === 'token' && (ev as unknown as { t?: string }).t) { liveTextRef.current += (ev as unknown as { t: string }).t; setLiveText(liveTextRef.current); }
               else if (ev.type === 'token_reset') { liveTextRef.current = ''; setLiveText(''); }
@@ -840,8 +815,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       }
       // ARTIFACTS-INTO-ORIGIN (Aug 9): a dispatched deliverable's card rides the answer turn and
       // the viewer opens HERE — the conversation that asked holds the work.
-      const artCard = d.artifact
-        ? { cards: [{ label: d.artifact.title, sub: `document · by ${d.artifact.agentName.split(' ')[0]}`, art: { tid: d.artifact.threadId, id: d.artifact.id } }] }
+      const artList = d.artifacts?.length ? d.artifacts : d.artifact ? [d.artifact] : [];
+      const artCard = artList.length
+        ? { cards: artList.map((a) => ({ label: a.title, sub: `document · by ${a.agentName.split(' ')[0]}`, art: { tid: a.threadId, id: a.id } })) }
         : {};
       // A token-streamed answer already revealed itself — the typewriter must not re-type it.
       setTurns((prev) => { pendingAnimate.current = liveTextRef.current ? -1 : prev.length; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...artCard }]; });
@@ -892,46 +868,29 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             {/* THE TAKEOVER (Claude-feel): a live conversation gets a CHAT'S room to breathe —
                 tall column, same smooth grid morph in, composer fixed as the floor. */}
             {/* DM MODE IS LEGIBLE (owner, Aug 10 — "even in the DM we still have the mention
-                placeholder"): a quiet persistent header names the room; New session folds the
-                history (a new thread — the relationship persists, the scroll resets). */}
+                placeholder"): a quiet persistent header names the room, and NOTHING else.
+                ONE CONTINUOUS THREAD (owner, Aug 13 — the Slack model): a coworker is a person,
+                the relationship is continuous, so there is no History popover and no New session
+                — the SCROLL-BACK is the history (date dividers mark the days), and the sidebar's
+                All conversations still lists this thread. */}
             {workerRoomRef.current && (
-              <div className="relative flex items-center justify-between pb-2 mb-1 border-b border-neutral-100">
+              <div className="flex items-center pb-2 mb-1 border-b border-neutral-100">
                 <span className="text-[12px] font-medium text-neutral-500">Chat with {workerRoomRef.current.name.split(' ')[0]}</span>
-                <span className="flex items-center gap-3">
-                  {/* THE DM HISTORY (Aug 11, owner ask): past sessions with THIS coworker,
-                      user-voice-law filtered, titled by their own first ask. */}
-                  <button onClick={() => void toggleDmHistory()} className="text-[12px] text-neutral-400 hover:text-indigo-600 transition-colors">
-                    History
-                  </button>
-                  <button onClick={() => void newDmSession()} className="text-[12px] text-neutral-400 hover:text-indigo-600 transition-colors">
-                    New session
-                  </button>
-                </span>
-                {dmHistory && (
-                  <div className="absolute right-0 top-full mt-1.5 w-80 max-h-72 overflow-y-auto bg-white border border-neutral-200 shadow-lg rounded-xl z-30 py-1">
-                    {dmHistory.length === 0 ? (
-                      <p className="px-3 py-2.5 text-[12px] text-neutral-400">No past sessions yet.</p>
-                    ) : dmHistory.map((s) => (
-                      <button key={s.id}
-                        onClick={() => {
-                          setDmHistory(null);
-                          if (workerRoomRef.current) void loadWorkerRoom(`worker:${s.id}:${workerRoomRef.current.id}`);
-                        }}
-                        className="w-full text-left px-3 py-2 hover:bg-neutral-50 transition-colors">
-                        <span className="block truncate text-[12.5px] text-neutral-700">{s.title}</span>
-                        {s.at && <span className="block text-[10.5px] text-neutral-400 mt-0.5">{new Date(s.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>}
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
             )}
             <div ref={scrollRef} className="space-y-4 max-h-[calc(100vh-250px)] min-h-[40vh] overflow-y-auto [scrollbar-width:thin] pr-1 pb-3">
-              {turns.map((t, i) => (
-                t.role === 'user' ? (
-                  <div key={i} className="flex justify-end"><UserBubble text={t.text} /></div>
+              {turns.map((t, i) => {
+                // THE DATE DIVIDER (ONE CONTINUOUS THREAD, owner, Aug 13 — the Slack model):
+                // in a DM, time is the only separator. A hairline day marker renders where two
+                // consecutive DATED turns fall on different days. A live-session turn carries no
+                // `at` — it never gets a divider before it (we don't guess when it was spoken).
+                const prevAt = turns[i - 1]?.at;
+                const divider = workerRoomRef.current && t.at && prevAt && dayKey(t.at) !== dayKey(prevAt)
+                  ? dayLabel(t.at) : null;
+                const body = t.role === 'user' ? (
+                  <div className="flex justify-end"><UserBubble text={t.text} /></div>
                 ) : (
-                  <div key={i} className="pr-2">
+                  <div className="pr-2">
                     {/* A coworker's reply wears THEIR name AND face (the one-narrator law +
                         same-visual-same-meaning: the worker page and email signatures carry the
                         headshot — the Home DM must too). Name → role png; initial chip fallback. */}
@@ -983,8 +942,20 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                       </div>
                     )}
                   </div>
-                )
-              ))}
+                );
+                return (
+                  <React.Fragment key={i}>
+                    {divider && (
+                      <div className="flex items-center gap-2 pt-1">
+                        <span className="h-px flex-1 bg-neutral-100" />
+                        <span className="text-[11px] text-neutral-400">{divider}</span>
+                        <span className="h-px flex-1 bg-neutral-100" />
+                      </div>
+                    )}
+                    {body}
+                  </React.Fragment>
+                );
+              })}
               {busy && liveText && (
                 <div className="pr-2 text-[13.5px] leading-relaxed text-neutral-800 whitespace-pre-wrap">{liveText}<span className="inline-block w-0.5 h-4 ml-0.5 align-text-bottom bg-indigo-400 animate-pulse" /></div>
               )}

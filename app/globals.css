@@ -99,8 +99,19 @@ body {
 .rise-in-stagger > *:nth-child(8)  { animation-delay: 315ms; }
 .rise-in-stagger > *:nth-child(n+9){ animation-delay: 360ms; }
 
+/* THE SETTLE (T6, Aug 12 — the room flicker): reasoned surfaces paint last-good from cache and
+   the fresh recompose lands ~1s later with legitimately different wording — a hard text swap
+   mid-read registered as a glitch. `settle-in` is the ONE update motion: new content fades in
+   gently instead of snapping. Keyed on the content so React remounts (and animates) only when
+   the text actually changed. */
+@keyframes settle-in {
+  from { opacity: 0.25; }
+  to   { opacity: 1; }
+}
+.settle-in { animation: settle-in 380ms ease-out both; }
+
 @media (prefers-reduced-motion: reduce) {
-  .rise-in, .rise-in-stagger > *, .animate-prompt-in { animation: none; }
+  .rise-in, .rise-in-stagger > *, .animate-prompt-in, .settle-in { animation: none; }
   .aug-interactive { transition: none; }
   .aug-interactive:hover { transform: none; }
 }

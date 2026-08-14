@@ -50,7 +50,12 @@ export async function runAnticipationPass(client: DBClient, userId: string): Pro
       .order('start_time', { ascending: true }).limit(6);
     for (const ev of (events ?? []) as Array<{ id: string; title: string; start_time: string; attendees: unknown; timezone: string | null }>) {
       if (briefs >= MAX_BRIEFS_PER_RUN) break;
-      const fireKey = `meeting:${ev.id}`;
+      // THE RESCHEDULE RE-BRIEF (pilot diagnosis, Aug 13 — found live: a demo moved Mon→Thu on the
+      // SAME calendar row, and the bare-id fire key meant the room kept its Monday prep brief as
+      // standing guidance forever). The fire key carries the event's start — a moved meeting earns
+      // a corrected brief, and the turn's UNCHANGED dedupe key below REPLACES the old prep text
+      // in place (keyed dedupe updates), so the record never shows two competing briefings.
+      const fireKey = `meeting:${ev.id}:${String(ev.start_time).slice(0, 16)}`;
       const { data: fired } = await client.from('item_plans').select('id')
         .eq('user_id', userId).eq('kind', KIND).eq('entity_id', fireKey).maybeSingle();
       if (fired) continue;

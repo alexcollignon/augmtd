@@ -24,6 +24,9 @@ export type RoomEntity = {
   brief?: string | null;
   move?: { label: string; ref: string | null } | null;
   offers?: Array<{ label: string; say: string }>;
+  /** THE GROUND LAW — when the served brief was composed: engine narration older than this folds
+   *  under "earlier (N)" in the rail (the brief is the digest of that history). */
+  briefAt?: string | null;
 };
 
 export type RoomSiblings = {
@@ -64,7 +67,7 @@ export async function buildRoomView(
     ...(await (async () => {
       const { readRoomResponse } = await import('@/lib/room/brief');
       const r = await readRoomResponse(supabase, userId, entityId);
-      return { brief: r?.text ?? null, move: r?.move ?? null, offers: r?.offers ?? [] };
+      return { brief: r?.text ?? null, move: r?.move ?? null, offers: r?.offers ?? [], briefAt: r?.at ?? null };
     })()),
   };
 

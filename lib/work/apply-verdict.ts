@@ -31,6 +31,21 @@ export async function applyVerdictConsequences(
     // an item or stripping a prepared draft on the back of an AI outage would destroy real work.
     if (verdict.failed) return out;
 
+    // ── 0b. ASK–VERDICT COHERENCE (plan AJ, owner's find: a "reply draft" ask survived the
+    // verdict's move to `decide` and sat beside a brief claiming everything prepared — three
+    // subsystems, three claims). An ask lives WITH the verdict that spawned it: when the judged
+    // work-class no longer takes requires (or the verdict carries none), the item's requires-asks
+    // settle (component stripped, ledger text kept). Deterministic — no model in the loop. ──
+    // Class-scoped on purpose: a reply/send_file/produce verdict WITHOUT requires may still have
+    // a live coworker ask (delegate needsInput) that is genuinely the user's to answer — only a
+    // verdict whose WORK CLASS takes no inputs at all settles the item's asks.
+    if (verdict.work !== 'none' && !['reply', 'send_file', 'produce'].includes(verdict.work)) {
+      try {
+        const { settleAsksForItem } = await import('@/lib/room/turns');
+        await settleAsksForItem(client, userId, input.kind === 'commitment' ? 'commitment' : 'inbox_item', input.id);
+      } catch { /* coherence is an enhancement — the verdict still applies */ }
+    }
+
     // ── 1. RESOLUTION from a dispositioned none. ──
     if (verdict.work === 'none' && (verdict.resolution === 'expired' || verdict.resolution === 'answered')) {
       const now = new Date().toISOString();
@@ -111,7 +126,26 @@ export async function applyVerdictConsequences(
         if (!(sd.draft as Record<string, unknown>)?.body && !(sd.nudge_draft as Record<string, unknown>)?.body
           && !sd.prepared_invite && !sd.prepared_forward) delete sd.prepared_by;
         await client.from('inbox_items').update({ source_data: sd }).eq('id', input.id).eq('user_id', userId);
-        // The narration must follow the work it narrated (never a stale "drafted" line).
+      }
+      // ── THE NARRATION FOLLOWS ITS ARTIFACT — UNGATED (found live, Aug 14: the draft died
+      // through another door a day earlier, `changed` stayed false here, and "Clara drafted the
+      // reply — it's ready to review" survived its draft into a decide verdict as a standing lie).
+      // A prep narration may survive ONLY while the CURRENT verdict's lane still holds its
+      // artifact; otherwise it deletes — idempotent, and the pass re-narrates the current lane
+      // the next time it prepares. (Commitment narrations live on pool rows whose writers
+      // replace them keyed — this door covers the inbox sd lanes + the pool-backed verbs.) ──
+      let narrationBacked = false;
+      if (verdict.work === 'reply' || verdict.work === 'send_file') narrationBacked = !!(sd.draft as Record<string, unknown>)?.body;
+      else if (verdict.work === 'chase') narrationBacked = !!(sd.nudge_draft as Record<string, unknown>)?.body;
+      else if (verdict.work === 'schedule') narrationBacked = !!sd.prepared_invite;
+      else if (verdict.work === 'forward') narrationBacked = !!sd.prepared_forward;
+      else if (verdict.work === 'produce' || verdict.work === 'decide') {
+        const { data: poolArt } = await client.from('item_deliverables').select('id')
+          .eq('user_id', userId).eq('kind', 'email').eq('entity_id', input.id)
+          .in('task_id', ['prepare-pass', 'decision-brief']).limit(1).maybeSingle();
+        narrationBacked = !!poolArt;
+      }
+      if (!narrationBacked) {
         await client.from('room_turns').delete().eq('user_id', userId).eq('dedupe_key', `prep:inbox:${input.id}`).then(() => {}, () => {});
       }
     }

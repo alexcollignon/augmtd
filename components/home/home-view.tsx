@@ -60,7 +60,10 @@ const GROUP_STATE_TONE: Record<GroupStateTone, { dot: string; text: string; bg: 
 type Tldr = { teaser: string; bullets: string[]; dontMiss: string | null };
 type Followups = { teaser: string; items: { id?: string; who: string; status: string; nextMove: string }[]; closing: string | null };
 type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'newsletter' }[]; tailGroups: number; tailItems: number };
-type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string; draft?: string | null; preparedBy?: string | null; subject?: string; snippet?: string; receivedAt?: string; effort?: 'quick' | 'medium' | 'deep' | null; dueDate?: string | null; initiative?: string | null; initiativeTotal?: number | null }[] };
+// THE MACHINE'S ONE WORD (experience-spec, Part "THE MACHINE") — the served lifecycle of an actionable
+// row. Optional on every lane: a cached brief written before it existed simply carries no field.
+type MachineHint = { state: string; word: string | null; surfaced?: boolean };
+type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string; draft?: string | null; preparedBy?: string | null; subject?: string; snippet?: string; receivedAt?: string; effort?: 'quick' | 'medium' | 'deep' | null; dueDate?: string | null; initiative?: string | null; initiativeTotal?: number | null; machine?: MachineHint | null }[] };
 type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
 // "For your awareness" — REAL correspondence you're only informed on (understanding=awareness):
 // real people, real work, no move expected. Distinct from the `noted` newsletter/promotion bulk,
@@ -70,7 +73,7 @@ type ForYourAwareness = { itemId: string; who: string; summary: string }[];
 // NOT a reply-to-a-person (payment failed, security alert, account expiring, storage full, "pay for
 // your booking"). Its OWN home, separate from replies ("What needs you") so notices don't clutter the
 // reply lane. Same row shape as For-your-awareness (sender + grounded one-liner + deep-dive + dismiss).
-type ActionNotices = { itemId: string; who: string; summary: string; preparedBy?: string | null; dueDate?: string | null; initiative?: string | null }[];
+type ActionNotices = { itemId: string; who: string; summary: string; preparedBy?: string | null; dueDate?: string | null; initiative?: string | null; machine?: MachineHint | null }[];
 type Brief = {
   firstName: string | null;
   briefLine: string | null;
@@ -83,8 +86,8 @@ type Brief = {
   keepAnEyeOn?: KeepAnEyeOn | null;
   status: { needsReply: number; meetingsToday: number; waitingOn: number; handledToday: number };
   dayProgress?: { cleared: number; needYou: number };
-  priorities: Priority[];
-  commitments: { id: string; description: string; prepared?: string | null; counterparty: string | null; dueDate: string | null; overdue: boolean; dueToday: boolean; initiative?: string | null; initiativeTotal?: number | null }[];
+  priorities: (Priority & { machine?: MachineHint | null })[];
+  commitments: { id: string; description: string; prepared?: string | null; counterparty: string | null; dueDate: string | null; overdue: boolean; dueToday: boolean; initiative?: string | null; initiativeTotal?: number | null; machine?: MachineHint | null }[];
   waitingOn: { id: string; description: string; counterparty: string | null; ageDays: number; initiative?: string | null; initiativeTotal?: number | null }[];
   schedule: { id: string; time: string; localTime?: string; title: string; attendees: number; prep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null }[];
   handled?: { triaged: number; filtered: number; summarised: number; tracked: number; resolved: number };
@@ -727,11 +730,39 @@ function ActionNoticeRow({ a, onDismiss, onUndoInbox }: { a: { itemId: string; w
 // into DoItems, so every deck entry renders through the SAME component with the SAME anatomy and the
 // SAME action system — one primary verb by posture + the quiet ✓ ✕ pair. Depth (a meeting's nested
 // action items, a deal's next move) lives in the deep-dive, not in per-species card chrome. ──
-function priorityToItem(p: Priority): DoItem {
+// ── THE MACHINE'S ONE WORD, rendered QUIET (experience-spec Part "THE MACHINE" + the laws: speak
+// consequence · one CTA row · earned calm). The state word rides the row's muted meta line — the one
+// grey the deck already uses — and adds NO affordance: the row's own click stays the door. Two silences
+// are deliberate: transient/terminal states say nothing, and `awaiting_approval` says nothing on a row
+// whose prepared chip already carries that exact meaning (one meaning, one signal). ──
+const MACHINE_SILENT = new Set(['preparing', 'unjudged', 'settled']);
+function machineWord(m: MachineHint | null | undefined, prepared?: string | null): string | null {
+  if (!m) return null;
+  // THE SURFACING DELTA (Aug 14): a first-judged-today item entering the deck says WHY it
+  // appeared — backlog drain reads as the system catching up, never as a random pop-in.
+  const stateWord = (!m.word || MACHINE_SILENT.has(m.state) || (m.state === 'awaiting_approval' && prepared)) ? null : m.word;
+  const parts = [m.surfaced ? 'surfaced today' : null, stateWord].filter(Boolean);
+  return parts.length ? parts.join(' · ') : null;
+}
+// ONE CLAIM PER ROW (Aug 14, found live: a row wore "Review & send" + "ready" + "needs one
+// thing from you" at once — three subsystems speaking adjacently). The machine's ladder already
+// says the ask outranks the send; the row chrome obeys: in an ask-bearing state the prepared
+// chip and its send-flavored CTA yield to the supply/decide claim (the draft stays reachable
+// on the door — the row's word says what is actually next).
+const ASK_STATES = new Set(['awaiting_input', 'awaiting_decision']);
+const oneClaimPrepared = (prepared: string | null | undefined, m: MachineHint | null | undefined): string | null =>
+  (m && ASK_STATES.has(m.state) ? null : (prepared ?? null));
+/** Fold the word into the row's muted second line ('Action needed' is boilerplate the row drops). */
+function withMachineWord(second: string | null, word: string | null): string | null {
+  if (!word) return second;
+  return second && second !== 'Action needed' ? `${second} · ${word}` : word;
+}
+function priorityToItem(p: Priority & { machine?: MachineHint | null }): DoItem {
   return {
     source: p.posture === 'needs_reply' ? 'reply' : 'notice',
     key: p.id, entityId: p.itemId ?? p.id, href: p.href,
-    ask: cleanTitle(p.title), second: p.context ?? (p.items?.length ? `${p.items.length} action item${p.items.length > 1 ? 's' : ''}` : null),
+    ask: cleanTitle(p.title),
+    second: withMachineWord(p.context ?? (p.items?.length ? `${p.items.length} action item${p.items.length > 1 ? 's' : ''}` : null), machineWord(p.machine)),
     overdue: p.overdue, dueDate: p.dueDate ?? null, effort: p.effort ?? null,
     initiative: p.initiative ?? null, initiativeTotal: p.initiativeTotal ?? null,
   };
@@ -1704,24 +1735,26 @@ export function HomeView() {
   const agendaReplyItems: DoItem[] = bodyReplies.map((m) => ({
     source: 'reply', key: `r-${m.itemId}`, entityId: m.itemId, href: door(m.itemId, `/item/${m.itemId}${enc(m.angle)}`),
     // Only show a "what to do" line when the synthesis produced a DISTINCT one — never echo the subject.
-    primary: m.who, ask: cleanTitle((m.ask && m.ask.trim() && m.ask.trim() !== (m.subject ?? '').trim()) ? m.ask : ''), second: m.subject ? cleanTitle(m.subject) : null,
+    primary: m.who, ask: cleanTitle((m.ask && m.ask.trim() && m.ask.trim() !== (m.subject ?? '').trim()) ? m.ask : ''),
+    second: withMachineWord(m.subject ? cleanTitle(m.subject) : null, machineWord(m.machine, m.preparedBy ?? (m.draft ? 'draft' : null))),
     when: fmtWhen(m.receivedAt), effort: m.effort ?? null, dueDate: m.dueDate ?? null, initiative: m.initiative ?? null, initiativeTotal: m.initiativeTotal ?? null,
     relCue: b?.personCues?.[m.itemId] ?? null,
-    prepared: m.preparedBy ?? (m.draft ? 'draft' : null),
+    prepared: oneClaimPrepared(m.preparedBy ?? (m.draft ? 'draft' : null), m.machine),
   }));
   const agendaNoticeItems: DoItem[] = (b?.actionNotices ?? []).filter((a) => !clearedIds.has(a.itemId) && !dismissed.has(a.itemId)).map((a) => ({
     source: 'notice', key: `n-${a.itemId}`, entityId: a.itemId, href: door(a.itemId, `/item/${a.itemId}?kind=email`),
-    primary: a.who || null, ask: cleanTitle(a.summary), second: 'Action needed',
+    primary: a.who || null, ask: cleanTitle(a.summary),
+    second: withMachineWord('Action needed', machineWord(a.machine, a.preparedBy ?? null)),
     dueDate: a.dueDate ?? null, overdue: !!a.dueDate && a.dueDate < todayISOStr,
     initiative: a.initiative ?? null,
-    prepared: a.preparedBy ?? null,
+    prepared: oneClaimPrepared(a.preparedBy ?? null, a.machine),
   }));
   const agendaCommitItems: DoItem[] = looseCommitments.map((c) => ({
     source: 'commitment', key: `c-${c.id}`, entityId: c.id, href: door(c.id, `/item/${c.id}?kind=commitment`),
     primary: null, ask: c.description,
-    second: c.counterparty ? (/^from /i.test(c.counterparty) ? c.counterparty : `You owe ${c.counterparty}`) : null,
+    second: withMachineWord(c.counterparty ? (/^from /i.test(c.counterparty) ? c.counterparty : `You owe ${c.counterparty}`) : null, machineWord(c.machine, c.prepared ?? null)),
     overdue: c.overdue, dueToday: c.dueToday, dueDate: c.dueDate ?? null, initiative: c.initiative ?? null, initiativeTotal: c.initiativeTotal ?? null,
-    prepared: c.prepared ?? null,
+    prepared: oneClaimPrepared(c.prepared ?? null, c.machine),
   }));
   const liveDeals = (b?.slippingDeals ?? []).filter((d) => !dismissedDeals.has(d.key));
   // THE BRIEF de-dup: items the brain SENTENCED live in the prose — they leave the deck (hero kept).

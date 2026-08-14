@@ -2,7 +2,7 @@ import {
   Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
   LevelFormat, convertInchesToTwip,
   Table, TableRow, TableCell, WidthType, BorderStyle, ShadingType,
-  Header, Footer, ImageRun,
+  Header, Footer, ImageRun, TabStopType,
 } from 'docx';
 import type { DeliverableType, DocContent, PptxContent, XlsxContent, ArtifactContent } from '@/lib/types/inbox';
 import type { DocTheme } from '@/lib/documents/theme';
@@ -227,10 +227,27 @@ export function buildDocx(content: DocContent, options?: { pageSize?: 'letter' |
         },
       },
       // The letterhead: logo top-right (true aspect, ~0.35in tall), footer line bottom-left.
+      // THE DUAL-LOGO COVER: a second mark (author × client) puts the primary logo LEFT and
+      // the second RIGHT on the same header line (right tab stop) — the co-brand layout.
       ...(theme?.logo ? {
         headers: {
           default: new Header({
-            children: [new Paragraph({
+            children: [theme.logo2 ? new Paragraph({
+              tabStops: [{ type: TabStopType.RIGHT, position: 9360 }],
+              children: [
+                new ImageRun({
+                  type: 'png',
+                  data: Buffer.from(theme.logo.dataB64, 'base64'),
+                  transformation: { height: 26, width: Math.max(26, Math.round(26 * (theme.logo.w / theme.logo.h))) },
+                }),
+                new TextRun({ text: '\t' }),
+                new ImageRun({
+                  type: 'png',
+                  data: Buffer.from(theme.logo2.dataB64, 'base64'),
+                  transformation: { height: 26, width: Math.max(26, Math.round(26 * (theme.logo2.w / theme.logo2.h))) },
+                }),
+              ],
+            }) : new Paragraph({
               alignment: AlignmentType.RIGHT,
               children: [new ImageRun({
                 type: 'png',
@@ -282,6 +299,9 @@ export async function buildPptx(content: PptxContent, theme?: DocTheme | null): 
   const logoDataUrl = theme?.logo ? `data:${theme.logo.mime};base64,${theme.logo.dataB64}` : null;
   const logoH = 0.3;
   const logoW = theme?.logo ? Math.max(0.3, Math.round(100 * logoH * (theme.logo.w / theme.logo.h)) / 100) : 0;
+  // THE DUAL-LOGO COVER: the second mark (client) sits TOP-RIGHT of every slide — co-brand.
+  const logo2DataUrl = theme?.logo2 ? `data:${theme.logo2.mime};base64,${theme.logo2.dataB64}` : null;
+  const logo2W = theme?.logo2 ? Math.max(0.3, Math.round(100 * logoH * (theme.logo2.w / theme.logo2.h)) / 100) : 0;
 
   pres.layout = 'LAYOUT_WIDE'; // 16:9
 
@@ -392,9 +412,13 @@ export async function buildPptx(content: PptxContent, theme?: DocTheme | null): 
         });
       }
 
-      // The letterhead corner: logo bottom-right + footer line bottom-left.
+      // The letterhead corner: logo bottom-right + footer line bottom-left; a second mark
+      // (the co-brand) top-right.
       if (logoDataUrl) {
         s.addImage({ data: logoDataUrl, x: 13.33 - logoW - 0.25, y: 7.5 - logoH - 0.15, w: logoW, h: logoH });
+      }
+      if (logo2DataUrl) {
+        s.addImage({ data: logo2DataUrl, x: 13.33 - logo2W - 0.25, y: 0.15, w: logo2W, h: logoH });
       }
       if (theme?.footer || theme?.brandName) {
         s.addText([theme?.footer, theme?.brandName].filter(Boolean).join(' · '), {

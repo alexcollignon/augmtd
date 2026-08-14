@@ -51,7 +51,36 @@ export async function generateReplyDraft(
   const from = String(sourceData.from || sourceData.from_address || '');
   const fromName = String(sourceData.from_name || '');
   const subject = String(sourceData.subject || '');
-  const body = String(sourceData.body || '');
+  let body = String(sourceData.body || '');
+  // THE GROUND LAW, content half (Aug 13, found live by the ground-walk fixture: a re-draft after
+  // the counterparty moved a meeting still confirmed the OLD time): the stored sourceData holds the
+  // thread's FOUNDING message forever — a reply must answer the thread's PRESENT. When a newer
+  // inbound exists, ITS words are the material (quote-stripped to the sender's own words per THE
+  // TOP MESSAGE law) and the founding message demotes to context. One fix here upgrades every
+  // drafting door (sweep · on-demand route · the pass).
+  let earlierContext = '';
+  try {
+    const tid = String(sourceData.thread_id || '');
+    if (tid) {
+      const { data: last } = await client.from('emails').select('body, received_at')
+        .eq('user_id', userId).eq('thread_id', tid).eq('is_from_user', false)
+        .order('received_at', { ascending: false }).limit(1).maybeSingle();
+      const lastBody = String(last?.body ?? '').trim();
+      const storedAt = Date.parse(String(sourceData.received_at || '')) || 0;
+      const lastAt = Date.parse(String(last?.received_at || '')) || 0;
+      if (lastBody && lastAt > storedAt) {
+        const { topMessageOf } = await import('@/lib/inbox/top-message');
+        const top = topMessageOf(lastBody);
+        if (top && top.trim()) {
+          earlierContext = body ? `
+--- EARLIER IN THE THREAD (context only — the reply answers the newest message above) ---
+${body.slice(0, 1200)}
+` : '';
+          body = top;
+        }
+      }
+    }
+  } catch { /* no thread resolvable — the stored body stands */ }
 
   // The unified `understanding` (coerced up-front) — its `initiative` grounds the Brain-context read below.
   const understanding = coerceUnderstanding((sourceData as Record<string, unknown>).understanding);
@@ -118,7 +147,7 @@ export async function generateReplyDraft(
       `Return ONLY the reply body — no subject line, no preamble, no ` +
       `surrounding quotes. Keep it appropriately concise and ready to send.\n\n` +
       `--- EMAIL TO REPLY TO ---\n` +
-      `From: ${from}\nSubject: ${subject}\n\n${body.slice(0, 3000)}\n\n` +
+      `From: ${from}\nSubject: ${subject}\n\n${body.slice(0, 3000)}\n${earlierContext}\n` +
       // LANGUAGE RULE — LAST, so it wins over the voice examples above (recency + explicit target).
       langRule }],
   });
