@@ -49,6 +49,18 @@ async function main() {
       .eq('provider', 'slack-sofia').select('id');
     if (!error) slackDropped = conns?.length ?? 0; else console.log(`  ! slack rows: ${error.message}`);
   }
+  // ── THE LUCA REBRAND REACHES EXISTING ROWS (the seed is insert-only — without this, every
+  // existing user's Luca keeps the LinkedIn-era instructions/description in the DB, which the
+  // UI and the native loop read; worker instructions are not user-editable, so overwrite-safe). ──
+  const { buildWorkers } = await import('@/lib/workers/seed');
+  const luca = buildWorkers('x').find((w) => w.worker_role === 'linkedin_drafter')!;
+  const { data: lucas, error: lucaErr } = APPLY
+    ? await sb.from('custom_agents')
+        .update({ instructions: luca.instructions, description: luca.description, conversation_starters: luca.conversation_starters })
+        .eq('worker_role', 'linkedin_drafter').eq('is_worker', true).select('id')
+    : { data: [], error: null };
+  if (lucaErr) console.log(`  ! luca rebrand: ${lucaErr.message}`);
+  else if (APPLY) console.log(`  luca rows rebranded: ${lucas?.length ?? 0}`);
   console.log(`${APPLY ? 'APPLIED' : 'WOULD APPLY'}: deactivated=${deactivated} workflowsRehomed=${rehomed} skillsDropped=${skillsDropped} slackConnectionsDropped=${slackDropped}`);
   process.exit(0);
 }
