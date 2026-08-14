@@ -896,7 +896,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                         headshot — the Home DM must too). Name → role png; initial chip fallback. */}
                     {t.author && (
                       <span className="mb-1.5 flex items-center gap-2">
-                        <WorkerFace name={t.author} />
+                        {/* size 28 — owner call, Aug 12 ("bigger coworker faces in chat"); the shared
+                            WorkerFace defaults to 20 for inline bylines, chat headers stay larger. */}
+                        <WorkerFace name={t.author} size={28} />
                         <span className="text-[12.5px] font-semibold text-indigo-600">{t.author.split(' ')[0]}</span>
                       </span>
                     )}
