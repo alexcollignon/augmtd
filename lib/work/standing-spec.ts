@@ -59,7 +59,7 @@ export async function buildStandingSpec(
         `own intent (never embellished); "cron" = standard 5-field cron matching the STATED cadence ` +
         `(unstated time of day → 08:00; unstated weekday for "weekly" → Monday); "cadence_label" = the ` +
         `human phrasing ("every Monday 08:00"); "owner_role" = the team role whose CRAFT fits (research → ` +
-        `research_analyst, writing/reports/admin/prep → personal_assistant, branding/LinkedIn → linkedin_drafter).` +
+        `research_analyst, writing/reports/admin/prep → personal_assistant, branding/LinkedIn → branding_expert).` +
         (repair ? `\nYOUR PREVIOUS CRON WAS INVALID (${repair}) — fix it.` : '') +
         `\nJSON only: {"name":"…","deliverable":"…","cron":"0 8 * * 1","cadence_label":"…","owner_role":"…"}`,
     });

@@ -4,13 +4,15 @@
 export const ROLE_AVATARS: Record<string, string> = {
   personal_assistant: '/workers/clara.png',
   content_manager:    '/workers/sofia.png',
-  linkedin_drafter:   '/workers/luca.png',
+  branding_expert:    '/workers/luca.png',
+  linkedin_drafter:   '/workers/luca.png', // legacy role key
   research_analyst:   '/workers/max.png',
 };
 
 export const ROLE_LABELS: Record<string, string> = {
   personal_assistant: 'Personal Assistant',
   content_manager:    'Content Strategist',
-  linkedin_drafter:   'Branding Expert',
+  branding_expert:    'Branding Expert',
+  linkedin_drafter:   'Branding Expert', // legacy role key
   research_analyst:   'Research Analyst',
 };
