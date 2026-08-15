@@ -1025,6 +1025,13 @@ function VisualWorkflowColumn({
     return null;
   })();
 
+  // NO LYING DOORS below the seated gate: the + only offers content steps (tool/ai/agent), and
+  // seatGate re-seats every one of them ABOVE the gate — so an add button between the gate and
+  // the output would teleport whatever it inserts. Positions past the gate render a plain
+  // connector instead. (No gate → every position is honest and keeps its +.)
+  const verifyIdx = workflow.steps.findIndex(s => s.type === 'verify');
+  const canAddAt = (at: number) => verifyIdx < 0 || at <= verifyIdx;
+
   return (
     <div className="flex flex-col items-center py-8 px-6 w-full max-w-[420px]">
       {/* Header */}
@@ -1049,7 +1056,9 @@ function VisualWorkflowColumn({
         const isActive = typeof activePanel === 'object' && activePanel.stepId === step.id;
         return (
           <div key={step.id} className="flex flex-col items-center w-full">
-            <InlineDivider insertAt={idx} agents={agents} onAdd={onAddStep} />
+            {canAddAt(idx)
+              ? <InlineDivider insertAt={idx} agents={agents} onAdd={onAddStep} />
+              : <FlowConnector />}
             {step.type === 'verify' || step.type === 'approval' ? (
               <GateFlowNode
                 step={step}
@@ -1070,7 +1079,9 @@ function VisualWorkflowColumn({
         );
       })}
 
-      <InlineDivider insertAt={workflow.steps.length} agents={agents} onAdd={onAddStep} />
+      {canAddAt(workflow.steps.length)
+        ? <InlineDivider insertAt={workflow.steps.length} agents={agents} onAdd={onAddStep} />
+        : <FlowConnector />}
 
       {/* THE DASHED SLOT — the opt-in door for the gate, only while no verify step exists. */}
       {!workflow.steps.some(s => s.type === 'verify') && (

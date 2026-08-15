@@ -182,6 +182,33 @@ fixed — across workflows and runs." Two truths conceded:
   blocked), a passed gate says "checked — nothing needed fixing" when expanded, and the
   reported:false degradation line stays honest.
 
+## THE CLOSING RECORD (Aug 15 pm — shipped as `18598ce` + the no-lying-doors fix)
+
+- **Gate version history — the rerun-at-HEAD lesson:** v2 shipped the structured verdict. v3 made
+  check-over-brief precedence explicit in the prompt (was carried only by block ordering — the
+  smoke agent's own flag) and REGRESSED G4: the gate "fixed" (silently deleted) content a rule
+  said must BLOCK delivery. v4 prompt language coin-flipped across runs. **v5 moved the promise
+  into CODE**: a block/hold/stop-demanding rule backed by a rule finding forces `blocked`
+  deterministically (`demandsBlock` beside the existing downgrade). LAW CONFIRMED TWICE: a user's
+  stated escalation is never model discretion; re-earn green after EVERY prompt change — the
+  rerun is what caught it.
+- **Receipts live on the LIVE surface:** `workflows-ledger.tsx` RunAudit = per-run GateChip
+  (✓ checked / ✎ checked · N fixed / ⏸ held by your check) + expandable findings (source or
+  attributed rule · action verb · quote · note); the grouped trail wears a DELTA-ONLY chip
+  (clean pass silent — repeat successes don't speak), derived server-side in the ledger route.
+  ⚠️ `worker-activity-tab.tsx` is ORPHANED (worker-profile → app/workers/workers-page-client.tsx
+  has no page routing it) — the first receipts landed there and were reverted; orphan cleanup is
+  an open separate decision.
+- **NO LYING DOORS below the seated gate (owner walk #3):** the inline + only offers content
+  steps and seatGate re-seats every one ABOVE the gate — so any add button at or below the gate
+  teleports its insert. Positions past the gate render a plain connector (`canAddAt`).
+- **THE FIDELITY PROOF (pre-deploy):** suite 74/74 at v5 incl. the owner-account AHK clone ×3;
+  plus the pilot-account Executive Briefing config replayed VERBATIM (all 12 steps incl.
+  deep_research) on the probe — succeeded, 358s, 20.4k-char in-format German briefing, no
+  verdict on any step (the gateless-regression promise), no sentinel leak, source rows read-only.
+  Legacy AHK workflows carry NO verify step → the new branches are structurally unreachable
+  until a gate is added.
+
 ## Rollout notes
 
 - No migration: the verdict rides existing jsonb; the hold reuses `awaiting_approval`
