@@ -44,6 +44,10 @@ export interface ToolStep {
   label: string;                   // human label for the builder / run trace
   tool: string;                    // tool id (e.g. 'web_search', 'get_urgent_emails')
   config: Record<string, unknown>; // tool-specific params
+  /** GUARDRAILS v1.1: the user's optional per-step ask ("only this week's mail"), authored on the
+   *  step's shield node but ENFORCED BY THE ONE GATE — aggregated into the verify prompt with
+   *  attribution, never a per-step mini-verifier (the one-verifier law). ≤200 chars. */
+  check?: string;
 }
 
 // AI step — inline intelligence transformation. No identity, no memory.
@@ -59,6 +63,11 @@ export interface AIStep {
    *  final step. For mechanical passes (verification gates) where a persona would
    *  fight the instruction — a verifier must preserve the draft, not restyle it. */
   use_worker_identity?: boolean;
+  /** GUARDRAILS v1.2: the user's optional per-step ask, same contract as ToolStep.check —
+   *  authored on the step's shield node, ENFORCED BY THE ONE GATE with attribution. Distinct from
+   *  `prompt` (what to make, hoped for): a check is what must be TRUE, verified with a receipt.
+   *  ≤200 chars. */
+  check?: string;
 }
 
 // Agent step — reuses a custom agent's identity, instructions, KB, memory.
@@ -97,6 +106,11 @@ export interface VerifyStep {
   label: string;
   /** Optional extra domain rules for this workflow ("cite only .gov sources", …). */
   instruction?: string;
+  /** THE GUARDRAILS ARC (Aug 14, docs/guardrails-plan.md): the user's own policy rules, plain
+   *  language, one list at the ONE gate (never per-step fragments — two competing verifiers).
+   *  Each ≤200 chars, list ≤10. Enforced by the gate beside the built-in checks; every finding
+   *  that enforces one carries the rule's text back on the verdict. */
+  rules?: string[];
 }
 
 export type WorkflowStep = ToolStep | AIStep | AgentStep | ApprovalStep | VerifyStep;
@@ -235,6 +249,47 @@ export interface Workflow {
 export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 export type TriggerSource = 'schedule' | 'event' | 'manual';
 
+// ── THE STRUCTURED VERDICT (guardrails arc) ──────────────────────────────────
+// The verify gate stops being mute: beside the corrected draft it reports WHAT it did, each
+// finding quoting the draft's own words. Rides StepOutput.verdict → workflow_runs.step_outputs
+// (jsonb) → the runs API / TestRunPanel / activity tab with zero route changes.
+
+export type GateFindingSource =
+  | 'numbers'     // the arithmetic floor — recomputed by code
+  | 'grounding'   // claim not supported by the run's sources
+  | 'citation'    // citation didn't point at a real source URL
+  | 'structure'   // draft structure repaired (sections/headings)
+  | 'dates'       // old material presented as current
+  | 'brief'       // the producing step's own prompt, unhonored (language/length/format it stated)
+  | 'rule';       // one of the user's rules
+
+export interface GateFinding {
+  source: GateFindingSource;
+  /** The user rule's text — present iff source === 'rule'. */
+  rule?: string;
+  /** GUARDRAILS v1.1: when the enforced rule was a per-step check, the label of the step that
+   *  authored it ("Fetch emails") — the finding points back at its step. */
+  stepLabel?: string;
+  /** The draft's own words at the violation (≤160 chars). The gate describes, never invents. */
+  quote: string;
+  action: 'corrected' | 'removed' | 'masked' | 'blocked';
+  /** What changed / why it stopped (≤200 chars). */
+  note?: string;
+}
+
+export interface GateVerdict {
+  /** VERIFY_GATE_VERSION at judgment time. */
+  version: number;
+  /** `blocked` is honored ONLY when a finding cites a user rule — code-enforced downgrade. */
+  status: 'passed' | 'corrected' | 'blocked';
+  findings: GateFinding[];
+  /** false = the model omitted the verdict sentinel; findings are the deterministic floor only —
+   *  an honest partial, never a fabricated pass. */
+  reported: boolean;
+  /** This verdict came after the one guardrail retry of the producing step. */
+  retried?: boolean;
+}
+
 export interface StepOutput {
   step_id: string;
   step_type: StepType;
@@ -242,6 +297,8 @@ export interface StepOutput {
   output: unknown;                  // string for ai/tool, object for agent with artifacts
   error?: string;
   duration_ms?: number;
+  /** Set on verify steps only — the gate's structured receipt (guardrails arc). */
+  verdict?: GateVerdict;
 }
 
 export interface WorkflowRun {

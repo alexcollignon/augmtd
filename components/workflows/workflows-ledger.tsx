@@ -24,6 +24,7 @@ import { Button, Badge } from '@/components/ui';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { ThreadArtifactsPanel } from '@/components/work/chat-artifact-panel';
 import type { DocumentArtifact } from '@/lib/types/inbox';
+import type { GateVerdict } from '@/lib/workflows/types';
 
 type LedgerRow = {
   id: string; name: string; description: string | null; status: string;
@@ -37,6 +38,9 @@ type LedgerRow = {
 type Awaiting = { runId: string; workflowId: string; workflowName: string; since: string; instruction: string | null; lastStepLabel: string | null };
 type RecentGroup = {
   workflowId: string; workflowName: string; count: number; lastAt: string; lastStatus: string;
+  /** THE GATE'S DELTA — set only when the latest run's delivery check changed something
+   *  (corrected/blocked); a clean pass is silent here (repeat successes don't speak). */
+  gate: { status: string; fixed: number } | null;
   deliverable: { threadId: string; artifactId: string; title: string } | null;
   failures: Array<{ at: string; error: string }>; held: number;
 };
@@ -481,6 +485,13 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                     {g.count === 1 ? `ran on ${shortDate(g.lastAt)}` : `ran ${g.count} times · last on ${shortDate(g.lastAt)}`}
                   </span>
                   {g.lastStatus === 'failed' && <Badge tone="red">Last run failed</Badge>}
+                  {g.gate && (
+                    <span className={`text-[10px] rounded-full px-1.5 py-[1px] font-medium ${
+                      g.gate.status === 'blocked' ? 'text-amber-700 bg-amber-100' : 'text-teal-700 bg-teal-100'
+                    }`}>
+                      {g.gate.status === 'blocked' ? '⏸ held by your check' : `✎ checked · ${g.gate.fixed} fixed`}
+                    </span>
+                  )}
                   {g.held > 0 && <span className="text-[12px] text-neutral-400">· {g.held} held back</span>}
                   <span className="flex-1" />
                   {g.deliverable && (
@@ -585,10 +596,54 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 type AuditRun = {
   id: string; status: string; triggered_by: string; thread_id: string | null;
-  step_outputs: Array<{ label?: string; step_type?: string; output?: unknown; error?: string; duration_ms?: number }> | null;
+  step_outputs: Array<{ label?: string; step_type?: string; output?: unknown; error?: string; duration_ms?: number; verdict?: GateVerdict }> | null;
   error: string | null; started_at: string | null; completed_at: string | null; created_at: string;
   artifacts?: Array<{ id: string; title: string; generated_at?: string }>;
 };
+
+// ── THE GATE'S RECEIPTS (guardrails arc): the per-run audit speaks what the delivery check did —
+// checked clean, fixed with findings, or held. Same shapes as the Studio's Test-run panel:
+// build time shows the promise, the run shows the receipt. ──
+const GATE_ACTION_LABEL: Record<string, string> = { corrected: 'fixed', removed: 'removed', masked: 'masked', blocked: 'blocked' };
+
+function gateVerdictOf(r: AuditRun): GateVerdict | null {
+  let v: GateVerdict | null = null;
+  for (const o of r.step_outputs ?? []) if (o?.verdict) v = o.verdict;
+  return v;
+}
+
+function GateChip({ v }: { v: GateVerdict }) {
+  if (v.status === 'blocked') return <span className="text-[10px] rounded-full px-1.5 py-[1px] font-medium text-amber-700 bg-amber-100">⏸ held by your check</span>;
+  if (v.status === 'corrected') return <span className="text-[10px] rounded-full px-1.5 py-[1px] font-medium text-teal-700 bg-teal-100">✎ checked · {v.findings.length} fixed</span>;
+  return <span className="text-[10px] rounded-full px-1.5 py-[1px] font-medium text-teal-700 bg-teal-50">✓ checked</span>;
+}
+
+function GateFindings({ v }: { v: GateVerdict }) {
+  if (!v.findings.length) {
+    return v.reported
+      ? <div className="text-[11.5px] text-neutral-400">Checked against this run&apos;s sources — nothing needed fixing.</div>
+      : null;
+  }
+  return (
+    <div className="space-y-1.5">
+      {v.findings.map((f, i) => (
+        <div key={i} className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className={`text-[9.5px] font-semibold uppercase tracking-wide ${f.source === 'rule' ? 'text-indigo-600' : 'text-teal-700'}`}>
+              {f.source === 'rule' ? (f.stepLabel ? `Your rule · from “${f.stepLabel}”` : 'Your rule') : `Built-in · ${f.source}`}
+            </span>
+            <span className={`text-[9.5px] uppercase rounded-full px-1.5 ${f.action === 'blocked' ? 'text-amber-700 bg-amber-100' : 'text-teal-700 bg-teal-50'}`}>
+              {GATE_ACTION_LABEL[f.action] ?? f.action}
+            </span>
+          </div>
+          <div className="mt-0.5 font-mono text-[11px] text-neutral-600 leading-relaxed">“{f.quote}”</div>
+          {f.note && <div className="text-[11px] text-neutral-500">{f.note}</div>}
+        </div>
+      ))}
+      {!v.reported && <div className="text-[10.5px] text-neutral-400">(the check reported only code-computed findings this run)</div>}
+    </div>
+  );
+}
 function RunAudit({ workflowId, onOpenDeliverable }: { workflowId: string; onOpenDeliverable: (threadId: string, artifactId: string) => Promise<void> }) {
   const [runs, setRuns] = useState<AuditRun[] | null>(null);
   const [openSteps, setOpenSteps] = useState<string | null>(null);
@@ -637,6 +692,7 @@ function RunAudit({ workflowId, onOpenDeliverable }: { workflowId: string; onOpe
             <div className="flex items-center gap-3">
               <span className="text-[13px] text-neutral-700 tabular-nums w-[104px] flex-shrink-0">{when(r)}</span>
               <Badge tone={chip.tone}>{chip.word}</Badge>
+              {(() => { const v = gateVerdictOf(r); return v ? <GateChip v={v} /> : null; })()}
               {took(r) && <span className="text-[12px] text-neutral-400">{took(r)}</span>}
               <span className="flex-1" />
               {steps.length > 0 && (
@@ -671,8 +727,11 @@ function RunAudit({ workflowId, onOpenDeliverable }: { workflowId: string; onOpe
                       </button>
                       {st.error && <div className="ml-5 text-[12px] text-red-500">{st.error.slice(0, 160)}</div>}
                       {openOutput === key && !st.error && (
-                        <div className="ml-5 mt-0.5 mb-1 max-h-44 overflow-y-auto rounded-lg border border-neutral-200 bg-neutral-50 px-2.5 py-2 text-[11.5px] leading-relaxed text-neutral-600 whitespace-pre-wrap">
-                          {out.slice(0, 2000)}{out.length > 2000 ? '…' : ''}
+                        <div className="ml-5 mt-0.5 mb-1 space-y-1.5">
+                          {st.verdict && <GateFindings v={st.verdict} />}
+                          <div className="max-h-44 overflow-y-auto rounded-lg border border-neutral-200 bg-neutral-50 px-2.5 py-2 text-[11.5px] leading-relaxed text-neutral-600 whitespace-pre-wrap">
+                            {out.slice(0, 2000)}{out.length > 2000 ? '…' : ''}
+                          </div>
                         </div>
                       )}
                     </div>

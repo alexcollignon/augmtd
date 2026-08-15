@@ -16,7 +16,8 @@ import { buildSkillsBlock, buildSkillsBlockByIds } from '@/lib/work/worker-skill
 import { composeSlackMessage } from './slack-message';
 import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost, executeBrowserFetch, executePtTenders, executeDeepResearch, executeWorkflowOutput, executeGetEmails, executeGetMeetingContext, executeSlackReadMessages, executeSlackPostMessage, executeSendCalendarInvite, executeForwardEmail, executeFindTeamWork, executeRunCompute } from '@/lib/tools';
 import type { SendCalendarInviteConfig, ForwardEmailConfig, ComputeConfig } from '@/lib/tools';
-import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep, VerifyStep } from './types';
+import { parseModelJSON } from '@/lib/ai/parse-json';
+import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep, VerifyStep, GateFinding, GateVerdict } from './types';
 
 export interface StepContext {
   userId: string;
@@ -37,6 +38,18 @@ export interface StepContext {
   /** STANDING REACTIONS — the triggering event block. Unlike projectGrounding this IS source
    *  material, so the verify gate sees it too (a claim about the trigger must be checkable). */
   triggerEvent?: string | null;
+  /** THE GUARDRAILS ARC — MUST-FIX findings from a BLOCKED gate verdict, fed to the ONE retry of
+   *  the producing step. The gate's own words come back as the brief's non-negotiables; the step
+   *  still owes its original instruction. Absent on every normal run. */
+  guardrailFeedback?: string | null;
+  /** THE BRIEF (guardrails arc) — the producing step's own prompt, handed to the verify gate as a
+   *  spec it enforces AS STATED. Set by the run loop (which holds the steps array); keeping it on
+   *  the context is what lets executeVerifyStep stay pure. */
+  producingPrompt?: string | null;
+  /** THE STEP'S OWN ASK (guardrails v1.1) — the tool steps' own asks, aggregated by the run loop
+   *  for the gate; enforced HERE so there is exactly one verifier, findings attributed via
+   *  stepLabel. Authoring is contextual (on the step), enforcement stays single (the gate). */
+  stepChecks?: Array<{ stepLabel: string; check: string }> | null;
 }
 
 // ── Public entrypoint ─────────────────────────────────────────────────────────
@@ -52,7 +65,19 @@ export async function executeStep(step: WorkflowStep, ctx: StepContext): Promise
       // The APPROVAL step is handled by the RUN LOOP (pause/resume in run-workflow) — reaching
       // it here means a caller bypassed the loop; pass through harmlessly, never park.
       case 'approval': output = '[Approval gate — handled by the run loop]'; break;
-      case 'verify': output = await executeVerifyStep(step, ctx); break;
+      // The verify gate speaks TWICE: the corrected draft (a plain string, so every downstream
+      // consumer is untouched) and its structured verdict, attached beside the output here.
+      case 'verify': {
+        const gated = await executeVerifyStep(step, ctx);
+        return {
+          step_id: step.id,
+          step_type: step.type,
+          label: step.label,
+          output: gated.text,
+          verdict: gated.verdict,
+          duration_ms: Date.now() - startedAt,
+        };
+      }
       default: {
         // exhaustiveness check
         const _never: never = step;
@@ -233,13 +258,72 @@ async function toolReadKbFile(
 // copy-pasted into workflow prompts again. Order matters: the ARITHMETIC FLOOR runs first (code
 // recomputes the draft's computable claims; its findings become MUST-FIX lines the reasoned pass
 // cannot ignore), then one persona-free reasoned pass verifies the draft against the sources.
-export const VERIFY_GATE_VERSION = 1;
+// v2 (THE GUARDRAILS ARC, docs/guardrails-plan.md): the gate stops being MUTE. Beside the
+// corrected draft it now returns a STRUCTURED VERDICT through a sentinel line, enforces THE BRIEF
+// (the producing step's own prompt, read at run time — never guessed at build time) and YOUR RULES
+// (the user's plain-language policy). `blocked` is honored only when a finding cites a user rule —
+// the model can never block on vibes (code-enforced downgrade below).
+// v3: check-over-brief precedence made EXPLICIT (was carried only by block ordering — the smoke
+// agent's own flag): where the brief conflicts with the user's rules/step checks, the user wins.
+// v4: AN EXPLICIT-BLOCK RULE IS HONORED AS WRITTEN — the v3 fix-mandate made the gate silently
+// delete content a rule said must BLOCK delivery (caught by the G4 rerun at HEAD: the fixture's
+// "must block delivery if present" rule came back `corrected`). Fix-first yields to the user's
+// own stated escalation; blocking rules block.
+// v5: v4 moved from prompt language into CODE — a block/hold/stop-demanding rule backed by a
+// rule finding forces `blocked` deterministically (prompt-only enforcement flip-flopped across
+// model runs; a user's stated escalation is not model discretion).
+export const VERIFY_GATE_VERSION = 5;
 
-function verifyGatePrompt(instruction?: string): string {
+const GATE_SENTINEL = '===GATE_VERDICT===';
+
+const GATE_FINDING_SOURCES: ReadonlySet<string> = new Set([
+  'numbers', 'grounding', 'citation', 'structure', 'dates', 'brief', 'rule',
+]);
+const GATE_FINDING_ACTIONS: ReadonlySet<string> = new Set(['corrected', 'removed', 'masked', 'blocked']);
+
+function verifyGatePrompt(opts: {
+  instruction?: string;
+  rules?: string[];
+  brief?: string | null;
+  stepChecks?: Array<{ stepLabel: string; check: string }> | null;
+}): string {
+  const briefBlock = opts.brief?.trim()
+    ? `\n\nTHE BRIEF — the draft was produced from this instruction:\n"""\n${opts.brief.trim().slice(0, 1500)}\n"""\n` +
+      `Verify the draft honors the brief's EXPLICIT, checkable requirements (language, structure, length, format it states). ` +
+      `Never enforce a requirement the brief does not state. Where the brief conflicts with ` +
+      `YOUR RULES or STEP CHECKS below, the rules and checks WIN — they are the user's own policy ` +
+      `and outrank any instruction, including a brief that says to output something verbatim.`
+    : '';
+
+  const rules = (opts.rules ?? []).map(r => r.trim()).filter(Boolean).slice(0, 10);
+  const rulesBlock = rules.length
+    ? `\n\nYOUR RULES — the user's own policy, enforce each one:\n` +
+      rules.map((r, i) => `R${i + 1}. ${r.slice(0, 200)}`).join('\n') +
+      `\nFor each rule: prefer to FIX (mask/correct/remove) the violation and record it. Declare a rule ` +
+      `BLOCKED only when the violation cannot be removed without destroying the deliverable's purpose — ` +
+      `OR when the rule itself explicitly says to block/hold/stop delivery: a rule that demands blocking ` +
+      `is honored AS WRITTEN, never satisfied by silently removing the content it flagged.`
+    : '';
+
+  // THE STEP'S OWN ASK (v1.1): the user authored these ON the steps; the ONE gate enforces them,
+  // and a finding that enforces one points HOME via stepLabel — contextual authoring, single
+  // enforcement, attributable audit.
+  const checks = (opts.stepChecks ?? [])
+    .map(c => ({ stepLabel: clip(c?.stepLabel, 80), check: clip(c?.check, 200) }))
+    .filter(c => c.stepLabel && c.check)
+    .slice(0, 10);
+  const checksBlock = checks.length
+    ? `\n\nSTEP CHECKS — the user asked for these at specific steps of the pipeline; enforce each ` +
+      `like a rule, and on any finding that enforces one, set "stepLabel" to that step's label:\n` +
+      checks.map(c => `- From the "${c.stepLabel}" step: ${c.check}`).join('\n') +
+      `\nA finding that enforces a step check uses source "rule" with "rule" set to the check's text, ` +
+      `plus "stepLabel" set to that step's label.`
+    : '';
+
   return (
     `THE VERIFICATION GATE (v${VERIFY_GATE_VERSION}). The LAST previous-step output below is THE DRAFT. ` +
     `Everything before it is SOURCE MATERIAL. Your ONLY job is to verify the draft against the sources ` +
-    `and return the CORRECTED DRAFT — nothing else.\n` +
+    `and return the CORRECTED DRAFT, then your verdict — nothing else.\n` +
     `Rules:\n` +
     `1. Every factual claim must be grounded in the source material. DELETE or CORRECT any claim the ` +
     `sources do not support — never keep an ungrounded claim because it sounds plausible.\n` +
@@ -249,18 +333,84 @@ function verifyGatePrompt(instruction?: string): string {
     `4. Dates are sacred: never shift a date, year, or figure toward the present; source material older ` +
     `than the task's window is HISTORICAL and must read as such.\n` +
     `5. Respect the draft's own language and style rules; change wording only where correction requires it.\n` +
-    `6. Return ONLY the corrected draft — no commentary, no preamble, no list of changes.` +
-    (instruction?.trim() ? `\nWorkflow-specific rules:\n${instruction.trim()}` : '')
+    `6. The corrected draft comes FIRST and alone — no commentary, no preamble, no list of changes inside it.\n` +
+    `7. After the corrected draft, output a line containing exactly ${GATE_SENTINEL} followed by ONE JSON ` +
+    `object on the lines after it: ` +
+    `{"status":"passed|corrected|blocked","findings":[{"source":"numbers|grounding|citation|structure|dates|brief|rule",` +
+    `"rule":"<the rule's text, only when source is rule>","quote":"<the draft's own words, <=160 chars>",` +
+    `"action":"corrected|removed|masked|blocked","note":"<what changed, <=200 chars>",` +
+    `"stepLabel":"<the step whose check this enforces, only for step checks>"}]}. ` +
+    `status is "passed" when you changed nothing, "corrected" when you fixed things, "blocked" only when a ` +
+    `YOUR-RULES violation could not be fixed. The findings list every change you made, including the ` +
+    `COMPUTED-BY-CODE corrections.` +
+    briefBlock +
+    rulesBlock +
+    checksBlock +
+    (opts.instruction?.trim() ? `\n\nWorkflow-specific rules:\n${opts.instruction.trim()}` : '')
   );
 }
 
-async function executeVerifyStep(step: VerifyStep, ctx: StepContext): Promise<string> {
+function clip(s: unknown, n: number): string {
+  return String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+}
+
+/** THE GATE DESCRIBES, NEVER INVENTS — a finding with no quote from the draft is dropped, an
+ *  unknown source/action is coerced rather than trusted. Sanitizing here keeps every downstream
+ *  surface (verdict chips, findings lists) reading structurally valid data. */
+function sanitizeFindings(raw: unknown): GateFinding[] {
+  if (!Array.isArray(raw)) return [];
+  const out: GateFinding[] = [];
+  for (const r of raw.slice(0, 30)) {
+    if (!r || typeof r !== 'object') continue;
+    const f = r as Record<string, unknown>;
+    const quote = clip(f.quote, 160);
+    if (!quote) continue;
+    const source = GATE_FINDING_SOURCES.has(String(f.source)) ? (f.source as GateFinding['source']) : 'grounding';
+    const action = GATE_FINDING_ACTIONS.has(String(f.action)) ? (f.action as GateFinding['action']) : 'corrected';
+    const rule = clip(f.rule, 200);
+    const note = clip(f.note, 200);
+    // THE STEP'S OWN ASK: attribution rides only on rule findings — a step check IS a user rule,
+    // and a stepLabel on a numbers/grounding finding would point the audit at the wrong owner.
+    const stepLabel = clip(f.stepLabel, 80);
+    out.push({
+      source, action, quote,
+      ...(source === 'rule' && rule ? { rule } : {}),
+      ...(source === 'rule' && stepLabel ? { stepLabel } : {}),
+      ...(note ? { note } : {}),
+    });
+  }
+  return out;
+}
+
+/** The arithmetic floor's findings are ground truth; the model reports its own version of the same
+ *  corrections, so merge on the quote's head rather than stacking duplicates. */
+function mergeFindings(floor: GateFinding[], reported: GateFinding[]): GateFinding[] {
+  const seen = new Set(floor.map(f => f.quote.slice(0, 40).toLowerCase()));
+  const merged = [...floor];
+  for (const f of reported) {
+    const key = f.quote.slice(0, 40).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(f);
+  }
+  return merged;
+}
+
+async function executeVerifyStep(
+  step: VerifyStep, ctx: StepContext,
+): Promise<{ text: string; verdict: GateVerdict }> {
   const prev = ctx.previousOutputs;
   const rawDraft = prev.length ? prev[prev.length - 1]?.output : null;
   const draft = typeof rawDraft === 'string' ? rawDraft : JSON.stringify(rawDraft ?? '');
-  if (!draft.trim()) return '[Verification gate: nothing to verify — no prior step output]';
+  if (!draft.trim()) {
+    return {
+      text: '[Verification gate: nothing to verify — no prior step output]',
+      verdict: { version: VERIFY_GATE_VERSION, status: 'passed', findings: [], reported: false },
+    };
+  }
   // 1 — the arithmetic floor (deterministic; an outage speaks no verdict and the reasoned gate still runs).
   let mismatchBlock = '';
+  let floorFindings: GateFinding[] = [];
   try {
     const { verifyComputableClaims } = await import('@/lib/prepare/verify-claims');
     const mismatches = await verifyComputableClaims(ctx.supabase, ctx.userId, draft.slice(0, 12000));
@@ -269,6 +419,12 @@ async function executeVerifyStep(step: VerifyStep, ctx: StepContext): Promise<st
         `\n\nCOMPUTED BY CODE — these numbers in the draft are WRONG and MUST be corrected ` +
         `(recomputed deterministically from the draft's own figures):\n` +
         mismatches.map((m) => `- "${m.quote.slice(0, 100)}" states ${m.stated}; the correct value is ${m.expected}`).join('\n');
+      floorFindings = mismatches.map((m) => ({
+        source: 'numbers' as const,
+        action: 'corrected' as const,
+        quote: m.quote.slice(0, 160),
+        note: `stated ${m.stated}; correct value is ${m.expected}`.slice(0, 200),
+      }));
     }
   } catch { /* enhancement only */ }
   // 2 — the reasoned gate, persona-free, through the ONE AI-step executor (clock, language,
@@ -276,9 +432,85 @@ async function executeVerifyStep(step: VerifyStep, ctx: StepContext): Promise<st
   const gate: AIStep = {
     type: 'ai', id: step.id, label: step.label || 'Verification gate',
     model_tier: 'reasoning', output_format: 'markdown', use_worker_identity: false,
-    prompt: verifyGatePrompt(step.instruction) + mismatchBlock,
+    prompt: verifyGatePrompt({
+      instruction: step.instruction,
+      rules: step.rules,
+      brief: ctx.producingPrompt,
+      stepChecks: ctx.stepChecks,
+    }) + mismatchBlock,
   };
-  return executeAIStep(gate, ctx);
+  const raw = await executeAIStep(gate, ctx);
+
+  // 3 — THE SENTINEL, parsed deterministically. FAILURE HONESTY: a missing or unparseable verdict
+  // degrades to the deterministic floor with reported:false — never a fabricated "passed".
+  const cut = raw.lastIndexOf(GATE_SENTINEL);
+  const degraded: GateVerdict = {
+    version: VERIFY_GATE_VERSION,
+    status: floorFindings.length ? 'corrected' : 'passed',
+    findings: floorFindings,
+    reported: false,
+  };
+  if (cut === -1) return { text: raw, verdict: degraded };
+
+  const body = raw.slice(0, cut).trim();
+  const parsed = parseModelJSON<{ status?: unknown; findings?: unknown } | null>(
+    raw.slice(cut + GATE_SENTINEL.length), null,
+  );
+  // Unparseable verdict JSON: the draft half is still the deliverable — never leak the sentinel
+  // and its debris into what gets delivered; only the report degrades.
+  if (!parsed || typeof parsed !== 'object') return { text: body || raw, verdict: degraded };
+  // A model that emitted the verdict but no draft has told us nothing about the deliverable —
+  // the whole output is the safest text, and the verdict is not trustworthy as a report.
+  if (!body) return { text: raw, verdict: degraded };
+
+  const findings = mergeFindings(floorFindings, sanitizeFindings(parsed.findings));
+  // STRUCTURAL ATTRIBUTION FALLBACK: a rule finding whose text matches a step check points home
+  // even when the model forgot stepLabel — the attribution promise is code's, not the model's.
+  const checks = ctx.stepChecks ?? [];
+  if (checks.length) {
+    const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+    for (const f of findings) {
+      if (f.source !== 'rule' || f.stepLabel || !f.rule) continue;
+      const hit = checks.find(c => {
+        const a = norm(c.check); const b = norm(f.rule!);
+        return a === b || a.includes(b) || b.includes(a);
+      });
+      if (hit) f.stepLabel = hit.stepLabel.slice(0, 80);
+    }
+  }
+  let status: GateVerdict['status'] =
+    parsed.status === 'blocked' ? 'blocked' :
+    parsed.status === 'corrected' ? 'corrected' :
+    parsed.status === 'passed' ? 'passed' : (findings.length ? 'corrected' : 'passed');
+  // CODE-ENFORCED DOWNGRADE: a block is a claim about the USER'S OWN RULES. Without a rule finding
+  // behind it, it is the model's opinion — the run keeps moving.
+  if (status === 'blocked' && !findings.some(f => f.source === 'rule')) status = 'corrected';
+  if (status === 'passed' && findings.length) status = 'corrected';
+  // THE BLOCK-DEMANDING RULE IS CODE-ENFORCED (v5 — prompt language flip-flopped once, so the
+  // promise moved into code): a rule whose OWN TEXT demands block/hold/stop, backed by a rule
+  // finding, forces `blocked` — the gate "fixing" content the user said must STOP delivery is a
+  // silent override of their stated escalation, never a success. The retry loop still applies;
+  // a clean re-produced draft (no finding on that rule) passes normally.
+  const demandsBlock = (t?: string) => !!t && /\b(block|hold|stop)\b/i.test(t);
+  if (status !== 'blocked' && findings.some(f => f.source === 'rule' && demandsBlock(f.rule))) {
+    status = 'blocked';
+  }
+
+  return { text: body, verdict: { version: VERIFY_GATE_VERSION, status, findings, reported: true } };
+}
+
+/** THE RETRY'S BRIEF (guardrails arc): a blocked gate hands its findings back to the step that
+ *  produced the draft. The block is additive — the step still owes its original instruction, so a
+ *  producer can never "satisfy" the gate by abandoning the work it was asked to do. */
+function guardrailFeedbackBlock(ctx: StepContext): string | null {
+  const fb = ctx.guardrailFeedback?.trim();
+  if (!fb) return null;
+  return (
+    `<guardrail_feedback>\n` +
+    `Your previous attempt was blocked by the delivery check. You MUST resolve every item below ` +
+    `while still fulfilling your instruction:\n${fb}\n` +
+    `</guardrail_feedback>`
+  );
 }
 
 async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
@@ -414,6 +646,7 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
     ctx.triggerEvent ? `<triggering_event>\n${ctx.triggerEvent}\n</triggering_event>` : null,
     previousBlock,
     `<instruction>\n${step.prompt}${formatNote}\n</instruction>`,
+    guardrailFeedbackBlock(ctx),
   ].filter(Boolean).join('\n\n');
 
   const res = await aiCreate(resolved.client, {
@@ -496,6 +729,7 @@ export async function executeAgentStep(step: AgentStep, ctx: StepContext): Promi
       const stepMessage = [
         formatPreviousOutputs(ctx.previousOutputs),
         `<workflow_task>\n${step.prompt}\n</workflow_task>`,
+        guardrailFeedbackBlock(ctx),
       ].filter(Boolean).join('\n\n');
       return await runWorkerStepViaAgentOS({
         workerRole: agentRow.worker_role,
@@ -555,6 +789,7 @@ export async function executeAgentStep(step: AgentStep, ctx: StepContext): Promi
   const userPrompt = [
     previousBlock,
     `<workflow_task>\n${step.prompt}\n</workflow_task>`,
+    guardrailFeedbackBlock(ctx),
   ].filter(Boolean).join('\n\n');
 
   const res = await aiCreate(resolved.client, {

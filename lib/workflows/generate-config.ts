@@ -60,11 +60,16 @@ Verify step — the STRUCTURAL VERIFICATION GATE (built into the engine, version
 previous step's output as THE DRAFT and everything before it as SOURCE MATERIAL — recomputes
 the draft's numbers BY CODE, deletes/corrects ungrounded claims, fixes citations, keeps
 structure exactly, never modernizes dates. Output = the corrected draft:
-{ "type": "verify", "id": "step_008", "label": "Verify against sources", "instruction": "optional extra domain rules" }
+{ "type": "verify", "id": "step_008", "label": "Verify against sources", "instruction": "optional extra domain rules", "rules": ["Never name a client company — write 'a client' instead"] }
+"rules" is optional: the USER'S OWN policy in their plain words, one short line each (max 10).
+The gate enforces each one on the finished draft and reports what it fixed.
 RULE: ALWAYS place one verify step directly after the final synthesis AI step when the
 pipeline gathers external material (news, web, feeds, research, tenders) or states numbers.
 Do NOT write verification instructions into the AI step's own prompt — the verify step IS the
 gate; duplicating it in prose creates two competing verifiers.
+RULE: when the request states policies about privacy, confidentiality, tone, or disclosure
+("never include internal figures", "mask names", "keep it formal"), put each as a rule on the
+verify step — never as prose in the ai step's prompt (the gate is the one verifier).
 
 Approval step — a HUMAN GATE: the run pauses here and waits for the user's explicit approve
 before continuing (the deliverable shows for review; approve resumes, reject holds it back):

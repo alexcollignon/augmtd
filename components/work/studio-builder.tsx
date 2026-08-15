@@ -56,12 +56,16 @@ import {
   PaperAirplaneIcon,
   ShieldCheckIcon,
   HandRaisedIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
   ToolStep, AIStep, AgentStep, SharingMode,
+  VerifyStep, ApprovalStep, GateVerdict, GateFinding,
 } from '@/lib/workflows/types';
 import { makeStepId, normalizeOutput } from '@/lib/workflows/types';
+import { builtinChecksFor, GATE_BUILTIN_LINES } from '@/lib/workflows/builtin-checks';
+import { AnchoredPopover } from '@/components/ui/anchored-popover';
 import { SharingModeSelector } from '@/components/work/sharing-mode-selector';
 import { LINKEDIN_FRAMEWORKS } from '@/lib/tools/linkedin-post';
 
@@ -191,6 +195,34 @@ const STEP_TYPE_ICONS = {
   approval: HandRaisedIcon,
 };
 
+// ── THE PINNED STATION (guardrails v1.1) ──────────────────────────────────────
+// The delivery gate is a STATION, not a list member: exactly one, always seated after the last
+// content step and before any trailing approval steps. Applied on every steps MUTATION (never on
+// load — opening a saved workflow must not rewrite it), so the label "Checked before delivery"
+// can never become a false claim by drift.
+function seatGate(steps: WorkflowStep[]): WorkflowStep[] {
+  const firstVerify = steps.find(s => s.type === 'verify');
+  if (!firstVerify) return steps;
+  const rest = steps.filter(s => s.type !== 'verify');
+  let at = rest.length;
+  while (at > 0 && rest[at - 1].type === 'approval') at--;
+  const next = [...rest.slice(0, at), firstVerify, ...rest.slice(at)];
+  const unchanged = next.length === steps.length && next.every((s, i) => s === steps[i]);
+  return unchanged ? steps : next;
+}
+
+// THE PROTECTIVE DEFAULT — the tools that bring OUTSIDE material into the pipeline. When the
+// user's own action introduces one (or an external delivery home), the gate seats itself.
+const EXTERNAL_MATERIAL_TOOLS = new Set([
+  'rss_feed', 'web_search', 'fetch_url', 'deep_research', 'get_pt_tenders', 'browser_fetch',
+]);
+
+function withGate(steps: WorkflowStep[]): WorkflowStep[] {
+  if (steps.some(s => s.type === 'verify')) return steps;
+  const gate: VerifyStep = { id: makeStepId(), type: 'verify', label: 'Check before delivery', rules: [] };
+  return [...steps, gate];
+}
+
 type ActivePanel = 'identity' | 'trigger' | 'output' | { stepId: string };
 type EnhanceFn = (prompt: string, label: string, context: { step_type: 'ai' | 'tool' | 'agent'; tool_type?: string; output_format?: string; model_tier?: string; field: 'prompt' | 'query' }) => void;
 type ChatMsg = { role: 'user' | 'assistant'; content: string; patched?: boolean };
@@ -220,8 +252,18 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
     setWorkflow(w => ({ ...w, [key]: value }));
   }, []);
 
+  // An explicit removal of the gate is the human's decision — it sticks for the session.
+  const gateDismissedRef = useRef(false);
+  const autoSeat = useCallback((steps: WorkflowStep[]) =>
+    seatGate(gateDismissedRef.current ? steps : withGate(steps)), []);
+
   const patchBulk = useCallback((updates: Partial<Workflow>) => {
-    setWorkflow(w => ({ ...w, ...updates }));
+    setWorkflow(w => {
+      const next = { ...w, ...updates };
+      // The assistant patches steps like any other mutation — the station re-seats.
+      if (updates.steps) next.steps = seatGate(updates.steps);
+      return next;
+    });
   }, []);
 
   const save = useCallback(async (): Promise<Workflow | null> => {
@@ -285,6 +327,10 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
       step = { id, type: 'tool', label: 'New tool step', tool: 'get_emails', config: {} } as ToolStep;
     } else if (type === 'ai') {
       step = { id, type: 'ai', label: 'New writing step', prompt: '', output_format: 'markdown', model_tier: 'fast' } as AIStep;
+    } else if (type === 'verify') {
+      step = { id, type: 'verify', label: 'Check before delivery', rules: [] } as VerifyStep;
+    } else if (type === 'approval') {
+      step = { id, type: 'approval', label: 'Your approval' } as ApprovalStep;
     } else {
       step = { id, type: 'agent', label: 'Hand off to a teammate', agent_id: agents[0]?.id ?? '', prompt: '' } as AgentStep;
     }
@@ -292,33 +338,52 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
       const steps = [...w.steps];
       if (insertAt !== undefined) steps.splice(insertAt, 0, step);
       else steps.push(step);
-      return { ...w, steps };
+      const external = step.type === 'tool' && EXTERNAL_MATERIAL_TOOLS.has((step as ToolStep).tool);
+      return { ...w, steps: external ? autoSeat(steps) : seatGate(steps) };
     });
     setActivePanel({ stepId: id });
-  }, [agents]);
+  }, [agents, autoSeat]);
 
   const updateStep = useCallback((stepId: string, partial: Partial<WorkflowStep>) => {
-    setWorkflow(w => ({
-      ...w,
-      steps: w.steps.map(s => s.id === stepId ? ({ ...s, ...partial } as WorkflowStep) : s),
-    }));
-  }, []);
+    setWorkflow(w => {
+      const steps = w.steps.map(s => s.id === stepId ? ({ ...s, ...partial } as WorkflowStep) : s);
+      const target = steps.find(s => s.id === stepId);
+      const nextTool = (partial as Partial<ToolStep>).tool;
+      // A tool CHANGED INTO external material is the user's own action — seat the gate.
+      const external = target?.type === 'tool' && !!nextTool && EXTERNAL_MATERIAL_TOOLS.has(nextTool);
+      return { ...w, steps: external ? autoSeat(steps) : seatGate(steps) };
+    });
+  }, [autoSeat]);
 
   const removeStep = useCallback((stepId: string) => {
-    setWorkflow(w => ({ ...w, steps: w.steps.filter(s => s.id !== stepId) }));
+    setWorkflow(w => {
+      if (w.steps.find(s => s.id === stepId)?.type === 'verify') gateDismissedRef.current = true;
+      return { ...w, steps: seatGate(w.steps.filter(s => s.id !== stepId)) };
+    });
   }, []);
 
+  // The gate is a station — it never reorders. Everything else swaps, then the station re-seats.
   const moveStep = useCallback((stepId: string, delta: -1 | 1) => {
     setWorkflow(w => {
       const idx = w.steps.findIndex(s => s.id === stepId);
-      if (idx === -1) return w;
+      if (idx === -1 || w.steps[idx].type === 'verify') return w;
       const steps = [...w.steps];
       const target = idx + delta;
       if (target < 0 || target >= steps.length) return w;
       [steps[idx], steps[target]] = [steps[target], steps[idx]];
-      return { ...w, steps };
+      return { ...w, steps: seatGate(steps) };
     });
   }, []);
+
+  // An external delivery home is external material leaving — the gate seats itself on the switch.
+  const patchOutput = useCallback((o: OutputConfig) => {
+    setWorkflow(w => {
+      const before = normalizeOutput(w.output_config).home;
+      const after = normalizeOutput(o).home;
+      const wentExternal = after !== before && (after === 'email' || after === 'slack');
+      return { ...w, output_config: o, steps: wentExternal ? autoSeat(w.steps) : w.steps };
+    });
+  }, [autoSeat]);
 
   const handleEnhanceStep = useCallback(async (
     stepId: string, prompt: string, stepLabel: string,
@@ -445,6 +510,7 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
             agents={agents}
             onSelectPanel={setActivePanel}
             onAddStep={addStep}
+            onUpdateStep={updateStep}
           />
         </div>
 
@@ -478,7 +544,7 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
             {resolvedPanel === 'output' && (
               <div className="space-y-5">
                 <SectionHeader title="Output" subtitle="What happens when the workflow finishes?" />
-                <OutputEditor output={workflow.output_config} onChange={o => patch('output_config', o)} />
+                <OutputEditor output={workflow.output_config} onChange={patchOutput} />
               </div>
             )}
             {typeof resolvedPanel === 'object' && activeStepIndex !== -1 && (() => {
@@ -494,7 +560,10 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
                   onUpdate={p => updateStep(step.id, p)}
                   onEnhance={(prompt, label, ctx) => handleEnhanceStep(step.id, prompt, label, ctx)}
                   onRemove={() => removeStep(step.id)}
-                  onMove={d => moveStep(step.id, d)}
+                  onMove={step.type === 'verify' ? undefined : d => moveStep(step.id, d)}
+                  stepCheckCount={workflow.steps.filter(
+                    s => (s.type === 'tool' || s.type === 'ai') && !!(s as ToolStep | AIStep).check?.trim(),
+                  ).length}
                   currentWorkflowId={workflow.id}
                 />
               );
@@ -522,7 +591,7 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
 
 // ── Test run panel ────────────────────────────────────────────────────────────
 
-type StepOutput = { step_type: string; label: string; output?: unknown; error?: string };
+type StepOutput = { step_type: string; label: string; output?: unknown; error?: string; verdict?: GateVerdict };
 
 function TestRunPanel({ workflowId, runId, steps, onClose }: {
   workflowId: string;
@@ -625,13 +694,36 @@ function TestRunPanel({ workflowId, runId, steps, onClose }: {
                     <div className="text-[10.5px] text-red-500 truncate mt-0.5">{out.error}</div>
                   )}
                 </div>
+                {out?.verdict && <VerdictChip verdict={out.verdict} />}
                 {out && !out.error && (
                   <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-400 flex-shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                 )}
               </button>
-              {isExpanded && outputText && (
-                <div className="px-3.5 pb-3 text-[11px] text-neutral-600 leading-relaxed whitespace-pre-wrap max-h-48 overflow-y-auto border-t border-neutral-100 pt-2.5 mt-0">
-                  {outputText.slice(0, 2000)}{outputText.length > 2000 ? '\n…' : ''}
+              {isExpanded && (out?.verdict || outputText) && (
+                <div className="border-t border-neutral-100 pt-2.5">
+                  {/* A clean gate still owes a receipt — say what it looked at and found. */}
+                  {out?.verdict && out.verdict.status === 'passed'
+                    && out.verdict.reported === true && out.verdict.findings.length === 0 && (
+                    <div className="px-3.5 pb-2 text-[10.5px] text-neutral-400">
+                      Checked against this run&apos;s sources — nothing needed fixing.
+                    </div>
+                  )}
+                  {/* The receipts first — what the gate did — then the draft it produced. */}
+                  {out?.verdict && out.verdict.findings.length > 0 && (
+                    <div className="px-3.5 pb-2.5 space-y-2">
+                      {out.verdict.findings.map((f, fi) => <FindingRow key={fi} finding={f} />)}
+                    </div>
+                  )}
+                  {out?.verdict && out.verdict.reported === false && (
+                    <div className="px-3.5 pb-2 text-[10.5px] text-neutral-400">
+                      (the check reported only code-computed findings this run)
+                    </div>
+                  )}
+                  {outputText && (
+                    <div className="px-3.5 pb-3 text-[11px] text-neutral-600 leading-relaxed whitespace-pre-wrap max-h-48 overflow-y-auto">
+                      {outputText.slice(0, 2000)}{outputText.length > 2000 ? '\n…' : ''}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -650,6 +742,75 @@ function TestRunPanel({ workflowId, runId, steps, onClose }: {
       <div className="px-4 py-3 border-t border-neutral-100 flex-shrink-0">
         <p className="text-[10.5px] text-neutral-400">Test output is not saved to inbox or history.</p>
       </div>
+    </div>
+  );
+}
+
+// ── The verdict, in outcome tense (guardrails arc) ────────────────────────────
+// Same chip shape as the Studio's configuration-tense chip; here it says what the gate DID.
+// Test mode never parks, so a blocked verdict reads "would be held" — an honest simulation.
+const FINDING_SOURCE_LABEL: Record<string, string> = {
+  numbers: 'Built-in · numbers',
+  grounding: 'Built-in · sources',
+  citation: 'Built-in · citations',
+  structure: 'Built-in · structure',
+  dates: 'Built-in · dates',
+  brief: 'Built-in · brief',
+};
+
+function VerdictChip({ verdict }: { verdict: GateVerdict }) {
+  const n = verdict.findings.length;
+  const { text, cls } =
+    verdict.status === 'blocked'
+      ? { text: '⏸ Would be held', cls: 'bg-amber-500 text-white' }
+      : verdict.status === 'corrected'
+        ? { text: `✎ Corrected · ${n}`, cls: 'bg-teal-600 text-white' }
+        : { text: '✓ Passed', cls: 'bg-teal-100 text-teal-700' };
+  return (
+    <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-medium ${cls}`}>
+      {text}
+    </span>
+  );
+}
+
+// What the gate DID with this finding — the receipt's verb, said plainly (v1.2 transparency).
+const FINDING_ACTION_LABEL: Record<GateFinding['action'], string> = {
+  corrected: 'fixed',
+  removed: 'removed',
+  masked: 'masked',
+  blocked: 'blocked',
+};
+
+function FindingRow({ finding }: { finding: GateFinding }) {
+  const isRule = finding.source === 'rule';
+  const actionWord = FINDING_ACTION_LABEL[finding.action];
+  return (
+    <div className="space-y-0.5">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className={`text-[10px] font-semibold uppercase tracking-wide ${isRule ? 'text-indigo-600' : 'text-teal-700'}`}>
+          {isRule
+            ? (finding.stepLabel
+                ? `Your rule · from "${finding.stepLabel}"`
+                : `Your rule${finding.rule ? ` · ${finding.rule}` : ''}`)
+            : (FINDING_SOURCE_LABEL[finding.source] ?? 'Built-in')}
+        </span>
+        {actionWord && (
+          <span className={`text-[9.5px] font-semibold uppercase tracking-wide rounded-full px-1.5 ${
+            finding.action === 'blocked' ? 'bg-amber-100 text-amber-700' : 'bg-teal-50 text-teal-700'
+          }`}>
+            {actionWord}
+          </span>
+        )}
+      </div>
+      {isRule && finding.stepLabel && finding.rule && (
+        <div className="text-[11px] text-neutral-500 leading-snug">{finding.rule}</div>
+      )}
+      {finding.quote && (
+        <div className="font-mono text-[11px] text-neutral-600 leading-snug break-words">{finding.quote}</div>
+      )}
+      {finding.note && (
+        <div className="text-[11px] text-neutral-500 leading-snug">{finding.note}</div>
+      )}
     </div>
   );
 }
@@ -843,14 +1004,27 @@ function InlineDivider({ insertAt, agents, onAdd }: {
 }
 
 function VisualWorkflowColumn({
-  workflow, activePanel, agents, onSelectPanel, onAddStep,
+  workflow, activePanel, agents, onSelectPanel, onAddStep, onUpdateStep,
 }: {
   workflow: Workflow;
   activePanel: ActivePanel;
   agents: AgentOption[];
   onSelectPanel: (p: ActivePanel) => void;
   onAddStep: (type: WorkflowStep['type'], insertAt?: number) => void;
+  onUpdateStep: (stepId: string, partial: Partial<WorkflowStep>) => void;
 }) {
+  // THE POSITIONAL BRIEF (v1.2): the gate enforces the prompt of the step FEEDING it — the
+  // nearest preceding ai/agent step before the first verify gate. Only THAT step may claim it.
+  const feedingStepId = (() => {
+    const gateIdx = workflow.steps.findIndex(s => s.type === 'verify');
+    if (gateIdx < 0) return null;
+    for (let i = gateIdx - 1; i >= 0; i--) {
+      const s = workflow.steps[i];
+      if (s.type === 'ai' || s.type === 'agent') return s.id;
+    }
+    return null;
+  })();
+
   return (
     <div className="flex flex-col items-center py-8 px-6 w-full max-w-[420px]">
       {/* Header */}
@@ -870,20 +1044,38 @@ function VisualWorkflowColumn({
         onClick={() => onSelectPanel('trigger')}
       />
 
-      {/* Steps with inline add dividers */}
-      {workflow.steps.map((step, idx) => (
-        <div key={step.id} className="flex flex-col items-center w-full">
-          <InlineDivider insertAt={idx} agents={agents} onAdd={onAddStep} />
-          <StepFlowCard
-            step={step}
-            index={idx}
-            active={typeof activePanel === 'object' && activePanel.stepId === step.id}
-            onClick={() => onSelectPanel({ stepId: step.id })}
-          />
-        </div>
-      ))}
+      {/* Steps with inline add dividers — gates (verify/approval) render as pill stations */}
+      {workflow.steps.map((step, idx) => {
+        const isActive = typeof activePanel === 'object' && activePanel.stepId === step.id;
+        return (
+          <div key={step.id} className="flex flex-col items-center w-full">
+            <InlineDivider insertAt={idx} agents={agents} onAdd={onAddStep} />
+            {step.type === 'verify' || step.type === 'approval' ? (
+              <GateFlowNode
+                step={step}
+                active={isActive}
+                onClick={() => onSelectPanel({ stepId: step.id })}
+              />
+            ) : (
+              <StepFlowCard
+                step={step}
+                index={idx}
+                active={isActive}
+                onClick={() => onSelectPanel({ stepId: step.id })}
+                onUpdate={p => onUpdateStep(step.id, p)}
+                feedsGate={step.id === feedingStepId}
+              />
+            )}
+          </div>
+        );
+      })}
 
       <InlineDivider insertAt={workflow.steps.length} agents={agents} onAdd={onAddStep} />
+
+      {/* THE DASHED SLOT — the opt-in door for the gate, only while no verify step exists. */}
+      {!workflow.steps.some(s => s.type === 'verify') && (
+        <AddCheckSlot onAdd={() => onAddStep('verify', workflow.steps.length)} />
+      )}
 
       {/* Output */}
       <OutputFlowCard
@@ -935,9 +1127,200 @@ function TriggerFlowCard({ trigger, active, onClick }: {
   );
 }
 
-function StepFlowCard({ step, index: _index, active, onClick }: {
+// ── The gate station (guardrails arc, docs/guardrails-plan.md) ────────────────
+// verify/approval are not steps that DO work — they are stations the work passes through. One
+// shape, two families: teal for the check, amber for the human hold. Narrower than a step card
+// so the connector reads as a line the run travels down.
+function GateFlowNode({ step, active, onClick }: {
+  step: WorkflowStep; active: boolean; onClick: () => void;
+}) {
+  const isVerify = step.type === 'verify';
+  const rules = isVerify ? ((step as VerifyStep).rules ?? []) : [];
+  const instruction = (step as { instruction?: string }).instruction?.trim();
+
+  const title = isVerify ? 'Checked before delivery' : 'Your approval';
+  const sub = instruction
+    ? (instruction.length > 46 ? instruction.slice(0, 46) + '…' : instruction)
+    : isVerify
+      ? 'checks & fixes the draft against this run’s sources'
+      : 'pauses here — nothing goes out until you OK it';
+
+  const shell = isVerify
+    ? `bg-teal-50 text-teal-800 ${active ? 'border-teal-400 shadow-md' : 'border-teal-200 hover:border-teal-300'}`
+    : `bg-amber-50 text-amber-800 ${active ? 'border-amber-400 shadow-md' : 'border-amber-200 hover:border-amber-300'}`;
+  const disc = isVerify ? 'bg-teal-600' : 'bg-amber-500';
+  const Icon = isVerify ? ShieldCheckIcon : HandRaisedIcon;
+
+  return (
+    <div className="w-full flex justify-center">
+      <div role="button" tabIndex={0}
+        onClick={onClick} onKeyDown={e => e.key === 'Enter' && onClick()}
+        className={`w-[88%] flex items-center gap-2.5 pl-2 pr-3 py-2 rounded-full border-2 cursor-pointer transition-all ${shell}`}
+      >
+        <div className={`w-7 h-7 rounded-full ${disc} flex items-center justify-center flex-shrink-0`}>
+          <Icon className="w-4 h-4 text-white" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[12.5px] font-semibold truncate leading-tight">{title}</div>
+          <div className="text-[11px] opacity-70 truncate leading-tight">{sub}</div>
+        </div>
+        {isVerify && (
+          rules.length > 0 ? (
+            <span className="flex-shrink-0 text-[11px] font-medium bg-teal-100 text-teal-700 rounded-full px-2 py-0.5">
+              + {rules.length} of your rule{rules.length === 1 ? '' : 's'}
+            </span>
+          ) : (
+            <span className="flex-shrink-0 text-[11px] text-teal-600/60">no rules yet</span>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+// The opt-in slot — an ADDITIONAL affordance beside the normal dividers, shown only while the
+// workflow has no gate. Clicking inserts the verify step and opens its panel.
+function AddCheckSlot({ onAdd }: { onAdd: () => void }) {
+  return (
+    <div className="w-full flex flex-col items-center">
+      <button type="button" onClick={onAdd}
+        className="w-[88%] flex items-center justify-center gap-1.5 px-3 py-2 rounded-full border border-dashed border-neutral-300 text-neutral-500 text-[11.5px] hover:border-teal-300 hover:text-teal-700 hover:bg-teal-50/40 transition-colors">
+        <ShieldCheckIcon className="w-3.5 h-3.5" />
+        Add a check before delivery
+      </button>
+      <div className="w-px h-4 bg-neutral-200" />
+    </div>
+  );
+}
+
+// The edge chip — THE SHIELD NODE (guardrails v1.1 → v1.2 symmetry). Not visibility-only any
+// more: it is the door to the step's OWN ask. BOTH tool and ai steps author a `check` here
+// (identical contract, enforced by the ONE delivery gate, attributed back to this step).
+// The "your instruction is the brief" claim is POSITIONAL — only the ai step FEEDING the gate
+// gets it (feedsGate), because that is the only prompt the gate actually enforces.
+function BuiltinChecksChip({ step, onUpdate, feedsGate = false }: {
+  step: WorkflowStep;
+  onUpdate?: (p: Partial<WorkflowStep>) => void;
+  feedsGate?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState('');
+  const ref = useRef<HTMLButtonElement>(null);
+  const checks = builtinChecksFor(step);
+  const isTool = step.type === 'tool';
+  const isAi = step.type === 'ai';
+  if (!isTool && !isAi) return null;
+
+  const check = (step as ToolStep | AIStep).check?.trim();
+  const aiPrompt = isAi ? (step as AIStep).prompt?.trim() : undefined;
+  const canAuthor = !!onUpdate;
+
+  const commit = () => {
+    const clean = draft.trim().slice(0, 200);
+    if (!clean || !onUpdate) return;
+    onUpdate({ check: clean } as Partial<WorkflowStep>);
+    setDraft('');
+  };
+
+  return (
+    <>
+      <button
+        ref={ref}
+        type="button"
+        title={check ? 'Your check on this step' : 'Checks on this step'}
+        onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
+        className={`absolute top-1/2 -translate-y-1/2 -right-3 w-[25px] h-[25px] rounded-full border flex items-center justify-center shadow-sm transition-colors ${
+          check
+            ? 'bg-teal-50 border-teal-300'
+            : `bg-white ${open ? 'border-teal-300' : 'border-teal-100 hover:border-teal-300'}`
+        }`}
+      >
+        <ShieldCheckIcon className="w-3.5 h-3.5 text-teal-600" />
+      </button>
+      <AnchoredPopover anchorRef={ref} open={open} onClose={() => setOpen(false)} width={272}>
+        <div
+          onClick={e => e.stopPropagation()}
+          className="bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden"
+        >
+          {checks && (
+            <>
+              <div className="px-3 pt-3 pb-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-teal-700">{checks.title}</span>
+              </div>
+              <div className="px-3 pb-2.5 space-y-1.5">
+                {checks.lines.map((line, i) => (
+                  <div key={i} className="flex items-start gap-1.5">
+                    <CheckIcon className="w-3 h-3 text-teal-500 flex-shrink-0 mt-[3px]" />
+                    <span className="text-[11.5px] text-neutral-600 leading-snug">{line}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* THE STEP'S OWN ASK — authored here, enforced at the one delivery gate. */}
+          {canAuthor && (
+            <div className={checks ? 'border-t border-neutral-100 px-3 py-2.5' : 'px-3 pt-3 pb-2.5'}>
+              <span className="block text-[10px] font-semibold uppercase tracking-wide text-neutral-500 mb-1.5">
+                Also check on this step
+              </span>
+              {check ? (
+                <div className="flex items-start gap-2 bg-teal-50/60 border border-teal-100 rounded-lg px-2.5 py-1.5">
+                  <span className="flex-1 min-w-0 text-[11.5px] text-neutral-700 leading-snug break-words">{check}</span>
+                  <button type="button" title="Remove this check"
+                    onClick={() => onUpdate?.({ check: undefined } as Partial<WorkflowStep>)}
+                    className="flex-shrink-0 p-0.5 rounded text-neutral-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+                    <XMarkIcon className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={draft}
+                    maxLength={200}
+                    onChange={e => setDraft(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commit(); } }}
+                    placeholder={'e.g. only use this week’s items'}
+                    className="flex-1 min-w-0 px-2.5 py-1.5 border border-neutral-200 rounded-lg text-[12px] bg-white outline-none focus:border-indigo-300"
+                  />
+                  <button type="button" disabled={!draft.trim()} onClick={commit}
+                    className="flex-shrink-0 px-2.5 py-1.5 rounded-lg text-[11.5px] font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-30 transition-colors">
+                    Add
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* THE POSITIONAL CLAIM — only the ai step feeding a gate has its prompt enforced. */}
+          {isAi && feedsGate && aiPrompt && (
+            <div className="border-t border-neutral-100 px-3 py-2.5">
+              <span className="text-[11px] text-neutral-500 leading-snug">
+                Its instruction is the brief — enforced by the delivery check:
+                {' '}&ldquo;{aiPrompt.slice(0, 90)}{aiPrompt.length > 90 ? '…' : ''}&rdquo;
+              </span>
+            </div>
+          )}
+
+          <div className="px-3 py-2 border-t border-neutral-100">
+            <span className="text-[10px] text-neutral-400">
+              {canAuthor
+                ? 'Built-ins always on · your check is enforced at the delivery gate'
+                : 'Always on · part of the engine'}
+            </span>
+          </div>
+        </div>
+      </AnchoredPopover>
+    </>
+  );
+}
+
+function StepFlowCard({ step, index: _index, active, onClick, onUpdate, feedsGate = false }: {
   step: WorkflowStep; index: number; active: boolean;
   onClick: () => void;
+  onUpdate?: (p: Partial<WorkflowStep>) => void;
+  feedsGate?: boolean;
 }) {
   const colors = STEP_TYPE_COLORS[step.type as keyof typeof STEP_TYPE_COLORS] ?? STEP_TYPE_COLORS.tool;
   const TypeIcon = STEP_TYPE_ICONS[step.type as keyof typeof STEP_TYPE_ICONS] ?? STEP_TYPE_ICONS.tool;
@@ -975,10 +1358,11 @@ function StepFlowCard({ step, index: _index, active, onClick }: {
   return (
     <div role="button" tabIndex={0}
       onClick={onClick} onKeyDown={e => e.key === 'Enter' && onClick()}
-      className={`w-full flex items-center gap-3 px-4 py-3.5 bg-white rounded-xl border-2 cursor-pointer transition-all ${
+      className={`relative w-full flex items-center gap-3 px-4 py-3.5 bg-white rounded-xl border-2 cursor-pointer transition-all ${
         active ? 'border-indigo-400 shadow-md' : 'border-neutral-100 hover:border-neutral-200 shadow-sm'
       }`}
     >
+      <BuiltinChecksChip step={step} onUpdate={onUpdate} feedsGate={feedsGate} />
       <div className={`w-9 h-9 rounded-xl ${bgClass} flex items-center justify-center flex-shrink-0`}>
         {isLinkedIn ? (
           <svg viewBox="0 0 24 24" className="w-4 h-4" fill="white" aria-hidden="true">
@@ -1180,7 +1564,8 @@ function IdentitySection({ workflow, patch, agents }: {
 }
 
 function StepConfigSection({
-  step, index, total, agents, isEnhancing, isPending, onUpdate, onEnhance, onRemove, onMove, currentWorkflowId,
+  step, index, total, agents, isEnhancing, isPending, onUpdate, onEnhance, onRemove, onMove,
+  stepCheckCount = 0, currentWorkflowId,
 }: {
   step: WorkflowStep; index: number; total: number; agents: AgentOption[];
   isEnhancing?: boolean; isPending?: boolean;
@@ -1188,13 +1573,14 @@ function StepConfigSection({
   onEnhance?: EnhanceFn;
   onRemove?: () => void;
   onMove?: (d: -1 | 1) => void;
+  stepCheckCount?: number;
   currentWorkflowId?: string;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const colors = STEP_TYPE_COLORS[step.type as keyof typeof STEP_TYPE_COLORS] ?? STEP_TYPE_COLORS.tool;
   const TypeIcon = STEP_TYPE_ICONS[step.type as keyof typeof STEP_TYPE_ICONS] ?? STEP_TYPE_ICONS.tool;
-  const typeLabel = ({ tool: 'Tool', ai: 'Produce', agent: 'Hand off' } as Record<string, string>)[step.type] ?? step.type;
+  const typeLabel = ({ tool: 'Tool', ai: 'Produce', agent: 'Hand off', verify: 'Check', approval: 'Approval' } as Record<string, string>)[step.type] ?? step.type;
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -1273,14 +1659,16 @@ function StepConfigSection({
         <AgentStepFields step={step as AgentStep} agents={agents} onUpdate={onUpdate as (p: Partial<AgentStep>) => void}
           isEnhancing={isEnhancing} isPending={isPending} onEnhance={onEnhance} />
       )}
-      {(step.type === 'verify' || step.type === 'approval') && (
+      {step.type === 'verify' && (
+        <VerifyStepFields step={step as VerifyStep} onUpdate={onUpdate as (p: Partial<VerifyStep>) => void}
+          stepCheckCount={stepCheckCount} />
+      )}
+      {step.type === 'approval' && (
         <div className="p-4 space-y-3">
           <p className="text-[12.5px] text-neutral-500 leading-relaxed">
-            {step.type === 'verify'
-              ? 'A built-in check: it treats the previous step\u2019s output as the draft, recomputes its numbers in code, removes anything the sources don\u2019t back, and keeps the structure exactly. No prompt needed.'
-              : 'The run pauses here and waits for your go-ahead — you approve or hold it back from the Workflows page. Nothing is delivered until you approve.'}
+            The run pauses here and waits for your go-ahead — you approve or hold it back from the Workflows page. Nothing is delivered until you approve.
           </p>
-          <Field label="Extra rules (optional)" hint={step.type === 'verify' ? 'e.g. "cite only .gov sources"' : 'what you\u2019re deciding'}>
+          <Field label="Extra rules (optional)" hint={'what you\u2019re deciding'}>
             <textarea
               value={(step as { instruction?: string }).instruction ?? ''}
               onChange={e => (onUpdate as (p: Record<string, unknown>) => void)({ instruction: e.target.value })}
@@ -1290,6 +1678,142 @@ function StepConfigSection({
           </Field>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── The gate panel (guardrails arc) ───────────────────────────────────────────
+// Three layers, shown in the order of their authority: the engine's own floors (locked, truthful
+// — GATE_BUILTIN_LINES), then the user's rules (the only steerable layer), then the legacy free
+// text. The footnote states the escalation honestly: fix → note → redo once → hold.
+const STARTER_RULES = [
+  'Hide personal data — names, emails, phone numbers',
+  'Never include internal pricing or margins',
+  'Keep the tone professional',
+];
+
+function VerifyStepFields({ step, onUpdate, stepCheckCount = 0 }: {
+  step: VerifyStep;
+  onUpdate: (p: Partial<VerifyStep>) => void;
+  stepCheckCount?: number;
+}) {
+  const rules = step.rules ?? [];
+  const [draft, setDraft] = useState('');
+
+  const addRule = (text: string) => {
+    const clean = text.trim().slice(0, 200);
+    if (!clean) return;
+    if (rules.length >= 10) return;
+    if (rules.some(r => r.trim().toLowerCase() === clean.toLowerCase())) return;
+    onUpdate({ rules: [...rules, clean] });
+  };
+  const removeRule = (i: number) => onUpdate({ rules: rules.filter((_, x) => x !== i) });
+
+  const starters = STARTER_RULES.filter(
+    s => !rules.some(r => r.trim().toLowerCase() === s.toLowerCase()),
+  );
+
+  return (
+    <div className="space-y-5">
+      <p className="text-[12.5px] text-neutral-500 leading-relaxed">
+        Before delivery, the final draft is checked against the original material this run
+        gathered — numbers recomputed, claims verified, your rules enforced. What can be proven
+        wrong is fixed and noted; what can&apos;t be fixed is held for you instead of delivering.
+      </p>
+
+      {/* Locked built-ins */}
+      <div>
+        <div className="flex items-baseline justify-between mb-1.5">
+          <span className="text-[10.5px] font-semibold uppercase tracking-wide text-neutral-500">
+            Always checked — built in
+          </span>
+          <span className="text-[10px] text-neutral-400">built in</span>
+        </div>
+        <div className="bg-teal-50/40 border border-teal-100 rounded-xl px-3 py-2.5 space-y-1.5">
+          {GATE_BUILTIN_LINES.map((line, i) => (
+            <div key={i} className="flex items-start gap-1.5">
+              <CheckIcon className="w-3 h-3 text-teal-500 flex-shrink-0 mt-[3px]" />
+              <span className="text-[11.5px] text-neutral-600 leading-snug">{line}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Your rules */}
+      <div>
+        <div className="flex items-baseline justify-between mb-1.5">
+          <span className="text-[10.5px] font-semibold uppercase tracking-wide text-neutral-500">Your rules</span>
+          <span className="text-[10px] text-neutral-400">{rules.length}/10</span>
+        </div>
+
+        {rules.length > 0 && (
+          <div className="space-y-1 mb-2">
+            {rules.map((r, i) => (
+              <div key={i} className="flex items-start gap-2 bg-neutral-50 border border-neutral-200 rounded-lg px-2.5 py-1.5">
+                <span className="flex-1 min-w-0 text-[12px] text-neutral-700 leading-snug break-words">{r}</span>
+                <button type="button" onClick={() => removeRule(i)} title="Remove rule"
+                  className="flex-shrink-0 p-0.5 rounded text-neutral-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+                  <XMarkIcon className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center gap-1.5">
+          <input
+            type="text"
+            value={draft}
+            maxLength={200}
+            disabled={rules.length >= 10}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); addRule(draft); setDraft(''); }
+            }}
+            placeholder="Add a rule in your own words…"
+            className="flex-1 min-w-0 px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white outline-none focus:border-indigo-300 disabled:opacity-50"
+          />
+          <button type="button"
+            disabled={!draft.trim() || rules.length >= 10}
+            onClick={() => { addRule(draft); setDraft(''); }}
+            className="flex-shrink-0 px-3 py-2 rounded-lg text-[12px] font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-30 transition-colors">
+            Add
+          </button>
+        </div>
+
+        {/* Authoring is contextual, enforcement is single — say where the other asks live. */}
+        {stepCheckCount > 0 && (
+          <p className="text-[11px] text-neutral-400 mt-2 leading-snug">
+            Also enforcing {stepCheckCount} step check{stepCheckCount === 1 ? '' : 's'} — edit them on their steps.
+          </p>
+        )}
+
+        {starters.length > 0 && rules.length < 10 && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {starters.map(s => (
+              <button key={s} type="button" onClick={() => addRule(s)}
+                className="inline-flex items-center rounded-full bg-indigo-50 text-indigo-600 text-[11px] px-2.5 py-1 hover:bg-indigo-100 transition-colors">
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Legacy free-text guidance — still honored by the engine */}
+      <Field label="Extra guidance (optional)" hint={'e.g. "cite only .gov sources"'}>
+        <textarea
+          value={step.instruction ?? ''}
+          onChange={e => onUpdate({ instruction: e.target.value })}
+          rows={2}
+          className="w-full text-[13px] bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-indigo-300 focus:bg-white resize-none"
+        />
+      </Field>
+
+      <p className="text-[11px] text-neutral-400 leading-relaxed border-t border-neutral-100 pt-3">
+        If a rule is broken, it gets fixed and noted. If it can&apos;t be fixed, the step is redone
+        once — and if it still fails, the run is held for your review instead of delivering.
+      </p>
     </div>
   );
 }

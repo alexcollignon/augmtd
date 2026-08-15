@@ -20,6 +20,9 @@ export interface ReportFacts {
   nextRun?: string;          // e.g. "tomorrow at 9am"
   deliverableGist?: string;  // a slice of the output, for context/nuance
   problem?: string;          // delivery failure to flag plainly
+  /** THE GATE'S RECEIPT (guardrails arc) — one factual, pre-built sentence about the delivery
+   *  check ("corrected 2 figures…"). Deterministic upstream; the worker only places it. */
+  gateNote?: string;
 }
 
 function didLine(f: ReportFacts): string {
@@ -40,7 +43,7 @@ export function fallbackReport(f: ReportFacts): string {
     f.home === 'slack'    ? `posted to ${f.channel ?? 'Slack'}` :
     f.home === 'email'    ? `emailed${f.channel ? ` to ${f.channel}` : ''}` :
     `here it is`;
-  return `${who}done with "${f.taskName}" — ${where}.${f.alsoNote ? ` ${f.alsoNote}.` : ''}`;
+  return `${who}done with "${f.taskName}" — ${where}.${f.gateNote ? ` ${f.gateNote}` : ''}${f.alsoNote ? ` ${f.alsoNote}.` : ''}`;
 }
 
 export async function generateReportBack(client: OpenAI, model: string, f: ReportFacts): Promise<string> {
@@ -52,11 +55,12 @@ You just finished a task and you're sending ${f.firstName || 'the person you wor
 
 FACTS (this is all you know — do not invent anything beyond it):
 - Task: "${f.taskName}"
-- What you did: ${didLine(f)}${f.link ? `\n- Link to it: ${f.link}` : ''}${f.alsoNote ? `\n- Also: ${f.alsoNote}` : ''}${f.nextRun ? `\n- Next run: ${f.nextRun}` : ''}${f.problem ? `\n- PROBLEM: ${f.problem}` : ''}${f.deliverableGist ? `\n- Gist of the output: ${f.deliverableGist.slice(0, 500)}` : ''}
+- What you did: ${didLine(f)}${f.link ? `\n- Link to it: ${f.link}` : ''}${f.alsoNote ? `\n- Also: ${f.alsoNote}` : ''}${f.gateNote ? `\n- Quality check: ${f.gateNote}` : ''}${f.nextRun ? `\n- Next run: ${f.nextRun}` : ''}${f.problem ? `\n- PROBLEM: ${f.problem}` : ''}${f.deliverableGist ? `\n- Gist of the output: ${f.deliverableGist.slice(0, 500)}` : ''}
 
 Write 1–3 short sentences, first person, warm and human — a colleague's DM, not a status report.
 - Say what you did and where it is (include the link naturally if there is one).
 ${f.problem ? '- Lead with the problem, plainly, and what would fix it.' : '- If a genuinely useful next step or question fits, offer it briefly. Don\'t force one.'}
+${f.gateNote ? '- Mention the quality check naturally, in ONE clause, using only what it says — never as a list and never as a claim of your own.' : ''}
 ${f.firstName ? `- You can address ${f.firstName} by name if it feels natural.` : ''}
 - No "I noticed", no "I wanted to let you know", no corporate phrasing. Don't restate the whole output.`;
 

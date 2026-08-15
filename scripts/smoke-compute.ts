@@ -766,7 +766,9 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/workflows/execute-step.ts').includes('VERIFY_GATE_VERSION') &&
     src('lib/workflows/execute-step.ts').includes('COMPUTED BY CODE') &&
     src('lib/workflows/execute-step.ts').includes('use_worker_identity: false,\n    prompt: verifyGatePrompt') &&
-    src('lib/workflows/execute-step.ts').includes("case 'verify': output = await executeVerifyStep") &&
+    // FLOOR, not an exact pin (the v2 guardrails bump broke the old `case 'verify': output = await…`
+    // string): the verify branch must still route through the one gate implementation.
+    src('lib/workflows/execute-step.ts').includes('executeVerifyStep(step, ctx)') &&
     src('lib/workflows/generate-config.ts').includes('"type": "verify"') &&
     src('lib/workflows/generate-config.ts').includes('two competing verifiers'));
 
