@@ -201,6 +201,35 @@ async function findOrCreateTaskThread(
   return { threadId: null, threadErr: insertErr?.message ?? 'unknown insert failure' };
 }
 
+// ── The gate's one line in the report-back (guardrails arc) ──────────────────
+// The coworker mentions the check the way a colleague would — what it did, in facts, once. Built
+// deterministically from the verdict: an AI sentence about a QA pass is exactly where a fabricated
+// reassurance would appear. A gate that reported nothing says nothing.
+function gateNoteFrom(stepOutputs: StepOutput[]): string | undefined {
+  const gate = [...stepOutputs].reverse().find(o => o.step_type === 'verify' && o.verdict);
+  const verdict = gate?.verdict;
+  if (!verdict?.reported) return undefined;
+  if (verdict.status === 'passed' || verdict.findings.length === 0) {
+    return 'I checked it against the sources — nothing needed fixing.';
+  }
+  const counts = { numbers: 0, removed: 0, masked: 0, other: 0 };
+  for (const f of verdict.findings) {
+    if (f.action === 'removed') counts.removed++;
+    else if (f.action === 'masked') counts.masked++;
+    else if (f.source === 'numbers') counts.numbers++;
+    else counts.other++;
+  }
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const parts: string[] = [];
+  if (counts.numbers) parts.push(`corrected ${plural(counts.numbers, 'figure', 'figures')}`);
+  if (counts.removed) parts.push(`removed ${plural(counts.removed, 'uncited claim', 'uncited claims')}`);
+  if (counts.masked) parts.push(`masked ${plural(counts.masked, 'item', 'items')} under your rules`);
+  if (counts.other) parts.push(`fixed ${plural(counts.other, 'other thing', 'other things')}`);
+  if (!parts.length) return 'I checked it against the sources — nothing needed fixing.';
+  const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  return `I checked it against the sources first — ${list}.`;
+}
+
 // ── Auto-pause: a scheduled task stops itself when nobody reads its output ────
 // After N consecutive unreviewed scheduled runs, flip the workflow to 'paused'
 // (+ auto_paused_at so the tasks tab can label it), tell the user in-character in
@@ -374,6 +403,62 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     projectGrounding = await workflowRunGrounding(admin, workflow.user_id, workflow.id);
   } catch { /* non-fatal */ }
 
+  // ONE context builder for every executeStep call in this run — the guardrail retry re-runs two
+  // steps with the same environment, and a second inline literal is how the two drift.
+  const stepCtx = (
+    index: number,
+    extra?: {
+      guardrailFeedback?: string | null;
+      producingPrompt?: string | null;
+      stepChecks?: Array<{ stepLabel: string; check: string }> | null;
+    },
+  ) => ({
+    userId: workflow.user_id,
+    runnerId,
+    workflowId: workflow.id,
+    supabase: admin,
+    previousOutputs: stepOutputs,
+    workflowName: workflow.name,
+    lastRunAt: workflow.last_run_at,
+    outputLanguage: workflow.output_config.output_language,
+    workerAgentId,
+    isLastStep: index === steps.length - 1,
+    workerInstructions,
+    skillIds,
+    projectGrounding,
+    triggerEvent: opts.triggerContext ?? null,
+    ...extra,
+  });
+  const checkpoint = () =>
+    admin.from('workflow_runs').update({ step_outputs: stepOutputs }).eq('id', runId).then(() => {}, () => {});
+  // THE BRIEF (guardrails arc): the gate enforces the producing step's OWN prompt as a spec. The
+  // steps array lives here, so the run loop resolves it and the gate stays pure.
+  const producingPromptFor = (gateIndex: number): string | null => {
+    for (let j = gateIndex - 1; j >= 0; j--) {
+      const s = steps[j] as { type?: string; prompt?: string };
+      if (s.type === 'ai' || s.type === 'agent') return s.prompt ?? null;
+    }
+    return null;
+  };
+  // THE STEP'S OWN ASK (guardrails v1.1; v1.2 extends to AI steps): every tool or ai step before
+  // the gate can carry the user's own check. Authoring is contextual, ENFORCEMENT IS SINGLE — the
+  // checks ride into the ONE gate as attributed lines, never a per-step mini-verifier. Nothing to
+  // aggregate → nothing rendered.
+  const stepChecksFor = (gateIndex: number): Array<{ stepLabel: string; check: string }> | null => {
+    const out: Array<{ stepLabel: string; check: string }> = [];
+    for (let j = 0; j < gateIndex; j++) {
+      const s = steps[j] as { type?: string; label?: string; tool?: string; check?: unknown };
+      if (s.type !== 'tool' && s.type !== 'ai') continue;
+      const check = typeof s.check === 'string' ? s.check.trim() : '';
+      if (!check) continue;
+      out.push({ stepLabel: s.label || s.tool || 'this step', check });
+    }
+    return out.length ? out : null;
+  };
+  // ONE retry per run — a producing step that cannot satisfy the user's rules on a second, fully
+  // informed attempt is a decision for the human, not a loop.
+  let guardrailRetried = false;
+
   for (let i = stepOutputs.length; i < steps.length; i++) {
     const step = steps[i];
     // ── THE APPROVAL STEP (production arc step 2 — pause/resume, the Executor-validated
@@ -409,31 +494,79 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       } catch { /* the parked status is the source of truth; the ask is a surface */ }
       return { runId: runId!, status: 'awaiting_approval', threadId };
     }
-    const out = await executeStep(step, {
-      userId: workflow.user_id,
-      runnerId,
-      workflowId: workflow.id,
-      supabase: admin,
-      previousOutputs: stepOutputs,
-      workflowName: workflow.name,
-      lastRunAt: workflow.last_run_at,
-      outputLanguage: workflow.output_config.output_language,
-      workerAgentId,
-      isLastStep: i === steps.length - 1,
-      workerInstructions,
-      skillIds,
-      projectGrounding,
-      triggerEvent: opts.triggerContext ?? null,
-    });
+    const isGate = (step as { type?: string }).type === 'verify';
+    const out = await executeStep(step, stepCtx(i, isGate
+      ? { producingPrompt: producingPromptFor(i), stepChecks: stepChecksFor(i) }
+      : undefined));
     stepOutputs.push(out);
     // THE CHECKPOINT (durable-execution practice, Aug 8): completed step outputs persist as the
     // run advances — the ledger reads live progress, a crash leaves evidence of exactly where,
     // and the approval snapshot stops being the only mid-run truth. Best-effort: a failed
     // checkpoint never fails the step it records.
-    await admin.from('workflow_runs').update({ step_outputs: stepOutputs }).eq('id', runId).then(() => {}, () => {});
+    await checkpoint();
     if (out.error) {
       runError = `Step "${out.label}" failed: ${out.error}`;
       break;
+    }
+
+    // ── RETRY-THEN-HOLD (guardrails arc): a BLOCKED verdict means the user's own rule could not
+    // be satisfied by correction. The producing step gets ONE more attempt carrying the findings;
+    // a second block is not the engine's call to override — the run parks for the human, through
+    // the EXISTING awaiting_approval machinery (resume continues at the step after the gate). ──
+    if (isGate && out.verdict?.status === 'blocked') {
+      let gateOut = out;
+      const producing = i > 0 ? steps[i - 1] : null;
+      const producingType = (producing as { type?: string } | null)?.type;
+      const producedHere = stepOutputs[stepOutputs.length - 2]?.step_id === producing?.id;
+      if (!guardrailRetried && producing && producedHere && (producingType === 'ai' || producingType === 'agent')) {
+        guardrailRetried = true;
+        const mustFix = (out.verdict.findings ?? [])
+          .map(f => `- [${f.source === 'rule' && f.rule ? f.rule : f.source}] "${f.quote}"${f.note ? ` — ${f.note}` : ''}`)
+          .join('\n');
+        stepOutputs.pop();               // the gate's verdict — about to be re-earned
+        stepOutputs.pop();               // the draft it blocked — the retry replaces it
+        const redo = await executeStep(producing, stepCtx(i - 1, { guardrailFeedback: mustFix }));
+        stepOutputs.push(redo);
+        await checkpoint();
+        if (redo.error) {
+          runError = `Step "${redo.label}" failed: ${redo.error}`;
+          break;
+        }
+        const regate = await executeStep(step, stepCtx(i, {
+          producingPrompt: producingPromptFor(i), stepChecks: stepChecksFor(i),
+        }));
+        if (regate.verdict) regate.verdict.retried = true;
+        stepOutputs.push(regate);
+        await checkpoint();
+        if (regate.error) {
+          runError = `Step "${regate.label}" failed: ${regate.error}`;
+          break;
+        }
+        gateOut = regate;
+      }
+
+      if (gateOut.verdict?.status === 'blocked') {
+        // Test mode never parks (a paused simulation proves nothing) — the verdict on the step
+        // output already says it would be held.
+        if (opts.isTest) continue;
+        // LOUD ON FAILURE: a park that cannot persist is a FAILED run, never a lie.
+        const { error: parkErr } = await admin.from('workflow_runs').update({
+          status: 'awaiting_approval', step_outputs: stepOutputs,
+        }).eq('id', runId);
+        if (parkErr) {
+          runError = `The delivery check held this run but it could not park (${parkErr.message}). Apply migration 20260808_workflow_runs_approval_status.sql.`;
+          break;
+        }
+        try {
+          const { narrateGuardrailHold } = await import('@/lib/workflows/standing');
+          const blocked = (gateOut.verdict.findings ?? []).find(f => f.action === 'blocked' && f.rule)
+            ?? (gateOut.verdict.findings ?? []).find(f => f.rule);
+          const ruleLine = (blocked?.rule ?? 'one of your rules could not be satisfied').slice(0, 140);
+          const preview = (typeof gateOut.output === 'string' ? gateOut.output : JSON.stringify(gateOut.output ?? '')).slice(0, 400);
+          await narrateGuardrailHold(admin, workflow, { runId: runId!, ruleLine, preview });
+        } catch { /* the parked status is the source of truth; the ask is a surface */ }
+        return { runId: runId!, status: 'awaiting_approval', threadId };
+      }
     }
   }
 
@@ -591,6 +724,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       channel: channelLabel, docTitle: materialised.title,
       link: home === 'document' ? threadLink : undefined,
       alsoNote, nextRun: nextRunLabel, deliverableGist: finalText, problem,
+      gateNote: gateNoteFrom(stepOutputs),
     };
     try {
       const { client, model } = await getAIClient(workflow.user_id, 'conversation', admin);

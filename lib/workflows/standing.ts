@@ -133,6 +133,35 @@ export async function narrateApprovalAsk(
   } catch { /* the parked run status is the source of truth */ }
 }
 
+/** THE GUARDRAIL HOLD (guardrails arc, docs/guardrails-plan.md): the delivery check blocked on one
+ *  of the USER'S OWN rules and the producing step could not satisfy it on its one retry — so the
+ *  decision goes to the human. Deliberately the SAME `approval` component as narrateApprovalAsk:
+ *  the room card and /api/workflows/runs/[id]/resume are the one door for "this run is waiting on
+ *  you", whatever stopped it. */
+export async function narrateGuardrailHold(
+  admin: SupabaseClient, wf: WfRow,
+  ask: { runId: string; ruleLine: string; preview: string },
+): Promise<void> {
+  try {
+    const { data: c } = await admin.from('commitments').select('id, status')
+      .eq('user_id', wf.user_id).eq('source', 'workflow').eq('source_id', wf.id)
+      .eq('status', 'open').limit(1).maybeSingle();
+    if (!c) return;
+    await admin.from('commitments').update({ due_date: new Date().toISOString().slice(0, 10) }).eq('id', c.id);
+    const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
+    const roomKey = await roomKeyForItem(admin, wf.user_id, 'commitment', String(c.id));
+    await writeRoomTurn(admin, wf.user_id, roomKey, {
+      role: 'system',
+      text: `"${wf.name}" is HELD by your delivery check — ${ask.ruleLine}. Review it before it goes anywhere.`,
+      component: {
+        key: 'approval', refId: ask.runId,
+        state: { runId: ask.runId, workflowId: wf.id, name: wf.name, instruction: ask.ruleLine, preview: ask.preview, held: true },
+      },
+      dedupeKey: `guardrail-hold:${ask.runId}`,
+    });
+  } catch { /* the parked run status is the source of truth */ }
+}
+
 /** ARC 2 stage 4 — ROOM FEEDBACK MUTATES THE METHOD. Feedback spoken in the standing commitment's
  *  room appends to the workflow's worker_instructions — the exact channel the final AI step
  *  injects — so next Monday's run inherits it. Durable, dated, capped. */

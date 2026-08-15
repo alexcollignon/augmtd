@@ -121,6 +121,16 @@ export async function GET() {
     const arr = byWf.get(r.workflow_id) ?? [];
     arr.push(r); byWf.set(r.workflow_id, arr);
   }
+  // THE GATE'S DELTA (guardrails arc): the grouped trail speaks deltas, never repeat successes —
+  // so the latest run's gate verdict surfaces ONLY when it changed something (corrected/blocked).
+  // A clean pass stays silent here; the per-run receipts live in RunAudit.
+  const gateDelta = (r: (typeof done)[number]): { status: string; fixed: number } | null => {
+    const outs = Array.isArray(r.step_outputs) ? (r.step_outputs as Array<{ verdict?: { status?: string; findings?: unknown[] } }>) : [];
+    let v: { status?: string; findings?: unknown[] } | undefined;
+    for (const o of outs) if (o?.verdict?.status) v = o.verdict;
+    if (!v || v.status === 'passed') return null;
+    return { status: String(v.status), fixed: Array.isArray(v.findings) ? v.findings.length : 0 };
+  };
   const recent = [...byWf.entries()].map(([wfId, rs]) => {
     const latest = rs[0]; // runs are newest-first
     const latestOk = rs.find(r => r.status === 'succeeded');
@@ -132,6 +142,7 @@ export async function GET() {
       count: rs.length,
       lastAt: latest.completed_at ?? latest.created_at,
       lastStatus: latest.status,
+      gate: gateDelta(latest),
       deliverable: latestOk?.thread_id && latestArt
         ? { threadId: latestOk.thread_id, artifactId: latestArt.id, title: latestArt.title }
         : null,
