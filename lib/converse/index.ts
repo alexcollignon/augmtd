@@ -19,6 +19,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 import { capabilitiesFor } from '@/lib/home/capability-map';
 import {
   executeResolveInboxItem, executeResolveCommitment, executeFindFile, executeRememberFact,
@@ -190,7 +191,10 @@ async function dialogueContext(
         : t.component?.key === 'input_checklist'
           ? ` [OPEN ASK — waiting on: ${((t.component.state?.items as string[] | undefined) ?? []).join('; ')}]`
           : '';
-      return `[${who}] ${t.text.replace(/\s+/g, ' ').slice(0, 220)}${comp}`;
+      // THE EXCERPT-HONESTY LAW (the Rene incident, Aug 17): a raw mid-word slice here made a
+      // coworker read OUR budget cut as "the task description got cut off" and report itself
+      // blocked. Every prompt-bound clip ends at a boundary and declares itself.
+      return `[${who}] ${clipForPrompt(t.text.replace(/\s+/g, ' '), 220)}${comp}`;
     });
     // The LATEST standing interaction wins (one pending thing at a time — the room's own ask law).
     let pending: PendingInteraction | null = null;
@@ -206,7 +210,7 @@ async function dialogueContext(
         break;
       }
     }
-    return { transcript: `THE CONVERSATION SO FAR (this room, latest last):\n${lines.join('\n')}`, pending, roomKey };
+    return { transcript: `THE CONVERSATION SO FAR (this room, latest last; ${EXCERPT_RULE}):\n${lines.join('\n')}`, pending, roomKey };
   } catch { return { transcript: '', pending: null, roomKey: null }; }
 }
 
@@ -264,7 +268,7 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
     `You are the router of a work assistant's chat. The user typed a note${inItem ? ' while viewing ONE work item' : ''}. ` +
     // THE DIALOGUE READ: the router sees the conversation, so a note referencing "it"/"that"/"the
     // bootcamp" resolves against what was just said, never against thin air.
-    (transcript ? `${transcript.slice(0, 1200)}\n\n` : '') +
+    (transcript ? `${clipForPrompt(transcript, 1200)}\n\n` : '') +
     `Classify it. Available direct COMMANDS (from the capability registry):\n${commands}\n\n` +
     `Return ONLY JSON:\n` +
     `{"command":{"tool":"<registry tool>","args":{...}}|null,` +
@@ -717,9 +721,9 @@ async function runCoworkerDelegation(
         step: { text: task, detail: `The user asked for this in chat: "${userText}"` +
           // The hand-off carries its conversation — a task worded as "do it" resolves against
           // what was just discussed instead of arriving at the coworker as thin air.
-          (transcript ? `\nTHE CONVERSATION THIS CAME FROM (resolve "it"/"that" against it):\n${transcript.slice(0, 4000)}` : '') +
+          (transcript ? `\nTHE CONVERSATION THIS CAME FROM (resolve "it"/"that" against it):\n${clipForPrompt(transcript, 4000)}` : '') +
           // …and the user's attached material rides WHOLE — the work is usually ON these files.
-          (material ? `\n\nTHE ATTACHED MATERIAL (the user attached these files with the request — work on their actual content):\n${material.slice(0, 18000)}` : '') },
+          (material ? `\n\nTHE ATTACHED MATERIAL (the user attached these files with the request — work on their actual content):\n${clipForPrompt(material, 18000)}` : '') },
       });
       const out = await runDelegation({
         supabase: admin, userId, worker: { id: worker.id as string, name: String(worker.name), worker_role: (worker.worker_role as string) ?? null, is_worker: true },
@@ -924,7 +928,7 @@ async function viewingExcerpt(client: SupabaseClient, userId: string, scope: Con
       return `THE ITEM THE USER IS VIEWING RIGHT NOW (your answer MUST be consistent with it):\n` +
         `From: ${(sd.from_name as string) || (sd.from as string) || ''}\nSubject: ${(sd.subject as string) || it.work_title || ''}\n` +
         (atts.length ? `Attachments: ${atts.join(', ')}\n` : '') +
-        `Body: ${String(sd.body || '').replace(/\s+/g, ' ').slice(0, 900)}`;
+        `Body: ${clipForPrompt(String(sd.body || '').replace(/\s+/g, ' '), 900)}\n(${EXCERPT_RULE})`;
     }
     if (linkKindOf(scope) === 'commitment') {
       const { data: c } = await client.from('commitments').select('description, counterparty, due_date').eq('id', scope.itemId).eq('user_id', userId).maybeSingle();
@@ -943,9 +947,13 @@ async function viewingExcerpt(client: SupabaseClient, userId: string, scope: Con
  *  reformatting. Assistant turns keep more length — they're what follow-ups operate ON. */
 function panelTranscript(history: ConverseHistoryTurn[] | undefined): string {
   if (!history?.length) return '';
+  // THE EXCERPT-HONESTY LAW (the Rene incident, Aug 17): the assistant-line hard cut at 900 chars
+  // broke mid-word ("…move forward after qu"), and the delegated coworker read OUR cut as a
+  // truncated task — then confabulated the quote. Boundary clips + a declared marker, and the
+  // rule rides the header so a tail-clip of the whole block can never strip it.
   const lines = history.slice(-8).map((t) =>
-    `[${t.role === 'user' ? 'user' : 'assistant'}] ${t.text.replace(/\s+/g, ' ').slice(0, t.role === 'assistant' ? 900 : 1200)}`);
-  return `THE CHAT SO FAR (this panel, latest last):\n${lines.join('\n')}`;
+    `[${t.role === 'user' ? 'user' : 'assistant'}] ${clipForPrompt(t.text.replace(/\s+/g, ' '), t.role === 'assistant' ? 900 : 1200)}`);
+  return `THE CHAT SO FAR (this panel, latest last; ${EXCERPT_RULE}):\n${lines.join('\n')}`;
 }
 
 // THE REF-TAG FLOOR (forward-motion law #3, found live: "[F3] [L3] is waiting for your response
@@ -1294,7 +1302,7 @@ async function converseInner(
   if (loopTurn.exhausted) {
     opts.onProgress?.('This needs real production — handing it to the team…');
     const handed = await runCoworkerDelegation(client, userId, scope, 'clara',
-      text.replace(/\s+/g, ' ').slice(0, 80), text, transcript, material, momentTheme, opts.attachments ?? []);
+      clipForPrompt(text.replace(/\s+/g, ' '), 80), text, transcript, material, momentTheme, opts.attachments ?? []);
     if (handed.delegated) return handed;
     return { say: "I couldn't finish this one inline, and the hand-off didn't go through either — try again in a moment, or name a coworker (\"Max: …\") to take it.", refs: [] };
   }
