@@ -5,6 +5,7 @@ import { getAIClient } from '@/lib/ai/factory';
 import type { AgentStep, StepOutput } from '@/lib/workflows/types';
 import type { ItemPlanKind, ItemPlanTask } from './item-plan';
 import { TYPED_OUTPUT_RULE } from '@/lib/workflows/typed-output';
+import { EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 import { readPool, writeDeliverable, renderPoolForContext, type Deliverable } from './deliverable-pool';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -82,6 +83,12 @@ export function buildDelegationPrompt(args: {
       `needs Y for the final version"). Only stop and ask when the work is genuinely impossible or ` +
       `meaningless without the missing pieces — a partial deliverable with honest gaps beats a request list.`,
     `- Report back plainly: what you did, what you're handing over, and anything you couldn't do.`,
+    `- If you PRODUCED the deliverable, your report speaks the deliverable — what it is and what's ` +
+      `in it. A question about a detail rides BESIDE the finished work ("here it is; one thing to ` +
+      `confirm: …"), never instead of it. Never report yourself blocked while handing back ` +
+      `completed work (found live: a finished agenda reported as "cut off, can't proceed").`,
+    `- ${EXCERPT_RULE} Never claim an instruction or document "got cut off" unless the SOURCE ` +
+      `itself shows it — our clip marker is a length budget, not evidence.`,
     `- Never invent facts to fill a gap — a named gap is honest; a fabricated fact is not.`,
     `- INSIDE a deliverable (a filled-in form, questionnaire, or document), keep every original ` +
       `section/question and where only the user can supply or verify a fact, write ` +
