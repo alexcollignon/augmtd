@@ -55,6 +55,17 @@ const EMBED_MAX_CHARS = 1500
 /** Cohere is asymmetric: a stored vector is a DOCUMENT; a probe against the index is a QUERY. */
 export type EmbedPurpose = 'document' | 'query';
 
+// ─── THE EMBED-TEXT DERIVATIONS (one place — the live indexers, the re-embed sweep and the E3 gate
+// all call these, so a stored vector is always reproducible from its row). THE NAME IS PART OF THE
+// DOCUMENT (Aug 19, found by the resolver gate after the Cohere swap): a query shaped like a filename
+// ("JDs overview") must find "JDs overview.pdf" — under the retired model's compressed scale that
+// worked by accident; semantically the name has to be IN the vector.
+/** File-level vector: the filename leads the body. */
+export const fileEmbedText = (filename: string, text: string): string => `${filename}\n${text}`;
+/** Tier-1 raw chunk vector (ingest path): the context header (document + section) leads the content. */
+export const rawChunkEmbedText = (contextHeader: string | null, content: string): string =>
+  `${contextHeader ? contextHeader + '\n' : ''}${content}`;
+
 export async function embedText(text: string, userId: string, supabase: SupabaseClient, opts?: { purpose?: EmbedPurpose }): Promise<number[]> {
   const { client, model, endpoint, tier } = await getAIClient(userId, 'embeddings', supabase);
   const res = await client.embeddings.create({
@@ -511,7 +522,7 @@ export async function indexUploadedFile(params: IndexUploadParams, adminClient: 
 
   let fileEmbedding: number[] | null = null;
   if (cleanText && cleanText.length > 10) {
-    fileEmbedding = await embedText(cleanText, userId, adminClient);
+    fileEmbedding = await embedText(fileEmbedText(filename, cleanText), userId, adminClient);
   }
 
   const { data: fileRows, error: upsertError } = await adminClient
@@ -648,7 +659,7 @@ export async function indexArtifact(params: IndexArtifactParams, adminClient: Su
 
     let fileEmbedding: number[] | null = null;
     if (cleanText && cleanText.length > 10) {
-      fileEmbedding = await embedText(cleanText, userId, adminClient);
+      fileEmbedding = await embedText(fileEmbedText(filename, cleanText), userId, adminClient);
     }
 
     const { data: fileRows, error: upsertError } = await adminClient
@@ -816,7 +827,7 @@ export async function indexSource(
         // Embed whole-file text for backward compat (existing search_knowledge_files RPC)
         let fileEmbedding: number[] | null = null;
         if (cleanText && cleanText.length > 10) {
-          fileEmbedding = await embedText(cleanText, source.user_id, adminClient);
+          fileEmbedding = await embedText(fileEmbedText(file.name, cleanText), source.user_id, adminClient);
         }
 
         // Upsert file row — get ID back for chunk FK
