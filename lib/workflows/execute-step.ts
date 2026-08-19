@@ -62,9 +62,11 @@ export async function executeStep(step: WorkflowStep, ctx: StepContext): Promise
       case 'tool':  output = await executeToolStep(step, ctx); break;
       case 'ai':    output = await executeAIStep(step, ctx); break;
       case 'agent': output = await executeAgentStep(step, ctx); break;
-      // The APPROVAL step is handled by the RUN LOOP (pause/resume in run-workflow) — reaching
-      // it here means a caller bypassed the loop; pass through harmlessly, never park.
+      // The APPROVAL and HANDOFF steps are handled by the RUN LOOP (pause/resume in
+      // run-workflow) — reaching them here means a caller bypassed the loop; pass through
+      // harmlessly, never park.
       case 'approval': output = '[Approval gate — handled by the run loop]'; break;
+      case 'handoff': output = '[Handoff gate — handled by the run loop]'; break;
       // The verify gate speaks TWICE: the corrected draft (a plain string, so every downstream
       // consumer is untouched) and its structured verdict, attached beside the output here.
       case 'verify': {

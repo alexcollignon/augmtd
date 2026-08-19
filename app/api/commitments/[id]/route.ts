@@ -64,6 +64,10 @@ export async function GET(
       counterparty: c.counterparty ?? null,
       dueDate: c.due_date ?? null,
       source: c.source ?? null,
+      // The source's OWN id travels with the source word: a source='handoff' commitment's
+      // source_id IS the parked run, and the deep-dive's decision card posts to it (the one
+      // /api/workflows/runs/[id]/resume door). Inert for every other source.
+      sourceId: c.source_id ?? null,
       threadId: c.thread_id ?? null,
       status: c.status,
       createdAt: c.created_at ?? null,
