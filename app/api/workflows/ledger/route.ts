@@ -20,7 +20,7 @@ export async function GET() {
 
   const [wfRes, scopeRes, runRes, workerRes] = await Promise.all([
     supabase.from('workflows')
-      .select('id, name, description, status, trigger, steps, output_config, last_run_at, next_run_at, auto_paused_at, agent_id')
+      .select('id, name, description, status, trigger, steps, output_config, last_run_at, next_run_at, auto_paused_at, agent_id, icon, color')
       .eq('user_id', user.id)
       .order('next_run_at', { ascending: true, nullsFirst: false }),
     supabase.from('item_plans')
@@ -40,7 +40,20 @@ export async function GET() {
     id: string; name: string; description: string | null; status: string;
     trigger: WorkflowTrigger | null; steps: WorkflowStep[] | null; output_config: OutputConfig | null;
     last_run_at: string | null; next_run_at: string | null; auto_paused_at: string | null; agent_id: string | null;
+    icon: string | null; color: string | null;
   }>;
+
+  // ── THE ACCOUNTABILITY OWNER ON THE LEDGER (processes arc B2) — served ONLY when it is an
+  // EXPLICIT choice (a stored owner row). Absent = the creator owns by default, and the row says
+  // nothing rather than parading the reader's own name back at them. One batch read. ──
+  const ownerNames = new Map<string, string>();
+  try {
+    const { ownersFor } = await import('@/lib/workflows/owner');
+    const owners = await ownersFor(supabase, wfs.map(w => ({ id: w.id, user_id: user.id })));
+    for (const [wfId, o] of owners) {
+      if (o.explicit && o.name) ownerNames.set(wfId, o.name);
+    }
+  } catch { /* ownership attribution is additive — the ledger serves without it */ }
 
   // Worker names (the presenter, never the owner — workflows are system-owned).
   const agentIds = [...new Set(wfs.map(w => w.agent_id).filter(Boolean))] as string[];
@@ -95,6 +108,10 @@ export async function GET() {
       hasVerify: (w.steps ?? []).some(s => (s as { type?: string }).type === 'verify'),
       workerName: w.agent_id ? (agentNames.get(w.agent_id) ?? null) : null,
       agentId: w.agent_id,
+      icon: w.icon ?? null,
+      color: w.color ?? null,
+      // Present only when accountability was explicitly assigned (absent = the creator owns).
+      ...(ownerNames.has(w.id) ? { ownerName: ownerNames.get(w.id)! } : {}),
       project: scopeByWf.get(w.id) ?? null,
       lastRunAt: w.last_run_at, nextRunAt: w.next_run_at,
       autoPaused: !!w.auto_paused_at,

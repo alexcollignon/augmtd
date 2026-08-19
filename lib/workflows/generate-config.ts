@@ -18,6 +18,10 @@ export interface GeneratedWorkflowConfig {
    *  one sentence naming it, so the door can surface "you already have a Tuesday briefing
    *  covering this" instead of silently minting a twin. */
   overlap_note?: string | null;
+  /** THE UNRESOLVED-PERSON NOTE (processes arc Phase B): a handoff step named someone code could
+   *  not resolve to a workspace member (no match, or ambiguous — two Sams). One sentence the
+   *  draft card can speak, so the gap is stated instead of silently shipping an empty gate. */
+  needs_person_note?: string | null;
 }
 
 const SYSTEM = `You are a workflow pipeline architect for a business automation platform. Given a plain-language description, generate a complete, production-quality workflow as a JSON object.
@@ -80,6 +84,25 @@ the delivery. When the user says it should run fully automatically, use none. Wh
 said and the output goes to EXTERNAL recipients (not the user themselves), prefer including it
 — a held send is recoverable, an unwanted one is not.
 
+Handoff step — a HUMAN GATE HELD BY ANOTHER PERSON: the run parks here until that teammate
+decides. Their ask lands on THEIR deck; the run resumes when they approve:
+{ "type": "handoff", "id": "step_007", "label": "Wait on a person", "assignee_name": "<the person's name AS THE REQUEST NAMES THEM>", "ask": "<what they're deciding or reviewing, in the request's own words>", "sla_hours": 24 }
+NEVER emit "assignee_user_id" — you give the NAME exactly as the request says it; the system
+resolves it to the real person. Inventing an id or an email is always wrong.
+"sla_hours" ONLY when the request states urgency or a deadline ("within a day", "by Friday",
+"chase them after 48h"); omit it otherwise.
+
+THE APPROVAL-VS-HANDOFF RULE (decide by WHO reviews):
+- The USER THEMSELF reviews/approves ("send it to me for approval", "let me check first",
+  "nothing goes out without my sign-off") → the "approval" step. Never a handoff.
+- ANOTHER NAMED PERSON reviews/approves/signs ("Jordan approves the shortlist", "legal signs
+  off — that's Sam", "Acme's account lead checks it first") → ONE "handoff" step at that exact
+  point in the pipeline, with the ask written from the request's own words.
+- Several named gates in sequence → several handoff steps, in the order the request states them
+  (a hiring loop: screen → "Jordan reviews the shortlist" → schedule → "Sam approves the offer").
+- A person named only as a RECIPIENT of the output ("send it to Sam") is delivery, not a gate —
+  no handoff step.
+
 ━━━ AVAILABLE TOOLS ━━━
 
 get_emails          — reads the user's inbox. config: { "mode": "recent" }
@@ -121,7 +144,10 @@ Default to "document" for scheduled reports and "message" for quick output. Use 
 5. The ai step prompt must be specific: state the output structure, language, tone, and what to write if input is sparse.
 6. Each step id must be unique: "step_001", "step_002", etc.
 7. For any news/briefing/report task, the ai step prompt MUST include date discipline: use only facts from the source material, include an item only if its publication date is stated and falls within the task's time window, never shift dates or years to fit the present, copy citation dates exactly from the material (never invent them), and prefer an honest "nothing relevant this period" over a stale item.
-8. For a recurring briefing/report deliverable, ADD a second, final ai step as a verification gate: it treats the preceding step's output as the draft and everything before as source material, deletes or corrects any claim/date/citation not grounded in the sources, enforces the draft's stated style rules, and outputs ONLY the corrected deliverable in full (an exception to rule 4's "exactly one ai step").`;
+8. For a recurring briefing/report deliverable, ADD a second, final ai step as a verification gate: it treats the preceding step's output as the draft and everything before as source material, deletes or corrects any claim/date/citation not grounded in the sources, enforces the draft's stated style rules, and outputs ONLY the corrected deliverable in full (an exception to rule 4's "exactly one ai step").
+9. NEVER estimate how long this work takes a human. Do not emit "estimated_manual_minutes" or any
+   time-saved/effort figure anywhere in the JSON — that baseline is AUTHORED by the user, never
+   guessed; a fabricated number would be presented to them as their own estimate.`;
 
 export async function generateWorkflowConfig(
   description: string,
@@ -233,6 +259,59 @@ export async function generateWorkflowConfig(
     }
   }
 
+  // THE AUTHORED-BASELINE LAW, CODE-ENFORCED: the manual-time baseline is the user's own number.
+  // Whatever the prompt says, a model-emitted estimate never survives to the save path.
+  const outputConfig = { ...((generated.output_config as Record<string, unknown>) ?? {}) };
+  delete outputConfig.estimated_manual_minutes;
+
+  // ── THE HANDOFF RESOLUTION (processes arc Phase B) — names are the model's job, ids are code's.
+  // The model emits assignee_name only; here it becomes a real workspace member (or stays empty
+  // and SAYS SO). Handoffs are not capped like gates — ordered human gates are legitimate — but a
+  // runaway draft gets a sanity ceiling so a pipeline can't park five-plus times.
+  const MAX_HANDOFFS = 4;
+  const handoffs = steps.filter((s) => s.type === 'handoff');
+  if (handoffs.length > MAX_HANDOFFS) {
+    const keep = new Set(handoffs.slice(0, MAX_HANDOFFS));
+    steps = steps.filter((s) => s.type !== 'handoff' || keep.has(s));
+  }
+
+  let needsPersonNote: string | null = null;
+  const liveHandoffs = steps.filter((s) => s.type === 'handoff');
+  if (liveHandoffs.length) {
+    try {
+      const { listWorkspaceMembers, matchMemberByName } = await import('./resolve-member');
+      const members = await listWorkspaceMembers(supabase, userId);
+      const unresolved: string[] = [];
+      for (const s of liveHandoffs) {
+        // The model must never supply an id — a hallucinated uuid is an unauthorized gate.
+        delete (s as { assignee_user_id?: unknown }).assignee_user_id;
+        const spoken = typeof s.assignee_name === 'string' ? s.assignee_name.trim() : '';
+        const hit = spoken ? matchMemberByName(members, spoken) : null;
+        if (hit) {
+          s.assignee_user_id = hit.userId;
+          s.assignee_name = hit.name; // the ROSTER's spelling, not the request's rendering
+        } else {
+          s.assignee_user_id = '';           // the Studio's "no person chosen yet" state
+          s.assignee_name = spoken || '';
+          if (spoken) unresolved.push(spoken);
+        }
+      }
+      const names = [...new Set(unresolved)];
+      if (names.length) {
+        needsPersonNote = names.length === 1
+          ? `I couldn't find ${names[0]} in your workspace — pick the person in Studio.`
+          : `I couldn't find ${names.slice(0, -1).join(', ')} or ${names[names.length - 1]} in your workspace — pick the people in Studio.`;
+      }
+    } catch {
+      // The roster read failing must never lose the draft: the steps keep empty assignees and the
+      // note tells the truth about what's missing.
+      for (const s of liveHandoffs) {
+        if (typeof s.assignee_user_id !== 'string') s.assignee_user_id = '';
+      }
+      needsPersonNote = 'I couldn\'t check your workspace roster — pick the person for each handoff in Studio.';
+    }
+  }
+
   // If caller passed an explicit override, use it; otherwise use model-generated value.
   const workerInstructions =
     options?.workerInstructions?.trim()
@@ -246,13 +325,13 @@ export async function generateWorkflowConfig(
     description: typeof generated.description === 'string' ? generated.description.trim() : null,
     trigger: (generated.trigger as Record<string, unknown>) ?? { type: 'manual' },
     steps,
-    output_config: (generated.output_config as Record<string, unknown>) ?? {
-      destination: 'message',
-      report_mode: 'each_run',
-    },
+    output_config: Object.keys(outputConfig).length
+      ? outputConfig
+      : { destination: 'message', report_mode: 'each_run' },
     worker_instructions: workerInstructions,
     overlap_note: typeof generated.overlap_note === 'string' && generated.overlap_note.trim()
       ? generated.overlap_note.trim()
       : null,
+    needs_person_note: needsPersonNote,
   };
 }

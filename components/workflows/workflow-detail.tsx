@@ -22,9 +22,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { ArrowLeftIcon, PencilSquareIcon, PlayIcon } from '@heroicons/react/24/outline';
+import {
+  ArrowLeftIcon, ArrowPathIcon, BoltIcon, BookOpenIcon, BriefcaseIcon, CalendarDaysIcon, ChartBarIcon,
+  ClockIcon, CpuChipIcon, DocumentTextIcon, EnvelopeIcon, FunnelIcon, GlobeAltIcon, InboxIcon,
+  MagnifyingGlassIcon, MegaphoneIcon, NewspaperIcon, PencilSquareIcon, PlayIcon,
+  PresentationChartLineIcon, TableCellsIcon,
+} from '@heroicons/react/24/outline';
 import { Badge, Button, SegmentedControl } from '@/components/ui';
-import { WorkerFace } from '@/components/work/worker-face';
 import { PROCESS_BUCKETS, gateDeltaOf, processStateOf } from '@/lib/workflows/process-state';
 import type { ProcessRow, ProcessState, StepOutputLike } from '@/lib/workflows/process-state';
 
@@ -38,6 +42,11 @@ type Tab = 'work' | 'timeline' | 'metrics' | 'history' | 'frames';
 // `explicit: false` means nobody has been named and the creator carries it.
 type OwnerInfo = { userId: string; name: string; explicit: boolean };
 type Teammate = { userId: string; name: string; email: string };
+
+// THE IDENTITY MARK (owner walk): with people involved, the PROCESS NAME is the identity and the
+// coworker is attribution — so the title never wears a human face. A tile renders only when the
+// ledger actually serves a mark; both fields are OPTIONAL and absent = no tile at all.
+type LedgerMark = { icon?: string | null; color?: string | null };
 
 type RunRow = {
   id: string;
@@ -92,6 +101,48 @@ function GateChip({ gate }: { gate: { status: string; fixed: number } }) {
   );
 }
 
+// THE MARK TILE — the workflow's own identity square (never a person's face). It speaks the
+// vocabulary Studio already authors (`workflows.icon` keys + `workflows.color` tokens) and is
+// defensive at every step: an unknown colour degrades to neutral, an unknown icon key degrades to
+// the house bolt, a raw emoji renders as itself, and NOTHING renders when neither field is served.
+const TILE_TONE: Record<string, string> = {
+  indigo: 'bg-indigo-50 text-indigo-600', violet: 'bg-violet-50 text-violet-600',
+  emerald: 'bg-emerald-50 text-emerald-600', amber: 'bg-amber-50 text-amber-600',
+  blue: 'bg-blue-50 text-blue-600', rose: 'bg-rose-50 text-rose-600',
+  teal: 'bg-teal-50 text-teal-600', neutral: 'bg-neutral-100 text-neutral-500',
+};
+
+const MARK_ICONS: Record<string, React.ComponentType<{ style?: React.CSSProperties }>> = {
+  bolt: BoltIcon, clock: ClockIcon, envelope: EnvelopeIcon, 'calendar-days': CalendarDaysIcon,
+  'document-text': DocumentTextIcon, 'magnifying-glass': MagnifyingGlassIcon, 'chart-bar': ChartBarIcon,
+  'arrow-path': ArrowPathIcon, newspaper: NewspaperIcon, 'globe-alt': GlobeAltIcon,
+  'table-cells': TableCellsIcon, inbox: InboxIcon, megaphone: MegaphoneIcon, funnel: FunnelIcon,
+  'presentation-chart-line': PresentationChartLineIcon, briefcase: BriefcaseIcon,
+  'cpu-chip': CpuChipIcon, 'book-open': BookOpenIcon,
+};
+
+export function WorkflowMark({ mark, size = 28 }: { mark: LedgerMark | null; size?: number }) {
+  const icon = mark?.icon?.trim() || '';
+  const color = mark?.color?.trim() || '';
+  if (!icon && !color) return null;
+  const toned = TILE_TONE[color.toLowerCase()];
+  const hex = !toned && /^#[0-9a-fA-F]{3,8}$/.test(color);
+  // A glyph is only rendered when it IS a glyph — an identifier ("newspaper") resolves through the
+  // authored map, and an unknown one falls back to the house mark rather than printing debug text.
+  const glyph = icon && icon.length <= 4 && !/^[\w-]+$/.test(icon) ? icon : null;
+  const Icon = MARK_ICONS[icon.toLowerCase()] ?? BoltIcon;
+  const glyphSize = { width: Math.round(size * 0.5), height: Math.round(size * 0.5) };
+  return (
+    <span
+      className={`inline-flex flex-shrink-0 items-center justify-center rounded-lg ${toned ?? (hex ? '' : 'bg-neutral-100 text-neutral-500')}`}
+      style={{ width: size, height: size, fontSize: Math.round(size * 0.55), ...(hex ? { backgroundColor: `${color}1f`, color } : {}) }}
+      aria-hidden="true"
+    >
+      {glyph ?? <Icon style={glyphSize} />}
+    </span>
+  );
+}
+
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 export function WorkflowDetail({
@@ -112,6 +163,7 @@ export function WorkflowDetail({
   const [runs, setRuns] = useState<RunRow[] | null>(null);
   const [running, setRunning] = useState(false);
   const [owner, setOwner] = useState<OwnerInfo | null>(null);
+  const [mark, setMark] = useState<LedgerMark | null>(null);
   // Who is looking: the creator sees "Owned by you" (when they hold it) and the change affordance.
   // Both facts come from ONE existing read — GET /api/workflows/[id] already serves is_owned_by_me.
   const [selfUserId, setSelfUserId] = useState<string | null>(null);
@@ -121,8 +173,15 @@ export function WorkflowDetail({
     try {
       const r = await fetch('/api/workflows/ledger');
       if (!r.ok) { setProcesses((p) => p ?? []); return; }
-      const j = (await r.json()) as { processes?: ProcessRow[] };
+      const j = (await r.json()) as {
+        processes?: ProcessRow[];
+        ledger?: Array<{ id: string; icon?: string | null; color?: string | null }>;
+      };
       setProcesses((j.processes ?? []).filter((p) => p.workflowId === workflowId));
+      // The identity mark rides the SAME payload — optional fields, no second fetch, and the
+      // header simply carries no tile when the route doesn't serve them.
+      const row = (j.ledger ?? []).find((w) => w.id === workflowId);
+      if (row && (row.icon || row.color)) setMark({ icon: row.icon ?? null, color: row.color ?? null });
     } catch { setProcesses((p) => p ?? []); }
   }, [workflowId]);
 
@@ -183,6 +242,24 @@ export function WorkflowDetail({
     return t;
   }, []);
 
+  // ── ONE SOURCE, BOTH TABS (owner walk, the one-derivation violation found live) ──────────────
+  // `runIdToProcessRow` is the SHARED map: Work reads the served rows, and Timeline now buckets
+  // through the SAME rows instead of re-deriving each run client-side. The client mapper cannot
+  // know a park belongs to a TEAMMATE (that attribution is served, viewer-aware), so Timeline used
+  // to say "Needs my input" over a run Work called "waiting on <name>" — two claims, one truth.
+  const runIdToProcessRow = useMemo(
+    () => new Map((processes ?? []).map((p) => [p.runId, p] as const)),
+    [processes],
+  );
+
+  // THE LIVE LINE — the same served words, in the header. Your own debt outranks a teammate's wait.
+  const parkedNow = useMemo(() => {
+    const rows = processes ?? [];
+    return rows.find((p) => p.state === 'needs_you' && !p.reason)
+      ?? rows.find((p) => p.state === 'waiting_on_others')
+      ?? null;
+  }, [processes]);
+
   return (
     <div className="flex-1 min-w-0 h-full flex flex-col bg-white overflow-hidden">
       {/* ── HEADER ─────────────────────────────────────────────────────────────────────────── */}
@@ -197,21 +274,28 @@ export function WorkflowDetail({
         </div>
         <div className="px-5 py-3 flex items-start gap-3">
           <div className="min-w-0 flex-1">
+            {/* THE HEADER GRAMMAR (owner walk): the PROCESS NAME is the identity — the coworker is
+                attribution and lives in the meta line, exactly as the ledger rows say it. */}
             <div className="flex items-center gap-2 flex-wrap">
-              {workerName && <WorkerFace name={workerName} size={24} />}
-              <h1 className="text-[18px] font-semibold text-neutral-900 truncate">
-                {workerName && <span className="text-neutral-400 font-normal">{workerName} / </span>}
-                {name}
-              </h1>
+              <WorkflowMark mark={mark} size={28} />
+              <h1 className="text-[18px] font-semibold text-neutral-900 truncate">{name}</h1>
               {status !== 'active' && <Badge tone="neutral">{status}</Badge>}
               {autoPaused && <Badge tone="amber">Paused after failures</Badge>}
             </div>
             <div className="mt-1 text-[12.5px] text-neutral-500 flex items-center gap-2 flex-wrap">
-              {scheduleLabel && <span>{scheduleLabel}</span>}
+              <span>{scheduleLabel ?? 'On demand'}</span>
               {nextRunAt && <span className="text-neutral-400">· next {fmtDateTime(nextRunAt)}</span>}
+              {workerName && <span className="text-neutral-400">· delivered by {workerName}</span>}
               {stepCount > 0 && <span className="text-neutral-400">· {stepCount} steps</span>}
             </div>
-            {description && <p className="mt-1 text-[12.5px] text-neutral-500 line-clamp-2">{description}</p>}
+            {parkedNow && (
+              <div className={`mt-1 text-[12.5px] ${parkedNow.state === 'needs_you' ? 'text-amber-600' : 'text-violet-600'}`}>
+                {parkedNow.state === 'needs_you'
+                  ? 'waiting for your approval'
+                  : `waiting on ${parkedNow.waitingOn?.name ?? 'a teammate'}`}
+              </div>
+            )}
+            {description && <p className="mt-1 text-[12.5px] text-neutral-400 line-clamp-2">{description}</p>}
             {owner && (
               <OwnerLine
                 workflowId={workflowId}
@@ -242,7 +326,7 @@ export function WorkflowDetail({
       {/* ── BODY ───────────────────────────────────────────────────────────────────────────── */}
       <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4">
         {tab === 'work' && <WorkTab processes={processes} />}
-        {tab === 'timeline' && <TimelineTab runs={runs} stepCount={stepCount} />}
+        {tab === 'timeline' && <TimelineTab runs={runs} stepCount={stepCount} runIdToProcessRow={runIdToProcessRow} />}
         {tab === 'metrics' && <MetricsTab workflowId={workflowId} />}
         {tab === 'history' && <HistoryTab runs={runs} processes={processes} workflowName={name} stepCount={stepCount} />}
         {/* Frames: STANDBY — no frame machinery in this arc. */}
@@ -583,10 +667,15 @@ function MetricsTab({ workflowId }: { workflowId: string }) {
 // ── TIMELINE ────────────────────────────────────────────────────────────────────────────────────
 // Every recent run on ONE date axis: a ~14-day window ending today, a vertical today line, one bar
 // per run (started → ended ?? now), coloured by the bucket the ONE derivation put it in.
+//
+// THE SHARED SOURCE: bucketing reads `runIdToProcessRow` — the SAME served rows the Work tab
+// renders — so the two tabs cannot disagree about a park's owner.
 
 const WINDOW_DAYS = 14;
 
-function TimelineTab({ runs, stepCount }: { runs: RunRow[] | null; stepCount: number }) {
+function TimelineTab({
+  runs, stepCount, runIdToProcessRow,
+}: { runs: RunRow[] | null; stepCount: number; runIdToProcessRow: Map<string, ProcessRow> }) {
   if (runs === null) return <Skeleton rows={4} />;
   if (!runs.length) return <Empty>Nothing has run yet.</Empty>;
 
@@ -599,14 +688,20 @@ function TimelineTab({ runs, stepCount }: { runs: RunRow[] | null; stepCount: nu
   const span = Math.max(1, t1 - t0);
   const pctOf = (ms: number) => ((Math.min(t1, Math.max(t0, ms)) - t0) / span) * 100;
 
-  type Placed = { run: RunRow; state: ProcessState; left: number; width: number; done: number };
+  type Placed = { run: RunRow; state: ProcessState; waitingOn: string | null; left: number; width: number; done: number };
   const placed: Placed[] = runs.map((r) => {
-    const { state } = processStateOf(r);
+    const served = runIdToProcessRow.get(r.id);
+    // THE SERVED ROW WINS. FALLBACK (safe by construction): the ledger caps at the most recent
+    // runs, so a run with no served row is OLDER than that window — and an out-of-window run is
+    // always TERMINAL (a parked or running process is, by definition, recent and therefore
+    // served). processStateOf(r) can only ever be reached for finished history here.
+    const state: ProcessState = served ? served.state : processStateOf(r).state;
+    const waitingOn = served?.waitingOn?.name ?? null;
     const s = new Date(r.started_at ?? r.created_at).getTime();
     const e = r.completed_at ? new Date(r.completed_at).getTime() : now;
     const left = pctOf(s);
     const width = Math.max(1.5, pctOf(e) - left);
-    return { run: r, state, left, width, done: (r.step_outputs ?? []).length };
+    return { run: r, state, waitingOn, left, width, done: (r.step_outputs ?? []).length };
   }).filter((p) => new Date(p.run.started_at ?? p.run.created_at).getTime() >= t0 - 86400000);
 
   if (!placed.length) return <Empty>Nothing has run in the last {WINDOW_DAYS} days.</Empty>;
@@ -620,13 +715,21 @@ function TimelineTab({ runs, stepCount }: { runs: RunRow[] | null; stepCount: nu
   return (
     <div className="max-w-4xl overflow-x-auto">
       <div className="min-w-[640px]">
-        {/* axis */}
+        {/* axis — edge ticks anchor instead of centring, or the first label clips to "ug". */}
         <div className="relative h-4 mb-2">
-          {ticks.map((t) => (
-            <span key={t.label} className="absolute -translate-x-1/2 text-[10.5px] text-neutral-400" style={{ left: `${t.pct}%` }}>
-              {t.label}
-            </span>
-          ))}
+          {ticks.map((t) => {
+            const atStart = t.pct <= 5;
+            const atEnd = t.pct >= 95;
+            return (
+              <span
+                key={t.label}
+                className={`absolute text-[10.5px] text-neutral-400 whitespace-nowrap ${atStart || atEnd ? '' : '-translate-x-1/2'}`}
+                style={atEnd ? { right: 0 } : { left: atStart ? 0 : `${t.pct}%` }}
+              >
+                {t.label}
+              </span>
+            );
+          })}
         </div>
         <div className="relative rounded-xl border border-neutral-200 bg-white py-2">
           {/* today line — spans the whole board */}
@@ -635,11 +738,14 @@ function TimelineTab({ runs, stepCount }: { runs: RunRow[] | null; stepCount: nu
             {PROCESS_BUCKETS.map(({ state, label }) => {
               const rows = placed.filter((p) => p.state === state);
               if (!rows.length) return null; // calm floor
+              // The group speaks the SERVED words — a wait wears its name when one is known.
+              const names = Array.from(new Set(rows.map((p) => p.waitingOn).filter((n): n is string => !!n)));
+              const heading = state === 'waiting_on_others' && names.length === 1 ? `Waiting on ${names[0]}` : label;
               return (
                 <section key={state}>
                   <div className="px-4 pb-1 flex items-center gap-2">
                     <span className={`w-1.5 h-1.5 rounded-full ${BUCKET_TONE[state].dot}`} />
-                    <h2 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">{label}</h2>
+                    <h2 className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">{heading}</h2>
                   </div>
                   <div className="space-y-1">
                     {rows.map((p) => (

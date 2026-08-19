@@ -25,6 +25,7 @@ import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { ThreadArtifactsPanel } from '@/components/work/chat-artifact-panel';
 import { ExpandableRows } from '@/components/home/expandable-rows';
 import ProcessDrawer, { GateChip, GateFindings } from '@/components/workflows/process-drawer';
+import { WorkflowMark } from '@/components/workflows/workflow-detail';
 import { PROCESS_BUCKETS } from '@/lib/workflows/process-state';
 import type { ProcessRow } from '@/lib/workflows/process-state';
 import type { DocumentArtifact } from '@/lib/types/inbox';
@@ -38,6 +39,8 @@ type LedgerRow = {
   project: { entityId: string; entityName: string } | null;
   lastRunAt: string | null; nextRunAt: string | null; autoPaused: boolean;
   lastRunStatus: string | null; lastRunError: string | null; runningProgress: string | null;
+  /** OPTIONAL identity/attribution the route may serve — absent renders exactly today's row. */
+  icon?: string | null; color?: string | null; ownerName?: string | null;
 };
 type Awaiting = { runId: string; workflowId: string; workflowName: string; since: string; instruction: string | null; lastStepLabel: string | null };
 type RecentGroup = {
@@ -105,6 +108,10 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
   const [describe, setDescribe] = useState('');
   const [drafting, setDrafting] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
+  // THE BASELINE, ASKED ONCE AT BIRTH (optional): how long the manual version takes. It powers the
+  // Metrics tab's time-saved line — which is ALWAYS labelled as the human's own estimate. Empty
+  // means OMITTED, never 0 (a fabricated zero would claim the work costs nothing).
+  const [baselineDraft, setBaselineDraft] = useState('');
   const [presenterId, setPresenterId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -182,6 +189,17 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
     } finally { setDrafting(false); }
   }, [describe, drafting, data?.workers]);
 
+  // The draft's output_config, plus the baseline WHEN the human stated one. A blank, a zero or a
+  // non-number never writes the field — the Metrics tab must invite an estimate, not invent one.
+  const outputConfigWithBaseline = useCallback((): Record<string, unknown> => {
+    const base = (draft?.output_config ?? {}) as Record<string, unknown>;
+    const raw = baselineDraft.trim();
+    if (!raw) return base;
+    const minutes = Math.round(Number(raw));
+    if (!Number.isFinite(minutes) || minutes <= 0) return base;
+    return { ...base, estimated_manual_minutes: minutes };
+  }, [draft?.output_config, baselineDraft]);
+
   // ── Review → confirm (the word is the deed: Confirm CREATES, active, adopted). ──
   const confirmDraft = useCallback(async () => {
     if (!draft || confirming) return;
@@ -191,17 +209,17 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: draft.name, description: draft.description, trigger: draft.trigger,
-          steps: draft.steps, output_config: draft.output_config, status: 'active',
+          steps: draft.steps, output_config: outputConfigWithBaseline(), status: 'active',
           agent_id: presenterId, worker_instructions: draft.worker_instructions ?? null,
         }),
       });
       const j = await r.json().catch(() => null);
       if (!r.ok || !j?.workflow) { toast.error(j?.error ?? 'Could not create it.'); return; }
       toast.success(`"${draft.name}" is live — ${draft.trigger.type === 'schedule' ? (draft.trigger.label ?? 'on its schedule') : draft.trigger.type === 'reaction' ? 'it fires when the condition is met' : 'run it anytime'}.`);
-      setDraft(null); setDescribe('');
+      setDraft(null); setDescribe(''); setBaselineDraft('');
       void refresh(true);
     } catch { toast.error('Could not create it — try again.'); } finally { setConfirming(false); }
-  }, [draft, confirming, presenterId, refresh]);
+  }, [draft, confirming, presenterId, refresh, outputConfigWithBaseline]);
 
   // ── THE STUDIO DOORS (owner, Aug 9): "Adjust in Studio" saves the draft AS A DRAFT (nothing
   // live) and opens the builder on it; "build from scratch" creates an empty draft and opens
@@ -214,7 +232,7 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: draft.name, description: draft.description, trigger: draft.trigger,
-          steps: draft.steps, output_config: draft.output_config, status: 'draft',
+          steps: draft.steps, output_config: outputConfigWithBaseline(), status: 'draft',
           agent_id: presenterId, worker_instructions: draft.worker_instructions ?? null,
         }),
       });
@@ -222,7 +240,7 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
       if (!r.ok || !j?.workflow?.id) { toast.error('Could not open it in Studio.'); return; }
       window.location.href = `/studio?workflow=${j.workflow.id}&from=workflows`;
     } catch { toast.error('Could not open it in Studio — try again.'); } finally { setConfirming(false); }
-  }, [draft, confirming, presenterId]);
+  }, [draft, confirming, presenterId, outputConfigWithBaseline]);
 
   const startFromScratch = useCallback(async () => {
     try {
@@ -366,7 +384,7 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                   {' · delivers to '}{HOME_WORD[String((draft.output_config as { destination?: string }).destination ?? 'message')] ?? 'a message'}
                 </div>
               </div>
-              <button onClick={() => setDraft(null)} className="text-[12px] text-neutral-400 hover:text-neutral-600">Discard</button>
+              <button onClick={() => { setDraft(null); setBaselineDraft(''); }} className="text-[12px] text-neutral-400 hover:text-neutral-600">Discard</button>
             </div>
             <ol className="mt-3 space-y-1">
               {draft.steps.map((s, i) => (
@@ -383,6 +401,23 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                 {draft.overlap_note}
               </div>
             )}
+            {/* THE BASELINE, ASKED AT BIRTH — optional, and the only honest source of time saved. */}
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              <label htmlFor="wf-baseline" className="text-[12px] text-neutral-500">
+                How long does this take you manually?
+              </label>
+              <input
+                id="wf-baseline"
+                type="number"
+                min={1}
+                inputMode="numeric"
+                value={baselineDraft}
+                onChange={(e) => setBaselineDraft(e.target.value)}
+                placeholder="minutes"
+                className="w-24 rounded-lg border border-neutral-200 bg-white px-2.5 py-1 text-[12.5px] focus:outline-none focus:border-indigo-300"
+              />
+              <span className="text-[11.5px] text-neutral-400">optional — it powers the Metrics tab</span>
+            </div>
             <div className="mt-4 flex items-center gap-3">
               <Button size="sm" onClick={() => void confirmDraft()} disabled={confirming}>
                 {confirming ? 'Creating…' : 'Confirm — it goes live'}
@@ -476,6 +511,8 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                   <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dot}`} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
+                      {/* The workflow's own identity tile — rendered ONLY when the route serves it. */}
+                      <WorkflowMark mark={{ icon: w.icon, color: w.color }} size={22} />
                       {/* The name is the door to the workflow's own home (the deep-dive). */}
                       <a href={`/workflows/${w.id}`} className="truncate text-[13px] font-medium text-neutral-800 hover:text-indigo-600 transition-colors">{w.name}</a>
                       {w.hasVerify && <ShieldCheckIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" title="Verified against sources before delivery" />}
@@ -515,6 +552,8 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                         <><span className="text-neutral-300">·</span><span className="text-neutral-400">paused</span></>
                       ) : null}
                       {w.status === 'draft' && <><span className="text-neutral-300">·</span><span className="text-neutral-400">draft — finish it in Studio</span></>}
+                      {/* Accountability, when the route names it — quiet attribution, never a claim. */}
+                      {w.ownerName && <><span className="text-neutral-300">·</span><span className="text-neutral-400">owned by {w.ownerName}</span></>}
                     </div>
                   </div>
                   {/* VISIBLE verbs — a hidden door is no door (owner, Aug 9). */}

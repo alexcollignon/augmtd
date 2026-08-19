@@ -14,6 +14,10 @@ export async function GET() {
     .select('company_id')
     .eq('user_id', user.id)
     .eq('status', 'active')
+    // THE DETERMINISTIC WORKSPACE (Aug 19): unordered limit(1) gave a multi-membership user an
+    // arbitrary roster — and the handoff name-resolver mirrors THIS pick, so the picker and the
+    // resolver must see the same company every read. Oldest active membership = primary.
+    .order('joined_at', { ascending: true })
     .limit(1)
     .maybeSingle();
 

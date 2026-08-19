@@ -225,6 +225,32 @@ async function main() {
       .map(([n]) => n);
     ok('NO components/workflows file re-implements processStateOf', reimplemented.length === 0, reimplemented.join(', '));
   }
+  {
+    // THE SOURCE FLOOR (owner walk, Aug 19 — a real one-derivation violation): the deep-dive's
+    // Timeline used to bucket every run through the CLIENT mapper, which cannot know a park
+    // belongs to a teammate — it said "Needs my input" over a run the Work tab called "waiting on
+    // <name>". Both tabs now read ONE map of the SERVED rows; the client mapper survives only as
+    // the out-of-window fallback (older runs are terminal by construction).
+    ok('the deep-dive builds ONE runId→ProcessRow map from the served processes',
+      detail.includes('const runIdToProcessRow = useMemo(')
+      && /new Map\(\(processes \?\? \[\]\)\.map\(\(p\) => \[p\.runId, p\]/.test(detail));
+    ok('…and hands that same map to the Timeline tab (Work + Timeline, one source)',
+      detail.includes('runIdToProcessRow={runIdToProcessRow}')
+      && detail.includes('const served = runIdToProcessRow.get(r.id);'));
+    ok('a run WITH a served row never touches processStateOf (the served state wins)',
+      /const state: ProcessState = served \? served\.state : processStateOf\(r\)\.state;/.test(detail));
+    ok('…and the fallback declares WHY it is safe (out-of-window runs are terminal)',
+      detail.includes('THE SERVED ROW WINS. FALLBACK (safe by construction)'));
+    {
+      // Comment lines are prose about the law, not calls — count CODE only.
+      const code = detail.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+      ok('processStateOf has exactly ONE call site left in the deep-dive (the fallback)',
+        (code.match(/processStateOf\(/g) ?? []).length === 1,
+        String((code.match(/processStateOf\(/g) ?? []).length));
+    }
+    ok('Timeline group labels speak the SERVED words (a wait wears its name)',
+      detail.includes('Waiting on ${names[0]}'));
+  }
 
   console.log('\nP5 — THE ONE DOOR (approve/reject fires the one resume route):');
   {

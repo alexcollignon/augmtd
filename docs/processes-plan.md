@@ -138,10 +138,18 @@ never render a disabled ghost).
   H8 verify-gate + handoff coexist; H9 test mode auto-passes and creates NO cross-user
   debris. Cleanup asserts zero leftovers on BOTH probes.
 
-## Phase C — reach + depth (queued)
+## Phase C — THE REPLY RAIL (owner decision Aug 19: ON DATA TRIGGER, not queued)
 
-Inbound handoff replies (Slack/email — the scoped inbound build), drift analytics on History,
-Frames on the roadmap's word, stored subjects/references if case volume warrants a registry.
+Inbound handoff replies (Slack/email reply-to-approve — the scoped descendant of the original
+"Slack inbound" strategic bet; the entry rung that builds the webhook/verification rails the
+bigger senses-for-the-ledger vision later reuses). DEFERRED DELIBERATELY: approvals stay
+IN-PLATFORM — the email deep link lands on the one-button decision card, assignees are workspace
+members with decks, and reply-by-email is an action gate driven by spoofable identity (a new
+security surface the regulated tier shouldn't carry before it earns its risk). **THE TRIGGER IS
+THE RECEIPTS**: the SLA machinery records every chase (handoff_nudge rows, waited-times) — build
+the rail when the data shows asks dying at the login wall (repeated nudges, long gate waits),
+not before. Also still here: drift analytics on History, stored references if case volume
+warrants, Frames on the roadmap's word.
 
 ## Phase B2 — THE PEOPLE SLICE (owner + reassign; specced Aug 18, owner's walk notes)
 

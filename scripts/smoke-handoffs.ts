@@ -108,9 +108,13 @@ async function main() {
     }
     // Probe C joins the roster too: B2's reassign can only move a gate INSIDE the workspace (the
     // team boundary the reassign ROUTE enforces — see the H11 source floor).
+    // BACKDATED MEMBERSHIPS: the workspace pick is now deterministic (oldest active membership
+    // wins — the picker and the name-resolver share it), and the probes carry debris memberships
+    // from other suites. Backdating makes THIS company the deterministic primary without ever
+    // touching another suite's fixtures.
     for (const [uid, role] of [[ownerId, 'owner'], [reviewerId, 'member'], [strangerId, 'member']] as const) {
       await admin.from('company_members')
-        .upsert({ company_id: companyId, user_id: uid, role, status: 'active' }, { onConflict: 'company_id,user_id' });
+        .upsert({ company_id: companyId, user_id: uid, role, status: 'active', joined_at: '2020-01-01T00:00:00Z' }, { onConflict: 'company_id,user_id' });
     }
     note(`scratch company ${companyId}${companyCreated ? ' (created)' : ' (reused)'} — all three probes active members`);
   } catch (e) {
@@ -899,6 +903,180 @@ async function main() {
       /m\.baselineMinutes !== null \?/.test(detailSrc) && /setBaselineDraft/.test(detailSrc));
     ok('OutputConfig carries estimated_manual_minutes (one existing save path, no migration)',
       /estimated_manual_minutes\?: number/.test(typesSrc));
+
+    // ══ H15 — THE COLLABORATIVE SHAPE IS SAYABLE ════════════════════════════════════════════════
+    // A pipeline with a human gate must be reachable from plain words: the model names the person,
+    // CODE resolves them, and an unresolvable name is SAID, never silently shipped as an empty gate.
+    // (b/c/d assert OUTCOMES — step presence, order, ids — never phrasings.)
+    console.log('\nH15 — the collaborative shape is sayable:');
+    const { generateWorkflowConfig } = await import('@/lib/workflows/generate-config');
+    type GenCfg = Awaited<ReturnType<typeof generateWorkflowConfig>>;
+    type GenStep = Record<string, unknown>;
+
+    // ── H15a — the resolution ladder, pure (no AI, no DB) ──────────────────────────────────────
+    const { matchMemberByName } = await import('@/lib/workflows/resolve-member');
+    const roster = [
+      { userId: 'u-riley-probe', name: 'Riley Probe', email: 'riley@fixture.test' },
+      { userId: 'u-riley-stone', name: 'Riley Stone', email: 'rs@fixture.test' },
+      { userId: 'u-jordan-vale', name: 'Jordan Vale', email: 'jv@fixture.test' },
+      { userId: 'u-sam-lee', name: 'Sam Lee', email: 'sam.lee@fixture.test' },
+    ];
+    const m = (n: string) => matchMemberByName(roster, n)?.userId ?? null;
+    ok('H15a exact full name wins', m('Riley Probe') === 'u-riley-probe', String(m('Riley Probe')));
+    ok('H15a AMBIGUITY IS A REFUSAL: "Riley" alone → null (never a looser tier)',
+      m('Riley') === null, String(m('Riley')));
+    ok('H15a a unique first name resolves', m('Jordan') === 'u-jordan-vale', String(m('Jordan')));
+    ok('H15a tier 3: a unique distinctive token ("lee") reaches its one person',
+      m('lee') === 'u-sam-lee', String(m('lee')));
+    // RE-POINTED (Aug 19, with the CONFIDENT-WRONG FLOOR): under the every-token law a scrambled
+    // full name ("stone riley") legitimately resolves — every token lands on ONE person. The
+    // refusal the floor guarantees is the PARTIAL hit across DIFFERENT humans.
+    ok('H15a a scrambled full name still reaches its one person (order-insensitive)',
+      m('stone riley') === 'u-riley-stone', String(m('stone riley')));
+    ok('H15a THE CONFIDENT-WRONG FLOOR: a multi-token name splitting across two humans REFUSES',
+      m('Sam Stone') === null, String(m('Sam Stone')));
+    ok('H15a an unknown person → null', m('Marisol Vexley') === null, String(m('Marisol Vexley')));
+    ok('H15a case/whitespace insensitive', m('  riLEY   probe ') === 'u-riley-probe', String(m('  riLEY   probe ')));
+    ok('H15a empty name → null, and an empty roster → null',
+      m('') === null && matchMemberByName([], 'Riley Probe') === null);
+    // THE CONFIDENT-WRONG CLASS: the person named is NOT on the roster, but one of their name
+    // tokens is shared by somebody else ("Sam Lee" asked for, only "Lee Chan" present). The
+    // module's own law is "we never guess who holds a gate" — a partial token hit on a DIFFERENT
+    // human must refuse, not authorize them.
+    const otherRoster = [
+      { userId: 'u-lee-chan', name: 'Lee Chan', email: 'lc@fixture.test' },
+      { userId: 'u-jordan-vale', name: 'Jordan Vale', email: 'jv@fixture.test' },
+    ];
+    ok('H15a a spoken FULL NAME never lands on someone who shares only one token',
+      matchMemberByName(otherRoster, 'Sam Lee') === null,
+      JSON.stringify(matchMemberByName(otherRoster, 'Sam Lee')));
+
+    // ── AI-gate harness: one retry on a flake, never a softened assertion ───────────────────────
+    let aiCalls = 0;
+    const genTwice = async (desc: string, primary: (c: GenCfg) => boolean, canRetry = true): Promise<GenCfg> => {
+      let cfg = await generateWorkflowConfig(desc, ownerId, admin, { companyName: COMPANY_NAME });
+      aiCalls++;
+      if (!primary(cfg) && canRetry) {
+        note('primary shape missed — re-running this generation ONCE (flake policy)');
+        cfg = await generateWorkflowConfig(desc, ownerId, admin, { companyName: COMPANY_NAME });
+        aiCalls++;
+      }
+      return cfg;
+    };
+    const stepsOf = (c: GenCfg): GenStep[] => (c?.steps ?? []) as GenStep[];
+    const shapeOf = (c: GenCfg) => stepsOf(c).map((s) =>
+      `${String(s.type)}${s.type === 'tool' ? `:${String(s.tool)}` : ''}(${String(s.label ?? '')})`).join(' → ');
+    const textBlob = (s: GenStep) => [s.label, s.prompt, s.ask, s.instruction, JSON.stringify(s.config ?? {})]
+      .map((v) => (typeof v === 'string' ? v : '')).join(' ');
+    // A generation must never touch the workflows table — generateWorkflowConfig DRAFTS, the
+    // create door inserts. Counted around the whole AI block.
+    const wfCount = async () => (await admin.from('workflows')
+      .select('id', { count: 'exact', head: true }).eq('user_id', ownerId)).count ?? 0;
+    const wfBeforeGen = await wfCount();
+
+    // ── H15b — the hiring loop generates with a REAL member ────────────────────────────────────
+    // THE PRECONDITION, ASSERTED FIRST: the roster the resolver will read must carry probe B.
+    // listWorkspaceMembers picks ONE active membership with no ordering — a user who belongs to
+    // two workspaces gets an arbitrary roster, so this is a real read hazard, stated not assumed.
+    const { listWorkspaceMembers } = await import('@/lib/workflows/resolve-member');
+    const liveRoster = await listWorkspaceMembers(admin, ownerId);
+    const rosterHasB = matchMemberByName(liveRoster, 'Riley Probe')?.userId === reviewerId;
+    console.log(`  ↳ roster the resolver saw: ${JSON.stringify(liveRoster.map((r) => r.name))}`);
+    ok('H15b precondition: the resolver reads the scratch roster (probe B is in it)',
+      rosterHasB, `listWorkspaceMembers picked a workspace without probe B: ${JSON.stringify(liveRoster.map((r) => r.name))}`);
+    const cfgB = await genTwice(
+      'When I ask, screen data analyst applicants into a shortlist, then Riley Probe approves the shortlist, then draft interview invitations.',
+      (c) => stepsOf(c).some((s) => s.type === 'handoff' && s.assignee_user_id === reviewerId),
+      rosterHasB, // a wrong roster is not a model flake — re-running the model cannot fix it
+    );
+    const bSteps = stepsOf(cfgB);
+    const bHandoffs = bSteps.filter((s) => s.type === 'handoff');
+    console.log(`  ↳ H15b pipeline: ${shapeOf(cfgB) || '(none)'}`);
+    ok('H15b the request produced a pipeline with at least one handoff', bHandoffs.length >= 1,
+      JSON.stringify(bSteps.map((s) => s.type)));
+    ok('H15b THE NAME BECAME AN ID: assignee_user_id is probe B, code-resolved',
+      bHandoffs.some((s) => s.assignee_user_id === reviewerId),
+      JSON.stringify(bHandoffs.map((s) => [s.assignee_name, s.assignee_user_id])));
+    ok("H15b …and assignee_name is the ROSTER's spelling",
+      bHandoffs.some((s) => s.assignee_user_id === reviewerId && s.assignee_name === 'Riley Probe'),
+      JSON.stringify(bHandoffs.map((s) => s.assignee_name)));
+    const bGateIdx = bSteps.findIndex((s) => s.type === 'handoff');
+    ok('H15b the gate sits AFTER the screening work (never first)', bGateIdx > 0, String(bGateIdx));
+    ok('H15b …and BEFORE the remaining work (something follows it)',
+      bGateIdx >= 0 && bGateIdx < bSteps.length - 1, `${bGateIdx} of ${bSteps.length}`);
+    ok('H15b …with the invitation work on the far side of the gate',
+      bGateIdx >= 0 && bSteps.slice(bGateIdx + 1).some((s) => /invit/i.test(textBlob(s))),
+      JSON.stringify(bSteps.slice(Math.max(bGateIdx, 0) + 1).map((s) => s.label)));
+    ok('H15b the ask is grounded in the request (it names the shortlist)',
+      bHandoffs.some((s) => /short\s?list/i.test(`${String(s.ask ?? '')} ${String(s.label ?? '')}`)),
+      JSON.stringify(bHandoffs.map((s) => s.ask)));
+    ok('H15b APPROVAL-VS-HANDOFF: no approval step (the user never asked to self-review)',
+      !bSteps.some((s) => s.type === 'approval'), JSON.stringify(bSteps.map((s) => s.type)));
+    ok('H15b no fabricated baseline anywhere in output_config',
+      !('estimated_manual_minutes' in (cfgB?.output_config ?? {})),
+      JSON.stringify(cfgB?.output_config));
+    ok('H15b every handoff carries a resolved-or-empty id (never a model uuid)',
+      bHandoffs.every((s) => s.assignee_user_id === '' || s.assignee_user_id === reviewerId || s.assignee_user_id === strangerId || s.assignee_user_id === ownerId),
+      JSON.stringify(bHandoffs.map((s) => s.assignee_user_id)));
+
+    // ── H15c — approval vs handoff: the user reviewing themself is NOT a handoff ────────────────
+    const cfgC = await genTwice(
+      'Every Monday summarize my inbox, and send it to me for approval before it emails out.',
+      (c) => stepsOf(c).some((s) => s.type === 'approval'),
+    );
+    const cSteps = stepsOf(cfgC);
+    console.log(`  ↳ H15c pipeline: ${shapeOf(cfgC) || '(none)'}`);
+    ok('H15c an approval step exists (the user themself reviews)',
+      cSteps.some((s) => s.type === 'approval'), JSON.stringify(cSteps.map((s) => s.type)));
+    ok('H15c …and NO handoff step was invented',
+      !cSteps.some((s) => s.type === 'handoff'), JSON.stringify(cSteps.map((s) => s.type)));
+    ok('H15c no unresolved-person note on a self-review pipeline',
+      !cfgC?.needs_person_note, String(cfgC?.needs_person_note));
+
+    // ── H15d — the honest unresolved ───────────────────────────────────────────────────────────
+    const cfgD = await genTwice(
+      'When I ask, draft the client brief, and Marisol Vexley reviews the brief before it goes out.',
+      (c) => stepsOf(c).some((s) => s.type === 'handoff'),
+    );
+    const dSteps = stepsOf(cfgD);
+    const dHandoffs = dSteps.filter((s) => s.type === 'handoff');
+    console.log(`  ↳ H15d pipeline: ${shapeOf(cfgD) || '(none)'} · note="${cfgD?.needs_person_note ?? ''}"`);
+    ok('H15d a named outsider still produces the handoff gate', dHandoffs.length >= 1,
+      JSON.stringify(dSteps.map((s) => s.type)));
+    ok('H15d the assignee is EMPTY, never guessed',
+      dHandoffs.every((s) => s.assignee_user_id === ''), JSON.stringify(dHandoffs.map((s) => s.assignee_user_id)));
+    ok('H15d the gap is SAID: needs_person_note names her',
+      /marisol/i.test(String(cfgD?.needs_person_note ?? '')), String(cfgD?.needs_person_note));
+    ok('H15d …and the spoken name survives on the step for the Studio to resolve',
+      dHandoffs.some((s) => /marisol/i.test(String(s.assignee_name ?? ''))),
+      JSON.stringify(dHandoffs.map((s) => s.assignee_name)));
+    ok('H15 A GENERATION INSERTS NOTHING (generateWorkflowConfig drafts; the create door saves)',
+      (await wfCount()) === wfBeforeGen, `${wfBeforeGen} → ${await wfCount()}`);
+
+    // ── H15e — the floors, in the landed source ────────────────────────────────────────────────
+    const genSrc = await readSrc('lib/workflows/generate-config.ts');
+    const workerTasksSrc = await readSrc('lib/tools/worker-tasks.ts');
+    ok('H15e the prompt FORBIDS a model-emitted id',
+      /NEVER emit "assignee_user_id"/.test(genSrc), 'prohibition missing');
+    ok('H15e …and code deletes any id BEFORE resolving (a hallucinated uuid cannot survive)',
+      /delete \(s as \{ assignee_user_id\?: unknown \}\)\.assignee_user_id;/.test(genSrc),
+      'delete-before-resolve line missing');
+    ok('H15e THE APPROVAL-VS-HANDOFF RULE is stated, by WHO reviews',
+      /THE APPROVAL-VS-HANDOFF RULE \(decide by WHO reviews\)/.test(genSrc), 'rule missing');
+    ok('H15e rule 9 forbids guessing a manual-time baseline',
+      /NEVER estimate how long this work takes a human/.test(genSrc), 'rule 9 missing');
+    ok('H15e …and code strips estimated_manual_minutes whatever the model says',
+      /delete outputConfig\.estimated_manual_minutes;/.test(genSrc), 'strip missing');
+    ok('H15e the runaway ceiling exists (MAX_HANDOFFS = 4)',
+      /const MAX_HANDOFFS = 4;/.test(genSrc) && /handoffs\.length > MAX_HANDOFFS/.test(genSrc), 'cap missing');
+    ok('H15e a roster-read failure still tells the truth (never a lost draft)',
+      /couldn\\'t check your workspace roster/.test(genSrc), 'failure note missing');
+    ok('H15e worker-tasks rides needs_person_note ON THE MARKER',
+      /needs_person_note: generated\.needs_person_note \?\? null,/.test(workerTasksSrc), 'marker field missing');
+    ok('H15e …AND speaks it in the sentence (personLine)',
+      /const personLine = generated\.needs_person_note \?/.test(workerTasksSrc) &&
+      /\$\{overlapLine\}\$\{personLine\}/.test(workerTasksSrc), 'personLine not spoken');
+    note(`H15 made ${aiCalls} real generation call(s)`);
   } catch (e) {
     fail++;
     console.log(`\n  ✗ SUITE THREW — ${(e as Error).message}\n${(e as Error).stack}`);
