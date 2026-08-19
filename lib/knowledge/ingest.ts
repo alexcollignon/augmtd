@@ -12,7 +12,7 @@
 
 import { createHash } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { embedText, chunkText, extractTextFromFile, getOrCreateUploadSource } from './indexer';
+import { embedText, fileEmbedText, rawChunkEmbedText, chunkText, extractTextFromFile, getOrCreateUploadSource } from './indexer';
 
 export type FileOriginKind = 'email_attachment' | 'chat' | 'coworker' | 'upload' | 'transcript' | 'generated' | 'gdrive' | 'dropbox';
 export type FileOrigin = { kind: FileOriginKind; ref: string };
@@ -35,10 +35,10 @@ export type IngestParams = {
 
 const MAX_CHUNKS = 24; // Tier-1 cap — deep coverage is Tier-2's job
 
-/** Batch-embed raw chunk contents (no summaries — Tier 1). */
-async function embedChunksRaw(contents: string[], userId: string, admin: SupabaseClient): Promise<number[][]> {
+/** Batch-embed raw chunks (no summaries — Tier 1): context header + content, the ONE derivation. */
+async function embedChunksRaw(items: Array<{ header: string; content: string }>, userId: string, admin: SupabaseClient): Promise<number[][]> {
   const out: number[][] = [];
-  for (const c of contents) out.push(await embedText(c.slice(0, 2000), userId, admin));
+  for (const c of items) out.push(await embedText(rawChunkEmbedText(c.header, c.content.slice(0, 2000)), userId, admin));
   return out;
 }
 
@@ -67,7 +67,7 @@ export async function ingestFile(admin: SupabaseClient, p: IngestParams): Promis
   }
   const clean = text ? text.replace(/\u0000/g, '').trim() : null;
 
-  const fileEmbedding = clean && clean.length > 10 ? await embedText(clean.slice(0, 6000), p.userId, admin) : null;
+  const fileEmbedding = clean && clean.length > 10 ? await embedText(fileEmbedText(p.filename, clean.slice(0, 6000)), p.userId, admin) : null;
   const sourceId = await getOrCreateUploadSource(p.userId, admin);
 
   const base = {
@@ -102,11 +102,12 @@ export async function ingestFile(admin: SupabaseClient, p: IngestParams): Promis
   if (clean && clean.length > 400) {
     try {
       const chunks = chunkText(clean, p.filename).slice(0, MAX_CHUNKS);
-      const embs = await embedChunksRaw(chunks.map((c) => c.content), p.userId, admin);
+      const headers = chunks.map((c) => `${p.filename}${c.heading ? ` — ${c.heading}` : ''}`);
+      const embs = await embedChunksRaw(chunks.map((c, i) => ({ header: headers[i], content: c.content })), p.userId, admin);
       await admin.from('knowledge_chunks').delete().eq('file_id', fileId);
       await admin.from('knowledge_chunks').insert(chunks.map((c, i) => ({
         file_id: fileId, user_id: p.userId, chunk_index: i, heading: c.heading, content: c.content,
-        context_header: `${p.filename}${c.heading ? ` — ${c.heading}` : ''}`,
+        context_header: headers[i],
         embedding: JSON.stringify(embs[i]),
       })));
     } catch { /* chunks are an enhancement — the file row + embedding stand alone */ }

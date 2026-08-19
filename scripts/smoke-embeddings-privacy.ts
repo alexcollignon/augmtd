@@ -21,7 +21,7 @@ import { createClient } from '@supabase/supabase-js';
 import { TIER_DEFAULTS } from '../lib/ai/defaults';
 import { getAIClient, getSystemClient } from '../lib/ai/factory';
 import { BEDROCK_EMBEDDING_MODEL, BEDROCK_EMBEDDING_DIMENSIONS } from '../lib/ai/bedrock-embeddings';
-import { embedText } from '../lib/knowledge/indexer';
+import { embedText, fileEmbedText } from '../lib/knowledge/indexer';
 import { entityEmbedText } from '../lib/entities/recognize';
 import { resolveProbeUser } from './probe-user';
 
@@ -111,7 +111,7 @@ async function main() {
     let fileOk = 0; const fileDetail: string[] = [];
     for (const f of sampleF) {
       const stored = typeof f.embedding === 'string' ? (JSON.parse(f.embedding as string) as number[]) : (f.embedding as number[]);
-      const fresh = await embedText((f.extracted_text as string).replace(/\u0000/g, '').trim(), f.user_id as string, admin);
+      const fresh = await embedText(fileEmbedText(f.filename as string, (f.extracted_text as string).replace(/\u0000/g, '').trim()), f.user_id as string, admin);
       const c = cos(stored, fresh);
       fileDetail.push(`${(f.filename as string).slice(0, 24)}=${c.toFixed(3)}`);
       if (c > 0.95) fileOk++;
