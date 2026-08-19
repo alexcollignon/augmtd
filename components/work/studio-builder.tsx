@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { toast } from 'sonner';
 import { isToolAllowed } from '@/lib/workspace/tool-capabilities';
 import { DEFAULT_FEATURES, type WorkspaceFeatures } from '@/lib/workspace/types';
 
@@ -56,12 +57,13 @@ import {
   PaperAirplaneIcon,
   ShieldCheckIcon,
   HandRaisedIcon,
+  UsersIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
   ToolStep, AIStep, AgentStep, SharingMode,
-  VerifyStep, ApprovalStep, GateVerdict, GateFinding,
+  VerifyStep, ApprovalStep, HandoffStep, GateVerdict, GateFinding,
 } from '@/lib/workflows/types';
 import { makeStepId, normalizeOutput } from '@/lib/workflows/types';
 import { builtinChecksFor, GATE_BUILTIN_LINES } from '@/lib/workflows/builtin-checks';
@@ -185,6 +187,7 @@ const STEP_TYPE_COLORS = {
   agent: { bg: 'bg-emerald-500', activeBg: 'bg-emerald-50', activeText: 'text-emerald-700' },
   verify:   { bg: 'bg-teal-600',  activeBg: 'bg-teal-50',  activeText: 'text-teal-700' },
   approval: { bg: 'bg-amber-500', activeBg: 'bg-amber-50', activeText: 'text-amber-700' },
+  handoff:  { bg: 'bg-violet-500', activeBg: 'bg-violet-50', activeText: 'text-violet-700' },
 };
 
 const STEP_TYPE_ICONS = {
@@ -193,6 +196,7 @@ const STEP_TYPE_ICONS = {
   agent: UserCircleIcon,
   verify:   ShieldCheckIcon,
   approval: HandRaisedIcon,
+  handoff:  UsersIcon,
 };
 
 // ── THE PINNED STATION (guardrails v1.1) ──────────────────────────────────────
@@ -205,7 +209,10 @@ function seatGate(steps: WorkflowStep[]): WorkflowStep[] {
   if (!firstVerify) return steps;
   const rest = steps.filter(s => s.type !== 'verify');
   let at = rest.length;
-  while (at > 0 && rest[at - 1].type === 'approval') at--;
+  // THE HUMAN STATIONS COME AFTER THE CHECK: a trailing approval OR handoff is a person waiting
+  // on the draft — they must see a CHECKED one. seatGate moves only the verify station; the
+  // handoff itself sits where the author placed it and stays reorderable.
+  while (at > 0 && (rest[at - 1].type === 'approval' || rest[at - 1].type === 'handoff')) at--;
   const next = [...rest.slice(0, at), firstVerify, ...rest.slice(at)];
   const unchanged = next.length === steps.length && next.every((s, i) => s === steps[i]);
   return unchanged ? steps : next;
@@ -331,6 +338,8 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
       step = { id, type: 'verify', label: 'Check before delivery', rules: [] } as VerifyStep;
     } else if (type === 'approval') {
       step = { id, type: 'approval', label: 'Your approval' } as ApprovalStep;
+    } else if (type === 'handoff') {
+      step = { id, type: 'handoff', label: 'Wait on a person', assignee_user_id: '', ask: '', sla_hours: undefined } as HandoffStep;
     } else {
       step = { id, type: 'agent', label: 'Hand off to a teammate', agent_id: agents[0]?.id ?? '', prompt: '' } as AgentStep;
     }
@@ -974,6 +983,7 @@ function InlineAddButton({ insertAt, agents, onAdd }: {
             { type: 'tool' as const,  Icon: WrenchScrewdriverIcon, label: 'Tool step',          disabled: false },
             { type: 'ai' as const,    Icon: SparklesIcon,          label: 'Write / produce',    disabled: false },
             { type: 'agent' as const, Icon: UserCircleIcon,        label: 'Hand off to a teammate', disabled: agents.length === 0 },
+            { type: 'handoff' as const, Icon: UsersIcon,           label: 'Wait on a person',   disabled: false },
           ] as const).map(({ type, Icon, label, disabled }) => (
             <button key={type}
               onClick={() => { if (!disabled) { onAdd(type, insertAt); setOpen(false); } }}
@@ -1059,7 +1069,7 @@ function VisualWorkflowColumn({
             {canAddAt(idx)
               ? <InlineDivider insertAt={idx} agents={agents} onAdd={onAddStep} />
               : <FlowConnector />}
-            {step.type === 'verify' || step.type === 'approval' ? (
+            {step.type === 'verify' || step.type === 'approval' || step.type === 'handoff' ? (
               <GateFlowNode
                 step={step}
                 active={isActive}
@@ -1146,21 +1156,39 @@ function GateFlowNode({ step, active, onClick }: {
   step: WorkflowStep; active: boolean; onClick: () => void;
 }) {
   const isVerify = step.type === 'verify';
+  // THE PERSON STATION (handoff arc): a third family — violet, wearing the assignee's name. An
+  // unassigned handoff says so plainly (amber warning tint) rather than looking finished.
+  const isHandoff = step.type === 'handoff';
+  const handoff = isHandoff ? (step as HandoffStep) : null;
+  const unassigned = isHandoff && !handoff?.assignee_user_id;
   const rules = isVerify ? ((step as VerifyStep).rules ?? []) : [];
   const instruction = (step as { instruction?: string }).instruction?.trim();
 
-  const title = isVerify ? 'Checked before delivery' : 'Your approval';
-  const sub = instruction
-    ? (instruction.length > 46 ? instruction.slice(0, 46) + '…' : instruction)
-    : isVerify
-      ? 'checks & fixes the draft against this run’s sources'
-      : 'pauses here — nothing goes out until you OK it';
+  const title = isVerify
+    ? 'Checked before delivery'
+    : isHandoff
+      ? (step.label?.trim() || 'Wait on a person')
+      : 'Your approval';
+  const handoffSub = handoff?.assignee_name
+    ? `waits on ${handoff.assignee_name}${handoff.sla_hours ? ` · ${handoff.sla_hours}h SLA` : ''}`
+    : 'no person chosen yet';
+  const sub = isHandoff
+    ? handoffSub
+    : instruction
+      ? (instruction.length > 46 ? instruction.slice(0, 46) + '…' : instruction)
+      : isVerify
+        ? 'checks & fixes the draft against this run’s sources'
+        : 'pauses here — nothing goes out until you OK it';
 
   const shell = isVerify
     ? `bg-teal-50 text-teal-800 ${active ? 'border-teal-400 shadow-md' : 'border-teal-200 hover:border-teal-300'}`
-    : `bg-amber-50 text-amber-800 ${active ? 'border-amber-400 shadow-md' : 'border-amber-200 hover:border-amber-300'}`;
-  const disc = isVerify ? 'bg-teal-600' : 'bg-amber-500';
-  const Icon = isVerify ? ShieldCheckIcon : HandRaisedIcon;
+    : isHandoff
+      ? (unassigned
+          ? `bg-amber-50 text-amber-800 ${active ? 'border-amber-400 shadow-md' : 'border-amber-300 hover:border-amber-400'}`
+          : `bg-violet-50 text-violet-800 ${active ? 'border-violet-400 shadow-md' : 'border-violet-200 hover:border-violet-300'}`)
+      : `bg-amber-50 text-amber-800 ${active ? 'border-amber-400 shadow-md' : 'border-amber-200 hover:border-amber-300'}`;
+  const disc = isVerify ? 'bg-teal-600' : isHandoff ? (unassigned ? 'bg-amber-500' : 'bg-violet-500') : 'bg-amber-500';
+  const Icon = isVerify ? ShieldCheckIcon : isHandoff ? UsersIcon : HandRaisedIcon;
 
   return (
     <div className="w-full flex justify-center">
@@ -1361,6 +1389,10 @@ function StepFlowCard({ step, index: _index, active, onClick, onUpdate, feedsGat
       const ins = (step as { instruction?: string }).instruction?.trim();
       return `Pauses for your approval${ins ? ` · ${ins.slice(0, 34)}` : ' before continuing'}`;
     }
+    if (step.type === 'handoff') {
+      const h = step as HandoffStep;
+      return h.assignee_name ? `Waits on ${h.assignee_name}` : 'Waits on a person — none chosen yet';
+    }
     const p = (step as AgentStep).prompt?.trim();
     const snippet = p ? (p.length > 42 ? p.slice(0, 42) + '…' : p) : 'No task yet';
     return `Agent · ${snippet}`;
@@ -1503,6 +1535,38 @@ function IdentitySection({ workflow, patch, agents }: {
             placeholder="What does this workflow produce?"
             className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
         </Field>
+        {/* THE OWNER (B2) — the accountability layer. Distinct from the EXECUTION identity, which
+            stays the creator's forever; this row moves who CARRIES the workflow, nothing else.
+            Only on a persisted workflow (there is no id to PUT against before the first save). */}
+        {workflow.is_owned_by_me !== false && workflow.id && (
+          <Field label="Owner" hint="who carries this workflow">
+            <WorkflowOwnerRow workflowId={workflow.id} />
+          </Field>
+        )}
+        {/* THE BASELINE — authored, never guessed. One number, the Metrics tab's only honest
+            source of "time saved". */}
+        <Field label="Manual time (minutes)" hint="powers the Metrics tab">
+          <input
+            type="number"
+            min={1}
+            inputMode="numeric"
+            value={String(
+              (workflow.output_config as unknown as { estimated_manual_minutes?: number } | null)
+                ?.estimated_manual_minutes ?? '',
+            )}
+            onChange={e => {
+              const raw = e.target.value.trim();
+              const n = Math.round(Number(raw));
+              const next = { ...(workflow.output_config ?? {}) } as Record<string, unknown>;
+              if (!raw || !Number.isFinite(n) || n <= 0) delete next.estimated_manual_minutes;
+              else next.estimated_manual_minutes = n;
+              patch('output_config', next as unknown as Workflow['output_config']);
+            }}
+            placeholder="e.g. 45"
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+          />
+          <p className="text-[11px] text-neutral-400 mt-1">How long this takes you by hand. Left empty, the Metrics tab shows no time saved — never a guessed one.</p>
+        </Field>
         {workflow.is_owned_by_me !== false && (
           <Field label="Team sharing">
             <SharingModeSelector
@@ -1591,7 +1655,7 @@ function StepConfigSection({
   const menuRef = useRef<HTMLDivElement>(null);
   const colors = STEP_TYPE_COLORS[step.type as keyof typeof STEP_TYPE_COLORS] ?? STEP_TYPE_COLORS.tool;
   const TypeIcon = STEP_TYPE_ICONS[step.type as keyof typeof STEP_TYPE_ICONS] ?? STEP_TYPE_ICONS.tool;
-  const typeLabel = ({ tool: 'Tool', ai: 'Produce', agent: 'Hand off', verify: 'Check', approval: 'Approval' } as Record<string, string>)[step.type] ?? step.type;
+  const typeLabel = ({ tool: 'Tool', ai: 'Produce', agent: 'Hand off', verify: 'Check', approval: 'Approval', handoff: 'Wait on a person' } as Record<string, string>)[step.type] ?? step.type;
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -1689,6 +1753,165 @@ function StepConfigSection({
           </Field>
         </div>
       )}
+      {step.type === 'handoff' && (
+        <HandoffStepFields step={step as HandoffStep} onUpdate={onUpdate as (p: Partial<HandoffStep>) => void} />
+      )}
+    </div>
+  );
+}
+
+// ── THE PERSON STATION'S PANEL (handoff arc, docs/processes-plan.md Phase B) ──────────────────
+// Three things and no more: WHO holds it, WHAT they're deciding, and HOW LONG before the coworker
+// chases. The roster is the workspace's own members (/api/meetings/teammates — the same source the
+// share picker reads); the display name is SNAPSHOTTED on pick so a later rename can't leave the
+// step unreadable, while `assignee_user_id` stays the truth the engine authorizes against.
+const SLA_CHOICES: Array<{ value: string; label: string }> = [
+  { value: '', label: 'No SLA — wait as long as it takes' },
+  { value: '4', label: '4 hours' },
+  { value: '8', label: '8 hours' },
+  { value: '24', label: '24 hours' },
+  { value: '48', label: '48 hours' },
+  { value: '72', label: '72 hours' },
+];
+
+type Teammate = { userId: string; name: string; email: string };
+
+// ── THE OWNER ROW (processes B2) — mirrors the deep-dive header's affordance, same roster, same
+// PUT. The workflow's EXECUTION identity is untouched: this names who is accountable, nothing more.
+function WorkflowOwnerRow({ workflowId }: { workflowId: string }) {
+  const [owner, setOwner] = useState<{ userId: string; name: string; explicit: boolean } | null>(null);
+  const [mates, setMates] = useState<Teammate[] | null>(null); // null = loading
+  const [failed, setFailed] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let dead = false;
+    void fetch(`/api/workflows/${workflowId}/owner`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => { if (!dead && j?.owner?.userId) setOwner(j.owner); })
+      .catch(() => {});
+    void fetch('/api/meetings/teammates')
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error('roster'))))
+      .then(j => { if (!dead) setMates((j?.teammates ?? []) as Teammate[]); })
+      .catch(() => { if (!dead) { setMates([]); setFailed(true); } });
+    return () => { dead = true; };
+  }, [workflowId]);
+
+  if (!owner) {
+    return <div className="text-[12.5px] text-neutral-400">Loading…</div>;
+  }
+  if (failed) {
+    return <div className="text-[12.5px] text-neutral-500">Owned by {owner.explicit ? owner.name : 'you'} — could not load your workspace to change it.</div>;
+  }
+
+  const pick = async (userId: string) => {
+    if (!userId || saving) return;
+    const m = (mates ?? []).find(x => x.userId === userId);
+    const name = m?.name;
+    const before = owner;
+    setSaving(true);
+    setOwner({ userId, name: name ?? 'you', explicit: true });
+    try {
+      const r = await fetch(`/api/workflows/${workflowId}/owner`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerUserId: userId, ownerName: name }),
+      });
+      if (!r.ok) { setOwner(before); toast.error(r.status === 403 ? 'Only the owner can hand this over.' : 'That change did not land — try again.'); return; }
+      const j = await r.json().catch(() => null);
+      if (j?.owner?.userId) setOwner(j.owner);
+      toast.success(name ? `${name} owns this workflow now.` : 'You own this workflow now.');
+    } catch { setOwner(before); toast.error('That change did not land — try again.'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <>
+      <select
+        value={owner.userId}
+        disabled={saving || mates === null}
+        onChange={e => void pick(e.target.value)}
+        className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white"
+      >
+        {/* The current holder is always nameable, even when they aren't in the teammate roster
+            (the roster excludes the caller by design). */}
+        <option value={owner.userId}>{(mates ?? []).some(m => m.userId === owner.userId) ? owner.name : 'Me'}</option>
+        {(mates ?? []).filter(m => m.userId !== owner.userId).map(m => (
+          <option key={m.userId} value={m.userId}>{m.name}</option>
+        ))}
+      </select>
+      <p className="text-[11px] text-neutral-400 mt-1">Accountability only — runs still execute with the creator&apos;s mailbox, coworkers, and connections.</p>
+    </>
+  );
+}
+
+function HandoffStepFields({ step, onUpdate }: {
+  step: HandoffStep;
+  onUpdate: (p: Partial<HandoffStep>) => void;
+}) {
+  const [mates, setMates] = useState<Teammate[] | null>(null); // null = loading
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let dead = false;
+    void fetch('/api/meetings/teammates')
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error('roster'))))
+      .then(j => { if (!dead) setMates((j?.teammates ?? []) as Teammate[]); })
+      .catch(() => { if (!dead) { setMates([]); setFailed(true); } });
+    return () => { dead = true; };
+  }, []);
+
+  const pick = (userId: string) => {
+    const m = (mates ?? []).find(x => x.userId === userId);
+    onUpdate({ assignee_user_id: userId, assignee_name: m?.name ?? undefined });
+  };
+
+  return (
+    <div className="p-4 space-y-4">
+      <Field label="Person" hint="who holds this step">
+        {mates === null ? (
+          <div className="text-[12.5px] text-neutral-400">Loading your workspace…</div>
+        ) : failed ? (
+          <div className="text-[12.5px] text-neutral-500">Could not load your workspace right now — reopen this step to try again.</div>
+        ) : mates.length === 0 ? (
+          <div className="text-[12.5px] text-neutral-500">No teammates in your workspace yet.</div>
+        ) : (
+          <select
+            value={step.assignee_user_id ?? ''}
+            onChange={e => pick(e.target.value)}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white"
+          >
+            <option value="">Choose a person…</option>
+            {mates.map(m => (
+              <option key={m.userId} value={m.userId}>{m.name}</option>
+            ))}
+          </select>
+        )}
+      </Field>
+
+      <Field label="The ask">
+        <textarea
+          value={step.ask ?? ''}
+          onChange={e => onUpdate({ ask: e.target.value })}
+          rows={3}
+          placeholder="What are they deciding or reviewing?"
+          className="w-full text-[13px] bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-indigo-300 focus:bg-white resize-none placeholder-neutral-400"
+        />
+      </Field>
+
+      <Field label="Chase after" hint="optional">
+        <select
+          value={step.sla_hours ? String(step.sla_hours) : ''}
+          onChange={e => onUpdate({ sla_hours: e.target.value ? parseInt(e.target.value, 10) : undefined })}
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white"
+        >
+          {SLA_CHOICES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+        </select>
+      </Field>
+
+      <p className="text-[11.5px] text-neutral-400 leading-relaxed">
+        The run pauses here. They get it on their deck (and by email); the coworker chases after the SLA.
+      </p>
     </div>
   );
 }

@@ -28,7 +28,7 @@ export async function searchKnowledgeChunks(
   adminClient: SupabaseClient,
   threshold = 0.15
 ): Promise<ChunkResult[]> {
-  const queryEmbedding = await embedText(query, userId, adminClient);
+  const queryEmbedding = await embedText(query, userId, adminClient, { purpose: 'query' });
 
   const { data, error } = await adminClient.rpc('hybrid_search_knowledge', {
     p_user_id: userId,

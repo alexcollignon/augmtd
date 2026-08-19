@@ -116,6 +116,16 @@ export async function GET(request: NextRequest) {
     } catch { /* bookkeeping — never breaks the dispatcher */ }
   });
 
+  // THE SLA CHASE (processes arc Phase B — the missed-promise floor, generalized to people): a
+  // handoff parked longer than its sla_hours gets chased by the coworker, ≤1/day per run, with
+  // the owner's room told. A gate quietly rotting on someone's desk is the class this kills.
+  after(async () => {
+    try {
+      const { sweepHandoffSLAs } = await import('@/lib/workflows/handoffs');
+      await sweepHandoffSLAs(supabase);
+    } catch { /* bookkeeping — never breaks the dispatcher */ }
+  });
+
   // STANDING REACTIONS backstop (production arc step 6): an event-run still queued after 10
   // minutes lost its inline attempt (crashed tail, missing request scope) — re-fire it with its
   // stored trigger context. A crashed tail never silently eats an event.

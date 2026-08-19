@@ -35,7 +35,7 @@ export type WorkflowTrigger = ManualTrigger | ScheduleTrigger | ReactionTrigger;
 
 // ── Steps ──────────────────────────────────────────────────────────────────────
 
-export type StepType = 'tool' | 'ai' | 'agent' | 'approval' | 'verify';
+export type StepType = 'tool' | 'ai' | 'agent' | 'approval' | 'verify' | 'handoff';
 
 // Tool step — deterministic data fetch via the MCP registry or a built-in tool id.
 export interface ToolStep {
@@ -113,7 +113,26 @@ export interface VerifyStep {
   rules?: string[];
 }
 
-export type WorkflowStep = ToolStep | AIStep | AgentStep | ApprovalStep | VerifyStep;
+// Handoff step — THE HUMAN GATE THAT BELONGS TO A TEAMMATE (processes arc Phase B,
+// docs/processes-plan.md): the run parks here and waits on a specific workspace member —
+// their deck gets the ask, THEY hold the gate (canResumeRun), decisions log with waited-time.
+// Sits WHERE PLACED (seatGate moves only verify — a mid-pipeline review→publish is legitimate).
+// Test runs auto-pass. REASSIGN deferred to B2 — a per-run override needs its own store.
+export interface HandoffStep {
+  type: 'handoff';
+  id: string;
+  label: string;
+  /** The workspace member who holds this gate (auth user id). */
+  assignee_user_id: string;
+  /** Display name snapshot at authoring time (the roster can rename; the step stays legible). */
+  assignee_name?: string;
+  /** What they're being asked to do/decide — rendered on their deck ask and the drawer card. */
+  ask?: string;
+  /** Hours before the coworker chases (sweepHandoffSLAs). Absent = no SLA chase. */
+  sla_hours?: number;
+}
+
+export type WorkflowStep = ToolStep | AIStep | AgentStep | ApprovalStep | VerifyStep | HandoffStep;
 
 // ── Output ─────────────────────────────────────────────────────────────────────
 
@@ -151,6 +170,10 @@ export interface OutputConfig {
   slack_announcement?: string;        // template for the document → Slack link-out post ({{title}}, {{link}}, {{date}}; supports <@Name>)
   report_mode?: ReportMode;           // coworker report-back cadence (default each_run)
   output_language?: string;           // BCP-47 code — injected into all AI steps; default 'en'
+  /** THE METRICS BASELINE (authored, never guessed): the user's own "how long does this take me
+   *  manually?" in minutes — powers the Metrics tab's time-saved line, which is ALWAYS labeled
+   *  as their estimate. Absent = the tab invites it; no default, no fabrication. */
+  estimated_manual_minutes?: number;
   // ── legacy (read-only back-compat) ──
   notification_mode?: NotificationMode;
   notification_email_ids?: string[];

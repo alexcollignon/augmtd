@@ -34,9 +34,17 @@ async function getTenantConfig(userId: string, supabase: SupabaseClient): Promis
 
   const companyAiTier = (memberData?.companies as any)?.ai_tier as TierType | null | undefined
 
+  // THE RETIRED-TIER GUARD (Aug 19): `private_shared` (the third-party OSS tier) was removed from
+  // the codebase; the DB CHECK constraints still accept the value, so a stray row must resolve to a
+  // REAL tier rather than crash on TIER_DEFAULTS[undefined]. The only honest landing is the private
+  // Bedrock tier — never the standard default (that would be a silent privacy downgrade).
+  const rawTier = (companyAiTier ?? (tcData?.tier as string | undefined) ?? 'standard') as string
+  const tier: TierType = rawTier in TIER_DEFAULTS ? (rawTier as TierType) : 'bedrock_optimised'
+  if (tier !== rawTier) console.warn(`[AI] retired tier '${rawTier}' for user ${userId.slice(0, 8)} → serving bedrock_optimised`)
+
   const config: TenantConfig = {
     userId,
-    tier: companyAiTier ?? (tcData?.tier as TierType) ?? 'standard',
+    tier,
     modelOverrides: tcData?.model_overrides ?? {},
     endpoints: tcData?.endpoints ?? {},
     encryptedApiKeys: tcData?.encrypted_api_keys ?? {},
@@ -105,8 +113,7 @@ function resolveApiKey(endpoint: ModelEndpoint, config: TenantConfig): string {
   switch (endpoint.provider) {
     case 'anthropic':     return process.env.ANTHROPIC_API_KEY ?? ''
     case 'azure_openai':  return process.env.AZURE_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? ''
-    case 'openai_compatible': return process.env.AUGMTD_AI_KEY ?? process.env.OPENAI_API_KEY ?? ''
-    case 'together':      return process.env.AUGMTD_AI_KEY ?? ''
+    case 'openai_compatible': return process.env.OPENAI_API_KEY ?? ''
     default:              return process.env.OPENAI_API_KEY ?? ''
   }
 }
@@ -122,7 +129,8 @@ function resolveEndpoint(task: TaskType, config: TenantConfig): ModelEndpoint {
   const endpoint: ModelEndpoint = { ...tierDefault, ...override }
 
   // For private tiers without a baked-in baseURL, inject from tenant endpoints config
-  if (!endpoint.baseURL && config.endpoints?.ai) {
+  // (never for Bedrock — it has no baseURL; SigV4 + region, built in buildClient).
+  if (endpoint.provider !== 'bedrock' && !endpoint.baseURL && config.endpoints?.ai) {
     endpoint.baseURL = endpoint.model.includes('bge') || endpoint.model.includes('embed')
       ? (config.endpoints.embeddings ?? config.endpoints.ai)
       : config.endpoints.ai
@@ -157,8 +165,14 @@ export async function getAIClient(
 }
 
 /**
- * System-level client — for server jobs (cron, background sync) where there
- * is no user context. Always uses platform defaults (standard tier).
+ * System-level client — ONLY for work with genuinely no user (no userId anywhere in scope).
+ * Always uses platform defaults (standard tier = OpenAI/Anthropic US).
+ *
+ * ⚠️ THE TIER LEAK (Aug 19): every call site that HAS a user must use `getAIClient(userId, …)` —
+ * the standard-tier default here silently sent privacy-tier tenants' background work (brief
+ * synthesis, briefings, memory rendering, alignment) to OpenAI/Anthropic, breaking the sovereignty
+ * premise the company's `ai_tier` exists to keep. `scripts/smoke-tier-routing.ts` allowlists the
+ * files that may call this; adding a caller = adding it there, with the reason.
  */
 export function getSystemClient(task: TaskType): ResolvedClient {
   const endpoint = TIER_DEFAULTS['standard'][task]

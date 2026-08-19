@@ -2,7 +2,7 @@
 
 Agno AgentOS runtime that powers the AI workers. Runs as a FastAPI app on
 Hetzner alongside the meeting bot. Configured for **private models only**:
-AWS Bedrock (EU) for interactive tasks, Together AI for background tasks. No
+AWS Bedrock (EU) for every task — the only model provider. No
 data ever reaches public OpenAI/Anthropic endpoints — see `models.py`.
 
 This is the migration target for the worker chat loop and workflow execution
@@ -13,7 +13,7 @@ This is the migration target for the worker chat loop and workflow execution
 
 | File | Purpose |
 |---|---|
-| `models.py` | Privacy-preserving model factory (Bedrock + Together only). Mirrors `lib/ai/defaults.ts` `bedrock_optimised`. |
+| `models.py` | Privacy-preserving model factory (Bedrock only). Mirrors `lib/ai/defaults.ts` `bedrock_optimised`. |
 | `main.py` | AgentOS FastAPI app. Phase 1: a single `ping` smoke-test agent. |
 | `test_phase1.py` | Boot + serve verification, optional live model ping. |
 | `Dockerfile` | python:3.12-slim, serves uvicorn on 8001. |
@@ -46,7 +46,7 @@ scp -r infra/agentos root@46.224.176.245:/root/augmtd-infra/infra/
 # 2. Build the image on the server
 ssh root@46.224.176.245 "cd /root/augmtd-infra/infra/agentos && docker build -t augmtd_agentos:latest ."
 
-# 3. Run (reuses /root/augmtd/.env — it already has AWS_BEDROCK_* and AUGMTD_AI_KEY)
+# 3. Run (reuses /root/augmtd/.env — it already has AWS_BEDROCK_*)
 ssh root@46.224.176.245 "docker stop augmtd_agentos 2>/dev/null; docker rm augmtd_agentos 2>/dev/null; \
   docker run -d --name augmtd_agentos --restart unless-stopped \
   -p 8001:8001 --env-file /root/augmtd/.env \

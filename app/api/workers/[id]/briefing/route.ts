@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdmin } from '@supabase/supabase-js';
-import { getSystemClient } from '@/lib/ai/factory';
+import { getAIClient } from '@/lib/ai/factory';
 import { logAIUsage } from '@/lib/ai/log-usage';
 
 export const runtime = 'nodejs';
@@ -219,7 +219,7 @@ Write a brief, natural check-in in first person. 2–4 sentences. Rules:
 - Sound like a colleague giving a quick update, not a system generating a report
 ${isFirstVisit ? '- This is a first meeting: introduce yourself and what you can help with' : `- Address ${firstName ? `"${firstName}"` : 'the user'} by name if it feels natural`}`;
 
-  const { client, model, endpoint, tier } = getSystemClient('conversation');
+  const { client, model, endpoint, tier } = await getAIClient(user.id, 'conversation', supabase);
 
   const stream = await client.chat.completions.create({
     model,

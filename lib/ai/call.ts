@@ -50,7 +50,6 @@ export type CallShape = {
 const SHAPE_ROUTES: Record<TierType, { jsonFast: TaskType; deep: TaskType; voiceGen: TaskType; text: TaskType }> = {
   standard:          { jsonFast: 'classification', deep: 'conversation', voiceGen: 'conversation', text: 'generation' },
   professional:      { jsonFast: 'classification', deep: 'conversation', voiceGen: 'conversation', text: 'generation' },
-  private_shared:    { jsonFast: 'classification', deep: 'planning',     voiceGen: 'conversation', text: 'generation' },
   bedrock_private:   { jsonFast: 'classification', deep: 'conversation', voiceGen: 'conversation', text: 'generation' },
   bedrock_optimised: { jsonFast: 'classification', deep: 'planning',     voiceGen: 'conversation', text: 'generation' },
   private_client:    { jsonFast: 'classification', deep: 'planning',     voiceGen: 'conversation', text: 'generation' },

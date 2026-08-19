@@ -836,9 +836,9 @@ Respond ONLY with valid JSON matching the structure above.`;
           content: prompt
         }
       ],
-      // Apply json_object mode for all providers — Bedrock adapter translates it to a system
-      // prompt instruction; Together AI / OpenAI-compatible APIs support it natively.
-      // Without this, Together AI (Kimi K2.6) returns unstructured text → parse fails → fallback fires.
+      // Apply json_object mode for all providers — the Bedrock adapter translates it to a system
+      // prompt instruction; OpenAI-compatible APIs support it natively. Without it an OSS model
+      // returns unstructured text → parse fails → fallback fires.
       response_format: { type: 'json_object' as const },
       // Budget headroom for reasoning models. On bedrock_optimised, `planning` is Kimi (a REASONING
       // model): it can spend ~1700+ tokens in the hidden reasoning channel before emitting content.

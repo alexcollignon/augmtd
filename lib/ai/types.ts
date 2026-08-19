@@ -17,9 +17,8 @@ export type TaskType =
 export type TierType =
   | 'standard'          // OpenAI / Anthropic APIs — no privacy guarantees
   | 'professional'      // Azure OpenAI / AWS Bedrock — contractual privacy, EU residency
-  | 'private_shared'    // AUGMTD-managed private GPU infra (Modal) — open source models
   | 'bedrock_private'    // AWS Bedrock + Claude Haiku 4.5 — structural isolation, SOC2/HIPAA
-  | 'bedrock_optimised' // Bedrock (chat/gen/ocr) + Fireworks (email/background) — cost-optimised hybrid
+  | 'bedrock_optimised' // Bedrock-only (Haiku volume · Sonnet cap) — the AUGMTD-operated private tier
   | 'private_client'    // Client's own cloud (AWS/Azure/GCP) — AUGMTD orchestrates
   | 'on_prem'           // Client's own hardware — air-gapped
 
@@ -30,7 +29,6 @@ export type ProviderType =
   | 'anthropic'         // api.anthropic.com (via OpenAI-compat endpoint)
   | 'azure_openai'      // {resource}.openai.azure.com
   | 'openai_compatible' // Any OpenAI-compatible endpoint (vLLM, Ollama, Modal, etc.)
-  | 'together'          // api.together.xyz — serverless OSS models
   | 'bedrock'           // AWS Bedrock — structural data isolation, SigV4 auth
 
 export interface ModelEndpoint {

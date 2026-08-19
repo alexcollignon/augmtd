@@ -65,6 +65,15 @@ export function runChecks(content: string, checks: ExtractedCheck[]): ClaimMisma
       if (!Array.isArray(c.operands) || !c.operands.every((n) => typeof n === 'number' && operandInText(n))) continue;
       const expected = expectedOf(c);
       if (expected === null || typeof c.stated !== 'number' || !Number.isFinite(c.stated)) continue;
+      // THE STATED LAW (found live, Aug 18 — the operand law's missing sibling): the extractor
+      // emitted a check whose `stated` value appears NOWHERE in its own quote ("stated 10" against
+      // a draft claiming 25%), with a wrong-signed expected — and the gate model OBEYED the
+      // poisoned MUST-FIX line while noting it knew better ("applied the specified correction as
+      // instructed"). A deterministic floor built on an invented claim is a false revise the
+      // design promised was structurally impossible. The stated number must appear as a
+      // STANDALONE token in the quote itself — substring-of-another-number (10 ∈ 110) never counts.
+      const quoteTokens = new Set((quote.match(/\d[\d.,]*/g) ?? []).map((t) => t.replace(/[.,]/g, '')));
+      if (!quoteTokens.has(String(Math.abs(c.stated)).replace(/[.\-]/g, ''))) continue;
       // Tolerance: rounding is honest (14.29% stated as 14.3 or ~14), a wrong number is not.
       const tol = Math.max(0.51, Math.abs(expected) * 0.015);
       if (Math.abs(expected - c.stated) > tol) {

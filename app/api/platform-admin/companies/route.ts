@@ -7,7 +7,7 @@ import { logAudit, AUDIT_ACTIONS } from '@/lib/audit/log';
 
 const VALID_TYPES: WorkspaceType[] = ['company', 'beta', 'pilot', 'internal'];
 const VALID_PLANS = ['starter', 'growth', 'enterprise'];
-const VALID_TIERS: (TierType | null)[] = ['standard', 'professional', 'private_shared', 'bedrock_private', 'bedrock_optimised', 'private_client', 'on_prem', null];
+const VALID_TIERS: (TierType | null)[] = ['standard', 'professional', 'bedrock_private', 'bedrock_optimised', 'private_client', 'on_prem', null];
 
 function toSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63);

@@ -2322,6 +2322,9 @@ type CommitmentData = {
   counterparty: string | null;
   dueDate: string | null;
   source: string | null;
+  /** The source's own id — for source='handoff' this IS the parked run (the resume door's target). */
+  sourceId?: string | null;
+  status?: string | null;
   createdAt: string | null;
   sourceContext: { kind: 'email' | 'meeting'; subject: string | null; snippet: string | null; from: string | null; when: string | null } | null;
 };
@@ -2363,6 +2366,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
     return () => { alive = false; };
   }, [id]);
 
+  const [reload, setReload] = useState(0);
   useEffect(() => {
     let alive = true;
     fetch(`/api/commitments/${id}`)
@@ -2370,7 +2374,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
       .then((d: CommitmentData) => { if (alive) { setData(d); saveLS(`aug-item-commitment-${id}`, d); } })
       .catch(() => { if (alive) setErr(true); });
     return () => { alive = false; };
-  }, [id]);
+  }, [id, reload]);
 
   const act = async (status: 'done' | 'dismissed') => {
     if (acting) return;
@@ -2386,6 +2390,16 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
 
   const overdue = !!(data?.dueDate && data.dueDate < new Date().toISOString().slice(0, 10));
   const src = data?.sourceContext;
+
+  // ── THE HANDOFF GATE (processes arc Phase B; owner walk, Aug 18). A source='handoff' commitment
+  // is not work to draft — it's a DECISION on a parked run (its source_id IS the runId). The judge
+  // structurally nones it (THE HANDOFF FLOOR in lib/work/judge.ts), and this surface renders its
+  // only two verbs: Approve — deliver it · Hold back, through the ONE resume door. The generic
+  // commitment verbs (Draft email → · Mark done · Dismiss) are SUPPRESSED here — the verb-scope
+  // law: verbs render only with their object, and approving IS done.
+  const isHandoff = data?.source === 'handoff';
+  const handoffRunId = isHandoff ? (data?.sourceId ?? null) : null;
+  const handoffOpen = isHandoff && ['open', 'pending', 'in_progress'].includes(String(data?.status ?? 'open'));
 
   return (
     <DeepDiveShell embedded={embedded} rail={<ItemRail kind="commitment" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} />}>
@@ -2420,6 +2434,16 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
           </div>
         ) : (
           <>
+            {/* THE HANDOFF DECISION — the whole move, first thing on the stage. */}
+            {isHandoff ? (
+              <HandoffDecisionCard
+                title={data.description}
+                runId={handoffRunId}
+                open={handoffOpen}
+                onDecided={() => setReload((n) => n + 1)}
+              />
+            ) : (
+            <>
             {/* One action bar — the compose panel is the only writing surface. When the judge says
                 chase/reply the composer MOUNTS on its own (below); the bar is then just the toggle. */}
             <ActionBar
@@ -2448,6 +2472,8 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
                   </button>
                 )}
               </div>
+            )}
+            </>
             )}
 
             {/* Prepared work (coworker deliverables) + a contextual invite; the gap rides the rail. */}
@@ -2499,7 +2525,9 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
         )}
       </div>
 
-      {/* Docked action footer — Mark done / Dismiss */}
+      {/* Docked action footer — Mark done / Dismiss. SUPPRESSED on a handoff gate: the decision
+          buttons above are the whole move (approving IS done; there is nothing else to mark). */}
+      {!isHandoff && (
       <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4">
         {done ? (
           <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3">
@@ -2525,7 +2553,74 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
           </div>
         )}
       </div>
+      )}
     </DeepDiveShell>
+  );
+}
+
+// ── THE HANDOFF DECISION CARD (processes arc Phase B). A parked run's teammate gate, deep-linked
+// from the handoff email (/item/<commitmentId>?kind=commitment). Two verbs, ONE door
+// (/api/workflows/runs/<runId>/resume, {approve}) — the same route the ledger's process drawer
+// posts to; the server authorizes, resumes-or-ends the run, and settles this commitment. ──
+function HandoffDecisionCard({
+  title, runId, open, onDecided,
+}: { title: string; runId: string | null; open: boolean; onDecided: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [settled, setSettled] = useState<'approved' | 'held' | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  const decide = async (approve: boolean) => {
+    if (!runId || busy) return;
+    setBusy(true); setFailed(false);
+    try {
+      const r = await fetch(`/api/workflows/runs/${runId}/resume`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approve }),
+      });
+      if (!r.ok) { setFailed(true); return; }
+      setSettled(approve ? 'approved' : 'held');
+      onDecided();
+    } catch { setFailed(true); } finally { setBusy(false); }
+  };
+
+  // A stale localStorage shape (cached before `sourceId` was served) knows the source but not the
+  // run — say NOTHING until the refetch lands rather than claim a decision that wasn't made.
+  if (!runId && open && !settled) return null;
+
+  // Already decided (by this click, elsewhere, or before you arrived) — a quiet line, no buttons.
+  if (settled || !open || !runId) {
+    return (
+      <div className="rounded-xl border border-neutral-200 bg-neutral-50/60 px-4 py-3">
+        <p className="text-[13px] text-neutral-500">
+          {settled === 'approved' ? 'Approved — the run is delivering.'
+            : settled === 'held' ? 'Held back — nothing was delivered.'
+            : 'This decision has already been made.'}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50/40 px-4 py-3.5">
+      <p className="text-[13.5px] font-medium text-neutral-800 leading-snug">{title}</p>
+      <p className="mt-0.5 text-[12px] text-neutral-500">A run is parked on your decision.</p>
+      <div className="mt-2.5 flex items-center gap-3">
+        <button
+          onClick={() => void decide(true)}
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 text-white px-4 py-2 text-[13px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+        >
+          <CheckIcon className="w-4 h-4" />Approve — deliver it
+        </button>
+        <button
+          onClick={() => void decide(false)}
+          disabled={busy}
+          className="inline-flex items-center text-[13px] font-medium text-neutral-500 hover:text-neutral-700 disabled:opacity-60 transition-colors"
+        >
+          Hold back
+        </button>
+      </div>
+      {failed && <p className="mt-2 text-[12px] text-rose-600">That decision did not land — try again.</p>}
+    </div>
   );
 }
 

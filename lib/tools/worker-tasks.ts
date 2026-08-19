@@ -4,6 +4,7 @@ import { resolveSkillIdsByName, normalizeSkillNames } from '@/lib/tools/worker-s
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkflowStep, OutputConfig, WorkflowTrigger } from '@/lib/workflows/types';
 import { normalizeOutput } from '@/lib/workflows/types';
+import type { WorkflowDraft } from '@/lib/workflows/draft-marker';
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────
 
@@ -310,7 +311,10 @@ export async function executeCreateTask(
   const { randomUUID } = await import('crypto');
   const schedule = formatSchedule(generated.trigger as { type: string; cron?: string; label?: string });
   const overlapLine = generated.overlap_note ? `\nOne heads-up: ${generated.overlap_note}` : '';
-  const marker = encodeWorkflowDraftMarker({
+  // THE UNRESOLVED-PERSON NOTE (processes arc Phase B): a handoff named someone the roster
+  // couldn't resolve — say it in the sentence AND ride it on the marker, so the card can speak it.
+  const personLine = generated.needs_person_note ? `\n${generated.needs_person_note}` : '';
+  const draftPayload: WorkflowDraft & { needs_person_note?: string | null } = {
     name: generated.name,
     description: generated.description ?? null,
     trigger: generated.trigger as { type: string; cron?: string; label?: string; timezone?: string; when?: string },
@@ -318,11 +322,13 @@ export async function executeCreateTask(
     output_config: generated.output_config,
     worker_instructions: generated.worker_instructions ?? null,
     overlap_note: generated.overlap_note ?? null,
+    needs_person_note: generated.needs_person_note ?? null,
     ...(skillIds.length > 0 ? { skill_ids: skillIds } : {}),
     agent_id: agentId,
     token: randomUUID(),
-  });
-  return `Here's the plan for **${generated.name}** — ${schedule}. Nothing runs until you confirm on the card.${overlapLine}\n${marker}`;
+  };
+  const marker = encodeWorkflowDraftMarker(draftPayload);
+  return `Here's the plan for **${generated.name}** — ${schedule}. Nothing runs until you confirm on the card.${overlapLine}${personLine}\n${marker}`;
 }
 
 export async function executeGetTask(

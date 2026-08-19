@@ -18,6 +18,7 @@ import { composeSlackMessage } from './slack-message';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import type {
   Workflow, WorkflowRun, StepOutput, TriggerSource, OutputConfig, NormalizedOutput, OutputHome,
+  HandoffStep,
 } from './types';
 import type { DocContent, DocSection, DocumentArtifact, DeliverableType } from '@/lib/types/inbox';
 
@@ -377,16 +378,18 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
   const steps = (workflow.steps || []) as Workflow['steps'];
   const stepOutputs: StepOutput[] = [];
   let runError: string | null = null;
-  // THE APPROVAL RESUME: seed the already-completed outputs and note WHICH approval step the
-  // park happened at (the first approval step at/after the seeded boundary) — that one passes
-  // as approved; any later approval step parks again, naturally.
+  // THE APPROVAL RESUME: seed the already-completed outputs and note WHICH human gate the park
+  // happened at (the FIRST approval OR handoff step at/after the seeded boundary — ONE scan, so
+  // a pipeline mixing owner approvals and teammate handoffs can never pass the wrong one) — that
+  // one passes as approved; any later human gate parks again, naturally.
   let resumeApprovalAt = -1;
   if (opts.resumeFromApproval && runId) {
     const { data: parked } = await admin.from('workflow_runs').select('step_outputs, status').eq('id', runId).maybeSingle();
     const seeded = (parked?.step_outputs ?? []) as StepOutput[];
     stepOutputs.push(...seeded);
     for (let j = stepOutputs.length; j < steps.length; j++) {
-      if ((steps[j] as { type?: string }).type === 'approval') { resumeApprovalAt = j; break; }
+      const t = (steps[j] as { type?: string }).type;
+      if (t === 'approval' || t === 'handoff') { resumeApprovalAt = j; break; }
     }
   }
   const workerAgentId = (workflow as Workflow & { agent_id?: string }).agent_id ?? undefined;
@@ -491,6 +494,44 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
         const prev = stepOutputs[stepOutputs.length - 1]?.output;
         const preview = (typeof prev === 'string' ? prev : JSON.stringify(prev ?? '')).slice(0, 400);
         await narrateApprovalAsk(admin, workflow, { runId: runId!, instruction, preview });
+      } catch { /* the parked status is the source of truth; the ask is a surface */ }
+      return { runId: runId!, status: 'awaiting_approval', threadId };
+    }
+    // ── THE HANDOFF STEP (processes arc Phase B — the human gate that belongs to a TEAMMATE).
+    // Mechanically the approval branch's twin: same park, same loud-on-failure law, same
+    // resume boundary. What differs is WHOSE gate it is — parkHandoff puts the ask on the
+    // ASSIGNEE'S deck and canResumeRun (the resume route) decides who may pass it. The DECISION
+    // is the route's to settle; the loop only opens and closes the gate. ──
+    if ((step as { type?: string }).type === 'handoff') {
+      const handoff = step as HandoffStep;
+      if (opts.isTest) {
+        // Test/cadence-simulation runs never park — and never create cross-user debris
+        // (no commitment, no room card, no email lands on a teammate for a simulation).
+        stepOutputs.push({ step_id: step.id, step_type: 'handoff', label: step.label || 'Handoff', output: '[Handoff — auto-passed in test mode]' });
+        continue;
+      }
+      if (i === resumeApprovalAt) {
+        // The decision that resumed this run passes exactly THIS gate — once.
+        stepOutputs.push({ step_id: step.id, step_type: 'handoff', label: step.label || 'Handoff', output: '[Approved]' });
+        continue;
+      }
+      // PARK: same law as the approval branch — a park that cannot persist is a FAILED run,
+      // never a lie.
+      const { error: parkErr } = await admin.from('workflow_runs').update({
+        status: 'awaiting_approval', step_outputs: stepOutputs,
+      }).eq('id', runId);
+      if (parkErr) {
+        runError = `Handoff step could not park the run (${parkErr.message}). Apply migration 20260808_workflow_runs_approval_status.sql.`;
+        break;
+      }
+      try {
+        const { parkHandoff } = await import('@/lib/workflows/handoffs');
+        const prev = stepOutputs[stepOutputs.length - 1]?.output;
+        const preview = (typeof prev === 'string' ? prev : JSON.stringify(prev ?? '')).slice(0, 400);
+        await parkHandoff(admin, {
+          id: workflow.id, user_id: workflow.user_id, name: workflow.name,
+          agent_id: (workflow as Workflow & { agent_id?: string }).agent_id ?? null,
+        }, handoff, { runId: runId!, subject: workflow.name, preview });
       } catch { /* the parked status is the source of truth; the ask is a surface */ }
       return { runId: runId!, status: 'awaiting_approval', threadId };
     }

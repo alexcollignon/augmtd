@@ -252,6 +252,17 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
           reason: 'a standing scheduled task — its workflow produces the deliverable; overdue means a run was missed',
         };
       }
+      // THE HANDOFF FLOOR (processes arc Phase B, found live Aug 18: the judge prepared a
+      // "Draft email" move on a teammate-approval ask): a source='handoff' commitment is a
+      // DECISION GATE on a parked run — its verbs are Approve/Hold, rendered by the commitment's
+      // own surface through the ONE resume door. Structurally none: no drafter, no delegation,
+      // no prepared moves; deciding IS the work.
+      if (String(c.source) === 'handoff') {
+        return {
+          work: 'none', component: 'message_only', executor: { kind: 'system' }, gate: null,
+          reason: 'a teammate-approval gate on a running process — approve or hold it back is the whole move',
+        };
+      }
       title = String(c.description || '');
       who = (c.counterparty as string) || null;
       activityAt = String(c.updated_at || c.created_at || '');

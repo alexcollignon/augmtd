@@ -1,4 +1,4 @@
-import { getSystemClient, aiCreate } from '@/lib/ai/factory'
+import { getSystemClient, getAIClient, aiCreate } from '@/lib/ai/factory'
 import { logAIUsage } from '@/lib/ai/log-usage'
 import { SupabaseClient } from '@supabase/supabase-js'
 
@@ -53,7 +53,11 @@ export async function renderProfile(
     if (!hasData) return null
   }
 
-  const { client, model, endpoint, tier } = getSystemClient('summarization')
+  // The user's OWN tier (company ai_tier wins inside the factory) — a privacy-tier tenant's memory
+  // never renders on the standard default. System client only when no user is in scope at all.
+  const { client, model, endpoint, tier } = logCtx
+    ? await getAIClient(logCtx.userId, 'summarization', logCtx.supabase)
+    : getSystemClient('summarization')
 
   const completion = await aiCreate(client, {
     model,

@@ -95,6 +95,11 @@ export type ReflectionVerdict = {
 };
 
 const PAIR_SIM_FLOOR = 0.55;  // shortlist floor — the JUDGE decides; this only bounds cost
+// Calibrated Aug 19 on Cohere Embed Multilingual v3 (doc–doc, entityEmbedText): near-duplicate entities
+// ≈0.85 (≈0.76 cross-lingual), sibling deals at one company ≈0.62, a person-channel facet ≈0.52,
+// unrelated ≈0.44 — so 0.55 admits duplicates + siblings (judge separates) and drops unrelated; facets
+// ride the shared-rare-domain path below. (Under the retired e5 model unrelated pairs sat ≈0.7, so
+// this floor was effectively "everything" — the cap did the bounding.)
 const MAX_PAIRS = 8;          // per run
 
 export async function reflectEntities(

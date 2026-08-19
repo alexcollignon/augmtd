@@ -158,7 +158,28 @@ async function main() {
     ok('at least one finding', (v2?.findings?.length ?? 0) >= 1, JSON.stringify(v2?.findings));
     ok('the corrected draft carries the RIGHT growth figure (10%)',
       /\b10(\.0)?\s?%/.test(g2Text), g2Text.slice(0, 200));
+    ok('…and NEVER with a flipped sign (the -10% live incident, Aug 18)',
+      !/-\s?10(\.0)?\s?%/.test(g2Text), g2Text.slice(0, 200));
     ok('the 25% claim is gone', !/\b25\s?%/.test(g2Text), g2Text.slice(0, 200));
+
+    // ── G2b — THE STATED LAW (pure, no AI; found live Aug 18): a poisoned extraction whose
+    // `stated` value appears nowhere in its own quote must DROP — the gate obeyed a wrong-signed
+    // floor line while noting it knew better ("applied the specified correction as instructed").
+    console.log('\nG2b — THE STATED LAW (pure):');
+    {
+      const { runChecks } = await import('@/lib/prepare/verify-claims');
+      const draft = 'Revenue grew 25% from Q1 (100) to Q2 (110).';
+      const poisoned = runChecks(draft, [
+        { kind: 'arith', quote: 'from Q1 (100) to Q2 (110)', op: 'pct_change', operands: [100, 110], stated: 10 },
+      ] as never);
+      const genuine = runChecks(draft, [
+        { kind: 'arith', quote: 'Revenue grew 25% from Q1 (100) to Q2 (110)', op: 'pct_change', operands: [100, 110], stated: 25 },
+      ] as never);
+      ok('a check whose stated value is absent from its quote DROPS (10 ∉ quote; 110 never counts)',
+        poisoned.length === 0, JSON.stringify(poisoned));
+      ok('the genuine check still fires with the RIGHT sign (25 → +10)',
+        genuine.length === 1 && genuine[0].expected === '10', JSON.stringify(genuine));
+    }
 
     // ── G3 — a user rule enforces, and the finding cites it ────────────────────────────────────
     console.log('\nG3 — your rule enforces (masking a planted name + address):');
