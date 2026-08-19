@@ -173,8 +173,12 @@ The following third-party services are used in the operation of augmtd. Each has
 | **Vercel** | Application hosting and serverless compute | EU region | SOC 2 Type II, GDPR, DPA available |
 | **Amazon Web Services** | All AI inference via Bedrock | EU (Frankfurt, eu-central-1) | ISO 27001/27017/27018, SOC 1/2/3, BSI C5, GDPR |
 | **Hetzner Online GmbH** | Meeting audio transcription server (self-hosted Whisper model) | Germany (Nuremberg) | ISO 27001, German law applies, BSI-aligned |
+| **Resend** | Outbound email delivery for messages your AI coworkers send on your behalf (only when you ask them to email someone) | USA (AWS-based) | SOC 2 Type II, GDPR, DPA available |
+| **Tavily** | Web search for the optional web-research tools (receives search queries and public URLs only — never your documents, emails, or meetings) | USA / Israel | SOC 2 Type II, GDPR, DPA available |
 
 **Notes:**
+
+- **Resend and Tavily carry no stored customer content.** Resend sees only the outbound email a coworker sends at your instruction (the same text you reviewed before sending). Tavily sees only the search query a web-research tool issues and the public pages it returns; web research is a workspace feature that can be switched off entirely, and sovereign deployments run with it off. Neither service receives your mailbox, documents, meetings, or knowledge base.
 
 - **AWS Bedrock (Frankfurt):** All AI processing in augmtd runs through AWS Bedrock in the Frankfurt (eu-central-1) region using Anthropic's Claude Haiku 4.5 model. This includes **semantic indexing (embeddings)** of your documents, which runs on Cohere Embed Multilingual via the same Bedrock EU endpoint — your documents are never sent to a separate embedding provider. Critically, in the Bedrock deployment model, **AWS operates the infrastructure and Anthropic supplies the model weights — augmtd does not have a direct data-processing relationship with Anthropic, and customer data is never transmitted to Anthropic's own servers.** All inference happens inside AWS's EU infrastructure. AWS Bedrock is BSI C5 certified — the German Federal Office for Information Security's cloud security framework — and does not use customer inputs or outputs for model training.
 
