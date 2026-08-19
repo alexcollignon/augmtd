@@ -10,6 +10,7 @@
 
 import AnthropicBedrock from '@anthropic-ai/bedrock-sdk'
 import type OpenAI from 'openai'
+import { createBedrockEmbeddings } from './bedrock-embeddings'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +41,9 @@ export function createBedrockAdapter(config: BedrockConfig): OpenAI {
         },
       },
     },
+    // THE PRIVACY PREMISE (Aug 19): embeddings ride the SAME perimeter as completions — Cohere Embed
+    // Multilingual v3 on Bedrock EU, OpenAI-shaped, so `client.embeddings.create()` works on a bedrock endpoint unchanged.
+    embeddings: createBedrockEmbeddings(config),
   }
 
   return adapter as unknown as OpenAI

@@ -122,7 +122,8 @@ function resolveEndpoint(task: TaskType, config: TenantConfig): ModelEndpoint {
   const endpoint: ModelEndpoint = { ...tierDefault, ...override }
 
   // For private tiers without a baked-in baseURL, inject from tenant endpoints config
-  if (!endpoint.baseURL && config.endpoints?.ai) {
+  // (never for Bedrock — it has no baseURL; SigV4 + region, built in buildClient).
+  if (endpoint.provider !== 'bedrock' && !endpoint.baseURL && config.endpoints?.ai) {
     endpoint.baseURL = endpoint.model.includes('bge') || endpoint.model.includes('embed')
       ? (config.endpoints.embeddings ?? config.endpoints.ai)
       : config.endpoints.ai

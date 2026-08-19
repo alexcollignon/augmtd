@@ -19,7 +19,7 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
                      baseURL: 'https://api.anthropic.com/v1' },
     summarization: { provider: 'openai',     model: 'gpt-4o-mini' },
     classification:{ provider: 'openai',     model: 'gpt-4o-mini' },
-    embeddings:    { provider: 'openai',     model: 'text-embedding-3-small', dimensions: 1024 },
+    embeddings:    { provider: 'bedrock',    model: 'cohere.embed-multilingual-v3', dimensions: 1024 },
     ocr:           { provider: 'openai',     model: 'gpt-4o' },
     assignment:    { provider: 'openai',     model: 'gpt-4o-mini' },
     conversation:  { provider: 'anthropic',  model: 'claude-sonnet-4-6',
@@ -44,7 +44,8 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
   // Kimi K2.6 for planning/generation/conversation (same model as before, now on Together AI).
   // gpt-oss-120b for classification/summarization/assignment (same model, Together AI host).
   // Gemma 4 31B for OCR — best available vision model on Together AI.
-  // Embeddings stay on Together AI — already there, no change.
+  // Embeddings on Bedrock EU (Cohere Embed Multilingual v3) — THE PRIVACY PREMISE: no document leaves the private
+  // perimeter to be vectorised (Together AI embeddings dropped Aug 19).
   private_shared: {
     planning:      { provider: 'together', model: 'moonshotai/Kimi-K2.6',
                      baseURL: 'https://api.together.xyz/v1' },
@@ -54,8 +55,7 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
                      baseURL: 'https://api.together.xyz/v1' },
     classification:{ provider: 'together', model: 'openai/gpt-oss-120b',
                      baseURL: 'https://api.together.xyz/v1' },
-    embeddings:    { provider: 'openai_compatible', model: 'intfloat/multilingual-e5-large-instruct',
-                     baseURL: 'https://api.together.xyz/v1' },
+    embeddings:    { provider: 'bedrock',  model: 'cohere.embed-multilingual-v3', dimensions: 1024 },
     ocr:           { provider: 'together', model: 'google/gemma-4-31B-it',
                      baseURL: 'https://api.together.xyz/v1' },
     assignment:    { provider: 'together', model: 'openai/gpt-oss-120b',
@@ -66,15 +66,14 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
 
   // ── Bedrock private — AWS Bedrock + Claude Haiku 4.5 ─────────────────────────
   // Structural data isolation: Anthropic has zero access to prompts (AWS-managed infra).
-  // Claude Haiku 4.5 for all tasks. Embeddings stay on Together AI (re-indexing not worth it).
+  // Claude Haiku 4.5 for all tasks. Embeddings on Bedrock EU too (Cohere Embed Multilingual v3, Aug 19).
   // SOC2/HIPAA-eligible, GDPR data residency via regional endpoints.
   bedrock_private: {
     planning:       { provider: 'bedrock', model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
     generation:     { provider: 'bedrock', model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
     summarization:  { provider: 'bedrock', model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
     classification: { provider: 'bedrock', model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
-    embeddings:     { provider: 'openai_compatible', model: 'intfloat/multilingual-e5-large-instruct',
-                      baseURL: 'https://api.together.xyz/v1' },
+    embeddings:     { provider: 'bedrock', model: 'cohere.embed-multilingual-v3', dimensions: 1024 },
     ocr:            { provider: 'bedrock', model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
     assignment:     { provider: 'bedrock', model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
     conversation:   { provider: 'bedrock', model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
@@ -86,8 +85,9 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
   //   • Sonnet 4.5 ONLY where the extra intelligence pays (conversation, planning/deep) — the cap;
   //     never Opus. (July 2026: replaced the Together AI split — Kimi/gpt-oss — so no prompt leaves
   //     Bedrock; also removes the reasoning-channel trap from this tier entirely.)
-  // SOLE exception: embeddings stay on Together AI — switching the embedding model would invalidate
-  // every pgvector index (full KB re-index across tenants); revisit deliberately, not as a side effect.
+  // Embeddings on Bedrock EU as well (Cohere Embed Multilingual v3, 1024-d — Aug 19, THE PRIVACY PREMISE): the last
+  // third-party hop is gone; the whole tier is ONE perimeter. The swap was done deliberately with a
+  // full re-embed (`scripts/reembed-bedrock.ts`) — vectors from different models never share a space.
   bedrock_optimised: {
     conversation:  { provider: 'bedrock',           model: 'eu.anthropic.claude-sonnet-4-5-20250929-v1:0', maxTokensDefault: 8192 },
     generation:    { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
@@ -96,8 +96,7 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
     classification:{ provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
     summarization: { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
     assignment:    { provider: 'bedrock',           model: 'eu.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokensDefault: 4096 },
-    embeddings:    { provider: 'openai_compatible', model: 'intfloat/multilingual-e5-large-instruct',
-                     baseURL: 'https://api.together.xyz/v1' },
+    embeddings:    { provider: 'bedrock',           model: 'cohere.embed-multilingual-v3', dimensions: 1024 },
   },
 
   // ── Private client — client's own cloud ──────────────────────────────────────

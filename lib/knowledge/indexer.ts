@@ -45,18 +45,25 @@ export interface KnowledgeFile {
 
 // ─── Embedding ──────────────────────────────────────────────────────────────
 
-// multilingual-e5-large-instruct uses XLM-RoBERTa tokenization (~2-2.5 chars/token),
-// not GPT-style (~4 chars/token). 800 chars ≈ 320-400 tokens — safe under the 512-token limit
-// for any content type including non-Latin scripts.
-const EMBED_MAX_CHARS = 800
+// Embeddings run on Bedrock Cohere Embed Multilingual v3 (Aug 19 — the privacy premise: documents
+// never leave the private perimeter to be vectorised). Cohere takes 512 tokens per text (~2.5–4
+// chars/token across EN/PT/DE/FR) and truncates the tail server-side; 1,500 chars keeps every stored
+// vector inside the window on any script. Every stored vector was re-embedded under this regime
+// (`scripts/reembed-bedrock.ts`) so the space is uniform.
+const EMBED_MAX_CHARS = 1500
 
-export async function embedText(text: string, userId: string, supabase: SupabaseClient): Promise<number[]> {
+/** Cohere is asymmetric: a stored vector is a DOCUMENT; a probe against the index is a QUERY. */
+export type EmbedPurpose = 'document' | 'query';
+
+export async function embedText(text: string, userId: string, supabase: SupabaseClient, opts?: { purpose?: EmbedPurpose }): Promise<number[]> {
   const { client, model, endpoint, tier } = await getAIClient(userId, 'embeddings', supabase);
   const res = await client.embeddings.create({
     model,
     input: text.slice(0, EMBED_MAX_CHARS),
     ...(endpoint.dimensions ? { dimensions: endpoint.dimensions } : {}),
-  });
+    // input_type is a Bedrock/Cohere field — an OpenAI-compatible host would 400 on it.
+    ...(endpoint.provider === 'bedrock' ? { input_type: opts?.purpose === 'query' ? 'search_query' : 'search_document' } : {}),
+  } as Parameters<typeof client.embeddings.create>[0]);
   logAIUsage(supabase, {
     userId, source: 'kb_indexing', provider: endpoint.provider, model, tier, taskType: 'embeddings',
     usage: { prompt_tokens: res.usage?.prompt_tokens, completion_tokens: 0 },
@@ -72,7 +79,8 @@ async function embedTexts(texts: string[], userId: string, supabase: SupabaseCli
     model,
     input: texts.map((t) => t.slice(0, EMBED_MAX_CHARS)),
     ...(endpoint.dimensions ? { dimensions: endpoint.dimensions } : {}),
-  });
+    ...(endpoint.provider === 'bedrock' ? { input_type: 'search_document' } : {}),
+  } as Parameters<typeof client.embeddings.create>[0]);
   logAIUsage(supabase, {
     userId, source: 'kb_indexing', provider: endpoint.provider, model, tier, taskType: 'embeddings',
     usage: { prompt_tokens: res.usage?.prompt_tokens, completion_tokens: 0 },
@@ -197,11 +205,12 @@ const SUMMARIZE_CHUNK_PREVIEW = 800; // chars sent to AI per chunk — enough fo
  * Processed in batches of SUMMARIZE_BATCH_SIZE via a single AI call per batch.
  * Falls back to raw truncation per chunk on any failure.
  *
- * Why: multilingual-e5-large-instruct has a 512-token limit. Embedding summaries
- * instead of raw chunk text ensures we never exceed it regardless of content density,
- * and produces cleaner semantic vectors.
+ * Why: one sentence per chunk produces cleaner semantic vectors than dense raw text, and stays
+ * inside the embedder's 512-token window regardless of content density.
+ * Exported so the re-embed sweep (`scripts/reembed-bedrock.ts`) reproduces the SAME text the
+ * live path embeds — the vectors it writes are the vectors this path would have written.
  */
-async function summarizeChunks(
+export async function summarizeChunks(
   chunks: Chunk[],
   filename: string,
   userId: string,
@@ -911,7 +920,7 @@ export async function searchKnowledge(
   limit: number,
   adminClient: SupabaseClient
 ): Promise<KnowledgeFile[]> {
-  const queryEmbedding = await embedText(query, userId, adminClient);
+  const queryEmbedding = await embedText(query, userId, adminClient, { purpose: 'query' });
 
   const { data, error } = await adminClient.rpc('search_knowledge_files', {
     p_user_id: userId,

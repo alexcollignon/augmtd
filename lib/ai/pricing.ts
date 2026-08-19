@@ -22,6 +22,7 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   // AWS Bedrock EU (same underlying Claude models, Bedrock pricing)
   'eu.anthropic.claude-haiku-4-5-20251001-v1:0':  { inputPer1M: 0.90, outputPer1M: 4.50 },
   'eu.anthropic.claude-sonnet-4-5-20250929-v1:0': { inputPer1M: 2.80, outputPer1M: 14.00 },
+  'cohere.embed-multilingual-v3':                 { inputPer1M: 0.09, outputPer1M: 0 },
 
   // Together AI
   'moonshotai/Kimi-K2.6':                        { inputPer1M: 0.55, outputPer1M: 2.20 },
