@@ -17,7 +17,7 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPAB
 (async () => {
   // ── 1. Resolution matrix ──
   console.log('═ 1. RESOLUTION MATRIX (tier × shape → model) ═');
-  const tiers: TierType[] = ['standard', 'bedrock_optimised', 'private_shared', 'bedrock_private'];
+  const tiers: TierType[] = ['standard', 'bedrock_optimised', 'bedrock_private'];
   const shapes = [
     { name: 'json',      shape: { output: 'json' as const } },
     { name: 'json+deep', shape: { output: 'json' as const, reasoning: 'deep' as const } },

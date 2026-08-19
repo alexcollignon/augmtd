@@ -110,7 +110,6 @@ const ROLE_COLORS: Record<string, string> = {
 
 const AI_TIER_OPTIONS: { value: TierType | null; label: string }[] = [
   { value: null,                label: 'Standard (default)' },
-  { value: 'private_shared',   label: 'Private Shared' },
   { value: 'bedrock_private',  label: 'Bedrock Private' },
   { value: 'bedrock_optimised', label: 'Bedrock Optimised' },
   { value: 'professional',     label: 'Professional' },
@@ -120,7 +119,6 @@ const AI_TIER_OPTIONS: { value: TierType | null; label: string }[] = [
 
 const AI_TIER_COLORS: Record<string, string> = {
   standard:          'bg-neutral-100 text-neutral-600',
-  private_shared:    'bg-emerald-50 text-emerald-700',
   bedrock_private:   'bg-violet-50 text-violet-700',
   bedrock_optimised: 'bg-amber-50 text-amber-700',
   professional:      'bg-blue-50 text-blue-700',

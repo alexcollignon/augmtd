@@ -1018,7 +1018,7 @@ export async function POST(
                 // Close any unclosed think block (stream ended while still reasoning)
                 if (inThinkBlock) { send({ type: 'thinking_done' }); inThinkBlock = false; }
 
-                // Some models (DeepSeek on Fireworks, Claude via Anthropic compat) emit tool calls
+                // Some models (OSS models on OpenAI-compatible hosts, Claude via Anthropic compat) emit tool calls
                 // as XML text instead of structured tool_calls deltas. Always strip XML from the
                 // displayed text; only execute as tool calls when no structured calls were received.
                 const cleanText = stripXmlToolCalls(turnText);
@@ -1202,7 +1202,7 @@ export async function POST(
             }
 
             // Fallback: if the stream closed without a recognized finish_reason
-            // (e.g. Together AI / Llama send null or an unknown value), treat it as stop.
+            // (e.g. OSS models on OpenAI-compatible hosts send null or an unknown value), treat it as stop.
             if (!sawFinish && continueLoop) {
               fullAssistantText += turnText;
               messages.push({ role: 'assistant', content: turnText || '' });
@@ -2369,7 +2369,7 @@ function hasSpecificSubject(message: string): boolean {
   return false
 }
 
-// ── XML tool call detection (DeepSeek/Fireworks compat) ───────────────────────
+// ── XML tool call detection (OSS-model / OpenAI-compat hosts) ───────────────────────
 // DeepSeek models sometimes emit tool calls as XML text instead of structured
 // tool_calls deltas when using OpenAI-compatible wrappers. These helpers detect
 // and parse them so we can execute the tools correctly.

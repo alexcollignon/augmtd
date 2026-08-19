@@ -34,9 +34,17 @@ async function getTenantConfig(userId: string, supabase: SupabaseClient): Promis
 
   const companyAiTier = (memberData?.companies as any)?.ai_tier as TierType | null | undefined
 
+  // THE RETIRED-TIER GUARD (Aug 19): `private_shared` (the third-party OSS tier) was removed from
+  // the codebase; the DB CHECK constraints still accept the value, so a stray row must resolve to a
+  // REAL tier rather than crash on TIER_DEFAULTS[undefined]. The only honest landing is the private
+  // Bedrock tier — never the standard default (that would be a silent privacy downgrade).
+  const rawTier = (companyAiTier ?? (tcData?.tier as string | undefined) ?? 'standard') as string
+  const tier: TierType = rawTier in TIER_DEFAULTS ? (rawTier as TierType) : 'bedrock_optimised'
+  if (tier !== rawTier) console.warn(`[AI] retired tier '${rawTier}' for user ${userId.slice(0, 8)} → serving bedrock_optimised`)
+
   const config: TenantConfig = {
     userId,
-    tier: companyAiTier ?? (tcData?.tier as TierType) ?? 'standard',
+    tier,
     modelOverrides: tcData?.model_overrides ?? {},
     endpoints: tcData?.endpoints ?? {},
     encryptedApiKeys: tcData?.encrypted_api_keys ?? {},
@@ -105,8 +113,7 @@ function resolveApiKey(endpoint: ModelEndpoint, config: TenantConfig): string {
   switch (endpoint.provider) {
     case 'anthropic':     return process.env.ANTHROPIC_API_KEY ?? ''
     case 'azure_openai':  return process.env.AZURE_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? ''
-    case 'openai_compatible': return process.env.AUGMTD_AI_KEY ?? process.env.OPENAI_API_KEY ?? ''
-    case 'together':      return process.env.AUGMTD_AI_KEY ?? ''
+    case 'openai_compatible': return process.env.OPENAI_API_KEY ?? ''
     default:              return process.env.OPENAI_API_KEY ?? ''
   }
 }

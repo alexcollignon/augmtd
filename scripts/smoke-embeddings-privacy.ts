@@ -42,7 +42,7 @@ async function main() {
 
   console.log('\nE1 — SOURCE FLOOR (the table and the call sites speak the law):');
   {
-    const OURS = ['standard', 'private_shared', 'bedrock_private', 'bedrock_optimised'] as const;
+    const OURS = ['standard', 'bedrock_private', 'bedrock_optimised'] as const;
     for (const tier of OURS) {
       const e = TIER_DEFAULTS[tier].embeddings;
       ok(`${tier}.embeddings → bedrock/${BEDROCK_EMBEDDING_MODEL} @${BEDROCK_EMBEDDING_DIMENSIONS}`,

@@ -7,7 +7,6 @@ import type { TaskType, TierType, ModelEndpoint } from './types'
 // All tiers use OpenAI-compatible API format.
 // - standard:        api.openai.com + api.anthropic.com (via compat endpoint)
 // - professional:    Azure OpenAI (baseURL + apiVersion set per tenant)
-// - private_shared:  AUGMTD-managed Modal endpoints (env vars)
 // - private_client:  Client-provided endpoints (tenant_configs.endpoints)
 // - on_prem:         Same as private_client, different auth
 
@@ -40,30 +39,6 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
     conversation:  { provider: 'azure_openai', model: 'gpt-4o-mini', apiVersion: '2024-02-01' },
   },
 
-  // ── Private shared — Together AI (fully private, no data leaves to OpenAI/Anthropic)
-  // Kimi K2.6 for planning/generation/conversation (same model as before, now on Together AI).
-  // gpt-oss-120b for classification/summarization/assignment (same model, Together AI host).
-  // Gemma 4 31B for OCR — best available vision model on Together AI.
-  // Embeddings on Bedrock EU (Cohere Embed Multilingual v3) — THE PRIVACY PREMISE: no document leaves the private
-  // perimeter to be vectorised (Together AI embeddings dropped Aug 19).
-  private_shared: {
-    planning:      { provider: 'together', model: 'moonshotai/Kimi-K2.6',
-                     baseURL: 'https://api.together.xyz/v1' },
-    generation:    { provider: 'together', model: 'moonshotai/Kimi-K2.6',
-                     baseURL: 'https://api.together.xyz/v1' },
-    summarization: { provider: 'together', model: 'openai/gpt-oss-120b',
-                     baseURL: 'https://api.together.xyz/v1' },
-    classification:{ provider: 'together', model: 'openai/gpt-oss-120b',
-                     baseURL: 'https://api.together.xyz/v1' },
-    embeddings:    { provider: 'bedrock',  model: 'cohere.embed-multilingual-v3', dimensions: 1024 },
-    ocr:           { provider: 'together', model: 'google/gemma-4-31B-it',
-                     baseURL: 'https://api.together.xyz/v1' },
-    assignment:    { provider: 'together', model: 'openai/gpt-oss-120b',
-                     baseURL: 'https://api.together.xyz/v1' },
-    conversation:  { provider: 'together', model: 'moonshotai/Kimi-K2.6',
-                     baseURL: 'https://api.together.xyz/v1' },
-  },
-
   // ── Bedrock private — AWS Bedrock + Claude Haiku 4.5 ─────────────────────────
   // Structural data isolation: Anthropic has zero access to prompts (AWS-managed infra).
   // Claude Haiku 4.5 for all tasks. Embeddings on Bedrock EU too (Cohere Embed Multilingual v3, Aug 19).
@@ -83,8 +58,9 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
   // All chat/completion work stays on AWS Bedrock EU (data residency, one provider):
   //   • Haiku 4.5 for the volume work (triage, summaries, background JSON) — cheap.
   //   • Sonnet 4.5 ONLY where the extra intelligence pays (conversation, planning/deep) — the cap;
-  //     never Opus. (July 2026: replaced the Together AI split — Kimi/gpt-oss — so no prompt leaves
-  //     Bedrock; also removes the reasoning-channel trap from this tier entirely.)
+  //     never Opus. (July 2026: replaced the earlier third-party OSS split so no prompt leaves
+  //     Bedrock; also removes the reasoning-channel trap from this tier entirely. Aug 19: that
+  //     third-party provider and its `private_shared` tier were REMOVED from the codebase.)
   // Embeddings on Bedrock EU as well (Cohere Embed Multilingual v3, 1024-d — Aug 19, THE PRIVACY PREMISE): the last
   // third-party hop is gone; the whole tier is ONE perimeter. The swap was done deliberately with a
   // full re-embed (`scripts/reembed-bedrock.ts`) — vectors from different models never share a space.

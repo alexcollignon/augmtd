@@ -12,6 +12,9 @@
 //               provider 'bedrock' (completions AND embeddings) — the company tier is honoured
 //               end to end; the probe (standard) still resolves embeddings to bedrock (the
 //               embeddings privacy law) and completions to the platform default.
+//   T3 NO THIRD-PARTY HOSTS (Aug 19) — Together AI and Fireworks are GONE: no provider enum, no
+//               tier default, no baseURL, no key, no AgentOS client; the Together-only
+//               `private_shared` tier is retired and a stray DB value lands on bedrock_optimised.
 //
 // Run: npx tsx --env-file=.env.local scripts/smoke-tier-routing.ts
 
@@ -19,6 +22,7 @@ import { readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { createClient } from '@supabase/supabase-js';
 import { getAIClient } from '../lib/ai/factory';
+import { TIER_DEFAULTS } from '../lib/ai/defaults';
 import type { TaskType } from '../lib/ai/types';
 import { resolveProbeUser } from './probe-user';
 
@@ -41,8 +45,8 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     const st = statSync(p);
-    if (st.isDirectory()) { if (name !== 'node_modules') walk(p, out); }
-    else if (/\.(ts|tsx)$/.test(name)) out.push(p);
+    if (st.isDirectory()) { if (name !== 'node_modules' && !name.startsWith('.')) walk(p, out); } // .venv etc = vendored libs, not ours
+    else if (/\.(ts|tsx|py)$/.test(name)) out.push(p);
   }
   return out;
 }
@@ -102,6 +106,36 @@ async function main() {
     const pc = await getAIClient(probeId, 'conversation', admin);
     ok('probe (standard): embeddings → bedrock (the embeddings privacy law holds on the default tier)', pe.endpoint.provider === 'bedrock', pe.endpoint.provider);
     ok('probe (standard): conversation → the platform default (standard tier is standard by design)', pc.tier === 'standard', pc.tier);
+  }
+
+  console.log('\nT3 — NO THIRD-PARTY OSS HOSTS (Together AI / Fireworks are gone, the tier with them):');
+  {
+    const files = [...walk('lib'), ...walk('app'), ...walk('components'), ...walk('infra/agentos')];
+    const HOST = /together\.xyz|fireworks\.ai|provider:\s*'together'|'together'\s*\|\|?|agno\.models\.together|AUGMTD_AI_KEY|AUGMTD_FIREWORKS|TOGETHER_API_KEY/;
+    const hits: string[] = [];
+    for (const f of files) {
+      if (/\.(ts|tsx|py)$/.test(f) === false) continue;
+      if (f.endsWith('scripts/smoke-tier-routing.ts')) continue;
+      const src = readFileSync(f, 'utf8');
+      if (HOST.test(src)) hits.push(f);
+    }
+    ok('no file in lib/ app/ components/ infra/agentos names a Together/Fireworks host, provider, or key', hits.length === 0, hits.join(', '));
+    const types = readFileSync('lib/ai/types.ts', 'utf8');
+    ok("ProviderType has no 'together' member", !/\|\s*'together'/.test(types));
+    ok("TierType has no 'private_shared' member", !/\|\s*'private_shared'/.test(types));
+    ok('TIER_DEFAULTS carries no private_shared tier', !('private_shared' in (TIER_DEFAULTS as Record<string, unknown>)));
+    const nonEU = Object.entries(TIER_DEFAULTS)
+      .filter(([k]) => ['standard', 'bedrock_private', 'bedrock_optimised'].includes(k))
+      .flatMap(([k, t]) => Object.entries(t as Record<string, { provider: string; baseURL?: string; model: string }>)
+        .filter(([, e]) => /together|fireworks/i.test(`${e.provider} ${e.baseURL ?? ''} ${e.model}`)).map(([task]) => `${k}.${task}`));
+    ok('no self-operated tier routes ANY task to a third-party OSS host', nonEU.length === 0, nonEU.join(' '));
+    const factory = readFileSync('lib/ai/factory.ts', 'utf8');
+    ok('the factory guards retired tier values (stray DB row → bedrock_optimised, never standard)', /rawTier in TIER_DEFAULTS \? \(rawTier as TierType\) : 'bedrock_optimised'/.test(factory));
+    for (const f of ['app/platform-admin/platform-admin-client.tsx', 'components/platform-admin/workspace-detail.tsx', 'app/api/platform-admin/companies/route.ts', 'app/api/platform-admin/companies/[id]/route.ts']) {
+      ok(`${f.split('/').slice(-2).join('/')} offers no private_shared`, !/private_shared/.test(readFileSync(f, 'utf8')));
+    }
+    const agentos = readFileSync('infra/agentos/models.py', 'utf8');
+    ok('AgentOS models.py builds Bedrock clients ONLY (Python mirror holds the same law)', !/together/i.test(agentos) && /def _bedrock\(/.test(agentos));
   }
 
   console.log(`\n${pass}/${pass + fail} passed`);

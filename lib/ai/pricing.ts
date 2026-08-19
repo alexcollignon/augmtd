@@ -24,12 +24,6 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   'eu.anthropic.claude-sonnet-4-5-20250929-v1:0': { inputPer1M: 2.80, outputPer1M: 14.00 },
   'cohere.embed-multilingual-v3':                 { inputPer1M: 0.09, outputPer1M: 0 },
 
-  // Together AI
-  'moonshotai/Kimi-K2.6':                        { inputPer1M: 0.55, outputPer1M: 2.20 },
-  'openai/gpt-oss-120b':                         { inputPer1M: 0.13, outputPer1M: 0.52 },
-  'intfloat/multilingual-e5-large-instruct':     { inputPer1M: 0.02, outputPer1M: 0 },
-  'google/gemma-4-31B-it':                       { inputPer1M: 0.20, outputPer1M: 0.80 },
-
   // Private-client / on-prem defaults — placeholder rates (client's own infra;
   // cost is mostly compute the client already owns, not a per-token bill).
   'llama-3.1-70b':      { inputPer1M: 0.35, outputPer1M: 0.40 },

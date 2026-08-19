@@ -604,7 +604,7 @@ Rules for other fields:
 - keyMoments: up to 6 notable segments. type: "decision" | "risk" | "commitment". segmentIndex must be a real [N] from the transcript.
 - Return ONLY the JSON object, no other text.`;
 
-    // Use json_object mode for providers that support it (OpenAI, Fireworks, Azure)
+    // Use json_object mode for providers that support it (OpenAI, Azure)
     const supportsJsonMode = endpoint.provider !== 'anthropic';
     const completion = await openai.chat.completions.create({
       model: defaultModel,
