@@ -13,6 +13,11 @@
 //   • A USER'S DISMISSAL STICKS (the pinning law's analog): a dismissed standing commitment is a
 //     human decision — never resurrected while the row exists; pausing/unpausing the workflow
 //     doesn't override the human.
+//   • THE DEBT SITS WITH THE OWNER, NOT THE CREATOR (B2 — lib/workflows/owner.ts): the row is
+//     created for the ACCOUNTABILITY owner; when ownership moves, the open row moves too (the old
+//     one closes with resolved_reason 'ownership moved', a fresh one opens for the new owner) and
+//     this hourly convergent door makes that self-healing. A DISMISSED row never resurrects — not
+//     for the old owner (it stays closed) and not for the new one (their own dismissal sticks).
 //   • Paused/deleted/manual workflows close their commitment honestly (resolved_reason says why).
 //   • The JUDGE holds the floor (lib/work/judge.ts): a source='workflow' commitment is judged
 //     none structurally — its WORKFLOW produces it; the prepare pass must never delegate it.
@@ -26,13 +31,31 @@ type WfRow = {
 
 export async function syncStandingCommitment(
   admin: SupabaseClient, wf: WfRow, workerName?: string | null,
-  opts?: { fromSuccessfulRun?: boolean },
+  /** `owner` lets a batch caller (the hourly door) pass a pre-resolved owner — one query for the
+   *  whole set instead of one per workflow. */
+  opts?: { fromSuccessfulRun?: boolean; owner?: { userId: string; explicit: boolean } },
 ): Promise<void> {
   try {
     const standing = wf.status === 'active' && wf.trigger?.type === 'schedule';
+    const owner = opts?.owner ?? await (await import('./owner')).ownerOf(admin, wf.id, wf.user_id);
+
+    // THE OWNERSHIP MOVE (B2): with an explicit owner, an OPEN row under anyone else is a debt
+    // sitting with the wrong person — close it honestly. Only OPEN rows move; a dismissed row is a
+    // human decision and stays exactly where the human left it.
+    if (owner.explicit) {
+      const { data: strays } = await admin.from('commitments').select('id')
+        .eq('source', 'workflow').eq('source_id', wf.id).eq('status', 'open')
+        .neq('user_id', owner.userId).limit(10);
+      for (const s of (strays ?? []) as Array<{ id: string }>) {
+        await admin.from('commitments').update({
+          status: 'completed', resolved_reason: 'ownership moved', resolved_at: new Date().toISOString(),
+        }).eq('id', s.id);
+      }
+    }
+
     const { data: existing } = await admin.from('commitments')
       .select('id, status, due_date, description')
-      .eq('user_id', wf.user_id).eq('source', 'workflow').eq('source_id', wf.id)
+      .eq('user_id', owner.userId).eq('source', 'workflow').eq('source_id', wf.id)
       .order('created_at', { ascending: false }).limit(1).maybeSingle();
 
     if (!standing) {
@@ -63,7 +86,7 @@ export async function syncStandingCommitment(
       return;
     }
     await admin.from('commitments').insert({
-      user_id: wf.user_id, direction: 'awaiting', description,
+      user_id: owner.userId, direction: 'awaiting', description,
       counterparty: workerName || 'Your team',
       due_date: dueDate, source: 'workflow', source_id: wf.id, status: 'open',
     });
@@ -79,17 +102,17 @@ export async function narrateStandingRun(
   run: { ok: boolean; runId: string; threadId: string | null; workerName: string; error?: string | null },
 ): Promise<void> {
   try {
-    const { data: c } = await admin.from('commitments').select('id, status')
-      .eq('user_id', wf.user_id).eq('source', 'workflow').eq('source_id', wf.id)
-      .eq('status', 'open').limit(1).maybeSingle();
+    // THE OWNER'S ROOM (B2): the standing row lives with the accountability owner, not the creator.
+    const { openStandingCommitment } = await import('./owner');
+    const c = await openStandingCommitment(admin, wf);
     if (!c) return; // no standing row (manual task / dismissed) — nothing owes narration
     const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
-    const roomKey = await roomKeyForItem(admin, wf.user_id, 'commitment', String(c.id));
+    const roomKey = await roomKeyForItem(admin, c.userId, 'commitment', String(c.id));
     const first = run.workerName.split(' ')[0];
     const threadHref = run.threadId ? `/home?chat=worker:${run.threadId}:${wf.agent_id ?? ''}` : null;
     if (run.ok) {
       // ONE-NARRATOR LAW: third-person orchestration narration — the CoS voice, author absent.
-      await writeRoomTurn(admin, wf.user_id, roomKey, {
+      await writeRoomTurn(admin, c.userId, roomKey, {
         role: 'system',
         text: `${first} produced "${wf.name}" — this run is ready to review.`,
         refs: threadHref ? [{ label: 'Open the deliverable', href: threadHref }] : undefined,
@@ -97,7 +120,7 @@ export async function narrateStandingRun(
       });
     } else {
       await admin.from('commitments').update({ due_date: new Date().toISOString().slice(0, 10) }).eq('id', c.id);
-      await writeRoomTurn(admin, wf.user_id, roomKey, {
+      await writeRoomTurn(admin, c.userId, roomKey, {
         role: 'system',
         text: `The "${wf.name}" run FAILED${run.error ? ` — ${String(run.error).slice(0, 140)}` : ''}. It stays owed until a run lands; it will retry on the next schedule.`,
         refs: threadHref ? [{ label: 'See what happened', href: threadHref }] : undefined,
@@ -117,14 +140,14 @@ export async function narrateApprovalAsk(
   ask: { runId: string; instruction: string; preview: string },
 ): Promise<void> {
   try {
-    const { data: c } = await admin.from('commitments').select('id, status')
-      .eq('user_id', wf.user_id).eq('source', 'workflow').eq('source_id', wf.id)
-      .eq('status', 'open').limit(1).maybeSingle();
+    // THE OWNER'S ROOM (B2): the ask parks on whoever is accountable, not whoever created it.
+    const { openStandingCommitment } = await import('./owner');
+    const c = await openStandingCommitment(admin, wf);
     if (!c) return;
     await admin.from('commitments').update({ due_date: new Date().toISOString().slice(0, 10) }).eq('id', c.id);
     const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
-    const roomKey = await roomKeyForItem(admin, wf.user_id, 'commitment', String(c.id));
-    await writeRoomTurn(admin, wf.user_id, roomKey, {
+    const roomKey = await roomKeyForItem(admin, c.userId, 'commitment', String(c.id));
+    await writeRoomTurn(admin, c.userId, roomKey, {
       role: 'system',
       text: `"${wf.name}" is ready and WAITING ON YOUR APPROVAL before it delivers${ask.instruction ? ` — ${ask.instruction}` : ''}.`,
       component: { key: 'approval', refId: ask.runId, state: { runId: ask.runId, workflowId: wf.id, name: wf.name, instruction: ask.instruction, preview: ask.preview } },
@@ -143,14 +166,14 @@ export async function narrateGuardrailHold(
   ask: { runId: string; ruleLine: string; preview: string },
 ): Promise<void> {
   try {
-    const { data: c } = await admin.from('commitments').select('id, status')
-      .eq('user_id', wf.user_id).eq('source', 'workflow').eq('source_id', wf.id)
-      .eq('status', 'open').limit(1).maybeSingle();
+    // THE OWNER'S ROOM (B2): the ask parks on whoever is accountable, not whoever created it.
+    const { openStandingCommitment } = await import('./owner');
+    const c = await openStandingCommitment(admin, wf);
     if (!c) return;
     await admin.from('commitments').update({ due_date: new Date().toISOString().slice(0, 10) }).eq('id', c.id);
     const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
-    const roomKey = await roomKeyForItem(admin, wf.user_id, 'commitment', String(c.id));
-    await writeRoomTurn(admin, wf.user_id, roomKey, {
+    const roomKey = await roomKeyForItem(admin, c.userId, 'commitment', String(c.id));
+    await writeRoomTurn(admin, c.userId, roomKey, {
       role: 'system',
       text: `"${wf.name}" is HELD by your delivery check — ${ask.ruleLine}. Review it before it goes anywhere.`,
       component: {
@@ -212,8 +235,13 @@ export async function syncAllStandingCommitments(admin: SupabaseClient): Promise
       const { data: ags } = await admin.from('custom_agents').select('id, name').in('id', agentIds);
       for (const a of ags ?? []) names.set(String(a.id), String(a.name));
     }
+    // One owner read for the whole set (B2) — the debt belongs to the accountability owner.
+    const { ownersFor } = await import('./owner');
+    const owners = await ownersFor(admin, (wfs as WfRow[]).map((w) => ({ id: w.id, user_id: w.user_id })));
     for (const wf of wfs as WfRow[]) {
-      await syncStandingCommitment(admin, wf, wf.agent_id ? names.get(wf.agent_id) ?? null : null);
+      await syncStandingCommitment(admin, wf, wf.agent_id ? names.get(wf.agent_id) ?? null : null, {
+        owner: owners.get(wf.id),
+      });
     }
     // Workflows DELETED out-of-band: close orphaned standing rows whose workflow no longer exists.
     const alive = new Set(wfs.map((w) => String(w.id)));

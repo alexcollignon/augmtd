@@ -3,7 +3,7 @@ AUGMTD AgentOS service — Phase 1 foundation.
 
 Runs the Agno AgentOS runtime as a FastAPI app. For Phase 1 this exposes a
 single smoke-test "ping" agent wired to the privacy-preserving model factory
-(Bedrock + Together only) and the session DB. Real worker agents arrive in
+(Bedrock only) and the session DB. Real worker agents arrive in
 Phase 2.
 
 Session storage:

@@ -28,7 +28,6 @@ const PLAN_OPTIONS = ['starter', 'pro', 'enterprise'];
 const AI_TIER_OPTIONS: { value: TierType | null; label: string }[] = [
   { value: null, label: 'Standard (default)' },
   { value: 'standard', label: 'Standard' },
-  { value: 'private_shared', label: 'Private Shared' },
   { value: 'bedrock_private', label: 'Bedrock Private' },
   { value: 'bedrock_optimised', label: 'Bedrock Optimised' },
 ];

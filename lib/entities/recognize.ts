@@ -357,7 +357,7 @@ export async function recognizeItem(
     embedding: Array.isArray(r.embedding) ? (r.embedding as number[]) : null,
   }));
   const people = itemPeople(item);
-  const itemEmb = await embedText(itemEmbedText(item), userId, supabase);
+  const itemEmb = await embedText(itemEmbedText(item), userId, supabase, { purpose: 'query' }); // the item PROBES the entity index
   const candidates = recallCandidates(itemEmb, entities, 5, people);
 
   // 3. JUDGMENT — reasoned, content-first, candidates in view.

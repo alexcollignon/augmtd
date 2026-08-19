@@ -23,6 +23,10 @@ import {
 import { Button, Badge } from '@/components/ui';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { ThreadArtifactsPanel } from '@/components/work/chat-artifact-panel';
+import { ExpandableRows } from '@/components/home/expandable-rows';
+import ProcessDrawer, { GateChip, GateFindings } from '@/components/workflows/process-drawer';
+import { PROCESS_BUCKETS } from '@/lib/workflows/process-state';
+import type { ProcessRow } from '@/lib/workflows/process-state';
 import type { DocumentArtifact } from '@/lib/types/inbox';
 import type { GateVerdict } from '@/lib/workflows/types';
 
@@ -45,7 +49,14 @@ type RecentGroup = {
   failures: Array<{ at: string; error: string }>; held: number;
 };
 type Worker = { id: string; name: string; worker_role: string };
-type LedgerPayload = { ledger: LedgerRow[]; awaiting: Awaiting[]; recent: RecentGroup[]; workers: Worker[]; team?: Array<{ id: string; name: string; scheduleLabel: string | null; ownerName: string }>; emailFeature?: boolean };
+type LedgerPayload = {
+  ledger: LedgerRow[]; awaiting: Awaiting[]; recent: RecentGroup[];
+  /** THE PROCESSES (processes arc) — every recent run wearing its human state, derived ONCE in
+   *  lib/workflows/process-state.ts and served by the ledger route. The strip and the drawer read
+   *  THIS array; no surface maps a run status to a bucket on its own. */
+  processes?: ProcessRow[];
+  workers: Worker[]; team?: Array<{ id: string; name: string; scheduleLabel: string | null; ownerName: string }>; emailFeature?: boolean;
+};
 
 type DraftStep = { type: string; label?: string; tool?: string };
 type Draft = {
@@ -100,6 +111,7 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
   const [cat, setCat] = useState<Template['category'] | 'all'>('all');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [openRuns, setOpenRuns] = useState<string | null>(null); // workflowId whose run audit is expanded
+  const [openProcess, setOpenProcess] = useState<ProcessRow | null>(null); // THE PROCESS DRAWER's subject
   const mounted = useRef(true);
 
   // THE DELIVERABLE VIEWER — "open" on a run opens the document HERE (the same docked panel the
@@ -258,21 +270,56 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
     } catch { toast.error('Could not delete it — try again.'); } finally { setBusy(null); }
   }, [refresh]);
 
-  const decide = useCallback(async (a: Awaiting, approve: boolean) => {
-    setBusy(a.runId);
-    try {
-      const r = await fetch(`/api/workflows/runs/${a.runId}/resume`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approve }),
-      });
-      if (!r.ok) { toast.error('That decision did not land — try again.'); return; }
-      toast.success(approve ? `Approved — "${a.workflowName}" is delivering.` : `Held back — nothing was delivered.`);
-      void refresh(true);
-    } catch { toast.error('That decision did not land — try again.'); } finally { setBusy(null); }
-  }, [refresh]);
+  // NB (owner walk, Aug 18): the "Waiting on you" card section is GONE. The ACTIVE PROCESSES strip
+  // carries the same truth in the ONE derivation's words — and the old section claimed EVERY parked
+  // run was waiting on YOU, including runs parked at a teammate's handoff gate (two contradicting
+  // claims on one page). The strip + the drawer are the surviving surface; the drawer's Approve /
+  // Reject go through the same `/api/workflows/runs/[id]/resume` door. `awaiting` may keep arriving
+  // in the payload — nothing renders it.
 
   const rows = data?.ledger ?? [];
-  const awaiting = data?.awaiting ?? [];
   const recent = data?.recent ?? [];
+
+  // ── THE ACTIVE PROCESSES STRIP (processes arc A1) — a SCOPED PROJECTION of the one derivation.
+  // The buckets come from PROCESS_BUCKETS + the served `state`; nothing here maps a run status.
+  // ADDITIVE CALM: held_back never appears (history only), delivered only counts while it's still
+  // news (<48h), empty buckets don't render, and the whole strip stays away unless something is
+  // genuinely live or freshly landed. ──
+  const processes = data?.processes ?? [];
+  const DELIVERED_WINDOW_MS = 48 * 60 * 60_000;
+  const recentlyDelivered = processes.filter(
+    (p) => p.state === 'delivered' && Date.now() - new Date(p.endedAt ?? p.startedAt).getTime() < DELIVERED_WINDOW_MS,
+  );
+  const liveProcesses = processes.filter((p) => p.state === 'needs_you' || p.state === 'running' || p.state === 'waiting_on_others');
+  const bucketCounts: Record<string, number> = {
+    needs_you: processes.filter((p) => p.state === 'needs_you').length,
+    running: processes.filter((p) => p.state === 'running').length,
+    waiting_on_others: processes.filter((p) => p.state === 'waiting_on_others').length,
+    delivered: recentlyDelivered.length,
+  };
+  const BUCKET_DOT: Record<string, string> = {
+    needs_you: 'bg-amber-500', running: 'bg-indigo-500', waiting_on_others: 'bg-violet-500', delivered: 'bg-emerald-500',
+  };
+  const BUCKET_WORD: Record<string, string> = {
+    needs_you: 'needs you', running: 'running', waiting_on_others: 'waiting on others', delivered: 'delivered',
+  };
+  const showStrip = liveProcesses.length > 0 || recentlyDelivered.length > 0;
+  // Needs-you first, then running — delivered rows stay OUT of the attention strip (they live in
+  // Activity and the deep-dive; the chip count is all the strip owes them).
+  const stripRows = [
+    ...liveProcesses.filter((p) => p.state === 'needs_you'),
+    ...liveProcesses.filter((p) => p.state === 'waiting_on_others'),
+    ...liveProcesses.filter((p) => p.state === 'running'),
+  ];
+  // ── THE PARKED TRUTH ON THE ROW (owner walk, Aug 18: a workflow parked at a handoff read "grey ·
+  // hasn't run yet" — false; it ran and is waiting). A workflow with a parked process wears THAT
+  // process's word, and the run-history segment ("last ran" / "hasn't run yet") yields to it.
+  // Your own debt outranks a teammate's wait. (A FAILED process also buckets under needs_you — but
+  // it carries a reason and isn't waiting for approval, so it stays out of here and the row keeps
+  // its honest red "last run failed" line.)
+  const parkedByWf = new Map<string, ProcessRow>();
+  for (const p of processes) if (p.state === 'waiting_on_others' && !parkedByWf.has(p.workflowId)) parkedByWf.set(p.workflowId, p);
+  for (const p of processes) if (p.state === 'needs_you' && !p.reason) parkedByWf.set(p.workflowId, p);
   // THE SOVEREIGN GALLERY (Aug 11): mailbox-READING templates make no sense on the corporate
   // tier (email feature off) — hidden with their category chip. Email DELIVERY of a briefing
   // stays (Resend to stated addresses — the sovereign boundary is auth connections only).
@@ -354,24 +401,51 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
       {/* THE TWO LENSES live on the ISLAND (owner, Aug 9: "leverage the island buttons instead
           of tabs") — Workflows = what stands; Runs = what ran. This component just obeys `tab`. */}
 
-      {/* ── Waiting on you (the debt leads — visible on BOTH lenses; an approval is never buried) ── */}
-      {awaiting.length > 0 && (
+      {/* ── ACTIVE PROCESSES — the runs that are alive right now, in the ONE derivation's words.
+          Empty buckets don't render; a quiet account sees nothing here at all. ── */}
+      {tab === 'workflows' && showStrip && (
         <div className="mt-8">
-          <h2 className="text-[11px] font-medium uppercase tracking-wide text-amber-700">Waiting on you</h2>
-          <div className="mt-2 space-y-2">
-            {awaiting.map((a) => (
-              <div key={a.runId} className="rounded-xl border border-amber-200 bg-amber-50/50 px-4 py-3">
-                <div className="text-[13px] text-neutral-800">
-                  <span className="font-medium">{a.workflowName}</span> is ready and waiting for your go-ahead
-                  {a.instruction ? <span className="text-neutral-600"> — {a.instruction}</span> : null}
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <Button size="sm" onClick={() => void decide(a, true)} disabled={busy === a.runId}>Approve — deliver it</Button>
-                  <button onClick={() => void decide(a, false)} disabled={busy === a.runId} className="text-[12px] text-neutral-500 hover:text-neutral-700">Hold back</button>
-                </div>
-              </div>
+          <h2 className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">Active processes</h2>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+            {PROCESS_BUCKETS.filter((b) => (bucketCounts[b.state] ?? 0) > 0).map((b) => (
+              <span key={b.state} className="inline-flex items-center gap-1.5 text-[12px] text-neutral-600">
+                <span className={`h-1.5 w-1.5 rounded-full ${BUCKET_DOT[b.state]}`} />
+                {b.label}
+                <span className="tabular-nums font-medium text-neutral-800">{bucketCounts[b.state]}</span>
+              </span>
             ))}
           </div>
+          {stripRows.length > 0 && (
+            <div className="mt-2 divide-y divide-neutral-100 rounded-2xl border border-neutral-200 bg-white">
+              <ExpandableRows
+                items={stripRows}
+                limit={6}
+                toggleClass="px-4 py-2"
+                render={(p) => (
+                  <button
+                    key={p.runId}
+                    onClick={() => setOpenProcess(p)}
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-neutral-50"
+                  >
+                    <span className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${BUCKET_DOT[p.state]}`} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] text-neutral-800">{p.subject}</span>
+                      {p.subject !== p.workflowName && (
+                        <span className="block truncate text-[12px] text-neutral-500">{p.workflowName}</span>
+                      )}
+                    </span>
+                    {/* The wait wears a NAME when one is known — "waiting on others" is a bucket,
+                        not a sentence a person can act on. */}
+                    <span className={`flex-shrink-0 text-[12px] ${
+                      p.state === 'needs_you' ? 'text-amber-600' : p.waitingOn ? 'text-violet-600' : 'text-neutral-400'
+                    }`}>
+                      {p.waitingOn ? `waiting on ${p.waitingOn.name}` : BUCKET_WORD[p.state]} ›
+                    </span>
+                  </button>
+                )}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -389,8 +463,11 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
         ) : (
           <div className="mt-2 divide-y divide-neutral-100 rounded-2xl border border-neutral-200 bg-white">
             {rows.map((w) => {
+              const parked = parkedByWf.get(w.id) ?? null;
+              const parkedOnYou = parked?.state === 'needs_you';
               const dot =
                 w.runningProgress ? 'bg-indigo-500 animate-pulse' :
+                parked ? (parkedOnYou ? 'bg-amber-400' : 'bg-violet-400') :
                 w.status === 'paused' || w.autoPaused ? 'bg-neutral-300' :
                 w.lastRunStatus === 'failed' ? 'bg-red-500' :
                 w.lastRunStatus === 'succeeded' ? 'bg-emerald-500' : 'bg-neutral-300';
@@ -399,11 +476,22 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                   <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dot}`} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="truncate text-[13px] font-medium text-neutral-800">{w.name}</span>
+                      {/* The name is the door to the workflow's own home (the deep-dive). */}
+                      <a href={`/workflows/${w.id}`} className="truncate text-[13px] font-medium text-neutral-800 hover:text-indigo-600 transition-colors">{w.name}</a>
                       {w.hasVerify && <ShieldCheckIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" title="Verified against sources before delivery" />}
                       {w.hasApproval && <CheckIcon className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" title="Waits for your approval before delivering" />}
                     </div>
                     <div className="mt-0.5 flex items-center gap-1.5 text-[12px] text-neutral-500 truncate">
+                      {/* The wait leads — a parked process is a debt, and debt speaks first. The
+                          wait wears a NAME when it isn't yours. */}
+                      {parked && (
+                        <>
+                          <span className={parkedOnYou ? 'text-amber-600' : 'text-violet-600'}>
+                            {parkedOnYou ? 'waiting for your approval' : `waiting on ${parked.waitingOn?.name ?? 'a teammate'}`}
+                          </span>
+                          <span className="text-neutral-300">·</span>
+                        </>
+                      )}
                       <span>{w.scheduleLabel ?? 'On demand'}</span>
                       {w.project && (
                         <>
@@ -414,7 +502,7 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                       {w.workerName && <><span className="text-neutral-300">·</span><span>delivered by {w.workerName}</span></>}
                       {w.runningProgress ? (
                         <><span className="text-neutral-300">·</span><span className="text-indigo-600">running — step {w.runningProgress}</span></>
-                      ) : w.lastRunStatus === 'failed' ? (
+                      ) : parked ? null : w.lastRunStatus === 'failed' ? (
                         <><span className="text-neutral-300">·</span><span className="text-red-600">last run failed</span></>
                       ) : w.lastRunAt ? (
                         <><span className="text-neutral-300">·</span><span>last ran {shortDate(w.lastRunAt)}</span></>
@@ -570,6 +658,21 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
 
       )}
 
+      {/* ── THE PROCESS DRAWER — one deed, one door: its Approve/Reject post to the SAME resume
+          route the "Waiting on you" card above uses. ── */}
+      {openProcess && (
+        <ProcessDrawer
+          process={openProcess}
+          workerName={rows.find((w) => w.id === openProcess.workflowId)?.workerName ?? null}
+          onClose={() => setOpenProcess(null)}
+          onDecided={() => { void refresh(true); }}
+          onRunAgain={(() => {
+            const w = rows.find((r) => r.id === openProcess.workflowId);
+            return w ? () => runNow(w) : undefined;
+          })()}
+        />
+      )}
+
       {/* ── THE DELIVERABLE VIEWER — PORTALED to body (THE OVERLAY LAW: the lens's RiseIn
           transform makes any in-tree `fixed` position against the animated box, not the
           viewport — the sheet floated mid-page). Docked flush, same panel as the Home chat. ── */}
@@ -602,48 +705,15 @@ type AuditRun = {
 };
 
 // ── THE GATE'S RECEIPTS (guardrails arc): the per-run audit speaks what the delivery check did —
-// checked clean, fixed with findings, or held. Same shapes as the Studio's Test-run panel:
-// build time shows the promise, the run shows the receipt. ──
-const GATE_ACTION_LABEL: Record<string, string> = { corrected: 'fixed', removed: 'removed', masked: 'masked', blocked: 'blocked' };
-
+// checked clean, fixed with findings, or held. GateChip/GateFindings now LIVE in the process
+// drawer and are imported here — the drawer's Log and this audit are the same receipts in two
+// seats, and a forked findings renderer is exactly the drift the one-claim law forbids. ──
 function gateVerdictOf(r: AuditRun): GateVerdict | null {
   let v: GateVerdict | null = null;
   for (const o of r.step_outputs ?? []) if (o?.verdict) v = o.verdict;
   return v;
 }
 
-function GateChip({ v }: { v: GateVerdict }) {
-  if (v.status === 'blocked') return <span className="text-[10px] rounded-full px-1.5 py-[1px] font-medium text-amber-700 bg-amber-100">⏸ held by your check</span>;
-  if (v.status === 'corrected') return <span className="text-[10px] rounded-full px-1.5 py-[1px] font-medium text-teal-700 bg-teal-100">✎ checked · {v.findings.length} fixed</span>;
-  return <span className="text-[10px] rounded-full px-1.5 py-[1px] font-medium text-teal-700 bg-teal-50">✓ checked</span>;
-}
-
-function GateFindings({ v }: { v: GateVerdict }) {
-  if (!v.findings.length) {
-    return v.reported
-      ? <div className="text-[11.5px] text-neutral-400">Checked against this run&apos;s sources — nothing needed fixing.</div>
-      : null;
-  }
-  return (
-    <div className="space-y-1.5">
-      {v.findings.map((f, i) => (
-        <div key={i} className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className={`text-[9.5px] font-semibold uppercase tracking-wide ${f.source === 'rule' ? 'text-indigo-600' : 'text-teal-700'}`}>
-              {f.source === 'rule' ? (f.stepLabel ? `Your rule · from “${f.stepLabel}”` : 'Your rule') : `Built-in · ${f.source}`}
-            </span>
-            <span className={`text-[9.5px] uppercase rounded-full px-1.5 ${f.action === 'blocked' ? 'text-amber-700 bg-amber-100' : 'text-teal-700 bg-teal-50'}`}>
-              {GATE_ACTION_LABEL[f.action] ?? f.action}
-            </span>
-          </div>
-          <div className="mt-0.5 font-mono text-[11px] text-neutral-600 leading-relaxed">“{f.quote}”</div>
-          {f.note && <div className="text-[11px] text-neutral-500">{f.note}</div>}
-        </div>
-      ))}
-      {!v.reported && <div className="text-[10.5px] text-neutral-400">(the check reported only code-computed findings this run)</div>}
-    </div>
-  );
-}
 function RunAudit({ workflowId, onOpenDeliverable }: { workflowId: string; onOpenDeliverable: (threadId: string, artifactId: string) => Promise<void> }) {
   const [runs, setRuns] = useState<AuditRun[] | null>(null);
   const [openSteps, setOpenSteps] = useState<string | null>(null);

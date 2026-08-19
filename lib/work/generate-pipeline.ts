@@ -820,7 +820,7 @@ export async function assembleArtifactFromSteps(params: {
 
   // Enable JSON mode for providers that support it — eliminates parsing failures
   // from unquoted keys, trailing commas, and other LLM JSON issues.
-  const supportsJsonMode = ['openai', 'azure_openai', 'together'].includes(endpoint.provider);
+  const supportsJsonMode = ['openai', 'azure_openai'].includes(endpoint.provider);
 
   const effectiveMaxTokens = maxTokens;
 

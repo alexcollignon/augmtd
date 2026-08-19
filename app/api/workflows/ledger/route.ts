@@ -27,7 +27,7 @@ export async function GET() {
       .select('entity_id, tasks')
       .eq('user_id', user.id).eq('kind', 'workflow_scope'),
     supabase.from('workflow_runs')
-      .select('id, workflow_id, status, triggered_by, step_outputs, error, created_at, completed_at, thread_id')
+      .select('id, workflow_id, status, triggered_by, step_outputs, error, created_at, started_at, completed_at, thread_id')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(25),
@@ -58,7 +58,8 @@ export async function GET() {
   const runs = (runRes.data ?? []) as Array<{
     id: string; workflow_id: string; status: string; triggered_by: string;
     step_outputs: Array<{ label?: string; step_type?: string }> | null;
-    error: string | null; created_at: string; completed_at: string | null; thread_id: string | null;
+    error: string | null; created_at: string; started_at: string | null;
+    completed_at: string | null; thread_id: string | null;
   }>;
   const wfById = new Map(wfs.map(w => [w.id, w]));
 
@@ -152,6 +153,72 @@ export async function GET() {
     };
   }).sort((a, b) => String(b.lastAt).localeCompare(String(a.lastAt)));
 
+  // ── THE PROCESSES (processes arc, docs/processes-plan.md): every recent run wearing its human
+  // state through the ONE derivation — the strip, the drawer, and the deep-dive all read THIS
+  // array (the deep-dive filters by workflowId). held_back rows ride along for History surfaces;
+  // attention surfaces bucket via PROCESS_BUCKETS and drop what doesn't render. ──
+  const { deriveProcessRows } = await import('@/lib/workflows/process-state');
+  const artTitleByRun = new Map<string, string>();
+  for (const r of done) {
+    if (!r.thread_id) continue;
+    const arts = artsByThread.get(r.thread_id) ?? [];
+    const doneAt = r.completed_at ? new Date(r.completed_at).getTime() + 60_000 : null;
+    const own = doneAt
+      ? arts.filter((a) => a.generated_at && new Date(a.generated_at).getTime() <= doneAt)
+          .sort((a, b) => String(b.generated_at).localeCompare(String(a.generated_at)))[0]
+      : arts[0];
+    if (own?.title) artTitleByRun.set(r.id, String(own.title).slice(0, 120));
+  }
+  const stepsTotalByWf = new Map(wfs.map((w) => [w.id, (w.steps ?? []).length]));
+  let processes = (await deriveProcessRows(supabase, user.id, runs, wfById, artTitleByRun))
+    .map((p) => ({ ...p, stepsTotal: stepsTotalByWf.get(p.workflowId) ?? p.stepsDone }));
+
+  // ── THE REASSIGN OVERRIDE IS SERVED TRUTH (B2): a parked handoff can have moved to another
+  // person for THIS RUN ONLY (item_plans kind='handoff_override' — the reassign route is its one
+  // writer; the authored step never mutates). The derivation stays pure and override-free, so the
+  // route re-reads the gate WITH the override and patches the rows: the strip must speak the
+  // CURRENT assignee, never the person who was originally authored into the step. ──
+  const parked = runs.filter((r) => r.status === 'awaiting_approval');
+  if (parked.length) {
+    try {
+      const { parkedGateOf } = await import('@/lib/workflows/process-state');
+      const stepIdByRun = new Map<string, string>();
+      for (const r of parked) {
+        const steps = (wfById.get(r.workflow_id)?.steps ?? []) as WorkflowStep[];
+        const cur = steps[(r.step_outputs ?? []).length];
+        if (cur && (cur as { type?: string }).type === 'handoff') stepIdByRun.set(r.id, (cur as { id: string }).id);
+      }
+      if (stepIdByRun.size) {
+        const keys = [...stepIdByRun.entries()].map(([runId, stepId]) => `${runId}:${stepId}`);
+        const { data: ovs } = await supabase.from('item_plans')
+          .select('entity_id, tasks')
+          .eq('user_id', user.id).eq('kind', 'handoff_override').in('entity_id', keys);
+        const byRun = new Map<string, { assigneeUserId: string; assigneeName?: string }>();
+        for (const o of (ovs ?? []) as Array<{ entity_id: string; tasks: { assigneeUserId?: string; assigneeName?: string } | null }>) {
+          const runId = String(o.entity_id).split(':')[0];
+          if (o.tasks?.assigneeUserId) byRun.set(runId, { assigneeUserId: o.tasks.assigneeUserId, assigneeName: o.tasks.assigneeName });
+        }
+        if (byRun.size) {
+          const runById = new Map(parked.map((r) => [r.id, r]));
+          processes = processes.map((p) => {
+            const ov = byRun.get(p.runId);
+            const r = runById.get(p.runId);
+            if (!ov || !r) return p;
+            const gate = parkedGateOf(
+              { step_outputs: (r.step_outputs ?? []) as never },
+              (wfById.get(r.workflow_id)?.steps ?? null) as WorkflowStep[] | null,
+              ov,
+            );
+            if (gate.kind !== 'handoff' || !gate.assigneeUserId) return p;
+            return gate.assigneeUserId === user.id
+              ? { ...p, state: 'needs_you' as const, waitingOn: null }
+              : { ...p, state: 'waiting_on_others' as const, reason: undefined, waitingOn: { name: gate.assigneeName ?? 'a teammate' } };
+          });
+        }
+      }
+    } catch { /* the derivation's own attribution still serves */ }
+  }
+
   // The presenter roster (coworker = presenter only; the workflow stays system-owned).
   const workers = ((workerRes.data ?? []) as Array<{ id: string; name: string; worker_role: string }>)
     .sort((a, b) => (a.worker_role === 'personal_assistant' ? -1 : b.worker_role === 'personal_assistant' ? 1 : a.name.localeCompare(b.name)));
@@ -188,5 +255,5 @@ export async function GET() {
     emailFeature = feats?.email !== false;
   } catch { /* default: show */ }
 
-  return NextResponse.json({ ledger, awaiting, recent, workers, team, emailFeature });
+  return NextResponse.json({ ledger, awaiting, recent, processes, workers, team, emailFeature });
 }

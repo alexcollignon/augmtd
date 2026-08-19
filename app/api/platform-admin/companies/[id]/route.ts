@@ -7,7 +7,7 @@ import type { TierType } from '@/lib/ai/types';
 
 const VALID_TYPES: WorkspaceType[] = ['company', 'beta', 'pilot', 'internal'];
 const VALID_PLANS = ['starter', 'growth', 'enterprise'];
-const VALID_TIERS: (TierType | null)[] = ['standard', 'professional', 'private_shared', 'bedrock_private', 'bedrock_optimised', 'private_client', 'on_prem', null];
+const VALID_TIERS: (TierType | null)[] = ['standard', 'professional', 'bedrock_private', 'bedrock_optimised', 'private_client', 'on_prem', null];
 
 async function getAdminClient() {
   const { createClient: createSupabase } = await import('@supabase/supabase-js');
