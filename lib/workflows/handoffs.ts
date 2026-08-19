@@ -346,11 +346,13 @@ export async function settleHandoffDecision(
 
     // THE RUN-ROOM RIDER (B2): every process gets a spoken decision trail — even a manual workflow
     // with no standing binding, whose narration used to reach the activity ledger only.
+    // ONE RUN ROOM (mockup wave): keyed to the CREATOR, like the comments route — ownership is
+    // transferable, execution identity is not; keying on the owner split the trail across two
+    // users' rooms after a transfer.
     try {
-      const { ownerOf, narrateInRunRoom } = await import('./owner');
-      const owner = await ownerOf(admin, wf.id, wf.user_id);
+      const { narrateInRunRoom } = await import('./owner');
       await narrateInRunRoom(
-        admin, owner.userId, runId,
+        admin, wf.user_id, runId,
         `${decider} ${approved ? 'approved' : 'held back'} "${wf.name}"${waited ? ` after ${waited}` : ''}.`,
         `handoff-decided:${runId}`,
       );
@@ -567,9 +569,9 @@ export async function reassignHandoff(
     const line = `Moved "${wf.name}" from ${fromName} to ${newName}.`;
     await narrateInOwnerStandingRoom(admin, wf, line, `handoff-reassigned:${runId}:r${rev}`);
     try {
-      const { ownerOf, narrateInRunRoom } = await import('./owner');
-      const owner = await ownerOf(admin, wf.id, wf.user_id);
-      await narrateInRunRoom(admin, owner.userId, runId, line, `handoff-reassigned:${runId}:r${rev}`);
+      // Creator-keyed like every run-room write (ONE RUN ROOM — see the decision rider above).
+      const { narrateInRunRoom } = await import('./owner');
+      await narrateInRunRoom(admin, wf.user_id, runId, line, `handoff-reassigned:${runId}:r${rev}`);
     } catch { /* the override is the truth */ }
     try {
       const { logActivity } = await import('@/lib/activity/log');

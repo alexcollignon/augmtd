@@ -17,6 +17,14 @@
 //     else holds) — never a disabled ghost anywhere else.
 //   · Log — the RunAudit receipts (steps · durations · outputs · gate verdicts) re-seated.
 //
+// NOTES ON THIS PROCESS (mockup-fidelity wave): the run has ONE conversation — the `run:<runId>`
+// room, served by ONE route (`/api/workflows/runs/[id]/comments`). Every gate card carries the
+// count and can open it, but the thread is honestly labelled as the RUN's notes — we never fake a
+// per-gate thread the store does not have. ONE fetch per drawer open (eager, on mount): the count
+// is part of the card's resting state, so a lazy fetch would render a silent card first. A 404
+// (the viewer is not authorized — the drawer should never show it, but truth over assumption)
+// hides the affordance entirely rather than shouting an error.
+//
 // THE RECEIPTS GRAMMAR LIVES HERE (GateChip/GateFindings, exported): the drawer and the ledger's
 // RunAudit render the SAME components — the ledger imports them from this file. One direction of
 // import (ledger → drawer), so the shared grammar can never fork and no cycle forms.
@@ -25,7 +33,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
-import { XMarkIcon, ChevronDownIcon, ArrowPathIcon, BellIcon, ArrowRightCircleIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon, ChevronDownIcon, ArrowPathIcon, BellIcon, ArrowRightCircleIcon, ChatBubbleLeftEllipsisIcon } from '@heroicons/react/24/outline';
 import { Button, Badge, TabBar } from '@/components/ui';
 import type { ProcessRow } from '@/lib/workflows/process-state';
 import type { GateVerdict, WorkflowStep, HandoffStep } from '@/lib/workflows/types';
@@ -69,6 +77,12 @@ export function GateFindings({ v }: { v: GateVerdict }) {
 
 type Teammate = { userId: string; name: string; email: string };
 
+/** A turn of the run's room, as served by `/api/workflows/runs/[id]/comments`.
+ *  `pending` is client-only — an optimistic line still in flight. */
+type RunComment = { author?: string | null; text: string; at?: string | null; pending?: boolean };
+
+const COMMENT_MAX = 600;
+
 type DrawerRun = {
   id: string; status: string; triggered_by: string; thread_id: string | null;
   step_outputs: Array<{ label?: string; step_type?: string; output?: unknown; error?: string; duration_ms?: number; verdict?: GateVerdict }> | null;
@@ -100,7 +114,7 @@ function whenWord(at: string | null): string {
 }
 
 export default function ProcessDrawer({
-  process, workerName, onClose, onDecided, onRunAgain,
+  process, workerName, onClose, onDecided, onRunAgain, initialTab,
 }: {
   process: ProcessRow;
   /** The presenter coworker, when the ledger knows one — identity only, never ownership. */
@@ -110,8 +124,10 @@ export default function ProcessDrawer({
   onDecided?: () => void;
   /** Reuses the ledger's existing run-now path — absent means NO button (never a dead one). */
   onRunAgain?: () => void | Promise<void>;
+  /** Which tab the opener meant — a "N steps" Log link lands on the Log, not on the gates. */
+  initialTab?: 'handoffs' | 'log';
 }) {
-  const [tab, setTab] = useState<'handoffs' | 'log'>('handoffs');
+  const [tab, setTab] = useState<'handoffs' | 'log'>(initialTab ?? 'handoffs');
   const [busy, setBusy] = useState(false);
   const [decided, setDecided] = useState<'approved' | 'rejected' | null>(null);
   const [rerunning, setRerunning] = useState(false);
@@ -125,6 +141,48 @@ export default function ProcessDrawer({
   // The workflow's own steps — the ONLY source of the human-gate list (fetched once per drawer).
   // undefined = loading, null = unavailable (the list degrades to the single waiting card).
   const [steps, setSteps] = useState<WorkflowStep[] | null | undefined>(undefined);
+  // ── THE RUN'S NOTES — one thread, one fetch per drawer open. undefined = loading,
+  // null = no affordance at all (unauthorized / unreachable), array = the thread. ──
+  const [comments, setComments] = useState<RunComment[] | null | undefined>(undefined);
+  const [openNotes, setOpenNotes] = useState<string | null>(null); // the gate card showing the thread
+  const [noteDraft, setNoteDraft] = useState('');
+  const [sendingNote, setSendingNote] = useState(false);
+  const [noteError, setNoteError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let dead = false;
+    void fetch(`/api/workflows/runs/${process.runId}/comments`)
+      .then(async (r) => (r.ok ? ((await r.json()) as { comments?: RunComment[] }) : null))
+      .then((j) => { if (!dead) setComments(j ? (j.comments ?? []) : null); })
+      .catch(() => { if (!dead) setComments(null); });
+    return () => { dead = true; };
+  }, [process.runId]);
+
+  // ── The one composer: optimistic append, honest rollback. ──
+  const sendNote = useCallback(async () => {
+    const text = noteDraft.trim().slice(0, COMMENT_MAX);
+    if (!text || sendingNote) return;
+    setSendingNote(true);
+    setNoteError(null);
+    const optimistic: RunComment = { author: 'You', text, at: new Date().toISOString(), pending: true };
+    setComments((c) => [...(c ?? []), optimistic]);
+    setNoteDraft('');
+    try {
+      const r = await fetch(`/api/workflows/runs/${process.runId}/comments`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
+      });
+      if (!r.ok) throw new Error('note');
+      const j = (await r.json().catch(() => null)) as { comment?: RunComment } | RunComment | null;
+      const landed = (j && 'comment' in (j as Record<string, unknown>) ? (j as { comment?: RunComment }).comment : (j as RunComment | null)) ?? null;
+      setComments((c) => (c ?? []).map((x) => (x === optimistic
+        ? { author: landed?.author ?? optimistic.author, text: landed?.text ?? text, at: landed?.at ?? optimistic.at }
+        : x)));
+    } catch {
+      setComments((c) => (c ?? []).filter((x) => x !== optimistic));
+      setNoteDraft(text);
+      setNoteError('That note did not send — try again.');
+    } finally { setSendingNote(false); }
+  }, [noteDraft, sendingNote, process.runId]);
 
   useEffect(() => {
     let dead = false;
@@ -379,6 +437,31 @@ export default function ProcessDrawer({
                             )}
                           </>
                         )}
+                        {comments !== null && (
+                          <div className="mt-2.5 border-t border-neutral-100 pt-2">
+                            <button
+                              onClick={() => { setOpenNotes((v) => (v === s.id ? null : s.id)); setNoteError(null); }}
+                              className="flex items-center gap-1 text-[11px] text-neutral-400 transition-colors hover:text-neutral-600"
+                            >
+                              <ChatBubbleLeftEllipsisIcon className="h-3.5 w-3.5" />
+                              {comments === undefined
+                                ? 'Notes'
+                                : comments.length === 0
+                                  ? 'Add a note'
+                                  : `${comments.length} comment${comments.length === 1 ? '' : 's'}`}
+                            </button>
+                            {openNotes === s.id && (
+                              <RunNotes
+                                comments={comments}
+                                draft={noteDraft}
+                                onDraft={setNoteDraft}
+                                onSend={() => void sendNote()}
+                                sending={sendingNote}
+                                error={noteError}
+                              />
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -448,6 +531,57 @@ export default function ProcessDrawer({
       </aside>
     </>,
     document.body,
+  );
+}
+
+// ── THE RUN'S NOTES — ONE thread (the run's room), shown under whichever gate card asked for it
+// and labelled as what it is. Turns are muted rows; the composer is one line. ──
+function RunNotes({
+  comments, draft, onDraft, onSend, sending, error,
+}: {
+  comments: RunComment[] | undefined;
+  draft: string;
+  onDraft: (v: string) => void;
+  onSend: () => void;
+  sending: boolean;
+  error: string | null;
+}) {
+  return (
+    <div className="mt-2">
+      <div className="text-[10.5px] font-medium uppercase tracking-wide text-neutral-400">Notes on this process</div>
+      {comments === undefined ? (
+        <div className="mt-1.5 text-[11.5px] text-neutral-400">Loading the notes…</div>
+      ) : comments.length === 0 ? (
+        <div className="mt-1.5 text-[11.5px] text-neutral-400">No notes yet.</div>
+      ) : (
+        <div className="mt-1.5 space-y-1">
+          {comments.map((c, i) => (
+            <div key={`${c.at ?? ''}-${i}`} className={`rounded-lg bg-neutral-50 px-2.5 py-1.5 ${c.pending ? 'opacity-60' : ''}`}>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-[11px] font-medium text-neutral-600">{c.author?.trim() || 'Someone'}</span>
+                <span className="text-[10.5px] text-neutral-400">{c.pending ? 'sending…' : (c.at ? sinceWord(c.at) : '')}</span>
+              </div>
+              <div className="mt-0.5 whitespace-pre-wrap text-[11.5px] leading-relaxed text-neutral-600">{c.text}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="mt-2 flex items-center gap-1.5">
+        <input
+          value={draft}
+          maxLength={COMMENT_MAX}
+          disabled={sending}
+          onChange={(e) => onDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(); } }}
+          placeholder="Add a note…"
+          className="min-w-0 flex-1 rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-[12px] placeholder:text-neutral-400"
+        />
+        <Button size="sm" variant="secondary" onClick={onSend} disabled={sending || !draft.trim()}>
+          {sending ? 'Sending…' : 'Send'}
+        </Button>
+      </div>
+      {error && <div className="mt-1 text-[11.5px] text-red-500">{error}</div>}
+    </div>
   );
 }
 

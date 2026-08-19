@@ -18,7 +18,7 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try { await requireFeature('studio', supabase, user.id); } catch (err) { return handleWorkspaceError(err); }
 
-  const [wfRes, scopeRes, runRes, workerRes] = await Promise.all([
+  const [wfRes, scopeRes, runRes, workerRes, unreviewedRes] = await Promise.all([
     supabase.from('workflows')
       .select('id, name, description, status, trigger, steps, output_config, last_run_at, next_run_at, auto_paused_at, agent_id, icon, color')
       .eq('user_id', user.id)
@@ -34,7 +34,22 @@ export async function GET() {
     supabase.from('custom_agents')
       .select('id, name, worker_role')
       .eq('user_id', user.id).eq('is_worker', true).eq('is_active', true),
+    // THE BADGE'S BREAKDOWN (owner walk, Aug 19: "we see 3 on the nav bar, but we don't know
+    // which ones it's referring to") — the sidebar's Workflows badge counts unreviewed succeeded
+    // runs (rooms/recent: status succeeded · reviewed_at null · last 30 days). This is the SAME
+    // predicate, per workflow — NOT derived from the 25-run window above, so the nav number and
+    // the row counts sum to the same fact by construction.
+    supabase.from('workflow_runs')
+      .select('workflow_id')
+      .eq('user_id', user.id).eq('status', 'succeeded')
+      .is('reviewed_at', null)
+      .gte('created_at', new Date(Date.now() - 30 * 86_400_000).toISOString()),
   ]);
+
+  const unreviewedByWf = new Map<string, number>();
+  for (const r of (unreviewedRes.data ?? []) as Array<{ workflow_id: string }>) {
+    unreviewedByWf.set(r.workflow_id, (unreviewedByWf.get(r.workflow_id) ?? 0) + 1);
+  }
 
   const wfs = (wfRes.data ?? []) as Array<{
     id: string; name: string; description: string | null; status: string;
@@ -42,26 +57,6 @@ export async function GET() {
     last_run_at: string | null; next_run_at: string | null; auto_paused_at: string | null; agent_id: string | null;
     icon: string | null; color: string | null;
   }>;
-
-  // ── THE ACCOUNTABILITY OWNER ON THE LEDGER (processes arc B2) — served ONLY when it is an
-  // EXPLICIT choice (a stored owner row). Absent = the creator owns by default, and the row says
-  // nothing rather than parading the reader's own name back at them. One batch read. ──
-  const ownerNames = new Map<string, string>();
-  try {
-    const { ownersFor } = await import('@/lib/workflows/owner');
-    const owners = await ownersFor(supabase, wfs.map(w => ({ id: w.id, user_id: user.id })));
-    for (const [wfId, o] of owners) {
-      if (o.explicit && o.name) ownerNames.set(wfId, o.name);
-    }
-  } catch { /* ownership attribution is additive — the ledger serves without it */ }
-
-  // Worker names (the presenter, never the owner — workflows are system-owned).
-  const agentIds = [...new Set(wfs.map(w => w.agent_id).filter(Boolean))] as string[];
-  const agentNames = new Map<string, string>();
-  if (agentIds.length) {
-    const { data: agents } = await supabase.from('custom_agents').select('id, name').in('id', agentIds);
-    for (const a of (agents ?? []) as Array<{ id: string; name: string }>) agentNames.set(a.id, a.name);
-  }
 
   const scopeByWf = new Map<string, { entityId: string; entityName: string }>();
   for (const s of (scopeRes.data ?? []) as Array<{ entity_id: string; tasks: { entityId?: string; entityName?: string } }>) {
@@ -75,6 +70,83 @@ export async function GET() {
     completed_at: string | null; thread_id: string | null;
   }>;
   const wfById = new Map(wfs.map(w => [w.id, w]));
+
+  // ── PHASE TWO, ONE FLIGHT (owner walk, Aug 19: "loading takes a bit of time, should be
+  // instant"): these reads are mutually independent and need only the first batch's rows — but
+  // they used to be awaited ONE AFTER ANOTHER (owners → agent names → thread artifacts →
+  // overrides → team → features ≈ 7 extra round-trips), and the page's cold paint is exactly this
+  // route's latency. The inputs are derived purely first; then everything flies together. ──
+  const agentIds = [...new Set(wfs.map(w => w.agent_id).filter(Boolean))] as string[];
+  const done = runs.filter(r => r.status !== 'awaiting_approval' && r.status !== 'queued' && r.status !== 'running');
+  const threadIds = [...new Set(done.map(r => r.thread_id).filter(Boolean))] as string[];
+  const parked = runs.filter((r) => r.status === 'awaiting_approval');
+  const stepIdByRun = new Map<string, string>();
+  for (const r of parked) {
+    const steps = (wfById.get(r.workflow_id)?.steps ?? []) as WorkflowStep[];
+    const cur = steps[(r.step_outputs ?? []).length];
+    if (cur && (cur as { type?: string }).type === 'handoff') stepIdByRun.set(r.id, (cur as { id: string }).id);
+  }
+  const overrideKeys = [...stepIdByRun.entries()].map(([runId, stepId]) => `${runId}:${stepId}`);
+
+  const [ownersOut, agentsOut, thsOut, ovsOut, teamOut, emailFeatureOut] = await Promise.all([
+    // The accountability owner (B2) — served ONLY when explicitly assigned; failure = no names.
+    (async () => {
+      try {
+        const { ownersFor } = await import('@/lib/workflows/owner');
+        return await ownersFor(supabase, wfs.map(w => ({ id: w.id, user_id: user.id })));
+      } catch { return new Map<string, { explicit?: boolean; name?: string | null }>(); }
+    })(),
+    // Worker names (the presenter, never the owner — workflows are system-owned).
+    agentIds.length
+      ? supabase.from('custom_agents').select('id, name').in('id', agentIds).then(r => r.data ?? [])
+      : Promise.resolve([]),
+    // Deliverable artifacts for the recent trail + the subject ladder.
+    threadIds.length
+      ? supabase.from('work_threads').select('id, artifacts').in('id', threadIds).then(r => r.data ?? [])
+      : Promise.resolve([]),
+    // Reassign overrides (B2) — the strip must speak the CURRENT assignee.
+    overrideKeys.length
+      ? supabase.from('item_plans').select('entity_id, tasks')
+          .eq('user_id', user.id).eq('kind', 'handoff_override').in('entity_id', overrideKeys)
+          .then(r => r.data ?? [])
+      : Promise.resolve([]),
+    // Teammates' shared workflows (read-only rows; its internal profile read rides this lane).
+    (async (): Promise<Array<{ id: string; name: string; scheduleLabel: string | null; ownerName: string }>> => {
+      try {
+        const { data: shared } = await supabase.from('workflows')
+          .select('id, name, trigger, user_id, sharing_mode')
+          .neq('user_id', user.id).eq('sharing_mode', 'live').eq('status', 'active').limit(20);
+        const rows = (shared ?? []) as Array<{ id: string; name: string; trigger: { type?: string; label?: string; cron?: string; when?: string } | null; user_id: string }>;
+        if (!rows.length) return [];
+        const ownerIds = [...new Set(rows.map((r) => r.user_id))];
+        const { data: profs } = await supabase.from('profiles').select('id, full_name, email').in('id', ownerIds);
+        const nameOf = new Map(((profs ?? []) as Array<{ id: string; full_name: string | null; email: string | null }>)
+          .map((p) => [p.id, p.full_name ?? p.email?.split('@')[0] ?? 'Teammate']));
+        return rows.map((r) => ({
+          id: r.id, name: r.name,
+          scheduleLabel:
+            r.trigger?.type === 'schedule' ? (r.trigger.label ?? (r.trigger.cron ? `cron ${r.trigger.cron}` : null)) :
+            r.trigger?.type === 'reaction' ? (r.trigger.label ?? 'On event') : 'On demand',
+          ownerName: nameOf.get(r.user_id) ?? 'Teammate',
+        }));
+      } catch { return []; }
+    })(),
+    // The sovereign gallery flag.
+    (async () => {
+      try {
+        const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
+        const feats = await getWorkspaceFeatures(user.id, supabase);
+        return feats?.email !== false;
+      } catch { return true; }
+    })(),
+  ]);
+
+  const ownerNames = new Map<string, string>();
+  for (const [wfId, o] of ownersOut as Map<string, { explicit?: boolean; name?: string | null }>) {
+    if (o.explicit && o.name) ownerNames.set(wfId, o.name);
+  }
+  const agentNames = new Map<string, string>();
+  for (const a of agentsOut as Array<{ id: string; name: string }>) agentNames.set(a.id, a.name);
 
   // Awaiting approval — the debt leads. The gate's instruction comes from the workflow's own
   // approval step at the parked boundary (step_outputs.length = the index it parked at).
@@ -112,6 +184,8 @@ export async function GET() {
       color: w.color ?? null,
       // Present only when accountability was explicitly assigned (absent = the creator owns).
       ...(ownerNames.has(w.id) ? { ownerName: ownerNames.get(w.id)! } : {}),
+      // The nav badge's share for THIS workflow — deliveries the user hasn't opened yet.
+      unreviewed: unreviewedByWf.get(w.id) ?? 0,
       project: scopeByWf.get(w.id) ?? null,
       lastRunAt: w.last_run_at, nextRunAt: w.next_run_at,
       autoPaused: !!w.auto_paused_at,
@@ -125,14 +199,9 @@ export async function GET() {
   // per workflow speaking the DELTA-worthy truth (count · last run · state), failures itemized
   // individually (a failure is a delta; a repeat success is not). "Open" points at the
   // DELIVERABLE — the latest document artifact on the task thread — never at a chat page. ──
-  const done = runs.filter(r => r.status !== 'awaiting_approval' && r.status !== 'queued' && r.status !== 'running');
-  const threadIds = [...new Set(done.map(r => r.thread_id).filter(Boolean))] as string[];
   const artsByThread = new Map<string, Array<{ id: string; title: string; generated_at?: string }>>();
-  if (threadIds.length) {
-    const { data: ths } = await supabase.from('work_threads').select('id, artifacts').in('id', threadIds);
-    for (const t of (ths ?? []) as Array<{ id: string; artifacts: Array<{ id: string; title: string; generated_at?: string }> | null }>) {
-      artsByThread.set(t.id, Array.isArray(t.artifacts) ? t.artifacts : []);
-    }
+  for (const t of thsOut as Array<{ id: string; artifacts: Array<{ id: string; title: string; generated_at?: string }> | null }>) {
+    artsByThread.set(t.id, Array.isArray(t.artifacts) ? t.artifacts : []);
   }
   const byWf = new Map<string, typeof done>();
   for (const r of done) {
@@ -167,6 +236,8 @@ export async function GET() {
       failures: rs.filter(r => r.status === 'failed').slice(0, 3)
         .map(r => ({ at: r.completed_at ?? r.created_at, error: (r.error ?? '').slice(0, 140) })),
       held: rs.filter(r => r.status === 'rejected').length,
+      // Same badge-share as the ledger row — the trail's group can point at what's unopened.
+      unreviewed: unreviewedByWf.get(wfId) ?? 0,
     };
   }).sort((a, b) => String(b.lastAt).localeCompare(String(a.lastAt)));
 
@@ -195,23 +266,12 @@ export async function GET() {
   // writer; the authored step never mutates). The derivation stays pure and override-free, so the
   // route re-reads the gate WITH the override and patches the rows: the strip must speak the
   // CURRENT assignee, never the person who was originally authored into the step. ──
-  const parked = runs.filter((r) => r.status === 'awaiting_approval');
   if (parked.length) {
     try {
       const { parkedGateOf } = await import('@/lib/workflows/process-state');
-      const stepIdByRun = new Map<string, string>();
-      for (const r of parked) {
-        const steps = (wfById.get(r.workflow_id)?.steps ?? []) as WorkflowStep[];
-        const cur = steps[(r.step_outputs ?? []).length];
-        if (cur && (cur as { type?: string }).type === 'handoff') stepIdByRun.set(r.id, (cur as { id: string }).id);
-      }
-      if (stepIdByRun.size) {
-        const keys = [...stepIdByRun.entries()].map(([runId, stepId]) => `${runId}:${stepId}`);
-        const { data: ovs } = await supabase.from('item_plans')
-          .select('entity_id, tasks')
-          .eq('user_id', user.id).eq('kind', 'handoff_override').in('entity_id', keys);
+      {
         const byRun = new Map<string, { assigneeUserId: string; assigneeName?: string }>();
-        for (const o of (ovs ?? []) as Array<{ entity_id: string; tasks: { assigneeUserId?: string; assigneeName?: string } | null }>) {
+        for (const o of ovsOut as Array<{ entity_id: string; tasks: { assigneeUserId?: string; assigneeName?: string } | null }>) {
           const runId = String(o.entity_id).split(':')[0];
           if (o.tasks?.assigneeUserId) byRun.set(runId, { assigneeUserId: o.tasks.assigneeUserId, assigneeName: o.tasks.assigneeName });
         }
@@ -240,37 +300,9 @@ export async function GET() {
   const workers = ((workerRes.data ?? []) as Array<{ id: string; name: string; worker_role: string }>)
     .sort((a, b) => (a.worker_role === 'personal_assistant' ? -1 : b.worker_role === 'personal_assistant' ? 1 : a.name.localeCompare(b.name)));
 
-  // ── TEAMMATES' SHARED WORKFLOWS (trailing item, Aug 10): read-only rows — what the team
-  // runs, with owner attribution. RLS already grants read on sharing_mode='live' rows. ──
-  let team: Array<{ id: string; name: string; scheduleLabel: string | null; ownerName: string }> = [];
-  try {
-    const { data: shared } = await supabase.from('workflows')
-      .select('id, name, trigger, user_id, sharing_mode')
-      .neq('user_id', user.id).eq('sharing_mode', 'live').eq('status', 'active').limit(20);
-    const rows = (shared ?? []) as Array<{ id: string; name: string; trigger: { type?: string; label?: string; cron?: string; when?: string } | null; user_id: string }>;
-    if (rows.length) {
-      const ownerIds = [...new Set(rows.map((r) => r.user_id))];
-      const { data: profs } = await supabase.from('profiles').select('id, full_name, email').in('id', ownerIds);
-      const nameOf = new Map(((profs ?? []) as Array<{ id: string; full_name: string | null; email: string | null }>)
-        .map((p) => [p.id, p.full_name ?? p.email?.split('@')[0] ?? 'Teammate']));
-      team = rows.map((r) => ({
-        id: r.id, name: r.name,
-        scheduleLabel:
-          r.trigger?.type === 'schedule' ? (r.trigger.label ?? (r.trigger.cron ? `cron ${r.trigger.cron}` : null)) :
-          r.trigger?.type === 'reaction' ? (r.trigger.label ?? 'On event') : 'On demand',
-        ownerName: nameOf.get(r.user_id) ?? 'Teammate',
-      }));
-    }
-  } catch { /* the team section is an enhancement */ }
-
-  // THE SOVEREIGN GALLERY (Aug 11, owner: mailbox-reading templates make no sense on the
-  // corporate tier): the client hides email-sourced templates when the feature is off.
-  let emailFeature = true;
-  try {
-    const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
-    const feats = await getWorkspaceFeatures(user.id, supabase);
-    emailFeature = feats?.email !== false;
-  } catch { /* default: show */ }
+  // Teammates' shared workflows + the sovereign gallery flag — both fetched in PHASE TWO's flight.
+  const team = teamOut;
+  const emailFeature = emailFeatureOut;
 
   return NextResponse.json({ ledger, awaiting, recent, processes, workers, team, emailFeature });
 }

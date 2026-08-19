@@ -138,6 +138,96 @@ never render a disabled ghost).
   H8 verify-gate + handoff coexist; H9 test mode auto-passes and creates NO cross-user
   debris. Cleanup asserts zero leftovers on BOTH probes.
 
+## THE MOCKUP-FIDELITY WAVE (Aug 19 pm — the owner refocused on the original mockups; build contract)
+
+Closing the remaining mockup gaps. Orchestrator decisions locked: comments = the `run:<runId>`
+room (NO SECOND ROOM — stored under the workflow CREATOR's user_id, served/written through ONE
+authorized route: owner, accountability owner, or any current/past gate holder of that run;
+author attribution on every turn); the deep-dive composer = A DOOR TO THE STANDING ROOM'S
+CONVERSATION (converse scoped to the standing commitment item when a binding exists — steer/run
+intents already live there; without a binding the composer hides, honestly); REFERENCE IDS stay
+deferred (registry-tier); the mockup's cross-workflow Work table is read as the DEEP-DIVE's
+per-workflow table (the strip stays the cross-view).
+
+- **THE PROCESS TABLE** (deep-dive Work tab, the mockup's grammar): columns SUBJECT (+ customer
+  chip = the workflow's entity scope name; 'Internal' when none) · PEOPLE (facepile: the run's
+  gate holders incl. overrides + the owner; initials discs, no photos we don't have) · WAITING
+  ON (the served waitingOn / 'You' / '—') · PROGRESS (bar + n/n) · LOG ('N steps' opening the
+  drawer's Log tab). 'Show completed (N)' toggle appends delivered/held rows.
+- **HANDOFF COMMENTS**: `GET/POST /api/workflows/runs/[id]/comments` — turns in the creator's
+  `run:<id>` room (role user, author {name}, dedupe-free), authorization as above; the drawer's
+  gate cards show 'N comments' + an expandable thread + a one-line composer. The decision cards
+  in the run record quote the thread's latest line at decision time when present.
+- **THE RUN RECORD** (read-only drawer from History rows): header + 'Read-only record.' line;
+  tabs **Decisions | Log | vs. previous**. Decisions = every human gate of the run: approvals
+  from step outputs ('You approved'), handoffs from their commitment rows (who — name+role
+  line, when, WAITED = resolved_at−created_at, 'over target' when waited > sla_hours, the
+  decision comment). Log = the existing receipts grammar. **vs. previous (v1, deterministic,
+  no AI)**: this run vs the SAME workflow's previous completed run — duration delta, executed
+  step labels added/removed (config drift), gate findings delta, decisions count delta.
+- **DRIFT CHIPS on History rows** (deterministic derivations, one module
+  `lib/workflows/run-record.ts` — orchestrator-reviewed): `Rejected` (status) ·
+  `Handoff over SLA` (any handoff waited > its sla_hours) · `Owner changed` (an owner-change
+  activity/narration between this run and the previous) · `Review step skipped` (the previous
+  completed run executed a verify/approval step this run's outputs lack — config/behavior
+  drift). Rows gain decisions count · waited summary · facepiles. Client-side search filters
+  by subject/decider names.
+- **TIMELINE bar-end labels**: 'You' / the waiting person's name at the bar's right edge
+  (the mockup's grammar; served waitingOn only, never derived locally).
+- Gates ship with the wave (laws-need-gates): derivation table-tests for run-record
+  (waited/over-target/skipped-step/vs-previous on fixture runs), the comments authorization
+  truth table (owner yes · holder yes · stranger 404), source floors (one comments route,
+  composer renders only with a binding, facepiles from served data).
+
+**PROGRESS (Aug 19 eve — BUILT, uncommitted): the whole wave landed, loop-engineered (3 Opus
+build agents + 1 gates agent, every diff orchestrator-reviewed). Suite `scripts/smoke-run-record.ts`
+97/97 ×2 · processes 65/65 · handoffs RE-EARNED 201/201 · tsc + production build green.**
+- Engine: `lib/workflows/run-record.ts` (Decision/RunSummary, pure driftChipsOf/vsPrevious,
+  `canReadRunRecord` = the ONE visibility predicate — past gate holders keep READ, resume stays
+  current-holder-only) + `runs/[id]/comments` (GET/POST, role-'user' turns in the creator's
+  `run:<id>` room, system narrations filtered out) + `runs/[id]/record`. HONESTY FLOORS: a
+  multi-handoff run NEVER borrows an SLA (slaHours null rather than guessed); a test auto-pass is
+  not a human decision; unknowable timestamps stay null; a nameless handoff decider renders
+  "A teammate", never "You" ("You" is claimed by KIND — approval gates only).
+- Surface: process TABLE (subject+scope chip · served facepiles · waiting-on · progress · Log
+  link opening the drawer ON its Log tab via new `initialTab`; row itself is the door;
+  Show completed fold), History regrammar (drift chips · decisions count · waited summary ·
+  client search) opening the read-only RUN RECORD drawer (Decisions | Log | vs. previous — zero
+  affordances), Timeline bar-end labels (served map only; failed ≠ "You"), drawer per-gate
+  "N comments" → ONE honest run-level thread ("Notes on this process" — never fake per-gate
+  threads), the composer = the standing room's door (words persist FIRST via /api/room/turns,
+  then steer, then the reply — a failure never drops the user's text; no binding → hidden).
+- ORCHESTRATOR FIXES ON REVIEW: (1) ONE RUN ROOM — both `narrateInRunRoom` call sites in
+  handoffs.ts re-keyed from the transferable accountability owner to the CREATOR (matching
+  comments; an ownership change was about to split one run's trail across two rooms); gated (C-B5).
+  (2) reviewStepLabels fallback aligned with executedStepLabels (diverging fallbacks would chip
+  "Review step skipped" chronically on unlabeled review steps); gated (A4b).
+- Two stale smoke-processes gates RE-POINTED (the pre-mockup "Work drops held_back" law was
+  superseded BY DESIGN by the Show-completed fold — replacement pins the new law equally hard).
+- Suite lesson worth keeping: a source floor counting call sites must count COMMENT-STRIPPED code
+  (the raw grep counted the comment that *says* it's the only call site).
+- **THE BADGE POINTS AT ITS ROWS (owner walk, Aug 19 eve — suite now 101/101)**: the nav's
+  Workflows badge (unreviewed succeeded runs, 30d — rooms/recent) never named WHICH rows it meant.
+  Now the ledger route serves the SAME predicate per workflow (`unreviewed` on ledger rows + recent
+  groups — a dedicated query, NOT derived from the 25-run window, so badge N = Σ row pills by
+  construction); the rows wear the identical indigo pill; and every reviewing deed clears through
+  the ONE reviewed_at stamp: open a deliverable (existing) · expand the run trail (new) · open the
+  workflow's deep-dive page (new mount stamp) — each optimistically zeroes the pill and bumps the
+  sidebar via `aug:conversation-changed`. Gate C6 pins predicate parity across both routes, the
+  served share, the rendered pill, and the stamping doors.
+- Walk polish (same eve): the ledger column widened (max-w-3xl → 5xl, the mockup's breathing
+  room); THE TILE WEARS THE STATE — workflow rows lead with a 40px identity tile (house bolt
+  fallback, rounded-xl at that size) carrying the status dot on its corner (ring-2 ring-white),
+  replacing the stray gutter dot + 22px inline mark; the deep-dive header's SSR'd date is
+  hydration-guarded (the client owns the clock — locale/tz mismatch found live; gate C7);
+  THE LEDGER ROUTE FLATTENED ("loading takes a bit of time") — six independent reads (owners ·
+  agent names · thread artifacts · reassign overrides · team shared · features flag) were awaited
+  SEQUENTIALLY (~7 extra round-trips per cold load); now pure derivations hoist first and
+  everything flies in ONE Promise.all (route ≈ 3 round-trip phases total; the LS instant-paint
+  already covered warm visits — the cold paint was exactly this route's latency); and the cold
+  paint itself wears A SKELETON IN THE ROW'S OWN SHAPE (card + tile + two shimmer lines, header
+  kept) — never a bare "Loading…" string, no layout jump when the truth arrives.
+
 ## Phase C — THE REPLY RAIL (owner decision Aug 19: ON DATA TRIGGER, not queued)
 
 Inbound handoff replies (Slack/email reply-to-approve — the scoped descendant of the original

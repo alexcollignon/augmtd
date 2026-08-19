@@ -288,10 +288,17 @@ async function main() {
     && !strip.includes("state === 'held_back'"));
   ok('delivered rides only as a chip count inside its window (never an attention row)',
     strip.includes('DELIVERED_WINDOW_MS') && !/stripRows = \[[\s\S]{0,240}'delivered'/.test(strip));
-  ok('the deep-dive drops held_back from Work', detail.includes("p.state !== 'held_back'"));
-  ok('empty buckets return null in BOTH deep-dive tables',
-    (detail.match(/if \(!rows\.length\) return null;/g) ?? []).length >= 2,
-    String((detail.match(/if \(!rows\.length\) return null;/g) ?? []).length));
+  // RE-POINTED (mockup-fidelity wave, Aug 19): the owner's mockup gave Work a process TABLE with
+  // a 'Show completed' fold — held_back/delivered now RENDER, but only behind the explicit toggle,
+  // never as active attention rows. The old "drops held_back entirely" law is superseded BY DESIGN;
+  // the replacement pins the new law just as hard.
+  ok('held_back is never an ACTIVE Work row (active = needs_you · running · waiting_on_others)',
+    /const active = processes\.filter\(\(p\) => p\.state === 'needs_you' \|\| p\.state === 'running' \|\| p\.state === 'waiting_on_others'\)/.test(detail));
+  ok('completed rows (delivered · held_back) render ONLY behind the Show-completed fold',
+    /const completed = processes\.filter\(\(p\) => p\.state === 'delivered' \|\| p\.state === 'held_back'\)/.test(detail)
+    && /const rows = showDone \? \[\.\.\.active, \.\.\.completed\] : active;/.test(detail));
+  ok('an empty Work tab says so honestly (never a mute table)',
+    detail.includes('Nothing is in flight right now.'));
   ok('FRAMES stays on standby (flag off)', /const SHOW_FRAMES = false/.test(detail));
   ok('…and the tab only exists behind the flag', /if \(SHOW_FRAMES\)/.test(detail));
   ok('the bare /workflows page is not a second surface — it redirects to the Home view',

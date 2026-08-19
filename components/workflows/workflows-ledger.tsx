@@ -41,10 +41,14 @@ type LedgerRow = {
   lastRunStatus: string | null; lastRunError: string | null; runningProgress: string | null;
   /** OPTIONAL identity/attribution the route may serve — absent renders exactly today's row. */
   icon?: string | null; color?: string | null; ownerName?: string | null;
+  /** THE BADGE'S SHARE (owner walk, Aug 19): how many of the nav badge's unreviewed deliveries
+   *  are THIS workflow's — same predicate as the sidebar count, so the numbers sum. */
+  unreviewed?: number;
 };
 type Awaiting = { runId: string; workflowId: string; workflowName: string; since: string; instruction: string | null; lastStepLabel: string | null };
 type RecentGroup = {
   workflowId: string; workflowName: string; count: number; lastAt: string; lastStatus: string;
+  unreviewed?: number;
   /** THE GATE'S DELTA — set only when the latest run's delivery check changed something
    *  (corrected/blocked); a clean pass is silent here (repeat successes don't speak). */
   gate: { status: string; fixed: number } | null;
@@ -127,6 +131,13 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
   // THE SEEN SIGNAL (coherence slice #1): opening runs/deliverables here IS reviewing — the
   // stamp feeds auto-pause honestly and clears the sidebar badge (one mechanic).
   const markReviewed = useCallback((workflowId?: string) => {
+    // Optimistic: the row pill is the nav badge's share — the moment the reviewing deed happens,
+    // the count it pointed at goes with it (the server stamp + the sidebar event follow).
+    setData((d) => d ? {
+      ...d,
+      ledger: d.ledger.map((w) => (!workflowId || w.id === workflowId) ? { ...w, unreviewed: 0 } : w),
+      recent: d.recent.map((g) => (!workflowId || g.workflowId === workflowId) ? { ...g, unreviewed: 0 } : g),
+    } : d);
     void fetch('/api/workflows/runs/reviewed', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(workflowId ? { workflowId } : {}),
@@ -346,7 +357,7 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
   const gallery: Template[] = visibleTemplates.filter((t) => cat === 'all' || t.category === cat);
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-8">
+    <div className="max-w-5xl mx-auto px-6 py-8">
       <h1 className="text-[24px] font-semibold text-neutral-900">Workflows</h1>
       <p className="mt-1 text-[13px] text-neutral-500">Set one up once — it runs on its own and delivers to you.</p>
 
@@ -487,9 +498,26 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
       {/* ── The ledger ── */}
       {tab === 'workflows' && (
       <div className="mt-6">
-        {rows.length > 0 && <h2 className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">Your workflows</h2>}
+        {(rows.length > 0 || (loading && rows.length === 0)) && (
+          <h2 className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">Your workflows</h2>
+        )}
         {loading && rows.length === 0 ? (
-          <div className="mt-4 text-[13px] text-neutral-400">Loading…</div>
+          // THE SKELETON WEARS THE ROW'S OWN SHAPE (owner, Aug 19: "if there's loading, show an
+          // animated loading state — something smooth"): the same card, tile, and two text lines
+          // the real rows paint into, shimmering — never a bare "Loading…" string, and no layout
+          // jump when the truth arrives.
+          <div className="mt-2 divide-y divide-neutral-100 rounded-2xl border border-neutral-200 bg-white animate-pulse" aria-hidden>
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 px-4 py-3">
+                <span className="w-10 h-10 rounded-xl bg-neutral-100 flex-shrink-0" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="h-3 rounded bg-neutral-100" style={{ width: `${34 + (i % 3) * 9}%` }} />
+                  <div className="h-2.5 rounded bg-neutral-100" style={{ width: `${58 + (i % 2) * 12}%` }} />
+                </div>
+                <span className="h-2.5 w-20 rounded bg-neutral-100 flex-shrink-0" />
+              </div>
+            ))}
+          </div>
         ) : rows.length === 0 ? (
           <div className="mt-4 rounded-2xl border border-dashed border-neutral-200 px-6 py-8 text-center">
             <BoltIcon className="mx-auto w-6 h-6 text-neutral-300" />
@@ -508,15 +536,31 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                 w.lastRunStatus === 'succeeded' ? 'bg-emerald-500' : 'bg-neutral-300';
               return (
                 <div key={w.id} className="flex items-center gap-3 px-4 py-3">
-                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dot}`} />
+                  {/* THE TILE WEARS THE STATE (mockup, Aug 19): identity and status are ONE visual
+                      object — the dot sits on the tile's corner, never floating in the gutter. A
+                      workflow with no authored mark still gets the house bolt (a row without a
+                      tile would leave its dot orphaned). */}
+                  <span className="relative flex-shrink-0">
+                    <WorkflowMark mark={{ icon: w.icon || 'bolt', color: w.color || 'neutral' }} size={40} />
+                    <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ring-2 ring-white ${dot}`} />
+                  </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      {/* The workflow's own identity tile — rendered ONLY when the route serves it. */}
-                      <WorkflowMark mark={{ icon: w.icon, color: w.color }} size={22} />
                       {/* The name is the door to the workflow's own home (the deep-dive). */}
                       <a href={`/workflows/${w.id}`} className="truncate text-[13px] font-medium text-neutral-800 hover:text-indigo-600 transition-colors">{w.name}</a>
                       {w.hasVerify && <ShieldCheckIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" title="Verified against sources before delivery" />}
                       {w.hasApproval && <CheckIcon className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" title="Waits for your approval before delivering" />}
+                      {/* THE BADGE, POINTED (owner walk, Aug 19): the nav's count wears the SAME
+                          pill on the exact rows it refers to — opening the deliverable, the run
+                          trail, or the workflow's page clears both through the one stamp. */}
+                      {(w.unreviewed ?? 0) > 0 && (
+                        <span
+                          title={`${w.unreviewed} ${w.unreviewed === 1 ? 'delivery' : 'deliveries'} you haven't opened`}
+                          className="flex-shrink-0 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 tabular-nums"
+                        >
+                          {w.unreviewed! > 9 ? '9+' : w.unreviewed}
+                        </span>
+                      )}
                     </div>
                     <div className="mt-0.5 flex items-center gap-1.5 text-[12px] text-neutral-500 truncate">
                       {/* The wait leads — a parked process is a debt, and debt speaks first. The
@@ -603,11 +647,24 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                 {/* The AI-Studio row grammar: chevron first (the row IS the expander), name + truth,
                     the one action right-aligned. */}
                 <button
-                  onClick={() => setOpenRuns((o) => (o === g.workflowId ? null : g.workflowId))}
+                  onClick={() => {
+                    const opening = openRuns !== g.workflowId;
+                    // Expanding the trail IS reviewing — the same stamp as opening the deliverable.
+                    if (opening && (g.unreviewed ?? 0) > 0) markReviewed(g.workflowId);
+                    setOpenRuns(opening ? g.workflowId : null);
+                  }}
                   className="group flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left hover:bg-neutral-100/60 transition-colors"
                 >
                   <ChevronDownIcon className={`w-3.5 h-3.5 text-neutral-400 transition-transform ${openRuns === g.workflowId ? 'rotate-180' : ''}`} />
                   <span className="text-[13px] font-medium text-neutral-800">{g.workflowName}</span>
+                  {(g.unreviewed ?? 0) > 0 && (
+                    <span
+                      title={`${g.unreviewed} ${g.unreviewed === 1 ? 'delivery' : 'deliveries'} you haven't opened`}
+                      className="flex-shrink-0 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 tabular-nums"
+                    >
+                      {g.unreviewed! > 9 ? '9+' : g.unreviewed}
+                    </span>
+                  )}
                   <span className="text-[12px] text-neutral-500">
                     {g.count === 1 ? `ran on ${shortDate(g.lastAt)}` : `ran ${g.count} times · last on ${shortDate(g.lastAt)}`}
                   </span>
