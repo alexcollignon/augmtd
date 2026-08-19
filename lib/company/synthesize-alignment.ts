@@ -11,7 +11,7 @@
 // model burns its budget in the reasoning channel on judgment-shaped prompts like this one
 // (the lesson documented in lib/home/item-plan.ts).
 
-import { aiCreate, getSystemClient } from '@/lib/ai/factory';
+import { aiCreate, getAIClient, getSystemClient } from '@/lib/ai/factory';
 import { logAIUsage } from '@/lib/ai/log-usage';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import type { AIOperationsSummary } from './ai-operations-metrics';
@@ -64,7 +64,11 @@ export async function synthesizeAlignment(
 ): Promise<AlignmentResult> {
   if (goals.length === 0) return { observations: [] };
 
-  const { client, model, endpoint, tier } = getSystemClient('summarization');
+  // The admin's tier = the company's tier (company ai_tier wins inside the factory) — a company-wide
+  // synthesis stays inside the company's perimeter. System client only when no user is in scope.
+  const { client, model, endpoint, tier } = logCtx
+    ? await getAIClient(logCtx.userId, 'summarization', logCtx.supabase)
+    : getSystemClient('summarization');
 
   const goalsStr = goals
     .map(g => `[${g.id}] (${g.kind}) ${g.title}${g.description ? ` — ${g.description}` : ''}`)

@@ -205,7 +205,7 @@ Tier defaults live in `lib/ai/defaults.ts`. Production standard tier uses: OpenA
 
 Use `aiCreate(client, params)` (also in `factory.ts`) instead of `client.chat.completions.create()` — it handles 429 rate-limit retries and transient 529/500 errors automatically.
 
-For background jobs without a user: `getSystemClient(task)` — always uses standard tier.
+For work with genuinely NO user in scope: `getSystemClient(task)` — standard tier (OpenAI/Anthropic US). ⚠️ **THE TIER LEAK (Aug 19, closed)**: six user-scoped sites (Home brief synthesis · coworker + team briefings · memory rendering · strategy alignment · recipient detection fallback) used it for "background" work, sending privacy-tier tenants' content outside their perimeter. All bind `getAIClient(userId, …)` now (the factory puts the company `ai_tier` first). Gate `scripts/smoke-tier-routing.ts` (17/17): an ALLOWLIST of files that may call `getSystemClient` (each with its no-user reason) + live proof that a real `bedrock_optimised` member resolves to Bedrock on all 8 task types. Adding a caller = adding it to the allowlist with the reason.
 
 ### AI workers — Agno / AgentOS (privacy-preserving agent runtime)
 

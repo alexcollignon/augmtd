@@ -158,8 +158,14 @@ export async function getAIClient(
 }
 
 /**
- * System-level client — for server jobs (cron, background sync) where there
- * is no user context. Always uses platform defaults (standard tier).
+ * System-level client — ONLY for work with genuinely no user (no userId anywhere in scope).
+ * Always uses platform defaults (standard tier = OpenAI/Anthropic US).
+ *
+ * ⚠️ THE TIER LEAK (Aug 19): every call site that HAS a user must use `getAIClient(userId, …)` —
+ * the standard-tier default here silently sent privacy-tier tenants' background work (brief
+ * synthesis, briefings, memory rendering, alignment) to OpenAI/Anthropic, breaking the sovereignty
+ * premise the company's `ai_tier` exists to keep. `scripts/smoke-tier-routing.ts` allowlists the
+ * files that may call this; adding a caller = adding it there, with the reason.
  */
 export function getSystemClient(task: TaskType): ResolvedClient {
   const endpoint = TIER_DEFAULTS['standard'][task]

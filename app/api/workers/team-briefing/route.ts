@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdmin } from '@supabase/supabase-js';
-import { getSystemClient } from '@/lib/ai/factory';
+import { getAIClient } from '@/lib/ai/factory';
 import { logAIUsage } from '@/lib/ai/log-usage';
 
 export const runtime = 'nodejs';
@@ -120,7 +120,7 @@ Write a short, conversational team update. Rules:
 - Do NOT invent tasks, outcomes, or reasoning beyond the context. No "I noticed", "it seems".
 ${nothing ? '- The team is new with no activity yet: in one or two sentences, warmly introduce the team and invite them to delegate their first piece of work.' : `- Address ${firstName ? `"${firstName}"` : 'them'} by name if natural.`}`;
 
-  const { client, model, endpoint, tier } = getSystemClient('conversation');
+  const { client, model, endpoint, tier } = await getAIClient(user.id, 'conversation', supabase);
 
   const stream = await client.chat.completions.create({
     model,

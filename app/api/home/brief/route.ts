@@ -1,6 +1,6 @@
 import { NextResponse, after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { getSystemClient } from '@/lib/ai/factory';
+import { getAIClient } from '@/lib/ai/factory';
 import { buildAnsweredSet } from '@/lib/inbox/needs-reply';
 import { computeThreadReplyState } from '@/lib/inbox/thread-resolution';
 import { classifyItem } from '@/lib/inbox/classify-item';
@@ -966,7 +966,7 @@ export async function GET() {
             if (pe?.state?.summary) personStates.set(k, { momentum: pe.state.momentum || 'active', summary: pe.state.summary });
           }
         } catch { /* non-fatal */ }
-        const synth = await synthesizeBrief(getSystemClient('summarization'), {
+        const synth = await synthesizeBrief(await getAIClient(user.id, 'summarization', supabase), {
             firstName, now, ctx: briefCtx, schedule,
             commitments: owedFacts,
             commitmentCandidates: commitmentCands,
