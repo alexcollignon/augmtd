@@ -64,6 +64,9 @@ export interface RunLike {
 export function parkedGateOf(
   run: Pick<RunLike, 'step_outputs'>,
   steps: WorkflowStep[] | null | undefined,
+  /** B2 REASSIGN: a per-run override (item_plans kind 'handoff_override') outranks the step's
+   *  static assignee — a per-run decision never mutates the authored workflow. */
+  override?: { assigneeUserId: string; assigneeName?: string } | null,
 ): { kind: 'guardrail' | 'approval' | 'handoff'; assigneeUserId?: string; assigneeName?: string } {
   const outs = run.step_outputs ?? [];
   const last = outs[outs.length - 1];
@@ -71,6 +74,9 @@ export function parkedGateOf(
   if (v?.status === 'blocked') return { kind: 'guardrail' };
   const current = (steps ?? [])[outs.length];
   if (current?.type === 'handoff') {
+    if (override?.assigneeUserId) {
+      return { kind: 'handoff', assigneeUserId: override.assigneeUserId, assigneeName: override.assigneeName };
+    }
     return { kind: 'handoff', assigneeUserId: current.assignee_user_id, assigneeName: current.assignee_name };
   }
   return { kind: 'approval' };

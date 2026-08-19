@@ -148,8 +148,9 @@ Frames on the roadmap's word, stored subjects/references if case volume warrants
 - **THE OWNER ≠ THE CREATOR** (the History mockup's "Owner changed" chip, now first-class).
   THE SPLIT LAW: **execution identity stays the creator** (`workflows.user_id` — whose mailbox,
   AI tier, coworkers, and connections every run uses; moving that is never on the table);
-  **owner = the accountability layer**: `owner_user_id` (nullable column, migration applied
-  manually; null = creator owns). The owner is who (1) carries the STANDING BINDING's debt on
+  **owner = the accountability layer**: STORE (build decision, Aug 19 — no migration): item_plans
+  kind='workflow_owner' entity_id=workflowId tasks={ownerUserId, ownerName, by, at} — the
+  workflow_scope precedent; absent = creator owns; promotable to a column if the read gets hot. The owner is who (1) carries the STANDING BINDING's debt on
   their deck, (2) approval parks default to (canResumeRun's 'owner' role reads owner_user_id ??
   user_id), (3) ghost notices reach (see the AI-Ops slice), (4) attribution speaks
   ("delivered by Max · owned by Jordan"). An owner change NARRATES into the standing room and
@@ -176,9 +177,10 @@ Metrics · History). Substrate already live: `ai_usage_events` carries tokens/co
 workflowId (AI-Ops instrumentation); run rows carry durations.
 
 - **THE BASELINE IS AUTHORED, NEVER GUESSED**: one field at creation — "how long does this take
-  you manually?" (`estimated_manual_minutes` on the workflow; asked on the creation card +
-  Studio identity; generate-config prompts for it; nullable — absent renders "add your manual
-  time to see time saved", never a fabricated number). This fixes the AI-Ops flat-15-min
+  you manually?" (STORE, build decision Aug 19: `output_config.estimated_manual_minutes` — one
+  existing save path, no migration; asked in Studio identity + the creation card;
+  generate-config prompting deferred; absent renders "add your manual time to see time saved",
+  never a fabricated number). This fixes the AI-Ops flat-15-min
   limitation AT THE SOURCE for workflows.
 - **The tab shows**: runs completed · median/last run duration · tokens + cost (in/out split,
   the AI-Ops fmt) · time saved = runs × stated baseline (labeled "your estimate", the AI-Ops

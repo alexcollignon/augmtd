@@ -170,8 +170,54 @@ export async function GET() {
     if (own?.title) artTitleByRun.set(r.id, String(own.title).slice(0, 120));
   }
   const stepsTotalByWf = new Map(wfs.map((w) => [w.id, (w.steps ?? []).length]));
-  const processes = (await deriveProcessRows(supabase, user.id, runs, wfById, artTitleByRun))
+  let processes = (await deriveProcessRows(supabase, user.id, runs, wfById, artTitleByRun))
     .map((p) => ({ ...p, stepsTotal: stepsTotalByWf.get(p.workflowId) ?? p.stepsDone }));
+
+  // ── THE REASSIGN OVERRIDE IS SERVED TRUTH (B2): a parked handoff can have moved to another
+  // person for THIS RUN ONLY (item_plans kind='handoff_override' — the reassign route is its one
+  // writer; the authored step never mutates). The derivation stays pure and override-free, so the
+  // route re-reads the gate WITH the override and patches the rows: the strip must speak the
+  // CURRENT assignee, never the person who was originally authored into the step. ──
+  const parked = runs.filter((r) => r.status === 'awaiting_approval');
+  if (parked.length) {
+    try {
+      const { parkedGateOf } = await import('@/lib/workflows/process-state');
+      const stepIdByRun = new Map<string, string>();
+      for (const r of parked) {
+        const steps = (wfById.get(r.workflow_id)?.steps ?? []) as WorkflowStep[];
+        const cur = steps[(r.step_outputs ?? []).length];
+        if (cur && (cur as { type?: string }).type === 'handoff') stepIdByRun.set(r.id, (cur as { id: string }).id);
+      }
+      if (stepIdByRun.size) {
+        const keys = [...stepIdByRun.entries()].map(([runId, stepId]) => `${runId}:${stepId}`);
+        const { data: ovs } = await supabase.from('item_plans')
+          .select('entity_id, tasks')
+          .eq('user_id', user.id).eq('kind', 'handoff_override').in('entity_id', keys);
+        const byRun = new Map<string, { assigneeUserId: string; assigneeName?: string }>();
+        for (const o of (ovs ?? []) as Array<{ entity_id: string; tasks: { assigneeUserId?: string; assigneeName?: string } | null }>) {
+          const runId = String(o.entity_id).split(':')[0];
+          if (o.tasks?.assigneeUserId) byRun.set(runId, { assigneeUserId: o.tasks.assigneeUserId, assigneeName: o.tasks.assigneeName });
+        }
+        if (byRun.size) {
+          const runById = new Map(parked.map((r) => [r.id, r]));
+          processes = processes.map((p) => {
+            const ov = byRun.get(p.runId);
+            const r = runById.get(p.runId);
+            if (!ov || !r) return p;
+            const gate = parkedGateOf(
+              { step_outputs: (r.step_outputs ?? []) as never },
+              (wfById.get(r.workflow_id)?.steps ?? null) as WorkflowStep[] | null,
+              ov,
+            );
+            if (gate.kind !== 'handoff' || !gate.assigneeUserId) return p;
+            return gate.assigneeUserId === user.id
+              ? { ...p, state: 'needs_you' as const, waitingOn: null }
+              : { ...p, state: 'waiting_on_others' as const, reason: undefined, waitingOn: { name: gate.assigneeName ?? 'a teammate' } };
+          });
+        }
+      }
+    } catch { /* the derivation's own attribution still serves */ }
+  }
 
   // The presenter roster (coworker = presenter only; the workflow stays system-owned).
   const workers = ((workerRes.data ?? []) as Array<{ id: string; name: string; worker_role: string }>)

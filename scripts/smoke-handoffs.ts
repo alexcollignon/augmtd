@@ -21,8 +21,25 @@
 //   H8  VERIFY-GATE COEXISTENCE — the gate corrects and the human still gets their turn; the
 //       corrected text is what reached the assignee's preview.
 //   H9  TEST MODE — auto-passes and creates ZERO cross-user debris.
-// Fixtures (workflows, runs, threads, commitments, room turns, nudge records, the scratch company,
-// probe 3) are deleted in `finally`, and the suite ASSERTS zero leftovers on both probes. An
+// Phase B2 — THE PEOPLE SLICE (owner + reassign) and THE METRICS TAB:
+//   H10 THE OWNER SPLIT — owner ≠ creator: the store moves accountability while `workflows.user_id`
+//       (the execution identity) never moves; the standing debt follows the owner (the old row
+//       closes 'ownership moved'); a dismissal STICKS across the move; both creator and
+//       accountability owner hold owner rights on a parked run, a stranger holds none.
+//   H11 REASSIGN, THE FULL TRUTH TABLE — the per-run override moves the gate WITHOUT touching the
+//       authored steps (byte-identical); the old ask dies honestly, the new person gets the same
+//       ask a park would have given them; authorization flips; the SERVED ledger row speaks the
+//       current holder; same-person and non-owner callers are refused.
+//   H12 REASSIGN BACK — the rev law: handing a step back to someone who already held it opens a
+//       FRESH ask (dedupe :r2), never an overwrite of the closed one.
+//   H13 SLA + NUDGE FOLLOW THE OVERRIDE — the chase names the CURRENT holder; the person it left
+//       hears nothing new.
+//   H14 THE METRICS ROUTE — source + honesty floors (the route is auth'd, so its SUBSTANCE is
+//       gated: real usage columns, the one gateDeltaOf derivation, an authored-never-guessed
+//       baseline, the null-usage degradation, and the client's "your estimate" labelling).
+// Fixtures (workflows, runs, threads, commitments, room turns, nudge records, owner/override
+// stores, the scratch company, probe 3) are deleted in `finally`, and the suite ASSERTS zero
+// leftovers on all three probes. An
 // interrupted run is safe to repeat: every fixture is named per-run and a sweep at start drains
 // any orphan left by a previous crash.
 // Run: npx tsx --env-file=.env.local scripts/smoke-handoffs.ts
@@ -69,8 +86,11 @@ async function main() {
 
   const ownerId = await resolveProbeUser(admin);
   const reviewerId = await resolveExtraProbe(admin, PROBE_B_EMAIL, 'Riley Probe');
-  const strangerId = await resolveExtraProbe(admin, PROBE_C_EMAIL, 'No Relation');
-  console.log(`probe A (owner) ${ownerId}\nprobe B (reviewer) ${reviewerId}\nprobe C (stranger) ${strangerId}`);
+  // Probe C plays TWO parts, in this order: the OUTSIDER of H3 (no grant of any kind — the
+  // authorization gate is about grants, never about names), then the person a gate is REASSIGNED
+  // to from H11 on. One extra user, both stories.
+  const strangerId = await resolveExtraProbe(admin, PROBE_C_EMAIL, 'Jordan Probe');
+  console.log(`probe A (creator) ${ownerId}\nprobe B (reviewer) ${reviewerId}\nprobe C (outsider → reassignee) ${strangerId}`);
 
   // ── the scratch company (roster realism; the engine paths key on user ids) ────────────────────
   let companyId: string | null = null;
@@ -86,11 +106,13 @@ async function main() {
       if (error || !made) throw new Error(error?.message ?? 'no row');
       companyId = String(made.id); companyCreated = true;
     }
-    for (const [uid, role] of [[ownerId, 'owner'], [reviewerId, 'member']] as const) {
+    // Probe C joins the roster too: B2's reassign can only move a gate INSIDE the workspace (the
+    // team boundary the reassign ROUTE enforces — see the H11 source floor).
+    for (const [uid, role] of [[ownerId, 'owner'], [reviewerId, 'member'], [strangerId, 'member']] as const) {
       await admin.from('company_members')
         .upsert({ company_id: companyId, user_id: uid, role, status: 'active' }, { onConflict: 'company_id,user_id' });
     }
-    note(`scratch company ${companyId}${companyCreated ? ' (created)' : ' (reused)'} — both probes active members`);
+    note(`scratch company ${companyId}${companyCreated ? ' (created)' : ' (reused)'} — all three probes active members`);
   } catch (e) {
     note(`company plumbing skipped (${(e as Error).message}) — the engine paths key on user ids, not membership`);
   }
@@ -185,7 +207,16 @@ async function main() {
         .in('entity_id', runIds.flatMap((r) => [0, 1].map((d) =>
           `${r}:${new Date(Date.now() - d * 86400_000).toISOString().slice(0, 10)}`)));
       await admin.from('activity_events').delete().eq('entity_type', 'workflow_run').in('entity_id', runIds);
+      // B2 — the per-run assignee overrides (kind='handoff_override', entity_id `<runId>:<stepId>`,
+      // keyed under the CREATOR). Every generation of a reassign shares the one row per step.
+      for (const rid of runIds) {
+        await admin.from('item_plans').delete()
+          .eq('kind', 'handoff_override').like('entity_id', `${rid}:%`);
+      }
     }
+    // B2 — the owner store + its ledger receipt (kind='workflow_owner', entity_id = workflow id).
+    await admin.from('item_plans').delete().eq('kind', 'workflow_owner').in('entity_id', wfIds);
+    await admin.from('activity_events').delete().eq('entity_type', 'workflow').in('entity_id', wfIds);
     // the owner's standing-binding commitments + their rooms (only if a binding was ever made)
     const { data: standing } = await admin.from('commitments').select('id, user_id')
       .eq('source', 'workflow').in('source_id', wfIds);
@@ -523,6 +554,351 @@ async function main() {
     ok('ZERO new room turns for the teammate', after.turns === before.turns, `${before.turns} → ${after.turns}`);
     ok('ZERO new nudge records', after.nudges === before.nudges, `${before.nudges} → ${after.nudges}`);
     ok('no handoff commitment exists for the test run', (await handoffCommitments(r9.runId)).length === 0);
+
+    // ══ PHASE B2 — THE PEOPLE SLICE ═════════════════════════════════════════════════════════════
+    const { ownerOf, ownersFor, setWorkflowOwner } = await import('@/lib/workflows/owner');
+    const { overrideFor, overrideKey, reassignHandoff } = await import('@/lib/workflows/handoffs');
+    const { syncStandingCommitment } = await import('@/lib/workflows/standing');
+
+    type StandingRow = { id: string; user_id: string; status: string; resolved_reason: string | null; due_date: string | null };
+    const standingRows = async (wfId: string): Promise<StandingRow[]> =>
+      ((await admin.from('commitments').select('id, user_id, status, resolved_reason, due_date')
+        .eq('source', 'workflow').eq('source_id', wfId)
+        .order('created_at', { ascending: true })).data ?? []) as StandingRow[];
+    /** The workflow row shaped exactly as the standing door reads it. */
+    const wfRowFor = async (wfId: string) => (await admin.from('workflows')
+      .select('id, user_id, name, status, trigger, next_run_at, agent_id').eq('id', wfId).maybeSingle()).data as
+      { id: string; user_id: string; name: string; status: string; trigger: { type?: string } | null; next_run_at: string | null; agent_id: string | null };
+
+    // ── H10 — THE OWNER SPLIT ──────────────────────────────────────────────────────────────────
+    console.log('\nH10 — the owner split: accountability moves, execution identity does not:');
+    const ownSteps: WorkflowStep[] = [
+      { type: 'ai', id: 'o_draft', label: 'Draft the weekly note', model_tier: 'fast', output_format: 'text',
+        prompt: SAY('WEEKLY NOTE: Acme Group pipeline steady; two renewals land next week.') },
+      { type: 'approval', id: 'o_gate', label: 'Approve the note', instruction: 'Approve before it goes out' },
+    ];
+    const wfOwn = await makeWorkflow({
+      name: `Weekly note — Acme Group [${stamp}]`, steps: ownSteps,
+      trigger: { type: 'schedule', label: 'Weekly on Monday', cron: '0 9 * * 1' } as WorkflowTrigger,
+    });
+    await admin.from('workflows')
+      .update({ next_run_at: new Date(Date.now() + 7 * 86400_000).toISOString() }).eq('id', wfOwn);
+
+    const own0 = await ownerOf(admin, wfOwn, ownerId);
+    ok('with no store row the CREATOR owns, and says so (explicit:false)',
+      own0.userId === ownerId && own0.explicit === false, JSON.stringify(own0));
+    await syncStandingCommitment(admin, await wfRowFor(wfOwn));
+    const st0 = await standingRows(wfOwn);
+    ok('the standing binding opens under the creator first',
+      st0.length === 1 && st0[0].user_id === ownerId && st0[0].status === 'open',
+      JSON.stringify(st0.map((s) => [s.user_id === ownerId ? 'A' : s.user_id === reviewerId ? 'B' : '?', s.status])));
+
+    const moved = await setWorkflowOwner(admin, {
+      workflowId: wfOwn, creatorUserId: ownerId, byUserId: ownerId,
+      newOwnerUserId: reviewerId, newOwnerName: 'Riley Probe',
+    });
+    ok('setWorkflowOwner succeeds', moved.ok === true, JSON.stringify(moved));
+    const own1 = await ownerOf(admin, wfOwn, ownerId);
+    ok('ownerOf now resolves probe B, EXPLICITLY',
+      own1.userId === reviewerId && own1.explicit === true, JSON.stringify(own1));
+    const { data: wfAfterMove } = await admin.from('workflows').select('user_id').eq('id', wfOwn).maybeSingle();
+    ok('THE SPLIT LAW: workflows.user_id (the execution identity) is UNTOUCHED',
+      String((wfAfterMove as { user_id?: string } | null)?.user_id) === ownerId,
+      String((wfAfterMove as { user_id?: string } | null)?.user_id));
+    const ownersBatch = await ownersFor(admin, [{ id: wfOwn, user_id: ownerId }]);
+    ok('the batch read agrees with the single read',
+      ownersBatch.get(wfOwn)?.userId === reviewerId && ownersBatch.get(wfOwn)?.explicit === true,
+      JSON.stringify(ownersBatch.get(wfOwn)));
+
+    const st1 = await standingRows(wfOwn);
+    const aRow = st1.find((s) => s.user_id === ownerId);
+    const bRow = st1.find((s) => s.user_id === reviewerId);
+    ok("THE DEBT FOLLOWS THE OWNER: probe B now carries the OPEN standing row",
+      !!bRow && bRow.status === 'open', JSON.stringify(bRow));
+    ok("…and the creator's row closed honestly ('ownership moved')",
+      aRow?.status !== 'open' && aRow?.resolved_reason === 'ownership moved',
+      JSON.stringify(aRow));
+    if (aRow) {
+      const aTurns = await roomTurnsOfCommitment(ownerId, String(aRow.id));
+      ok('the room LOSING it was told (never a silent transfer)',
+        aTurns.some((t) => /moved to Riley Probe/i.test(t.text)), JSON.stringify(aTurns.map((t) => t.text)));
+    } else ok('the room LOSING it was told (never a silent transfer)', false, 'no creator standing row found');
+    if (bRow) {
+      const bTurns = await roomTurnsOfCommitment(reviewerId, String(bRow.id));
+      ok('the room GAINING it was told, in the accountability words',
+        bTurns.some((t) => /You now own/i.test(t.text) && /accountability/i.test(t.text)),
+        JSON.stringify(bTurns.map((t) => t.text)));
+    } else ok('the room GAINING it was told, in the accountability words', false, 'no owner standing row found');
+
+    // the parked run: BOTH the creator and the accountability owner hold owner rights.
+    const r10 = await runWorkflow({ workflowId: wfOwn, triggerSource: 'manual', isTest: false });
+    runIdsCreated.push(r10.runId);
+    ok('the owned workflow parks at its approval gate', r10.status === 'awaiting_approval', `${r10.status} ${r10.error ?? ''}`);
+    const a10 = await canResumeRun(admin, r10.runId, ownerId);
+    ok('THE CREATOR KEEPS OWNER RIGHTS', a10.ok && a10.role === 'owner', JSON.stringify({ ok: a10.ok, role: a10.role }));
+    const b10 = await canResumeRun(admin, r10.runId, reviewerId);
+    ok('THE ACCOUNTABILITY OWNER GAINS THEM', b10.ok && b10.role === 'owner', JSON.stringify({ ok: b10.ok, role: b10.role }));
+    const c10 = await canResumeRun(admin, r10.runId, strangerId);
+    ok('everyone else is still refused, with nothing leaked',
+      c10.ok === false && c10.role === null && !c10.run && !c10.workflow, JSON.stringify({ ok: c10.ok, role: c10.role }));
+    await decide(r10.runId, ownerId, false, 'closing the owner-split fixture');
+
+    // THE DISMISSAL STICKS ACROSS THE MOVE — a human decision outranks the convergent door.
+    if (bRow) {
+      await admin.from('commitments').update({
+        status: 'dismissed', resolved_reason: 'not mine to carry', resolved_at: new Date().toISOString(),
+      }).eq('id', bRow.id);
+      await syncStandingCommitment(admin, await wfRowFor(wfOwn));
+      const st2 = await standingRows(wfOwn);
+      const bAfter = st2.filter((s) => s.user_id === reviewerId);
+      ok("the owner's dismissal STICKS — no resurrection on re-sync",
+        bAfter.length === 1 && bAfter[0].status === 'dismissed', JSON.stringify(bAfter.map((s) => s.status)));
+      ok('…and the move never re-opens a row for the creator either',
+        st2.filter((s) => s.user_id === ownerId && s.status === 'open').length === 0,
+        JSON.stringify(st2.map((s) => [s.user_id === ownerId ? 'A' : 'B', s.status])));
+    } else {
+      ok("the owner's dismissal STICKS — no resurrection on re-sync", false, 'no owner standing row to dismiss');
+      ok('…and the move never re-opens a row for the creator either', false, 'no owner standing row to dismiss');
+    }
+
+    // ── H11 — REASSIGN, the full truth table ───────────────────────────────────────────────────
+    console.log('\nH11 — reassign: the gate moves, the authored workflow does not:');
+    const REASSIGN_ASK = 'Sign off the vendor security review';
+    const reassignSteps: WorkflowStep[] = [
+      { type: 'ai', id: 'x_draft', label: 'Draft the review', model_tier: 'fast', output_format: 'text',
+        prompt: SAY('VENDOR REVIEW: Acme Group supplier passes SOC2; two low findings tracked.') },
+      { type: 'handoff', id: 'x_sign', label: 'Sign off',
+        assignee_user_id: reviewerId, assignee_name: 'Riley Probe', ask: REASSIGN_ASK, sla_hours: 24 },
+      { type: 'ai', id: 'x_file', label: 'File it', model_tier: 'fast', output_format: 'text',
+        prompt: SAY('FILED: vendor review archived.') },
+    ];
+    const wfReassign = await makeWorkflow({ name: `Vendor review — Acme Group [${stamp}]`, steps: reassignSteps });
+    const stepsBefore = JSON.stringify((await admin.from('workflows').select('steps').eq('id', wfReassign).maybeSingle()).data?.steps);
+
+    const r11 = await runWorkflow({ workflowId: wfReassign, triggerSource: 'manual', isTest: false });
+    runIdsCreated.push(r11.runId);
+    ok('the run parked at probe B\'s gate', r11.status === 'awaiting_approval', `${r11.status} ${r11.error ?? ''}`);
+    const bAsk11 = (await handoffCommitments(r11.runId)).find((c) => String(c.user_id) === reviewerId);
+    ok('probe B holds the open ask before the move', bAsk11?.status === 'open', String(bAsk11?.status));
+
+    // (7a) a NON-owner cannot move a gate — not even the person currently holding it.
+    const badByB = await reassignHandoff(admin, { runId: r11.runId, byUserId: reviewerId, newAssigneeUserId: strangerId });
+    ok('the ASSIGNEE cannot reassign their own gate (non-owner, nothing leaked)',
+      badByB.ok === false && 'status' in badByB && badByB.status === 404, JSON.stringify(badByB));
+
+    const move11 = await reassignHandoff(admin, { runId: r11.runId, byUserId: ownerId, newAssigneeUserId: strangerId });
+    ok('the OWNER may move it', move11.ok === true, JSON.stringify(move11));
+    ok('…and it is the FIRST generation (rev 1)', move11.ok === true && move11.rev === 1, JSON.stringify(move11));
+
+    // (1) the override store + the untouched authoring
+    const ov11 = await overrideFor(admin, ownerId, r11.runId, 'x_sign');
+    ok('the override row exists, keyed `<runId>:<stepId>`',
+      !!ov11 && ov11.assigneeUserId === strangerId, JSON.stringify(ov11));
+    ok('…at rev 1, stamped with who moved it', ov11?.rev === 1 && ov11?.by === ownerId, JSON.stringify(ov11));
+    const { data: ovRaw } = await admin.from('item_plans').select('entity_id')
+      .eq('user_id', ownerId).eq('kind', 'handoff_override').eq('entity_id', overrideKey(r11.runId, 'x_sign')).maybeSingle();
+    ok('…stored under the CREATOR (the execution identity keeps the bookkeeping)', !!ovRaw?.entity_id, JSON.stringify(ovRaw));
+    const stepsAfter = JSON.stringify((await admin.from('workflows').select('steps').eq('id', wfReassign).maybeSingle()).data?.steps);
+    ok('THE AUTHORED WORKFLOW IS BYTE-IDENTICAL (a per-run decision is not an authoring change)',
+      stepsAfter === stepsBefore, `${stepsBefore?.length} → ${stepsAfter?.length}`);
+
+    // (2) the old ask dies with its work
+    const c11 = await handoffCommitments(r11.runId);
+    const bClosed = c11.find((c) => String(c.user_id) === reviewerId);
+    ok("probe B's ask CLOSED with the honest reason",
+      bClosed?.status === 'completed' && bClosed?.resolved_reason === 'reassigned',
+      JSON.stringify({ status: bClosed?.status, reason: bClosed?.resolved_reason }));
+    const bMovedTurns = bClosed ? await roomTurnsOfCommitment(reviewerId, String(bClosed.id)) : [];
+    ok("…and probe B's room says it moved on (never a row that silently vanishes)",
+      bMovedTurns.some((t) => /moved to Jordan/i.test(t.text)), JSON.stringify(bMovedTurns.map((t) => t.text)));
+
+    // (3) the new person gets exactly the ask a park would have given them
+    const cAsk11 = c11.find((c) => String(c.user_id) === strangerId);
+    ok('probe C has a FRESH open ask', cAsk11?.status === 'open' && cAsk11?.direction === 'you_owe',
+      JSON.stringify({ status: cAsk11?.status, direction: cAsk11?.direction }));
+    ok('…carrying the step\'s ask', String(cAsk11?.description ?? '').includes(REASSIGN_ASK), String(cAsk11?.description));
+    const cTurns11 = cAsk11 ? await roomTurnsOfCommitment(strangerId, String(cAsk11.id)) : [];
+    const cCard11 = cTurns11.find((t) => t.component?.key === 'approval');
+    ok('…and the same `approval` card the park writes, marked handoff:true',
+      cCard11?.component?.state?.handoff === true && String(cCard11?.component?.state?.runId) === r11.runId,
+      JSON.stringify(cCard11?.component?.state));
+    ok("…whose dedupe key carries the generation (':r1')",
+      cCard11?.dedupe_key === `handoff:${r11.runId}:x_sign:r1`, String(cCard11?.dedupe_key));
+    ok('…with the produced draft as its preview',
+      /VENDOR REVIEW/i.test(String(cCard11?.component?.state?.preview ?? '')),
+      String(cCard11?.component?.state?.preview ?? '').slice(0, 80));
+
+    // (4) the authorization truth table flips
+    const authC11 = await canResumeRun(admin, r11.runId, strangerId);
+    ok('probe C may now resume, as the ASSIGNEE', authC11.ok && authC11.role === 'assignee',
+      JSON.stringify({ ok: authC11.ok, role: authC11.role }));
+    ok('…and canResumeRun names them as the current holder',
+      authC11.assignee?.userId === strangerId && authC11.override?.rev === 1,
+      JSON.stringify({ assignee: authC11.assignee, rev: authC11.override?.rev }));
+    const authB11 = await canResumeRun(admin, r11.runId, reviewerId);
+    ok('probe B — who held it a moment ago — is REFUSED',
+      authB11.ok === false && authB11.role === null, JSON.stringify({ ok: authB11.ok, role: authB11.role }));
+    const authA11 = await canResumeRun(admin, r11.runId, ownerId);
+    ok('the owner still holds owner rights', authA11.ok && authA11.role === 'owner',
+      JSON.stringify({ ok: authA11.ok, role: authA11.role }));
+
+    // (5) THE SERVED LEDGER ROW speaks the CURRENT holder — the route's own patch shape,
+    //     replicated over the pure pieces (the derivation stays override-free by design).
+    const servedRow = async (viewerId: string) => {
+      const row = (await runRow(r11.runId))!;
+      const wfMapR = new Map([[wfReassign, { name: `Vendor review — Acme Group [${stamp}]`, steps: reassignSteps }]]);
+      const rows = await deriveProcessRows(admin, ownerId, [asRunLike(row)], wfMapR, undefined, viewerId);
+      const ov = await overrideFor(admin, ownerId, r11.runId, 'x_sign');
+      const gate = parkedGateOf({ step_outputs: row.step_outputs as unknown as RunLike['step_outputs'] }, reassignSteps, ov);
+      if (gate.kind !== 'handoff' || !gate.assigneeUserId) return rows[0];
+      return gate.assigneeUserId === viewerId
+        ? { ...rows[0], state: 'needs_you' as const, waitingOn: null }
+        : { ...rows[0], state: 'waiting_on_others' as const, reason: undefined, waitingOn: { name: gate.assigneeName ?? 'a teammate' } };
+    };
+    const ownerServed = await servedRow(ownerId);
+    ok("the ledger row the OWNER is served says waiting_on_others",
+      ownerServed?.state === 'waiting_on_others', String(ownerServed?.state));
+    ok('…naming probe C, NOT the person authored into the step',
+      /Jordan/i.test(String(ownerServed?.waitingOn?.name ?? '')) && !/Riley/i.test(String(ownerServed?.waitingOn?.name ?? '')),
+      JSON.stringify(ownerServed?.waitingOn));
+    const cServed = await servedRow(strangerId);
+    ok("the row probe C is served reads needs_you", cServed?.state === 'needs_you', String(cServed?.state));
+    const bServed = await servedRow(reviewerId);
+    ok("probe B is no longer told anything is on them",
+      bServed?.state === 'waiting_on_others' && !/Riley/i.test(String(bServed?.waitingOn?.name ?? '')),
+      JSON.stringify({ state: bServed?.state, waitingOn: bServed?.waitingOn }));
+    console.log(`  ↳ served to the owner: "waiting on ${ownerServed?.waitingOn?.name}" (step still authored to Riley Probe)`);
+
+    // (6) + (7b) the refusals
+    const same11 = await reassignHandoff(admin, { runId: r11.runId, byUserId: ownerId, newAssigneeUserId: strangerId });
+    ok('reassigning to the CURRENT holder is refused (409, honest words)',
+      same11.ok === false && 'status' in same11 && same11.status === 409 && /already hold/i.test(same11.error),
+      JSON.stringify(same11));
+    const badByC = await reassignHandoff(admin, { runId: r11.runId, byUserId: strangerId, newAssigneeUserId: reviewerId });
+    ok('the NEW assignee cannot reassign it onward either',
+      badByC.ok === false && 'status' in badByC && badByC.status === 404, JSON.stringify(badByC));
+    const routeSrc = await (await import('node:fs/promises')).readFile('app/api/workflows/runs/[id]/reassign/route.ts', 'utf8');
+    ok('THE TEAM BOUNDARY is enforced at the one HTTP door (same active workspace, both people)',
+      /company_members/.test(routeSrc) && /they are not in your workspace/.test(routeSrc));
+
+    // the new holder decides, through the faithful resume sequence
+    const d11 = await decide(r11.runId, strangerId, true);
+    ok('probe C approves and the run completes', 'status' in d11 && d11.status === 'succeeded', JSON.stringify(d11));
+    const c11done = await handoffCommitments(r11.runId);
+    const cClosed = c11done.find((c) => String(c.user_id) === strangerId);
+    ok("probe C's ask closed on approval", cClosed?.status === 'completed' && !!cClosed?.resolved_at,
+      JSON.stringify({ status: cClosed?.status, at: cClosed?.resolved_at }));
+    ok('…and probe B\'s reassigned row was never touched again',
+      (await handoffCommitments(r11.runId)).find((c) => String(c.user_id) === reviewerId)?.resolved_reason === 'reassigned');
+
+    // ── H12 — REASSIGN BACK (the rev law) ──────────────────────────────────────────────────────
+    console.log('\nH12 — reassign back: a second generation, never an overwrite:');
+    const r12 = await runWorkflow({ workflowId: wfReassign, triggerSource: 'manual', isTest: false });
+    runIdsCreated.push(r12.runId);
+    ok('a fresh run parks at probe B again (the authoring never changed)',
+      r12.status === 'awaiting_approval', `${r12.status} ${r12.error ?? ''}`);
+    const m12a = await reassignHandoff(admin, { runId: r12.runId, byUserId: ownerId, newAssigneeUserId: strangerId });
+    ok('B → C is rev 1', m12a.ok === true && m12a.rev === 1, JSON.stringify(m12a));
+    const m12b = await reassignHandoff(admin, { runId: r12.runId, byUserId: ownerId, newAssigneeUserId: reviewerId });
+    ok('C → B (back again) is rev 2', m12b.ok === true && m12b.rev === 2, JSON.stringify(m12b));
+    const ov12 = await overrideFor(admin, ownerId, r12.runId, 'x_sign');
+    ok('the ONE override row now names probe B at rev 2',
+      ov12?.assigneeUserId === reviewerId && ov12?.rev === 2, JSON.stringify(ov12));
+    const c12 = await handoffCommitments(r12.runId);
+    const bRows12 = c12.filter((c) => String(c.user_id) === reviewerId);
+    ok('probe B has TWO rows — the closed one and a FRESH open ask', bRows12.length === 2,
+      JSON.stringify(bRows12.map((c) => c.status)));
+    ok("…the first closed 'reassigned', the second open",
+      bRows12[0]?.status === 'completed' && bRows12[0]?.resolved_reason === 'reassigned' && bRows12[1]?.status === 'open',
+      JSON.stringify(bRows12.map((c) => [c.status, c.resolved_reason])));
+    const cRow12 = c12.find((c) => String(c.user_id) === strangerId);
+    ok("probe C's middle ask closed 'reassigned' too",
+      cRow12?.status === 'completed' && cRow12?.resolved_reason === 'reassigned',
+      JSON.stringify({ status: cRow12?.status, reason: cRow12?.resolved_reason }));
+    const bTurns12 = await roomTurnsOfCommitment(reviewerId, String(bRows12[1]?.id));
+    const bCard12 = bTurns12.find((t) => t.component?.key === 'approval');
+    ok("THE REV LAW: the new card is a NEW turn, dedupe ':r2' (no in-place overwrite)",
+      bCard12?.dedupe_key === `handoff:${r12.runId}:x_sign:r2`, String(bCard12?.dedupe_key));
+    const authB12 = await canResumeRun(admin, r12.runId, reviewerId);
+    ok('probe B may resume again', authB12.ok && authB12.role === 'assignee', JSON.stringify({ ok: authB12.ok, role: authB12.role }));
+    const authC12 = await canResumeRun(admin, r12.runId, strangerId);
+    ok('probe C is refused again', authC12.ok === false && authC12.role === null,
+      JSON.stringify({ ok: authC12.ok, role: authC12.role }));
+    await decide(r12.runId, ownerId, false, 'closing the rev-law fixture');
+
+    // ── H13 — SLA + NUDGE follow the override ──────────────────────────────────────────────────
+    console.log('\nH13 — the chase names the CURRENT holder:');
+    const slaSteps: WorkflowStep[] = [
+      { type: 'ai', id: 's_draft', label: 'Draft the renewal note', model_tier: 'fast', output_format: 'text',
+        prompt: SAY('RENEWAL NOTE: Acme Group contract renews next quarter.') },
+      { type: 'handoff', id: 's_sign', label: 'Approve the renewal note',
+        assignee_user_id: reviewerId, assignee_name: 'Riley Probe', ask: 'Approve the renewal note', sla_hours: 24 },
+    ];
+    const wfSla = await makeWorkflow({
+      name: `Renewal note — Acme Group [${stamp}]`, steps: slaSteps,
+      trigger: { type: 'schedule', label: 'Weekly on Friday', cron: '0 9 * * 5' } as WorkflowTrigger,
+    });
+    await admin.from('workflows')
+      .update({ next_run_at: new Date(Date.now() + 5 * 86400_000).toISOString() }).eq('id', wfSla);
+    await syncStandingCommitment(admin, await wfRowFor(wfSla));
+    const slaStanding = (await standingRows(wfSla)).find((s) => s.status === 'open');
+    ok('the SLA fixture has a standing room to narrate into', !!slaStanding && slaStanding.user_id === ownerId,
+      JSON.stringify(slaStanding));
+
+    const r13 = await runWorkflow({ workflowId: wfSla, triggerSource: 'manual', isTest: false });
+    runIdsCreated.push(r13.runId);
+    ok('the run parked at probe B', r13.status === 'awaiting_approval', `${r13.status} ${r13.error ?? ''}`);
+    const m13 = await reassignHandoff(admin, { runId: r13.runId, byUserId: ownerId, newAssigneeUserId: strangerId });
+    ok('the gate moved to probe C', m13.ok === true, JSON.stringify(m13));
+    const cAsk13 = (await handoffCommitments(r13.runId)).find((c) => String(c.user_id) === strangerId && c.status === 'open');
+    ok('probe C holds the open ask', !!cAsk13, JSON.stringify(cAsk13));
+    // Backdate the CURRENT holder's ask past the SLA (their own clock — they were asked, then waited).
+    await admin.from('commitments')
+      .update({ created_at: new Date(Date.now() - 26 * 3600_000).toISOString() }).eq('id', String(cAsk13?.id));
+    const bBefore13 = (await roomTurnsOfCommitment(reviewerId,
+      String((await handoffCommitments(r13.runId)).find((c) => String(c.user_id) === reviewerId)?.id ?? ''))).length;
+    const nudge13 = async () => (await admin.from('item_plans').select('id')
+      .eq('user_id', ownerId).eq('kind', 'handoff_nudge').eq('entity_id', `${r13.runId}:${today}`)).data ?? [];
+    ok('no nudge before the sweep', (await nudge13()).length === 0);
+    await sweepHandoffSLAs(admin);
+    ok('the breached, REASSIGNED handoff was chased once', (await nudge13()).length === 1, JSON.stringify(await nudge13()));
+    const ownerSlaTurns = await roomTurnsOfCommitment(ownerId, String(slaStanding?.id));
+    ok('THE CHASE NAMES THE CURRENT HOLDER (probe C), not the authored assignee',
+      ownerSlaTurns.some((t) => /I nudged Jordan/i.test(t.text)) &&
+      !ownerSlaTurns.some((t) => /I nudged Riley/i.test(t.text)),
+      JSON.stringify(ownerSlaTurns.map((t) => t.text)));
+    const bAfter13 = (await roomTurnsOfCommitment(reviewerId,
+      String((await handoffCommitments(r13.runId)).find((c) => String(c.user_id) === reviewerId)?.id ?? ''))).length;
+    ok('the person it LEFT hears nothing new', bAfter13 === bBefore13, `${bBefore13} → ${bAfter13}`);
+    await decide(r13.runId, ownerId, false, 'closing the SLA-override fixture');
+
+    // ── H14 — THE METRICS ROUTE: source + honesty floors ───────────────────────────────────────
+    console.log('\nH14 — the metrics receipt (the route is auth\'d; its SUBSTANCE is the gate):');
+    const readSrc = async (p: string) => (await import('node:fs/promises')).readFile(p, 'utf8');
+    const metricsSrc = await readSrc('app/api/workflows/[id]/metrics/route.ts');
+    const detailSrc = await readSrc('components/workflows/workflow-detail.tsx');
+    const typesSrc = await readSrc('lib/workflows/types.ts');
+    ok('the receipt reads the REAL usage columns off ai_usage_events',
+      /from\('ai_usage_events'\)/.test(metricsSrc) &&
+      /prompt_tokens, completion_tokens, cost_eur/.test(metricsSrc), 'columns not selected verbatim');
+    ok('ONE DERIVATION: the gate read imports gateDeltaOf from process-state',
+      /import \{ gateDeltaOf \} from '@\/lib\/workflows\/process-state'/.test(metricsSrc) &&
+      /gateDeltaOf\(outs\)/.test(metricsSrc), 'gateDeltaOf not imported/used');
+    ok('…and re-derives nothing locally (no second verdict scan in the route)',
+      !/const gateDelta\s*=/.test(metricsSrc), 'a local gate derivation exists');
+    ok('THE BASELINE IS AUTHORED: served from output_config.estimated_manual_minutes',
+      /estimated_manual_minutes/.test(metricsSrc) && /baselineMinutes/.test(metricsSrc));
+    ok('…with NO default (an absent baseline is null, never a fabricated 15)',
+      /:\s*null;?/.test(metricsSrc) && !/\?\?\s*15\b/.test(metricsSrc) && !/baselineMinutes\s*=\s*\d/.test(metricsSrc));
+    ok('HONEST DEGRADATION: a failed usage read serves `usage: null`, not a broken receipt',
+      /usage[^\n]*\|\s*null = null/.test(metricsSrc) && /if \(usageError\)/.test(metricsSrc));
+    ok('the time-saved number is labelled as the USER\'S ESTIMATE, client-side',
+      /based on your estimate/.test(detailSrc));
+    ok('…and a null baseline INVITES the input instead of inventing a number',
+      /How long does this take you manually\?/.test(detailSrc) &&
+      /m\.baselineMinutes !== null \?/.test(detailSrc) && /setBaselineDraft/.test(detailSrc));
+    ok('OutputConfig carries estimated_manual_minutes (one existing save path, no migration)',
+      /estimated_manual_minutes\?: number/.test(typesSrc));
   } catch (e) {
     fail++;
     console.log(`\n  ✗ SUITE THREW — ${(e as Error).message}\n${(e as Error).stack}`);
@@ -530,8 +906,10 @@ async function main() {
     console.log('\nCleanup:');
     await cleanupWorkflows(createdWorkflows);
     // best-effort: the coworker-email audit rows the park's notification may have written
-    await admin.from('email_sends').delete().eq('user_id', ownerId).contains('recipients', [PROBE_B_EMAIL])
-      .then(() => {}, () => {});
+    for (const addr of [PROBE_B_EMAIL, PROBE_C_EMAIL]) {
+      await admin.from('email_sends').delete().eq('user_id', ownerId).contains('recipients', [addr])
+        .then(() => {}, () => {});
+    }
 
     // ZERO LEFTOVERS, asserted on BOTH probes.
     const { count: wfLeft } = await admin.from('workflows').select('id', { count: 'exact', head: true })
@@ -555,6 +933,22 @@ async function main() {
     ok('probe B carries no room turns', (bTurns ?? 0) === 0, String(bTurns));
     const { count: bComms } = await admin.from('commitments').select('id', { count: 'exact', head: true }).eq('user_id', reviewerId);
     ok('probe B carries no commitments', (bComms ?? 0) === 0, String(bComms));
+    // B2 leftovers: probe C carried real asks and rooms too, and the two stores are ours.
+    const { count: cTurns } = await admin.from('room_turns').select('id', { count: 'exact', head: true }).eq('user_id', strangerId);
+    ok('probe C carries no room turns', (cTurns ?? 0) === 0, String(cTurns));
+    const { count: cComms } = await admin.from('commitments').select('id', { count: 'exact', head: true }).eq('user_id', strangerId);
+    ok('probe C carries no commitments', (cComms ?? 0) === 0, String(cComms));
+    const { count: ownerStores } = await admin.from('item_plans').select('id', { count: 'exact', head: true })
+      .eq('user_id', ownerId).eq('kind', 'workflow_owner');
+    ok('no owner-store rows left', (ownerStores ?? 0) === 0, String(ownerStores));
+    const { count: overrideStores } = await admin.from('item_plans').select('id', { count: 'exact', head: true })
+      .eq('user_id', ownerId).eq('kind', 'handoff_override');
+    ok('no reassign-override rows left', (overrideStores ?? 0) === 0, String(overrideStores));
+    if (createdWorkflows.length) {
+      const { count: ownerActs } = await admin.from('activity_events').select('id', { count: 'exact', head: true })
+        .eq('entity_type', 'workflow').in('entity_id', createdWorkflows);
+      ok('no ownership receipts left', (ownerActs ?? 0) === 0, String(ownerActs));
+    }
 
     // the scratch company + probe C are ours only when we made them.
     if (companyId) {

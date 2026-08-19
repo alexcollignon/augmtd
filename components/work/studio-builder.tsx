@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { toast } from 'sonner';
 import { isToolAllowed } from '@/lib/workspace/tool-capabilities';
 import { DEFAULT_FEATURES, type WorkspaceFeatures } from '@/lib/workspace/types';
 
@@ -1534,6 +1535,38 @@ function IdentitySection({ workflow, patch, agents }: {
             placeholder="What does this workflow produce?"
             className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
         </Field>
+        {/* THE OWNER (B2) — the accountability layer. Distinct from the EXECUTION identity, which
+            stays the creator's forever; this row moves who CARRIES the workflow, nothing else.
+            Only on a persisted workflow (there is no id to PUT against before the first save). */}
+        {workflow.is_owned_by_me !== false && workflow.id && (
+          <Field label="Owner" hint="who carries this workflow">
+            <WorkflowOwnerRow workflowId={workflow.id} />
+          </Field>
+        )}
+        {/* THE BASELINE — authored, never guessed. One number, the Metrics tab's only honest
+            source of "time saved". */}
+        <Field label="Manual time (minutes)" hint="powers the Metrics tab">
+          <input
+            type="number"
+            min={1}
+            inputMode="numeric"
+            value={String(
+              (workflow.output_config as unknown as { estimated_manual_minutes?: number } | null)
+                ?.estimated_manual_minutes ?? '',
+            )}
+            onChange={e => {
+              const raw = e.target.value.trim();
+              const n = Math.round(Number(raw));
+              const next = { ...(workflow.output_config ?? {}) } as Record<string, unknown>;
+              if (!raw || !Number.isFinite(n) || n <= 0) delete next.estimated_manual_minutes;
+              else next.estimated_manual_minutes = n;
+              patch('output_config', next as unknown as Workflow['output_config']);
+            }}
+            placeholder="e.g. 45"
+            className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+          />
+          <p className="text-[11px] text-neutral-400 mt-1">How long this takes you by hand. Left empty, the Metrics tab shows no time saved — never a guessed one.</p>
+        </Field>
         {workflow.is_owned_by_me !== false && (
           <Field label="Team sharing">
             <SharingModeSelector
@@ -1742,6 +1775,75 @@ const SLA_CHOICES: Array<{ value: string; label: string }> = [
 ];
 
 type Teammate = { userId: string; name: string; email: string };
+
+// ── THE OWNER ROW (processes B2) — mirrors the deep-dive header's affordance, same roster, same
+// PUT. The workflow's EXECUTION identity is untouched: this names who is accountable, nothing more.
+function WorkflowOwnerRow({ workflowId }: { workflowId: string }) {
+  const [owner, setOwner] = useState<{ userId: string; name: string; explicit: boolean } | null>(null);
+  const [mates, setMates] = useState<Teammate[] | null>(null); // null = loading
+  const [failed, setFailed] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let dead = false;
+    void fetch(`/api/workflows/${workflowId}/owner`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => { if (!dead && j?.owner?.userId) setOwner(j.owner); })
+      .catch(() => {});
+    void fetch('/api/meetings/teammates')
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error('roster'))))
+      .then(j => { if (!dead) setMates((j?.teammates ?? []) as Teammate[]); })
+      .catch(() => { if (!dead) { setMates([]); setFailed(true); } });
+    return () => { dead = true; };
+  }, [workflowId]);
+
+  if (!owner) {
+    return <div className="text-[12.5px] text-neutral-400">Loading…</div>;
+  }
+  if (failed) {
+    return <div className="text-[12.5px] text-neutral-500">Owned by {owner.explicit ? owner.name : 'you'} — could not load your workspace to change it.</div>;
+  }
+
+  const pick = async (userId: string) => {
+    if (!userId || saving) return;
+    const m = (mates ?? []).find(x => x.userId === userId);
+    const name = m?.name;
+    const before = owner;
+    setSaving(true);
+    setOwner({ userId, name: name ?? 'you', explicit: true });
+    try {
+      const r = await fetch(`/api/workflows/${workflowId}/owner`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerUserId: userId, ownerName: name }),
+      });
+      if (!r.ok) { setOwner(before); toast.error(r.status === 403 ? 'Only the owner can hand this over.' : 'That change did not land — try again.'); return; }
+      const j = await r.json().catch(() => null);
+      if (j?.owner?.userId) setOwner(j.owner);
+      toast.success(name ? `${name} owns this workflow now.` : 'You own this workflow now.');
+    } catch { setOwner(before); toast.error('That change did not land — try again.'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <>
+      <select
+        value={owner.userId}
+        disabled={saving || mates === null}
+        onChange={e => void pick(e.target.value)}
+        className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white"
+      >
+        {/* The current holder is always nameable, even when they aren't in the teammate roster
+            (the roster excludes the caller by design). */}
+        <option value={owner.userId}>{(mates ?? []).some(m => m.userId === owner.userId) ? owner.name : 'Me'}</option>
+        {(mates ?? []).filter(m => m.userId !== owner.userId).map(m => (
+          <option key={m.userId} value={m.userId}>{m.name}</option>
+        ))}
+      </select>
+      <p className="text-[11px] text-neutral-400 mt-1">Accountability only — runs still execute with the creator&apos;s mailbox, coworkers, and connections.</p>
+    </>
+  );
+}
 
 function HandoffStepFields({ step, onUpdate }: {
   step: HandoffStep;

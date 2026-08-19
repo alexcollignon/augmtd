@@ -228,15 +228,22 @@ async function main() {
 
   console.log('\nP5 — THE ONE DOOR (approve/reject fires the one resume route):');
   {
-    const files: Array<[string, string]> = [['workflows-ledger.tsx', strip], ['process-drawer.tsx', drawer], ['workflow-detail.tsx', detail]];
+    // RE-POINTED (Aug 19, owner walk fix): the ledger's WAITING ON YOU card section was DELETED
+    // (it contradicted the strip on teammate gates), so the ledger has ZERO resume callers by
+    // design. The doors today: the drawer + the commitment deep-dive's HANDOFF DECISION CARD
+    // (components/home/item-detail.tsx) + the room card — all the one route.
+    const itemDetail = readFileSync('components/home/item-detail.tsx', 'utf8');
+    const files: Array<[string, string]> = [['workflows-ledger.tsx', strip], ['process-drawer.tsx', drawer], ['workflow-detail.tsx', detail], ['item-detail.tsx', itemDetail]];
     // Every fetch() URL across the workflows surfaces, extracted structurally.
     const urls: Array<{ file: string; url: string }> = [];
     for (const [name, src] of files) {
       for (const m of src.matchAll(/fetch\(\s*[`'"]([^`'"]+)[`'"]/g)) urls.push({ file: name, url: m[1] });
     }
     const resumeCalls = urls.filter((u) => u.url.includes('/resume'));
-    ok('at least TWO callers post to the resume route (ledger card + drawer)', resumeCalls.length >= 2,
+    ok('at least TWO callers post to the resume route (the drawer + the decision card)', resumeCalls.length >= 2,
       `${resumeCalls.length}: ${resumeCalls.map((u) => u.file).join(', ')}`);
+    ok('the LEDGER itself has zero resume callers (the WAITING ON YOU section stays dead)',
+      !resumeCalls.some((u) => u.file === 'workflows-ledger.tsx'), '');
     ok('every /resume call is the literal /api/workflows/runs/<runId>/resume shape',
       resumeCalls.every((u) => /^\/api\/workflows\/runs\/\$\{[^}]+\}\/resume$/.test(u.url)),
       resumeCalls.map((u) => u.url).join(' | '));

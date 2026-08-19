@@ -15,8 +15,15 @@
 //     a failed narration never breaks a decision.
 //
 // Visibility (owner-decided): the assignee sees THEIR step + minimal context — the ask and a
-// short preview — never the workflow. Notification = coworker email, best-effort. REASSIGN is
-// deferred to B2 (a per-run assignee override needs its own store).
+// short preview — never the workflow. Notification = coworker email, best-effort.
+//
+// B2 — REASSIGN (THE PEOPLE SLICE): a parked handoff's gate can move to another workspace member.
+// The store is PER RUN (`item_plans` kind='handoff_override' entity_id=`<runId>:<stepId>`, keyed
+// under the CREATOR's user_id) and outranks the step's static assignee everywhere the gate is
+// read — THE WORKFLOW STEP NEVER MUTATES: a per-run decision is not an authoring change. The
+// reassign route is the ONE writer of that store; every reader here goes through `overrideFor`.
+// B2 also splits OWNER from CREATOR (lib/workflows/owner.ts): the accountability owner holds owner
+// rights on runs and hears the narrations, while the creator — the execution identity — keeps them.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -55,20 +62,63 @@ function humanizeWait(ms: number): string {
 }
 
 /** The OWNER's standing room — the same one narrateApprovalAsk/narrateStandingRun speak into.
- *  A workflow without a standing binding (manual, never scheduled) simply has no room to narrate
- *  in; the run status still carries the truth. */
+ *  B2: "owner" means the ACCOUNTABILITY owner (openStandingCommitment resolves it), so an
+ *  ownership change re-points every one of these narrations at once. A workflow without a standing
+ *  binding (manual, never scheduled) simply has no room to narrate in; the run status still
+ *  carries the truth. */
 async function narrateInOwnerStandingRoom(
   admin: SupabaseClient, wf: HandoffWorkflow, text: string, dedupeKey: string,
 ): Promise<void> {
   try {
-    const { data: c } = await admin.from('commitments').select('id')
-      .eq('user_id', wf.user_id).eq('source', 'workflow').eq('source_id', wf.id)
-      .eq('status', 'open').limit(1).maybeSingle();
+    const { openStandingCommitment } = await import('./owner');
+    const c = await openStandingCommitment(admin, wf);
     if (!c) return;
     const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
-    const roomKey = await roomKeyForItem(admin, wf.user_id, 'commitment', String(c.id));
-    await writeRoomTurn(admin, wf.user_id, roomKey, { role: 'system', text, dedupeKey });
+    const roomKey = await roomKeyForItem(admin, c.userId, 'commitment', String(c.id));
+    await writeRoomTurn(admin, c.userId, roomKey, { role: 'system', text, dedupeKey });
   } catch { /* narration is a surface — the run status is the truth */ }
+}
+
+// ── THE PER-RUN ASSIGNEE OVERRIDE (B2) ────────────────────────────────────────────────────────
+
+const OVERRIDE_KIND = 'handoff_override';
+
+export interface HandoffOverride {
+  assigneeUserId: string;
+  assigneeName?: string;
+  /** Reassign generation — 1 for the first move. Makes each ask's dedupe key distinct even when a
+   *  step is handed back to someone who already held it. */
+  rev: number;
+  by?: string;
+  at?: string;
+}
+
+export const overrideKey = (runId: string, stepId: string): string => `${runId}:${stepId}`;
+
+/** THE ONE OVERRIDE READ. Keyed under the workflow CREATOR (the execution identity owns the run's
+ *  bookkeeping rows). Absent → null, and the step's static assignee stands. Never throws. */
+export async function overrideFor(
+  admin: SupabaseClient, creatorUserId: string, runId: string, stepId: string,
+): Promise<HandoffOverride | null> {
+  try {
+    const { data } = await admin.from('item_plans').select('tasks')
+      .eq('user_id', creatorUserId).eq('kind', OVERRIDE_KIND).eq('entity_id', overrideKey(runId, stepId))
+      .maybeSingle();
+    const t = (data?.tasks ?? null) as Partial<HandoffOverride> | null;
+    if (!t?.assigneeUserId) return null;
+    return {
+      assigneeUserId: t.assigneeUserId, assigneeName: t.assigneeName,
+      rev: Number(t.rev ?? 1) || 1, by: t.by, at: t.at,
+    };
+  } catch { return null; }
+}
+
+/** The current handoff step of a parked run (the boundary it stopped at), or null. */
+function currentHandoffStep(
+  steps: WorkflowStep[] | null | undefined, stepOutputs: unknown[] | null | undefined,
+): HandoffStep | null {
+  const s = (steps ?? [])[(stepOutputs ?? []).length];
+  return s && s.type === 'handoff' ? s : null;
 }
 
 /** Best-effort coworker email to a teammate. The workflow's presenting coworker writes it, from
@@ -99,6 +149,30 @@ export async function parkHandoff(
   ctx: { runId: string; subject?: string; preview: string },
 ): Promise<void> {
   try {
+    await askAssignee(admin, wf, step, {
+      userId: step.assignee_user_id, name: step.assignee_name ?? null,
+    }, { runId: ctx.runId, subject: ctx.subject, preview: ctx.preview });
+
+    // The OWNER's side of the story: this isn't stalled, it's with someone.
+    await narrateInOwnerStandingRoom(
+      admin, wf,
+      `"${wf.name}" is waiting on ${step.assignee_name ?? 'a teammate'} — ${step.ask ?? 'their review'}.`,
+      `handoff-wait:${ctx.runId}:${step.id}`,
+    );
+  } catch { /* the parked run status is the source of truth */ }
+}
+
+/** LIMBS 1–3 OF THE PARK, for ANY assignee: the deck ask, the room card, the email with the door.
+ *  Shared by parkHandoff and reassignHandoff so a reassigned person gets exactly the same ask the
+ *  original one got — one implementation of "you now hold this gate". Best-effort throughout. */
+async function askAssignee(
+  admin: SupabaseClient,
+  wf: HandoffWorkflow,
+  step: HandoffStep,
+  assignee: { userId: string; name?: string | null },
+  ctx: { runId: string; subject?: string; preview: string; rev?: number },
+): Promise<void> {
+  try {
     const ask = (step.ask ?? '').trim() || 'Review and approve';
     const subject = (ctx.subject ?? wf.name).trim();
     const description = `${ask} — ${subject}`.slice(0, MAX_DESCRIPTION);
@@ -109,7 +183,7 @@ export async function parkHandoff(
 
     // (1) THE ASSIGNEE'S ASK — their own deck row. This is the whole attention story for them.
     const { data: commitment } = await admin.from('commitments').insert({
-      user_id: step.assignee_user_id,
+      user_id: assignee.userId,
       direction: 'you_owe',
       description,
       counterparty: ownerFirst,
@@ -125,8 +199,8 @@ export async function parkHandoff(
     if (commitment?.id) {
       try {
         const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
-        const roomKey = await roomKeyForItem(admin, step.assignee_user_id, 'commitment', String(commitment.id));
-        await writeRoomTurn(admin, step.assignee_user_id, roomKey, {
+        const roomKey = await roomKeyForItem(admin, assignee.userId, 'commitment', String(commitment.id));
+        await writeRoomTurn(admin, assignee.userId, roomKey, {
           role: 'system',
           text: `${ownerFirst} needs you on this before it moves — ${ask}.`,
           component: {
@@ -137,7 +211,9 @@ export async function parkHandoff(
               handoff: true,
             },
           },
-          dedupeKey: `handoff:${ctx.runId}:${step.id}`,
+          // A reassign's ask carries its generation so a step handed BACK to someone who already
+          // held it lands as a new turn instead of overwriting the old one in place.
+          dedupeKey: `handoff:${ctx.runId}:${step.id}${ctx.rev ? `:r${ctx.rev}` : ''}`,
         });
       } catch { /* the commitment already carries the ask */ }
     }
@@ -147,20 +223,13 @@ export async function parkHandoff(
     const askUrl = commitment?.id
       ? `${(process.env.AUGMTD_WEBHOOK_BASE_URL || 'https://app.augmtd.ai').replace(/\/$/, '')}/item/${commitment.id}?kind=commitment`
       : null;
-    await emailAssignee(admin, wf, step.assignee_user_id, {
+    await emailAssignee(admin, wf, assignee.userId, {
       subject: `${wf.name} — waiting on you`,
       body: `Hi,\n\n${ownerFirst} has something waiting on you: ${ask}.\n\n` +
         (askUrl
           ? `Review and approve it here: ${askUrl}\n\n(It's also on your AUGMTD deck.)`
           : `It's on your AUGMTD deck — approve it there and the rest runs itself.`),
     });
-
-    // (4) The OWNER's side of the story: this isn't stalled, it's with someone.
-    await narrateInOwnerStandingRoom(
-      admin, wf,
-      `"${wf.name}" is waiting on ${step.assignee_name ?? 'a teammate'} — ${step.ask ?? 'their review'}.`,
-      `handoff-wait:${ctx.runId}:${step.id}`,
-    );
   } catch { /* the parked run status is the source of truth */ }
 }
 
@@ -173,12 +242,19 @@ export interface ResumeAuthorization {
   workflow?: { id: string; user_id: string; name: string; agent_id?: string | null; steps?: WorkflowStep[] | null };
   /** The handoff step whose gate the caller holds (assignee) or that the run is parked at. */
   step?: HandoffStep;
+  /** B2: WHO actually holds the parked handoff gate right now — the per-run override if one
+   *  exists, else the step's static assignee. Present only when the run is parked at a handoff. */
+  assignee?: { userId: string; name?: string | null };
+  /** The active per-run override, if any (its `rev` numbers the next reassign). */
+  override?: HandoffOverride | null;
 }
 
-/** THE ONE AUTHORIZATION READ for resuming a run. Owner: always. Assignee: only when the run is
- *  actually parked AND the CURRENT step is a handoff assigned to them — via `parkedGateOf`, so a
- *  blocked-verify tail (guardrail hold) is never granted to anyone but the owner. Everyone else:
- *  refused, with no information leaked. */
+/** THE ONE AUTHORIZATION READ for resuming a run. Owner rights: the CREATOR (execution identity —
+ *  it keeps control of its own runs) OR the ACCOUNTABILITY OWNER (B2). Assignee: only when the run
+ *  is actually parked AND the CURRENT gate is a handoff held by them — via `parkedGateOf` WITH the
+ *  per-run override, so a reassigned person is authorized and the person they replaced is not, and
+ *  so a blocked-verify tail (guardrail hold) is never granted to anyone but the owner. Everyone
+ *  else: refused, with no information leaked. */
 export async function canResumeRun(
   admin: SupabaseClient, runId: string, callerId: string,
 ): Promise<ResumeAuthorization> {
@@ -193,26 +269,28 @@ export async function canResumeRun(
 
   const workflow = wf as ResumeAuthorization['workflow'];
   const runRow = run as unknown as RunLike & { user_id: string };
+  const current = currentHandoffStep(workflow!.steps, runRow.step_outputs);
+  const override = current
+    ? await overrideFor(admin, workflow!.user_id, runId, current.id)
+    : null;
+  const gate = runRow.status === 'awaiting_approval'
+    ? parkedGateOf(runRow, workflow!.steps, override)
+    : null;
+  const held = gate?.kind === 'handoff' && current
+    ? { step: current, assignee: { userId: gate.assigneeUserId!, name: gate.assigneeName ?? null }, override }
+    : {};
 
-  if (workflow!.user_id === callerId) {
-    const gate = runRow.status === 'awaiting_approval'
-      ? parkedGateOf(runRow, workflow!.steps)
-      : null;
-    const current = (workflow!.steps ?? [])[(runRow.step_outputs ?? []).length];
-    return {
-      ok: true, role: 'owner', run: runRow, workflow,
-      ...(gate?.kind === 'handoff' && current?.type === 'handoff' ? { step: current } : {}),
-    };
+  // THE CREATOR KEEPS OWNER RIGHTS; the accountability owner GAINS them (only read when needed).
+  let isOwner = workflow!.user_id === callerId;
+  if (!isOwner) {
+    const { ownerOf } = await import('./owner');
+    isOwner = (await ownerOf(admin, workflow!.id, workflow!.user_id)).userId === callerId;
   }
+  if (isOwner) return { ok: true, role: 'owner', run: runRow, workflow, ...held };
 
-  if (runRow.status !== 'awaiting_approval') return { ok: false, role: null };
-  const gate = parkedGateOf(runRow, workflow!.steps);
+  if (runRow.status !== 'awaiting_approval' || !gate) return { ok: false, role: null };
   if (gate.kind !== 'handoff' || gate.assigneeUserId !== callerId) return { ok: false, role: null };
-  const current = (workflow!.steps ?? [])[(runRow.step_outputs ?? []).length];
-  return {
-    ok: true, role: 'assignee', run: runRow, workflow,
-    ...(current?.type === 'handoff' ? { step: current } : {}),
-  };
+  return { ok: true, role: 'assignee', run: runRow, workflow, ...held };
 }
 
 // ── THE DECISION ──────────────────────────────────────────────────────────────────────────────
@@ -266,6 +344,18 @@ export async function settleHandoffDecision(
       `handoff-decided:${runId}`,
     );
 
+    // THE RUN-ROOM RIDER (B2): every process gets a spoken decision trail — even a manual workflow
+    // with no standing binding, whose narration used to reach the activity ledger only.
+    try {
+      const { ownerOf, narrateInRunRoom } = await import('./owner');
+      const owner = await ownerOf(admin, wf.id, wf.user_id);
+      await narrateInRunRoom(
+        admin, owner.userId, runId,
+        `${decider} ${approved ? 'approved' : 'held back'} "${wf.name}"${waited ? ` after ${waited}` : ''}.`,
+        `handoff-decided:${runId}`,
+      );
+    } catch { /* the run row already carries the decision */ }
+
     try {
       const { logActivity } = await import('@/lib/activity/log');
       await logActivity(admin, wf.user_id, {
@@ -302,6 +392,8 @@ async function claimNudge(admin: SupabaseClient, ownerId: string, runId: string)
  *  Shared by the on-demand Nudge button and the SLA sweep — one behaviour, one cap. */
 async function fireNudge(
   admin: SupabaseClient, wf: HandoffWorkflow, step: HandoffStep, runId: string,
+  /** WHO holds the gate right now — the per-run override outranks the step (B2). */
+  assignee: { userId: string; name?: string | null },
 ): Promise<{ ok: boolean; capped?: true }> {
   const claimed = await claimNudge(admin, wf.user_id, runId);
   if (!claimed) return { ok: false, capped: true };
@@ -309,19 +401,19 @@ async function fireNudge(
   const ownerFirst = await firstNameOf(admin, wf.user_id, 'a teammate');
   // The chase carries the same door as the original ask (the assignee's commitment room).
   const { data: c } = await admin.from('commitments').select('id')
-    .eq('user_id', step.assignee_user_id).eq('source', 'handoff').eq('source_id', runId)
+    .eq('user_id', assignee.userId).eq('source', 'handoff').eq('source_id', runId)
     .eq('status', 'open').limit(1).maybeSingle();
   const askUrl = c?.id
     ? `${(process.env.AUGMTD_WEBHOOK_BASE_URL || 'https://app.augmtd.ai').replace(/\/$/, '')}/item/${c.id}?kind=commitment`
     : null;
-  await emailAssignee(admin, wf, step.assignee_user_id, {
+  await emailAssignee(admin, wf, assignee.userId, {
     subject: `Still waiting on you — ${wf.name}`,
     body: `Hi,\n\nA quick nudge: ${ownerFirst} is still waiting on you for ${ask}.\n\n` +
       (askUrl ? `It's one click away: ${askUrl}` : `It's on your AUGMTD deck whenever you're ready.`),
   });
   await narrateInOwnerStandingRoom(
     admin, wf,
-    `I nudged ${step.assignee_name ?? 'your teammate'} about "${wf.name}" — still waiting on ${step.ask ?? 'their review'}.`,
+    `I nudged ${assignee.name ?? step.assignee_name ?? 'your teammate'} about "${wf.name}" — still waiting on ${step.ask ?? 'their review'}.`,
     `handoff-nudge:${runId}:${new Date().toISOString().slice(0, 10)}`,
   );
   return { ok: true };
@@ -338,7 +430,7 @@ export async function nudgeHandoff(
     return await fireNudge(admin, {
       id: auth.workflow.id, user_id: auth.workflow.user_id,
       name: auth.workflow.name, agent_id: auth.workflow.agent_id ?? null,
-    }, auth.step, runId);
+    }, auth.step, runId, auth.assignee ?? { userId: auth.step.assignee_user_id, name: auth.step.assignee_name ?? null });
   } catch { return { ok: false }; }
 }
 
@@ -364,13 +456,19 @@ export async function sweepHandoffSLAs(admin: SupabaseClient): Promise<void> {
       try {
         const wf = wfById.get(String(r.workflow_id));
         if (!wf) continue;
-        const gate = parkedGateOf({ step_outputs: (r.step_outputs ?? []) as RunLike['step_outputs'] }, wf.steps);
-        if (gate.kind !== 'handoff') continue;
-        const step = (wf.steps ?? [])[((r.step_outputs ?? []) as unknown[]).length];
-        if (!step || step.type !== 'handoff' || !step.sla_hours) continue;
+        const step = currentHandoffStep(wf.steps, (r.step_outputs ?? []) as unknown[]);
+        if (!step || !step.sla_hours) continue;
+        // The per-run override outranks the step: a reassigned gate chases the CURRENT holder.
+        const override = await overrideFor(admin, wf.user_id, String(r.id), step.id);
+        const gate = parkedGateOf(
+          { step_outputs: (r.step_outputs ?? []) as RunLike['step_outputs'] }, wf.steps, override,
+        );
+        if (gate.kind !== 'handoff' || !gate.assigneeUserId) continue;
 
         // PARKED-AT is the assignee's commitment (the run row has no park timestamp). No
-        // commitment → nothing to measure honestly, so nothing is chased.
+        // commitment → nothing to measure honestly, so nothing is chased. After a reassign the
+        // newest open row is the NEW holder's, so the SLA clock restarts with them — a person is
+        // never chased for time they were not yet asked for.
         const { data: c } = await admin.from('commitments').select('created_at')
           .eq('source', 'handoff').eq('source_id', r.id).eq('status', 'open')
           .order('created_at', { ascending: false }).limit(1).maybeSingle();
@@ -380,8 +478,111 @@ export async function sweepHandoffSLAs(admin: SupabaseClient): Promise<void> {
 
         await fireNudge(admin, {
           id: wf.id, user_id: wf.user_id, name: wf.name, agent_id: wf.agent_id ?? null,
-        }, step, String(r.id));
+        }, step, String(r.id), { userId: gate.assigneeUserId, name: gate.assigneeName ?? null });
       } catch { /* one stuck run never stops the sweep */ }
     }
   } catch { /* never break the dispatcher */ }
+}
+
+// ── THE REASSIGN (B2) ─────────────────────────────────────────────────────────────────────────
+
+/** MOVE A PARKED HANDOFF TO SOMEONE ELSE. Owner-only (creator or accountability owner). The
+ *  authored workflow is NEVER touched — the move is a per-run override row; every gate reader
+ *  consults it (canResumeRun, the SLA chase, the served ledger), so authorization, the chase and
+ *  the strip all speak the CURRENT assignee from the same truth.
+ *
+ *  The sequence: authorize → override → close the old ask honestly → ask the new person exactly as
+ *  a park would → narrate the owner's room and the run room → log. Only the override write is
+ *  fatal; everything after it is best-effort (the override IS who holds the gate). */
+export async function reassignHandoff(
+  admin: SupabaseClient,
+  args: { runId: string; byUserId: string; newAssigneeUserId: string; newAssigneeName?: string | null },
+): Promise<{ ok: true; assignee: { userId: string; name: string | null }; rev: number }
+  | { ok: false; error: string; status?: number }> {
+  const { runId, byUserId, newAssigneeUserId } = args;
+  try {
+    const auth = await canResumeRun(admin, runId, byUserId);
+    // A refusal leaks nothing: a stranger and a missing run look the same.
+    if (!auth.ok || !auth.workflow || !auth.run) return { ok: false, error: 'run not found', status: 404 };
+    if (auth.role !== 'owner') return { ok: false, error: 'run not found', status: 404 };
+    if (auth.run.status !== 'awaiting_approval') {
+      return { ok: false, error: `run is ${String(auth.run.status)} — there is no gate to move`, status: 409 };
+    }
+    const step = auth.step;
+    // A guardrail hold is ALWAYS the owner's (parkedGateOf's law order) — nothing to hand over.
+    if (!step || !auth.assignee) {
+      return { ok: false, error: 'this run is not waiting on a person', status: 409 };
+    }
+    const from = auth.assignee;
+    if (from.userId === newAssigneeUserId) {
+      return { ok: false, error: 'they already hold this', status: 409 };
+    }
+
+    const wf: HandoffWorkflow = {
+      id: auth.workflow.id, user_id: auth.workflow.user_id,
+      name: auth.workflow.name, agent_id: auth.workflow.agent_id ?? null,
+    };
+    const rev = (auth.override?.rev ?? 0) + 1;
+    const newName = (args.newAssigneeName ?? '').trim()
+      || await firstNameOf(admin, newAssigneeUserId, 'a teammate');
+    const fromName = (from.name ?? '').trim() || await firstNameOf(admin, from.userId, 'your teammate');
+    const nowIso = new Date().toISOString();
+
+    // (1) THE OVERRIDE — the only fatal limb: it IS the gate from here on.
+    const { error: upErr } = await admin.from('item_plans').upsert({
+      user_id: wf.user_id, kind: OVERRIDE_KIND, entity_id: overrideKey(runId, step.id),
+      tasks: { assigneeUserId: newAssigneeUserId, assigneeName: newName, rev, by: byUserId, at: nowIso },
+      updated_at: nowIso,
+    }, { onConflict: 'user_id,kind,entity_id' });
+    if (upErr) return { ok: false, error: 'the reassign could not be saved', status: 500 };
+
+    // (2) THE OLD ASK DIES WITH ITS WORK — the person it left owes nothing now, and their room
+    //     says so (a deck row that silently vanishes is the class this closes).
+    try {
+      const { data: old } = await admin.from('commitments').select('id')
+        .eq('user_id', from.userId).eq('source', 'handoff').eq('source_id', runId).eq('status', 'open')
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (old?.id) {
+        await admin.from('commitments').update({
+          status: 'completed', resolved_reason: 'reassigned', resolved_at: nowIso,
+        }).eq('id', old.id);
+        const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
+        const roomKey = await roomKeyForItem(admin, from.userId, 'commitment', String(old.id));
+        await writeRoomTurn(admin, from.userId, roomKey, {
+          role: 'system',
+          text: `This moved to ${newName} — nothing more needed from you.`,
+          dedupeKey: `handoff-reassigned-away:${runId}:r${rev}`,
+        });
+      }
+    } catch { /* the override already moved the gate */ }
+
+    // (3) THE NEW PERSON GETS THE SAME ASK A PARK WOULD HAVE GIVEN THEM (limbs 1–3, one impl).
+    // Same preview shape the park itself builds (the last step's output, stringified, clipped).
+    const prev = ((auth.run.step_outputs ?? [])[(auth.run.step_outputs ?? []).length - 1] as { output?: unknown })?.output;
+    const preview = (typeof prev === 'string' ? prev : JSON.stringify(prev ?? '')).slice(0, MAX_PREVIEW);
+    await askAssignee(admin, wf, step, { userId: newAssigneeUserId, name: newName },
+      { runId, subject: wf.name, preview, rev });
+
+    // (4) + (5) The owner hears it, the run room records it, the ledger keeps the receipt.
+    const line = `Moved "${wf.name}" from ${fromName} to ${newName}.`;
+    await narrateInOwnerStandingRoom(admin, wf, line, `handoff-reassigned:${runId}:r${rev}`);
+    try {
+      const { ownerOf, narrateInRunRoom } = await import('./owner');
+      const owner = await ownerOf(admin, wf.id, wf.user_id);
+      await narrateInRunRoom(admin, owner.userId, runId, line, `handoff-reassigned:${runId}:r${rev}`);
+    } catch { /* the override is the truth */ }
+    try {
+      const { logActivity } = await import('@/lib/activity/log');
+      await logActivity(admin, wf.user_id, {
+        type: 'handoff_reassigned',
+        title: line,
+        entityType: 'workflow_run', entityId: runId,
+        metadata: { runId, workflowId: wf.id, stepId: step.id, from: from.userId, to: newAssigneeUserId, by: byUserId, rev },
+      });
+    } catch { /* the ledger is a receipt, never a gate */ }
+
+    return { ok: true, assignee: { userId: newAssigneeUserId, name: newName }, rev };
+  } catch {
+    return { ok: false, error: 'the reassign failed', status: 500 };
+  }
 }

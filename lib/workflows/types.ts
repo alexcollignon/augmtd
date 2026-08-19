@@ -170,6 +170,10 @@ export interface OutputConfig {
   slack_announcement?: string;        // template for the document → Slack link-out post ({{title}}, {{link}}, {{date}}; supports <@Name>)
   report_mode?: ReportMode;           // coworker report-back cadence (default each_run)
   output_language?: string;           // BCP-47 code — injected into all AI steps; default 'en'
+  /** THE METRICS BASELINE (authored, never guessed): the user's own "how long does this take me
+   *  manually?" in minutes — powers the Metrics tab's time-saved line, which is ALWAYS labeled
+   *  as their estimate. Absent = the tab invites it; no default, no fabrication. */
+  estimated_manual_minutes?: number;
   // ── legacy (read-only back-compat) ──
   notification_mode?: NotificationMode;
   notification_email_ids?: string[];

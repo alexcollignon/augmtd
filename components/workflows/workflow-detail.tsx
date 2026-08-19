@@ -31,7 +31,13 @@ import type { ProcessRow, ProcessState, StepOutputLike } from '@/lib/workflows/p
 // Frames stays on the roadmap fork — the seat exists, the tab renders nothing (plan: STANDBY).
 const SHOW_FRAMES = false;
 
-type Tab = 'work' | 'timeline' | 'history' | 'frames';
+type Tab = 'work' | 'timeline' | 'metrics' | 'history' | 'frames';
+
+// THE OWNER (Phase B2) — the accountability layer, distinct from the EXECUTION identity (the
+// creator's mailbox/tier/coworkers, which never moves). Served by GET /api/workflows/[id]/owner;
+// `explicit: false` means nobody has been named and the creator carries it.
+type OwnerInfo = { userId: string; name: string; explicit: boolean };
+type Teammate = { userId: string; name: string; email: string };
 
 type RunRow = {
   id: string;
@@ -105,6 +111,10 @@ export function WorkflowDetail({
   const [processes, setProcesses] = useState<ProcessRow[] | null>(null);
   const [runs, setRuns] = useState<RunRow[] | null>(null);
   const [running, setRunning] = useState(false);
+  const [owner, setOwner] = useState<OwnerInfo | null>(null);
+  // Who is looking: the creator sees "Owned by you" (when they hold it) and the change affordance.
+  // Both facts come from ONE existing read — GET /api/workflows/[id] already serves is_owned_by_me.
+  const [selfUserId, setSelfUserId] = useState<string | null>(null);
 
   // THE SCOPED PROJECTION: one ledger read, filtered to this workflow. Same payload the strip uses.
   const loadProcesses = useCallback(async () => {
@@ -127,6 +137,24 @@ export function WorkflowDetail({
 
   useEffect(() => { void loadProcesses(); void loadRuns(); }, [loadProcesses, loadRuns]);
 
+  // Owner + viewer, once per mount. A missing/failed owner read renders NO owner line at all
+  // (never a guessed one) — the accountability layer is either known or silent.
+  useEffect(() => {
+    let dead = false;
+    void fetch(`/api/workflows/${workflowId}/owner`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (!dead && j?.owner?.userId) setOwner(j.owner as OwnerInfo); })
+      .catch(() => {});
+    void fetch(`/api/workflows/${workflowId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        const w = j?.workflow as { user_id?: string; is_owned_by_me?: boolean } | undefined;
+        if (!dead && w?.is_owned_by_me && w.user_id) setSelfUserId(w.user_id);
+      })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [workflowId]);
+
   const runNow = useCallback(async () => {
     setRunning(true);
     try {
@@ -148,6 +176,7 @@ export function WorkflowDetail({
     const t: Array<{ value: Tab; label: string }> = [
       { value: 'work', label: 'Work' },
       { value: 'timeline', label: 'Timeline' },
+      { value: 'metrics', label: 'Metrics' },
       { value: 'history', label: 'History' },
     ];
     if (SHOW_FRAMES) t.push({ value: 'frames', label: 'Frames' });
@@ -183,6 +212,14 @@ export function WorkflowDetail({
               {stepCount > 0 && <span className="text-neutral-400">· {stepCount} steps</span>}
             </div>
             {description && <p className="mt-1 text-[12.5px] text-neutral-500 line-clamp-2">{description}</p>}
+            {owner && (
+              <OwnerLine
+                workflowId={workflowId}
+                owner={owner}
+                selfUserId={selfUserId}
+                onChanged={setOwner}
+              />
+            )}
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <Button size="sm" variant="secondary" onClick={() => void runNow()} disabled={running}>
@@ -206,6 +243,7 @@ export function WorkflowDetail({
       <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4">
         {tab === 'work' && <WorkTab processes={processes} />}
         {tab === 'timeline' && <TimelineTab runs={runs} stepCount={stepCount} />}
+        {tab === 'metrics' && <MetricsTab workflowId={workflowId} />}
         {tab === 'history' && <HistoryTab runs={runs} processes={processes} workflowName={name} stepCount={stepCount} />}
         {/* Frames: STANDBY — no frame machinery in this arc. */}
         {tab === 'frames' && null}
@@ -275,6 +313,268 @@ function ProcessRowLine({ p }: { p: ProcessRow }) {
         <Link href="/home?view=workflows" className="flex-shrink-0 text-[12px] font-medium text-indigo-600 hover:text-indigo-800">
           Review
         </Link>
+      )}
+    </div>
+  );
+}
+
+// ── THE OWNER LINE (Phase B2) ───────────────────────────────────────────────────────────────────
+// ONE QUIET LINE, never a section: who carries this workflow. The creator gets an inline change
+// affordance (the workspace roster, the HandoffStepFields pattern); everyone else just reads it.
+// THE SPLIT LAW is spoken by omission — nothing here touches WHO the runs execute as.
+
+function OwnerLine({
+  workflowId, owner, selfUserId, onChanged,
+}: {
+  workflowId: string;
+  owner: OwnerInfo;
+  selfUserId: string | null;
+  onChanged: (o: OwnerInfo) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [mates, setMates] = useState<Teammate[] | null>(null); // null = loading
+  const [failed, setFailed] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // The roster is fetched ONCE, on first open — not on every render of the header.
+  useEffect(() => {
+    if (!editing || mates !== null) return;
+    let dead = false;
+    void fetch('/api/meetings/teammates')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('roster'))))
+      .then((j) => { if (!dead) setMates((j?.teammates ?? []) as Teammate[]); })
+      .catch(() => { if (!dead) { setMates([]); setFailed(true); } });
+    return () => { dead = true; };
+  }, [editing, mates]);
+
+  const isMine = !!selfUserId && owner.userId === selfUserId;
+  const canChange = !!selfUserId; // only the creator holds the change affordance
+
+  const pick = async (userId: string) => {
+    if (!userId || saving) return;
+    const name = userId === selfUserId ? 'you' : ((mates ?? []).find((m) => m.userId === userId)?.name ?? 'Teammate');
+    const before = owner;
+    setSaving(true);
+    onChanged({ userId, name, explicit: true }); // optimistic — reverted below if it doesn't land
+    try {
+      const r = await fetch(`/api/workflows/${workflowId}/owner`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerUserId: userId, ownerName: name === 'you' ? undefined : name }),
+      });
+      if (!r.ok) {
+        onChanged(before);
+        toast.error(r.status === 403 ? 'Only the owner can hand this over.' : 'That change did not land — try again.');
+        return;
+      }
+      const j = (await r.json().catch(() => null)) as { owner?: OwnerInfo } | null;
+      if (j?.owner?.userId) onChanged(j.owner);
+      toast.success(userId === selfUserId ? 'You own this workflow now.' : `${name} owns this workflow now.`);
+      setEditing(false);
+    } catch {
+      onChanged(before);
+      toast.error('That change did not land — try again.');
+    } finally { setSaving(false); }
+  };
+
+  if (editing) {
+    return (
+      <div className="mt-1 flex items-center gap-2 flex-wrap">
+        <span className="text-[12.5px] text-neutral-400">Owned by</span>
+        {mates === null ? (
+          <span className="text-[12.5px] text-neutral-400">loading your workspace…</span>
+        ) : failed ? (
+          <span className="text-[12.5px] text-neutral-500">Could not load your workspace right now.</span>
+        ) : mates.length === 0 && !selfUserId ? (
+          <span className="text-[12.5px] text-neutral-500">No teammates in your workspace yet.</span>
+        ) : (
+          <select
+            value={owner.userId}
+            disabled={saving}
+            onChange={(e) => void pick(e.target.value)}
+            className="px-2 py-1 border border-neutral-200 rounded-md text-[12.5px] bg-white"
+          >
+            {selfUserId && <option value={selfUserId}>Me</option>}
+            {mates.map((m) => <option key={m.userId} value={m.userId}>{m.name}</option>)}
+          </select>
+        )}
+        <button onClick={() => setEditing(false)} className="text-[12px] text-neutral-400 hover:text-neutral-600">
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-1 text-[12.5px] text-neutral-400">
+      Owned by <span className="text-neutral-500">{isMine ? 'you' : owner.name}</span>
+      {canChange && (
+        <button onClick={() => setEditing(true)} className="ml-2 text-[12px] text-neutral-400 hover:text-indigo-600">
+          change
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── METRICS (the per-workflow ROI receipt) ──────────────────────────────────────────────────────
+// THE BASELINE IS AUTHORED, NEVER GUESSED: time saved exists only once the human states how long
+// the manual version takes, and it is ALWAYS labelled as their estimate. No baseline → an invitation
+// to state one, never a fabricated number.
+
+type Metrics = {
+  runs: {
+    total: number; succeeded: number; failed: number; rejected: number; cancelled: number;
+    inFlight: number; firstRunAt: string | null; lastRunAt: string | null;
+  };
+  durations: { medianMs: number | null; lastMs: number | null; measuredRuns: number };
+  gate: { runsWithGate: number; intervened: number };
+  usage: { promptTokens: number; completionTokens: number; costEur: number; events: number } | null;
+  baselineMinutes: number | null;
+};
+
+const fmtTokens = (n: number): string =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n.toLocaleString();
+
+function fmtMs(ms: number | null): string | null {
+  if (ms === null || !Number.isFinite(ms)) return null;
+  const min = ms / 60000;
+  if (min >= 60) return `${(min / 60).toFixed(1)} h`;
+  return min >= 1 ? `${Math.round(min)} min` : `${Math.max(1, Math.round(ms / 1000))}s`;
+}
+
+function fmtHours(minutes: number): string {
+  const h = minutes / 60;
+  if (h < 1) return `${Math.round(minutes)} min`;
+  return `${h >= 10 ? Math.round(h) : h.toFixed(1)} h`;
+}
+
+function StatTile({ label, value, sub }: { label: string; value: string; sub?: string | null }) {
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-white px-4 py-3">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">{label}</div>
+      <div className="mt-1 text-[18px] font-semibold text-neutral-900 tabular-nums">{value}</div>
+      {sub && <div className="mt-0.5 text-[11.5px] text-neutral-400">{sub}</div>}
+    </div>
+  );
+}
+
+function MetricsTab({ workflowId }: { workflowId: string }) {
+  const [m, setM] = useState<Metrics | null | undefined>(undefined); // undefined = loading, null = unavailable
+  const [baselineDraft, setBaselineDraft] = useState('');
+  const [savingBaseline, setSavingBaseline] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/workflows/${workflowId}/metrics`);
+      if (!r.ok) { setM(null); return; }
+      setM((await r.json()) as Metrics);
+    } catch { setM(null); }
+  }, [workflowId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  // THE ONE SAVE PATH: the baseline lives on output_config, written through the normal workflow
+  // PATCH (which replaces the whole object — so it is READ and MERGED, never clobbered).
+  const saveBaseline = useCallback(async () => {
+    const minutes = Math.round(Number(baselineDraft));
+    if (!Number.isFinite(minutes) || minutes <= 0) { toast.error('Give it a number of minutes.'); return; }
+    setSavingBaseline(true);
+    try {
+      const g = await fetch(`/api/workflows/${workflowId}`);
+      if (!g.ok) { toast.error('Could not save that — try again.'); return; }
+      const current = ((await g.json())?.workflow?.output_config ?? {}) as Record<string, unknown>;
+      const r = await fetch(`/api/workflows/${workflowId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ output_config: { ...current, estimated_manual_minutes: minutes } }),
+      });
+      if (!r.ok) { toast.error('Could not save that — try again.'); return; }
+      toast.success('Saved — time saved is now based on your estimate.');
+      setBaselineDraft('');
+      await load();
+    } catch { toast.error('Could not save that — try again.'); } finally { setSavingBaseline(false); }
+  }, [baselineDraft, workflowId, load]);
+
+  if (m === undefined) return <Skeleton rows={3} />;
+  if (m === null) return <Empty>Could not read this workflow&apos;s numbers right now.</Empty>;
+  if (m.runs.total === 0) return <Empty>Nothing has run yet — the receipt fills in as it works.</Empty>;
+
+  const median = fmtMs(m.durations.medianMs);
+  const last = fmtMs(m.durations.lastMs);
+  const savedMinutes = m.baselineMinutes !== null ? m.runs.succeeded * m.baselineMinutes : null;
+
+  return (
+    <div className="max-w-3xl space-y-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+        <StatTile
+          label="Runs delivered"
+          value={String(m.runs.succeeded)}
+          sub={m.runs.total !== m.runs.succeeded ? `of ${m.runs.total} run${m.runs.total === 1 ? '' : 's'}` : null}
+        />
+        <StatTile
+          label="Median run time"
+          value={median ?? '—'}
+          sub={median ? (last ? `last ${last}` : null) : 'no completed run to measure'}
+        />
+        <StatTile
+          label="Tokens"
+          value={m.usage ? fmtTokens(m.usage.promptTokens + m.usage.completionTokens) : '—'}
+          sub={m.usage ? `${fmtTokens(m.usage.promptTokens)} in · ${fmtTokens(m.usage.completionTokens)} out` : 'no AI spend recorded'}
+        />
+        <StatTile
+          label="Cost"
+          value={m.usage ? `€${m.usage.costEur < 1 ? m.usage.costEur.toFixed(3) : m.usage.costEur.toFixed(2)}` : '—'}
+          sub={m.usage ? 'AI spend on this workflow' : null}
+        />
+      </div>
+
+      {/* TIME SAVED — an estimate, always dressed as one. */}
+      <div className="rounded-xl border border-neutral-200 bg-white px-4 py-3.5">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Time saved</div>
+        {savedMinutes !== null && m.baselineMinutes !== null ? (
+          <>
+            <div className="mt-1 text-[18px] font-semibold text-neutral-900 tabular-nums">{fmtHours(savedMinutes)}</div>
+            <div className="mt-0.5 text-[11.5px] text-neutral-400">
+              {m.runs.succeeded} delivered run{m.runs.succeeded === 1 ? '' : 's'} — based on your estimate of {m.baselineMinutes} min per manual run.
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="mt-1 text-[12.5px] text-neutral-600">
+              How long does this take you manually? Add it and this becomes a real number.
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                inputMode="numeric"
+                value={baselineDraft}
+                onChange={(e) => setBaselineDraft(e.target.value)}
+                placeholder="minutes"
+                className="w-28 px-2.5 py-1.5 border border-neutral-200 rounded-lg text-[13px] focus:outline-none focus:border-indigo-300"
+              />
+              <Button size="sm" variant="secondary" onClick={() => void saveBaseline()} disabled={savingBaseline || !baselineDraft.trim()}>
+                {savingBaseline ? 'Saving…' : 'Save'}
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* The quality receipt beside the money one — only when a check actually ran. */}
+      {m.gate.runsWithGate > 0 && (
+        <div className="text-[12.5px] text-neutral-500">
+          The delivery check intervened on {m.gate.intervened} of {m.gate.runsWithGate} run{m.gate.runsWithGate === 1 ? '' : 's'}.
+        </div>
+      )}
+
+      {m.runs.firstRunAt && (
+        <div className="text-[11px] text-neutral-400">
+          First run {fmtDateTime(m.runs.firstRunAt)}
+          {m.runs.lastRunAt ? ` · latest ${fmtDateTime(m.runs.lastRunAt)}` : ''}
+          {m.usage === null ? ' · AI spend is not recorded for this workspace yet.' : ''}
+        </div>
       )}
     </div>
   );

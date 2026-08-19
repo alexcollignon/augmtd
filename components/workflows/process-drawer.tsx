@@ -11,8 +11,10 @@
 //     this run's step-output count — no stored gate state, no parallel record. Approve/Reject fire
 //     THE ONE DOOR (`/api/workflows/runs/[id]/resume`, `{ approve }`) — the same route the ledger's
 //     "Waiting on you" card posts to. NUDGE (`/runs/[id]/nudge`) is a different DEED, not a second
-//     approval door, and appears only while someone ELSE holds the waiting gate. REASSIGN is
-//     deferred to B2 — absent, never a disabled ghost.
+//     approval door, and appears only while someone ELSE holds the waiting gate. REASSIGN (B2) is
+//     its own deed too — the per-run gate moves to another workspace member (the workflow's authored
+//     step never mutates). It renders exactly where Nudge does (owner-side, on a handoff someone
+//     else holds) — never a disabled ghost anywhere else.
 //   · Log — the RunAudit receipts (steps · durations · outputs · gate verdicts) re-seated.
 //
 // THE RECEIPTS GRAMMAR LIVES HERE (GateChip/GateFindings, exported): the drawer and the ledger's
@@ -23,7 +25,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
-import { XMarkIcon, ChevronDownIcon, ArrowPathIcon, BellIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon, ChevronDownIcon, ArrowPathIcon, BellIcon, ArrowRightCircleIcon } from '@heroicons/react/24/outline';
 import { Button, Badge, TabBar } from '@/components/ui';
 import type { ProcessRow } from '@/lib/workflows/process-state';
 import type { GateVerdict, WorkflowStep, HandoffStep } from '@/lib/workflows/types';
@@ -64,6 +66,8 @@ export function GateFindings({ v }: { v: GateVerdict }) {
     </div>
   );
 }
+
+type Teammate = { userId: string; name: string; email: string };
 
 type DrawerRun = {
   id: string; status: string; triggered_by: string; thread_id: string | null;
@@ -112,6 +116,12 @@ export default function ProcessDrawer({
   const [decided, setDecided] = useState<'approved' | 'rejected' | null>(null);
   const [rerunning, setRerunning] = useState(false);
   const [nudging, setNudging] = useState(false);
+  // REASSIGN (B2): the roster is fetched only when the picker is opened — never on drawer mount.
+  const [reassigning, setReassigning] = useState(false);
+  const [movePicker, setMovePicker] = useState(false);
+  const [mates, setMates] = useState<Teammate[] | null>(null); // null = loading
+  const [rosterFailed, setRosterFailed] = useState(false);
+  const [movedTo, setMovedTo] = useState<string | null>(null);
   // The workflow's own steps — the ONLY source of the human-gate list (fetched once per drawer).
   // undefined = loading, null = unavailable (the list degrades to the single waiting card).
   const [steps, setSteps] = useState<WorkflowStep[] | null | undefined>(undefined);
@@ -162,6 +172,37 @@ export default function ProcessDrawer({
       toast.success(`Nudged — ${process.waitingOn?.name ?? 'they'} got a fresh ping.`);
     } catch { toast.error('That nudge did not go out — try again.'); } finally { setNudging(false); }
   }, [nudging, process.runId, process.waitingOn?.name]);
+
+  useEffect(() => {
+    if (!movePicker || mates !== null) return;
+    let dead = false;
+    void fetch('/api/meetings/teammates')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('roster'))))
+      .then((j) => { if (!dead) setMates((j?.teammates ?? []) as Teammate[]); })
+      .catch(() => { if (!dead) { setMates([]); setRosterFailed(true); } });
+    return () => { dead = true; };
+  }, [movePicker, mates]);
+
+  // ── REASSIGN — a THIRD deed with its own door: the parked gate moves to someone else. The
+  // authored step is untouched (a per-run decision is not an authoring change). ──
+  const reassign = useCallback(async (assigneeUserId: string, assigneeName: string) => {
+    if (reassigning) return;
+    setReassigning(true);
+    try {
+      const r = await fetch(`/api/workflows/runs/${process.runId}/reassign`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assigneeUserId, assigneeName }),
+      });
+      if (!r.ok) {
+        toast.error(r.status === 403 ? 'Only the owner can move this.' : 'That move did not land — try again.');
+        return;
+      }
+      setMovedTo(assigneeName);
+      setMovePicker(false);
+      toast.success(`Moved to ${assigneeName} — they've got it now.`);
+      onDecided?.();
+    } catch { toast.error('That move did not land — try again.'); } finally { setReassigning(false); }
+  }, [reassigning, process.runId, onDecided]);
 
   const runAgain = useCallback(async () => {
     if (!onRunAgain || rerunning) return;
@@ -283,12 +324,59 @@ export default function ProcessDrawer({
                                 </>
                               )}
                               {heldByOther && isHandoff && (
-                                <Button size="sm" variant="secondary" onClick={() => void nudge()} disabled={nudging}>
-                                  <BellIcon className="mr-1 h-3.5 w-3.5" />
-                                  {nudging ? 'Nudging…' : 'Nudge'}
-                                </Button>
+                                <>
+                                  <Button size="sm" variant="secondary" onClick={() => void nudge()} disabled={nudging}>
+                                    <BellIcon className="mr-1 h-3.5 w-3.5" />
+                                    {nudging ? 'Nudging…' : 'Nudge'}
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    onClick={() => setMovePicker((v) => !v)}
+                                    disabled={reassigning}
+                                  >
+                                    <ArrowRightCircleIcon className="mr-1 h-3.5 w-3.5" />
+                                    Reassign
+                                  </Button>
+                                </>
                               )}
                             </div>
+                            {heldByOther && isHandoff && movePicker && (
+                              <div className="mt-2">
+                                {mates === null ? (
+                                  <div className="text-[12px] text-neutral-400">Loading your workspace…</div>
+                                ) : rosterFailed ? (
+                                  <div className="text-[12px] text-neutral-500">Could not load your workspace right now — try again in a moment.</div>
+                                ) : (() => {
+                                  // Never offer the person who already holds it — by the authored
+                                  // assignee AND by the served current holder (a prior reassign
+                                  // moved the gate without touching the step).
+                                  const options = mates.filter(
+                                    (mm) => mm.userId !== h?.assignee_user_id && mm.name !== process.waitingOn?.name,
+                                  );
+                                  if (!options.length) {
+                                    return <div className="text-[12px] text-neutral-500">Nobody else in your workspace to move this to.</div>;
+                                  }
+                                  return (
+                                    <select
+                                      defaultValue=""
+                                      disabled={reassigning}
+                                      onChange={(e) => {
+                                        const m = options.find((o) => o.userId === e.target.value);
+                                        if (m) void reassign(m.userId, m.name);
+                                      }}
+                                      className="w-full rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-[12.5px]"
+                                    >
+                                      <option value="">{reassigning ? 'Moving…' : 'Move it to…'}</option>
+                                      {options.map((m) => <option key={m.userId} value={m.userId}>{m.name}</option>)}
+                                    </select>
+                                  );
+                                })()}
+                              </div>
+                            )}
+                            {movedTo && (
+                              <div className="mt-2 text-[12.5px] text-neutral-600">Moved to {movedTo} — they hold this gate now.</div>
+                            )}
                           </>
                         )}
                       </div>
