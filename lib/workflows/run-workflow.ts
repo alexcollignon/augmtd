@@ -89,8 +89,11 @@ async function materialiseOutput(
   userId: string,
   threadId: string,
   workflowName: string,
+  workflowId: string,
   out: NormalizedOutput,
   finalStepOutput: StepOutput | undefined,
+  /** The run this generation came from — recorded on the frame series' version entries. */
+  runIdForSeries?: string | null,
 ): Promise<MaterialisedOutput> {
   const finalText = typeof finalStepOutput?.output === 'string'
     ? finalStepOutput.output
@@ -119,7 +122,12 @@ async function materialiseOutput(
     return { text: finalText, artifact, title };
   }
 
-  if ((out.home === 'document' && artifactType === 'document') || wantsAttachmentDoc) {
+  // AN EXPLICIT OUTPUT, NOT A WORD LOTTERY (THE FRAME SERIES): `artifact_type: 'frame'` FORCES the
+  // door onto the frame lane — no title luck. The FRAME_WORDS trigger inside the door survives as
+  // the implicit fallback (chat one-shots + legacy configs).
+  const wantsFrame = out.home === 'document' && artifactType === 'frame';
+
+  if ((out.home === 'document' && (artifactType === 'document' || artifactType === 'frame')) || wantsAttachmentDoc) {
     // ── THE ONE PRODUCTION DOOR (plan AF): workflow deliverables materialize through the SAME
     // module the delegations and DMs use — typed protocol, the compiler tier (a scheduled run
     // whose task names a chart gets a real charted file), the brand theme, every floor. One
@@ -130,13 +138,39 @@ async function materialiseOutput(
     const m = await materializeDocument(admin, userId, {
       title, content: finalText,
       request: title,
+      ...(wantsFrame ? { forceType: 'frame' as const } : {}),
     });
+    const outTitleOf = (fallback: string) =>
+      (typeof m.content === 'object' && m.content && 'title' in m.content && m.content.title)
+        ? String(m.content.title) : fallback;
+
+    // ── THE FRAME SERIES: a frame does NOT append a new artifact per run. It keeps ONE stable
+    // identity on this workflow's one persistent thread and gains a VERSION (upsertFrameSeries is
+    // the one writer; it performs the thread write itself because the head updates IN PLACE, which
+    // an append cannot express). The downstream merge dedupes by id, so nothing lands twice. ──
+    if (m.type === 'frame') {
+      const { upsertFrameSeries } = await import('@/lib/frames/series');
+      const seriesTitle = outTitleOf(title);
+      const res = await upsertFrameSeries(admin, {
+        userId, threadId, workflowId, runId: runIdForSeries ?? null,
+        title: seriesTitle, bytes: m.bytes, mime: m.mime, content: m.content,
+        provenance: m.provenance ?? null,
+      });
+      return {
+        text: typed ? (typed.remainder || `${seriesTitle} — attached.`) : finalText,
+        artifact: res.artifact, title: seriesTitle,
+      };
+    }
+
     const artifactId = randomUUID();
     const storagePath = `${userId}/${threadId}/${artifactId}.${m.ext}`;
     const { error: upErr } = await admin.storage.from('work-artifacts')
       .upload(storagePath, m.bytes, { contentType: m.mime, upsert: true, cacheControl: '0' });
     if (upErr) throw new Error(`Artifact upload failed: ${upErr.message}`);
     const outTitle = (typeof m.content === 'object' && m.content && 'title' in m.content && m.content.title) ? String(m.content.title) : title;
+    // THE BINDING IS THE LIFE (law 4) lives in the SERIES branch above — every frame this door
+    // produces goes through `upsertFrameSeries`, which stamps {workflowId, refresh:'on_run'} onto
+    // the head. Nothing that reaches here is a frame, so this path appends as it always did.
     const artifact: DocumentArtifact = {
       id: artifactId, title: outTitle, type: m.type,
       generated_at: now.toISOString(), storage_path: storagePath,
@@ -660,7 +694,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
   const finalStep = contentOutputs[contentOutputs.length - 1] ?? stepOutputs[stepOutputs.length - 1];
   const out = normalizeOutput(workflow.output_config);
   const materialised = await materialiseOutput(
-    admin, workflow.user_id, threadId, workflow.name, out, finalStep,
+    admin, workflow.user_id, threadId, workflow.name, workflow.id, out, finalStep, runId,
   );
   const finalText = materialised.text;
   const agentId = (workflow as Workflow & { agent_id?: string }).agent_id ?? undefined;
@@ -738,7 +772,11 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     let attachments: { filename: string; content: Buffer }[] | undefined;
     if (out.emailAsAttachment && materialised.artifact) {
       // The doc artifact was already materialised (and kept in Documents + Drive); attach it.
-      const docType: DeliverableType = (out.artifactType as DeliverableType) ?? 'document';
+      // A frame is not an office attachment (its file is .html and no builder makes one) — an
+      // email-attachment home falls back to the document builder rather than asking for the
+      // impossible. The frame lane itself only runs on the document home.
+      const configured = (out.artifactType as DeliverableType) ?? 'document';
+      const docType: DeliverableType = configured === 'frame' ? 'document' : configured;
       const buffer = await buildArtifactFile(docType, materialised.artifact.content as DocContent);
       const safeName = (subject.replace(/[^\w\s.-]/g, '').trim() || 'document').slice(0, 80);
       attachments = [{ filename: `${safeName}.${getFileExt(docType)}`, content: buffer }];
@@ -796,7 +834,15 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     const existing = ((fresh as { artifacts?: DocumentArtifact[] } | null)?.artifacts) ?? [];
     // Cap the array — the persistent thread accumulates one artifact per run, and
     // chat-context injection reads every artifact on the thread.
-    const merged = [...existing, materialised.artifact].slice(-20);
+    // NEVER A TWIN (THE FRAME SERIES): a frame's head was already written IN PLACE by
+    // `upsertFrameSeries`, so it is already in this freshly-read array. Appending it again would
+    // fork the identity the series exists to keep. Every other kind carries a brand-new uuid and
+    // therefore appends exactly as before.
+    const already = materialised.artifact.id
+      && existing.some((a) => a?.id === materialised.artifact!.id);
+    const merged = already
+      ? existing.map((a) => (a?.id === materialised.artifact!.id ? materialised.artifact! : a))
+      : [...existing, materialised.artifact].slice(-20);
     await admin.from('work_threads')
       .update({ artifacts: merged, artifact: materialised.artifact, updated_at: new Date().toISOString() })
       .eq('id', threadId);

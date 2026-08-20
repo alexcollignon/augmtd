@@ -5,6 +5,7 @@ import { ChevronDownIcon } from '@heroicons/react/20/solid';
 import { SparklesIcon, CheckCircleIcon, DocumentTextIcon, ExclamationTriangleIcon, PencilSquareIcon, DocumentDuplicateIcon, TableCellsIcon, PresentationChartBarIcon, EnvelopeIcon, ArrowTopRightOnSquareIcon, UserCircleIcon, BoltIcon } from '@heroicons/react/24/outline';
 import { ArrowPathIcon } from '@heroicons/react/20/solid';
 import { ClarificationWidget, ClarificationData } from './clarification-widget';
+import { FrameCard } from '@/components/frames/frame-card';
 import { MENTION_ICONS, MENTION_COLORS, MentionChip } from './chat-input-bar';
 
 // Coworker-chat mention types (coworker/task/document) — mirrors WorkerMentionInput.
@@ -424,6 +425,22 @@ function AssistantMessage({ content, toolCalls, artifactIds, citations, clarific
           <div className="flex flex-wrap gap-2 pt-1">
             {artifactIds.map(id => {
               const meta = artifactVersionMap?.get(id);
+              // A FRAME LIVES WHERE ITS WORK LIVES (frames plan law 5): in chat it is the card
+              // itself — rendered inline through the ONE renderer, not a chip you must open.
+              if (meta?.type === 'frame') {
+                return (
+                  <div key={id} className="w-full">
+                    {/* Open raises the SIDE PANEL (the Claude idiom) — full-screen is one more
+                        click, from the panel's own link. No panel opener here → the address. */}
+                    <FrameCard
+                      artifactId={id}
+                      title={meta.title}
+                      height={340}
+                      onOpen={onViewArtifact ? () => onViewArtifact(id) : undefined}
+                    />
+                  </div>
+                );
+              }
               const ArtIcon =
                 meta?.type === 'spreadsheet' ? TableCellsIcon
                 : meta?.type === 'presentation' ? PresentationChartBarIcon

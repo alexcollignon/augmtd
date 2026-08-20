@@ -299,8 +299,21 @@ async function main() {
     && /const rows = showDone \? \[\.\.\.active, \.\.\.completed\] : active;/.test(detail));
   ok('an empty Work tab says so honestly (never a mute table)',
     detail.includes('Nothing is in flight right now.'));
-  ok('FRAMES stays on standby (flag off)', /const SHOW_FRAMES = false/.test(detail));
+  // RE-POINTED (frames arc Phase 1, Aug 19 — the owner ordered the arc; standby is over BY
+  // DESIGN): the flag is ON, and the replacement law is the frames plan's law 1 — the tab is a
+  // FILTER over frame-typed artifacts, never a second production machine. The deep gates live in
+  // smoke-frames.ts; here we pin the flag + the filter grammar.
+  ok('FRAMES is live behind its flag (the arc landed)', /const SHOW_FRAMES = true/.test(detail));
   ok('…and the tab only exists behind the flag', /if \(SHOW_FRAMES\)/.test(detail));
+  // RE-POINTED (the gallery wave, Aug 19): FramesTab MOVED to components/frames/frames-tab.tsx —
+  // the deep-dive keeps the flag, the gated registration and the mount; the FILTER law is asserted
+  // where the filter now lives. Same law, same strength, correct address.
+  {
+    const framesTab = readFileSync('components/frames/frames-tab.tsx', 'utf8');
+    ok('…and the Frames tab is a FILTER on frame-typed artifacts (law 1 — never a second machine)',
+      /type [!=]== 'frame'/.test(framesTab) && /FramesTab/.test(detail)
+      && detail.includes("from '@/components/frames/frames-tab'"));
+  }
   ok('the bare /workflows page is not a second surface — it redirects to the Home view',
     indexPage.includes("redirect('/home?view=workflows')"));
   ok('the deep-dive page bounces an unreadable workflow to the same one surface',

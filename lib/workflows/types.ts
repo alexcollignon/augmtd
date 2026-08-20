@@ -148,7 +148,9 @@ export type OutputDestination =
   | 'email_draft'           // → message (never shipped)
   | 'living_document';      // → document
 
-export type ArtifactType = 'document' | 'spreadsheet' | 'presentation' | 'email';
+// 'frame' = AN EXPLICIT OUTPUT, NOT A WORD LOTTERY (frames plan, THE FRAME SERIES): configuring it
+// FORCES the production door onto the frame lane instead of hoping the title contains "dashboard".
+export type ArtifactType = 'document' | 'spreadsheet' | 'presentation' | 'email' | 'frame';
 
 // How proactively the coworker reports back after a run.
 export type ReportMode = 'each_run' | 'digest' | 'silent';

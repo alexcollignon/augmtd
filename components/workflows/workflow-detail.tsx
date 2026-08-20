@@ -13,7 +13,9 @@
 //    short single-column list with no case chrome.
 //  • RECEIPTS EVERYWHERE — History re-seats existing run receipts (duration, steps, gate verdict),
 //    never a parallel record; nothing is claimed that the data doesn't hold.
-//  • FRAMES = STANDBY — the tab is built behind SHOW_FRAMES and renders nothing.
+//  • FRAMES ARE A FILTER — the tab lists this workflow's frame ARTIFACTS off the same runs payload
+//    the other tabs read. It LIVES in `components/frames/frames-tab.tsx` (gallery · side panel ·
+//    the new-frame-from-a-run door); this file only registers the seat and hands it that payload.
 //
 // Timeline math is plain client-safe date arithmetic (never `lib/work-items/model.ts`, which drags
 // the server graph into the client bundle).
@@ -31,11 +33,13 @@ import {
 import { Badge, Button, SegmentedControl } from '@/components/ui';
 import ProcessDrawer from '@/components/workflows/process-drawer';
 import RunRecordDrawer, { type RecordRunOutputs } from '@/components/workflows/run-record-drawer';
+import { FramesTab } from '@/components/frames/frames-tab';
 import { PROCESS_BUCKETS, gateDeltaOf, processStateOf } from '@/lib/workflows/process-state';
 import type { ProcessRow, ProcessState, StepOutputLike } from '@/lib/workflows/process-state';
 
-// Frames stays on the roadmap fork — the seat exists, the tab renders nothing (plan: STANDBY).
-const SHOW_FRAMES = false;
+// THE FRAMES ARC Phase 1 has landed: the seat is live. The tab is a FILTER over this workflow's
+// frame artifacts (frames plan law 1 + law 5) — not a feature, not a second surface.
+const SHOW_FRAMES = true;
 
 type Tab = 'work' | 'timeline' | 'metrics' | 'history' | 'frames';
 
@@ -71,6 +75,16 @@ type RunRow = {
   completed_at: string | null;
   created_at: string;
   record?: RunRecordBlock;
+  // The run's thread artifacts, served additively by GET /api/workflows/[id]/runs. The Frames tab
+  // is a FILTER over these (frames plan law 1: a frame is an artifact kind, not a feature).
+  artifacts?: ArtifactLike[];
+};
+
+/** Only what the Frames filter needs — the full artifact shape lives in lib/types/inbox. */
+type ArtifactLike = {
+  id?: string; title?: string; type?: string; generated_at?: string;
+  /** THE BINDING (frames plan law 4) — stamped on workflow-born frames; the live mark's only source. */
+  binding?: { workflowId?: string; refresh?: string } | null;
 };
 
 /** The standing binding, served by the runs route: the open commitment this workflow promises and
@@ -193,6 +207,7 @@ export function WorkflowDetail({
   const [mark, setMark] = useState<LedgerMark | null>(null);
   const [scope, setScope] = useState<Scope | null>(null);
   const [standing, setStanding] = useState<StandingBinding | null>(null);
+  const [sharedFrameIds, setSharedFrameIds] = useState<string[]>([]);
   // The two drawers of this surface: a LIVE process (decisions still possible) and a finished run's
   // READ-ONLY record. They are different objects, so they are different doors.
   const [openProcess, setOpenProcess] = useState<{ p: ProcessRow; tab: 'handoffs' | 'log' } | null>(null);
@@ -225,9 +240,14 @@ export function WorkflowDetail({
     try {
       const r = await fetch(`/api/workflows/${workflowId}/runs?limit=30`);
       if (!r.ok) { setRuns((p) => p ?? []); return; }
-      const j = (await r.json()) as { runs?: RunRow[]; standing?: StandingBinding | null };
+      const j = (await r.json()) as {
+        runs?: RunRow[]; standing?: StandingBinding | null; sharedFrameIds?: string[];
+      };
       setRuns(j.runs ?? []);
       setStanding(j.standing ?? null);
+      // SERVED TRUTH ONLY: the Frames tab's visibility word comes from the live share rows the
+      // route resolves — never from anything this client could infer.
+      setSharedFrameIds(j.sharedFrameIds ?? []);
     } catch { setRuns((p) => p ?? []); }
   }, [workflowId]);
 
@@ -404,8 +424,14 @@ export function WorkflowDetail({
             onOpenRecord={setOpenRecord}
           />
         )}
-        {/* Frames: STANDBY — no frame machinery in this arc. */}
-        {tab === 'frames' && null}
+        {tab === 'frames' && (
+          <FramesTab
+            workflowId={workflowId}
+            runs={runs}
+            sharedFrameIds={sharedFrameIds}
+            onRefresh={loadRuns}
+          />
+        )}
       </div>
 
       {/* ── THE COMPOSER — a DOOR to the standing room's conversation, never a second inbox. It
@@ -499,7 +525,9 @@ function WorkTab({
   recordByRun: Map<string, RunRecordBlock>;
   onOpen: (p: ProcessRow, tab: 'handoffs' | 'log') => void;
 }) {
-  const [showDone, setShowDone] = useState(false);
+  // Completed rows SHOW by default (owner, Aug 20) — the fold survives as "Hide completed" for
+  // a busy table; a quiet workflow's history must not hide behind a click.
+  const [showDone, setShowDone] = useState(true);
   if (processes === null) return <Skeleton rows={3} />;
 
   const active = processes.filter((p) => p.state === 'needs_you' || p.state === 'running' || p.state === 'waiting_on_others');

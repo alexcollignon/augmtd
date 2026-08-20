@@ -122,7 +122,10 @@ function currentHandoffStep(
 }
 
 /** Best-effort coworker email to a teammate. The workflow's presenting coworker writes it, from
- *  the OWNER's account (the sending identity + cap belong to the person whose work this is). */
+ *  the OWNER's account (the sending identity + cap belong to the person whose work this is).
+ *  A workflow with NO presenter falls back to the OWNER'S PERSONAL ASSISTANT (owner call,
+ *  Aug 20: a generic team@ sender is a stranger; "Clara · Alexandre's assistant" is the voice
+ *  this email already speaks in) — only then to the generic team identity. */
 async function emailAssignee(
   admin: SupabaseClient, wf: HandoffWorkflow, assigneeUserId: string,
   mail: { subject: string; body: string },
@@ -131,8 +134,15 @@ async function emailAssignee(
     const { data: u } = await admin.auth.admin.getUserById(assigneeUserId);
     const to = (u?.user?.email as string | undefined) ?? null;
     if (!to) return;
+    let senderId = wf.agent_id ?? undefined;
+    if (!senderId) {
+      const { data: pa } = await admin.from('custom_agents').select('id')
+        .eq('user_id', wf.user_id).eq('is_worker', true).eq('is_active', true)
+        .eq('worker_role', 'personal_assistant').limit(1).maybeSingle();
+      senderId = (pa as { id?: string } | null)?.id ?? undefined;
+    }
     const { sendCoworkerEmail } = await import('@/lib/tools/coworker-email');
-    await sendCoworkerEmail(admin, wf.user_id, wf.agent_id ?? undefined, {
+    await sendCoworkerEmail(admin, wf.user_id, senderId, {
       to: [to], subject: mail.subject, body: mail.body,
     });
   } catch { /* a notification that fails never breaks the park */ }

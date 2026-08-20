@@ -57,12 +57,21 @@ export type Materialized = {
    *  the text version here so the in-app viewer still shows something readable). */
   content: ArtifactContent;
   /** Which tier produced the file — observability, never behavior. */
-  tier: 'compiler' | 'typed' | 'template';
+  tier: 'frame' | 'compiler' | 'typed' | 'template';
+  /** THE FRAMES ARC: the structural computed-facts stamp (law 3 — the card wears
+   *  "✓ computed in code" from THIS, never from prose). Present on the frame tier only. */
+  provenance?: { computed: boolean };
 };
 
+// Office extensions only — 'frame' is deliberately absent (its file is .html; a frame that ever
+// resolved to an office ext would be a lie in the filename and a wrong builder downstream).
 const EXT_BY_TYPE: Record<string, 'docx' | 'pptx' | 'xlsx'> = {
   presentation: 'pptx', spreadsheet: 'xlsx', document: 'docx', report: 'docx', analysis: 'docx',
 };
+
+/** The deterministic frame trigger: the user asked to LOOK INTO something. Office-file
+ *  operations (revise-in-place, follow-this-template) are never frames. */
+const FRAME_WORDS = /\b(dashboard|interactive (?:view|report)|tracker|frame|live view)\b/i;
 
 export async function materializeDocument(
   client: SupabaseClient, userId: string, args: MaterializeArgs,
@@ -83,13 +92,41 @@ export async function materializeDocument(
     ?? (typed ? (typed.type === 'spreadsheet' ? 'xlsx' : 'pptx') : null)
     ?? (args.forceType ? EXT_BY_TYPE[args.forceType] ?? 'docx' : null)
     ?? (/\b(deck|slides?|presentation|pptx)\b/i.test(request) ? 'pptx' : 'docx');
-  const type: DeliverableType = compileExt === 'pptx' ? 'presentation' : compileExt === 'xlsx' ? 'spreadsheet' : (args.forceType ?? 'document');
+  // A forced 'frame' names the TIER-0 lane, not a fall-through kind: if the frame lane declines,
+  // the deliverable that lands is an honest document (never a .docx wearing type 'frame').
+  const forcedDocType = args.forceType && args.forceType !== 'frame' ? args.forceType : null;
+  const type: DeliverableType = compileExt === 'pptx' ? 'presentation' : compileExt === 'xlsx' ? 'spreadsheet' : (forcedDocType ?? 'document');
   const doc: ArtifactContent = typed ? typed.content : textToDocContent(title, args.content);
 
   // ── Theme: explicit override → the one hierarchy → house look. Fail-soft always. ──
   let theme: DocTheme | null = args.theme ?? null;
   if (args.theme === undefined) {
     try { theme = await (await import('@/lib/documents/theme')).getDocTheme(client, userId); } catch { theme = null; }
+  }
+
+  // ── TIER 0 — THE FRAME (frames plan Phase 1, law 1): a deliverable you can look INTO. Runs
+  // BEFORE the compiler because a dashboard ask is not a document ask; on null it FALLS THROUGH
+  // to every tier below untouched — the user always gets a deliverable. ──
+  const wantsFrame = !args.revise && !args.templateFile
+    && (args.forceType === 'frame' || FRAME_WORDS.test(request) || FRAME_WORDS.test(title));
+  if (wantsFrame) {
+    try {
+      const { generateFrameHtml } = await import('@/lib/frames/generate-frame');
+      const frame = await generateFrameHtml(client, userId, {
+        title, content: args.content, request, csvText: args.csvText ?? null,
+        computedFacts: args.computedFacts ?? null, theme,
+      });
+      if (frame) {
+        return {
+          bytes: Buffer.from(frame.html, 'utf8'), ext: 'html', mime: 'text/html', type: 'frame',
+          // The fallback-render law: the text version rides along so every existing in-app
+          // viewer still shows something readable. The provenance stamp ALSO rides INSIDE
+          // content — content is what every caller persists onto the artifact row, so the
+          // serving route and the chip read it with zero caller edits.
+          content: { ...doc, provenance: frame.provenance }, tier: 'frame', provenance: frame.provenance,
+        };
+      }
+    } catch { /* the tiers below are the floor */ }
   }
 
   // ── TIER 1 — THE COMPILER: charts / revision / template-following, code in the locked room. ──

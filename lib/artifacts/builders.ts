@@ -466,12 +466,14 @@ export async function buildXlsx(content: XlsxContent): Promise<Buffer> {
 export function getFileExt(type: DeliverableType): string {
   if (type === 'presentation') return 'pptx';
   if (type === 'spreadsheet') return 'xlsx';
+  if (type === 'frame') return 'html'; // THE FRAMES ARC: a frame is one self-contained HTML file
   return 'docx';
 }
 
 export function getMimeType(type: DeliverableType): string {
   if (type === 'presentation') return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
   if (type === 'spreadsheet') return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (type === 'frame') return 'text/html';
   return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 }
 

@@ -215,6 +215,10 @@ build agents + 1 gates agent, every diff orchestrator-reviewed). Suite `scripts/
   workflow's deep-dive page (new mount stamp) — each optimistically zeroes the pill and bumps the
   sidebar via `aug:conversation-changed`. Gate C6 pins predicate parity across both routes, the
   served share, the rendered pill, and the stamping doors.
+- THE SENDER FALLBACK LADDER (owner, Aug 20 — handoffs 204/204): a coworker-less workflow's
+  park/nudge email speaks as the OWNER'S PERSONAL ASSISTANT (resolved at the ONE emailAssignee
+  seam both park and chase ride), never the generic team@ stranger; team@ survives only as the
+  never-crash floor. Gate H16.
 - Walk polish (same eve): the ledger column widened (max-w-3xl → 5xl, the mockup's breathing
   room); THE TILE WEARS THE STATE — workflow rows lead with a 40px identity tile (house bolt
   fallback, rounded-xl at that size) carrying the status dot on its corner (ring-2 ring-white),

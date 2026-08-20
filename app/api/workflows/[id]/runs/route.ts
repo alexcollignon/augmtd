@@ -160,6 +160,29 @@ export async function GET(
     }
   } catch { /* no binding readable → no composer, which is the honest state */ }
 
+  // ── THE SHARED FRAMES (frames plan law 6) — SERVED TRUTH, never a client guess. The Frames tab
+  // says "Anyone with link" only where a LIVE share row exists; a revoked share deletes its row, so
+  // absence here IS the private state. One query over this page's own frame artifacts.
+  let sharedFrameIds: string[] = [];
+  try {
+    const frameIds: string[] = [];
+    for (const list of artifactsByRun.values()) {
+      for (const a of (list ?? []) as Array<{ id?: string; type?: string }>) {
+        if (a?.id && a.type === 'frame') frameIds.push(a.id);
+      }
+    }
+    if (frameIds.length) {
+      const { FRAME_SHARE_KIND } = await import('@/lib/frames/share');
+      const { data: shares } = await supabase
+        .from('item_plans')
+        .select('entity_id')
+        .eq('user_id', user.id)
+        .eq('kind', FRAME_SHARE_KIND)
+        .in('entity_id', [...new Set(frameIds)]);
+      sharedFrameIds = ((shares ?? []) as Array<{ entity_id: string }>).map((s) => String(s.entity_id));
+    }
+  } catch { /* unknown is never a claim — with no read, every frame reads Private */ }
+
   return NextResponse.json({
     runs: runs.map((r) => ({
       ...r,
@@ -167,5 +190,6 @@ export async function GET(
       ...(recordByRun.has(r.id) ? { record: recordByRun.get(r.id) } : {}),
     })),
     standing,
+    sharedFrameIds,
   });
 }
