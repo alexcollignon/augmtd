@@ -8,7 +8,9 @@ import {
   EnvelopeIcon,
   PresentationChartBarIcon,
   TableCellsIcon,
+  Squares2X2Icon,
 } from '@heroicons/react/24/outline';
+import { FrameCard } from '@/components/frames/frame-card';
 import type {
   ArtifactContent,
   DocContent,
@@ -78,6 +80,7 @@ export function ArtifactPanel({ artifactId, threadId, onClose }: ArtifactPanelPr
   }
 
   const TypeIcon = !meta ? DocumentTextIcon
+    : meta.type === 'frame' ? Squares2X2Icon
     : meta.type === 'email' ? EnvelopeIcon
     : meta.type === 'presentation' ? PresentationChartBarIcon
     : meta.type === 'spreadsheet' ? TableCellsIcon
@@ -134,7 +137,15 @@ export function ArtifactPanel({ artifactId, threadId, onClose }: ArtifactPanelPr
           </div>
         )}
 
-        {!isLoading && meta && (
+        {/* A FRAME IS RENDERED, NOT PREVIEWED (frames plan law 2/5) — the ONE renderer, in the
+            room that produced it. Its inline script is confined to FrameCard's sandboxed iframe. */}
+        {!isLoading && meta && meta.type === 'frame' && (
+          <div className="h-full min-h-0">
+            <FrameCard artifactId={artifactId} title={meta.title} full />
+          </div>
+        )}
+
+        {!isLoading && meta && meta.type !== 'frame' && (
           <div className="px-5 py-6">
             {meta.generated_at && (
               <p className="text-[10.5px] text-neutral-400 mb-5">

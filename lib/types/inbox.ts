@@ -25,7 +25,10 @@ export type ConfirmationAction = 'confirm_as_mine' | 'not_my_task';
 
 export type ExecutionStatus = 'queued' | 'preparing' | 'ready' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
 
-export type DeliverableType = 'report' | 'presentation' | 'document' | 'email' | 'analysis' | 'spreadsheet';
+// 'frame' — THE FRAMES ARC (Phase 1): a self-contained interactive HTML view. It is an artifact
+// KIND, not a surface (frames plan law 1): it enters at THE ONE PRODUCTION DOOR and every actor
+// that already ships documents can ship one. Its file is .html/text/html — never an office ext.
+export type DeliverableType = 'report' | 'presentation' | 'document' | 'email' | 'analysis' | 'spreadsheet' | 'frame';
 
 export type ArtifactType = 'excel' | 'powerpoint' | 'word' | 'pdf' | 'email_draft';
 
@@ -129,6 +132,10 @@ export interface DocContent {
   title: string;
   subtitle?: string;
   sections: DocSection[];
+  /** THE STRUCTURAL PROVENANCE STAMP (frames plan law 3): rides INSIDE content because content
+   *  is what every caller already persists onto the artifact row — the "✓ computed in code"
+   *  chip renders from THIS, with zero caller edits. Set by the production door only. */
+  provenance?: { computed: boolean };
 }
 
 export interface PptxSlide {

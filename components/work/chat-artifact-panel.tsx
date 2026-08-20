@@ -13,6 +13,7 @@ import {
   EnvelopeIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
+  Squares2X2Icon,
 } from '@heroicons/react/24/outline';
 import {
   DocumentArtifact,
@@ -23,6 +24,7 @@ import {
   QAReport,
 } from '@/lib/types/inbox';
 import { computeVersionedArtifacts, latestVersions, VersionedArtifact } from '@/lib/artifacts/version-utils';
+import { FrameCard } from '@/components/frames/frame-card';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -40,7 +42,8 @@ function ArtifactIcon({ artifact, className }: { artifact: DocumentArtifact; cla
   const ct = contentType(artifact);
   const type = artifact.type;
   const Icon =
-    ct === 'pptx' || type === 'presentation' ? PresentationChartBarIcon
+    type === 'frame' ? Squares2X2Icon
+    : ct === 'pptx' || type === 'presentation' ? PresentationChartBarIcon
     : ct === 'xlsx' || type === 'spreadsheet' ? TableCellsIcon
     : ct === 'email' || type === 'email' ? EnvelopeIcon
     : DocumentTextIcon;
@@ -49,6 +52,7 @@ function ArtifactIcon({ artifact, className }: { artifact: DocumentArtifact; cla
 
 function shortType(artifact: DocumentArtifact): string {
   const ct = contentType(artifact);
+  if (artifact.type === 'frame') return 'Frame';
   if (ct === 'pptx' || artifact.type === 'presentation') return 'Presentation';
   if (ct === 'xlsx' || artifact.type === 'spreadsheet') return 'Spreadsheet';
   if (ct === 'email' || artifact.type === 'email') return 'Email';
@@ -417,7 +421,25 @@ function ArtifactDetailView({ artifact, threadId, allArtifacts, onBack, onClose,
           </button>
         </div>
 
-        {/* Preview content */}
+        {/* Preview content — A FRAME IS NOT PREVIEWED, IT IS RENDERED (frames plan law 2/5):
+            it lives where its work lives, through the ONE renderer, edge-to-edge in this panel. */}
+        {artifact.type === 'frame' && artifact.id ? (
+          <div className="flex-1 min-h-0 flex flex-col">
+            {/* The ADDRESS is one more click from the panel (the Claude idiom): chat card →
+                side panel → full screen. */}
+            <div className="flex items-center justify-end px-4 py-1.5 border-b border-neutral-100 flex-shrink-0">
+              <a
+                href={`/frames/${artifact.id}`}
+                className="text-[11.5px] font-medium text-neutral-400 hover:text-indigo-600 transition-colors"
+              >
+                Full screen →
+              </a>
+            </div>
+            <div className="flex-1 min-h-0">
+              <FrameCard artifactId={artifact.id} title={artifact.title} full />
+            </div>
+          </div>
+        ) : (
         <div className="flex-1 overflow-y-auto px-6 py-6">
           {ct === 'doc' && artifact.content && <DocPreview content={artifact.content as DocContent} />}
           {ct === 'pptx' && artifact.content && <PptxPreview content={artifact.content as PptxContent} />}
@@ -435,6 +457,7 @@ function ArtifactDetailView({ artifact, threadId, allArtifacts, onBack, onClose,
           )}
           {artifact.qa_report && <QAPanel report={artifact.qa_report} />}
         </div>
+        )}
 
       </div>
     </div>

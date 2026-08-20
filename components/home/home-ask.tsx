@@ -667,7 +667,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             // opens the artifact panel HERE; an email draft mounts the SAME editable send card
             // the worker page uses, inline. Only registry renders still point at their page.
             else if (event.type === 'artifact_ready' && event.artifact?.title && event.artifact.id) {
-              cards.push({ label: event.artifact.title, sub: `document · by ${first}`, art: { tid, id: event.artifact.id } }); setCards();
+              // The word matches the kind ONLY when the stream states it — never guessed
+              // (frames plan law 1: a frame is a deliverable KIND). The card's door is the same
+              // artifact panel, which renders a frame through the ONE renderer.
+              cards.push({ label: event.artifact.title, sub: `${event.artifact.type === 'frame' ? 'frame' : 'document'} · by ${first}`, art: { tid, id: event.artifact.id } }); setCards();
               void openArtifact(tid, event.artifact.id);
             }
             else if (event.type === 'artifact' && event.artifact) {

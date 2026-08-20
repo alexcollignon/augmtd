@@ -121,6 +121,10 @@ slack_send          — posts a message to a Slack channel, written from an inst
 Pick ONE home for the deliverable (the app always keeps a record regardless):
 - "message"  → a message in the run thread (quick digests, short conversational updates)
 - "document" → a saved document in Documents/Drive (briefings, reports). Set artifact_type:"document" + a title_template.
+  If the DELIVERABLE ITSELF is something to LOOK INTO rather than read — a dashboard, a live view, a
+  tracker, a board, an interactive report — set artifact_type:"frame" instead (still destination
+  "document"). A frame keeps ONE stable identity and updates with every run. Use it only when the
+  request asks for that kind of deliverable, never for an ordinary written briefing or report.
 - "slack"    → posted to a Slack channel. Set slack_channel (e.g. "#marketing"), or "@me" to DM the user privately. ONLY if Slack is connected.
 - "email"    → emailed.
 
@@ -130,6 +134,7 @@ Examples:
 Recurring briefing → { "destination": "document", "artifact_type": "document", "title_template": "Briefing — {{week_of}}", "report_mode": "each_run" }
 Post to Slack      → { "destination": "slack", "slack_channel": "#marketing", "report_mode": "each_run" }
 Quick digest       → { "destination": "message", "report_mode": "each_run" }
+Live dashboard     → { "destination": "document", "artifact_type": "frame", "title_template": "Pipeline dashboard — {{date}}", "report_mode": "each_run" }
 Document + link in Slack → { "destination": "document", "artifact_type": "document", "title_template": "...", "slack_channel": "#team", "link_out": { "slack": true }, "report_mode": "each_run" }
 
 title_template tokens: {{date}}, {{week_of}}, {{workflow}}

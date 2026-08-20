@@ -3305,10 +3305,14 @@ function OutputEditor({ output, onChange }: { output: OutputConfig; onChange: (o
       {home === 'document' && (
         <>
           <Field label="Document type">
+            {/* THE EXPLICIT FRAME OUTPUT (frames plan, THE FRAME SERIES): configured here, the
+                production door is FORCED to the frame lane — no title-word lottery. One artifact
+                identity per workflow; each run updates it in place and keeps the older versions. */}
             <select value={output.artifact_type ?? 'document'} onChange={e => onChange({ ...output, artifact_type: e.target.value as OutputConfig['artifact_type'] })}
               className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
               <option value="document">Word document</option>
               <option value="email">Email draft</option>
+              <option value="frame">Frame — a live dashboard, updated every run</option>
             </select>
           </Field>
           <label className="flex items-center gap-2.5 cursor-pointer">

@@ -1077,6 +1077,21 @@ async function main() {
       /const personLine = generated\.needs_person_note \?/.test(workerTasksSrc) &&
       /\$\{overlapLine\}\$\{personLine\}/.test(workerTasksSrc), 'personLine not spoken');
     note(`H15 made ${aiCalls} real generation call(s)`);
+
+    // ── H16 — THE SENDER FALLBACK LADDER (owner, Aug 20: a coworker-less workflow's park/nudge
+    // email must speak as the OWNER'S PERSONAL ASSISTANT, never as the generic team@ stranger).
+    // Source floor on the ONE email seam (emailAssignee serves park AND chase alike).
+    console.log('\nH16 — the sender fallback ladder (source floor):');
+    {
+      const src = await (await import('node:fs/promises')).readFile('lib/workflows/handoffs.ts', 'utf8');
+      const seam = src.slice(src.indexOf('async function emailAssignee'), src.indexOf('// ── THE PARK'));
+      ok('H16 the one email seam exists to be gated', seam.length > 0);
+      ok('H16 a missing presenter falls back to the owner\'s personal assistant',
+        /worker_role', 'personal_assistant'/.test(seam), 'the PA fallback left the seam');
+      ok('H16 …resolved before the send, inside the seam (park and chase both ride it)',
+        seam.indexOf("personal_assistant") < seam.indexOf('sendCoworkerEmail(admin, wf.user_id, senderId'),
+        'the fallback no longer feeds the send');
+    }
   } catch (e) {
     fail++;
     console.log(`\n  ✗ SUITE THREW — ${(e as Error).message}\n${(e as Error).stack}`);
