@@ -123,8 +123,11 @@ export async function POST(request: NextRequest) {
               // document ending there (the excerpt-honesty law).
               const body = head ? clipForPrompt(head, 400) : 'No readable text was extracted from this file.';
               const fields = fileDoorFields(filename);
+              // THE MATERIAL LANE: the fired run reads the document itself, not the judge's
+              // 400-char gist — a CV dropped through this door must reach the comparison whole.
               const rx = await checkSourceReactions(adminClient, user.id, 'file', [{
                 id: fileId, title: filename, gist: `${label}\n${body}`, fields,
+                ...(head ? { material: clipForPrompt(head, 8000) } : {}),
               }]);
               if (rx?.fired) console.log(`[reactions] file door fired ${rx.fired} run(s) for ${user.id.slice(0, 8)}`);
             },

@@ -916,6 +916,33 @@ async function main() {
   ok('…and the widened select falls back to legacy-only when the column is absent',
     /if \(wide\.error\) \{[\s\S]{0,400}?\.eq\('trigger->>type', 'reaction'\)/.test(reactionsSrc));
 
+  // ── THE MATERIAL LANE (found live: a mail-fired run knew an application arrived but never saw
+  //    the attached CV; a file-fired run read a 400-char gist of the document it fired on) ───────
+  {
+    ok('THE MATERIAL LANE — the fired run\'s context carries the event\'s fuller text, honestly clipped',
+      /material\?: string;/.test(reactionsSrc)
+      && /\[WHAT IT CARRIED — extracted text:\]\\n\$\{clipForPrompt\(material, 9000\)\}/.test(reactionsSrc));
+    ok('…appended AFTER the head\'s own cap (the 2400 slice can never decapitate the material)',
+      /\\n\$\{item\.gist\}`\.slice\(0, 2400\);/.test(reactionsSrc)
+      && /if \(!material\) return head;/.test(reactionsSrc));
+    {
+      const judgeBody = reactionsSrc.slice(reactionsSrc.indexOf('async function judgeCandidates'));
+      const judgeFn = judgeBody.slice(0, judgeBody.indexOf('\n}\n') + 3);
+      ok('THE JUDGE NEVER READS THE MATERIAL — gist stays its whole (cheap) view',
+        judgeFn.length > 200 && !/\bmaterial\b/.test(judgeFn), judgeFn.slice(0, 80));
+    }
+    ok('the MAIL mapper lifts the sync\'s already-extracted attachment text into the lane (clipped, per file)',
+      /extractedText/.test(reactionsSrc)
+      && /clipForPrompt\(String\(a\.extractedText\), 2600\)/.test(reactionsSrc));
+    ok('…and the judge sees the FACT of the attachments — their names ride the gist',
+      /\[Attached: \$\{attNames\.slice\(0, 8\)\.join\(', '\)\}\]/.test(reactionsSrc));
+    {
+      const confirmSrc = stripComments(readFileSync('app/api/drive/upload/confirm/route.ts', 'utf8'));
+      ok('the FILE seam passes the uploaded document\'s own text as material (clipped, excerpt-marked)',
+        /material: clipForPrompt\(head, 8000\)/.test(confirmSrc));
+    }
+  }
+
   // ══════════════════════════════════════════════════════════════════════════════════════════════
   // ██ W2 — THE INPUTS TRAY + THE MATERIAL DOOR (docs/relay-canvas-plan.md, law 7) ██
   //

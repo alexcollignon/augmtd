@@ -52,6 +52,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { parseModelJSON } from '@/lib/ai/parse-json';
+import { clipForPrompt } from '@/lib/utils/clip-for-prompt';
 import {
   normalizeTriggers, doorFiltersPass,
   type ReactionDoor, type TriggerSourceKey,
@@ -107,6 +108,13 @@ export interface ReactionEvent {
    *  ADDITIVE and OPTIONAL: an absent field FAILS any filter naming it (fail closed, by law), so a
    *  seam that cannot supply a field simply cannot be filtered on it — it never passes by default. */
   fields?: Record<string, string>;
+  /** THE MATERIAL LANE (found live: a mail-fired run knew an application arrived but never saw
+   *  the attached CV — the sync had already extracted its text onto the very row the door read).
+   *  Fuller text for the FIRED RUN'S context only: mail = extracted attachment text, file = the
+   *  document's own extracted text. The judge NEVER reads it — `gist` stays its whole cheap view,
+   *  so a door with material costs the same judgment as one without. Pre-clipped by the seam
+   *  (clipForPrompt — the excerpt-honesty law), capped again at assembly. */
+  material?: string;
 }
 
 /** Mail keeps its historical token so pre-W1 fire records never double-fire. */
@@ -116,11 +124,15 @@ function sourceToken(source: TriggerSourceKey): string {
 
 /** The trigger-context block a fired run carries — every AI step (and the verify gate, for which
  *  this is legitimate source material) sees WHY it is running. */
-function triggerBlock(item: { title: string; from?: string | null; gist: string }): string {
-  return (
+function triggerBlock(item: { title: string; from?: string | null; gist: string; material?: string }): string {
+  const head =
     `[THE TRIGGERING EVENT — this run fired because this arrived:]\n` +
-    `${item.title}${item.from ? `\nFrom: ${item.from}` : ''}\n${item.gist}`.slice(0, 2400)
-  );
+    `${item.title}${item.from ? `\nFrom: ${item.from}` : ''}\n${item.gist}`.slice(0, 2400);
+  // THE MATERIAL LANE: the event's fuller text (attachments / the uploaded document) joins the
+  // fired run's context AFTER the head's own cap — the head slice must never decapitate it.
+  const material = (item.material ?? '').trim();
+  if (!material) return head;
+  return `${head}\n\n[WHAT IT CARRIED — extracted text:]\n${clipForPrompt(material, 9000)}`;
 }
 
 type DoorWf = { id: string; name: string; doors: ReactionDoor[] };
@@ -199,12 +211,28 @@ export async function checkReactions(
         if (fromAddress) fields.from_address = fromAddress;
         if (fromName) fields.from_name = fromName;
         if (subject) fields.subject = subject;
+        // THE MATERIAL LANE: the sync already downloaded + text-extracted this mail's attachments
+        // onto this very row (source_data.attachments[].extractedText) — the door carries them to
+        // the fired run instead of leaving a CV unread beside a 500-char gist. The judge sees only
+        // the attachment NAMES (in the gist — the fact of a CV, not its text: cheap and sufficient
+        // for "is this an application"-class conditions).
+        const atts = (Array.isArray(sd.attachments) ? sd.attachments : []) as Array<{
+          filename?: string; extractedText?: string | null;
+        }>;
+        const attNames = atts.map((a) => String(a.filename ?? '').trim()).filter(Boolean);
+        const material = atts
+          .filter((a) => (a.extractedText ?? '').trim())
+          .slice(0, 4)
+          .map((a) => `--- ${String(a.filename ?? 'attachment')} ---\n${clipForPrompt(String(a.extractedText), 2600)}`)
+          .join('\n');
         return {
           id: String(it.id),
           title: String(it.work_title ?? sd.subject ?? 'Email').slice(0, 120),
           from: fromName || fromAddress || null,
-          gist: String(sd.snippet ?? sd.body_preview ?? sd.body ?? '').replace(/\s+/g, ' ').slice(0, 500),
+          gist: String(sd.snippet ?? sd.body_preview ?? sd.body ?? '').replace(/\s+/g, ' ').slice(0, 500)
+            + (attNames.length ? `\n[Attached: ${attNames.slice(0, 8).join(', ')}]` : ''),
           fields,
+          ...(material ? { material } : {}),
         };
       });
     if (!items.length) return { considered: 0, fired: 0, deferred: 0 };
