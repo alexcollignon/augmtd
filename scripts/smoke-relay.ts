@@ -28,6 +28,10 @@
 // and the documented degradation (silent no-op, legacy-mail-only) is asserted natively. Every
 // section prints which mode it ran in.
 //
+// W5 (its own banner at the tail): DF the filter algebra (pure) · DL the live door · DS the source
+// floors. Plus the W5 RE-POINTS: readiness rule 5 now names BOTH remedies ("a condition or a
+// filter"), and rule 8's station is "file it under its record".
+//
 // W3 (its own banner further down): SP the subprocess station · RL René's loop.
 // W3b (THE THROTTLE, NEVER A SHREDDER): TL the clamp + the store · TD live deferral · TR the drain
 // and its atomic claim · TB the drain/backstop partition · TS the serving + parity floors.
@@ -50,7 +54,9 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { resolveProbeUser } from './probe-user';
 import {
   TRIGGER_SOURCES, normalizeTriggers, doorsForServing, doorLabel, triggerSource,
-  isTriggerSourceKey, type ReactionDoor,
+  isTriggerSourceKey, filterFieldsFor, parseFilter, filterPasses, doorFiltersPass,
+  addressDomain, describeFilters, FILTER_OP_LABEL,
+  type ReactionDoor, type DoorFilter,
 } from '../lib/workflows/trigger-sources';
 import { authorDoors, matchWorkflowByName, doorsForStorage, doorNote, describeDoors } from '../lib/workflows/author-doors';
 import { readinessOf, READINESS_REASON_MAX } from '../lib/workflows/readiness';
@@ -66,6 +72,32 @@ const ok = (name: string, cond: boolean, detail?: string) => {
 const stripComments = (s: string) => s.split('\n')
   .filter((l) => { const t = l.trim(); return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*'); })
   .join('\n');
+
+/** Brace-match the block that OPENS at `start` (from the first `{` at or after it). */
+function blockFrom(src: string, start: number): { body: string; end: number } | null {
+  let depth = 0;
+  const open = src.indexOf('{', start);
+  if (open < 0) return null;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') { depth--; if (depth === 0) return { body: src.slice(start, i), end: i }; }
+  }
+  return null;
+}
+
+/** THE ROBUST WINDOW (the W5 repair of two drifted floors): the TIGHTEST block opened by `opener`
+ *  that ENCLOSES `needle`. A char-offset window (`src.slice(at - 900, at)`) stops asserting the
+ *  moment a line is added between the opener and the seam — silently, still green. Two of this
+ *  suite's own upload-confirm floors decayed exactly that way. A brace match cannot drift: it is
+ *  anchored to the code's own structure, not to a distance. */
+function enclosingBlock(src: string, opener: RegExp, needle: string): { body: string; end: number } | null {
+  let best: { body: string; end: number } | null = null;
+  for (const m of src.matchAll(opener)) {
+    const b = blockFrom(src, m.index!);
+    if (b && b.body.includes(needle) && (!best || b.body.length < best.body.length)) best = b;
+  }
+  return best;
+}
 
 const feats = (over: Partial<WorkspaceFeatures> = {}): WorkspaceFeatures =>
   ({ email: true, meetings: true, drive: true, agents: true, studio: true, home: true, ...over });
@@ -347,13 +379,34 @@ async function main() {
   // ══════════════════════════════════════════════════════════════════════════════════════════════
   console.log('\nR — READINESS: THE DOORS (rule 5; mode: pure):');
   const steps = [{ type: 'ai', label: 'Write it' }];
-  ok('a JUDGED door with a blank `when` → the pinned legacy sentence',
-    reasonOf(readinessOf({ status: 'active', steps, triggers: [{ source: 'file', when: '  ' }] }, feats()))
-      === 'The trigger needs an event to react to.',
+  // W5 RE-POINT — rule 5's remedy is now BOTH remedies: a door fires on a judged condition OR on a
+  // deterministic filter, so a door with NEITHER is the only unready one, and the sentence says so.
+  const RULE5 = 'The trigger needs a condition or a filter to react to.';
+  ok('a JUDGED door with NEITHER a condition NOR a filter → the pinned W5 sentence',
+    reasonOf(readinessOf({ status: 'active', steps, triggers: [{ source: 'file', when: '  ' }] }, feats())) === RULE5,
     String(reasonOf(readinessOf({ status: 'active', steps, triggers: [{ source: 'file' }] }, feats()))));
   ok('…the legacy reaction trigger reaches the SAME sentence through the fold (one rule, both shapes)',
-    reasonOf(readinessOf({ status: 'active', steps, trigger: { type: 'reaction', when: '' } }, feats()))
-      === 'The trigger needs an event to react to.');
+    reasonOf(readinessOf({ status: 'active', steps, trigger: { type: 'reaction', when: '' } }, feats())) === RULE5);
+  ok('…and it fits the ledger row\'s budget', RULE5.length <= READINESS_REASON_MAX);
+  ok('THE FIREABILITY HALF (W5) — a FILTERS-ONLY door with a blank `when` is READY',
+    readinessOf({
+      status: 'active', steps,
+      triggers: [{ source: 'mail', filters: [{ field: 'from_address', op: 'domain_is', value: 'acme.test' }] }],
+    }, feats()).ready === true,
+    String(reasonOf(readinessOf({
+      status: 'active', steps,
+      triggers: [{ source: 'mail', filters: [{ field: 'from_address', op: 'domain_is', value: 'acme.test' }] }],
+    }, feats()))));
+  ok('…a JUDGED condition AND a filter together are ready (the two combine, they never conflict)',
+    readinessOf({
+      status: 'active', steps,
+      triggers: [{ source: 'mail', when: 'it is a job application', filters: [{ field: 'subject', op: 'contains', value: 'application' }] }],
+    }, feats()).ready === true);
+  ok('…but a filter THE REGISTRY REFUSES cannot make a blank door ready (the drop widens, rule 5 speaks)',
+    reasonOf(readinessOf({
+      status: 'active', steps,
+      triggers: [{ source: 'mail', filters: [{ field: 'attachment_count', op: 'is', value: '2' }] }],
+    }, feats())) === RULE5);
   ok('a WORKFLOW door with nothing bound → its own sentence',
     reasonOf(readinessOf({ status: 'active', steps, triggers: [{ source: 'workflow' }] }, feats()))
       === "The 'when another workflow delivers' door needs a workflow.",
@@ -820,18 +873,29 @@ async function main() {
       /id: runId,\s*sourceId: workflow\.id,/.test(guarded));
   }
   {
+    // ⚠️ REPAIRED IN W5 — these two floors used 900-char windows around the seam and had drifted:
+    // the file grew between the `try {` / `after(` opener and the call, so the windows no longer
+    // reached them and the gates asserted nothing. They now brace-match the ENCLOSING block, which
+    // no amount of code between opener and seam can break.
     const seam = (src: string, name: string, needle: string) => {
       const at = src.indexOf(needle);
-      const before = src.slice(Math.max(0, at - 900), at);
-      const afterTxt = src.slice(at, at + 900);
-      ok(`${name}: the seam is host-safe (try/catch around the call)`,
-        at > -1 && before.lastIndexOf('try {') > before.lastIndexOf('function ') && /catch/.test(afterTxt), `at ${at}`);
+      const t = enclosingBlock(src, /try \{/g, needle);
+      // THE TRY MUST BE THE CALL'S OWN. A route-level try wrapping an `after()` callback catches
+      // NOTHING the callback throws — it has already returned. So the innermost enclosing try must
+      // reach the call DIRECTLY: no deferred-execution boundary may sit between them.
+      const direct = !!t && !/after\(/.test(t.body.slice(0, t.body.indexOf(needle)));
+      ok(`${name}: the seam is host-safe (its OWN try/catch, inside the callback that runs it)`,
+        at > -1 && !!t && direct && /^\s*catch\b/.test(src.slice(t!.end + 1)),
+        at < 0 ? 'seam not found'
+          : !t ? 'no try block encloses the seam'
+          : !direct ? 'the only enclosing try is outside the deferred callback' : 'the enclosing try has no catch');
     };
     seam(driveConfirm, 'upload confirm', "checkSourceReactions(adminClient, user.id, 'file'");
     seam(botManager, 'meeting completion', "checkSourceReactions(supabase, userId, 'meeting'");
     seam(runWfCode, 'run success tail', "checkSourceReactions(admin, workflow.user_id, 'workflow'");
     ok('upload confirm defers the door to after() (the upload never waits on a reaction)',
-      /after\(async \(\) => \{[\s\S]{0,900}?checkSourceReactions\(adminClient, user\.id, 'file'/.test(driveConfirm));
+      !!enclosingBlock(driveConfirm, /after\(async \(\) => \{/g, "checkSourceReactions(adminClient, user.id, 'file'"),
+      'the file seam is not inside an after() callback');
     ok('meeting completion prefers after() and falls back to inline when there is no request scope',
       /after\(fire\);/.test(botManager) && /catch \{[\s\S]{0,200}?await fire\(\);/.test(botManager));
     ok('every seam is NON-FATAL by contract (checkSourceReactions itself swallows and logs)',
@@ -1203,7 +1267,10 @@ async function main() {
       ok('…and only when the tray actually has docs (a never-configured workflow builds nothing)',
         /if \(inputs\?\.docs\.length\) \{/.test(runWfCode));
       ok('IT JOINS THE projectGrounding CHANNEL — the system-prompt append, not previousOutputs',
-        /const aiContext = \[projectGrounding, inputsBlock\]\.filter\(Boolean\)\.join\('\\n\\n'\) \|\| null;/.test(runWfCode)
+        // W4 RE-POINT (declared): the binding became `let` so the CASE STATION can APPEND its
+        // grounding to the same channel mid-run. The law is unchanged — one channel, a
+        // system-prompt append, never previousOutputs — so the assembly is asserted, not the keyword.
+        /(?:const|let) aiContext = \[projectGrounding, inputsBlock\]\.filter\(Boolean\)\.join\('\\n\\n'\) \|\| null;/.test(runWfCode)
         && /projectGrounding: aiContext,/.test(runWfCode));
       ok('…and previousOutputs still carries ONLY the step outputs (the tray can never be middle-cut away)',
         /previousOutputs: stepOutputs,/.test(runWfCode) && !/previousOutputs: \[[^\]]*inputsBlock/.test(runWfCode)
@@ -2512,6 +2579,1061 @@ async function main() {
       (leftWf ?? []).length === 0 && (leftRuns ?? []).length === 0 && (leftFires ?? []).length === 0
       && (leftLimits ?? []).length === 0 && (leftLinks ?? []).length === 0,
       `${(leftWf ?? []).length}/${(leftRuns ?? []).length}/${(leftFires ?? []).length}/${(leftLimits ?? []).length}/${(leftLinks ?? []).length}`);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  // ██ W4 — THE CASE LAYER (docs/relay-canvas-plan.md "W4", THE DECIDING LAW: A CASE IS AN
+  //         ENTITY — no second registry, no `cases` table, no migration) ██
+  //
+  //   CA  THE RESOLVE LADDER, LIVE — real runs on the probe host: the first event FOUNDS an
+  //       UNTRACKED entity + the workflow's own index row + the run stamp + the atom's link; the
+  //       second event on the same opening takes the DETERMINISTIC path (no second entity, no
+  //       second AI call); a different opening founds a second case; a case-less event founds
+  //       NOTHING and says so; TEST MODE matches but never populates the registry; a filing the
+  //       one brain already made is NEVER overwritten; and — the wave's payoff — THE GROUNDING
+  //       SWAP carries the case's accumulated page into the ai step that follows.
+  //   CS  THE SOURCE + PURE FLOORS — THE PINNING LAW at the founding writer, one generic-word
+  //       idiom, the classification-tier judge with its key-bound-to-instruction rule, the atom
+  //       token map, the engine-side station, THE ADDITIVE swap (scope + tray + case) and its one
+  //       inherited gate exclusion, readiness rule 8 beside untouched rules 1–7, the subject
+  //       ladder as a live table, the chip's ternary, Studio's block and its ordinary seat, and
+  //       generate-config's catalogue entry + ONE-case sanitation feeding ONE needs_step_note.
+  //
+  // W1's, W2's and W3's sections above are untouched — a wave adds its floor, it never edits the
+  // previous wave's.
+  //
+  // AI BUDGET: five completions in total (CA1 · CA3 · CA4 · CA5b · CA7's ai step). Every other
+  // live gate here is structurally zero-AI — which is exactly what CA2 asserts.
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  const {
+    resolveCaseForRun, deterministicCaseMatch, distinctiveTokens, readCaseIndex,
+    atomForRun: atomForRunW4, CASE_INDEX_KIND, RUN_CASE_KIND,
+  } = await import('../lib/workflows/case-step');
+  const { runWorkflow: runW4 } = await import('../lib/workflows/run-workflow');
+  const { deriveProcessRows: deriveRowsW4 } = await import('../lib/workflows/process-state');
+  const { entityRunGrounding } = await import('../lib/workflows/entity-edge');
+  const { namesOverlap } = await import('../lib/entities/recognize');
+
+  const CPFX = `Probe relay W4 ${stamp}`;
+  const c4WfIds: string[] = [];
+  const c4EntityIds: string[] = [];
+  const c4Atoms: string[] = [];
+  const c4RunIds: string[] = [];
+  const c4Start = new Date(Date.now() - 10_000).toISOString();
+  /** The ONLY honest proof a payload travelled a seam: a word reachable through one door alone. */
+  const CASE_WORD = 'VERDANTMILL';
+  const CASE_INSTRUCTION = 'the job opening named in the application';
+
+  type C4Out = { step_id: string; step_type: string; label: string; output: unknown; error?: string };
+  type C4Run = {
+    id: string; workflow_id: string; status: string; error: string | null;
+    step_outputs: C4Out[] | null; triggered_by: string | null;
+    started_at: string | null; completed_at: string | null; created_at: string;
+  };
+
+  try {
+    const mkW4 = async (name: string, steps: unknown[]): Promise<string | null> => {
+      const { data, error } = await admin.from('workflows').insert({
+        user_id: userId, name, status: 'active', trigger: { type: 'manual' }, steps,
+        output_config: { destination: 'message' },
+      }).select('id').single();
+      const id = (data as { id: string } | null)?.id ?? null;
+      if (!id) { console.log(`  ✗ W4 fixture "${name}" failed — ${error?.message}`); fail++; }
+      else c4WfIds.push(id);
+      return id;
+    };
+    const caseStep = (id: string, instruction = CASE_INSTRUCTION) =>
+      ({ id, type: 'case', label: 'File it under its record', case_instruction: instruction });
+
+    /** A run driven the way the dispatcher drives one: the row exists first, so the fire record can
+     *  be keyed by it — that record IS the only seam through which a run learns what arrived. */
+    const mkRun = async (
+      wfId: string, context: string, opts?: { atomId?: string; token?: string; isTest?: boolean },
+    ) => {
+      let runId: string | undefined;
+      if (opts?.atomId) {
+        const { data } = await admin.from('workflow_runs').insert({
+          workflow_id: wfId, user_id: userId, status: 'queued', triggered_by: 'event',
+        }).select('id').single();
+        runId = (data as { id: string } | null)?.id;
+        await admin.from('item_plans').insert({
+          user_id: userId, kind: 'reaction_fire',
+          entity_id: `${wfId}:${opts.token ?? 'inbox'}:${opts.atomId}`,
+          tasks: { runId, context, firedAt: new Date().toISOString() },
+        });
+        c4Atoms.push(opts.atomId);
+      }
+      const res = await runW4({
+        workflowId: wfId,
+        triggerSource: opts?.atomId ? 'event' : 'manual',
+        triggerContext: context,
+        ...(runId ? { runId } : {}),
+        ...(opts?.isTest ? { isTest: true } : {}),
+      });
+      c4RunIds.push(res.runId);
+      // Whatever this run FOUNDED is a real row in the user's own registry — track it the moment it
+      // exists, so the sweep at the bottom can never leave a case behind.
+      const { data: st } = await admin.from('item_plans').select('tasks')
+        .eq('user_id', userId).eq('kind', RUN_CASE_KIND).eq('entity_id', res.runId).maybeSingle();
+      const founded = (st as { tasks: { entityId?: string } } | null)?.tasks?.entityId;
+      if (founded && !c4EntityIds.includes(founded)) c4EntityIds.push(founded);
+      return res;
+    };
+
+    const runRow = async (id: string): Promise<C4Run | null> => {
+      const { data } = await admin.from('workflow_runs')
+        .select('id, workflow_id, status, error, step_outputs, triggered_by, started_at, completed_at, created_at')
+        .eq('id', id).maybeSingle();
+      return (data as C4Run | null) ?? null;
+    };
+    const outAt = (r: C4Run | null, i: number) => {
+      const o = (r?.step_outputs ?? [])[i];
+      return typeof o?.output === 'string' ? o.output : JSON.stringify(o?.output ?? '');
+    };
+    const stampOf = async (runId: string) => {
+      const { data } = await admin.from('item_plans').select('tasks')
+        .eq('user_id', userId).eq('kind', RUN_CASE_KIND).eq('entity_id', runId).maybeSingle();
+      return (data as { tasks: { entityId?: string; name?: string } } | null)?.tasks ?? null;
+    };
+    const entityRow = async (id: string) => {
+      const { data } = await admin.from('work_entities')
+        .select('id, kind, name, summary, tracked, status, embedding').eq('id', id).maybeSingle();
+      return (data as { id: string; kind: string; name: string; summary: string | null; tracked: boolean; status: string; embedding: unknown } | null) ?? null;
+    };
+    const linkOf = async (atomId: string) => {
+      const { data } = await admin.from('entity_links').select('entity_id, item_kind, via, reason')
+        .eq('user_id', userId).eq('item_id', atomId).maybeSingle();
+      return (data as { entity_id: string | null; item_kind: string; via: string; reason: string | null } | null) ?? null;
+    };
+    const entitiesNamed = async (name: string) => {
+      const { data } = await admin.from('work_entities').select('id').eq('user_id', userId).eq('name', name);
+      return ((data ?? []) as Array<{ id: string }>).length;
+    };
+
+    // ── The material. Fake names only (Northwind / Fernbrook / Bramley; Jordan Vale, Ashwin Rao). ──
+    const APP_1 = [
+      'A new application arrived.',
+      'Application — Senior Data Analyst, Northwind Logistics',
+      '',
+      'Candidate: Jordan Vale.',
+      'Applying for the Senior Data Analyst opening at Northwind Logistics.',
+      'Five years in analytics; available from October.',
+    ].join('\n');
+
+    const wfCase = await mkW4(`${CPFX} filing`, [caseStep('c1')]);
+
+    // ── CA1 ───────────────────────────────────────────────────────────────────────────────────
+    console.log('\nCA1 — THE FIRST EVENT FOUNDS ITS CASE (mode: LIVE, one classification call):');
+    let caseId = '';
+    let caseName = '';
+    let ca1RunId = '';
+    if (wfCase) {
+      const atom1 = randomUUID();
+      const res = await mkRun(wfCase, APP_1, { atomId: atom1 });
+      ca1RunId = res.runId;
+      const row = await runRow(res.runId);
+      const stamp1 = await stampOf(res.runId);
+      caseId = String(stamp1?.entityId ?? '');
+      caseName = String(stamp1?.name ?? '');
+      if (caseId) c4EntityIds.push(caseId);
+      const ent = caseId ? await entityRow(caseId) : null;
+
+      ok('THE RUN WEARS ITS CASE — a durable `run_case` stamp keyed by the run id',
+        !!caseId && !!caseName, JSON.stringify(stamp1));
+      ok('THE CASE IS AN ENTITY — kind `initiative` in the one registry (no second store)',
+        ent?.kind === 'initiative' && ent?.status === 'active', JSON.stringify({ k: ent?.kind, s: ent?.status }));
+      ok('THE PINNING LAW HOLDS — a machine-founded case is UNTRACKED (tracking stays human)',
+        ent?.tracked === false, String(ent?.tracked));
+      ok('…and it is EMBEDDED, so the one brain can recall it like any other body of work',
+        Array.isArray(ent?.embedding) && (ent?.embedding as unknown[]).length > 0,
+        Array.isArray(ent?.embedding) ? `${(ent?.embedding as unknown[]).length}d` : 'none');
+      ok('…its summary names the workflow that opened it (provenance, not a bare label)',
+        String(ent?.summary ?? '').includes(`${CPFX} filing`), String(ent?.summary ?? '').slice(0, 80));
+      ok('THE KEY IS THE MATERIAL\'S OWN WORDS — the opened name is stated by the event itself',
+        deterministicCaseMatch(APP_1, [{ entityId: caseId, caseName }]) !== null, caseName);
+
+      const idx = wfCase ? await readCaseIndex(admin, userId, wfCase) : [];
+      ok('THE INDEX ROW lands at `${workflowId}:${entityId}` — the workflow\'s own case list',
+        idx.length === 1 && idx[0].entityId === caseId && idx[0].caseName === caseName,
+        JSON.stringify(idx));
+      const { data: idxRaw } = await admin.from('item_plans').select('entity_id, tasks')
+        .eq('user_id', userId).eq('kind', CASE_INDEX_KIND).eq('entity_id', `${wfCase}:${caseId}`).maybeSingle();
+      ok('…stored under the house storeless precedent (item_plans kind `workflow_case`, openedAt)',
+        !!idxRaw && !!(idxRaw as { tasks: { openedAt?: string } }).tasks?.openedAt, JSON.stringify(idxRaw));
+
+      const link1 = await linkOf(atom1);
+      ok('THE ATOM JOINS THE CASE\'S ROOM through the door every other atom uses (`workflow_case`)',
+        link1?.entity_id === caseId && link1?.item_kind === 'inbox_item' && link1?.via === 'workflow_case',
+        JSON.stringify(link1));
+      ok('THE CARD SPEAKS THE OPENING and what the case now holds',
+        outAt(row, 0).startsWith(`Opened a new case: ${caseName} — `)
+        && outAt(row, 0).includes('The case now holds 1 linked item.'), outAt(row, 0).slice(0, 140));
+      ok('…and the run itself succeeded (a station files; it never becomes the deliverable\'s gate)',
+        row?.status === 'succeeded', `${row?.status}/${row?.error ?? ''}`);
+    }
+
+    // ── CA2 ───────────────────────────────────────────────────────────────────────────────────
+    console.log('\nCA2 — THE SECOND EVENT TAKES THE DETERMINISTIC PATH (mode: pure + LIVE, zero AI):');
+    let ca2RunId = '';
+    if (wfCase && caseId) {
+      // The pure half: the pre-pass IS the zero-AI proof — it is a total function of its inputs.
+      const idxOne = [{ entityId: caseId, caseName }];
+      const second = `Second application for the ${caseName} opening. Candidate: Ashwin Rao.`;
+      ok('THE PRE-PASS matches a case whose EVERY distinctive token the event states',
+        deterministicCaseMatch(second, idxOne)?.entityId === caseId);
+      ok('…word-bounded, never a bare `includes` (a substring is not a name)',
+        deterministicCaseMatch('Northwindy Logisticsland analysts', [{ entityId: 'x', caseName: 'Northwind Logistics' }]) === null);
+      ok('…AMBIGUITY IS NOT A MATCH — two indexed cases both stated falls through to the judge',
+        deterministicCaseMatch('Acme Foundry and Bramley Freight both replied', [
+          { entityId: 'a', caseName: 'Acme Foundry' }, { entityId: 'b', caseName: 'Bramley Freight' },
+        ]) === null);
+      ok('…and an ALL-GENERIC case name can never match on its own (the one-brain idiom)',
+        deterministicCaseMatch('the project review for the new program', [{ entityId: 'g', caseName: 'The Project Review' }]) === null);
+
+      // The live half: the same opening, a SECOND time — one entity, one index row, two items.
+      const before = await entitiesNamed(caseName);
+      const res2 = await mkRun(wfCase, second);
+      ca2RunId = res2.runId;
+      const row2 = await runRow(res2.runId);
+      const stamp2 = await stampOf(res2.runId);
+      ok('LIVE: the second event resolves to THE SAME CASE (match-first is the default posture)',
+        stamp2?.entityId === caseId, JSON.stringify(stamp2));
+      ok('…and NO second entity was founded under that name (dedupe, not accumulation)',
+        (await entitiesNamed(caseName)) === before, `${before} → ${await entitiesNamed(caseName)}`);
+      ok('…the workflow\'s index still holds exactly ONE row for it',
+        (await readCaseIndex(admin, userId, wfCase)).filter((c) => c.entityId === caseId).length === 1);
+      ok('THE MANUAL ARRIVAL IS HONEST — no atom means no filing is implied',
+        outAt(row2, 0).includes('This one arrived as material, so there is nothing to file.'),
+        outAt(row2, 0).slice(0, 160));
+      ok('…and the card never claims an opening it did not perform',
+        !outAt(row2, 0).startsWith('Opened a new case'), outAt(row2, 0).slice(0, 60));
+    }
+
+    // ── CA3 ───────────────────────────────────────────────────────────────────────────────────
+    console.log('\nCA3 — A DIFFERENT OPENING FOUNDS A SECOND CASE (mode: LIVE, one classification call):');
+    if (wfCase) {
+      const APP_2 = [
+        'A new application arrived.',
+        'Application — Warehouse Shift Lead, Fernbrook Foods',
+        '',
+        'Candidate: Ashwin Rao.',
+        'Applying for the Warehouse Shift Lead opening at Fernbrook Foods.',
+      ].join('\n');
+      const res3 = await mkRun(wfCase, APP_2, { atomId: randomUUID() });
+      const stamp3 = await stampOf(res3.runId);
+      const secondId = String(stamp3?.entityId ?? '');
+      if (secondId) c4EntityIds.push(secondId);
+      ok('a case the index does not hold is OPENED, not forced onto a neighbour',
+        !!secondId && secondId !== caseId, `${secondId} vs ${caseId}`);
+      ok('…and it, too, is UNTRACKED', (await entityRow(secondId))?.tracked === false);
+      const idx = await readCaseIndex(admin, userId, wfCase);
+      ok('THE INDEX NOW HOLDS 2 — the workflow\'s own case list, one read',
+        idx.length === 2 && new Set(idx.map((c) => c.entityId)).size === 2, JSON.stringify(idx.map((c) => c.caseName)));
+      ok('…and the two cases never crossed (each event states only its own)',
+        deterministicCaseMatch(APP_2, idx)?.entityId === secondId);
+    }
+
+    // ── CA4 ───────────────────────────────────────────────────────────────────────────────────
+    console.log('\nCA4 — NO CASE NAMED: NOTHING IS FOUNDED, AND IT SAYS SO (mode: LIVE, one call):');
+    let ca4RunId = '';
+    if (wfCase) {
+      const NOTHING = [
+        'Building services notice.',
+        'Lobby lighting replacement',
+        '',
+        'The lobby lights will be replaced on Tuesday evening. No action is needed from anyone.',
+      ].join('\n');
+      const idxBefore = (await readCaseIndex(admin, userId, wfCase)).length;
+      const res4 = await mkRun(wfCase, NOTHING);
+      ca4RunId = res4.runId;
+      const row4 = await runRow(res4.runId);
+      ok('THE NONE-CARD IS THE PINNED SENTENCE, verbatim',
+        outAt(row4, 0) === 'No case named in this material — continuing without one.', outAt(row4, 0));
+      ok('…nothing was founded (the index is exactly as it was)',
+        (await readCaseIndex(admin, userId, wfCase)).length === idxBefore);
+      ok('…nothing was stamped (a case-less run wears no case)', (await stampOf(res4.runId)) === null);
+      ok('…and the run PROCEEDS on the workflow\'s static scope — an unresolvable event parks NOTHING',
+        row4?.status === 'succeeded', `${row4?.status}/${row4?.error ?? ''}`);
+    }
+
+    // ── CA5 ───────────────────────────────────────────────────────────────────────────────────
+    console.log('\nCA5 — TEST MODE MATCHES BUT FOUNDS NOTHING (mode: LIVE; (a) zero AI, (b) one call):');
+    if (wfCase && caseId) {
+      const atomT = randomUUID();
+      const resT = await mkRun(wfCase, `Another application for the ${caseName} opening.`,
+        { atomId: atomT, isTest: true });
+      const rowT = await runRow(resT.runId);
+      ok('(a) a MATCHED case in test mode still says it opened nothing',
+        outAt(rowT, 0).includes('[test mode — no case opened]'), outAt(rowT, 0).slice(0, 160));
+      ok('…no run stamp was written (a simulation never populates the registry)',
+        (await stampOf(resT.runId)) === null);
+      ok('…and the triggering atom was NOT filed', (await linkOf(atomT)) === null);
+
+      const idxBefore = (await readCaseIndex(admin, userId, wfCase)).length;
+      const NEW_KEY = [
+        'A new application arrived.',
+        'Application — Night Dispatch Coordinator, Bramley Freight',
+        '',
+        'Candidate: Jordan Vale, applying for the Night Dispatch Coordinator opening at Bramley Freight.',
+      ].join('\n');
+      const resU = await mkRun(wfCase, NEW_KEY, { isTest: true });
+      const rowU = await runRow(resU.runId);
+      ok('(b) an UNMATCHED key in test mode is reported, never opened',
+        /doesn't match an open case yet\./.test(outAt(rowU, 0))
+        && outAt(rowU, 0).includes('[test mode — no case opened]'), outAt(rowU, 0).slice(0, 160));
+      const { data: bramley } = await admin.from('work_entities').select('id')
+        .eq('user_id', userId).ilike('name', '%Bramley%');
+      ok('…and NO entity was founded for it (the registry is untouched by a simulation)',
+        ((bramley ?? []) as unknown[]).length === 0, String(((bramley ?? []) as unknown[]).length));
+      ok('…the index did not grow', (await readCaseIndex(admin, userId, wfCase)).length === idxBefore);
+      ok('…and the test run still SUCCEEDED (a simulation must not park)',
+        rowU?.status === 'succeeded', `${rowU?.status}/${rowU?.error ?? ''}`);
+    }
+
+    // ── CA6 ───────────────────────────────────────────────────────────────────────────────────
+    console.log('\nCA6 — NEVER AN OVERWRITE: an atom the one brain already filed keeps ITS link (mode: LIVE, zero AI):');
+    if (wfCase && caseId) {
+      const { data: decoyRow } = await admin.from('work_entities').insert({
+        user_id: userId, kind: 'initiative', name: `${CPFX} prior body of work`,
+        summary: 'Filed here by the one brain before any workflow saw it.',
+      }).select('id').single();
+      const decoyId = (decoyRow as { id: string } | null)?.id ?? '';
+      if (decoyId) c4EntityIds.push(decoyId);
+      const atomC = randomUUID();
+      await admin.from('entity_links').insert({
+        user_id: userId, entity_id: decoyId, item_kind: 'inbox_item', item_id: atomC,
+        via: 'recognized', reason: 'the one brain filed it first',
+      });
+      const resC = await mkRun(wfCase, `A further note on the ${caseName} opening.`, { atomId: atomC });
+      const rowC = await runRow(resC.runId);
+      const linkC = await linkOf(atomC);
+      ok('THE ORIGINAL LINK STANDS — the case layer only ever fills an EMPTY slot',
+        linkC?.entity_id === decoyId && linkC?.via === 'recognized', JSON.stringify(linkC));
+      ok('…and the card says so rather than implying a filing that never happened',
+        outAt(rowC, 0).includes('It was already filed elsewhere, so its own link stands.'),
+        outAt(rowC, 0).slice(0, 200));
+      ok('…while the run still WEARS the case it resolved (a refused filing is not a lost case)',
+        (await stampOf(resC.runId))?.entityId === caseId);
+    }
+
+    // ── CA7 ───────────────────────────────────────────────────────────────────────────────────
+    console.log('\nCA7 — THE GROUNDING SWAP: the next step reads the CASE\'S accumulated page (mode: LIVE, one ai call):');
+    if (caseId) {
+      // The code word lives ONLY on the case entity — nothing in the run's own material carries it,
+      // so an ai step that speaks it can only have read the case's page.
+      await admin.from('work_entities')
+        .update({ summary: `Filing reference CASEWORD-${CASE_WORD}. Screening in progress for this opening.` })
+        .eq('id', caseId);
+      const block = await entityRunGrounding(admin, userId, caseId, caseName);
+      ok('the case block IS the one grounding, headed as the case this run belongs to',
+        !!block && block.startsWith(`[THE CASE THIS RUN BELONGS TO — "${caseName}"`) && block.includes(CASE_WORD),
+        String(block ?? '').slice(0, 90));
+
+      const wf7 = await mkW4(`${CPFX} compare`, [
+        caseStep('c1'),
+        {
+          id: 'a1', type: 'ai', label: 'Read the case', model_tier: 'fast',
+          prompt: 'The context you were given includes a filing reference that begins with CASEWORD-. '
+            + 'Reply with ONLY that reference, exactly as written, and nothing else. '
+            + 'If there is no such reference, reply NONE.',
+        },
+      ]);
+      if (wf7) {
+        // THE INDEX IS PER-WORKFLOW (v1, and deliberately so — the ENTITY is global, so two
+        // workflows naming the same opening converge through recognition, not through a shared
+        // list). Asserted, then the second workflow is given its own row for the SAME case —
+        // exactly the state it would be in after opening it once itself.
+        ok('THE INDEX IS PER-WORKFLOW — a second workflow does not inherit the first\'s case list',
+          (await readCaseIndex(admin, userId, wf7)).length === 0
+          && (await readCaseIndex(admin, userId, wfCase!)).length === 2);
+        await admin.from('item_plans').insert({
+          user_id: userId, kind: CASE_INDEX_KIND, entity_id: `${wf7}:${caseId}`,
+          tasks: { caseName, openedAt: new Date().toISOString() },
+        });
+        const ctx7 = [
+          'A new application arrived.',
+          `Application — ${caseName}`,
+          '',
+          `Candidate: Priya Raman, applying for the ${caseName} opening.`,
+        ].join('\n');
+        ok('THE NEGATIVE CONTROL — the run\'s own material carries no trace of the code word',
+          !ctx7.includes(CASE_WORD));
+        const res7 = await mkRun(wf7, ctx7);
+        const row7 = await runRow(res7.runId);
+        ok('the case station resolved before the ai step (order is the payoff\'s precondition)',
+          (row7?.step_outputs ?? [])[0]?.step_type === 'case'
+          && (await stampOf(res7.runId))?.entityId === caseId,
+          JSON.stringify((row7?.step_outputs ?? []).map((o) => o.step_type)));
+        ok('…and the case card itself never carries the word either',
+          !outAt(row7, 0).includes(CASE_WORD), outAt(row7, 0).slice(0, 100));
+        ok('THE PAYOFF: the ai step SPEAKS the case\'s accumulated page — reachable through no other door',
+          outAt(row7, 1).includes(CASE_WORD), outAt(row7, 1).slice(0, 120));
+      }
+    }
+
+    // ── CS ────────────────────────────────────────────────────────────────────────────────────
+    console.log('\nCS — THE FOUNDING WRITER, THE IDIOM, THE JUDGE, THE SEAM (mode: source + LIVE):');
+    const caseSrc = stripComments(readFileSync('lib/workflows/case-step.ts', 'utf8'));
+    const recogSrc = stripComments(readFileSync('lib/entities/recognize.ts', 'utf8'));
+    const runSrc = stripComments(readFileSync('lib/workflows/run-workflow.ts', 'utf8'));
+    const execSrc = stripComments(readFileSync('lib/workflows/execute-step.ts', 'utf8'));
+    const readySrc = stripComments(readFileSync('lib/workflows/readiness.ts', 'utf8'));
+    const stateSrcW4 = stripComments(readFileSync('lib/workflows/process-state.ts', 'utf8'));
+    const studioW4 = stripComments(readFileSync('components/work/studio-builder.tsx', 'utf8'));
+    const detailW4 = readFileSync('components/workflows/workflow-detail.tsx', 'utf8');
+    const genW4 = stripComments(readFileSync('lib/workflows/generate-config.ts', 'utf8'));
+    const cardW4 = stripComments(readFileSync('components/workflows/workflow-draft-card.tsx', 'utf8'));
+    /** The founding INSERT itself — never a neighbouring select of the same table. */
+    const foundingSlice = (src: string) => {
+      const m = /from\('work_entities'\)\s*\n?\s*\.insert\(\{/.exec(src);
+      return m ? src.slice(m.index, m.index + 450) : '';
+    };
+    ok('THE PINNING LAW IS STRUCTURAL — the word `tracked` appears NOWHERE in the case writer',
+      !/tracked/.test(caseSrc));
+    ok('…and the founding insert MIRRORS recognition\'s own (kind initiative · summary · embedding · last_event_at)',
+      /kind: 'initiative'/.test(foundingSlice(caseSrc)) && /last_event_at/.test(foundingSlice(caseSrc))
+      && /kind: 'initiative'/.test(foundingSlice(recogSrc)) && /last_event_at/.test(foundingSlice(recogSrc))
+      && !/tracked/.test(foundingSlice(recogSrc)),
+      foundingSlice(caseSrc).slice(0, 60));
+    ok('ONE IDIOM — the generic-word list is IMPORTED from the one brain, never re-declared here',
+      /import \{ GENERIC_WORK_WORDS, entityEmbedText \} from '@\/lib\/entities\/recognize'/.test(caseSrc)
+      && !/GENERIC_WORK_WORDS = new Set/.test(caseSrc));
+    ok('…and the pre-pass drops exactly what the named-subject veto drops (same two filters)',
+      distinctiveTokens('The New Project Review').length === 0
+      && namesOverlap('The New Project Review', 'anything at all') === true
+      && distinctiveTokens('Northwind Logistics').join(',') === 'northwind,logistics');
+    ok('THE RESOLVE IS ONE CHEAP CALL — classification tier, temperature 0, capped tokens',
+      /getAIClient\(userId, 'classification', admin\)/.test(caseSrc)
+      && /temperature: 0,/.test(caseSrc) && /max_tokens: 200,/.test(caseSrc));
+    ok('THE KEY IS BOUND TO THE INSTRUCTION — an incidental token may never stand as a case',
+      /THE KEY MUST BE AN INSTANCE OF WHAT THE USER /.test(caseSrc)
+      && /never an incidental token that happens to be present/.test(caseSrc)
+      && /WHAT IDENTIFIES A CASE HERE: \$\{String\(instruction/.test(caseSrc));
+    ok('…and an AI FAILURE IS NEVER A CASE (no fabricated key, no throw)',
+      /return \{ match: null, caseKey: null \};/.test(caseSrc));
+    ok('THE ATOM MAP — mail keeps its HISTORICAL `inbox` token; the rest are registry kinds',
+      /inbox: 'inbox_item',/.test(caseSrc) && /meeting: 'meeting',/.test(caseSrc)
+      && /file: 'knowledge_file',/.test(caseSrc));
+    ok('…and the seam is the fire record, found by `tasks->>runId`',
+      /\.eq\('kind', 'reaction_fire'\)\.eq\('tasks->>runId', runId\)/.test(caseSrc));
+    // THE GROUNDING SEES WHAT THE FILING WROTE (found by the demo assembly): the room grounding
+    // reads documents off knowledge_files.entity_id, and its entity_links read covers only inbox
+    // items and commitments — so a filed FILE must also wear the case's stamp or it accumulates
+    // invisibly (the link exists; no later run's comparison can see the filed CV). Fill-if-empty
+    // only — the same never-overwrite posture as the link itself and ingest's upload stamp.
+    ok('A FILED FILE IS A VISIBLE FILE — the link writer stamps knowledge_files.entity_id',
+      /itemKind === 'knowledge_file'/.test(caseSrc)
+      && /from\('knowledge_files'\)\.update\(\{ entity_id: entityId \}\)/.test(caseSrc));
+    ok('…and the stamp is FILL-IF-EMPTY, never an overwrite (`.is(\'entity_id\', null)`)',
+      (() => {
+        const m = /from\('knowledge_files'\)\.update\(\{ entity_id: entityId \}\)/.exec(caseSrc);
+        return !!m && /\.is\('entity_id', null\)/.test(caseSrc.slice(m.index, m.index + 220));
+      })());
+    {
+      // LIVE (zero AI): the map on real fire records — mail files, a `workflow` door does not.
+      const probeRun = randomUUID();
+      const probeAtom = randomUUID();
+      await admin.from('item_plans').insert([
+        {
+          user_id: userId, kind: 'reaction_fire',
+          entity_id: `${wfCase}:inbox:${probeAtom}`, tasks: { runId: probeRun },
+        },
+        {
+          user_id: userId, kind: 'reaction_fire',
+          entity_id: `${wfCase}:workflow:${randomUUID()}`, tasks: { runId: `${probeRun}-b` },
+        },
+      ]);
+      const mail = await atomForRunW4(admin, userId, probeRun);
+      const child = await atomForRunW4(admin, userId, `${probeRun}-b`);
+      ok('LIVE: a mail fire yields the inbox item it carried',
+        mail?.itemKind === 'inbox_item' && mail?.itemId === probeAtom, JSON.stringify(mail));
+      ok('LIVE: a `workflow` door carries no filable atom — no link, said honestly, never invented',
+        child === null, JSON.stringify(child));
+      ok('LIVE: a run with no fire record at all resolves to nothing',
+        (await atomForRunW4(admin, userId, randomUUID())) === null);
+    }
+    ok('THE STATION IS ENGINE-SIDE — execute-step holds only the pass-through literal',
+      /case 'case': output = '\[Case station — handled by the run loop\]'; break;/.test(execSrc)
+      && !/resolveCaseForRun/.test(execSrc));
+    ok('…and the run loop owns it (the ⧉ station\'s precedent: it needs the stores)',
+      /if \(\(step as \{ type\?: string \}\)\.type === 'case'\)/.test(runSrc)
+      && /const \{ resolveCaseForRun \} = await import\('\.\/case-step'\);/.test(runSrc));
+    ok('…NON-FATAL EVERYWHERE — a resolve that throws outputs the honest card and the run proceeds',
+      /catch \(e\) \{\s*console\.error\('\[run-workflow\] case step failed \(non-fatal\):', e\);/.test(runSrc)
+      && /let cardText = 'The case step could not run — continuing without one\.';/.test(runSrc));
+    ok('TEST MODE IS DECIDED AT THE CALL SITE — matchOnly rides isTest, never a second rule',
+      /matchOnly: Boolean\(opts\.isTest\),/.test(runSrc));
+    ok('THE SWAP IS ADDITIVE — scope + tray are assembled first, the case APPENDS to them',
+      /let aiContext = \[projectGrounding, inputsBlock\]\.filter\(Boolean\)\.join\('\\n\\n'\) \|\| null;/.test(runSrc)
+      && /aiContext = \[aiContext, caseBlock\]\.filter\(Boolean\)\.join\('\\n\\n'\);/.test(runSrc));
+    ok('…and it rides the ONE system-prompt channel, inheriting that channel\'s single exclusion',
+      /projectGrounding: aiContext,/.test(runSrc)
+      && /if \(ctx\.projectGrounding && step\.use_worker_identity !== false\) \{/.test(execSrc));
+
+    console.log('\nCS — READINESS RULE 8, BESIDE UNTOUCHED RULES 1–7 (mode: pure):');
+    {
+      const RULE8 = "The 'file it under its record' step needs to know what identifies a case.";
+      const withCase = (instruction: string, extra: unknown[] = []) => ({
+        id: 'wf-self', status: 'active',
+        steps: [{ id: 'c1', type: 'case', label: 'File it under its record', case_instruction: instruction }, ...extra],
+      });
+      ok('RULE 8 — a blank instruction speaks the pinned sentence, verbatim',
+        reasonOf(readinessOf(withCase('   '), feats())) === RULE8, String(reasonOf(readinessOf(withCase('   '), feats()))));
+      ok('…and a missing field is the same absence (never a silent ready)',
+        reasonOf(readinessOf({ id: 'w', status: 'active', steps: [{ id: 'c1', type: 'case', label: 'File it under its record' }] }, feats())) === RULE8);
+      ok('…a stated instruction is READY', readinessOf(withCase(CASE_INSTRUCTION), feats()).ready === true);
+      ok('…the sentence fits the ledger row\'s budget', RULE8.length <= READINESS_REASON_MAX);
+      ok('ORDER IS SEVERITY — a draft still speaks FIRST (rule 2 outranks rule 8)',
+        reasonOf(readinessOf({ ...withCase(''), status: 'draft' }, feats())) === 'Still a draft — finish it in Studio.');
+      ok('rules 1–7 answer EXACTLY as before with a case step in the pipeline',
+        reasonOf(readinessOf({ id: 'w', status: 'active', steps: [] }, feats())) === 'No steps yet — build it in Studio.'
+        && reasonOf(readinessOf(withCase(CASE_INSTRUCTION, [{ id: 'h', type: 'handoff', label: 'Wait' }]), feats()))
+          === "The 'Wait on a person' step needs a person."
+        && reasonOf(readinessOf(withCase(CASE_INSTRUCTION, [{ id: 'p', type: 'workflow', label: 'Run it' }]), feats()))
+          === "The 'Run it' process step needs a workflow."
+        && reasonOf(readinessOf(withCase(CASE_INSTRUCTION, [{ id: 'p', type: 'workflow', label: 'Me', workflow_id: 'wf-self' }]), feats()))
+          === "A workflow can't include itself as a step.");
+      ok('…and the rule lives in THE ONE TABLE (one entry, nothing else moved)',
+        /=> typeOf\(s\) === 'case' && !String\(\(s\.case_instruction as string \| undefined\) \?\? ''\)\.trim\(\),/.test(readySrc)
+        && (readySrc.match(/const RULES: Rule\[\] = \[/g) ?? []).length === 1);
+    }
+
+    console.log('\nCS — THE SUBJECT LADDER + THE CHIP (mode: LIVE derivation, zero AI):');
+    if (wfCase && ca1RunId && ca2RunId && ca4RunId) {
+      const rows = [await runRow(ca1RunId), await runRow(ca2RunId), await runRow(ca4RunId)]
+        .filter(Boolean) as C4Run[];
+      const derived = await deriveRowsW4(admin, userId, rows as never,
+        new Map([[wfCase, { name: `${CPFX} filing`, steps: [caseStep('c1')] }]]) as never);
+      const byRun = new Map(derived.map((d) => [d.runId, d]));
+      const r1 = byRun.get(ca1RunId); const r2 = byRun.get(ca2RunId); const r4 = byRun.get(ca4RunId);
+      ok('RUNG 1 — a fired run keeps its EVENT\'S OWN TITLE (the case never speaks over what arrived)',
+        r1?.subject === 'Application — Senior Data Analyst, Northwind Logistics', String(r1?.subject));
+      ok('…while still WEARING the case it resolved (the subject and the chip are different claims)',
+        r1?.caseRef?.entityId === caseId && r1?.caseRef?.name === caseName, JSON.stringify(r1?.caseRef));
+      ok('RUNG 3 — a run with no event title wears THE CASE, not the workflow\'s static name',
+        r2?.subject === caseName && r2?.caseRef?.entityId === caseId, String(r2?.subject));
+      ok('RUNG 4 — a case-less run falls all the way back to the workflow name',
+        r4?.subject === `${CPFX} filing` && !r4?.caseRef, `${r4?.subject} / ${JSON.stringify(r4?.caseRef)}`);
+      ok('THE STAMP IS READ, NEVER RE-REASONED — one batched read of `run_case`, keyed by run id',
+        /\.eq\('kind', 'run_case'\)\s*\n?\s*\.in\('entity_id', runs\.map\(\(r\) => r\.id\)\)/.test(stateSrcW4)
+        && !/resolveCaseForRun/.test(stateSrcW4));
+      ok('…and the ladder\'s ORDER is the documented one (event → artifact → case → workflow)',
+        (() => {
+          const i = stateSrcW4.indexOf('const subject =');
+          const rung = (s: string) => stateSrcW4.indexOf(s, i);
+          return i > 0
+            && rung('subjectByRun.get(r.id)') < rung('threadArtifactTitle?.get(r.id)')
+            && rung('threadArtifactTitle?.get(r.id)') < rung('?? caseRef?.name')
+            && rung('?? caseRef?.name') < rung('?? wfName;');
+        })());
+      ok('…the case rides the row ONLY when there is one (an absent case is an absent field)',
+        /\.\.\.\(caseRef \? \{ caseRef \} : \{\}\),/.test(stateSrcW4));
+      ok('THE CHIP\'S TERNARY — the case outranks the static scope, and \'Internal\' is still the floor',
+        /\{p\.caseRef\?\.name \?\? scope\?\.entityName \?\? 'Internal'\}/.test(detailW4));
+    }
+
+    console.log('\nCS — STUDIO: the case block, born blank, ordinary to the gate (mode: source):');
+    ok('the picker offers the station as a first-class block',
+      /\{ type: 'case' as const, Icon: ArrowsRightLeftIcon,\s*label: 'File it under its record',\s*disabled: false \}/.test(studioW4));
+    ok('…and a NEW one is BORN BLANK on purpose (readiness rule 8 speaks until the author says)',
+      /step = \{ id, type: 'case', label: 'File it under its record', case_instruction: '' \} as CaseStepDraft;/.test(studioW4));
+    ok('the rail renders a COMPOUND case block for it (not a step card, not a pill)',
+      /step\.type === 'case' \? \(\s*<CaseFlowBlock/.test(studioW4));
+    ok('…which wears the AMBER HINT IDIOM while blank (law 4 — an unfinished station never reads finished)',
+      /'border-amber-200 hover:border-amber-300 shadow-sm'/.test(studioW4)
+      && /what identifies a case\? e\.g\./.test(studioW4));
+    ok('…and the panel MIRRORS readiness rule 8\'s own sentence, where it can be fixed',
+      /The &lsquo;file it under its record&rsquo; step needs to know what identifies a case\./.test(studioW4));
+    ok('ONE DECISION AND NO MORE — the panel edits the instruction and nothing else',
+      /onChange=\{e => onUpdate\(\{ case_instruction: e\.target\.value \}\)\}/.test(studioW4)
+      && (studioW4.match(/onUpdate\(\{ case_instruction/g) ?? []).length === 1);
+    {
+      const gateBody = studioW4.slice(studioW4.indexOf('function seatGate('));
+      const seat = gateBody.slice(0, gateBody.indexOf('\nfunction '));
+      const moveBody = studioW4.slice(studioW4.indexOf('const moveStep = useCallback('));
+      const move = moveBody.slice(0, moveBody.indexOf('\n  }, ['));
+      ok('THE CASE STATION IS ORDINARY TO THE GATE — seatGate still moves the verify step and nothing else',
+        !seat.includes("'case'") && /verify/.test(seat));
+      ok('…and reordering treats it like any other step (only verify is pinned)',
+        !move.includes("'case'") && /w\.steps\[idx\]\.type === 'verify'/.test(move));
+    }
+
+    console.log('\nCS — GENERATE-CONFIG: one case, never born unready, ONE note channel (mode: source):');
+    ok('THE CATALOGUE ENTRY teaches the shape AND when NOT to emit it',
+      /\{ "type": "case", "id": "step_002", "label": "File it under its record", "case_instruction": "the job opening named in the application" \}/.test(genW4)
+      && /At most ONE per workflow\./.test(genW4)
+      && /A plain one-shot pipeline — a digest,\na briefing, a report — NEVER gets one\./.test(genW4));
+    ok('…and the instruction is the REQUEST\'S OWN WORDS, never a field name or an id',
+      /"case_instruction" is WHAT IDENTIFIES A CASE, in the request's own words — never a field name,/.test(genW4));
+    ok('A BLANK INSTRUCTION IS DROPPED — a draft is never BORN unready',
+      /if \(!instruction\) \{\s*stepNotes\.push\('I left out the step that files each event under its own case/.test(genW4));
+    ok('ONE CASE PER WORKFLOW — the first is kept, the rest are refused OUT LOUD',
+      /if \(seatedCase\) \{\s*stepNotes\.push\('A run carries one thing, so it files under one case/.test(genW4)
+      && /seatedCase = true;\s*kept\.push\(\{ \.\.\.s, case_instruction: instruction \}\);/.test(genW4));
+    ok('…and the survivor carries the TRIMMED instruction (a whitespace key is not a key)',
+      /const instruction = typeof s\.case_instruction === 'string' \? s\.case_instruction\.trim\(\) : '';/.test(genW4));
+    ok('THE COLLECTOR IS ONE CHANNEL — case + ⧉ refusals join into ONE needs_step_note',
+      /const stepNotes: string\[\] = \[\];/.test(genW4)
+      && (genW4.match(/const stepNotes: string\[\] = \[\];/g) ?? []).length === 1
+      && /const needsStepNote: string \| null = stepNote\(stepNotes\);/.test(genW4)
+      && /needs_step_note: needsStepNote,/.test(genW4));
+    ok('…declared before the ⧉ stations push into it (one list, two kinds of refusal)',
+      genW4.indexOf('const stepNotes: string[] = [];') < genW4.indexOf('stepNotes.push(...authored.notes);'));
+    ok('THE DRAFT CARD\'S CASE WORD says what it files BY, in the author\'s own words',
+      /if \(s\.type === 'case'\) \{/.test(cardW4)
+      && /return head \? `File each under its record — \$\{head\}` : 'File each under its record';/.test(cardW4));
+  } finally {
+    // ── ZERO LEFTOVERS: workflows · runs · threads · index rows · stamps · fires · links · CASES ──
+    for (const id of c4WfIds) {
+      await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', CASE_INDEX_KIND).like('entity_id', `${id}:%`);
+      await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', 'reaction_fire').like('entity_id', `${id}:%`);
+      await admin.from('work_threads').delete().eq('workflow_id', id);
+      await admin.from('workflow_runs').delete().eq('workflow_id', id);
+      await admin.from('workflows').delete().eq('id', id);
+    }
+    for (const rid of c4RunIds) {
+      await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', RUN_CASE_KIND).eq('entity_id', rid);
+    }
+    for (const a of c4Atoms) await admin.from('entity_links').delete().eq('user_id', userId).eq('item_id', a);
+    for (const e of c4EntityIds) {
+      await admin.from('entity_links').delete().eq('user_id', userId).eq('entity_id', e);
+      await admin.from('work_entities').delete().eq('id', e);
+    }
+    const { data: leftWf } = await admin.from('workflows').select('id').eq('user_id', userId).like('name', `${CPFX}%`);
+    const { data: leftRuns } = await admin.from('workflow_runs').select('id')
+      .in('workflow_id', c4WfIds.length ? c4WfIds : ['00000000-0000-0000-0000-000000000000']);
+    const { data: leftIdx } = await admin.from('item_plans').select('id')
+      .eq('user_id', userId).eq('kind', CASE_INDEX_KIND).gte('created_at', c4Start);
+    const { data: leftStamps } = await admin.from('item_plans').select('id')
+      .eq('user_id', userId).eq('kind', RUN_CASE_KIND).gte('created_at', c4Start);
+    const { data: leftFires } = await admin.from('item_plans').select('id')
+      .eq('user_id', userId).eq('kind', 'reaction_fire').gte('created_at', c4Start);
+    const { data: leftLinks } = await admin.from('entity_links').select('item_id')
+      .eq('user_id', userId).gte('created_at', c4Start);
+    // THE ONE THAT MATTERS MOST: a case is a REAL ENTITY in the user's own registry — a suite that
+    // founds one and leaves it has polluted the one brain, not a fixture table.
+    const { data: leftCases } = await admin.from('work_entities').select('id, name')
+      .eq('user_id', userId).gte('created_at', c4Start);
+    ok('W4 probe leftovers are ZERO (workflows · runs · index rows · stamps · fires · links · CASES)',
+      (leftWf ?? []).length === 0 && (leftRuns ?? []).length === 0 && (leftIdx ?? []).length === 0
+      && (leftStamps ?? []).length === 0 && (leftFires ?? []).length === 0
+      && (leftLinks ?? []).length === 0 && (leftCases ?? []).length === 0,
+      `${(leftWf ?? []).length}/${(leftRuns ?? []).length}/${(leftIdx ?? []).length}/${(leftStamps ?? []).length}/`
+      + `${(leftFires ?? []).length}/${(leftLinks ?? []).length}/${(leftCases ?? []).length}`
+      + ` ${JSON.stringify((leftCases ?? []).map((c) => (c as { name: string }).name))}`);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  // ██ W5 — THE DOOR FILTERS (docs/relay-canvas-plan.md) ██
+  //
+  //   DF THE ALGEBRA (pure) — the op table (`is` is EXACT, never a substring · `contains` ·
+  //      `domain_is` with the display-name strip, the LAST `@` and a tolerated leading `@`),
+  //      FAIL CLOSED (a field the event does not carry fails ITS filter — a filter that cannot be
+  //      answered must never silently pass), AND semantics, no-filters-passes, parseFilter drops
+  //      THE FILTER and never the door, `workflow` offers nothing to filter on, filters are part of
+  //      a door's IDENTITY (dedupe), and a filters-only door SAYS its filters.
+  //   DL THE LIVE DOOR (probe, ≤2 AI calls) — a filters-only door fires DETERMINISTICALLY with the
+  //      ENGINE's own reason (no judge in the path), a filtered-out event is considered and leaves
+  //      NOTHING behind, the filters gate BEFORE the judge (the filtered-out event cannot have been
+  //      seen by it), and a missing field fails closed on real rows.
+  //   DS THE SOURCE FLOORS — the gate sits before the judge IN CODE, the mail builder reads the
+  //      REAL address (never the display name), fireability is when-OR-filters at every reader,
+  //      Studio renders fields from the registry and says a lone op as a WORD, both authoring doors
+  //      are taught the same vocabulary from ONE place, and the W4 rename is complete.
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  console.log('\nDF — THE FILTER ALGEBRA (pure; mode: pure):');
+  {
+    const F = (field: string, op: DoorFilter['op'], value: string): DoorFilter => ({ field, op, value });
+
+    ok('`is` is EXACT, never a substring (a filter that matches too much is the wrong-fire this exists to stop)',
+      filterPasses(F('from_address', 'is', 'careers@acme.test'), 'careers@acme.test')
+      && filterPasses(F('from_address', 'is', 'CAREERS@Acme.Test'), '  careers@acme.test ')
+      && !filterPasses(F('from_address', 'is', 'acme.test'), 'careers@acme.test')
+      && !filterPasses(F('ext', 'is', 'pdf'), 'pdfx'));
+    ok('`contains` is a case-insensitive substring, both sides trimmed',
+      filterPasses(F('subject', 'contains', 'Application'), 'Re: my application for the role')
+      && !filterPasses(F('subject', 'contains', 'invoice'), 'Re: my application'));
+    ok('`domain_is` strips a display name and reads what follows the LAST `@`',
+      filterPasses(F('from_address', 'domain_is', 'acme.test'), 'Acme Careers <careers@acme.test>')
+      && filterPasses(F('from_address', 'domain_is', 'acme.test'), 'careers@acme.test')
+      && filterPasses(F('from_address', 'domain_is', 'acme.test'), 'odd@name@acme.test'));
+    ok('…a leading `@` in the user\'s value means the same domain (both spellings are one intent)',
+      filterPasses(F('from_address', 'domain_is', '@acme.test'), 'careers@acme.test')
+      && !filterPasses(F('from_address', 'domain_is', 'acme.test'), 'careers@other.test'));
+    ok('…and a value with NO domain at all never matches (addressDomain is honest about \'\')',
+      addressDomain('Acme Careers') === '' && addressDomain('Acme <careers@acme.test>') === 'acme.test'
+      && !filterPasses(F('from_address', 'domain_is', 'acme.test'), 'Acme Careers'));
+    ok('FAIL CLOSED — an ABSENT or BLANK field fails its filter (never a permissive default)',
+      !filterPasses(F('from_address', 'domain_is', 'acme.test'), undefined)
+      && !filterPasses(F('from_address', 'domain_is', 'acme.test'), null)
+      && !filterPasses(F('subject', 'contains', 'x'), '   '));
+    ok('…and the GATE fails closed on the same absence (the door never opens on a field it can\'t read)',
+      doorFiltersPass({ filters: [F('from_address', 'domain_is', 'acme.test')] }, { fields: { subject: 'hello' } }) === false
+      && doorFiltersPass({ filters: [F('from_address', 'domain_is', 'acme.test')] }, { fields: null }) === false
+      && doorFiltersPass({ filters: [F('from_address', 'domain_is', 'acme.test')] }, null) === false);
+    ok('AND SEMANTICS — every filter must pass; one miss closes the door',
+      doorFiltersPass(
+        { filters: [F('from_address', 'domain_is', 'acme.test'), F('subject', 'contains', 'application')] },
+        { fields: { from_address: 'careers@acme.test', subject: 'My application' } }) === true
+      && doorFiltersPass(
+        { filters: [F('from_address', 'domain_is', 'acme.test'), F('subject', 'contains', 'invoice')] },
+        { fields: { from_address: 'careers@acme.test', subject: 'My application' } }) === false);
+    ok('NO FILTERS = PASS — a door without filters is exactly the door it was before W5',
+      doorFiltersPass({}, { fields: {} }) === true
+      && doorFiltersPass({ filters: [] }, null) === true
+      && doorFiltersPass(null, null) === true);
+
+    ok('parseFilter validates against THE SOURCE\'S OWN registry row (law 3)',
+      JSON.stringify(parseFilter('mail', { field: 'from_address', op: 'domain_is', value: ' acme.test ' }))
+        === JSON.stringify({ field: 'from_address', op: 'domain_is', value: 'acme.test' }));
+    ok('…an UNKNOWN field, an op the field doesn\'t offer, or a BLANK value is dropped, never repaired',
+      parseFilter('mail', { field: 'attachment_count', op: 'is', value: '2' }) === null
+      && parseFilter('mail', { field: 'subject', op: 'is', value: 'x' }) === null       // subject offers `contains` only
+      && parseFilter('mail', { field: 'from_address', op: 'contains', value: 'x' }) === null
+      && parseFilter('mail', { field: 'from_address', op: 'is', value: '   ' }) === null
+      && parseFilter('mail', 'nonsense') === null);
+    ok('…and a field of ANOTHER source is unknown here (fields never leak across the registry)',
+      parseFilter('mail', { field: 'filename', op: 'contains', value: 'CV' }) === null
+      && parseFilter('file', { field: 'subject', op: 'contains', value: 'x' }) === null
+      && !!parseFilter('file', { field: 'filename', op: 'contains', value: 'CV' }));
+    ok('THE `workflow` SOURCE OFFERS NOTHING TO FILTER ON (it matches by bound id)',
+      filterFieldsFor('workflow').length === 0
+      && parseFilter('workflow', { field: 'from_address', op: 'is', value: 'x' }) === null);
+    ok('…and every OTHER registry row DOES offer fields, each with at least one op',
+      TRIGGER_SOURCES.filter((s) => s.needsWhen).every(
+        (s) => (s.filterFields ?? []).length > 0 && (s.filterFields ?? []).every((f) => !!f.key && !!f.label && f.ops.length > 0)),
+      JSON.stringify(TRIGGER_SOURCES.map((s) => [s.key, (s.filterFields ?? []).length])));
+
+    {
+      const n = normalizeTriggers({
+        triggers: [{
+          source: 'mail', when: 'it is a job application',
+          filters: [
+            { field: 'from_address', op: 'domain_is', value: 'acme.test' },
+            { field: 'attachment_count', op: 'is', value: '2' },   // unknown field
+            { field: 'subject', op: 'is', value: 'x' },            // op the field doesn't offer
+          ],
+        }],
+      });
+      ok('A BAD FILTER DROPS THE FILTER, NEVER THE DOOR (a dropped narrowing widens; a dropped door loses work)',
+        n.doors.length === 1 && (n.doors[0].filters ?? []).length === 1
+        && n.doors[0].filters![0].field === 'from_address' && n.doors[0].when === 'it is a job application',
+        JSON.stringify(n.doors));
+    }
+    {
+      const n = normalizeTriggers({ triggers: [{ source: 'workflow', workflow_id: 'wf-a', filters: [{ field: 'from_address', op: 'is', value: 'x' }] }] });
+      ok('…and a filter on a source with no fields simply doesn\'t ride (the binding is untouched)',
+        n.doors.length === 1 && n.doors[0].filters === undefined && n.doors[0].workflow_id === 'wf-a', JSON.stringify(n.doors));
+    }
+    {
+      const n = normalizeTriggers({
+        triggers: [
+          { source: 'mail', when: 'a tender lands', filters: [{ field: 'from_address', op: 'domain_is', value: 'acme.test' }] },
+          { source: 'mail', when: 'a tender lands', filters: [{ field: 'from_address', op: 'domain_is', value: 'other.test' }] },
+          { source: 'mail', when: 'a tender lands' },
+        ],
+      });
+      ok('FILTERS ARE PART OF A DOOR\'S IDENTITY — same condition, different filters = THREE doors (folding would delete one)',
+        n.doors.length === 3, JSON.stringify(n.doors.map((d) => d.filters ?? null)));
+    }
+    {
+      const n = normalizeTriggers({
+        triggers: [
+          { source: 'mail', when: 'x', filters: [{ field: 'subject', op: 'contains', value: 'A' }, { field: 'from_address', op: 'domain_is', value: 'acme.test' }] },
+          { source: 'mail', when: 'x', filters: [{ field: 'from_address', op: 'domain_is', value: 'ACME.TEST' }, { field: 'subject', op: 'contains', value: 'a' }] },
+        ],
+      });
+      ok('…but the identity is ORDER- AND CASE-INSENSITIVE (the same door authored twice reads as one)',
+        n.doors.length === 1, JSON.stringify(n.doors));
+    }
+    ok('a duplicate filter inside ONE door is folded, and the list is capped at 6',
+      (normalizeTriggers({ triggers: [{ source: 'mail', filters: [
+        { field: 'subject', op: 'contains', value: 'a' }, { field: 'subject', op: 'contains', value: 'A' },
+      ] }] }).doors[0].filters ?? []).length === 1
+      && (normalizeTriggers({ triggers: [{ source: 'meeting', filters:
+        Array.from({ length: 9 }, (_, i) => ({ field: 'title', op: 'contains', value: `w${i}` })) }] }).doors[0].filters ?? []).length === 6);
+
+    ok('describeFilters speaks the REGISTRY\'S OWN WORDS (label + the one op vocabulary)',
+      describeFilters({ source: 'mail', filters: [F('from_address', 'domain_is', 'acme.test'), F('subject', 'contains', 'application')] })
+        === 'Sender domain is acme.test · Subject contains application'
+      && describeFilters({ source: 'mail' }) === ''
+      && Object.values(FILTER_OP_LABEL).join('|') === 'is|contains|domain is');
+    ok('THE CHIP GRAMMAR — an authored label WINS (a label is the user\'s own words, and they outrank ours)',
+      doorLabel({ type: 'reaction', source: 'mail', label: 'Applications', filters: [F('subject', 'contains', 'application')] }) === 'Applications');
+    ok('…and a FILTERS-ONLY door reads its filters, never a bare source key',
+      doorLabel({ type: 'reaction', source: 'mail', filters: [F('from_address', 'domain_is', 'acme.test')] })
+        === 'An email arrives · Sender domain is acme.test',
+      doorLabel({ type: 'reaction', source: 'mail', filters: [F('from_address', 'domain_is', 'acme.test')] }));
+    ok('…a JUDGED door still leads with its condition, and describeDoors adds what it narrowed to',
+      doorLabel({ type: 'reaction', source: 'mail', when: 'it is a job application', filters: [F('subject', 'contains', 'application')] })
+        === 'When it is a job application'
+      && describeDoors([{ type: 'reaction', source: 'mail', when: 'it is a job application', filters: [F('subject', 'contains', 'application')] }])
+        === 'When it is a job application (Subject contains application)');
+    {
+      const served = doorsForServing({ triggers: [
+        { source: 'mail', filters: [{ field: 'from_address', op: 'domain_is', value: 'acme.test' }] },
+        { source: 'mail', when: 'a tender lands' },
+      ] });
+      ok('SERVING is ADDITIVE — `filters` rides only where a door has them (a plain door serves exactly as before)',
+        served.length === 2 && (served[0].filters ?? []).length === 1 && served[1].filters === undefined,
+        JSON.stringify(served));
+    }
+  }
+
+  // ── DL — THE LIVE DOOR ──────────────────────────────────────────────────────────────────────
+  const DPFX = `Probe relay filters ${stamp}`;
+  const dIds: string[] = [];
+  const dKeys: string[] = [];
+  const dLimits: string[] = [];
+  const dStart = new Date(stamp - 60_000).toISOString();
+  try {
+    const mkDoorWf = async (name: string, doors: ReactionDoor[]) => {
+      const { data, error } = await admin.from('workflows').insert({
+        user_id: userId, name, status: 'active', trigger: { type: 'manual' }, steps: [],
+        ...(HAS_COLUMN ? { triggers: doors } : {}),
+      }).select('id').single();
+      const id = (data as { id: string } | null)?.id ?? null;
+      if (!id) { console.log(`  ✗ W5 fixture "${name}" failed — ${error?.message}`); fail++; }
+      else dIds.push(id);
+      return id;
+    };
+    /** THE FIXTURE'S CLIENT: live where the additive column exists, the documented Proxy where it
+     *  does not — the engine under test is the real engine either way (the W1 pattern). */
+    const clientFor = (id: string | null, doors: ReactionDoor[]): SupabaseClient => (HAS_COLUMN ? admin : doorProxy(admin, (cols) => ({
+      data: WIDE(cols) ? [{ id, name: 'fixture', trigger: { type: 'manual' }, triggers: doors }] : [],
+      error: null,
+    })));
+    /** Seat the fixture AT its throttle: a matched event is then RECORDED and QUEUED but never
+     *  STARTED, so the door's decision is asserted from its own fire record and no probe workflow
+     *  ever runs a pipeline. (W3b: the limit paces, it never loses — deferral is still a match.) */
+    const atLimit = async (wfId: string) => {
+      dLimits.push(wfId);
+      await admin.from('item_plans').insert({ user_id: userId, kind: 'workflow_limit', entity_id: wfId, tasks: { dailyFires: 1 } });
+      const key = `${wfId}:seed:${stamp}`;
+      dKeys.push(key);
+      await admin.from('item_plans').insert({
+        user_id: userId, kind: 'reaction_fire', entity_id: key,
+        tasks: { runId: null, reason: 'throttle seed', startedAt: new Date().toISOString() },
+      });
+    };
+    const fireRecord = async (wfId: string, eventId: string) => {
+      const { data } = await admin.from('item_plans').select('tasks')
+        .eq('user_id', userId).eq('kind', 'reaction_fire').eq('entity_id', `${wfId}:inbox:${eventId}`).maybeSingle();
+      return (data as { tasks?: { reason?: string } } | null)?.tasks ?? null;
+    };
+
+    // ── THE DETERMINISTIC DOOR: filters, no `when`. Zero AI is in its path. ────────────────────
+    {
+      const doors: ReactionDoor[] = [{
+        type: 'reaction', source: 'mail',
+        filters: [{ field: 'from_address', op: 'domain_is', value: 'acme.test' }],
+      }];
+      const wfDet = await mkDoorWf(`${DPFX} deterministic`, doors);
+      const client = clientFor(wfDet, doors);
+      console.log(`\nDL — THE DETERMINISTIC DOOR (filters, no condition) [mode: ${HAS_COLUMN ? 'live (stored triggers)' : 'fixture-proxy'}]:`);
+      if (wfDet) {
+        await atLimit(wfDet);
+        const evHit = randomUUID(), evWrong = randomUUID(), evBlind = randomUUID();
+        dKeys.push(`${wfDet}:inbox:${evHit}`, `${wfDet}:inbox:${evWrong}`, `${wfDet}:inbox:${evBlind}`);
+
+        const rHit = await checkSourceReactions(client, userId, 'mail', [{
+          id: evHit, title: 'Probe application', gist: 'a probe fixture event',
+          fields: { from_address: 'careers@acme.test', from_name: 'Acme Careers', subject: 'Probe application' },
+        }]);
+        ok('a matching event OPENS the door with no judge in the path',
+          (rHit?.considered ?? 0) === 1 && ((rHit?.fired ?? 0) + (rHit?.deferred ?? 0)) === 1, JSON.stringify(rHit));
+        ok('…and the fire record carries THE ENGINE\'S OWN WORDS, never a model\'s',
+          (await fireRecord(wfDet, evHit))?.reason === "matched the door's filters",
+          String((await fireRecord(wfDet, evHit))?.reason));
+
+        const rWrong = await checkSourceReactions(client, userId, 'mail', [{
+          id: evWrong, title: 'Probe application', gist: 'a probe fixture event',
+          fields: { from_address: 'careers@other.test', from_name: 'Acme Careers', subject: 'Probe application' },
+        }]);
+        ok('THE WRONG DOMAIN is CONSIDERED and then refused — nothing fires, nothing is queued',
+          (rWrong?.considered ?? 0) === 1 && (rWrong?.fired ?? 0) === 0 && (rWrong?.deferred ?? 0) === 0, JSON.stringify(rWrong));
+        ok('…and it leaves NO fire record (a refusal is not a handled event — the next pass re-decides)',
+          (await fireRecord(wfDet, evWrong)) === null);
+        ok('…the DISPLAY NAME never rescues it (the filter reads the real address, and only that)',
+          (await fireRecord(wfDet, evWrong)) === null);
+
+        const rBlind = await checkSourceReactions(client, userId, 'mail', [{
+          id: evBlind, title: 'Probe application', gist: 'a probe fixture event',
+          fields: { subject: 'Probe application' },     // the seam could not supply an address
+        }]);
+        ok('FAIL CLOSED, LIVE — an event with NO from_address never opens a sender-filtered door',
+          (rBlind?.considered ?? 0) === 1 && (rBlind?.fired ?? 0) === 0 && (rBlind?.deferred ?? 0) === 0
+          && (await fireRecord(wfDet, evBlind)) === null, JSON.stringify(rBlind));
+
+        const { data: detRuns } = await admin.from('workflow_runs').select('id').eq('workflow_id', wfDet);
+        ok('…and across all three events exactly ONE run row exists (the matched one, queued at the throttle)',
+          (detRuns ?? []).length === 1, String((detRuns ?? []).length));
+        // Retired before the judged fixture so `considered` stays one workflow's arithmetic.
+        await admin.from('workflows').update({ status: 'paused' }).eq('id', wfDet);
+      }
+    }
+
+    // ── THE JUDGED DOOR WITH FILTERS: the gate runs FIRST, so the judge only ever sees survivors ──
+    {
+      const doors: ReactionDoor[] = [{
+        type: 'reaction', source: 'mail',
+        when: 'the message is a probe fixture for the relay suite',
+        filters: [{ field: 'subject', op: 'contains', value: 'w5-probe' }],
+      }];
+      const wfJudged = await mkDoorWf(`${DPFX} judged`, doors);
+      const client = clientFor(wfJudged, doors);
+      console.log('\nDL — FILTERS + A CONDITION (the filtered-out event never reaches the judge) [1 AI call]:');
+      if (wfJudged) {
+        await atLimit(wfJudged);
+        const evPass = randomUUID(), evGated = randomUUID();
+        dKeys.push(`${wfJudged}:inbox:${evPass}`, `${wfJudged}:inbox:${evGated}`);
+        // BOTH events would satisfy the CONDITION — their gists are the same sentence. Only the
+        // subject differs, and only the filter reads it. So a record on the gated event could only
+        // mean the judge saw it: the two are decided by the gate alone.
+        const gist = 'This is a probe fixture for the relay suite.';
+        const r = await checkSourceReactions(client, userId, 'mail', [
+          { id: evPass, title: 'w5-probe application', gist, fields: { from_address: 'careers@acme.test', subject: 'w5-probe application' } },
+          { id: evGated, title: 'Unrelated note', gist, fields: { from_address: 'careers@acme.test', subject: 'Unrelated note' } },
+        ]);
+        ok('BOTH events are candidates (the gate narrows candidacy, it does not hide arrivals)',
+          (r?.considered ?? 0) === 2, JSON.stringify(r));
+        ok('THE GATE IS BEFORE THE JUDGE — the filtered-out event leaves no record, so it was never judged',
+          (await fireRecord(wfJudged, evGated)) === null);
+        ok('…while the survivor reached the judge and matched (the condition still refines on top)',
+          !!(await fireRecord(wfJudged, evPass)), JSON.stringify(r));
+        ok('…and the survivor\'s reason is the JUDGE\'S sentence, not the deterministic one',
+          ((await fireRecord(wfJudged, evPass))?.reason ?? '') !== "matched the door's filters",
+          String((await fireRecord(wfJudged, evPass))?.reason));
+      }
+    }
+  } finally {
+    for (const id of dIds) {
+      await admin.from('workflow_runs').delete().eq('workflow_id', id);
+      await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', 'reaction_fire').like('entity_id', `${id}:%`);
+      await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', 'workflow_limit').eq('entity_id', id);
+      await admin.from('workflows').delete().eq('id', id);
+    }
+    for (const k of dKeys) await admin.from('item_plans').delete().eq('user_id', userId).eq('entity_id', k);
+    for (const id of dLimits) await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', 'workflow_limit').eq('entity_id', id);
+    const { data: leftWf } = await admin.from('workflows').select('id').eq('user_id', userId).like('name', `${DPFX}%`);
+    const { data: leftRuns } = await admin.from('workflow_runs').select('id')
+      .in('workflow_id', dIds.length ? dIds : ['00000000-0000-0000-0000-000000000000']);
+    const { data: leftFires } = await admin.from('item_plans').select('id')
+      .eq('user_id', userId).eq('kind', 'reaction_fire').gte('created_at', dStart);
+    const { data: leftLimits } = await admin.from('item_plans').select('id')
+      .eq('user_id', userId).eq('kind', 'workflow_limit').gte('created_at', dStart);
+    ok('W5 probe leftovers are ZERO (workflows · runs · fire records · limit rows)',
+      (leftWf ?? []).length === 0 && (leftRuns ?? []).length === 0
+      && (leftFires ?? []).length === 0 && (leftLimits ?? []).length === 0,
+      `${(leftWf ?? []).length}/${(leftRuns ?? []).length}/${(leftFires ?? []).length}/${(leftLimits ?? []).length}`);
+  }
+
+  // ── DS — THE SOURCE FLOORS (comment-stripped) ───────────────────────────────────────────────
+  console.log('\nDS — THE W5 SOURCE FLOORS (mode: source, comments stripped):');
+  {
+    const authorSrc = stripComments(readFileSync('lib/workflows/author-doors.ts', 'utf8'));
+    const registrySrc = stripComments(readFileSync('lib/workflows/trigger-sources.ts', 'utf8'));
+    const readySrc = stripComments(readFileSync('lib/workflows/readiness.ts', 'utf8'));
+    const tasksSrc = stripComments(readFileSync('lib/tools/worker-tasks.ts', 'utf8'));
+    const cardSrc = stripComments(readFileSync('components/workflows/workflow-draft-card.tsx', 'utf8'));
+
+    // 1 — THE GATE IS BEFORE THE JUDGE, in code, in the ONE loop.
+    {
+      const loop = reactionsSrc.slice(reactionsSrc.indexOf('async function runDoors('));
+      const gateAt = loop.indexOf('doorFiltersPass(');
+      const judgeAt = loop.indexOf('judgeCandidates(');
+      ok('THE FILTERS GATE CANDIDACY BEFORE THE JUDGE (an event a filter rejects costs no AI call)',
+        gateAt > -1 && judgeAt > -1 && gateAt < judgeAt, `gate ${gateAt} · judge ${judgeAt}`);
+      ok('…and the judge is handed the SURVIVORS, never the raw candidates',
+        /await judgeCandidates\(admin, userId, door\.when!\.trim\(\), passed\)/.test(loop));
+      ok('…the DETERMINISTIC branch (filters, no condition) reaches no judge and speaks the engine\'s words',
+        /const deterministic = \(door\.when \?\? ''\)\.trim\(\)\.length <= 3;/.test(loop)
+        && /passed\.map\(c => \(\{ id: c\.id, reason: "matched the door's filters" \}\)\)/.test(loop));
+    }
+    // 2 — THE MAIL BUILDER READS THE REAL ADDRESS.
+    ok('THE MAIL FIELDS read `source_data.from_address` — the REAL address, never the display name',
+      /const fromAddress = typeof sd\.from_address === 'string' \? sd\.from_address\.trim\(\) : '';/.test(reactionsSrc)
+      && /fields\.from_address = fromAddress;/.test(reactionsSrc)
+      && !/fields\.from_address = (fromName|from)\b/.test(reactionsSrc));
+    ok('…the display name rides as its OWN field, and a missing address simply omits the key (fail closed)',
+      /const fromName = typeof sd\.from_name === 'string'/.test(reactionsSrc)
+      && /if \(fromAddress\) fields\.from_address = fromAddress;/.test(reactionsSrc)
+      && /if \(fromName\) fields\.from_name = fromName;/.test(reactionsSrc));
+    ok('…and every judged seam carries its registry fields (file: filename/ext · meeting: title)',
+      /const fields: Record<string, string> = \{ filename \};/.test(driveConfirm)
+      && /if \(ext\) fields\.ext = ext;/.test(driveConfirm)
+      && /fields: \{ title: String\(finalTitle\) \} as Record<string, string>,/.test(botManager));
+    // 3 — FIREABILITY IS when-OR-filters AT EVERY READER.
+    ok('FIREABLE = a condition OR a filter, in the engine (doorIsUsable) …',
+      /return \(d\.when \?\? ''\)\.trim\(\)\.length > 3 \|\| !!d\.filters\?\.length;/.test(reactionsSrc));
+    ok('… in readiness rule 5 …',
+      /const filtered = \(d\.filters\?\.length \?\? 0\) > 0;/.test(readySrc)
+      && /if \(!judged && !filtered\) return 'The trigger needs a condition or a filter to react to\.';/.test(readySrc));
+    ok('… in the sanitiser (a door with filters and no `when` survives) …',
+      /if \(!when && !filters\.length\) \{/.test(authorSrc));
+    ok('… and in Studio\'s own blank test (the three must never disagree about what is ready)',
+      /const blank = needsWhen \? \(!door\.when\?\.trim\(\) && filters\.length === 0\) : !door\.workflow_id;/.test(studioCode));
+    // 4 — STUDIO RENDERS FROM THE REGISTRY, AND SAYS A LONE OP AS A WORD.
+    {
+      // A top-level function's body ends at the first column-0 `}` — the destructured parameter
+      // object would defeat a brace match started at the signature.
+      const rowStart = studioCode.indexOf('function DoorFilterRow(');
+      const rowEnd = studioCode.indexOf('\n}\n', rowStart);
+      const body = rowStart > -1 && rowEnd > rowStart ? studioCode.slice(rowStart, rowEnd) : '';
+      ok('THE FILTER ROW renders its fields FROM THE REGISTRY (law 3 — filterFieldsFor, never a list here)',
+        !!body && /const fields = filterFieldsFor\(source\);/.test(body)
+        && !['from_address', 'from_name', 'subject', 'filename', 'ext', 'title'].some((k) => body.includes(`'${k}'`)),
+        body ? 'a field key is hardcoded in the row' : 'DoorFilterRow not found');
+      ok('…a source with nothing structural to filter on renders NO row at all',
+        /if \(!fields\.length\) return null;/.test(body));
+      ok('THE OP IS A WORD when the field offers only one (a select that can say one thing is chrome)',
+        /opsFor\(draft\.field\)\.length > 1 \?/.test(body)
+        && /<span className="text-\[11\.5px\] text-neutral-500 flex-shrink-0">\{FILTER_OP_LABEL\[draft\.op\]\}<\/span>/.test(body));
+      ok('…and a BLANK value is never stored (a blank filter is no filter)',
+        /if \(!value\) \{ setDraft\(null\); return; \}/.test(body));
+    }
+    ok('THE OPTIONAL-WHEN PLACEHOLDER says the condition is REFINEMENT once filters are seated',
+      /placeholder=\{filters\.length[\s\S]{0,160}?\? 'and when \(optional\): a condition to judge on top…'/.test(studioCode));
+    ok('THE AMBER HINT MIRRORS RULE 5 — both name the same two remedies',
+      /This door needs a condition or a filter before it can fire\./.test(studioCode)
+      && studioCode.includes('condition or a filter')
+      && readySrc.includes('condition or a filter'));
+    // 5 — THE TWO AUTHORING DOORS, ONE VOCABULARY.
+    ok('generate-config carries PREFER A FILTER OVER A CONDITION …',
+      /PREFER A FILTER OVER A CONDITION\./.test(genCfgCode));
+    ok('…and the OMIT rule (a condition restating a filter makes every event pay for a judgement)',
+      /OMIT "when" ENTIRELY/.test(genCfgCode)
+      && /A door with filters and no "when" is perfectly valid/.test(genCfgCode));
+    ok('…both authoring doors are taught the FIELDS from the registry, never from prose',
+      /const fields = \(s\.filterFields \?\? \[\]\)\.map\(/.test(authorSrc)
+      && /\.filter\(\(s\) => \(s\.filterFields\?\.length \?\? 0\) > 0\)/.test(tasksSrc));
+    ok('THE CHAT TOOLS SHARE ONE FILTER_ARG — declared once, mounted on BOTH door arguments',
+      (tasksSrc.match(/const FILTER_ARG = \{/g) ?? []).length === 1
+      && (tasksSrc.match(/filters: FILTER_ARG,/g) ?? []).length === 2);
+    // 6 — THE SANITISER: capped, and it says what CAN be matched.
+    ok('THE SANITISER CAPS a door at 6 filters (a door is a sentence, not a query builder)',
+      /if \(out\.length >= 6\) break;/.test(authorSrc) && /if \(out\.length >= 6\) break;/.test(registrySrc));
+    ok('…and a DROPPED filter is SPOKEN, naming what this door CAN be matched on',
+      /const known = fields\.map\(\(d\) => `\$\{d\.label\.toLowerCase\(\)\} \(\$\{d\.ops\.join\('\/'\)\}\)`\)\.join\(', '\);/.test(authorSrc)
+      && /I can't filter this door on "\$\{spokenField\}" — I can match on \$\{known\}/.test(authorSrc));
+    ok('…a filter on the WORKFLOW source is refused in its own words (that door matches by delivery)',
+      /That door matches by which task delivered, so there is nothing to filter on/.test(authorSrc)
+      // TWO call sites — the judged branch (where filters ride) and the structural branch (where
+      // they are only spoken): a structural door must SAY it can't filter, never store one.
+      && (authorSrc.match(/authorFilters\(def\.key, r\.filters, notes\)/g) ?? []).length === 2);
+    // 7 — THE DRAFT CARD'S DOOR WORD.
+    ok('THE DRAFT CARD\'S DOOR WORD follows the SAME ladder as Studio\'s chip (label → filters → when)',
+      /const authored = d\.label\?\.trim\(\);\s*if \(authored\) return authored;\s*const filters = describeFilters\(d\);/.test(cardSrc)
+      && /return filters \|\| when \|\| d\.source;/.test(cardSrc)
+      && /const authored = d\.label\?\.trim\(\);\s*if \(authored\) return authored;\s*const filters = describeFilters\(d\);/.test(studioCode));
+    // 8 — THE CASE RENAME (W4's station, re-pointed in W5's release).
+    ok('THE RENAME — "File it under its record" is the picker label AND the new step\'s default',
+      /label: 'File it under its record',\s*disabled: false \}/.test(studioCode)
+      && /step = \{ id, type: 'case', label: 'File it under its record', case_instruction: '' \} as CaseStepDraft;/.test(studioCode));
+    ok('…rule 8 speaks the same station in its own sentence',
+      /return blank \? "The 'file it under its record' step needs to know what identifies a case\." : null;/.test(readySrc));
+    ok('…and "Link to its case" survives NOWHERE in the three surfaces (comment-stripped)',
+      !studioCode.includes('Link to its case') && !genCfgCode.includes('Link to its case') && !readySrc.includes('Link to its case'));
   }
 
   console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed`);

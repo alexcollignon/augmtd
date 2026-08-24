@@ -6,6 +6,17 @@ import { clipForPrompt } from '@/lib/utils/clip-for-prompt';
 // so it runs in the background via after(); this ceiling covers that background work.
 export const maxDuration = 300;
 
+/** THE `file` DOOR'S DETERMINISTIC FIELDS (relay canvas W5) — what a door FILTER reads, keyed by
+ *  the source registry's `filterFields`. `ext` is the bare, lower-cased extension (no dot) so
+ *  "Type is pdf" is one unambiguous thing; a name with no extension omits it, and an `ext` filter
+ *  then fails closed (a field the event cannot answer must never pass by default). */
+function fileDoorFields(filename: string): Record<string, string> {
+  const fields: Record<string, string> = { filename };
+  const ext = (filename.includes('.') ? filename.split('.').pop() ?? '' : '').trim().toLowerCase();
+  if (ext) fields.ext = ext;
+  return fields;
+}
+
 // POST /api/drive/upload/confirm
 // Body: { path, filename, mimeType, sizeBytes, folderId? }
 // Registers the file immediately (so it appears in Drive), then indexes in the background.
@@ -111,8 +122,9 @@ export async function POST(request: NextRequest) {
               // Whitespace-bounded cut, declared — the judge must never read OUR clip as the
               // document ending there (the excerpt-honesty law).
               const body = head ? clipForPrompt(head, 400) : 'No readable text was extracted from this file.';
+              const fields = fileDoorFields(filename);
               const rx = await checkSourceReactions(adminClient, user.id, 'file', [{
-                id: fileId, title: filename, gist: `${label}\n${body}`,
+                id: fileId, title: filename, gist: `${label}\n${body}`, fields,
               }]);
               if (rx?.fired) console.log(`[reactions] file door fired ${rx.fired} run(s) for ${user.id.slice(0, 8)}`);
             },

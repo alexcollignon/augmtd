@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import { CheckIcon, ShieldCheckIcon, BoltIcon } from '@heroicons/react/24/outline';
 import { Button } from '@/components/ui';
 import { FIRE_LIMIT_DEFAULT } from '@/lib/workflows/fire-limit';
+import { describeFilters, type DoorFilter } from '@/lib/workflows/trigger-sources';
 
 export type WorkflowDraft = {
   name: string;
@@ -26,7 +27,11 @@ export type WorkflowDraft = {
   skill_ids?: string[];
   /** THE EVENT DOORS (relay canvas W1) — authored by describe/chat, sanitized server-side;
    *  the Confirm must carry them or a said door dies at creation (the four-door law). */
-  triggers?: Array<{ type: string; source: string; when?: string; label?: string; workflow_id?: string }>;
+  triggers?: Array<{
+    type: string; source: string; when?: string; label?: string; workflow_id?: string;
+    /** THE DOOR FILTERS (W5) — the exact half. They ride to Confirm with the rest of the door. */
+    filters?: DoorFilter[];
+  }>;
   /** A door the sanitiser refused, spoken (the needs_person_note mechanism reused). */
   needs_door_note?: string | null;
   /** THE INPUTS TRAY (relay canvas W2) — reference material the draft pinned, already resolved to
@@ -56,7 +61,26 @@ const stepWord = (s: WorkflowDraft['steps'][number]): string => {
   // THE SUBPROCESS STATION (relay canvas W3, law 5): the child's own name, said as what it is —
   // a whole process of the user's own running inside this one, not just another step.
   if (s.type === 'workflow') return `⧉ ${s.label || 'a process'} (a process of its own)`;
+  // THE CASE STATION (relay canvas W4): the deed said in the same grammar as the other stations —
+  // what it does, then what it recognizes a case BY (the user's own words, head-clipped).
+  if (s.type === 'case') {
+    const raw = typeof s.case_instruction === 'string' ? s.case_instruction.trim() : '';
+    const head = raw.length > 40 ? `${raw.slice(0, 40).trimEnd()}…` : raw;
+    return head ? `File each under its record — ${head}` : 'File each under its record';
+  }
   return s.label || s.tool || s.type;
+};
+
+// A door's word on the card. W5 — a door narrowed by FILTERS must say so here, or the card would
+// promise a wider door than the one the Confirm creates (a filters-only door had nothing but its
+// bare source key to show: "runs when mail"). Filters render in the registry's own words.
+const doorWord = (d: NonNullable<WorkflowDraft['triggers']>[number]): string => {
+  const authored = d.label?.trim();
+  if (authored) return authored;
+  const filters = describeFilters(d);
+  const when = d.when?.trim();
+  if (filters && when) return `${filters} — ${when}`;
+  return filters || when || d.source;
 };
 
 const consumedKey = (token: string) => `aug-wfdraft-done:${token}`;
@@ -125,7 +149,7 @@ export function WorkflowDraftCard({
           <div className="mt-0.5 text-[12px] text-neutral-500">
             {triggerWord(draft.trigger)}
             {(draft.triggers?.length ?? 0) > 0 && (
-              <> · runs when {draft.triggers!.map((d) => (d.label || d.when || d.source)).join(' · when ')}</>
+              <> · runs when {draft.triggers!.map(doorWord).join(' · when ')}</>
             )}
             {(draft.inputs?.docs.length ?? 0) > 0 && (
               <> · reads {draft.inputs!.docs.map((d) => d.name).join(' · ')}</>

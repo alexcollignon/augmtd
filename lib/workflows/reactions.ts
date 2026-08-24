@@ -52,7 +52,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { parseModelJSON } from '@/lib/ai/parse-json';
-import { normalizeTriggers, type ReactionDoor, type TriggerSourceKey } from '@/lib/workflows/trigger-sources';
+import {
+  normalizeTriggers, doorFiltersPass,
+  type ReactionDoor, type TriggerSourceKey,
+} from '@/lib/workflows/trigger-sources';
 import { readFireLimits, FIRE_LIMIT_DEFAULT } from '@/lib/workflows/fire-limit';
 
 const FIRE_KIND = 'reaction_fire';
@@ -99,6 +102,11 @@ export interface ReactionEvent {
   entityId?: string | null;
   /** The STRUCTURAL match key for non-judged sources (`workflow`: the delivering workflow's id). */
   sourceId?: string | null;
+  /** THE DETERMINISTIC FIELDS (W5) — what the DOOR FILTERS read, keyed by the source registry's
+   *  `filterFields`. Mail: from_address · from_name · subject. File: filename · ext. Meeting: title.
+   *  ADDITIVE and OPTIONAL: an absent field FAILS any filter naming it (fail closed, by law), so a
+   *  seam that cannot supply a field simply cannot be filtered on it — it never passes by default. */
+  fields?: Record<string, string>;
 }
 
 /** Mail keeps its historical token so pre-W1 fire records never double-fire. */
@@ -148,11 +156,12 @@ async function doorWorkflows(
   return out;
 }
 
-/** A door that cannot be judged (or bound) can never fire honestly — readiness says so on the row;
- *  here it is simply skipped. */
+/** A door that cannot be judged, filtered or bound can never fire honestly — readiness says so on
+ *  the row; here it is simply skipped.
+ *  W5: a door with ≥1 valid filter and NO `when` is fireable and FULLY DETERMINISTIC. */
 function doorIsUsable(d: ReactionDoor): boolean {
   if (d.source === 'workflow') return !!(d.workflow_id ?? '').trim();
-  return (d.when ?? '').trim().length > 3;
+  return (d.when ?? '').trim().length > 3 || !!d.filters?.length;
 }
 
 /** Check the user's standing reactions against inbound items that arrived since `sinceIso`.
@@ -179,11 +188,23 @@ export async function checkReactions(
       })
       .map((it) => {
         const sd = (it.source_data ?? {}) as Record<string, unknown>;
+        // THE DETERMINISTIC FIELDS (W5). ⚠️ `from` is the SPOKEN sender (display name when there is
+        // one) — a filter must never read it: `from_address` is the REAL address, and it is the
+        // only thing `is`/`domain_is` may see. A missing address simply omits the field, and every
+        // sender filter then fails closed.
+        const fromAddress = typeof sd.from_address === 'string' ? sd.from_address.trim() : '';
+        const fromName = typeof sd.from_name === 'string' ? sd.from_name.trim() : '';
+        const subject = String(sd.subject ?? it.work_title ?? '').trim();
+        const fields: Record<string, string> = {};
+        if (fromAddress) fields.from_address = fromAddress;
+        if (fromName) fields.from_name = fromName;
+        if (subject) fields.subject = subject;
         return {
           id: String(it.id),
           title: String(it.work_title ?? sd.subject ?? 'Email').slice(0, 120),
-          from: (sd.from_name as string) ?? (sd.from_address as string) ?? null,
+          from: fromName || fromAddress || null,
           gist: String(sd.snippet ?? sd.body_preview ?? sd.body ?? '').replace(/\s+/g, ' ').slice(0, 500),
+          fields,
         };
       });
     if (!items.length) return { considered: 0, fired: 0, deferred: 0 };
@@ -269,16 +290,32 @@ async function runDoors(
     // it (the exactly-once key is per event, so a second door can never double-fire the same one).
     const firedHere = new Set<string>();
     for (const door of wf.doors) {
+      // ── THE DOOR FILTERS GATE CANDIDACY (W5) ────────────────────────────────────────────────
+      // Deterministic, in code, BEFORE the judge: an event a filter rejects never reaches an AI
+      // call (the spend win) and never fires. AND semantics; a field the event doesn't carry
+      // fails its filter. A door with NO filters is unchanged (everything passes through).
+      const passed = (door.filters?.length ?? 0)
+        ? candidates.filter((c) => doorFiltersPass(door, c))
+        : candidates;
+      if (!passed.length) continue;
+
+      // A content door with filters and NO judged condition is FULLY DETERMINISTIC: the filters
+      // ARE the match, so there is nothing left to judge and no AI call is made.
+      const deterministic = (door.when ?? '').trim().length <= 3;
       const matched = door.source === 'workflow'
         // STRUCTURAL, NOT JUDGED: composition is deterministic — no AI call.
         // THE SELF-LOOP FLOOR (W1 fire doors): a workflow whose own door names ITSELF must never be
         // fired by its own delivery. The exactly-once key carries the delivering RUN's id (a new
         // one every time), so without this the chain would be infinite — bounded only by DAILY_CAP,
         // which is a cap, not a floor.
-        ? candidates
+        ? passed
             .filter(c => (c.sourceId ?? '') === (door.workflow_id ?? '') && (c.sourceId ?? '') !== wf.id)
             .map(c => ({ id: c.id, reason: 'the upstream workflow delivered' }))
-        : await judgeCandidates(admin, userId, door.when!, candidates);
+        : deterministic
+          // The reason is THE ENGINE'S OWN WORDS, never a model's.
+          ? passed.map(c => ({ id: c.id, reason: "matched the door's filters" }))
+          // The judged door: filters (if any) already narrowed the batch; the condition refines.
+          : await judgeCandidates(admin, userId, door.when!.trim(), passed);
 
       let deferredHere = 0;
       for (const m of matched) {

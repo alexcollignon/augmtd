@@ -14,7 +14,30 @@ import {
   clampFireLimit, fireLimitClampNote, readFireLimit, writeFireLimit,
   FIRE_LIMIT_MIN, FIRE_LIMIT_MAX, FIRE_LIMIT_DEFAULT,
 } from '@/lib/workflows/fire-limit';
-import { normalizeTriggers, doorLabel, type ReactionDoor } from '@/lib/workflows/trigger-sources';
+import { normalizeTriggers, doorLabel, TRIGGER_SOURCES, type ReactionDoor } from '@/lib/workflows/trigger-sources';
+
+// ── THE DOOR FILTERS, TAUGHT FROM THE REGISTRY (relay canvas W5, law 3) ─────────────────────────
+// The chat tools and generate-config are the two authoring doors; both learn the FIELD VOCABULARY
+// from `filterFields`, so neither can offer a field the sanitiser would then drop. Compact form —
+// an argument description is a sentence, not a catalogue page.
+const FILTER_VOCAB = TRIGGER_SOURCES
+  .filter((s) => (s.filterFields?.length ?? 0) > 0)
+  .map((s) => `${s.key}: ${s.filterFields!.map((f) => `${f.key} (${f.ops.join('/')})`).join(', ')}`)
+  .join(' · ');
+
+const FILTER_ARG = {
+  type: 'array',
+  description: `Optional. EXACT conditions checked in code before any judgement — cheaper and more predictable than "when", so PREFER them for anything structural the user states ("from careers@acme.test" → from_address is/domain_is; "subject mentions application" → subject contains). Fields by source — ${FILTER_VOCAB}. All filters must pass (AND); they combine with "when", which should then carry only what is genuinely fuzzy. Never invent a field or a value the user didn't state.`,
+  items: {
+    type: 'object',
+    properties: {
+      field: { type: 'string', description: 'A field of THIS door\'s source (see the list above).' },
+      op: { type: 'string', enum: ['is', 'contains', 'domain_is'], description: '"is" = exact match · "contains" = substring · "domain_is" = the address\'s domain.' },
+      value: { type: 'string', description: "The value in the user's own words — an address, a domain, a word, a file extension." },
+    },
+    required: ['field', 'op', 'value'],
+  },
+} as const;
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────
 
@@ -53,6 +76,7 @@ export const createTaskDefinition = {
             when: { type: 'string', description: 'For mail/file/meeting: the condition in plain words, judged against each arriving event.' },
             workflow_name: { type: 'string', description: 'For source "workflow": the NAME of an existing task that should feed this one (never an id — the system resolves the name).' },
             label: { type: 'string', description: 'Optional short human rendering of the door.' },
+            filters: FILTER_ARG,
           },
           required: ['source'],
         },
@@ -118,6 +142,7 @@ export const updateTaskDefinition = {
             when: { type: 'string', description: 'For mail/file/meeting: the condition in plain words, judged against each arriving event.' },
             workflow_name: { type: 'string', description: 'For source "workflow": the NAME of an existing task that should feed this one (never an id).' },
             label: { type: 'string', description: 'Optional short human rendering of the door.' },
+            filters: FILTER_ARG,
           },
           required: ['source'],
         },

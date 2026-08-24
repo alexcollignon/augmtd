@@ -20,7 +20,11 @@
 //   1. registry:   `source` must be a TRIGGER_SOURCES key. Unknown → dropped.
 //   2. feature:    a door whose source needs an OFF workspace feature is a dead door → dropped.
 //                  (features unknown → the rule abstains, exactly like readinessOf.)
-//   3. condition:  a judged source (needsWhen) with a blank `when` → dropped (nothing to judge).
+//   3. filters (W5): each deterministic filter is validated against the SOURCE'S OWN filterFields
+//                  (registry). Unknown field / unoffered op / blank value → THAT FILTER dropped
+//                  with a sentence (dropping widens the door, so silence would over-fire).
+//      condition:  a judged source with NEITHER a `when` NOR a surviving filter → dropped (nothing
+//                  to judge and nothing to match).
 //   4. binding:    a `workflow` door arrives by NAME (the resolve-member precedent — the model
 //                  NEVER emits ids). Exact name → unique containment. Ambiguous or no match →
 //                  dropped. A workflow bound to ITSELF is refused (law 5's circular floor).
@@ -37,7 +41,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkspaceFeatures } from '@/lib/workspace/types';
 import {
   TRIGGER_SOURCES, isTriggerSourceKey, triggerSource, normalizeTriggers, doorLabel,
-  type ReactionDoor,
+  parseFilter, filterFieldsFor, describeFilters, FILTER_OP_LABEL,
+  type ReactionDoor, type DoorFilter,
 } from '@/lib/workflows/trigger-sources';
 import type { WorkflowInputDoc } from '@/lib/workflows/inputs';
 import { makeStepId } from '@/lib/workflows/types';
@@ -60,7 +65,15 @@ export function renderDoorCatalogue(): string {
     const shape = s.needsWhen
       ? '"when": the condition in plain words (judged against each arriving event)'
       : '"workflow_name": the exact name of one of the user\'s existing tasks';
-    return `- "${s.key}" — ${s.label}. Give ${shape}.`;
+    // W5 — the FILTER fields ride from the registry too, so both authoring doors are taught the
+    // exact same vocabulary and neither can invent a field.
+    const fields = (s.filterFields ?? []).map(
+      (f) => `${f.key} = ${f.label} (${f.ops.join('/')})`,
+    );
+    const filters = fields.length
+      ? ` Optional "filters": [{field, op, value}] — exact, checked in code, no judgement: ${fields.join(', ')}.`
+      : '';
+    return `- "${s.key}" — ${s.label}. Give ${shape}.${filters}`;
   }).join('\n');
 }
 
@@ -116,6 +129,43 @@ function resolveByName<T extends NamedRow>(rows: T[], spoken: string): NameMatch
  *  which pipeline feeds which — a wrong binding fires the wrong work forever). */
 export function matchWorkflowByName(rows: WorkflowRow[], spoken: string): WorkflowRow | null {
   return resolveByName(rows, spoken).hit;
+}
+
+/**
+ * THE FILTER RUNG (W5). A model-emitted filter is a WISH like every other: it is checked against
+ * THE SOURCE'S OWN `filterFields` (law 3 — the registry is the catalogue) and a bad one is DROPPED
+ * WITH A SENTENCE, never repaired into something the user did not say. Dropping a filter WIDENS the
+ * door, so silence here would be a real (over-firing) lie.
+ */
+function authorFilters(source: string, raw: unknown, notes: string[]): DoorFilter[] {
+  if (raw === undefined || raw === null) return [];
+  const fields = filterFieldsFor(source);
+  if (!Array.isArray(raw)) {
+    notes.push('I couldn\'t read the trigger filters, so I left them off the door.');
+    return [];
+  }
+  const out: DoorFilter[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    const r = (entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>;
+    const spokenField = str(r.field) || '(unnamed)';
+    const f = parseFilter(source, entry);
+    if (!f) {
+      if (!fields.length) {
+        notes.push('That door matches by which task delivered, so there is nothing to filter on — I left the filter out.');
+      } else {
+        const known = fields.map((d) => `${d.label.toLowerCase()} (${d.ops.join('/')})`).join(', ');
+        notes.push(`I can't filter this door on "${spokenField}" — I can match on ${known}, so I left that filter out.`);
+      }
+      continue;
+    }
+    const key = `${f.field}|${f.op}|${f.value.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(f);
+    if (out.length >= 6) break;
+  }
+  return out;
 }
 
 function looksLikeSchedule(r: Record<string, unknown>): boolean {
@@ -179,13 +229,18 @@ export async function authorDoors(
     if (label) door.label = label;
 
     if (def.needsWhen) {
-      // (3) Nothing to judge = no door.
+      // (3a) W5 — THE DETERMINISTIC FILTERS, validated against the registry BEFORE the condition
+      // rung, because a door with filters and no `when` is a perfectly good (and cheaper) door.
+      const filters = authorFilters(def.key, r.filters, notes);
+      if (filters.length) door.filters = filters;
+
+      // (3b) Nothing to judge AND nothing to match = no door.
       const when = str(r.when);
-      if (!when) {
+      if (!when && !filters.length) {
         notes.push(`I left out the "${def.label.toLowerCase()}" door — tell me what has to be true about it and I'll add it.`);
         continue;
       }
-      door.when = when;
+      if (when) door.when = when;
     } else {
       // (4) NAMES ARE THE MODEL'S JOB, IDS ARE CODE'S.
       const spoken = str(r.workflow_name);
@@ -207,6 +262,8 @@ export async function authorDoors(
         notes.push('A task can\'t be triggered by itself — I left that door out.');
         continue;
       }
+      // A structural door has nothing to filter — say so rather than storing a dead condition.
+      authorFilters(def.key, r.filters, notes);
       door.workflow_id = hit.id;
       if (!door.label) door.label = `When "${hit.name}" delivers`;
     }
@@ -230,7 +287,14 @@ export function doorNote(notes: string[]): string | null {
 
 /** A human list of doors, for tool output and confirmations. */
 export function describeDoors(doors: ReactionDoor[]): string {
-  return doors.length ? doors.map(doorLabel).join(' · ') : 'none';
+  if (!doors.length) return 'none';
+  return doors.map((d) => {
+    const base = doorLabel(d);
+    // doorLabel already speaks the filters when they ARE the match (no `when`); a judged door
+    // wearing filters must still say what it narrowed to, or a confirmation would under-claim.
+    const f = d.when ? describeFilters(d) : '';
+    return f ? `${base} (${f})` : base;
+  }).join(' · ');
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════

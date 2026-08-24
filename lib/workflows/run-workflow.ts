@@ -529,7 +529,10 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       inputsBlock = await buildInputsBlock(admin, workflow.user_id, inputs.docs);
     }
   } catch { /* non-fatal — a tray that cannot be read never fails a run */ }
-  const aiContext = [projectGrounding, inputsBlock].filter(Boolean).join('\n\n') || null;
+  // MUTABLE ON PURPOSE (relay canvas W4): a resolved case step APPENDS its case grounding here, so
+  // every step after the station reasons over the case's accumulated history. Additive — the
+  // workflow scope and the inputs tray keep their seats; nothing is swapped out.
+  let aiContext = [projectGrounding, inputsBlock].filter(Boolean).join('\n\n') || null;
 
   // ONE context builder for every executeStep call in this run — the guardrail retry re-runs two
   // steps with the same environment, and a second inline literal is how the two drift.
@@ -730,6 +733,39 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
         await fire();
       }
       return { runId: runId!, status: 'awaiting_approval', threadId };
+    }
+    // ── THE CASE STATION (relay canvas W4, THE DECIDING LAW: A CASE IS AN ENTITY). Engine-side
+    // like the ⧉ station, because it needs the stores: the workflow's case index, the one brain's
+    // registry, and the fire record that says what actually arrived. Non-fatal EVERYWHERE — a
+    // resolve failure outputs the honest none-card and the run proceeds on the static scope. ──
+    if ((step as { type?: string }).type === 'case') {
+      const cs = step as import('./types').CaseStep;
+      const label = cs.label || 'Case';
+      let cardText = 'The case step could not run — continuing without one.';
+      try {
+        const { resolveCaseForRun } = await import('./case-step');
+        const prior = stepOutputs[stepOutputs.length - 1]?.output;
+        const eventText = (opts.triggerContext ?? '').trim()
+          || (typeof prior === 'string' ? prior : JSON.stringify(prior ?? '')).trim();
+        const res = await resolveCaseForRun(admin, {
+          userId: workflow.user_id, workflowId: workflow.id, workflowName: workflow.name,
+          step: cs, eventText, runId: runId!,
+          // TEST MODE MATCHES BUT NEVER OPENS: a simulation must not populate the registry.
+          matchOnly: Boolean(opts.isTest),
+        });
+        cardText = res.cardText;
+        if (!res.none) {
+          // THE GROUNDING SWAP — from this step on, every ai step reads the case's page.
+          const { entityRunGrounding } = await import('@/lib/workflows/entity-edge');
+          const caseBlock = await entityRunGrounding(admin, workflow.user_id, res.entityId, res.name);
+          if (caseBlock) aiContext = [aiContext, caseBlock].filter(Boolean).join('\n\n');
+        }
+      } catch (e) {
+        console.error('[run-workflow] case step failed (non-fatal):', e);
+      }
+      stepOutputs.push({ step_id: step.id, step_type: 'case', label, output: cardText });
+      await checkpoint();
+      continue;
     }
     const isGate = (step as { type?: string }).type === 'verify';
     const out = await executeStep(step, stepCtx(i, isGate

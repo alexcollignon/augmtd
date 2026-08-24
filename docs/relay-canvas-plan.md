@@ -228,6 +228,79 @@ THE LAW: **the limit paces, it never loses.**
 - Gate re-points declared: smoke-relay's RL ceiling gates (the cycle "stops at the cap") become
   "the cycle DEFERS at the throttle" — same law, lossless form.
 
+## W4 — THE CASE LAYER (spec addendum, Aug 24 — build contract)
+
+René's step 2: "Augmtd links application to job opening." Applications arrive over days through
+many doors; each run carries ONE; the comparison needs the OPENING'S ACCUMULATED candidates.
+Cross-run state — the last structural gap in the diagram.
+
+**THE DECIDING LAW: A CASE IS AN ENTITY.** No second registry, no `cases` table, no migration.
+A job opening is a `work_entities` row (machine-founded, UNTRACKED — recognition already founds
+untracked entities from real work; THE PINNING LAW untouched: tracking stays a human decision).
+Riding the one brain buys everything at once: the case has a ROOM, a ledger, recognition,
+portfolio visibility ("smaller things"), and the EXISTING one-grounding machinery becomes the
+case's memory — no new accumulation store.
+
+- **THE CASE STEP** — `{ type: 'case', id, label, case_instruction }` ("the job opening named in
+  the application"). Executed IN the run loop (engine-side, like the ⧉ station — it needs the
+  stores): (1) a deterministic token pre-pass then ONE cheap reasoned resolve of the event
+  against THE WORKFLOW'S OWN CASE INDEX (match-first, conservative); no match → FOUND an
+  untracked entity named by the case key ("Senior Data Analyst — Acme"); (2) the index row:
+  item_plans kind `workflow_case`, entity_id `${workflowId}:${entityId}`, tasks {caseName,
+  openedAt} (the house storeless precedent — the workflow's own case list, one read); (3) LINK
+  the triggering event to the case through the EXISTING entity_links machinery where the event
+  has a real atom (mail → the inbox item; file → the knowledge file; via 'workflow_case' as the
+  link's via-word), so the case's room fills through the same door every other atom uses;
+  (4) the step's OUTPUT is the case card in words (name · what arrived · what the case now
+  holds), and — the payoff — **THE RUN'S GROUNDING SWAPS TO THE CASE**: from this step on,
+  aiContext carries the CASE entity's grounding (the same one-grounding read every reasoner
+  uses), so the comparison step sees the opening's accumulated candidates BY CONSTRUCTION.
+- **THE SUBJECT WEARS THE CASE**: a run that resolved a case serves `case {entityId, name}` on
+  its ProcessRow; the subject ladder prefers it; the table's customer chip speaks it (falling
+  back to the workflow's static scope as today).
+- **READINESS**: a case step with a blank instruction → "The 'link to its case' step needs to
+  know what identifies a case."
+- **FLOORS**: match-first, found-only-when-no-match (dedupe is the default posture); founded
+  entities are UNTRACKED and never auto-tracked; the resolve is ONE classification-tier call
+  per run (the throttle already bounds runs/day, so founding is bounded transitively); an
+  unresolvable event (no case key in the material) parks NOTHING — the step outputs an honest
+  "no case named; continuing without one" line and the run proceeds ungrounded-swap (the
+  workflow's static scope stays).
+- **PARITY**: "link each application to its job opening" → generate-config emits the case step
+  (instruction in the user's words); Studio renders the normalizer block (the mockup's
+  case-chip block) with the instruction field; the chat tools ride the generator (steps), as
+  with the ⧉ station.
+- **Deliberately NOT in W4**: a Cases tab/surface (the case's room IS the surface — law 5 of
+  the one-surface world); case lifecycle verbs (close/merge — the entity machinery's existing
+  doors serve); cross-workflow case sharing (the index is per-workflow v1; the ENTITY is
+  global, so two workflows naming the same opening converge through recognition naturally).
+
+**W4 BUILT (Aug 24; relay 501/501 ×2 (+94) — A CASE IS AN ENTITY, live-proven: the grounding
+swap carried a code word reachable only through another run's filed material; the index is
+PER-WORKFLOW (discovered mid-gating, now a floor); founding mirrors recognition, UNTRACKED,
+the pinning law gated (`tracked: true` cannot exist in the module); never-overwrite links;
+test mode founds nothing).** ⚠️ OWNER CLARIFICATION (Aug 24): the owner read "link to its
+case" as filing into THE COMPANY'S OWN records — the no-integration reading (AUGMTD as the
+record-keeper, self-bootstrapping folders) was MY call from the diagram's wording + the
+current-capabilities directive, surfaced late. RENAMED "File it under its record" (W5).
+Queued proposals awaiting the owner: the resolver consults the PINNED openings doc (filing
+against company data, zero integrations); external records as a resolution source when
+connectors land (the same step, one registry row).
+
+**W5 — THE DOOR FILTERS BUILT (Aug 24; relay 568/568 ×2 (+DF/DL/DS) · processes 125/125; the
+owner's 80/20)**: deterministic per-source filters ON the registry rows (mail: Sender is/
+domain is · Subject contains; file: name contains · Type is; meeting: Title contains) —
+FAIL-CLOSED (an unanswerable filter never passes), AND semantics, filters gate candidacy
+BEFORE the judge (the spend win: filters-only doors fire with ZERO AI, reason "matched the
+door's filters"); fireability = condition OR filter at all four readers; chips + one registry
+popover in Studio (op-as-a-word when a field offers one); PREFER-A-FILTER + THE OMIT RULE in
+authoring (round-1 probe caught the model restating its filters as a redundant judged
+condition — every event would have paid for a judgment that bought nothing); topical ≠
+structural drawn deliberately ("about the analyst role" stays judged — a subject-contains
+filter would silently drop applications that omit the word). REPAIRS: the two upload-confirm
+floors' 900-char windows had drifted (green on empty text) — structural brace-match anchors
+now, and the host-safety law HARDENED (the innermost try must reach the call directly).
+
 ## GATES (laws-need-gates — each wave ships its floor)
 - The four-door parity sweep per primitive (generate-config emits · chat args accept · Studio
   edits · ledger serves) — the arc's standing gate.

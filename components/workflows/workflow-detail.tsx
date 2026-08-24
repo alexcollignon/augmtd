@@ -655,7 +655,10 @@ function ProcessTableRow({
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[13px] text-neutral-800 truncate">{p.subject}</span>
           <span className="text-[10px] rounded-full px-1.5 py-[1px] bg-neutral-100 text-neutral-500">
-            {scope?.entityName ?? 'Internal'}
+            {/* THE SUBJECT WEARS THE CASE (relay canvas W4): when the run resolved a case, the
+                chip speaks THAT — the specific opening this run served — falling back to the
+                workflow's static scope, and to 'Internal', exactly as before. */}
+            {p.caseRef?.name ?? scope?.entityName ?? 'Internal'}
           </span>
           {p.gate && <GateChip gate={p.gate} />}
         </div>

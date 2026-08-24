@@ -16,13 +16,17 @@
 //   3. handoff without an assignee    → "The 'Wait on a person' step needs a person."
 //   4. a step whose tool is feature-gated OFF for this workspace
 //                                     → "The <label> step needs <Feature> enabled."
-//   5. an EVENT DOOR that cannot fire → judged door with no `when`: "The trigger needs an event to
-//      react to." · a 'workflow' door with no workflow bound · a door whose SOURCE feature is off
+//   5. an EVENT DOOR that cannot fire → a content door with NEITHER a judged `when` NOR a
+//      deterministic filter (W5): "The trigger needs a condition or a filter to react to." ·
+//      a 'workflow' door with no workflow bound · a door whose SOURCE feature is off
 //      (the doors are iterated through normalizeTriggers — legacy single reaction trigger folds in)
 //   6. a `workflow` (⧉ subprocess) step with no workflow bound
 //                                     → "The '<label>' process step needs a workflow."
 //   7. a `workflow` step naming THIS workflow
 //                                     → "A workflow can't include itself as a step."
+//   8. a `case` step with a blank instruction
+//                                     → "The 'file it under its record' step needs to know what identifies
+//                                        a case."
 // Adding a rule = ONE entry in RULES below. Nothing else moves.
 //
 // PAUSED IS NOT UNREADINESS — a paused (or auto-paused) workflow is ready, just asleep.
@@ -129,7 +133,12 @@ const RULES: Rule[] = [
         if (!String(d.workflow_id ?? '').trim()) return "The 'when another workflow delivers' door needs a workflow.";
         continue;
       }
-      if (String(d.when ?? '').trim().length <= 3) return 'The trigger needs an event to react to.';
+      // W5 — FIREABLE = a judged condition OR at least one deterministic filter. A door with
+      // filters and no `when` is fully deterministic and perfectly able to fire; only a door with
+      // NEITHER has nothing to react to.
+      const judged = String(d.when ?? '').trim().length > 3;
+      const filtered = (d.filters?.length ?? 0) > 0;
+      if (!judged && !filtered) return 'The trigger needs a condition or a filter to react to.';
       const req = def?.feature ?? null;
       if (features && req && features[req] === false) {
         const feature = FEATURE_LABEL[req] ?? req;
@@ -164,6 +173,16 @@ const RULES: Rule[] = [
       (s) => typeOf(s) === 'workflow' && String((s.workflow_id as string | undefined) ?? '').trim() === self,
     );
     return loops ? "A workflow can't include itself as a step." : null;
+  },
+
+  // 8 — THE CASE STATION WITH NOTHING TO RECOGNIZE (relay canvas W4): a case step whose
+  // instruction is blank cannot tell one case from another, so every run would either found a
+  // duplicate or file nothing. The sentence names the missing knowledge, not the field.
+  (wf) => {
+    const blank = (wf.steps ?? []).map(asRec).some(
+      (s) => typeOf(s) === 'case' && !String((s.case_instruction as string | undefined) ?? '').trim(),
+    );
+    return blank ? "The 'file it under its record' step needs to know what identifies a case." : null;
   },
 ];
 

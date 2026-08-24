@@ -70,6 +70,9 @@ export async function executeStep(step: WorkflowStep, ctx: StepContext): Promise
       // The SUBPROCESS station is a park too (relay canvas W3) — the run loop fires the child and
       // resumes on its delivery. Reaching the dispatcher means a caller bypassed the loop.
       case 'workflow': output = '[Process station — handled by the run loop]'; break;
+      // The CASE station is engine-side too (relay canvas W4) — it needs the stores (the case
+      // index, the registry, the fire record). Same pass-through law as the parks.
+      case 'case': output = '[Case station — handled by the run loop]'; break;
       // The verify gate speaks TWICE: the corrected draft (a plain string, so every downstream
       // consumer is untouched) and its structured verdict, attached beside the output here.
       case 'verify': {

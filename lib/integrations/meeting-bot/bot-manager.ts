@@ -435,6 +435,8 @@ export async function storeTranscriptAndGenerateWork(
       title: String(finalTitle).slice(0, 120),
       gist: head || String(finalTitle),
       entityId: null as string | null,
+      // W5 — THE DETERMINISTIC FIELD the door filters read (`title`), the meeting's own name.
+      fields: { title: String(finalTitle) } as Record<string, string>,
     };
     try {
       const { data: link } = await supabase.from('entity_links').select('entity_id')

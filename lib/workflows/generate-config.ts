@@ -5,7 +5,7 @@ import { makeStepId } from '@/lib/workflows/types';
 import { listConnectedProviders } from '@/lib/integrations/connection';
 import { INTEGRATIONS } from '@/lib/integrations/registry';
 import { getWorkspaceFeatures } from '@/lib/workspace/features';
-import { authorDoors, renderDoorCatalogue, doorNote } from '@/lib/workflows/author-doors';
+import { authorDoors, renderDoorCatalogue, doorNote, stepNote } from '@/lib/workflows/author-doors';
 import { clampFireLimit, fireLimitClampNote, FIRE_LIMIT_MIN, FIRE_LIMIT_MAX } from '@/lib/workflows/fire-limit';
 import type { ReactionDoor } from '@/lib/workflows/trigger-sources';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -88,14 +88,29 @@ The legacy "reaction" trigger shape means "an email arrives matching this condit
 
 "triggers" is a list of the ways this work can START, other than the schedule. It is [] by default.
 Emit ONE entry per DISTINCT way the work begins — "when applications arrive by email OR someone
-uploads a CV" is TWO doors, not one. Each entry: { "source": "<key>", "when": "...", "label": "short human rendering" }
+uploads a CV" is TWO doors, not one. Each entry:
+{ "source": "<key>", "when": "...", "label": "short human rendering", "filters": [{ "field": "…", "op": "is|contains|domain_is", "value": "…" }] }
 
 Available doors:
 ${renderDoorCatalogue()}
 
 RULES for doors:
-- "when" states the condition in the request's own plain words — it is judged against each arriving
-  event ("the email is a job application with a CV attached", "the file is a candidate CV").
+- PREFER A FILTER OVER A CONDITION. A "filter" is EXACT and checked in code — no judgement, no
+  cost, and it behaves the same every time. Anything the request states structurally becomes one:
+  "from careers@acme.test" → {"field":"from_address","op":"is","value":"careers@acme.test"};
+  "from anyone at acme.test" → {"field":"from_address","op":"domain_is","value":"acme.test"};
+  "subject mentions application" → {"field":"subject","op":"contains","value":"application"};
+  "PDFs only" → {"field":"ext","op":"is","value":"pdf"}. Only the fields listed for that door above
+  exist — never invent a field, an operator, or a value the request didn't state.
+- Use "when" ONLY for what is genuinely fuzzy — something that needs reading and judgement ("it
+  looks like a strong candidate", "the email is actually a job application"). OMIT "when" ENTIRELY
+  when the filters already say everything the request stated: restating a filter as a condition
+  ("filters: subject contains invoice" + "when": "an invoice email arrives") buys nothing and makes
+  every arriving event pay for a judgement. Leave "when" out unless it adds something the filters
+  cannot check.
+- The two COMBINE and are ANDed: filters narrow first, then the condition is judged on what's left.
+  A door with filters and no "when" is perfectly valid — and cheaper. A door with neither cannot
+  fire, so give it at least one.
 - A "workflow" door is given BY NAME in "workflow_name" — the exact name of a task the user already
   runs ("when my Interview process delivers"). NEVER emit a workflow id; the system resolves the
   name. If no such task exists, don't invent one — just leave that door out.
@@ -132,6 +147,18 @@ you already named in "input_doc_names".
 
 Tool step — fetches data, always before AI steps:
 { "type": "tool", "id": "step_001", "label": "3–5 word label", "tool": "TOOL_ID", "config": {} }
+
+Case step — links each arriving event to ITS ongoing case/record (a job opening, a client matter,
+a deal) so later steps see everything that case has accumulated. It goes EARLY — before the steps
+that need the accumulated view:
+{ "type": "case", "id": "step_002", "label": "File it under its record", "case_instruction": "the job opening named in the application" }
+"case_instruction" is WHAT IDENTIFIES A CASE, in the request's own words — never a field name,
+never an id.
+RULE: emit it ONLY when the request describes per-event filing into an ongoing record ("link each
+application to its job opening", "file every invoice under its client", "keep each candidate with
+the role they applied for"). At most ONE per workflow. Place it before the steps that need the
+case's accumulated view (comparison, scoring, shortlisting). A plain one-shot pipeline — a digest,
+a briefing, a report — NEVER gets one.
 
 AI step — synthesises all previous outputs, always last and always exactly one:
 { "type": "ai", "id": "step_010", "label": "3–5 word label", "prompt": "...", "output_format": "markdown", "model_tier": "reasoning" }
@@ -404,22 +431,59 @@ export async function generateWorkflowConfig(
     }
   }
 
+  // ── THE STEP-REFUSAL CHANNEL. Both the subprocess stations and the case station speak through
+  // `needs_step_note` — it is the STEP channel (as needs_door_note is the door channel and
+  // needs_input_note the document channel), so a refused STEP of any kind belongs here. Collected
+  // as lines, joined once, so two refusals read as two sentences in one block.
+  const stepNotes: string[] = [];
+
+  // ── THE CASE STATION (relay canvas W4) — the model may say "link each application to its job
+  // opening"; code decides what can actually stand. NO RESOLVER IS INVOLVED, and none is needed: a
+  // case step carries an INSTRUCTION (what identifies a case, in the user's own words), never a
+  // name pointing at an existing object — so unlike a door, a pinned document, or a ⧉ station,
+  // there is nothing to look up and nothing to be ambiguous about. Only two things can be wrong:
+  //   1. MORE THAN ONE — one run carries ONE thing, so a second normalizer would re-file what the
+  //      first already filed. Keep the FIRST (it is the early station by nature) and refuse the
+  //      rest OUT LOUD (a dropped step is a step refusal — hence needs_step_note, not silence).
+  //   2. A BLANK INSTRUCTION — readiness would catch it at the door, but a draft should not be
+  //      BORN unready: the card would offer Confirm on a workflow that can't run.
+  {
+    let seatedCase = false;
+    const kept: Array<Record<string, unknown>> = [];
+    for (const s of steps) {
+      if (s.type !== 'case') { kept.push(s); continue; }
+      const instruction = typeof s.case_instruction === 'string' ? s.case_instruction.trim() : '';
+      if (!instruction) {
+        stepNotes.push('I left out the step that files each event under its own case — say what identifies a case (like "the job opening named in the application") and I\'ll add it.');
+        continue;
+      }
+      if (seatedCase) {
+        stepNotes.push('A run carries one thing, so it files under one case — I kept the first case step and left the others out.');
+        continue;
+      }
+      seatedCase = true;
+      kept.push({ ...s, case_instruction: instruction });
+    }
+    steps = kept;
+  }
+
   // ── THE SUBPROCESS STATIONS (relay canvas W3, law 5) — the model named PROCESSES; the ONE
   // resolver turns each name into one of the user's own workflows (or refuses it out loud: no such
   // process, ambiguous, still a draft, already nests one of its own, itself). Same failure
   // discipline as the doors and the tray: a resolver outage costs the stations, never the draft.
-  let needsStepNote: string | null = null;
   if (steps.some((s) => s.type === 'workflow')) {
     try {
-      const { authorSubprocessSteps, stepNote } = await import('@/lib/workflows/author-doors');
+      const { authorSubprocessSteps } = await import('@/lib/workflows/author-doors');
       const authored = await authorSubprocessSteps(steps, { supabase, userId });
       steps = authored.steps;
-      needsStepNote = stepNote(authored.notes);
+      stepNotes.push(...authored.notes);
     } catch {
       steps = steps.filter((s) => s.type !== 'workflow');
-      needsStepNote = 'I couldn\'t check your other processes, so I left the process step out — add it in Studio.';
+      stepNotes.push('I couldn\'t check your other processes, so I left the process step out — add it in Studio.');
     }
   }
+
+  const needsStepNote: string | null = stepNote(stepNotes);
 
   // ── THE EVENT DOORS (relay canvas W1, law 1) — the model's doors are WISHES; the ONE sanitiser
   // decides what can be stored (registry-checked, feature-checked, workflow names resolved to the

@@ -361,12 +361,19 @@ async function main() {
   }
   ok('…and the SAME step is ready when the feature is on',
     readinessOf({ status: 'active', steps: [{ type: 'tool', tool: 'get_emails', label: 'Pull the inbox' }] }, feats()).ready === true);
-  ok('5 — a reaction with a blank `when` → "The trigger needs an event to react to."',
+  // W5 re-point: a door is fireable on a judged condition OR a deterministic filter, so the
+  // sentence names both remedies. The old wording ("needs an event to react to") named neither.
+  ok('5 — a reaction with a blank `when` → "The trigger needs a condition or a filter to react to."',
     reasonOf(readinessOf({ status: 'active', trigger: { type: 'reaction', when: '   ' }, steps: [{ type: 'ai' }] }, feats()))
-      === 'The trigger needs an event to react to.',
+      === 'The trigger needs a condition or a filter to react to.',
     String(reasonOf(readinessOf({ status: 'active', trigger: { type: 'reaction' }, steps: [{ type: 'ai' }] }, feats()))));
   ok('…a reaction WITH a condition is ready',
     readinessOf({ status: 'active', trigger: { type: 'reaction', when: 'a tender lands' }, steps: [{ type: 'ai' }] }, feats()).ready === true);
+  ok('…and THE FIREABILITY HALF (W5): a door with a FILTER and no condition is ready too',
+    readinessOf({
+      status: 'active', steps: [{ type: 'ai' }],
+      triggers: [{ source: 'mail', filters: [{ field: 'from_address', op: 'domain_is', value: 'acme.test' }] }],
+    }, feats()).ready === true);
   ok('THE READY CASE speaks no reason at all',
     JSON.stringify(readinessOf({ status: 'active', trigger: { type: 'schedule' }, steps: [{ type: 'tool', tool: 'web_search' }] }, feats()))
       === JSON.stringify({ ready: true }));

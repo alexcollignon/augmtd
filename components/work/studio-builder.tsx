@@ -63,6 +63,7 @@ import {
   MicrophoneIcon,
   ArrowPathRoundedSquareIcon,
   Square2StackIcon,
+  ArrowsRightLeftIcon,
 } from '@heroicons/react/24/outline';
 import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
@@ -72,7 +73,8 @@ import type {
 import { makeStepId, normalizeOutput } from '@/lib/workflows/types';
 import {
   TRIGGER_SOURCES, triggerSource, normalizeTriggers, doorLabel,
-  type ReactionDoor, type TriggerSourceKey,
+  filterFieldsFor, describeFilters, FILTER_OP_LABEL,
+  type ReactionDoor, type TriggerSourceKey, type DoorFilter, type DoorFilterOp, type FilterFieldDef,
 } from '@/lib/workflows/trigger-sources';
 import { builtinChecksFor, GATE_BUILTIN_LINES } from '@/lib/workflows/builtin-checks';
 import type {
@@ -195,6 +197,7 @@ function normalizeFireLimit(raw: unknown): FireLimit {
 // resumes the parent. Named off the union rather than off the engine's exported symbol, so the
 // surface binds to the SCHEMA, not to a name.
 type ProcessStep = Extract<WorkflowStep, { type: 'workflow' }>;
+type CaseStepDraft = Extract<WorkflowStep, { type: 'case' }>;
 
 // The `workflow` door binds a workflow_id — the picker reads the user's own tasks (self excluded).
 // THE SUBPROCESS STATION (W3) reads the SAME list through the SAME cache, so a workflow named
@@ -297,6 +300,8 @@ const STEP_TYPE_COLORS = {
   approval: { bg: 'bg-amber-500', activeBg: 'bg-amber-50', activeText: 'text-amber-700' },
   handoff:  { bg: 'bg-violet-500', activeBg: 'bg-violet-50', activeText: 'text-violet-700' },
   workflow: { bg: 'bg-violet-600', activeBg: 'bg-violet-50', activeText: 'text-violet-700' },
+  // THE CASE STATION (W4) — a normalizer, not a producer: it wears the tool family's blue.
+  case: { bg: 'bg-blue-500', activeBg: 'bg-indigo-50', activeText: 'text-indigo-700' },
 };
 
 const STEP_TYPE_ICONS = {
@@ -307,6 +312,7 @@ const STEP_TYPE_ICONS = {
   approval: HandRaisedIcon,
   handoff:  UsersIcon,
   workflow: Square2StackIcon,
+  case: ArrowsRightLeftIcon,
 };
 
 // ── THE PINNED STATION (guardrails v1.1) ──────────────────────────────────────
@@ -550,6 +556,10 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
     } else if (type === 'workflow') {
       // Born UNPICKED — the label is the child's own name, written on the pick, never guessed.
       step = { id, type: 'workflow', label: '', workflow_id: '' } as ProcessStep;
+    } else if (type === 'case') {
+      // THE CASE STATION (W4) — born with its verb as the label and NOTHING to recognize yet;
+      // readiness rule 8 speaks until the author says what identifies a case.
+      step = { id, type: 'case', label: 'File it under its record', case_instruction: '' } as CaseStepDraft;
     } else {
       step = { id, type: 'agent', label: 'Hand off to a teammate', agent_id: agents[0]?.id ?? '', prompt: '' } as AgentStep;
     }
@@ -1179,6 +1189,9 @@ function InlineAddButton({ insertAt, agents, onAdd }: {
             { type: 'handoff' as const, Icon: UsersIcon,           label: 'Wait on a person',   disabled: false },
             // THE SUBPROCESS STATION (W3) — a whole workflow, standing on this rail as one block.
             { type: 'workflow' as const, Icon: Square2StackIcon,   label: 'Include a process',  disabled: false },
+            // THE CASE STATION (W4) — the normalizer verb, in the SAME one list as every other
+            // structural step: what arrived gets filed against the thing it belongs to.
+            { type: 'case' as const, Icon: ArrowsRightLeftIcon,    label: 'File it under its record',   disabled: false },
           ] as const).map(({ type, Icon, label, disabled }) => (
             <button key={type}
               onClick={() => { if (!disabled) { onAdd(type, insertAt); setOpen(false); } }}
@@ -1231,7 +1244,8 @@ function VisualWorkflowColumn({
     return null;
   })();
 
-  // NO LYING DOORS below the seated gate: the + only offers content steps (tool/ai/agent), and
+  // NO LYING DOORS below the seated gate: the + offers every insertable step type (stale note
+  // fixed Aug 24 — it long predates handoff/⧉ process/case), and
   // seatGate re-seats every one of them ABOVE the gate — so an add button between the gate and
   // the output would teleport whatever it inserts. Positions past the gate render a plain
   // connector instead. (No gate → every position is honest and keeps its +.)
@@ -1278,6 +1292,12 @@ function VisualWorkflowColumn({
             ) : step.type === 'workflow' ? (
               <SubprocessFlowBlock
                 step={step as ProcessStep}
+                active={isActive}
+                onClick={() => onSelectPanel({ stepId: step.id })}
+              />
+            ) : step.type === 'case' ? (
+              <CaseFlowBlock
+                step={step as CaseStepDraft}
                 active={isActive}
                 onClick={() => onSelectPanel({ stepId: step.id })}
               />
@@ -1335,6 +1355,19 @@ function clipDoor(s: string, max = 34): string {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
 
+/** What a door SAYS on a chip: the authored label, else its filters and/or its judged condition.
+ *  An authored label always wins — a label is data, and the user's own words outrank ours. */
+function doorChipWord(d: ReactionDoor, sourceLabel?: string): string {
+  const authored = d.label?.trim();
+  if (authored) return authored;
+  const filters = describeFilters(d);
+  const when = d.when?.trim();
+  if (filters && when) return `${filters} — ${when}`;
+  if (filters) return filters;
+  if (when) return `${sourceLabel ?? 'On event'} — ${when}`;
+  return doorLabel(d);
+}
+
 function whenEntries(workflow: WorkflowDraft): WhenEntry[] {
   const { primary, doors } = normalizeTriggers(workflow);
   const entries: WhenEntry[] = doors.map((d, i) => {
@@ -1343,7 +1376,10 @@ function whenEntries(workflow: WorkflowDraft): WhenEntry[] {
       key: `door-${i}`,
       Icon: sourceIcon(def?.icon),
       // The registry says what a door IS; the chip only adds the user's own condition.
-      text: clipDoor(d.label?.trim() || (d.when ? `${def?.label ?? 'On event'} — ${d.when}` : doorLabel(d))),
+      // W5 — a FILTERS-ONLY door has no condition to speak, so it speaks its filters instead
+      // ("Sender domain is acme.test"). The chip already wears the source's icon, so repeating
+      // "An email arrives" would spend the chip's whole width saying what the icon says.
+      text: clipDoor(doorChipWord(d, def?.label)),
       tone: 'door' as const,
     };
   });
@@ -1564,7 +1600,9 @@ function InputsDocPicker({ anchorRef, open, onClose, docs, accepts, onToggleDoc,
 
   return (
     <AnchoredPopover anchorRef={anchorRef} open={open} onClose={onClose} align="right" width={264}>
-      <div className="p-2">
+      {/* THE OVERLAY LAW: AnchoredPopover is a positioned SHELL — the consumer paints the panel.
+          A bare div renders transparent over the rail (found live, Aug 24). */}
+      <div className="p-2 bg-white border border-neutral-200 rounded-xl shadow-xl">
         <input
           autoFocus
           value={q}
@@ -1715,6 +1753,50 @@ function SubprocessFlowBlock({ step, active, onClick }: {
         <div className={`text-[11.5px] truncate leading-tight mt-0.5 ${picked ? 'text-neutral-500' : 'text-amber-700/80'}`}>{meta}</div>
       </div>
       <ChevronRightIcon className={`w-4 h-4 flex-shrink-0 mt-0.5 ${picked ? 'text-violet-300' : 'text-amber-400'}`} />
+    </div>
+  );
+}
+
+// ── THE CASE BLOCK on the rail (relay canvas W4) ──────────────────────────────────────────────
+// The normalizer's grammar, drawn: the tool family's shell (it FILES what arrived, it does not
+// produce), the step's own label as the title, and a small `case` chip that says what kind of
+// station this is at a glance. A blank instruction wears the amber hint idiom — the same
+// sentence readiness rule 8 will speak — rather than standing as a finished claim.
+function CaseFlowBlock({ step, active, onClick }: {
+  step: CaseStepDraft; active: boolean; onClick: () => void;
+}) {
+  const instruction = step.case_instruction?.trim() ?? '';
+  const meta = instruction
+    ? (instruction.length > 46 ? `${instruction.slice(0, 46)}…` : instruction)
+    : 'what identifies a case? e.g. “the job opening named in the application”';
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={e => e.key === 'Enter' && onClick()}
+      className={`w-full flex items-center gap-3 px-4 py-3.5 bg-white rounded-xl border-2 cursor-pointer transition-all ${
+        active ? 'border-indigo-400 shadow-md'
+        : instruction ? 'border-neutral-100 hover:border-neutral-200 shadow-sm'
+        : 'border-amber-200 hover:border-amber-300 shadow-sm'
+      }`}
+    >
+      <div className="w-9 h-9 rounded-xl bg-blue-500 flex items-center justify-center flex-shrink-0">
+        <ArrowsRightLeftIcon className="w-4 h-4 text-white" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-[13px] font-semibold text-neutral-800 truncate leading-tight">
+            {step.label?.trim() || 'File it under its record'}
+          </span>
+          <span className="flex-shrink-0 text-[10px] rounded-full px-1.5 py-[1px] bg-indigo-50 text-indigo-600">case</span>
+        </div>
+        <div className={`text-[11.5px] truncate leading-tight mt-0.5 ${instruction ? 'text-neutral-400' : 'text-amber-700/90'}`}>
+          {meta}
+        </div>
+      </div>
+      <ChevronRightIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
     </div>
   );
 }
@@ -2157,7 +2239,7 @@ function StepConfigSection({
   const menuRef = useRef<HTMLDivElement>(null);
   const colors = STEP_TYPE_COLORS[step.type as keyof typeof STEP_TYPE_COLORS] ?? STEP_TYPE_COLORS.tool;
   const TypeIcon = STEP_TYPE_ICONS[step.type as keyof typeof STEP_TYPE_ICONS] ?? STEP_TYPE_ICONS.tool;
-  const typeLabel = ({ tool: 'Tool', ai: 'Produce', agent: 'Hand off', verify: 'Check', approval: 'Approval', handoff: 'Wait on a person', workflow: 'Process' } as Record<string, string>)[step.type] ?? step.type;
+  const typeLabel = ({ tool: 'Tool', ai: 'Produce', agent: 'Hand off', verify: 'Check', approval: 'Approval', handoff: 'Wait on a person', workflow: 'Process', case: 'Case' } as Record<string, string>)[step.type] ?? step.type;
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -2264,6 +2346,45 @@ function StepConfigSection({
           onUpdate={onUpdate as (p: Partial<ProcessStep>) => void}
           currentWorkflowId={currentWorkflowId ?? ''}
         />
+      )}
+      {step.type === 'case' && (
+        <CaseStepFields step={step as CaseStepDraft} onUpdate={onUpdate as (p: Partial<CaseStepDraft>) => void} />
+      )}
+    </div>
+  );
+}
+
+// ── THE CASE STATION'S PANEL (relay canvas W4) ────────────────────────────────────────────────
+// ONE thing to say: what identifies a case, in the author's own words. The station matches first
+// against the cases this workflow already opened and only founds a new one when nothing matches —
+// so the sentence here is a RECOGNITION key, not a naming template. The label lives in the header
+// input above (every station's idiom); the blank-instruction hint is readiness rule 8's own
+// sentence, said here first, where it can be fixed.
+function CaseStepFields({ step, onUpdate }: {
+  step: CaseStepDraft;
+  onUpdate: (p: Partial<CaseStepDraft>) => void;
+}) {
+  const blank = !step.case_instruction?.trim();
+  return (
+    <div className="p-4 space-y-3">
+      <p className="text-[12.5px] text-neutral-500 leading-relaxed">
+        Each run carries one thing. This step files it against the case it belongs to — matching a
+        case you already have, or opening a new one when it names a case nobody opened yet. From
+        here on, the run sees everything that case has accumulated.
+      </p>
+      <Field label="What identifies a case" hint="in your own words">
+        <textarea
+          value={step.case_instruction ?? ''}
+          onChange={e => onUpdate({ case_instruction: e.target.value })}
+          rows={3}
+          placeholder="the job opening named in the application"
+          className="w-full text-[13px] bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-indigo-300 focus:bg-white resize-none placeholder-neutral-300"
+        />
+      </Field>
+      {blank && (
+        <p className="text-[11.5px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          The &lsquo;file it under its record&rsquo; step needs to know what identifies a case.
+        </p>
       )}
     </div>
   );
@@ -2839,7 +2960,10 @@ function WhenSection({ workflow, selfId, onPrimary, onDoors, onFireLimit }: {
             const def = triggerSource(door.source);
             const Icon = sourceIcon(def?.icon);
             const needsWhen = def?.needsWhen !== false;
-            const blank = needsWhen ? !door.when?.trim() : !door.workflow_id;
+            const filters = door.filters ?? [];
+            // W5 — FIREABLE = a judged condition OR at least one deterministic filter (the same
+            // rule readiness enforces; the two must never disagree about what is ready).
+            const blank = needsWhen ? (!door.when?.trim() && filters.length === 0) : !door.workflow_id;
             return (
               <div key={`${door.source}-${i}`} className="rounded-lg border border-neutral-200 px-2.5 py-2">
                 <div className="flex items-center gap-2 mb-1.5">
@@ -2852,11 +2976,24 @@ function WhenSection({ workflow, selfId, onPrimary, onDoors, onFireLimit }: {
                     <XMarkIcon className="w-3.5 h-3.5" />
                   </button>
                 </div>
+                {/* THE FILTERS — exact, decided in code, before any judgement. Chips + one small
+                    menu; never a query builder (the calm grammar the owner asked for). */}
+                {needsWhen && (
+                  <DoorFilterRow
+                    source={door.source}
+                    filters={filters}
+                    onChange={next => setDoor(i, { filters: next.length ? next : undefined })}
+                  />
+                )}
                 {needsWhen ? (
                   <input
                     value={door.when ?? ''}
                     onChange={e => setDoor(i, { when: e.target.value })}
-                    placeholder={WHEN_PLACEHOLDER[door.source] ?? 'when …'}
+                    // With filters seated, the judged condition is REFINEMENT — the placeholder says
+                    // so, so nobody reads a blank box as an unfinished door.
+                    placeholder={filters.length
+                      ? 'and when (optional): a condition to judge on top…'
+                      : (WHEN_PLACEHOLDER[door.source] ?? 'when …')}
                     className="w-full px-2 py-1.5 border border-neutral-200 rounded-md text-[12.5px] bg-white outline-none focus:border-indigo-300"
                   />
                 ) : (
@@ -2872,7 +3009,7 @@ function WhenSection({ workflow, selfId, onPrimary, onDoors, onFireLimit }: {
                 )}
                 {blank && (
                   <p className="mt-1 text-[11px] text-amber-600">
-                    {needsWhen ? 'This door needs a condition before it can fire.' : 'Pick the workflow whose delivery opens this door.'}
+                    {needsWhen ? 'This door needs a condition or a filter before it can fire.' : 'Pick the workflow whose delivery opens this door.'}
                   </p>
                 )}
               </div>
@@ -2886,7 +3023,8 @@ function WhenSection({ workflow, selfId, onPrimary, onDoors, onFireLimit }: {
           Add a door
         </button>
         <AnchoredPopover anchorRef={addRef} open={pickerOpen} onClose={() => setPickerOpen(false)} align="left" width={252}>
-          <div className="py-1">
+          {/* THE OVERLAY LAW: the shell is transparent — the consumer paints the panel. */}
+          <div className="py-1 bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden">
             {TRIGGER_SOURCES.map(src => {
               const allowed = src.feature === null || features[src.feature] !== false;
               const Icon = sourceIcon(src.icon);
@@ -2956,6 +3094,131 @@ function ThrottleRow({ limit, onChange }: { limit?: FireLimit; onChange: (n: num
     </div>
   );
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// THE DOOR FILTERS (relay canvas W5) — the exact half of a door, said in chips.
+//
+// The grammar, deliberately small (the owner's ask: easy to understand, 80/20, no clutter):
+//   · what EXISTS renders as a removable chip in the registry's own words ("Sender domain is
+//     acme.test") — reading a door never requires opening an editor;
+//   · what you ADD comes through ONE quiet "+ filter" → a menu of THIS SOURCE'S fields (law 3:
+//     rendered from `filterFields`, never a hardcoded list) → one inline row;
+//   · the operator is a WORD, not a control, whenever the field offers only one — a select that
+//     can only say one thing is chrome.
+// No boolean toggles, no groups, no nesting: filters are AND by law, so there is nothing to choose.
+// ════════════════════════════════════════════════════════════════════════════
+function DoorFilterRow({ source, filters, onChange }: {
+  source: TriggerSourceKey;
+  filters: DoorFilter[];
+  onChange: (next: DoorFilter[]) => void;
+}) {
+  const fields = filterFieldsFor(source);
+  const addRef = useRef<HTMLButtonElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [draft, setDraft] = useState<DoorFilter | null>(null);
+
+  if (!fields.length) return null;                 // a source with nothing structural to filter on
+
+  const fieldLabel = (key: string) => fields.find(f => f.key === key)?.label ?? key;
+  const opsFor = (key: string): DoorFilterOp[] => fields.find(f => f.key === key)?.ops ?? [];
+
+  const begin = (f: FilterFieldDef) => {
+    setDraft({ field: f.key, op: f.ops[0], value: '' });
+    setMenuOpen(false);
+  };
+  const commit = () => {
+    const d = draft;
+    if (!d) return;
+    const value = d.value.trim();
+    if (!value) { setDraft(null); return; }        // a blank filter is no filter — never stored
+    const key = (x: DoorFilter) => `${x.field}|${x.op}|${x.value.toLowerCase()}`;
+    const next = { ...d, value };
+    onChange(filters.some(x => key(x) === key(next)) ? filters : [...filters, next]);
+    setDraft(null);
+  };
+
+  return (
+    <div className="mb-1.5">
+      <div className="flex flex-wrap items-center gap-1">
+        {filters.map((f, i) => (
+          <span key={`${f.field}-${f.op}-${i}`}
+            className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-neutral-100 border border-neutral-200 text-[11px] text-neutral-600">
+            <span className="truncate max-w-[190px]">
+              {fieldLabel(f.field)} {FILTER_OP_LABEL[f.op]} <span className="text-neutral-800">{f.value}</span>
+            </span>
+            <button type="button" title="Remove this filter"
+              onClick={() => onChange(filters.filter((_, idx) => idx !== i))}
+              className="p-0.5 text-neutral-300 hover:text-red-500 transition-colors">
+              <XMarkIcon className="w-3 h-3" />
+            </button>
+          </span>
+        ))}
+        {!draft && (
+          <button ref={addRef} type="button" onClick={() => setMenuOpen(v => !v)}
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] text-neutral-400 hover:text-neutral-700 hover:bg-neutral-50 transition-colors">
+            <PlusIcon className="w-3 h-3" />
+            filter
+          </button>
+        )}
+      </div>
+
+      <AnchoredPopover anchorRef={addRef} open={menuOpen} onClose={() => setMenuOpen(false)} align="left" width={216}>
+        <div className="py-1 bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden">
+          <div className="px-3 pt-1 pb-1.5 text-[10.5px] uppercase tracking-wide text-neutral-400 font-semibold">
+            Only when
+          </div>
+          {fields.map(f => (
+            <button key={f.key} type="button" onClick={() => begin(f)}
+              className="w-full flex items-center justify-between gap-2 px-3.5 py-2 text-left hover:bg-neutral-50 transition-colors">
+              <span className="text-[12.5px] text-neutral-700">{f.label}</span>
+              <span className="text-[11px] text-neutral-400">{f.ops.map(o => FILTER_OP_LABEL[o]).join(' / ')}</span>
+            </button>
+          ))}
+        </div>
+      </AnchoredPopover>
+
+      {draft && (
+        <div className="mt-1 flex items-center gap-1.5">
+          <span className="text-[11.5px] text-neutral-500 flex-shrink-0">{fieldLabel(draft.field)}</span>
+          {opsFor(draft.field).length > 1 ? (
+            <select value={draft.op}
+              onChange={e => setDraft({ ...draft, op: e.target.value as DoorFilterOp })}
+              className="px-1.5 py-1 border border-neutral-200 rounded-md text-[11.5px] bg-white outline-none focus:border-indigo-300">
+              {opsFor(draft.field).map(o => <option key={o} value={o}>{FILTER_OP_LABEL[o]}</option>)}
+            </select>
+          ) : (
+            // ONE op means there is nothing to pick — it is said as a word.
+            <span className="text-[11.5px] text-neutral-500 flex-shrink-0">{FILTER_OP_LABEL[draft.op]}</span>
+          )}
+          <input autoFocus
+            value={draft.value}
+            onChange={e => setDraft({ ...draft, value: e.target.value })}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); commit(); }
+              if (e.key === 'Escape') setDraft(null);
+            }}
+            onBlur={commit}
+            placeholder={FILTER_VALUE_HINT[`${source}.${draft.field}`] ?? ''}
+            aria-label={`${fieldLabel(draft.field)} ${FILTER_OP_LABEL[draft.op]}`}
+            className="flex-1 min-w-0 px-2 py-1 border border-neutral-200 rounded-md text-[11.5px] bg-white outline-none focus:border-indigo-300"
+          />
+          <button type="button" onMouseDown={e => e.preventDefault()} onClick={commit} title="Add this filter"
+            className="px-1.5 py-1 rounded-md text-[11.5px] text-indigo-600 hover:bg-indigo-50 transition-colors flex-shrink-0">✓</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A value hint per (source, field) — an EXAMPLE only; the registry stays the field catalogue and an
+// unlisted key simply gets no hint (never a fabricated one).
+const FILTER_VALUE_HINT: Record<string, string> = {
+  'mail.from_address': 'careers@acme.test  ·  acme.test',
+  'mail.subject': 'application',
+  'file.filename': 'CV',
+  'file.ext': 'pdf',
+  'meeting.title': 'client call',
+};
 
 // The door's own grammar — the sentence a person completes. Keyed by registry source; an
 // unlisted source degrades to the generic prompt (the registry stays the catalogue).
