@@ -25,6 +25,7 @@ import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { ThreadArtifactsPanel } from '@/components/work/chat-artifact-panel';
 import { ExpandableRows } from '@/components/home/expandable-rows';
 import ProcessDrawer, { GateChip, GateFindings } from '@/components/workflows/process-drawer';
+import RunMaterialSheet, { asksForMaterial, type RunMaterial } from '@/components/workflows/run-material-sheet';
 import { WorkflowMark } from '@/components/workflows/workflow-detail';
 import { PROCESS_BUCKETS } from '@/lib/workflows/process-state';
 import type { ProcessRow } from '@/lib/workflows/process-state';
@@ -44,7 +45,23 @@ type LedgerRow = {
   /** THE BADGE'S SHARE (owner walk, Aug 19): how many of the nav badge's unreviewed deliveries
    *  are THIS workflow's — same predicate as the sidebar count, so the numbers sum. */
   unreviewed?: number;
+  /** THE READINESS WAVE: served truth about whether this workflow CAN run right now. Absent means
+   *  the route says nothing — the row then claims nothing (a chip is a claim, never an inference). */
+  readiness?: Readiness;
+  /** THE MATERIAL DOOR (relay canvas W2): the two served facts that decide whether Run-now asks
+   *  what this run works on — the event doors and the inputs tray's flag. Both optional: unserved
+   *  means the row keeps exactly today's one-click Run. */
+  doors?: Array<{ source: string; label: string }>;
+  inputs?: { acceptMaterial?: boolean } | null;
 };
+
+/** Served readiness — the reason ALREADY names the first missing thing, so no surface rewords it. */
+type Readiness = { ready: true } | { ready: false; reason: string };
+
+/** The one read: not-ready ONLY when the route says so, with a reason to speak. */
+const notReadyReason = (r: Readiness | undefined): string | null =>
+  r && r.ready === false && typeof r.reason === 'string' && r.reason.trim() ? r.reason.trim() : null;
+
 type Awaiting = { runId: string; workflowId: string; workflowName: string; since: string; instruction: string | null; lastStepLabel: string | null };
 type RecentGroup = {
   workflowId: string; workflowName: string; count: number; lastAt: string; lastStatus: string;
@@ -119,6 +136,8 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
   const [presenterId, setPresenterId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  // THE MATERIAL DOOR: the row whose Run-now is asking what this run works on (null = closed).
+  const [materialFor, setMaterialFor] = useState<LedgerRow | null>(null);
   const [cat, setCat] = useState<Template['category'] | 'all'>('all');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [openRuns, setOpenRuns] = useState<string | null>(null); // workflowId whose run audit is expanded
@@ -266,16 +285,35 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
   }, []);
 
   // ── Row verbs (speak consequence; VISIBLE — a hidden door is no door). ──
-  const runNow = useCallback(async (w: LedgerRow) => {
+  const startRun = useCallback(async (w: LedgerRow, material?: RunMaterial) => {
     setBusy(w.id);
     try {
-      const r = await fetch(`/api/workflows/${w.id}/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const r = await fetch(`/api/workflows/${w.id}/run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        // THE MATERIAL DOOR: the field exists on the body only when the user gave something.
+        body: material?.text ? JSON.stringify({ material }) : '{}',
+      });
       if (!r.ok) { toast.error('The run could not start.'); return; }
       toast.success(`"${w.name}" is running — the deliverable lands in ${HOME_WORD[w.home] ?? w.home}.`);
       setTimeout(() => void refresh(true), 4000);
       setTimeout(() => void refresh(true), 20000);
-    } catch { toast.error('The run could not start — try again.'); } finally { setBusy(null); }
+    } catch { toast.error('The run could not start — try again.'); } finally { setBusy(null); setMaterialFor(null); }
   }, [refresh]);
+
+  const runNow = useCallback((w: LedgerRow) => {
+    // THE BUTTON ANSWERS (readiness wave): a workflow the engine refuses to start doesn't fire and
+    // doesn't grey out into a mystery — the click speaks the served reason, in its own words.
+    // READINESS SPEAKS FIRST — the material sheet never stands in front of a refusal.
+    const blocked = notReadyReason(w.readiness);
+    if (blocked) { toast(blocked); return; }
+    // THE MATERIAL DOOR opens only for a workflow that asks for material; every other row keeps
+    // its one-click Run exactly as it was.
+    if (asksForMaterial({ acceptsMaterial: w.inputs?.acceptMaterial, hasReactionDoors: (w.doors?.length ?? 0) > 0 })) {
+      setMaterialFor(w);
+      return;
+    }
+    void startRun(w);
+  }, [startRun]);
 
   const togglePause = useCallback(async (w: LedgerRow) => {
     const to = w.status === 'paused' ? 'active' : 'paused';
@@ -528,9 +566,11 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
             {rows.map((w) => {
               const parked = parkedByWf.get(w.id) ?? null;
               const parkedOnYou = parked?.state === 'needs_you';
+              const notReady = notReadyReason(w.readiness);
               const dot =
                 w.runningProgress ? 'bg-indigo-500 animate-pulse' :
                 parked ? (parkedOnYou ? 'bg-amber-400' : 'bg-violet-400') :
+                notReady ? 'bg-amber-300' :
                 w.status === 'paused' || w.autoPaused ? 'bg-neutral-300' :
                 w.lastRunStatus === 'failed' ? 'bg-red-500' :
                 w.lastRunStatus === 'succeeded' ? 'bg-emerald-500' : 'bg-neutral-300';
@@ -550,6 +590,16 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                       <a href={`/workflows/${w.id}`} className="truncate text-[13px] font-medium text-neutral-800 hover:text-indigo-600 transition-colors">{w.name}</a>
                       {w.hasVerify && <ShieldCheckIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" title="Verified against sources before delivery" />}
                       {w.hasApproval && <CheckIcon className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" title="Waits for your approval before delivering" />}
+                      {/* THE READINESS CHIP — quiet, and it carries its own reason on hover. The
+                          row never invents one: no served readiness, no chip. */}
+                      {notReady && (
+                        <span
+                          title={notReady}
+                          className="flex-shrink-0 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
+                        >
+                          Not ready
+                        </span>
+                      )}
                       {/* THE BADGE, POINTED (owner walk, Aug 19): the nav's count wears the SAME
                           pill on the exact rows it refers to — opening the deliverable, the run
                           trail, or the workflow's page clears both through the one stamp. */}
@@ -583,6 +633,10 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                       {w.workerName && <><span className="text-neutral-300">·</span><span>delivered by {w.workerName}</span></>}
                       {w.runningProgress ? (
                         <><span className="text-neutral-300">·</span><span className="text-indigo-600">running — step {w.runningProgress}</span></>
+                      ) : notReady ? (
+                        // THE STATE WORD YIELDS: what stands in the way outranks when it last ran.
+                        // The served reason already names the first missing thing — spoken as-is.
+                        <><span className="text-neutral-300">·</span><span className="text-amber-600 truncate">{notReady}</span></>
                       ) : parked ? null : w.lastRunStatus === 'failed' ? (
                         <><span className="text-neutral-300">·</span><span className="text-red-600">last run failed</span></>
                       ) : w.lastRunAt ? (
@@ -595,7 +649,9 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                       ) : w.status === 'paused' ? (
                         <><span className="text-neutral-300">·</span><span className="text-neutral-400">paused</span></>
                       ) : null}
-                      {w.status === 'draft' && <><span className="text-neutral-300">·</span><span className="text-neutral-400">draft — finish it in Studio</span></>}
+                      {/* ONE CLAIM PER ROW: the readiness reason already says "still a draft" in
+                          its own words — the old segment would say it a second time. */}
+                      {w.status === 'draft' && !notReady && <><span className="text-neutral-300">·</span><span className="text-neutral-400">draft — finish it in Studio</span></>}
                       {/* Accountability, when the route names it — quiet attribution, never a claim. */}
                       {w.ownerName && <><span className="text-neutral-300">·</span><span className="text-neutral-400">owned by {w.ownerName}</span></>}
                     </div>
@@ -783,6 +839,18 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
         </div>,
         document.body,
       )}
+
+      {/* THE MATERIAL DOOR — the SAME sheet the workflow deep-dive mounts, opened from the row's
+          play button when this workflow asks what a hand-run should work on. */}
+      <RunMaterialSheet
+        open={!!materialFor}
+        workflowName={materialFor?.name ?? ''}
+        acceptsMaterial={materialFor?.inputs?.acceptMaterial}
+        hasReactionDoors={(materialFor?.doors?.length ?? 0) > 0}
+        busy={!!materialFor && busy === materialFor.id}
+        onRun={(m) => { if (materialFor) void startRun(materialFor, m); }}
+        onClose={() => setMaterialFor(null)}
+      />
     </div>
   );
 }

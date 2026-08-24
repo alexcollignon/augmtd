@@ -27,6 +27,14 @@ import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { fmtMonthDay, fmtDateTime, fmtWeekdayDate } from '@/lib/utils/format-date';
 import AddToProjectControl from '@/components/entities/add-to-work-control';
 import { ItemRail, pushDealTurn, type RailView } from '@/components/home/item-rail';
+import { panelPlan, applyPanelPlan } from '@/lib/room/render-plan';
+import dynamic from 'next/dynamic';
+
+// THE RUN'S RECEIPTS — REUSED, never forked (the record drawer is the one read-only story of a
+// run: Decisions / Log / vs. previous, portalled, self-fetching by runId). Lazily loaded so the
+// handoff gate — a rare shape of one deep-dive — never weighs on every item open.
+const RunRecordDrawer = dynamic(() => import('@/components/workflows/run-record-drawer'), { ssr: false });
+import type { RecordRunOutputs } from '@/components/workflows/run-record-drawer';
 
 // THE STRUCTURAL FRAME (UX arc): the room's two panes mount from frame one — before the view
 // loads, the rail receives this empty shell (+ pending) instead of not existing. Structure never
@@ -2327,6 +2335,27 @@ type CommitmentData = {
   status?: string | null;
   createdAt: string | null;
   sourceContext: { kind: 'email' | 'meeting'; subject: string | null; snippet: string | null; from: string | null; when: string | null } | null;
+  /** THE GATED WORK (lib/workflows/handoff-context.ts `HandoffContext`) — served ONLY on a
+   *  source='handoff' commitment whose run reads; null everywhere else. Additive: the card
+   *  degrades to its pre-block form when it's absent (a stale localStorage shape, an older
+   *  payload), never to an empty box. */
+  handoff?: HandoffBlock | null;
+};
+
+/** The served handoff block — structurally mirrors `HandoffContext` (the room never imports the
+ *  server module; the payload is the contract). */
+type HandoffBlock = {
+  workflowId: string;
+  workflowName: string;
+  runId: string;
+  runAt: string | null;
+  ask: string;
+  slaHours: number | null;
+  askedByFirst: string | null;
+  selfGate: boolean;
+  workerName: string | null;
+  parked: boolean;
+  preview: { text: string; truncated: boolean } | null;
 };
 
 function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boolean }) {
@@ -2342,9 +2371,6 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   // The ONE outcome read — rail context + gap + prepared deliverables + a contextual invite.
   const { view } = useItemView('commitment', id);
   const [inviteOpen, setInviteOpen] = useState(false);
-  // ONE-ROOM R2: the conversation exists for LOOSE items too (the rail handles a null entity —
-  // item-anchored narration + the founding chip). The room key falls back to `<kind>:<id>`.
-  const railView = view ? (view as RailView) : null;
 
   // J2 (judged room): THE ONE WORK JUDGMENT mounts the surface — a chase/reply verdict opens the
   // composer directly (the message is the work; no "Draft email →" button gate). The user's own
@@ -2398,8 +2424,18 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   // commitment verbs (Draft email → · Mark done · Dismiss) are SUPPRESSED here — the verb-scope
   // law: verbs render only with their object, and approving IS done.
   const isHandoff = data?.source === 'handoff';
-  const handoffRunId = isHandoff ? (data?.sourceId ?? null) : null;
+  const handoff = isHandoff ? (data?.handoff ?? null) : null;
+  const handoffRunId = isHandoff ? (handoff?.runId ?? data?.sourceId ?? null) : null;
   const handoffOpen = isHandoff && ['open', 'pending', 'in_progress'].includes(String(data?.status ?? 'open'));
+
+  // ONE-ROOM R2: the conversation exists for LOOSE items too (the rail handles a null entity —
+  // item-anchored narration + the founding chip). The room key falls back to `<kind>:<id>`.
+  // THE MOVE YIELDS TO A RENDERED DECISION (lib/room/render-plan.ts): the handoff gate card below
+  // IS this room's decision, so the placement table — not this screen — strips the rail's CTA and
+  // its offer chips. The door only reports the fact and hands the verdict through the view.
+  const railView = view
+    ? applyPanelPlan(view as RailView, panelPlan({ hasDecision: false, hasGatedDecision: isHandoff && handoffOpen }))
+    : null;
 
   return (
     <DeepDiveShell embedded={embedded} rail={<ItemRail kind="commitment" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} />}>
@@ -2440,6 +2476,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
                 title={data.description}
                 runId={handoffRunId}
                 open={handoffOpen}
+                handoff={handoff}
                 onDecided={() => setReload((n) => n + 1)}
               />
             ) : (
@@ -2515,7 +2552,12 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
                   {!src.subject && !src.snippet && <p className="text-[13px] text-neutral-400">No further context available.</p>}
                 </div>
               </section>
-            ) : (
+            ) : isHandoff && handoff ? null : (
+              // THE FALSE LINE (owner, Aug 20): a handoff gate HAS a linked source — the parked
+              // run — and the sourceContext read above structurally can't find it. Saying "no
+              // linked source" beside a card that shows the run's own output was the room
+              // contradicting itself. The card's provenance line carries the truth; this line
+              // stays for every commitment that genuinely has no source to show.
               <p className="text-[13px] text-neutral-400 leading-relaxed">
                 This commitment was tracked from your activity. No linked source to show.
               </p>
@@ -2563,15 +2605,32 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
 // (/api/workflows/runs/<runId>/resume, {approve}) — the same route the ledger's process drawer
 // posts to; the server authorizes, resumes-or-ends the run, and settles this commitment. ──
 function HandoffDecisionCard({
-  title, runId, open, onDecided,
-}: { title: string; runId: string | null; open: boolean; onDecided: () => void }) {
+  title, runId, open, handoff, onDecided,
+}: { title: string; runId: string | null; open: boolean; handoff: HandoffBlock | null; onDecided: () => void }) {
   const [busy, setBusy] = useState(false);
   const [settled, setSettled] = useState<'approved' | 'held' | null>(null);
   const [failed, setFailed] = useState(false);
+  const [note, setNote] = useState('');
+  // THE RECEIPTS DOOR — the reused record drawer. `null` = closed; an array = its Log tab's
+  // source, read once from the run row when the link is clicked (see openReceipts).
+  // null = drawer closed · { outs: null } = open but the read was refused (access, not absence).
+  const [receipts, setReceipts] = useState<{ outs: RecordRunOutputs | null } | null>(null);
 
   const decide = async (approve: boolean) => {
     if (!runId || busy) return;
     setBusy(true); setFailed(false);
+    // THE NOTE IS BEST-EFFORT AND NEVER A GATE: it goes to the run's ONE thread before the
+    // decision fires (so the thread reads in the order it happened), but a failed or slow note
+    // must never cost the user their decision — no await-on-error, no early return, nothing here
+    // can throw into the resume below.
+    const said = note.trim();
+    if (said && runId) {
+      try {
+        await fetch(`/api/workflows/runs/${runId}/comments`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: said }),
+        });
+      } catch { /* the decision is what matters — the note is a courtesy */ }
+    }
     try {
       const r = await fetch(`/api/workflows/runs/${runId}/resume`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approve }),
@@ -2582,44 +2641,127 @@ function HandoffDecisionCard({
     } catch { setFailed(true); } finally { setBusy(false); }
   };
 
+  // THE RECEIPTS DOOR: the run's own Log tab reads `step_outputs`, which this room's payload does
+  // not carry — so fetch the run row (the existing GET /api/workflows/[id]/runs/[runId], scoped by
+  // the workflowId the block already names) on the click, then open. When that read is refused
+  // (RLS scopes it to the run's owner — a gate holder who is NOT the owner gets a 404), the drawer
+  // still opens on its self-fetching Decisions / vs-previous tabs; only the Log tab is empty.
+  const openReceipts = async () => {
+    if (!handoff) return;
+    // A refused read (owner-scoped route; the holder is not the owner) passes NULL — the drawer's
+    // Log tab then speaks ACCESS, not a false "no receipts recorded". Only a successful read
+    // passes an array.
+    let outs: RecordRunOutputs | null = null;
+    try {
+      const r = await fetch(`/api/workflows/${handoff.workflowId}/runs/${handoff.runId}`);
+      if (r.ok) {
+        const j = (await r.json()) as { run?: { step_outputs?: RecordRunOutputs | null } };
+        outs = Array.isArray(j?.run?.step_outputs) ? j.run!.step_outputs! : [];
+      }
+    } catch { /* the record's own tabs still tell the story */ }
+    setReceipts({ outs });
+  };
+
   // A stale localStorage shape (cached before `sourceId` was served) knows the source but not the
   // run — say NOTHING until the refetch lands rather than claim a decision that wasn't made.
   if (!runId && open && !settled) return null;
 
-  // Already decided (by this click, elsewhere, or before you arrived) — a quiet line, no buttons.
-  if (settled || !open || !runId) {
+  const decided = !!settled || !open || !runId;
+  const decidedWord = settled === 'approved' ? 'Approved — the run is delivering.'
+    : settled === 'held' ? 'Held back — nothing was delivered.'
+    : 'This decision has already been made.';
+
+  // No block served (an older payload, a stale cache) — the card as it was: a quiet decided line,
+  // never an empty box pretending to show work it doesn't have.
+  if (!handoff && decided) {
     return (
       <div className="rounded-xl border border-neutral-200 bg-neutral-50/60 px-4 py-3">
-        <p className="text-[13px] text-neutral-500">
-          {settled === 'approved' ? 'Approved — the run is delivering.'
-            : settled === 'held' ? 'Held back — nothing was delivered.'
-            : 'This decision has already been made.'}
-        </p>
+        <p className="text-[13px] text-neutral-500">{decidedWord}</p>
       </div>
     );
   }
 
+  const receiptsDrawer = receipts && handoff
+    ? <RunRecordDrawer runId={handoff.runId} stepOutputs={receipts.outs} onClose={() => setReceipts(null)} />
+    : null;
+
   return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50/40 px-4 py-3.5">
-      <p className="text-[13.5px] font-medium text-neutral-800 leading-snug">{title}</p>
-      <p className="mt-0.5 text-[12px] text-neutral-500">A run is parked on your decision.</p>
-      <div className="mt-2.5 flex items-center gap-3">
-        <button
-          onClick={() => void decide(true)}
-          disabled={busy}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 text-white px-4 py-2 text-[13px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
-        >
-          <CheckIcon className="w-4 h-4" />Approve — deliver it
-        </button>
-        <button
-          onClick={() => void decide(false)}
-          disabled={busy}
-          className="inline-flex items-center text-[13px] font-medium text-neutral-500 hover:text-neutral-700 disabled:opacity-60 transition-colors"
-        >
-          Hold back
-        </button>
-      </div>
+    <div className={`rounded-xl border px-4 py-3.5 ${decided ? 'border-neutral-200 bg-neutral-50/60' : 'border-amber-200 bg-amber-50/40'}`}>
+      {/* THE ASK — the gate's own words (the commitment description is the fallback). */}
+      <p className="text-[13.5px] font-medium text-neutral-800 leading-snug">{handoff?.ask?.trim() || title}</p>
+
+      {/* THE PROVENANCE LINE — what this decision belongs to. This is the truth that replaces the
+          old "no linked source to show": a handoff gate's source is the run. */}
+      {handoff ? (
+        <p className="mt-0.5 text-[12px] text-neutral-500 leading-relaxed">
+          From the workflow {handoff.workflowName}
+          {handoff.runAt ? ` · run of ${fmtDateTime(handoff.runAt)}` : ''}
+          {/* SELF-GATE: your own run — the owing grammar ("asked by X") would be a lie about a
+              counterparty that doesn't exist. Only this card softens; the item header is not ours. */}
+          {decided ? ` · ${decidedWord}`
+            : handoff.selfGate ? ' · your own gate'
+            : handoff.askedByFirst ? ` · asked by ${handoff.askedByFirst}` : ''}
+          {handoff.slaHours ? ` · target ${handoff.slaHours}h` : ''}
+          {handoff.workerName ? ` · prepared by ${handoff.workerName}` : ''}
+        </p>
+      ) : (
+        <p className="mt-0.5 text-[12px] text-neutral-500">A run is parked on your decision.</p>
+      )}
+
+      {/* THE OBJECT — the work being gated, in its own bytes. A decision asked without showing
+          what it decides is the whole find; absent a preview the card simply doesn't claim one. */}
+      {handoff?.preview && (
+        <div className="mt-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 mb-1.5">What you&apos;re approving</p>
+          <div className="max-h-[320px] overflow-y-auto rounded-lg border border-neutral-200 bg-white px-3 py-2.5">
+            <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-neutral-700">{handoff.preview.text}</pre>
+          </div>
+          {handoff.preview.truncated && (
+            <p className="mt-1 text-[11px] text-neutral-400">— first 20,000 characters shown; the full output is in the run&apos;s receipts.</p>
+          )}
+        </div>
+      )}
+
+      {!decided && (
+        <>
+          {/* THE NOTE — one line, optional, spoken into the run's thread with the decision. */}
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            disabled={busy}
+            placeholder="Add a note for the thread…"
+            className="mt-3 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-[12.5px] text-neutral-800 placeholder:text-neutral-400 focus:border-indigo-300 focus:outline-none disabled:opacity-60"
+          />
+          <div className="mt-2.5 flex items-center gap-3">
+            <button
+              onClick={() => void decide(true)}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 text-white px-4 py-2 text-[13px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+            >
+              <CheckIcon className="w-4 h-4" />Approve — deliver it
+            </button>
+            <button
+              onClick={() => void decide(false)}
+              disabled={busy}
+              className="inline-flex items-center text-[13px] font-medium text-neutral-500 hover:text-neutral-700 disabled:opacity-60 transition-colors"
+            >
+              Hold back
+            </button>
+          </div>
+        </>
+      )}
       {failed && <p className="mt-2 text-[12px] text-rose-600">That decision did not land — try again.</p>}
+
+      {/* THE RECORD — quiet, below the deed (it is context, never a competing action). */}
+      {handoff && (
+        <button
+          onClick={() => void openReceipts()}
+          className="mt-3 inline-flex items-center text-[12px] font-medium text-neutral-500 hover:text-indigo-600 transition-colors"
+        >
+          See the run&apos;s receipts →
+        </button>
+      )}
+      {receiptsDrawer}
     </div>
   );
 }

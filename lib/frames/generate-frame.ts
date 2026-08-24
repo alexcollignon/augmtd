@@ -12,10 +12,16 @@
 //   • THE LOCKED FRAME — validateFrameHtml decides whether the output may exist. One repair
 //     pass carrying the reasons verbatim, then an HONEST NULL: the door falls through to its
 //     lower tiers and the user still gets a deliverable (fail soft down the ladder).
+//   • THE FRAME KIT — beauty is not an adjective in a prompt. Every generation is dressed BY
+//     CODE with the house design system (lib/frames/kit.ts) at the ONE place a generation is
+//     produced (`ask`), so the first pass and the repair pass are covered by construction and
+//     nothing the model does can ship a frame without it. The prompt documents the kit's API so
+//     the model COMPOSES with it instead of hand-rolling visuals.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { DocTheme } from '@/lib/documents/theme';
 import { validateFrameHtml } from '@/lib/frames/validate-frame';
+import { injectFrameKit, FRAME_KIT_REFERENCE } from '@/lib/frames/kit';
 
 export type GenerateFrameArgs = {
   title: string;
@@ -45,13 +51,15 @@ const FRAME_CONTRACT = [
   '· No <link>, no <iframe>/<object>/<embed>, no <meta http-equiv="refresh">, no <form action>.',
   '· No fetch(), XMLHttpRequest, WebSocket, EventSource, sendBeacon, import()/import statements.',
   '· No navigation: never assign to location, never call location.replace() or window.open().',
-  '· No chart library, no CDN, no web font, no remote image. Draw charts as hand-rolled inline SVG (bars, lines, donuts) — plain <svg> elements sized in the document. System font stack only.',
+  '· No chart library, no CDN, no web font, no remote image. Charts are drawn by the injected kit (below) as inline SVG. System font stack only.',
   '',
   'THE DATA (the truth floor): the material below IS the data. Inline it verbatim — as a JSON literal in an inline <script> and/or as rendered values. Never invent a number, never recompute a figure, never round or extrapolate. If a number is not in the material, it does not appear in the frame. When computed facts are given, they are AUTHORITATIVE — use them exactly as stated.',
   '',
   'INTERACTIVITY (read-only, over the inlined data only): tabs, filters, search, column sorting, chart hover/tooltips, collapsible sections. All state lives in the page. Nothing calls out, nothing writes back.',
   '',
-  'CRAFT: a calm, dense, professional view — a clear title, a short lead line, KPI tiles where the data supports them, then tables/charts. Responsive with no horizontal page scroll (tables scroll inside their own container). Readable in a narrow iframe. Keep the whole file under 1.4MB.',
+  FRAME_KIT_REFERENCE,
+  '',
+  'CRAFT: a calm, dense, professional view built out of the kit — header, KPI tiles, then sections of cards, charts and dense rows. Responsive with no horizontal page scroll (tables scroll inside .k-table-wrap). Readable in a narrow iframe. Keep the whole file under 1.4MB.',
 ].join('\n');
 
 export async function generateFrameHtml(
@@ -76,7 +84,7 @@ export async function generateFrameHtml(
 
     const accent = args.theme?.accent ? `#${args.theme.accent.replace(/^#/, '')}` : '#4F46E5';
     const brandLine = [
-      `ACCENT COLOR: ${accent} (use it for emphasis, chart series, and headings — never load a logo or a font).`,
+      `ACCENT COLOR: ${accent} — already set for you as the kit's --k-accent (never load a logo or a font; do not restate the hex, use var(--k-accent)).`,
       args.theme?.brandName ? `BRAND NAME (text only): ${args.theme.brandName}` : null,
       args.theme?.footer ? `FOOTER LINE (text only): ${args.theme.footer}` : null,
     ].filter(Boolean).join('\n');
@@ -110,7 +118,12 @@ export async function generateFrameHtml(
             `=== MATERIAL ===\n${material}`,
         }],
       });
-      return stripFence((res.choices?.[0]?.message?.content ?? '').trim()) || null;
+      const raw = stripFence((res.choices?.[0]?.message?.content ?? '').trim());
+      if (!raw) return null;
+      // THE KIT LANDS HERE — the ONE place a generation exists, so the first pass and the repair
+      // pass are both dressed by construction, and it happens BEFORE validation (the kit is bound
+      // by law 2 like everything else and is swept by the very next line of the caller).
+      return injectFrameKit(raw, accent);
     };
 
     let html = await ask();

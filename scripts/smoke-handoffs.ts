@@ -37,6 +37,12 @@
 //   H14 THE METRICS ROUTE — source + honesty floors (the route is auth'd, so its SUBSTANCE is
 //       gated: real usage columns, the one gateDeltaOf derivation, an authored-never-guessed
 //       baseline, the null-usage degradation, and the client's "your estimate" labelling).
+// Phase C — THE GATED-WORK ROOM (the decision shows what it decides):
+//   H17 THE GATE CARRIES ITS OBJECT — the ONE derivation serves the ask, the provenance and the
+//       run's own bytes (honest cut, null over a guess, a settled gate still speaking); the gated
+//       card folds into the ONE placement table (no kind branch in the table, the shell or the
+//       rail); the note is spoken into the run's ONE room before the decision, best-effort; and a
+//       refused receipts read speaks ACCESS, never a false "no receipts recorded".
 // Fixtures (workflows, runs, threads, commitments, room turns, nudge records, owner/override
 // stores, the scratch company, probe 3) are deleted in `finally`, and the suite ASSERTS zero
 // leftovers on all three probes. An
@@ -1092,6 +1098,232 @@ async function main() {
         seam.indexOf("personal_assistant") < seam.indexOf('sendCoworkerEmail(admin, wf.user_id, senderId'),
         'the fallback no longer feeds the send');
     }
+
+    // ══ H17 — THE GATE CARRIES ITS OBJECT (owner walk, Aug 20) ══════════════════════════════════
+    // A source='handoff' commitment is a DECISION ON A PARKED RUN. Until this wave its room asked
+    // for that decision while showing nothing of the work, and its source strip claimed "no linked
+    // source" — because the source is a RUN, which the commitment routes never read. H17 gates the
+    // repair on all three of its halves: THE DERIVATION (one module, served on the payload the card
+    // already reads), THE PLACEMENT (the gated card folds into the ONE table's notion of a
+    // decision — no kind branch anywhere), and THE HONESTY (an honest cut, null over a guess, and
+    // a refused read that speaks ACCESS instead of a false absence).
+    console.log('\nH17 — the gate carries its object:');
+    const { handoffContextFor, previewFromOutput, HANDOFF_PREVIEW_MAX } =
+      await import('@/lib/workflows/handoff-context');
+
+    // The fixture is SEEDED rather than run: H17 gates the derivation off a run row, and the
+    // oversized-object case (H17b) is a shape no real model call would produce on demand. Same
+    // shapes the engine writes — a parked run with one snapshotted output, and the assignee's ask.
+    const H17_ASK = 'Review the Q3 vendor shortlist before it goes out';
+    const H17_WF_NAME = `Vendor shortlist review [${stamp}]`;
+    const H17_OBJECT = [
+      'VENDOR SHORTLIST — Q3',
+      '1. Northwind Systems — best fit on integration depth.',
+      '2. Bluecrest Labs — cheapest, thinnest support.',
+      'Recommendation: proceed with Northwind.',
+    ].join('\n');
+    const wf17 = await makeWorkflow({
+      name: H17_WF_NAME,
+      steps: [
+        { type: 'ai', id: 'h17_draft', label: 'Draft the shortlist', model_tier: 'fast',
+          output_format: 'text', prompt: SAY('unused — the run row is seeded directly') },
+        { type: 'handoff', id: 'h17_gate', label: 'Review the shortlist',
+          assignee_user_id: reviewerId, assignee_name: 'Riley Probe', ask: H17_ASK, sla_hours: 12 },
+        { type: 'ai', id: 'h17_send', label: 'Send it', model_tier: 'fast',
+          output_format: 'text', prompt: SAY('unused — the gate never opens in this fixture') },
+      ],
+    });
+    const seedOutputs = (text: string): StepOutput[] =>
+      [{ step_id: 'h17_draft', step_type: 'ai', label: 'Draft the shortlist', output: text }];
+    const { data: run17Row, error: run17Err } = await admin.from('workflow_runs').insert({
+      workflow_id: wf17, user_id: ownerId, status: 'awaiting_approval', triggered_by: 'manual',
+      step_outputs: seedOutputs(H17_OBJECT), started_at: new Date().toISOString(),
+    }).select('id').single();
+    const run17 = String(run17Row?.id ?? '');
+    ok('H17 fixture: a parked run stands at the teammate gate', !!run17, String(run17Err?.message));
+    if (run17) runIdsCreated.push(run17);
+    const { data: c17 } = await admin.from('commitments').insert({
+      user_id: reviewerId, direction: 'you_owe',
+      description: `${H17_ASK} — Vendor shortlist review`, counterparty: 'Probe A',
+      due_date: new Date(Date.now() + 12 * 3600_000).toISOString().slice(0, 10),
+      source: 'handoff', source_id: run17, status: 'open',
+    }).select('id, description').single();
+    ok('H17 fixture: the assignee holds the ask', !!c17?.id, 'no commitment row');
+
+    /** The route's ONE derivation, called exactly as GET /api/commitments/[id] calls it. */
+    const derive = (over: Partial<{
+      userId: string; source: string | null; sourceId: string | null;
+      description: string | null; status: string | null;
+    }> = {}) => handoffContextFor(admin, {
+      userId: reviewerId, source: 'handoff', sourceId: run17,
+      description: String(c17?.description ?? ''), status: 'open', ...over,
+    });
+
+    // ── H17a — THE SERVED BLOCK ────────────────────────────────────────────────────────────────
+    const blockB = await derive();
+    ok('H17a the block serves for the ASSIGNEE', !!blockB, 'null block');
+    ok('H17a the ask is the STEP\'s own words (not the description head)',
+      blockB?.ask === H17_ASK, String(blockB?.ask));
+    ok('H17a it names the work it belongs to (workflow + run)',
+      blockB?.workflowName === H17_WF_NAME && blockB?.runId === run17 && blockB?.workflowId === wf17,
+      JSON.stringify([blockB?.workflowName, blockB?.runId, blockB?.workflowId]));
+    ok('H17a THE OBJECT is the run\'s OWN bytes, byte-equal to the seeded output',
+      blockB?.preview?.text === H17_OBJECT && blockB?.preview?.truncated === false,
+      JSON.stringify(blockB?.preview).slice(0, 200));
+    ok('H17a the run reads PARKED while the ask is open', blockB?.parked === true, String(blockB?.parked));
+    ok('H17a the SLA rides the step (target hours, never invented)',
+      blockB?.slaHours === 12, String(blockB?.slaHours));
+    ok('H17a a TEAMMATE\'s gate is not a self-gate', blockB?.selfGate === false, String(blockB?.selfGate));
+    const blockOwner = await derive({ userId: ownerId });
+    ok('H17a …and the SAME run held by the workflow owner IS a self-gate',
+      blockOwner?.selfGate === true, String(blockOwner?.selfGate));
+    ok('H17a the run\'s own time is served, never "now"',
+      typeof blockB?.runAt === 'string' && !Number.isNaN(Date.parse(String(blockB?.runAt))), String(blockB?.runAt));
+
+    // ── H17b — THE OBJECT'S HONEST CUT ─────────────────────────────────────────────────────────
+    const longObject = 'lorem ipsum dolor sit amet consectetur '.repeat(900); // ~35k chars
+    const cut = previewFromOutput(longObject);
+    ok('H17b an oversized object is MARKED truncated', cut?.truncated === true, JSON.stringify(cut?.truncated));
+    ok('H17b …and never exceeds the declared ceiling',
+      (cut?.text.length ?? Infinity) <= HANDOFF_PREVIEW_MAX, String(cut?.text.length));
+    ok('H17b …the cut is a prefix of the real bytes (never a rewrite)',
+      !!cut && longObject.startsWith(cut.text), 'the preview is not a prefix');
+    ok('H17b …and it lands ON whitespace — no half-word is shown as the work',
+      !!cut && /\s/.test(longObject.charAt(cut.text.length)) && !/\s$/.test(cut.text),
+      JSON.stringify(cut?.text.slice(-24)));
+    const oneWord = 'x'.repeat(HANDOFF_PREVIEW_MAX + 5_000);
+    const cutWord = previewFromOutput(oneWord);
+    ok('H17b a whitespace-free object still cuts at the ceiling, still marked',
+      cutWord?.truncated === true && cutWord?.text.length === HANDOFF_PREVIEW_MAX, String(cutWord?.text.length));
+    await admin.from('workflow_runs').update({ step_outputs: seedOutputs(longObject) }).eq('id', run17);
+    const blockLong = await derive();
+    ok('H17b the SERVED block carries that same honest cut',
+      blockLong?.preview?.truncated === true &&
+      (blockLong?.preview?.text.length ?? Infinity) <= HANDOFF_PREVIEW_MAX &&
+      longObject.startsWith(String(blockLong?.preview?.text ?? ' ')),
+      JSON.stringify([blockLong?.preview?.truncated, blockLong?.preview?.text.length]));
+    await admin.from('workflow_runs').update({ step_outputs: seedOutputs(H17_OBJECT) }).eq('id', run17);
+
+    // ── H17c — THE NULL FLOORS (a gate we cannot describe is never an error) ───────────────────
+    ok('H17c a plain email commitment derives NOTHING',
+      (await derive({ source: 'email', sourceId: 'irrelevant' })) === null, 'a non-handoff got a block');
+    ok('H17c a handoff with no source id derives nothing',
+      (await derive({ sourceId: null })) === null, 'an unbound gate got a block');
+    const ghostRun = '00000000-0000-4000-8000-0000000d1ed0';
+    ok('H17c an unreadable run yields null, never a guess',
+      (await derive({ sourceId: ghostRun })) === null, 'a missing run got a block');
+    let threw = false; let malformed: unknown = 'not-run';
+    try { malformed = await derive({ sourceId: 'not-a-uuid' }); } catch { threw = true; }
+    ok('H17c …and a malformed source id NEVER throws into the room',
+      !threw && malformed === null, threw ? 'it threw' : JSON.stringify(malformed).slice(0, 120));
+    ok('H17c an empty object is no preview at all (never an empty box)',
+      previewFromOutput(null) === null && previewFromOutput(undefined) === null && previewFromOutput('') === null);
+
+    // ── H17d — A SETTLED GATE STILL SPEAKS ─────────────────────────────────────────────────────
+    await admin.from('commitments').update({ status: 'completed', resolved_at: new Date().toISOString() })
+      .eq('id', String(c17?.id));
+    const { data: c17done } = await admin.from('commitments').select('status').eq('id', String(c17?.id)).maybeSingle();
+    const settledBlock = await derive({ status: String(c17done?.status ?? 'completed') });
+    ok('H17d a settled handoff still gets the WHOLE block (the gated work is still the story)',
+      !!settledBlock && settledBlock.preview?.text === H17_OBJECT && settledBlock.ask === H17_ASK,
+      JSON.stringify(settledBlock?.ask));
+    ok('H17d …with parked:false — the room never claims it is still waiting',
+      settledBlock?.parked === false, String(settledBlock?.parked));
+    await admin.from('commitments').update({ status: 'open', resolved_at: null }).eq('id', String(c17?.id));
+
+    // ── H17e — THE NOTE'S STORE (one room, the decision's own) ─────────────────────────────────
+    const { writeRoomTurn, readRoomTurns } = await import('@/lib/room/turns');
+    const { narrateInRunRoom } = await import('@/lib/workflows/owner');
+    const run17Room = `run:${run17}`;
+    const H17_NOTE = 'Approving — the integration-depth argument is the one that matters.';
+    // Exactly what POST /api/workflows/runs/[id]/comments does with the card's body: a role 'user'
+    // turn in the CREATOR's run room, attributed to whoever spoke.
+    await writeRoomTurn(admin, ownerId, run17Room, {
+      role: 'user', text: H17_NOTE, author: { kind: 'coworker', id: reviewerId, name: 'Riley' },
+    });
+    await narrateInRunRoom(admin, ownerId, run17, 'Riley approved the vendor shortlist.', `handoff-decided:${run17}`);
+    const turns17 = await readRoomTurns(admin, ownerId, run17Room, 200);
+    const comments17 = turns17.filter((t) => t.role === 'user');
+    ok('H17e the note and the decision narration share ONE room (no second store)',
+      turns17.length === 2, JSON.stringify(turns17.map((t) => t.role)));
+    ok('H17e the role filter (what the comments door serves) returns exactly the note',
+      comments17.length === 1 && comments17[0].text === H17_NOTE, JSON.stringify(comments17.map((t) => t.text)));
+    ok('H17e …carrying WHO spoke', comments17[0]?.author?.name === 'Riley', JSON.stringify(comments17[0]?.author));
+    const commentsSrc17 = await readSrc('app/api/workflows/runs/[id]/comments/route.ts');
+    ok('H17e SOURCE FLOOR: the door writes `run:<id>` under the CREATOR, as a user turn',
+      /writeRoomTurn\(auth\.admin, auth\.creatorUserId, `run:\$\{runId\}`/.test(commentsSrc17) &&
+      /role: 'user'/.test(commentsSrc17), 'the comments door moved its room');
+
+    await admin.from('room_turns').delete().eq('user_id', ownerId).eq('room_key', run17Room);
+    const { count: room17Left } = await admin.from('room_turns')
+      .select('id', { count: 'exact', head: true }).eq('user_id', ownerId).eq('room_key', run17Room);
+    ok('H17 the run room is drained (probe A keeps no fixture turns)', (room17Left ?? 0) === 0, String(room17Left));
+
+    // ── H17f — ONE PLACEMENT TABLE ─────────────────────────────────────────────────────────────
+    const stripComments = (s: string) =>
+      s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const planSrc = await readSrc('lib/room/render-plan.ts');
+    ok('H17f the two kinds of decision FOLD INTO ONE before the table reads it',
+      /hasDecision:\s*raw\.hasDecision \|\| !!raw\.hasGatedDecision/.test(planSrc), 'the fold is missing');
+    const planFn = stripComments(planSrc.slice(
+      planSrc.indexOf('export function panelPlan'), planSrc.indexOf('export function applyPanelPlan')));
+    const tableBody = planFn.slice(planFn.indexOf('return {'));
+    ok('H17f …and the table itself never branches on the KIND of decision',
+      !/handoff|gated/i.test(tableBody), tableBody.replace(/\s+/g, ' ').slice(0, 200));
+    ok('H17f the placement table imports NO component (placement, never rendering)',
+      !/^\s*import /m.test(planSrc) && !/@\/components/.test(planSrc), 'render-plan grew an import');
+    ok('H17f applyPanelPlan is pure — same object back when nothing is suppressed',
+      /if \(plan\.showMove && plan\.showOffers\) return view;/.test(planSrc), 'the identity path is gone');
+
+    // ── H17g — THE AGNOSTICISM FLOOR ───────────────────────────────────────────────────────────
+    const shellSrc = await readSrc('components/room/room-shell.tsx');
+    const railSrc = await readSrc('components/home/item-rail.tsx');
+    const itemDetailSrc = await readSrc('components/home/item-detail.tsx');
+    ok('H17g the room shell knows nothing of handoffs', !/handoff/i.test(shellSrc), 'a handoff reference reached the shell');
+    ok('H17g the rail gained NO gated-decision branch (the fact travels through the view)',
+      !/hasGatedDecision/.test(railSrc) && !/handoff/i.test(railSrc), 'the rail learned a kind');
+    ok('H17g the DOOR hands the fact to the one table, over the view it already passes',
+      /applyPanelPlan\(view as RailView, panelPlan\(\{ hasDecision: false, hasGatedDecision: isHandoff && handoffOpen \}\)\)/
+        .test(itemDetailSrc), 'the door stopped consulting the table');
+
+    // ── H17h — THE DECISION IS BYTE-SAFE ───────────────────────────────────────────────────────
+    const decideBody = itemDetailSrc.slice(
+      itemDetailSrc.indexOf('const decide = async (approve: boolean)'),
+      itemDetailSrc.indexOf('const openReceipts'));
+    const iComments = decideBody.indexOf('/comments');
+    const iResume = decideBody.indexOf('/resume');
+    ok('H17h the decision still posts to the ONE resume door',
+      /\/api\/workflows\/runs\/\$\{runId\}\/resume/.test(decideBody) && iResume > 0, String(iResume));
+    ok('H17h the note is spoken BEFORE the decision (the thread reads in the order it happened)',
+      iComments > 0 && iComments < iResume, `${iComments} vs ${iResume}`);
+    ok('H17h …inside its own try/catch — a failed note can never cost the decision',
+      /try \{[\s\S]*?\/comments[\s\S]*?\} catch \{[^}]*\}/.test(decideBody.slice(0, iResume)), 'the note is unguarded');
+    ok('H17h …and nothing between the note and the resume returns early',
+      !/\breturn\b/.test(decideBody.slice(iComments, iResume)), 'an early return sits before the resume');
+
+    // ── H17i — THE FALSE LINE ──────────────────────────────────────────────────────────────────
+    const falseLineCount = (itemDetailSrc.match(/No linked source to show/g) ?? []).length;
+    ok('H17i the "no linked source" line exists exactly ONCE', falseLineCount === 1, String(falseLineCount));
+    ok('H17i …and renders only behind the not-a-served-handoff guard',
+      /isHandoff && handoff \? null :/.test(itemDetailSrc), 'the guard is gone — the false line can stand again');
+
+    // ── H17j — ACCESS, NOT ABSENCE ─────────────────────────────────────────────────────────────
+    const drawerSrc = await readSrc('components/workflows/run-record-drawer.tsx');
+    ok('H17j the drawer takes a NULLABLE receipts source',
+      /stepOutputs: RecordRunOutputs \| null;/.test(drawerSrc), 'stepOutputs is not nullable');
+    const iNullBranch = drawerSrc.indexOf('stepOutputs === null');
+    const iEmptyLine = drawerSrc.indexOf('No receipts recorded');
+    ok('H17j a REFUSED read gets its own line, decided before the empty case',
+      iNullBranch > 0 && iEmptyLine > iNullBranch, `${iNullBranch} vs ${iEmptyLine}`);
+    ok('H17j …and the empty case survives for a run that truly recorded nothing',
+      /stepOutputs\.length === 0/.test(drawerSrc), 'the honest empty case is gone');
+    const receiptsBody = itemDetailSrc.slice(
+      itemDetailSrc.indexOf('const openReceipts'), itemDetailSrc.indexOf('// A stale localStorage shape'));
+    ok('H17j the card starts from null and ONLY a successful read assigns an array',
+      /let outs: RecordRunOutputs \| null = null;/.test(receiptsBody) &&
+      /if \(r\.ok\)/.test(receiptsBody) &&
+      (receiptsBody.match(/\bouts\s*=/g) ?? []).length === 1,
+      JSON.stringify(receiptsBody.match(/\bouts\s*=/g)));
   } catch (e) {
     fail++;
     console.log(`\n  ✗ SUITE THREW — ${(e as Error).message}\n${(e as Error).stack}`);

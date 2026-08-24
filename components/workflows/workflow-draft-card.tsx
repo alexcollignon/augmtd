@@ -23,6 +23,16 @@ export type WorkflowDraft = {
   worker_instructions?: string | null;
   overlap_note?: string | null;
   skill_ids?: string[];
+  /** THE EVENT DOORS (relay canvas W1) — authored by describe/chat, sanitized server-side;
+   *  the Confirm must carry them or a said door dies at creation (the four-door law). */
+  triggers?: Array<{ type: string; source: string; when?: string; label?: string; workflow_id?: string }>;
+  /** A door the sanitiser refused, spoken (the needs_person_note mechanism reused). */
+  needs_door_note?: string | null;
+  /** THE INPUTS TRAY (relay canvas W2) — reference material the draft pinned, already resolved to
+   *  the caller's own documents; the Confirm must carry it or a said document dies at creation. */
+  inputs?: { docs: Array<{ kbFileId: string; name: string }>; acceptMaterial: boolean } | null;
+  /** A document the resolver couldn't find, spoken — the same needs-note law as the doors. */
+  needs_input_note?: string | null;
   /** The coworker whose conversation drafted it — becomes the delivery voice. */
   agent_id?: string | null;
   /** Idempotence token: a confirmed card renders as a receipt, never a second Confirm. */
@@ -72,6 +82,8 @@ export function WorkflowDraftCard({
           steps: draft.steps, output_config: draft.output_config, status: 'active',
           agent_id: draft.agent_id ?? null, worker_instructions: draft.worker_instructions ?? null,
           ...(draft.skill_ids?.length ? { skill_ids: draft.skill_ids } : {}),
+          ...(draft.triggers?.length ? { triggers: draft.triggers } : {}),
+          ...(draft.inputs ? { inputs: draft.inputs } : {}),
         }),
       });
       const j = await r.json();
@@ -102,6 +114,13 @@ export function WorkflowDraftCard({
           </div>
           <div className="mt-0.5 text-[12px] text-neutral-500">
             {triggerWord(draft.trigger)}
+            {(draft.triggers?.length ?? 0) > 0 && (
+              <> · runs when {draft.triggers!.map((d) => (d.label || d.when || d.source)).join(' · when ')}</>
+            )}
+            {(draft.inputs?.docs.length ?? 0) > 0 && (
+              <> · reads {draft.inputs!.docs.map((d) => d.name).join(' · ')}</>
+            )}
+            {draft.inputs?.acceptMaterial && <> · takes material at run time</>}
             {' · delivers to '}{HOME_WORD[String((draft.output_config as { destination?: string }).destination ?? 'message')] ?? 'a message'}
           </div>
         </div>
@@ -122,6 +141,18 @@ export function WorkflowDraftCard({
       {draft.overlap_note && (
         <div className="mt-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
           {draft.overlap_note}
+        </div>
+      )}
+      {/* A door the sanitiser refused is SPOKEN, never silently absent (the needs-note law). */}
+      {draft.needs_door_note && (
+        <div className="mt-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+          {draft.needs_door_note}
+        </div>
+      )}
+      {/* A document the resolver couldn't find is SPOKEN too — same block, its own sentence. */}
+      {draft.needs_input_note && (
+        <div className="mt-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+          {draft.needs_input_note}
         </div>
       )}
       <div className="mt-3 flex items-center gap-3">

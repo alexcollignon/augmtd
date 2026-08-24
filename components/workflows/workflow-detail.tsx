@@ -33,6 +33,7 @@ import {
 import { Badge, Button, SegmentedControl } from '@/components/ui';
 import ProcessDrawer from '@/components/workflows/process-drawer';
 import RunRecordDrawer, { type RecordRunOutputs } from '@/components/workflows/run-record-drawer';
+import RunMaterialSheet, { asksForMaterial, type RunMaterial } from '@/components/workflows/run-material-sheet';
 import { FramesTab } from '@/components/frames/frames-tab';
 import { PROCESS_BUCKETS, gateDeltaOf, processStateOf } from '@/lib/workflows/process-state';
 import type { ProcessRow, ProcessState, StepOutputLike } from '@/lib/workflows/process-state';
@@ -180,6 +181,13 @@ export function WorkflowMark({ mark, size = 28 }: { mark: LedgerMark | null; siz
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
+/** Served readiness — the reason ALREADY names the first missing thing, so no surface rewords it. */
+type Readiness = { ready: true } | { ready: false; reason: string };
+
+/** The one read: not-ready ONLY when the route says so, with a reason to speak. */
+const notReadyReason = (r: Readiness | undefined): string | null =>
+  r && r.ready === false && typeof r.reason === 'string' && r.reason.trim() ? r.reason.trim() : null;
+
 export function WorkflowDetail({
   workflowId, name, description, status, scheduleLabel, stepCount, workerName, nextRunAt, autoPaused,
 }: {
@@ -215,6 +223,17 @@ export function WorkflowDetail({
   // Who is looking: the creator sees "Owned by you" (when they hold it) and the change affordance.
   // Both facts come from ONE existing read — GET /api/workflows/[id] already serves is_owned_by_me.
   const [selfUserId, setSelfUserId] = useState<string | null>(null);
+  // THE READINESS WAVE — served truth about whether this workflow CAN run right now. It rides the
+  // SAME GET /api/workflows/[id] this page already reads for the viewer fact; null = the route said
+  // nothing and the header claims nothing (a reason is spoken, never inferred).
+  const [notReady, setNotReady] = useState<string | null>(null);
+  // THE MATERIAL DOOR (relay canvas W2): whether Run-now should ask what this run works on. Both
+  // facts ride the SAME GET this page already reads — event doors (a hand-run is otherwise hollow)
+  // and the inputs tray's own flag. Unserved = false, so a plain workflow keeps its one-click Run.
+  const [wantsMaterial, setWantsMaterial] = useState(false);
+  const [materialOpen, setMaterialOpen] = useState(false);
+  const [hasDoors, setHasDoors] = useState(false);
+  const [acceptsMaterial, setAcceptsMaterial] = useState(false);
 
   // THE SCOPED PROJECTION: one ledger read, filtered to this workflow. Same payload the strip uses.
   const loadProcesses = useCallback(async () => {
@@ -277,18 +296,31 @@ export function WorkflowDetail({
     void fetch(`/api/workflows/${workflowId}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
-        const w = j?.workflow as { user_id?: string; is_owned_by_me?: boolean } | undefined;
-        if (!dead && w?.is_owned_by_me && w.user_id) setSelfUserId(w.user_id);
+        const w = j?.workflow as {
+          user_id?: string; is_owned_by_me?: boolean; readiness?: Readiness;
+          doors?: unknown[]; inputs?: { acceptMaterial?: boolean } | null;
+        } | undefined;
+        if (dead) return;
+        if (w?.is_owned_by_me && w.user_id) setSelfUserId(w.user_id);
+        setNotReady(notReadyReason((j as { readiness?: Readiness } | null)?.readiness ?? w?.readiness));
+        const doors = (j as { doors?: unknown[] } | null)?.doors ?? w?.doors;
+        const openDoors = Array.isArray(doors) && doors.length > 0;
+        const accepts = w?.inputs?.acceptMaterial === true;
+        setHasDoors(openDoors);
+        setAcceptsMaterial(accepts);
+        setWantsMaterial(asksForMaterial({ acceptsMaterial: accepts, hasReactionDoors: openDoors }));
       })
       .catch(() => {});
     return () => { dead = true; };
   }, [workflowId]);
 
-  const runNow = useCallback(async () => {
+  const startRun = useCallback(async (material?: RunMaterial) => {
     setRunning(true);
     try {
       const r = await fetch(`/api/workflows/${workflowId}/run`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        // THE MATERIAL DOOR: the field exists on the body only when the user gave something.
+        body: material?.text ? JSON.stringify({ material }) : '{}',
       });
       const j = (await r.json().catch(() => ({}))) as { error?: string };
       if (!r.ok) { toast.error(j.error ?? 'Could not start the run'); return; }
@@ -298,8 +330,19 @@ export function WorkflowDetail({
       toast.error('Could not start the run');
     } finally {
       setRunning(false);
+      setMaterialOpen(false);
     }
   }, [workflowId, loadProcesses, loadRuns]);
+
+  const runNow = useCallback(() => {
+    // THE BUTTON ANSWERS (readiness wave): a workflow the engine refuses to start doesn't fire and
+    // doesn't grey out into a mystery — the click speaks the served reason, in its own words.
+    // READINESS SPEAKS FIRST: the material sheet is a door onto a run that CAN happen — it never
+    // stands in front of a refusal.
+    if (notReady) { toast(notReady); return; }
+    if (wantsMaterial) { setMaterialOpen(true); return; }
+    void startRun();
+  }, [notReady, wantsMaterial, startRun]);
 
   const tabs = useMemo(() => {
     const t: Array<{ value: Tab; label: string }> = [
@@ -365,6 +408,9 @@ export function WorkflowDetail({
               {workerName && <span className="text-neutral-400">· delivered by {workerName}</span>}
               {stepCount > 0 && <span className="text-neutral-400">· {stepCount} steps</span>}
             </div>
+            {/* THE READINESS LINE — what stands in the way of the next run, in the served reason's
+                own words. Rendered only when the route says the workflow cannot run. */}
+            {notReady && <div className="mt-1 text-[12.5px] text-amber-600">{notReady}</div>}
             {parkedNow && (
               <div className={`mt-1 text-[12.5px] ${parkedNow.state === 'needs_you' ? 'text-amber-600' : 'text-violet-600'}`}>
                 {parkedNow.state === 'needs_you'
@@ -458,6 +504,17 @@ export function WorkflowDetail({
           onClose={() => setOpenRecord(null)}
         />
       )}
+
+      {/* THE MATERIAL DOOR — the same sheet the ledger row's play button mounts. */}
+      <RunMaterialSheet
+        open={materialOpen}
+        workflowName={name}
+        acceptsMaterial={acceptsMaterial}
+        hasReactionDoors={hasDoors}
+        busy={running}
+        onRun={(m) => void startRun(m)}
+        onClose={() => setMaterialOpen(false)}
+      />
     </div>
   );
 }

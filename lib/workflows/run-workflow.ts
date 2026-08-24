@@ -21,6 +21,7 @@ import type {
   HandoffStep,
 } from './types';
 import type { DocContent, DocSection, DocumentArtifact, DeliverableType } from '@/lib/types/inbox';
+import type { WorkspaceFeatures } from '@/lib/workspace/types';
 
 // ── Admin client (service role) ───────────────────────────────────────────────
 
@@ -337,7 +338,11 @@ export interface RunWorkflowOptions {
    *  that parked it. Requires runId. */
   resumeFromApproval?: boolean;
   /** STANDING REACTIONS (production arc step 6): the triggering event's context block — rides
-   *  every AI step (including the verify gate, for which it is legitimate source material). */
+   *  every AI step (including the verify gate, for which it is legitimate source material).
+   *  THE MATERIAL DOOR (relay canvas W2) reuses this exact channel: material handed in at Run-now
+   *  arrives as a `[MANUAL MATERIAL …]` block here. That is why a reaction workflow run by hand
+   *  WITH material does not hit the nothing-to-react-to refusal below — the refusal is keyed on
+   *  this context being empty, and material IS the event stand-in. Without it, it still refuses. */
   triggerContext?: string;
 }
 
@@ -390,6 +395,49 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       .eq('id', runId);
   }
 
+  // ── THE REFUSAL AT THE DOOR (THE READINESS WAVE) ───────────────────────────────────────────
+  // A run with nothing to work with refuses HERE, with a spoken reason — never a cascade of six
+  // steps politely narrating their own emptiness into a "deliverable" that is a failure report.
+  // A refusal is an ORDINARY failed run: no thread message, no narration, no deliverable, no
+  // artifact, no report-back, no email. The existing failed→needs_you lane carries the sentence.
+  const refuse = async (
+    reason: string,
+    extra?: { outputs?: StepOutput[]; threadId?: string | null },
+  ): Promise<RunWorkflowResult> => {
+    await admin.from('workflow_runs').update({
+      status: 'failed',
+      error: reason,
+      ...(extra?.outputs ? { step_outputs: extra.outputs } : {}),
+      completed_at: new Date().toISOString(),
+    }).eq('id', runId!);
+    return { runId: runId!, status: 'failed', threadId: extra?.threadId ?? null, error: reason };
+  };
+
+  // (a) NOT READY — the same derivation the ledger row and the dispatcher speak.
+  {
+    const { readinessOf, nothingToReactTo } = await import('./readiness');
+    let features: WorkspaceFeatures | null = null;
+    try {
+      const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
+      features = await getWorkspaceFeatures(workflow.user_id, admin);
+    } catch { /* unknown features never invent unreadiness */ }
+    const r = readinessOf(
+      { status: workflow.status, trigger: workflow.trigger as { type?: string; when?: string } | null, steps: workflow.steps ?? [] },
+      features,
+    );
+    if (!r.ready) return refuse(r.reason);
+
+    // (b) A REACTION WITHOUT ITS EVENT. The structural fact is the trigger context block: a real
+    // fire always carries it (lib/workflows/reactions.ts injects it at both the inline and the
+    // backstop door). No block = nothing happened. Manual AND test runs refuse alike — a test
+    // without material is the same emptiness, and the sentence already names the remedy.
+    // A resume is exempt: its event rode in on the original run.
+    const trig = workflow.trigger as { type?: string; when?: string; label?: string } | null;
+    if (trig?.type === 'reaction' && !opts.resumeFromApproval && !(opts.triggerContext ?? '').trim()) {
+      return refuse(nothingToReactTo(trig));
+    }
+  }
+
   // Find-or-create the task's persistent thread — ONE thread per (workflow, runner),
   // not one per run. Report-backs append to it like a colleague's recurring DM.
   // The thread title is the stable task name; deliverable titles stay date-stamped
@@ -440,6 +488,24 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     projectGrounding = await workflowRunGrounding(admin, workflow.user_id, workflow.id);
   } catch { /* non-fatal */ }
 
+  // ── THE INPUTS TRAY (THE RELAY CANVAS W2 — law 7: INPUTS ARE VISIBLE) ─────────────────────────
+  // The workflow's pinned reference material, built ONCE per run and carried into every ai step.
+  // IT RIDES THE `projectGrounding` CHANNEL ON PURPOSE: that channel is a system-prompt append, so
+  // (a) it never enters `previousOutputs` and therefore never competes with — or is eaten by —
+  // formatPreviousOutputs' middle-cut truncation of the step outputs, and (b) it inherits the
+  // channel's ONE exclusion: a verify gate (use_worker_identity: false) does not see it, because a
+  // gate must judge the draft against the run's own sources and not "correct" it from standing
+  // reference text. Nothing is built when the tray was never configured.
+  let inputsBlock: string | null = null;
+  try {
+    const { readWorkflowInputs, buildInputsBlock } = await import('@/lib/workflows/inputs');
+    const inputs = await readWorkflowInputs(admin, workflow.user_id, workflow.id);
+    if (inputs?.docs.length) {
+      inputsBlock = await buildInputsBlock(admin, workflow.user_id, inputs.docs);
+    }
+  } catch { /* non-fatal — a tray that cannot be read never fails a run */ }
+  const aiContext = [projectGrounding, inputsBlock].filter(Boolean).join('\n\n') || null;
+
   // ONE context builder for every executeStep call in this run — the guardrail retry re-runs two
   // steps with the same environment, and a second inline literal is how the two drift.
   const stepCtx = (
@@ -462,7 +528,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     isLastStep: index === steps.length - 1,
     workerInstructions,
     skillIds,
-    projectGrounding,
+    projectGrounding: aiContext,
     triggerEvent: opts.triggerContext ?? null,
     ...extra,
   });
@@ -582,6 +648,18 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     if (out.error) {
       runError = `Step "${out.label}" failed: ${out.error}`;
       break;
+    }
+
+    // ── (c) THE EMPTY-FIRST-MATERIAL FLOOR (THE READINESS WAVE) ──────────────────────────────
+    // The run's first material is the ground everything after it stands on. If the FIRST tool
+    // step came back structurally empty, every later step would be writing from nothing — the
+    // pilot's cascade. Refuse instead, with the reason spoken. CONSERVATIVE BY DESIGN: first
+    // tool step only, structural emptiness only — a "no new items" sentence is content.
+    if (i === 0 && (step as { type?: string }).type === 'tool') {
+      const { isStructurallyEmpty, emptyFirstMaterial } = await import('./readiness');
+      if (isStructurallyEmpty(out.output)) {
+        return refuse(emptyFirstMaterial(out.label), { outputs: stepOutputs, threadId });
+      }
     }
 
     // ── RETRY-THEN-HOLD (guardrails arc): a BLOCKED verdict means the user's own rule could not
@@ -904,6 +982,28 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       await syncStandingCommitment(admin, wfRow, worker?.name ?? null, { fromSuccessfulRun: true });
       await narrateStandingRun(admin, wfRow, { ok: true, runId, threadId, workerName: worker?.name ?? 'Your coworker' });
     } catch { /* bookkeeping — never breaks a run */ }
+
+    // ── THE `workflow` FIRE DOOR (THE RELAY CANVAS W1 — docs/relay-canvas-plan.md) ──────────────
+    // "Another workflow delivers" — the STRUCTURAL source (no judge; the engine routes it by
+    // workflow id). It fires ONLY from this success tail: a refusal, a failure and an
+    // awaiting_approval park all return before here, and the whole block is `!opts.isTest`, so a
+    // test run delivers nothing and fires nothing.
+    // THE EVENT ID IS THE RUN's, never the workflow's — a second delivery must be able to fire.
+    // Self-loop: a door on THIS workflow naming ITSELF is dropped engine-side in `runDoors`
+    // (`c.sourceId !== wf.id`) — the exactly-once key is per run, so without that guard a
+    // self-door would re-fire on every delivery forever.
+    try {
+      const { checkSourceReactions } = await import('@/lib/workflows/reactions');
+      const gist = (materialised.title ? `${materialised.title}\n` : '')
+        + String(finalText ?? '').replace(/\s+/g, ' ').trim().slice(0, 300);
+      const rx = await checkSourceReactions(admin, workflow.user_id, 'workflow', [{
+        id: runId,
+        sourceId: workflow.id,
+        title: workflow.name,
+        gist: gist.trim() || workflow.name,
+      }]);
+      if (rx?.fired) console.log(`[reactions] workflow door fired ${rx.fired} run(s) from "${workflow.name}"`);
+    } catch (e) { console.error('[run-workflow] Non-fatal: workflow reaction check failed:', e); }
 
     // ── Auto-pause: don't keep producing output nobody reads ──
     // Runs AFTER the next_run_at write above so the pause's null isn't overwritten.

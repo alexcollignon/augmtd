@@ -59,6 +59,9 @@ import {
   HandRaisedIcon,
   UsersIcon,
   XMarkIcon,
+  DocumentPlusIcon,
+  MicrophoneIcon,
+  ArrowPathRoundedSquareIcon,
 } from '@heroicons/react/24/outline';
 import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
@@ -66,7 +69,14 @@ import type {
   VerifyStep, ApprovalStep, HandoffStep, GateVerdict, GateFinding,
 } from '@/lib/workflows/types';
 import { makeStepId, normalizeOutput } from '@/lib/workflows/types';
+import {
+  TRIGGER_SOURCES, triggerSource, normalizeTriggers, doorLabel,
+  type ReactionDoor, type TriggerSourceKey,
+} from '@/lib/workflows/trigger-sources';
 import { builtinChecksFor, GATE_BUILTIN_LINES } from '@/lib/workflows/builtin-checks';
+import type {
+  WorkflowInputDoc as LibWorkflowInputDoc, WorkflowInputs as LibWorkflowInputs,
+} from '@/lib/workflows/inputs';
 import { AnchoredPopover } from '@/components/ui/anchored-popover';
 import { SharingModeSelector } from '@/components/work/sharing-mode-selector';
 import { LINKEDIN_FRAMEWORKS } from '@/lib/tools/linkedin-post';
@@ -117,6 +127,63 @@ const WORKFLOW_COLORS = [
   { key: 'rose',    bg: 'bg-rose-500',    ring: 'ring-rose-500'    },
   { key: 'neutral', bg: 'bg-neutral-500', ring: 'ring-neutral-500' },
 ];
+
+// ── THE WHEN BLOCK (THE RELAY CANVAS, W1 — docs/relay-canvas-plan.md) ─────────
+// Law 3: the SOURCE LIST lives in lib/workflows/trigger-sources.ts and nowhere else. All this
+// surface owns is the icon-name → component mapping (a shared module cannot import heroicons
+// components); an unmapped icon name degrades to the bolt, it never drops the row.
+const TRIGGER_SOURCE_ICON: Record<string, typeof BoltIcon> = {
+  EnvelopeIcon,
+  DocumentPlusIcon,
+  MicrophoneIcon,
+  ArrowPathRoundedSquareIcon,
+};
+function sourceIcon(iconName: string | undefined): typeof BoltIcon {
+  return (iconName && TRIGGER_SOURCE_ICON[iconName]) || BoltIcon;
+}
+
+// ── THE INPUTS TRAY (THE RELAY CANVAS, W2 — docs/relay-canvas-plan.md, law 7) ─
+// A workflow's reference material (a policy, a template) is CONFIG, not a buried skill — so it
+// is drawn on the rail, hanging off the WHEN block on a dashed connector: what the run WORKS
+// WITH, beside what it DOES. Served on the workflow GET as `inputs`, written through the same
+// PATCH every other builder edit rides — one door, no second endpoint. The picker reads the ONE
+// knowledge-file source the chat composer's @-mention already reads.
+// The shape is the ENGINE's (lib/workflows/inputs.ts) — type-only, so no server graph rides in.
+type WorkflowInputDoc = LibWorkflowInputDoc;
+type WorkflowInputs = LibWorkflowInputs;
+
+/** Whatever the route served, read as the shape the tray edits. A malformed read is an empty tray. */
+function normalizeInputs(raw: unknown): WorkflowInputs {
+  const o = (raw ?? {}) as { docs?: unknown; acceptMaterial?: unknown };
+  const docs = Array.isArray(o.docs)
+    ? (o.docs as Array<Record<string, unknown>>)
+        .filter(d => d && typeof d.kbFileId === 'string' && (d.kbFileId as string).length > 0)
+        .map(d => ({ kbFileId: String(d.kbFileId), name: typeof d.name === 'string' && d.name.trim() ? String(d.name) : 'Document' }))
+    : [];
+  return { docs, acceptMaterial: o.acceptMaterial === true };
+}
+
+// The doors column is additive (jsonb, may not exist in every environment yet), so the builder
+// carries it as an extension of Workflow rather than waiting on the shared type. `inputs` rides
+// the same way: `undefined` = not yet read (never write it), `null`/object = known.
+type WorkflowDraft = Workflow & { triggers?: ReactionDoor[]; inputs?: WorkflowInputs | null };
+
+// The `workflow` door binds a workflow_id — the picker reads the user's own tasks (self excluded).
+let _wfOptionsCache: Array<{ id: string; name: string }> | null = null;
+function useWorkflowOptions(): Array<{ id: string; name: string }> {
+  const [options, setOptions] = useState<Array<{ id: string; name: string }>>(_wfOptionsCache ?? []);
+  useEffect(() => {
+    if (_wfOptionsCache) return;
+    fetch('/api/workflows').then(r => r.json()).then((d: { workflows?: Array<{ id: string; name: string; is_owned_by_me?: boolean }> }) => {
+      const list = (d.workflows ?? [])
+        .filter(w => w.is_owned_by_me !== false)
+        .map(w => ({ id: w.id, name: w.name }));
+      _wfOptionsCache = list;
+      setOptions(list);
+    }).catch(() => {});
+  }, []);
+  return options;
+}
 
 const AVAILABLE_TOOLS = [
   { id: 'get_emails',          label: 'Fetch emails',              description: 'Pull emails from your inbox — filter by mode, time window, sender, keywords or topic.' },
@@ -235,7 +302,7 @@ type EnhanceFn = (prompt: string, label: string, context: { step_type: 'ai' | 't
 type ChatMsg = { role: 'user' | 'assistant'; content: string; patched?: boolean };
 
 export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBack }: Props) {
-  const [workflow, setWorkflow] = useState<Workflow>(initialWorkflow);
+  const [workflow, setWorkflow] = useState<WorkflowDraft>(initialWorkflow);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [activePanel, setActivePanel] = useState<ActivePanel>('identity');
@@ -264,6 +331,54 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
   const autoSeat = useCallback((steps: WorkflowStep[]) =>
     seatGate(gateDismissedRef.current ? steps : withGate(steps)), []);
 
+  // ── THE WHEN BLOCK's two independent writes (the destroyer-bug floor) ───────
+  // The primary (manual/schedule) and the event doors are DIFFERENT config. Editing one never
+  // reads, rewrites, or drops the other: setPrimary touches `trigger` only, setDoors touches
+  // `triggers` only — except for THE LEGACY MIGRATION, which is explicit in both directions:
+  // a pre-W1 `trigger:{type:'reaction'}` normalizes to a mail door, and the first write of
+  // either half lands `trigger:{type:'manual'}` + that door in `triggers` IN THE SAME UPDATE.
+  // Nothing here can leave a reaction behind.
+  const setPrimary = useCallback((t: WorkflowTrigger) => {
+    setWorkflow(w => {
+      if (w.trigger?.type !== 'reaction') return { ...w, trigger: t };
+      const { doors } = normalizeTriggers(w);   // folds the legacy reaction into a mail door
+      return { ...w, trigger: t, triggers: doors };
+    });
+  }, []);
+
+  const setDoors = useCallback((doors: ReactionDoor[]) => {
+    setWorkflow(w => ({
+      ...w,
+      triggers: doors,
+      // The doors list the editor hands back ALREADY contains the folded legacy door, so the
+      // legacy carrier can retire — never before, never silently.
+      trigger: w.trigger?.type === 'reaction' ? { type: 'manual' } : w.trigger,
+    }));
+  }, []);
+
+  // THE TRAY'S ONE READ. `inputs` is additive config the page's SSR'd row does not carry, so the
+  // builder hydrates it once from the workflow GET — the same door that serves it everywhere
+  // else. It NEVER overwrites an edit the user already made (undefined = not yet read).
+  const workflowId = initialWorkflow.id;
+  useEffect(() => {
+    let dead = false;
+    void fetch(`/api/workflows/${workflowId}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => {
+        if (dead || !j) return;
+        // `null` is the route's own word for NEVER CONFIGURED — kept as null so a save doesn't
+        // write an empty tray nobody asked for. The rail draws its ghost line either way.
+        const served = (j.workflow as { inputs?: unknown } | undefined)?.inputs ?? j.inputs ?? null;
+        setWorkflow(w => (w.inputs === undefined ? { ...w, inputs: served === null ? null : normalizeInputs(served) } : w));
+      })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [workflowId]);
+
+  const setInputs = useCallback((next: WorkflowInputs) => {
+    setWorkflow(w => ({ ...w, inputs: next }));
+  }, []);
+
   const patchBulk = useCallback((updates: Partial<Workflow>) => {
     setWorkflow(w => {
       const next = { ...w, ...updates };
@@ -276,6 +391,13 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
   const save = useCallback(async (): Promise<Workflow | null> => {
     setSaving(true);
     try {
+      // ONE PERSISTENCE PATH for the WHEN block: both halves are written from the SAME normalized
+      // read on EVERY save, so `trigger` and `triggers` can never shear — and a legacy reaction
+      // trigger MIGRATES here (primary manual + its mail door) instead of being overwritten away.
+      const { primary, doors } = normalizeTriggers(workflow);
+      const triggerToSave: WorkflowTrigger = primary.type === 'schedule'
+        ? { type: 'schedule', cron: primary.cron ?? '0 9 * * *', ...(primary.timezone ? { timezone: primary.timezone } : {}), ...(primary.label ? { label: primary.label } : {}) }
+        : { type: 'manual' };
       const res = await fetch(`/api/workflows/${workflow.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -284,18 +406,29 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
           description: workflow.description,
           icon: workflow.icon,
           color: workflow.color,
-          trigger: workflow.trigger,
+          trigger: triggerToSave,
+          triggers: doors,
           steps: workflow.steps,
           output_config: workflow.output_config,
           status: workflow.status,
           agent_id: workflow.agent_id ?? null,
           worker_instructions: workflow.worker_instructions ?? null,
           skill_ids: workflow.skill_ids ?? [],
+          // The tray rides the existing save — but only once it has been READ (undefined) and only
+          // when there is a tray to write (null = never configured; writing it would be a no-op
+          // delete). Sending an unhydrated value would let a save wipe material we never saw.
+          ...(workflow.inputs ? { inputs: workflow.inputs } : {}),
         }),
       });
       if (res.ok) {
-        const { workflow: saved } = await res.json();
-        setWorkflow(saved);
+        const { workflow: saved } = await res.json() as { workflow: WorkflowDraft };
+        // A response that doesn't echo the additive column must not erase the doors we just wrote.
+        setWorkflow(saved.triggers === undefined ? { ...saved, triggers: doors } : saved);
+        // The same rule for the tray: a response that doesn't echo `inputs` must not erase it.
+        if (saved.inputs === undefined && workflow.inputs !== undefined) {
+          const keep = workflow.inputs;
+          setWorkflow(w => ({ ...w, inputs: keep }));
+        }
         setSavedAt(new Date());
         return saved;
       } else {
@@ -520,6 +653,7 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
             onSelectPanel={setActivePanel}
             onAddStep={addStep}
             onUpdateStep={updateStep}
+            onInputsChange={setInputs}
           />
         </div>
 
@@ -530,25 +664,7 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
               <IdentitySection workflow={workflow} patch={patch} agents={agents} />
             )}
             {resolvedPanel === 'trigger' && (
-              <div className="space-y-6">
-                <div className="flex items-start gap-2.5">
-                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 ${
-                    workflow.trigger.type === 'schedule' ? 'bg-amber-500' : 'bg-neutral-400'
-                  }`}>
-                    {workflow.trigger.type === 'schedule'
-                      ? <ClockIcon className="w-5 h-5 text-white" />
-                      : <BoltIcon className="w-5 h-5 text-white" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[10.5px] text-neutral-400 uppercase tracking-wide font-semibold mb-0.5">Trigger · Step</div>
-                    <div className="text-[18px] font-semibold text-neutral-900 leading-tight">
-                      {workflow.trigger.type === 'manual' ? 'Manual trigger' : triggerShortTitle(workflow.trigger)}
-                    </div>
-                  </div>
-                </div>
-                <div className="border-t border-neutral-100" />
-                <TriggerEditor trigger={workflow.trigger} onChange={t => patch('trigger', t)} />
-              </div>
+              <WhenSection workflow={workflow} selfId={workflow.id} onPrimary={setPrimary} onDoors={setDoors} />
             )}
             {resolvedPanel === 'output' && (
               <div className="space-y-5">
@@ -1014,14 +1130,15 @@ function InlineDivider({ insertAt, agents, onAdd }: {
 }
 
 function VisualWorkflowColumn({
-  workflow, activePanel, agents, onSelectPanel, onAddStep, onUpdateStep,
+  workflow, activePanel, agents, onSelectPanel, onAddStep, onUpdateStep, onInputsChange,
 }: {
-  workflow: Workflow;
+  workflow: WorkflowDraft;
   activePanel: ActivePanel;
   agents: AgentOption[];
   onSelectPanel: (p: ActivePanel) => void;
   onAddStep: (type: WorkflowStep['type'], insertAt?: number) => void;
   onUpdateStep: (stepId: string, partial: Partial<WorkflowStep>) => void;
+  onInputsChange: (next: WorkflowInputs) => void;
 }) {
   // THE POSITIONAL BRIEF (v1.2): the gate enforces the prompt of the step FEEDING it — the
   // nearest preceding ai/agent step before the first verify gate. Only THAT step may claim it.
@@ -1054,12 +1171,16 @@ function VisualWorkflowColumn({
         </p>
       </div>
 
-      {/* Trigger */}
-      <TriggerFlowCard
-        trigger={workflow.trigger}
+      {/* WHEN — the intake block: every door that can start this run, converging on step one */}
+      <WhenFlowBlock
+        workflow={workflow}
         active={activePanel === 'trigger'}
         onClick={() => onSelectPanel('trigger')}
       />
+
+      {/* WORKS WITH — the inputs tray hangs off the rail on a dashed connector (law 7): reference
+          material the run reads, drawn beside the line rather than as a step on it. */}
+      <InputsTray inputs={workflow.inputs} onChange={onInputsChange} />
 
       {/* Steps with inline add dividers — gates (verify/approval) render as pill stations */}
       {workflow.steps.map((step, idx) => {
@@ -1119,32 +1240,290 @@ function FlowConnector() {
   );
 }
 
-function TriggerFlowCard({ trigger, active, onClick }: {
-  trigger: WorkflowTrigger; active: boolean; onClick: () => void;
+// ── THE WHEN BLOCK on the rail ────────────────────────────────────────────────
+// Law 6, drawn: every door that can start a run stands side by side and CONVERGES on step one.
+// One entry keeps the single-tile look (a lone door needs no fan); two or more earn the fan.
+type WhenEntry = { key: string; Icon: typeof BoltIcon; text: string; tone: 'door' | 'clock' | 'manual' };
+
+function clipDoor(s: string, max = 34): string {
+  const t = s.trim();
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+}
+
+function whenEntries(workflow: WorkflowDraft): WhenEntry[] {
+  const { primary, doors } = normalizeTriggers(workflow);
+  const entries: WhenEntry[] = doors.map((d, i) => {
+    const def = triggerSource(d.source);
+    return {
+      key: `door-${i}`,
+      Icon: sourceIcon(def?.icon),
+      // The registry says what a door IS; the chip only adds the user's own condition.
+      text: clipDoor(d.label?.trim() || (d.when ? `${def?.label ?? 'On event'} — ${d.when}` : doorLabel(d))),
+      tone: 'door' as const,
+    };
+  });
+  if (primary.type === 'schedule') {
+    const title = (() => {
+      try { return triggerShortTitle({ type: 'schedule', cron: primary.cron ?? '0 9 * * *', timezone: primary.timezone }); }
+      catch { return 'On a schedule'; }
+    })();
+    entries.push({ key: 'schedule', Icon: ClockIcon, text: title, tone: 'clock' });
+  }
+  if (entries.length === 0) entries.push({ key: 'manual', Icon: BoltIcon, text: 'Manual — you run it', tone: 'manual' });
+  return entries;
+}
+
+function WhenFlowBlock({ workflow, active, onClick }: {
+  workflow: WorkflowDraft; active: boolean; onClick: () => void;
 }) {
-  const title = trigger.type === 'manual'
-    ? 'Manual trigger'
-    : (() => { try { return triggerShortTitle(trigger); } catch { return 'Scheduled'; } })();
+  const entries = whenEntries(workflow);
+  const many = entries.length > 1;
+
+  const chipTone = (tone: WhenEntry['tone']) =>
+    tone === 'door'   ? { shell: 'border-indigo-200 bg-white',  disc: 'bg-indigo-50 text-indigo-600' }
+    : tone === 'clock' ? { shell: 'border-amber-200 bg-white',  disc: 'bg-amber-50 text-amber-600' }
+                       : { shell: 'border-neutral-200 bg-white', disc: 'bg-neutral-100 text-neutral-500' };
+
+  if (!many) {
+    const only = entries[0];
+    const tone = chipTone(only.tone);
+    return (
+      <div role="button" tabIndex={0}
+        onClick={onClick} onKeyDown={e => e.key === 'Enter' && onClick()}
+        className={`w-full flex items-center gap-3 px-4 py-3.5 bg-white rounded-xl border-2 cursor-pointer transition-all ${
+          active ? 'border-indigo-400 shadow-md' : 'border-neutral-100 hover:border-neutral-200 shadow-sm'
+        }`}
+      >
+        <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${tone.disc}`}>
+          <only.Icon className="w-4 h-4" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-widest mb-0.5">When</div>
+          <div className="text-[13px] font-semibold text-neutral-800 truncate">{only.text}</div>
+        </div>
+        <ChevronRightIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
+      </div>
+    );
+  }
+
+  const n = entries.length;
+  const unit = 100;
+  const mid = (n * unit) / 2;
   return (
     <div role="button" tabIndex={0}
       onClick={onClick} onKeyDown={e => e.key === 'Enter' && onClick()}
-      className={`w-full flex items-center gap-3 px-4 py-3.5 bg-white rounded-xl border-2 cursor-pointer transition-all ${
+      className={`w-full rounded-xl border-2 px-3 pt-2.5 pb-1 cursor-pointer transition-all bg-white ${
         active ? 'border-indigo-400 shadow-md' : 'border-neutral-100 hover:border-neutral-200 shadow-sm'
       }`}
     >
-      <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
-        trigger.type === 'schedule' ? 'bg-amber-100' : 'bg-neutral-100'
-      }`}>
-        {trigger.type === 'schedule'
-          ? <ClockIcon className="w-4 h-4 text-amber-600" />
-          : <BoltIcon className="w-4 h-4 text-neutral-500" />}
+      <div className="text-[10px] font-semibold text-indigo-500 uppercase tracking-widest text-center mb-2">When</div>
+      <div className="flex flex-wrap justify-center gap-1.5">
+        {entries.map(e => {
+          const tone = chipTone(e.tone);
+          return (
+            <span key={e.key}
+              className={`inline-flex items-center gap-1.5 max-w-full px-2 py-1 rounded-lg border text-[11.5px] font-medium text-neutral-700 ${tone.shell}`}>
+              <span className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 ${tone.disc}`}>
+                <e.Icon className="w-2.5 h-2.5" />
+              </span>
+              <span className="truncate">{e.text}</span>
+            </span>
+          );
+        })}
       </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-widest mb-0.5">Trigger</div>
-        <div className="text-[13px] font-semibold text-neutral-800 truncate">{title}</div>
-      </div>
-      <ChevronRightIcon className="w-4 h-4 text-neutral-300 flex-shrink-0" />
+      {/* the intake fan — many doors, one run */}
+      <svg className="w-full h-6 mt-1" viewBox={`0 0 ${n * unit} 24`} preserveAspectRatio="none" fill="none" aria-hidden>
+        {entries.map((e, i) => {
+          const x = i * unit + unit / 2;
+          return <path key={e.key} d={`M ${x} 1 C ${x} 15 ${mid} 8 ${mid} 23`} stroke="#c7d2fe" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />;
+        })}
+      </svg>
     </div>
+  );
+}
+
+// ── THE INPUTS TRAY on the rail (THE RELAY CANVAS, W2) ────────────────────────
+// Drawn as the mockup's "Works with": a dashed-bordered tray hanging off the line on a dashed
+// connector — dashed everywhere on purpose, because nothing in it is a step. Pinned documents
+// ride every run as staged material; the toggle says whether a hand-run may carry more.
+// An empty tray is ONE GHOST LINE, never a section with nothing in it.
+function InputsTray({ inputs, onChange }: {
+  inputs: WorkflowInputs | null | undefined;
+  onChange: (next: WorkflowInputs) => void;
+}) {
+  const addRef = useRef<HTMLButtonElement>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  // Not yet read from the server: draw nothing rather than an empty claim.
+  if (inputs === undefined) return null;
+
+  const docs = inputs?.docs ?? [];
+  const accepts = inputs?.acceptMaterial === true;
+  const empty = docs.length === 0 && !accepts;
+
+  const emit = (next: Partial<WorkflowInputs>) =>
+    onChange({ docs, acceptMaterial: accepts, ...next });
+
+  const picker = (
+    <InputsDocPicker
+      anchorRef={addRef}
+      open={pickerOpen}
+      onClose={() => setPickerOpen(false)}
+      docs={docs}
+      accepts={accepts}
+      onToggleDoc={(doc) => emit({
+        docs: docs.some(d => d.kbFileId === doc.kbFileId)
+          ? docs.filter(d => d.kbFileId !== doc.kbFileId)
+          : [...docs, doc],
+      })}
+      onToggleAccepts={(v) => emit({ acceptMaterial: v })}
+    />
+  );
+
+  if (empty) {
+    return (
+      <div className="w-full flex justify-end -mt-1">
+        <button
+          ref={addRef}
+          type="button"
+          onClick={() => setPickerOpen(true)}
+          className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-neutral-200 bg-white/60 px-2 py-1 text-[11px] text-neutral-400 hover:text-neutral-600 hover:border-neutral-300 transition-colors"
+        >
+          <PlusIcon className="w-3 h-3" />
+          Works with — pin a document
+        </button>
+        {picker}
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full flex justify-end items-start">
+      {/* the dashed connector back to the line */}
+      <svg width="40" height="28" viewBox="0 0 40 28" fill="none" className="mt-3 flex-shrink-0" aria-hidden>
+        <path d="M0 3 C22 3 14 22 40 22" stroke="#e5e5e5" strokeWidth="1.5" strokeDasharray="3 3" />
+      </svg>
+      <div className="mt-2 w-[196px] rounded-xl border border-dashed border-neutral-200 bg-white/70 px-2.5 py-2">
+        <div className="text-[9.5px] font-semibold uppercase tracking-[0.08em] text-neutral-400 mb-1.5">Works with</div>
+
+        {docs.map(d => (
+          <div key={d.kbFileId} className="group flex items-center gap-1.5 mb-1 rounded-lg border border-dashed border-neutral-200 bg-white px-2 py-1">
+            <DocumentTextIcon className="w-3 h-3 text-neutral-400 flex-shrink-0" />
+            <span className="flex-1 truncate text-[11.5px] text-neutral-600" title={d.name}>{d.name}</span>
+            <button
+              type="button"
+              title="Unpin"
+              onClick={() => emit({ docs: docs.filter(x => x.kbFileId !== d.kbFileId) })}
+              className="opacity-0 group-hover:opacity-100 text-neutral-300 hover:text-neutral-600 transition-opacity"
+            >
+              <XMarkIcon className="w-3 h-3" />
+            </button>
+          </div>
+        ))}
+
+        <button
+          ref={addRef}
+          type="button"
+          onClick={() => setPickerOpen(true)}
+          className="inline-flex items-center gap-1 text-[11px] text-neutral-400 hover:text-neutral-600 transition-colors"
+        >
+          <PlusIcon className="w-3 h-3" />
+          Pin a document
+        </button>
+
+        {/* The toggle's state is a CLAIM about how this workflow can be run — so it is spoken on
+            the rail even though the control that sets it lives in the tray's editor. */}
+        {accepts && (
+          <div className="mt-1.5 pt-1.5 border-t border-dashed border-neutral-200 text-[10.5px] text-neutral-400 leading-snug">
+            Accepts material at run time
+          </div>
+        )}
+      </div>
+      {picker}
+    </div>
+  );
+}
+
+// The tray's editor. THE PICKER REUSES THE ONE KNOWLEDGE SOURCE the chat composer's @-mention
+// already reads (/api/workers/mentions?types=document → knowledge_files) — no second KB door.
+function InputsDocPicker({ anchorRef, open, onClose, docs, accepts, onToggleDoc, onToggleAccepts }: {
+  anchorRef: React.RefObject<HTMLButtonElement | null>;
+  open: boolean;
+  onClose: () => void;
+  docs: WorkflowInputDoc[];
+  accepts: boolean;
+  onToggleDoc: (doc: WorkflowInputDoc) => void;
+  onToggleAccepts: (v: boolean) => void;
+}) {
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState<WorkflowInputDoc[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    let dead = false;
+    setLoading(true);
+    const t = setTimeout(() => {
+      fetch(`/api/workers/mentions?types=document&q=${encodeURIComponent(q.trim())}`)
+        .then(r => (r.ok ? r.json() : null))
+        .then(j => {
+          if (dead) return;
+          const rows = (j?.results ?? []) as Array<{ id: string; label: string }>;
+          setResults(rows.map(r => ({ kbFileId: r.id, name: r.label })));
+        })
+        .catch(() => { if (!dead) setResults([]); })
+        .finally(() => { if (!dead) setLoading(false); });
+    }, q ? 200 : 0);
+    return () => { dead = true; clearTimeout(t); };
+  }, [open, q]);
+
+  return (
+    <AnchoredPopover anchorRef={anchorRef} open={open} onClose={onClose} align="right" width={264}>
+      <div className="p-2">
+        <input
+          autoFocus
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          placeholder="Search your knowledge…"
+          className="w-full text-[12px] rounded-lg border border-neutral-200 focus:border-indigo-300 focus:outline-none px-2 py-1.5"
+        />
+        <div className="mt-1.5 max-h-56 overflow-y-auto">
+          {loading && <div className="px-2 py-2 text-[11px] text-neutral-400">Looking…</div>}
+          {!loading && results.length === 0 && (
+            <div className="px-2 py-2 text-[11px] text-neutral-400">
+              {q ? 'Nothing in Knowledge matches that.' : 'Nothing in Knowledge yet — upload a file there first.'}
+            </div>
+          )}
+          {!loading && results.map(r => {
+            const pinned = docs.some(d => d.kbFileId === r.kbFileId);
+            return (
+              <button
+                key={r.kbFileId}
+                type="button"
+                onClick={() => onToggleDoc(r)}
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-neutral-50 text-left"
+              >
+                <DocumentTextIcon className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
+                <span className="flex-1 truncate text-[12px] text-neutral-700" title={r.name}>{r.name}</span>
+                {pinned && <CheckIcon className="w-3.5 h-3.5 text-indigo-600 flex-shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
+        <label className="mt-1.5 pt-2 px-1 flex items-start gap-2 border-t border-neutral-100 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={accepts}
+            onChange={e => onToggleAccepts(e.target.checked)}
+            className="mt-0.5 h-3.5 w-3.5 rounded border-neutral-300 text-indigo-600 focus:ring-0"
+          />
+          <span className="text-[11px] text-neutral-600 leading-snug">
+            Accepts material at run time
+            <span className="block text-[10.5px] text-neutral-400">Run now can carry a file or pasted text</span>
+          </span>
+        </label>
+      </div>
+    </AnchoredPopover>
   );
 }
 
@@ -2156,7 +2535,172 @@ function triggerShortTitle(trigger: WorkflowTrigger): string {
   return `Every ${dayNames} · ${t}`;
 }
 
-function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChange: (t: WorkflowTrigger) => void }) {
+// ════════════════════════════════════════════════════════════════════════════
+// THE WHEN BLOCK — the editor (THE RELAY CANVAS, W1)
+//
+// Three sections, THREE INDEPENDENT CONFIGS:
+//   1. Runs on demand — a standing truth, not a button (law 6: manual is always available).
+//   2. On a schedule  — the primary clock (`workflow.trigger`); at most one (next_run_at is singular).
+//   3. When something happens — the EVENT DOORS (`workflow.triggers`), rendered from the registry.
+// Editing any one of them never writes the others: the destroyer bug (one Manual click erasing a
+// reaction trigger) is structurally impossible here — there is no shared toggle any more.
+// ════════════════════════════════════════════════════════════════════════════
+function WhenSection({ workflow, selfId, onPrimary, onDoors }: {
+  workflow: WorkflowDraft;
+  selfId: string;
+  onPrimary: (t: WorkflowTrigger) => void;
+  onDoors: (doors: ReactionDoor[]) => void;
+}) {
+  const features = useWorkspaceFeatures();
+  const wfOptions = useWorkflowOptions();
+  const { primary, doors } = normalizeTriggers(workflow);
+  const scheduled = primary.type === 'schedule';
+  const userTz = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC';
+
+  const addRef = useRef<HTMLButtonElement>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const setDoor = (i: number, partial: Partial<ReactionDoor>) =>
+    onDoors(doors.map((d, idx) => idx === i ? { ...d, ...partial } : d));
+  const removeDoor = (i: number) => onDoors(doors.filter((_, idx) => idx !== i));
+  const addDoor = (source: TriggerSourceKey) => { onDoors([...doors, { type: 'reaction', source }]); setPickerOpen(false); };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start gap-2.5">
+        <div className="w-9 h-9 rounded-xl bg-indigo-500 flex items-center justify-center flex-shrink-0 mt-0.5">
+          <BoltIcon className="w-5 h-5 text-white" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[10.5px] text-neutral-400 uppercase tracking-wide font-semibold mb-0.5">When</div>
+          <div className="text-[18px] font-semibold text-neutral-900 leading-tight">What starts this workflow</div>
+        </div>
+      </div>
+      <div className="border-t border-neutral-100" />
+
+      {/* 1 — RUNS ON DEMAND: always true, so it is a sentence, never a choice. */}
+      <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg bg-neutral-50 border border-neutral-100">
+        <BoltIcon className="w-4 h-4 text-neutral-400 flex-shrink-0 mt-0.5" />
+        <div className="min-w-0">
+          <div className="text-[12.5px] font-medium text-neutral-700">Runs on demand</div>
+          <p className="text-[11.5px] text-neutral-500 leading-snug">
+            You can always run this yourself — from here, from the task list, or by asking a coworker.
+          </p>
+        </div>
+      </div>
+
+      {/* 2 — ON A SCHEDULE: the primary clock. Off = manual primary; the doors are untouched. */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <ClockIcon className="w-4 h-4 text-amber-500" />
+            <span className="text-[12.5px] font-medium text-neutral-700">On a schedule</span>
+          </div>
+          <button type="button"
+            onClick={() => onPrimary(scheduled ? { type: 'manual' } : { type: 'schedule', cron: '0 9 * * *', timezone: userTz })}
+            className={`px-2.5 py-1 text-[11.5px] font-medium rounded-md border transition-colors ${
+              scheduled ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'border-neutral-200 text-neutral-500 hover:bg-neutral-50'
+            }`}>
+            {scheduled ? 'On' : 'Off'}
+          </button>
+        </div>
+        {scheduled
+          ? <ScheduleEditor trigger={{ type: 'schedule', cron: primary.cron ?? '0 9 * * *', timezone: primary.timezone }} onChange={onPrimary} />
+          : <p className="text-[11.5px] text-neutral-400">No clock — this one waits to be asked, or for a door below.</p>}
+      </div>
+
+      {/* 3 — WHEN SOMETHING HAPPENS: the event doors, rendered from the registry (law 3). */}
+      <div>
+        <div className="flex items-center gap-2 mb-2">
+          <ArrowPathRoundedSquareIcon className="w-4 h-4 text-indigo-500" />
+          <span className="text-[12.5px] font-medium text-neutral-700">When something happens</span>
+        </div>
+        <p className="text-[11.5px] text-neutral-400 mb-2.5 leading-snug">
+          Any door fires its own run, carrying the one thing that arrived.
+        </p>
+
+        <div className="space-y-2">
+          {doors.map((door, i) => {
+            const def = triggerSource(door.source);
+            const Icon = sourceIcon(def?.icon);
+            const needsWhen = def?.needsWhen !== false;
+            const blank = needsWhen ? !door.when?.trim() : !door.workflow_id;
+            return (
+              <div key={`${door.source}-${i}`} className="rounded-lg border border-neutral-200 px-2.5 py-2">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="w-5 h-5 rounded bg-indigo-50 text-indigo-600 flex items-center justify-center flex-shrink-0">
+                    <Icon className="w-3 h-3" />
+                  </span>
+                  <span className="text-[12px] font-medium text-neutral-700 flex-1 min-w-0 truncate">{def?.label ?? door.source}</span>
+                  <button type="button" onClick={() => removeDoor(i)} title="Remove this door"
+                    className="p-0.5 text-neutral-300 hover:text-red-500 transition-colors flex-shrink-0">
+                    <XMarkIcon className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                {needsWhen ? (
+                  <input
+                    value={door.when ?? ''}
+                    onChange={e => setDoor(i, { when: e.target.value })}
+                    placeholder={WHEN_PLACEHOLDER[door.source] ?? 'when …'}
+                    className="w-full px-2 py-1.5 border border-neutral-200 rounded-md text-[12.5px] bg-white outline-none focus:border-indigo-300"
+                  />
+                ) : (
+                  <select
+                    value={door.workflow_id ?? ''}
+                    onChange={e => setDoor(i, { workflow_id: e.target.value || undefined })}
+                    className="w-full px-2 py-1.5 border border-neutral-200 rounded-md text-[12.5px] bg-white outline-none focus:border-indigo-300">
+                    <option value="">Choose a workflow…</option>
+                    {wfOptions.filter(o => o.id !== selfId).map(o => (
+                      <option key={o.id} value={o.id}>{o.name || 'Untitled'}</option>
+                    ))}
+                  </select>
+                )}
+                {blank && (
+                  <p className="mt-1 text-[11px] text-amber-600">
+                    {needsWhen ? 'This door needs a condition before it can fire.' : 'Pick the workflow whose delivery opens this door.'}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <button ref={addRef} type="button" onClick={() => setPickerOpen(v => !v)}
+          className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-medium text-neutral-600 border border-dashed border-neutral-300 rounded-md hover:bg-neutral-50 hover:text-neutral-800 transition-colors">
+          <PlusIcon className="w-3.5 h-3.5" />
+          Add a door
+        </button>
+        <AnchoredPopover anchorRef={addRef} open={pickerOpen} onClose={() => setPickerOpen(false)} align="left" width={252}>
+          <div className="py-1">
+            {TRIGGER_SOURCES.map(src => {
+              const allowed = src.feature === null || features[src.feature] !== false;
+              const Icon = sourceIcon(src.icon);
+              return (
+                <button key={src.key} type="button" disabled={!allowed}
+                  title={allowed ? '' : 'This door needs a feature that\'s off for this workspace'}
+                  onClick={() => { if (allowed) addDoor(src.key); }}
+                  className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left hover:bg-neutral-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                  <Icon className="w-4 h-4 text-neutral-500 flex-shrink-0" />
+                  <span className="text-[12.5px] text-neutral-700">{src.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </AnchoredPopover>
+      </div>
+    </div>
+  );
+}
+
+// The door's own grammar — the sentence a person completes. Keyed by registry source; an
+// unlisted source degrades to the generic prompt (the registry stays the catalogue).
+const WHEN_PLACEHOLDER: Record<string, string> = {
+  mail:    'when it looks like a new application',
+  file:    'when it is a signed contract',
+  meeting: 'when it was a client call',
+};
+
+function ScheduleEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChange: (t: WorkflowTrigger) => void }) {
   const userTz = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC';
   const parsed = parseCronHuman(trigger.type === 'schedule' ? (trigger.cron ?? '0 9 * * *') : '0 9 * * *');
   const [freq, setFreq] = useState<Freq>(parsed.freq);
@@ -2180,24 +2724,8 @@ function TriggerEditor({ trigger, onChange }: { trigger: WorkflowTrigger; onChan
 
   return (
     <>
-      <div className="flex gap-2">
-        <button onClick={() => onChange({ type: 'manual' })}
-          className={`flex-1 px-3 py-2 text-[12.5px] font-medium rounded-md border transition-colors ${
-            trigger.type === 'manual' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'border-neutral-200 text-neutral-600 hover:bg-neutral-50'
-          }`}>
-          <BoltIcon className="w-4 h-4 inline mr-1.5" />
-          Manual only
-        </button>
-        <button onClick={() => { const cron = buildCron(freq, days, hour, minute, dom); onChange({ type: 'schedule', cron, timezone: tz }); }}
-          className={`flex-1 px-3 py-2 text-[12.5px] font-medium rounded-md border transition-colors ${
-            trigger.type === 'schedule' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'border-neutral-200 text-neutral-600 hover:bg-neutral-50'
-          }`}>
-          On a schedule
-        </button>
-      </div>
-
       {trigger.type === 'schedule' && (
-        <div className="pt-3 space-y-3">
+        <div className="pt-1 space-y-3">
           <div className="flex flex-wrap gap-1.5">
             {(Object.keys(FREQ_LABELS) as Freq[]).map(f => (
               <button key={f} onClick={() => handleFreq(f)}

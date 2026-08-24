@@ -128,8 +128,10 @@ export default function RunRecordDrawer({
   runId, stepOutputs, onClose,
 }: {
   runId: string;
-  /** The run's receipts, from the payload the deep-dive already fetched (no second read). */
-  stepOutputs: RecordRunOutputs;
+  /** The run's receipts, from a payload the mounting surface holds (no second read). NULL = the
+   *  surface COULD NOT read them (the per-run route is owner-scoped; a gate holder who is not
+   *  the owner is refused) — the Log tab says so honestly, never "no receipts recorded". */
+  stepOutputs: RecordRunOutputs | null;
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<'decisions' | 'log' | 'vs'>('decisions');
@@ -264,7 +266,13 @@ export default function RunRecordDrawer({
           )}
 
           {tab === 'log' && (
-            stepOutputs.length === 0 ? (
+            stepOutputs === null ? (
+              // ACCESS, NOT ABSENCE: the surface was refused the read (owner-scoped route) —
+              // saying "no receipts recorded" here would be a lie about the run.
+              <div className="text-[12px] text-neutral-400">
+                The step-by-step receipts are visible to the workflow&apos;s owner — the decisions above are the part that&apos;s yours.
+              </div>
+            ) : stepOutputs.length === 0 ? (
               <div className="text-[12px] text-neutral-400">No receipts recorded for this run.</div>
             ) : (
               <div className="space-y-1">

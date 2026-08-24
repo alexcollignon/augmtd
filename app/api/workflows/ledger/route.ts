@@ -88,7 +88,7 @@ export async function GET() {
   }
   const overrideKeys = [...stepIdByRun.entries()].map(([runId, stepId]) => `${runId}:${stepId}`);
 
-  const [ownersOut, agentsOut, thsOut, ovsOut, teamOut, emailFeatureOut] = await Promise.all([
+  const [ownersOut, agentsOut, thsOut, ovsOut, teamOut, featuresOut, doorsOut, materialWfIds] = await Promise.all([
     // The accountability owner (B2) — served ONLY when explicitly assigned; failure = no names.
     (async () => {
       try {
@@ -131,13 +131,33 @@ export async function GET() {
         }));
       } catch { return []; }
     })(),
-    // The sovereign gallery flag.
+    // The sovereign gallery flag — AND the readiness rule's feature input (one read, one flight).
     (async () => {
       try {
         const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
-        const feats = await getWorkspaceFeatures(user.id, supabase);
-        return feats?.email !== false;
-      } catch { return true; }
+        return await getWorkspaceFeatures(user.id, supabase);
+      } catch { return null; }
+    })(),
+    // THE EVENT DOORS (relay canvas W1) — read in ITS OWN defensive query, never bolted onto the
+    // first batch's select: `workflows.triggers` is additive, and a 42703 on a column that does not
+    // exist yet must cost the doors, never the whole ledger.
+    (async (): Promise<Map<string, unknown>> => {
+      try {
+        const { data, error } = await supabase.from('workflows')
+          .select('id, triggers').eq('user_id', user.id);
+        if (error) return new Map();
+        return new Map(((data ?? []) as Array<{ id: string; triggers: unknown }>).map((r) => [r.id, r.triggers]));
+      } catch { return new Map(); }
+    })(),
+    // THE INPUTS FLAG (relay canvas W2) — the ledger's run door only needs acceptMaterial, so it
+    // serves the flag per row (the tray itself lives on the deep-dive). One store read.
+    (async (): Promise<Set<string>> => {
+      try {
+        const { data } = await supabase.from('item_plans')
+          .select('entity_id, tasks').eq('user_id', user.id).eq('kind', 'workflow_inputs');
+        return new Set(((data ?? []) as Array<{ entity_id: string; tasks: { acceptMaterial?: boolean } | null }>)
+          .filter((r) => r.tasks?.acceptMaterial === true).map((r) => r.entity_id));
+      } catch { return new Set(); }
     })(),
   ]);
 
@@ -163,6 +183,15 @@ export async function GET() {
     };
   });
 
+  // THE READINESS WAVE: every row says whether it CAN run, before anyone clicks Run. Pure over
+  // rows already in hand (status/trigger/steps) + the features read already in flight above.
+  const { readinessOf } = await import('@/lib/workflows/readiness');
+  // THE EVENT DOORS (relay canvas W1) — served normalized + registry-labelled, ADDITIVE.
+  // scheduleLabel is untouched: the SURFACE composes the two (a doors-bearing manual workflow is
+  // still "On demand" here; the WHEN block says the rest). `triggers` may not exist on the row yet
+  // — normalizeTriggers tolerates it being absent.
+  const { doorsForServing } = await import('@/lib/workflows/trigger-sources');
+
   const ledger = wfs.map(w => {
     const out = normalizeOutput(w.output_config);
     const trig = w.trigger as { type?: string; label?: string; cron?: string; when?: string } | null;
@@ -178,6 +207,13 @@ export async function GET() {
       stepCount: (w.steps ?? []).length,
       hasApproval: (w.steps ?? []).some(s => (s as { type?: string }).type === 'approval'),
       hasVerify: (w.steps ?? []).some(s => (s as { type?: string }).type === 'verify'),
+      doors: doorsForServing({ trigger: trig, triggers: doorsOut.get(w.id) }),
+      // The run door's one fact (W2): whether Run now should offer the material sheet here.
+      inputs: { acceptMaterial: materialWfIds.has(w.id) },
+      readiness: readinessOf(
+        { status: w.status, trigger: trig, triggers: doorsOut.get(w.id), steps: w.steps ?? [] },
+        featuresOut,
+      ),
       workerName: w.agent_id ? (agentNames.get(w.agent_id) ?? null) : null,
       agentId: w.agent_id,
       icon: w.icon ?? null,
@@ -302,7 +338,7 @@ export async function GET() {
 
   // Teammates' shared workflows + the sovereign gallery flag — both fetched in PHASE TWO's flight.
   const team = teamOut;
-  const emailFeature = emailFeatureOut;
+  const emailFeature = featuresOut?.email !== false;
 
   return NextResponse.json({ ledger, awaiting, recent, processes, workers, team, emailFeature });
 }

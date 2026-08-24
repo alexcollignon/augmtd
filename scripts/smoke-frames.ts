@@ -130,6 +130,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { resolveProbeUser } from './probe-user';
 import { validateFrameHtml, FRAME_CSP_META, FRAME_MAX_BYTES } from '@/lib/frames/validate-frame';
+import { injectFrameKit, FRAME_KIT_CSS, FRAME_KIT_JS, FRAME_KIT_VERSION } from '@/lib/frames/kit';
 
 /** The suite may be run bare — load .env.local ourselves so the header command is the whole one. */
 async function loadEnv() {
@@ -1239,6 +1240,142 @@ async function main() {
       /live && ' This link always shows the latest version\.'/.test(codeOf(controlSrc))
       || /live &&\s*' This link always shows the latest version\.'/.test(codeOf(await readSrc('app/(main)/frames/[id]/frame-share-control.tsx'))),
       'the living disclosure is missing or unconditional');
+
+    // ══ K — THE FRAME KIT (the visual-craft wave: beauty made deterministic) ═════════════════
+    // The pilot's note was "ideally we have some stunning visuals" and the generations were plain
+    // default cards and bare numbers. The answer is a design system WE author and INJECT BY CODE
+    // (like the CSP meta), so the model composes instead of hand-rolling — which only holds if the
+    // kit itself obeys law 2, lands exactly once, and cannot be skipped by a generation.
+    console.log('\nK — the frame kit (the design system, injected by code):');
+
+    const kitSrc = await readSrc('lib/frames/kit.ts');
+
+    // ── K1 — THE KIT IS LOCKED LIKE EVERYTHING ELSE. It is bytes we ship inside a shared file, so
+    // it is the one place a leak would be invisible: it never faces the model, only the validator. ──
+    const kitOnly = injectFrameKit('<html><head></head><body></body></html>');
+    const kitVerdict = validateFrameHtml(kitOnly);
+    ok('K1 the kit alone passes THE ONE VALIDATOR (the design system is not the leak)',
+      kitVerdict.ok === true, kitVerdict.ok ? '' : JSON.stringify(kitVerdict.reasons));
+    const kitStrings = FRAME_KIT_CSS + '\n' + FRAME_KIT_JS;
+    const KIT_VECTORS: Array<[string, RegExp]> = [
+      ['an external address', /https?:\/\//i],
+      ['a protocol-relative address', /(?:src|href|url\()\s*=?\s*["']?\/\//i],
+      ['a network call', /\bfetch\s*\(|\bXMLHttpRequest\b|\bWebSocket\b|\bEventSource\b|sendBeacon/],
+      ['a <link> / <base> / embedded document', /<link\b|<base\b|<(?:iframe|object|embed)\b/i],
+      ['a css @import', /@import/i],
+      ['a navigation', /\blocation\s*(?:\.\s*href\s*)?=(?!=)|\blocation\s*\.\s*(?:replace|assign)\s*\(|window\s*\.\s*open\s*\(/],
+      ['a module load', /\bimport\s*\(|(?:^|[\n;{])\s*import\s+[^(\n]/],
+    ];
+    for (const [what, re] of KIT_VECTORS) {
+      ok(`K1 …and the kit strings carry no ${what}`, !re.test(kitStrings),
+        (kitStrings.match(re) ?? ['—'])[0]);
+    }
+    ok('K1 …and it is a real design system, not a token (CSS + JS, both substantial)',
+      FRAME_KIT_CSS.length > 6000 && FRAME_KIT_JS.length > 4000,
+      `${FRAME_KIT_CSS.length}/${FRAME_KIT_JS.length}`);
+    ok('K1 …exposing the chart builders the prompt promises (bar · hbar · line · donut · spark · expand)',
+      ['bar:', 'hbar:', 'line:', 'donut:', 'spark:', 'expand:'].every((k) => FRAME_KIT_JS.includes(k))
+      && /window\.Kit\s*=/.test(FRAME_KIT_JS), 'a documented builder is missing from window.Kit');
+    ok('K1 …and every builder renders an honest empty state (a chart never fakes data)',
+      (FRAME_KIT_JS.match(/return empty\(el/g) ?? []).length >= 4 && /class="k-empty"/.test(FRAME_KIT_JS),
+      String((FRAME_KIT_JS.match(/return empty\(el/g) ?? []).length));
+
+    // ── K2 — IDEMPOTENCE + THE ACCENT. The repair pass injects into an already-dressed document by
+    // construction, so a second injection must be a no-op — two kits would be two design systems. ──
+    const once = injectFrameKit('<html><head></head><body></body></html>', '#0F766E');
+    const twice = injectFrameKit(once, '#B91C1C');
+    const markers = (s: string) => (s.match(/augmtd-frame-kit/g) ?? []).length;
+    ok('K2 injection is idempotent — a second pass adds no second kit',
+      markers(once) === 1 && markers(twice) === 1 && twice === once,
+      `${markers(once)} then ${markers(twice)}`);
+    ok('K2 …the accent lands as a custom-property override (never a rewritten stylesheet)',
+      /:root\{--k-accent:#0F766E\}/.test(once) && once.indexOf('--k-accent:#0F766E') > once.indexOf(FRAME_KIT_CSS.slice(0, 40)),
+      'the accent override is missing or precedes the kit');
+    ok('K2 …and a non-hex accent is ignored (an accent is a colour, never a place a URL hides)',
+      !/--k-accent:/.test(injectFrameKit('<html><head></head><body></body></html>',
+        'url(https://example.com/x.png)').replace(FRAME_KIT_CSS, '')),
+      'a non-hex accent reached the document');
+    ok('K2 …the kit lands INSIDE <head>, after the CSP meta when one is already stamped',
+      (() => {
+        const stamped = validateFrameHtml('<html><head></head><body></body></html>');
+        if (!stamped.ok) return false;
+        const dressed = injectFrameKit(stamped.html);
+        return dressed.indexOf(FRAME_CSP_META) < dressed.indexOf('augmtd-frame-kit')
+          && dressed.indexOf('augmtd-frame-kit') < dressed.indexOf('<body');
+      })(), 'the kit lands outside <head> or before the policy');
+
+    // ── K3 — THE LIVE GENERATION WEARS IT. L1's real call is the fixture: the bytes the door
+    // returned must carry the kit, compose with it, and STILL re-validate clean. ──
+    ok('K3 the LIVE generated frame carries the kit marker with its version',
+      html.includes(`augmtd-frame-kit v${FRAME_KIT_VERSION}`), 'no kit marker in the produced bytes');
+    ok('K3 …exactly once (the injection is idempotent in life, not only in the table)',
+      markers(html) === 1, String(markers(html)));
+    // The kit's own strings are stripped before anything is counted: FRAME_KIT_JS is full of
+    // class="k-…" markup, so counting them in the whole document would assert the kit against
+    // itself and pass no matter what the model wrote.
+    const ownMarkup = html.replace(FRAME_KIT_CSS, '').replace(FRAME_KIT_JS, '');
+    const kClasses = new Set((ownMarkup.match(/class="([^"]*)"/g) ?? []).join(' ').match(/\bk-[a-z0-9-]+/g) ?? []);
+    ok('K3 …and the model COMPOSED with it (the page the model wrote is built out of kit classes)',
+      kClasses.size >= 6 && ownMarkup.includes('k-page'), `${kClasses.size} kit classes`);
+    // THE NON-FLAKY HALF of "compose, don't hand-roll": whether a given generation reaches for a
+    // chart at all is a judgement about its data (four numbers are four KPI tiles), so a gate that
+    // DEMANDS a chart would be generation-dependent — the one thing a gate may never be. What is
+    // law-shaped is the other direction: no frame may draw its OWN chart. Every <svg> in the bytes
+    // must be the kit's, so the kit block is stripped and the remainder must contain none.
+    const handSvg = (ownMarkup.match(/<svg\b/gi) ?? []).length;
+    const kitCalls = [...new Set(html.match(/\bKit\s*\.\s*(?:bar|hbar|line|donut|spark|expand)\b/g) ?? [])];
+    ok('K3 …and hand-rolls NO chart of its own (every <svg> in the frame is the kit\'s)',
+      handSvg === 0, `${handSvg} hand-rolled svg`);
+    ok('K3 …so whatever charting it does show came through the kit',
+      handSvg === 0 && (kitCalls.length > 0 || !/class="[^"]*k-chart/.test(ownMarkup)),
+      'a chart container exists with no kit call behind it');
+    note(kitCalls.length
+      ? `this generation called ${kitCalls.join(' · ')}`
+      : 'this generation charted nothing (its data did not warrant one) — the no-hand-rolling floor still holds');
+    ok('K3 …and the dressed bytes still re-validate clean through the ONE validator',
+      validateFrameHtml(html).ok === true, 'the kit broke the no-egress floor in life');
+    ok('K3 …with the CSP meta still exactly once (the kit never displaces the policy)',
+      countMeta(html) === 1, String(countMeta(html)));
+
+    // ── K4 — THE SOURCE FLOORS. Injection is the promise; the prompt is how the model earns it. ──
+    ok('K4 the lane imports the ONE kit module',
+      /import \{ injectFrameKit, FRAME_KIT_REFERENCE \} from '@\/lib\/frames\/kit'/.test(genSrc),
+      'the lane does not import the kit');
+    const genCode = codeOf(genSrc);
+    const injectAt = genCode.indexOf('injectFrameKit(raw, accent)');
+    ok('K4 injection happens AFTER generation, at the ONE place a generation exists',
+      injectAt > 0 && /const raw = stripFence\(/.test(genCode) && genCode.indexOf('const raw = stripFence(') < injectAt,
+      'the kit is not injected on the produced text');
+    ok('K4 …so BOTH passes are dressed by construction (the repair pass re-enters the same ask)',
+      (genCode.match(/injectFrameKit\(/g) ?? []).length === 1
+      && /const ask = async \(repairReasons\?: string\[\]\)/.test(genCode)
+      && (genCode.match(/await ask\(/g) ?? []).length === 2,
+      'the repair pass does not ride the same generation site');
+    ok('K4 …and BEFORE validation (the kit is swept by the validator, never exempt from it)',
+      injectAt > 0 && injectAt < genCode.indexOf('validateFrameHtml('),
+      'the kit is injected after the frame has already been validated');
+    ok('K4 the prompt DOCUMENTS the kit API (the model composes, it does not guess)',
+      /Kit\.bar\(/.test(genSrc + kitSrc) && /Kit\.hbar\(/.test(kitSrc) && /Kit\.donut\(/.test(kitSrc)
+      && /FRAME_KIT_REFERENCE,/.test(genSrc), 'the contract does not carry the kit reference');
+    ok('K4 …and carries A NUMBER NEVER STANDS ALONE',
+      /A NUMBER NEVER STANDS ALONE/.test(kitSrc), 'the KPI law is not stated to the model');
+    ok('K4 …and tells the model not to emit its own kit CSS/JS (one design system per frame)',
+      /You do NOT write it, you COMPOSE with it/.test(kitSrc)
+      && /Never emit/.test(kitSrc), 'the do-not-duplicate instruction is missing');
+    ok('K4 FRAME_KIT_VERSION exists and the marker EMBEDS it (a kit bump is visible in the bytes)',
+      FRAME_KIT_VERSION >= 1 && /augmtd-frame-kit v\$\{FRAME_KIT_VERSION\}/.test(kitSrc)
+      && kitOnly.includes(`augmtd-frame-kit v${FRAME_KIT_VERSION}`),
+      'the version does not ride the marker');
+    ok('K4 THE KIT IS ONE MODULE — no other file defines the tokens or the builders',
+      (await (async () => {
+        const hits: string[] = [];
+        for (const f of libAppFiles) {
+          if (f === 'lib/frames/kit.ts') continue;
+          const s = await readSrc(f);
+          if (/--k-accent\s*:/.test(s) || /window\.Kit\s*=/.test(s)) hits.push(f);
+        }
+        return hits;
+      })()).length === 0, 'a second file defines kit tokens or the Kit global');
   } catch (e) {
     fail++;
     console.log(`\n  ✗ SUITE THREW — ${(e as Error).message}\n${(e as Error).stack}`);

@@ -5,6 +5,8 @@ import { makeStepId } from '@/lib/workflows/types';
 import { listConnectedProviders } from '@/lib/integrations/connection';
 import { INTEGRATIONS } from '@/lib/integrations/registry';
 import { getWorkspaceFeatures } from '@/lib/workspace/features';
+import { authorDoors, renderDoorCatalogue, doorNote } from '@/lib/workflows/author-doors';
+import type { ReactionDoor } from '@/lib/workflows/trigger-sources';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export interface GeneratedWorkflowConfig {
@@ -22,6 +24,23 @@ export interface GeneratedWorkflowConfig {
    *  not resolve to a workspace member (no match, or ambiguous — two Sams). One sentence the
    *  draft card can speak, so the gap is stated instead of silently shipping an empty gate. */
   needs_person_note?: string | null;
+  /** THE EVENT DOORS (relay canvas W1, law 1) — sanitised, registry-checked, resolution-complete.
+   *  Empty array = no event doors. Consumers store it with the SAME discipline as the workflows
+   *  PATCH (normalized array, NULL when empty). */
+  triggers: ReactionDoor[];
+  /** THE DROPPED-DOOR NOTE — the needs_person_note idiom for doors: a wish code refused (unknown
+   *  source, blank condition, unresolvable workflow name, a second schedule) is STATED, never
+   *  silently discarded. */
+  needs_door_note?: string | null;
+  /** THE INPUTS TRAY (relay canvas W2, law 7) — reference material the description PINNED, already
+   *  resolved to the caller's OWN knowledge_files, plus the run-time material door. `null` = the
+   *  description configured no tray (which is NOT the same as "a tray with nothing in it"). */
+  inputs?: { docs: Array<{ kbFileId: string; name: string }>; acceptMaterial: boolean } | null;
+  /** THE UNRESOLVED-DOCUMENT NOTE — a pinned name code could not find (or that matched two files).
+   *  Its own field, not folded into needs_door_note: a door and a document are different
+   *  primitives, each surface must be able to speak one without the other, and a field named for
+   *  doors carrying document refusals is a name that lies. */
+  needs_input_note?: string | null;
 }
 
 const SYSTEM = `You are a workflow pipeline architect for a business automation platform. Given a plain-language description, generate a complete, production-quality workflow as a JSON object.
@@ -33,6 +52,8 @@ JSON shape:
   "name": "Short name (3–6 words)",
   "description": "One sentence — what this produces",
   "trigger": { "type": "manual" },
+  "triggers": [],
+  "input_doc_names": [],
   "steps": [],
   "output_config": { "destination": "message", "report_mode": "each_run" },
   "worker_instructions": null,
@@ -50,7 +71,46 @@ JSON shape:
 { "type": "reaction", "when": "a new public tender matching the client's construction profile arrives", "label": "When a matching tender lands" }
 
 Use schedule whenever the request mentions timing. Infer the most natural timezone from context (company, sources, language).
-Use reaction when the request says the workflow should fire WHEN/WHENEVER something happens ("when a matching tender lands", "whenever a client emails about pricing") — "when" states the condition in plain words (it is judged against each new arriving event), "label" is the short human rendering. A reaction workflow receives the triggering event as its first context block — its steps should work FROM that event (summarize, enrich, respond, produce), never re-fetch broad news/feeds the event doesn't call for.
+The legacy "reaction" trigger shape means "an email arrives matching this condition" — prefer the EVENT DOORS below, which say the same thing and can say more.
+
+━━━ EVENT DOORS ("triggers") ━━━
+
+"triggers" is a list of the ways this work can START, other than the schedule. It is [] by default.
+Emit ONE entry per DISTINCT way the work begins — "when applications arrive by email OR someone
+uploads a CV" is TWO doors, not one. Each entry: { "source": "<key>", "when": "...", "label": "short human rendering" }
+
+Available doors:
+${renderDoorCatalogue()}
+
+RULES for doors:
+- "when" states the condition in the request's own plain words — it is judged against each arriving
+  event ("the email is a job application with a CV attached", "the file is a candidate CV").
+- A "workflow" door is given BY NAME in "workflow_name" — the exact name of a task the user already
+  runs ("when my Interview process delivers"). NEVER emit a workflow id; the system resolves the
+  name. If no such task exists, don't invent one — just leave that door out.
+- NEVER put a schedule in "triggers" — timing lives on "trigger", and a workflow can hold only one.
+- Manual running is always available; never emit a door for it.
+- A workflow with doors receives the triggering event as its first context block — its steps should
+  work FROM that event (summarize, enrich, compare, respond, produce), never re-fetch broad
+  news/feeds the event doesn't call for.
+- Only emit a door the request actually asks for. Silence about how work starts means [].
+
+━━━ INPUTS (reference material) ━━━
+
+Two optional top-level fields say what STANDING MATERIAL this work reads:
+
+"input_doc_names": ["Hiring Policy"] — the user's OWN words for a document the request PINS as
+  reference ("compare each application against our Hiring Policy", "using the brand guidelines
+  doc", "score it with our rubric"). Give the NAME as the request says it — NEVER an id, never a
+  path, never a file you invented. The system resolves the name against the user's documents and
+  says so if it can't find one. Omit the field entirely when the request pins nothing.
+"accept_material": true — set ONLY when the work is done ON something handed over at run time
+  ("when I upload a CV", "paste the transcript and…", "I'll give you the draft"). It opens a
+  material box on Run-now. Default is to omit it.
+
+A pinned document is the STANDING rulebook (policy, template, rubric); run-time material is the
+NEW thing each run works on. Don't confuse them, and never emit a read_kb_file step for a document
+you already named in "input_doc_names".
 
 ━━━ STEP TYPES ━━━
 
@@ -317,6 +377,40 @@ export async function generateWorkflowConfig(
     }
   }
 
+  // ── THE EVENT DOORS (relay canvas W1, law 1) — the model's doors are WISHES; the ONE sanitiser
+  // decides what can be stored (registry-checked, feature-checked, workflow names resolved to the
+  // user's own ids, a second schedule refused). Anything dropped is SAID, never silently lost.
+  let doors: ReactionDoor[] = [];
+  let needsDoorNote: string | null = null;
+  try {
+    let features = null;
+    try { features = await getWorkspaceFeatures(userId, supabase); } catch { /* unknown → abstain */ }
+    const authored = await authorDoors(generated.triggers, { supabase, userId, features });
+    doors = authored.doors;
+    needsDoorNote = doorNote(authored.notes);
+  } catch {
+    // A sanitiser failure must never lose the draft — the pipeline stands, on-demand only.
+    doors = [];
+  }
+
+  // ── THE INPUTS TRAY (relay canvas W2, law 7) — the model spoke NAMES; the ONE resolver turns
+  // them into the caller's own knowledge_files (a name it can't find, or that matches two files,
+  // is REFUSED and SAID). Same failure discipline as the doors: a resolver outage costs the tray,
+  // never the draft.
+  let inputs: GeneratedWorkflowConfig['inputs'] = null;
+  let needsInputNote: string | null = null;
+  try {
+    const { authorInputs, inputNote, inputsForStorage } = await import('@/lib/workflows/author-doors');
+    const authored = await authorInputs(
+      { doc_names: generated.input_doc_names, accept_material: generated.accept_material },
+      { supabase, userId },
+    );
+    inputs = inputsForStorage(authored);
+    needsInputNote = inputNote(authored.notes);
+  } catch {
+    inputs = null;
+  }
+
   // If caller passed an explicit override, use it; otherwise use model-generated value.
   const workerInstructions =
     options?.workerInstructions?.trim()
@@ -329,6 +423,7 @@ export async function generateWorkflowConfig(
     name: String(generated.name).trim(),
     description: typeof generated.description === 'string' ? generated.description.trim() : null,
     trigger: (generated.trigger as Record<string, unknown>) ?? { type: 'manual' },
+    triggers: doors,
     steps,
     output_config: Object.keys(outputConfig).length
       ? outputConfig
@@ -338,5 +433,8 @@ export async function generateWorkflowConfig(
       ? generated.overlap_note.trim()
       : null,
     needs_person_note: needsPersonNote,
+    needs_door_note: needsDoorNote,
+    inputs,
+    needs_input_note: needsInputNote,
   };
 }

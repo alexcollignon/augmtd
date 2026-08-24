@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
   // Fetch due workflows
   const { data: due, error } = await supabase
     .from('workflows')
-    .select('id, user_id, name, trigger, next_run_at')
+    .select('id, user_id, name, trigger, next_run_at, status, steps')
     .eq('status', 'active')
     .not('next_run_at', 'is', null)
     .lte('next_run_at', now.toISOString())
@@ -48,12 +48,46 @@ export async function GET(request: NextRequest) {
     id: string; user_id: string; name: string;
     trigger: { type: string; cron?: string; timezone?: string };
     next_run_at: string;
+    status: string;
+    steps: Array<Record<string, unknown>> | null;
   }>;
 
   const enqueued: string[] = [];
   const skipped: string[] = [];
+  const notReady: string[] = [];
+
+  // THE READINESS WAVE at the dispatcher: a not-ready workflow never gets a doomed run row. It is
+  // SKIPPED and its schedule still rolls forward — unreadiness must not wedge the clock. The
+  // reason already stands on the ledger row (same derivation), so this needs no user-facing write.
+  const featuresByUser = new Map<string, import('@/lib/workspace/types').WorkspaceFeatures | null>();
+  const featuresFor = async (userId: string) => {
+    if (featuresByUser.has(userId)) return featuresByUser.get(userId)!;
+    let f: import('@/lib/workspace/types').WorkspaceFeatures | null = null;
+    try {
+      const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
+      f = await getWorkspaceFeatures(userId, supabase);
+    } catch { /* unknown features never invent unreadiness */ }
+    featuresByUser.set(userId, f);
+    return f;
+  };
+  const { readinessOf } = await import('@/lib/workflows/readiness');
 
   for (const wf of dueList) {
+    const r = readinessOf(
+      { status: wf.status, trigger: wf.trigger, steps: wf.steps ?? [] },
+      await featuresFor(wf.user_id),
+    );
+    if (!r.ready) {
+      notReady.push(wf.id);
+      console.log(`[workflows-dispatch] not ready, skipped ${wf.id}: ${r.reason}`);
+      // Roll the schedule forward anyway — a not-ready workflow must not wedge the clock.
+      const nextRun = nextRunFromTrigger(wf.trigger, now);
+      await supabase.from('workflows').update({
+        next_run_at: nextRun ? nextRun.toISOString() : null,
+      }).eq('id', wf.id);
+      continue;
+    }
+
     // Concurrency guard: skip if there is already a queued or running run for this workflow
     const { data: existing } = await supabase
       .from('workflow_runs')
@@ -143,5 +177,6 @@ export async function GET(request: NextRequest) {
     due_count: dueList.length,
     enqueued: enqueued.length,
     skipped: skipped.length,
+    not_ready: notReady.length,
   });
 }

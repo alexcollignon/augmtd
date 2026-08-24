@@ -215,6 +215,40 @@ build agents + 1 gates agent, every diff orchestrator-reviewed). Suite `scripts/
   workflow's deep-dive page (new mount stamp) — each optimistically zeroes the pill and bumps the
   sidebar via `aug:conversation-changed`. Gate C6 pins predicate parity across both routes, the
   served share, the rendered pill, and the stamping doors.
+- **A RUN NEEDS ITS MATERIAL (René's incident, Aug 20 — processes 124/124 ×2; suites re-earned
+  handoffs 250 · frames 216 · run-record 102)**: a draft reaction workflow ran with no event and
+  SUCCEEDED with a six-step narrated-emptiness cascade as its "deliverable" (which the frame
+  lane then dressed). TWO STATES, DELIBERATELY DISTINCT: **READINESS** (workflow-level,
+  `lib/workflows/readiness.ts` — ONE pure rule table, first failing rule speaks: no steps ·
+  draft · unassigned handoff · feature-gated tool · blank reaction trigger; paused IS ready;
+  null features abstains) served on ledger rows + workflow GET → the amber "Not ready" chip +
+  reason in the state slot, RUN NOW SPEAKS the reason instead of firing (no dead buttons), the
+  dispatcher SKIPS (no doomed run row; next_run_at still rolls); and **THE REFUSAL AT THE DOOR**
+  (run-level, run-workflow): not-ready · reaction-without-its-event (structural fact =
+  empty triggerContext; resumeFromApproval exempt) · empty-first-tool-material → ONE ordinary
+  failed run with the spoken reason, ZERO steps, no thread/deliverable/frame/report-back — the
+  existing failed→needs_you lane carries it (NO new run status). COPY LAW enforced on review:
+  the refusal sentence claimed "attach sample material to test" — an affordance that doesn't
+  exist; corrected + a copy floor pins "sample material" out. PLUS the drawer's GATE OBJECT
+  ("What's being approved" on the waiting card via the SAME previewFromOutput, one lifted run
+  fetch). Gates P7a–P7k.
+- **THE GATE CARRIES ITS OBJECT (owner-found, Aug 20 — handoffs 250/250 ×2; closed the arc's
+  last UX gap)**: the handoff commitment room's decision card now SHOWS the work being gated —
+  served block `handoff{workflowName, runId/At, ask, slaHours, askedByFirst, selfGate,
+  workerName, parked, preview{text, truncated}}` on GET /api/commitments/[id] (ONE derivation,
+  `lib/workflows/handoff-context.ts`; entitlement = the caller's own handoff row, the same fact
+  canReadRunRecord grants 'holder' on; preview = the run's last output, 20k whitespace-honest
+  cut). The card: provenance header (kills the false "no linked source" line for handoffs only) ·
+  "What you're approving" scrollable object · optional note → the run's ONE comments room,
+  best-effort BEFORE the resume · "See the run's receipts →" reuses RunRecordDrawer (a refused
+  owner-scoped read passes NULL → the Log tab speaks ACCESS, never a false "no receipts") ·
+  selfGate softens to "your own gate". **THE MOVE YIELDS, agnostically**: render-plan's
+  PanelPlanInput gained hasGatedDecision, folded into ONE hasDecision BEFORE the table (the
+  table never branches on kind); pure applyPanelPlan strips move/offers at the door — room-shell
+  and item-rail untouched (H17g source floors pin the invariant). Gate-suite lesson: the
+  one-door endpoint gate must match URL LITERALS with interpolations stripped (`${handoff.…}`
+  false-fired on a variable name). Hygiene note queued: a generic run-room turn sweep over
+  runIdsCreated in smoke-handoffs' finally (H10–13 narrations linger on probe A).
 - THE SENDER FALLBACK LADDER (owner, Aug 20 — handoffs 204/204): a coworker-less workflow's
   park/nudge email speaks as the OWNER'S PERSONAL ASSISTANT (resolved at the ONE emailAssignee
   seam both park and chase ride), never the generic team@ stranger; team@ survives only as the

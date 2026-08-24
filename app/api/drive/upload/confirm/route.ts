@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { clipForPrompt } from '@/lib/utils/clip-for-prompt';
 
 // Indexing a large PDF (extract → ~200 chunk summaries → embeddings) can take minutes,
 // so it runs in the background via after(); this ceiling covers that background work.
@@ -81,10 +82,41 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to register file' }, { status: 500 });
     }
 
+    // ── THE `file` FIRE DOOR (THE RELAY CANVAS — W1 opened it, W2 MATURED it) ───────────────────
+    // "A file LANDS in Knowledge" is a HUMAN act, so the door lives at the UPLOAD seam and nowhere
+    // else. This route is reached only by the four user-facing upload surfaces (Knowledge panel,
+    // Home ask attach, the two agent-knowledge pickers) — workflow-generated documents and meeting
+    // transcripts reach `knowledge_files` through `indexArtifact` / `indexSource` instead, which
+    // are deliberately NOT doors: a workflow-produced file firing workflows is a loop nobody
+    // authored. THE SEAM STAYS HERE, in the confirm-initiated flow, and is handed to the shared
+    // indexer as an EXPLICIT listener — the indexer itself never guesses that a caller is a door.
+    //
+    // W2 MOVED THE MOMENT: the door used to fire on registration (filename + size only), so the
+    // judge matched on a NAME. It now fires when extraction completes, and the gist carries the
+    // CONTENT HEAD — the judge matches on SUBSTANCE, and the fired run has real material to work
+    // with. Exactly-once is unchanged (`<workflowId>:file:<knowledge_file id>`).
+    // Best-effort by contract: the upload has already succeeded and must never fail on a reaction.
     after(async () => {
       try {
         await indexUploadedFile(
-          { buffer, filename, mimeType, userId: user.id, storagePathInBucket: path, folderId },
+          {
+            buffer, filename, mimeType, userId: user.id, storagePathInBucket: path, folderId,
+            onIndexed: async ({ fileId, extractedText }) => {
+              const { checkSourceReactions } = await import('@/lib/workflows/reactions');
+              const head = String(extractedText ?? '').replace(/\s+/g, ' ').trim();
+              const kb = Math.max(1, Math.round(buffer.length / 1024));
+              const size = kb >= 1024 ? `${(kb / 1024).toFixed(1)}MB` : `${kb}KB`;
+              const ext = (filename.split('.').pop() ?? '').toUpperCase().slice(0, 8);
+              const label = `${filename} · ${ext || mimeType} · ${size} uploaded to Knowledge`;
+              // Whitespace-bounded cut, declared — the judge must never read OUR clip as the
+              // document ending there (the excerpt-honesty law).
+              const body = head ? clipForPrompt(head, 400) : 'No readable text was extracted from this file.';
+              const rx = await checkSourceReactions(adminClient, user.id, 'file', [{
+                id: fileId, title: filename, gist: `${label}\n${body}`,
+              }]);
+              if (rx?.fired) console.log(`[reactions] file door fired ${rx.fired} run(s) for ${user.id.slice(0, 8)}`);
+            },
+          },
           adminClient
         );
       } catch (err) {
