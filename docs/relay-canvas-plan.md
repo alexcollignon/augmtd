@@ -301,6 +301,41 @@ filter would silently drop applications that omit the word). REPAIRS: the two up
 floors' 900-char windows had drifted (green on empty text) — structural brace-match anchors
 now, and the host-safety law HARDENED (the innermost try must reach the call directly).
 
+**THE MATERIAL LANE BUILT (Aug 24, `c8fb7a3`; relay 576/576 — found live against a REAL
+application email on a pilot inbox)**: a mail-fired run knew a candidate applied but never saw
+the attached CV — the sync had already downloaded + text-extracted the attachments onto the very
+inbox row the door read, and the fire context carried only a 500-char body gist; the file door
+fired on a 400-char clip of its own document (the seeded demo's hand-built contexts masked
+both). `ReactionEvent.material` = fuller text for the FIRED RUN's context only (mail lifts
+`source_data.attachments[].extractedText`, clipped per file + excerpt-marked; the file seam
+passes the uploaded document's own extracted text) — `triggerBlock` appends it AFTER the head's
+own 2400 cap so the slice can never decapitate it; deferred fires replay it from the stored
+record unchanged. THE JUDGE STAYS CHEAP BY STRUCTURE: it never reads material — the FACT of the
+attachments rides the gist as names (`[Attached: …]`), which is all "is this an application"-
+class conditions need. Six gates (context carries it · cap can't eat it · judge never sees it ·
+both seams feed it). SUITE LESSON RE-LEARNED: killing a suite mid-run strands probe rows that
+poison the next run's live scenarios — sweep probe state before rerunning; never kill a suite
+casually.
+
+**W4 POST-SCRIPT — A FILED FILE IS A VISIBLE FILE (Aug 24, in `ebea2f9`)**: the demo assembly
+found a file-door filing accumulated INVISIBLY — the room grounding reads documents off
+`knowledge_files.entity_id` (its entity_links read covers only inbox_item/commitment), so the
+link existed but no later run's comparison could see the filed CV. The case link writer now
+stamps `knowledge_files.entity_id` fill-if-empty (ingest's own upload idiom — never an
+overwrite); two gates hold it.
+
+**THE DEMO (owner account, live; seeder untracked)**: scenarios A–E retired (workflows deleted,
+seeder code removed); scenario F = the CV-triage whiteboard end to end — 3 doors (filtered mail
+zero-AI · file · loop), Hiring Policy tray, case filing (2 openings; accumulation proven live),
+3 parked approvals, interview child w/ Interview Policy + prepared-scheduling-email draft, FRAME
+output (validated series head), winner/decline emails as DRAFTS inside the gated deliverable.
+Spoken simplifications: ONE approval (not the whiteboard's two); emails never send.
+
+**⚠️ OPEN ENGINE GAP (owner call pending)**: an EVENT-FIRED run parked at approval gets NO deck
+ask — `narrateApprovalAsk` rides `openStandingCommitment`, which only a SCHEDULED workflow has;
+event-driven approvals are reachable via the workflows page + drawer only, never the Home
+attention surface.
+
 ## GATES (laws-need-gates — each wave ships its floor)
 - The four-door parity sweep per primitive (generate-config emits · chat args accept · Studio
   edits · ledger serves) — the arc's standing gate.
