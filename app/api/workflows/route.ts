@@ -90,6 +90,16 @@ export async function POST(request: NextRequest) {
     agent_id?: string | null;
     worker_instructions?: string | null;
     skill_ids?: string[];
+    /** THE EVENT DOORS (relay canvas W1) — normalized before storage; unknown sources can never
+     *  be persisted (the same discipline as the [id] PATCH). */
+    triggers?: unknown;
+    /** THE INPUTS TRAY (relay canvas W2) — `{ docs:[{kbFileId,name}], acceptMaterial }`. Stored
+     *  out of band (item_plans kind 'workflow_inputs'), never a workflows column; validated
+     *  against the caller's own knowledge_files at the store. */
+    inputs?: unknown;
+    /** THE THROTTLE (relay canvas W3b) — event runs a day. Stored out of band (item_plans kind
+     *  'workflow_limit'), clamped at the store; absent = the platform default. */
+    fire_limit?: unknown;
   };
   try { body = await request.json(); } catch { return NextResponse.json({ error: 'Invalid body' }, { status: 400 }); }
 
@@ -137,6 +147,54 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (error) return NextResponse.json({ error: sanitizeError(error) }, { status: 500 });
+
+  // ── THE EVENT DOORS ride creation (relay canvas W1 — the four-door law: a describe-authored
+  // door must survive the draft card's Confirm). A SEPARATE best-effort write, not part of the
+  // insert: `triggers` is the arc's one additive column, and pre-migration a 42703 here must
+  // cost the doors, never the workflow's creation. Normalized like the PATCH — unknown sources
+  // can never be persisted. ──
+  if (body.triggers !== undefined && data) {
+    try {
+      const { normalizeTriggers } = await import('@/lib/workflows/trigger-sources');
+      const { doors } = normalizeTriggers({ triggers: body.triggers });
+      const { error: doorErr } = await supabase.from('workflows')
+        .update({ triggers: doors.length ? doors : null })
+        .eq('id', (data as { id: string }).id);
+      if (doorErr) console.warn('[workflows POST] doors not persisted (column absent?):', doorErr.message);
+      else (data as Record<string, unknown>).triggers = doors.length ? doors : null;
+    } catch (e) {
+      console.warn('[workflows POST] doors not persisted:', (e as Error).message);
+    }
+  }
+
+  // ── THE INPUTS TRAY rides creation (relay canvas W2 — the same four-door law: a document the
+  // draft pinned must survive the Confirm). Written AFTER the insert, best-effort and isolated:
+  // the tray is a separate store, and a store failure must cost the tray, never the workflow.
+  // Ownership is re-proven at the store — a hand-crafted body naming a stranger's file is dropped.
+  if (body.inputs !== undefined && data) {
+    try {
+      const { writeWorkflowInputs } = await import('@/lib/workflows/inputs');
+      const res = await writeWorkflowInputs(supabase, user.id, (data as { id: string }).id, body.inputs);
+      if (!res.ok) console.warn('[workflows POST] inputs not persisted:', res.error);
+      else (data as Record<string, unknown>).inputs = res.inputs;
+    } catch (e) {
+      console.warn('[workflows POST] inputs not persisted:', (e as Error).message);
+    }
+  }
+
+  // ── THE THROTTLE rides creation (relay canvas W3b — the same four-door law: a pace the draft
+  // stated must survive the Confirm). Its own store, best-effort and isolated: a store failure
+  // costs the number (the workflow then rides the platform default), never the creation.
+  if (body.fire_limit !== undefined && body.fire_limit !== null && data) {
+    try {
+      const { writeFireLimit } = await import('@/lib/workflows/fire-limit');
+      const res = await writeFireLimit(supabase, user.id, (data as { id: string }).id, body.fire_limit);
+      if (!res.ok) console.warn('[workflows POST] fire limit not persisted:', res.error);
+      else (data as Record<string, unknown>).fireLimit = res.fireLimit;
+    } catch (e) {
+      console.warn('[workflows POST] fire limit not persisted:', (e as Error).message);
+    }
+  }
 
   // THE ENTITY EDGE — a saved workflow that names a registered project links to it at birth.
   try {

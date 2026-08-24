@@ -420,6 +420,47 @@ export async function storeTranscriptAndGenerateWork(
     }, adminClient).catch(() => {});
   }
 
+  // ── THE `meeting` FIRE DOOR (THE RELAY CANVAS W1 — docs/relay-canvas-plan.md) ─────────────────
+  // THE ONE COMPLETION POINT: every recording path (bot · in-person · upload) ends here, and only
+  // here is a recording's work durably done (processed=true, insights written, transcript indexed).
+  // Placed AFTER shadowRecognizeMeeting so a project-scoped door sees a fresh entity link.
+  // Best-effort by contract: a reaction failure never touches the meeting pipeline.
+  try {
+    const finalTitle = (transcriptUpdate.title as string | undefined) ?? title;
+    // The insights' summary head if one is in hand, else the meeting's own name — never invented.
+    const head = String(insights.document ?? '')
+      .replace(/^#+\s*/gm, '').replace(/\s+/g, ' ').trim().slice(0, 400);
+    const event = {
+      id: String(transcriptRecord.id),
+      title: String(finalTitle).slice(0, 120),
+      gist: head || String(finalTitle),
+      entityId: null as string | null,
+      // W5 — THE DETERMINISTIC FIELD the door filters read (`title`), the meeting's own name.
+      fields: { title: String(finalTitle) } as Record<string, string>,
+    };
+    try {
+      const { data: link } = await supabase.from('entity_links').select('entity_id')
+        .eq('user_id', userId).eq('item_kind', 'meeting').eq('item_id', transcriptRecord.id)
+        .not('entity_id', 'is', null).maybeSingle();
+      event.entityId = (link as { entity_id?: string } | null)?.entity_id ?? null;
+    } catch { /* scope is a refinement, never a blocker */ }
+
+    const fire = async () => {
+      try {
+        const { checkSourceReactions } = await import('@/lib/workflows/reactions');
+        const rx = await checkSourceReactions(supabase, userId, 'meeting', [event]);
+        if (rx?.fired) console.log(`[reactions] meeting door fired ${rx.fired} run(s) for ${userId.slice(0, 8)}`);
+      } catch (e) { console.error('[MeetingBot] Non-fatal: meeting reaction check failed:', e); }
+    };
+    try {
+      const { after } = await import('next/server');
+      after(fire);
+    } catch {
+      // No request scope (worker scripts / reprocess): run it inline, still non-fatal.
+      await fire();
+    }
+  } catch (e) { console.error('[MeetingBot] Non-fatal: meeting door seam failed:', e); }
+
   console.log(`[MeetingBot] Generated ${workItemsCreated} work items from: ${title}`);
 }
 

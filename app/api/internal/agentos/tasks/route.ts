@@ -74,7 +74,18 @@ export async function POST(request: NextRequest) {
 
       case 'create_task':
         if (!agent_id) return NextResponse.json({ error: 'agent_id required' }, { status: 400 });
-        result = await executeCreateTask(String(args.description ?? ''), agent_id, user_id, sb, ac, args.skill_names as string[] | string | undefined);
+        // `trigger_doors` rides through when the Python tool sends it (box redeploy pending — the
+        // TS side accepts it today; update_task's door verbs already ride the `args as never` pass).
+        // The INPUTS TRAY (W2) rides the same way — spoken doc names + the material flag.
+        result = await executeCreateTask(
+          String(args.description ?? ''), agent_id, user_id, sb, ac,
+          args.skill_names as string[] | string | undefined, args.trigger_doors,
+          args.input_doc_names,
+          typeof args.input_accept_material === 'boolean' ? args.input_accept_material : undefined,
+          // THE THROTTLE (relay canvas W3b) rides the same way — the executor clamps and says so.
+          // (update_task's `daily_run_limit` already rides the `args as never` pass below.)
+          args.daily_run_limit,
+        );
         break;
 
       case 'get_task':

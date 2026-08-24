@@ -6,6 +6,7 @@ import { computeNextRun, validateCron } from '@/lib/workflows/schedule';
 import type { WorkflowTrigger, WorkflowStep, OutputConfig, WorkflowStatus } from '@/lib/workflows/types';
 import { requireFeature, handleWorkspaceError } from '@/lib/workspace/require-feature';
 import { sanitizeError } from '@/lib/utils/api-error';
+import type { WorkspaceFeatures } from '@/lib/workspace/types';
 
 export async function GET(
   _request: NextRequest,
@@ -24,7 +25,55 @@ export async function GET(
     .single();
 
   if (error || !data) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  return NextResponse.json({ workflow: { ...data, is_owned_by_me: data.user_id === user.id } });
+
+  // THE READINESS WAVE: the same derivation the ledger row and the run door speak — additive,
+  // never a second opinion. A features read failure never invents unreadiness.
+  const { readinessOf } = await import('@/lib/workflows/readiness');
+  let features: WorkspaceFeatures | null = null;
+  try {
+    const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
+    features = await getWorkspaceFeatures(user.id, supabase);
+  } catch { /* unknown features → the feature rule abstains */ }
+  const readiness = readinessOf(
+    { id: data.id, status: data.status, trigger: data.trigger, triggers: data.triggers, steps: data.steps ?? [] },
+    features,
+  );
+  // THE EVENT DOORS (relay canvas W1) — additive, normalized, registry-labelled. `select('*')`
+  // already carries `triggers` when the column exists; normalizeTriggers tolerates it being absent.
+  const { doorsForServing } = await import('@/lib/workflows/trigger-sources');
+  const doors = doorsForServing({ trigger: data.trigger, triggers: data.triggers });
+
+  // THE INPUTS TRAY (relay canvas W2, law 7 — INPUTS ARE VISIBLE). Served as `inputs`, keyed under
+  // the workflow's CREATOR so one workflow has exactly one tray whoever is reading it. `null` means
+  // NEVER CONFIGURED — distinct from a tray configured with nothing.
+  // (Read with the admin client: the tray row belongs to the CREATOR, so a teammate reading a
+  // shared workflow — already past this route's RLS check above — would otherwise see a false
+  // "no tray". The read is scoped to this workflow's own row and returns nothing else.)
+  const { readWorkflowInputs } = await import('@/lib/workflows/inputs');
+  const { createClient: createAdminClient } = await import('@supabase/supabase-js');
+  const adminRead = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  );
+  const inputs = await readWorkflowInputs(adminRead, data.user_id, id);
+
+  // THE THROTTLE (relay canvas W3b) — served ALWAYS, never null: absence in the store means the
+  // platform default, and the surface must be able to show the real number without knowing that
+  // rule. `isDefault` is what tells the stepper whether this workflow pinned its own.
+  const { readFireLimit } = await import('@/lib/workflows/fire-limit');
+  const fireLimit = await readFireLimit(adminRead, data.user_id, id);
+
+  return NextResponse.json({
+    // Served in BOTH places on purpose: `workflow.readiness` for consumers that hold only the
+    // workflow object, and the top-level field for the route's own contract. One value, one
+    // derivation — they can never disagree.
+    workflow: { ...data, is_owned_by_me: data.user_id === user.id, doors, inputs, fireLimit, readiness },
+    doors,
+    readiness,
+    inputs,
+    fireLimit,
+  });
 }
 
 export async function PATCH(
@@ -44,6 +93,15 @@ export async function PATCH(
     color: string;
     status: WorkflowStatus;
     trigger: WorkflowTrigger;
+    /** THE EVENT DOORS (relay canvas W1) — additive; normalized server-side so an unknown source
+     *  key can never be stored (law 3: the registry is the catalogue). */
+    triggers: unknown;
+    /** THE INPUTS TRAY (relay canvas W2) — `{ docs:[{kbFileId,name}], acceptMaterial }`. Stored
+     *  OUT of band (item_plans kind 'workflow_inputs'), never a workflows column. */
+    inputs: unknown;
+    /** THE THROTTLE (relay canvas W3b) — the per-workflow daily event-run limit. Stored OUT of
+     *  band (item_plans kind 'workflow_limit'); clamped to 1–100, never refused silently. */
+    fire_limit: unknown;
     steps: WorkflowStep[];
     output_config: OutputConfig;
     shared_with_company: boolean;
@@ -86,6 +144,21 @@ export async function PATCH(
   }
 
   const update: Record<string, unknown> = { ...body };
+  // Event doors are stored NORMALIZED — unknown source keys are dropped, never persisted.
+  if ('triggers' in body) {
+    const { normalizeTriggers } = await import('@/lib/workflows/trigger-sources');
+    const doors = normalizeTriggers({ triggers: body.triggers }).doors;
+    // NULL, not [] — the fire doors discover candidates with `triggers is not null`; an empty
+    // array would put every touched workflow back in that read for nothing.
+    update.triggers = doors.length ? doors : null;
+  }
+  // THE INPUTS TRAY lives in its own store, NOT on the workflows row — strip it from the column
+  // update before the spread can send an unknown column to PostgREST.
+  const inputsBody = 'inputs' in body ? body.inputs : undefined;
+  delete update.inputs;
+  // Same discipline for the throttle — its own store, never a workflows column.
+  const fireLimitBody = 'fire_limit' in body ? body.fire_limit : undefined;
+  delete update.fire_limit;
   // Server-owned column — never client-settable (the body spread would pass it through).
   delete update.auto_paused_at;
   if (nextRunAt !== undefined) update.next_run_at = nextRunAt;
@@ -118,7 +191,43 @@ export async function PATCH(
     .single();
 
   if (error) return NextResponse.json({ error: sanitizeError(error) }, { status: 500 });
-  return NextResponse.json({ workflow: data });
+
+  // THE INPUTS TRAY (relay canvas W2) — written AFTER the row update succeeds, through the
+  // session client (so RLS is the second fence) and validated against the caller's OWN
+  // knowledge_files: a kbFileId that is not theirs is dropped, never stored. `dropped` is
+  // returned so the surface can SAY what it refused instead of silently shortening the tray.
+  let inputs: unknown = undefined;
+  let inputsDropped = 0;
+  if (inputsBody !== undefined) {
+    const { writeWorkflowInputs } = await import('@/lib/workflows/inputs');
+    const res = await writeWorkflowInputs(supabase, user.id, id, inputsBody);
+    if (!res.ok) return NextResponse.json({ error: res.error }, { status: 500 });
+    inputs = res.inputs;
+    inputsDropped = res.dropped;
+  }
+
+  // THE THROTTLE (relay canvas W3b) — written through the SAME after-the-row-update discipline.
+  // Out-of-range CLAMPS and says so (`fire_limit_clamped`), never a silent refusal; writing the
+  // default deletes the row, so `isDefault` keeps meaning "riding the platform default".
+  let fireLimit: unknown = undefined;
+  let fireLimitClamped = false;
+  if (fireLimitBody !== undefined) {
+    const { writeFireLimit } = await import('@/lib/workflows/fire-limit');
+    const res = await writeFireLimit(supabase, user.id, id, fireLimitBody);
+    if (!res.ok) return NextResponse.json({ error: res.error }, { status: 500 });
+    fireLimit = res.fireLimit;
+    fireLimitClamped = res.clamped;
+  }
+
+  return NextResponse.json({
+    workflow: {
+      ...data,
+      ...(inputsBody !== undefined ? { inputs } : {}),
+      ...(fireLimitBody !== undefined ? { fireLimit } : {}),
+    },
+    ...(inputsBody !== undefined ? { inputs, inputs_dropped: inputsDropped } : {}),
+    ...(fireLimitBody !== undefined ? { fireLimit, fire_limit_clamped: fireLimitClamped } : {}),
+  });
 }
 
 export async function DELETE(

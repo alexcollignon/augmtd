@@ -494,6 +494,14 @@ export interface IndexUploadParams {
   userId: string;
   storagePathInBucket: string;
   folderId?: string;
+  /** THE FILE DOOR'S SEAM (relay canvas W2 — the door matured from "a file was uploaded" to "a
+   *  file's CONTENT is in hand"). Called ONCE, after the extracted text is durably written, with
+   *  the row's id and its text. DELIBERATELY AN EXPLICIT ARGUMENT FROM THE CALLER: this indexer is
+   *  shared by artifact and connected-source paths that must NEVER be doors (a workflow-made file
+   *  firing workflows is a loop nobody authored), so the seam is opted INTO by the human-upload
+   *  route and can never be guessed at from in here. Best-effort by contract — a throw is caught
+   *  and logged; indexing is never failed by a listener. */
+  onIndexed?: (info: { fileId: string; extractedText: string | null }) => Promise<void>;
 }
 
 /**
@@ -501,17 +509,30 @@ export interface IndexUploadParams {
  * Returns the knowledge_files.id (UUID).
  */
 export async function indexUploadedFile(params: IndexUploadParams, adminClient: SupabaseClient): Promise<string> {
-  const { buffer, filename, mimeType, userId, storagePathInBucket, folderId } = params;
+  const { buffer, filename, mimeType, userId, storagePathInBucket, folderId, onIndexed } = params;
+
+  // The listener is best-effort at EVERY exit: a throwing listener must never fail the indexing
+  // whose success it is reporting.
+  const announce = async (fileId: string, extractedText: string | null) => {
+    if (!onIndexed) return;
+    try { await onIndexed({ fileId, extractedText }); }
+    catch (err) { console.error('[Indexer] Non-fatal: onIndexed listener failed:', filename, err); }
+  };
 
   // Skip all expensive processing if this exact file content is already indexed
   const contentHash = createHash('sha256').update(buffer).digest('hex');
   const { data: existingFile } = await adminClient
     .from('knowledge_files')
-    .select('id')
+    .select('id, extracted_text')
     .eq('user_id', userId)
     .eq('content_hash', contentHash)
     .maybeSingle();
-  if (existingFile) return existingFile.id;
+  if (existingFile) {
+    // Already-in-hand content still ANNOUNCES — with the id of the row that holds it, so the
+    // exactly-once key upstream naturally recognises a re-upload of the same document.
+    await announce(existingFile.id, (existingFile as { extracted_text?: string | null }).extracted_text ?? null);
+    return existingFile.id;
+  }
 
   const sourceId = await getOrCreateUploadSource(userId, adminClient);
 
@@ -553,6 +574,11 @@ export async function indexUploadedFile(params: IndexUploadParams, adminClient: 
   }
 
   const fileId = fileRows[0].id;
+
+  // EXTRACTION IS COMPLETE AND DURABLE HERE (the upsert above wrote `extracted_text`). The seam
+  // sits before chunking on purpose: the content is already in hand, and a listener must not wait
+  // on ~200 summary/embedding calls to hear about it.
+  await announce(fileId, cleanText);
 
   if (cleanText && cleanText.length > 10) {
     const allChunks = chunkText(cleanText, filename);

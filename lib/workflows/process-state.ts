@@ -28,8 +28,15 @@ export interface ProcessRow {
   runId: string;
   workflowId: string;
   workflowName: string;
-  /** THE SUBJECT LADDER: trigger event title → deliverable/artifact title → workflow name. */
+  /** THE SUBJECT LADDER (order = specificity, most specific first):
+   *    1. the trigger event's own title (what arrived)
+   *    2. the deliverable/artifact title (manual runs)
+   *    3. THE CASE the run resolved (relay canvas W4) — the opening this run served
+   *    4. the workflow name (a scheduled repeat deliberately keeps this — calm). */
   subject: string;
+  /** THE SUBJECT WEARS THE CASE (relay canvas W4): the case this run resolved, when it did.
+   *  Read from the durable `run_case` stamp the case step writes — never re-reasoned at read. */
+  caseRef?: { entityId: string; name: string } | null;
   state: ProcessState;
   /** Spoken only when it changes what the user does next (e.g. the failure reason). */
   reason?: string;
@@ -67,12 +74,26 @@ export function parkedGateOf(
   /** B2 REASSIGN: a per-run override (item_plans kind 'handoff_override') outranks the step's
    *  static assignee — a per-run decision never mutates the authored workflow. */
   override?: { assigneeUserId: string; assigneeName?: string } | null,
-): { kind: 'guardrail' | 'approval' | 'handoff'; assigneeUserId?: string; assigneeName?: string } {
+): {
+  kind: 'guardrail' | 'approval' | 'handoff' | 'subprocess';
+  assigneeUserId?: string; assigneeName?: string;
+  /** Subprocess parks only — the station's authored label + the child it handed the baton to. */
+  stepId?: string; label?: string; childWorkflowId?: string;
+} {
   const outs = run.step_outputs ?? [];
   const last = outs[outs.length - 1];
   const v = (last?.verdict ?? null) as GateVerdict | null;
   if (v?.status === 'blocked') return { kind: 'guardrail' };
   const current = (steps ?? [])[outs.length];
+  // THE ⧉ STATION (relay canvas W3): a subprocess park holds no human — the wait belongs to a
+  // MACHINE, so it is never anyone's needs_you. Sits beside the handoff branch, same precedence
+  // (the blocked-verify tail still outranks both).
+  if (current?.type === 'workflow') {
+    return {
+      kind: 'subprocess', stepId: current.id,
+      label: current.label || 'Process', childWorkflowId: current.workflow_id,
+    };
+  }
   if (current?.type === 'handoff') {
     if (override?.assigneeUserId) {
       return { kind: 'handoff', assigneeUserId: override.assigneeUserId, assigneeName: override.assigneeName };
@@ -151,30 +172,59 @@ export async function deriveProcessRows(
     } catch { /* subject ladder degrades to the workflow name */ }
   }
 
+  // THE CASE STAMP (relay canvas W4) — batched beside the fire read, for the same reason: it is a
+  // durable fact written at resolve time (`item_plans` kind 'run_case', entity_id = the run id),
+  // so BOTH readers of this derivation (the ledger and the run record) wear the case with no route
+  // change. Failure degrades to a case-less row, never a broken serve.
+  const caseByRun = new Map<string, { entityId: string; name: string }>();
+  if (runs.length) {
+    try {
+      const { data: stamps } = await admin.from('item_plans').select('entity_id, tasks')
+        .eq('user_id', userId).eq('kind', 'run_case')
+        .in('entity_id', runs.map((r) => r.id)).limit(runs.length);
+      for (const s of (stamps ?? []) as Array<{ entity_id: string; tasks: { entityId?: string; name?: string } | null }>) {
+        if (s.tasks?.entityId && s.tasks?.name) {
+          caseByRun.set(String(s.entity_id), { entityId: s.tasks.entityId, name: String(s.tasks.name).slice(0, 120) });
+        }
+      }
+    } catch { /* the ladder degrades one rung */ }
+  }
+
   return runs.map((r) => {
     let { state, reason } = processStateOf(r);
     const wf = wfById.get(r.workflow_id);
     const wfName = wf?.name ?? 'Workflow';
     const outs = r.step_outputs ?? [];
     // Phase B — viewer-aware park attribution (the handoff gate belongs to its assignee).
-    let waitingOn: { name: string } | null = null;
+    // `role` is the SURFACE DISCRIMINATOR: a machine wait must never be drawn in the people
+    // grammar (a facepile of a process name is a lie). Only the ⧉ station sets it.
+    let waitingOn: { name: string; role?: string } | null = null;
     if (r.status === 'awaiting_approval') {
       const gate = parkedGateOf(r, wf?.steps);
-      if (gate.kind === 'handoff' && gate.assigneeUserId && gate.assigneeUserId !== viewer) {
+      // A ⧉ STATION WAITS ON A MACHINE (relay canvas W3): no human holds this gate, so it reads
+      // waiting_on_others for EVERY viewer — the owner included. Never needs_you.
+      if (gate.kind === 'subprocess') {
+        state = 'waiting_on_others';
+        reason = undefined;
+        waitingOn = { name: gate.label ?? 'another process', role: 'process' };
+      } else if (gate.kind === 'handoff' && gate.assigneeUserId && gate.assigneeUserId !== viewer) {
         state = 'waiting_on_others';
         reason = undefined;
         waitingOn = { name: gate.assigneeName ?? 'a teammate' };
       }
     }
+    const caseRef = caseByRun.get(r.id) ?? null;
     const subject =
       subjectByRun.get(r.id)
       ?? (r.triggered_by === 'manual' ? threadArtifactTitle?.get(r.id) : undefined)
+      ?? caseRef?.name          // W4: the case outranks the workflow's static name, never the event
       ?? wfName;
     return {
       runId: r.id,
       workflowId: r.workflow_id,
       workflowName: wfName,
       subject,
+      ...(caseRef ? { caseRef } : {}),
       state,
       ...(reason ? { reason } : {}),
       startedAt: r.started_at ?? r.created_at,

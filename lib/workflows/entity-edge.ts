@@ -129,6 +129,27 @@ export async function workflowDraftGrounding(
   return { block: block.slice(0, 700), entity: found };
 }
 
+/** THE CASE GROUNDING (relay canvas W4): the same one-grounding read, addressed by ENTITY instead
+ *  of by the workflow's static scope. The case step swaps the run onto this from the moment it
+ *  resolves, so the comparison step sees the case's accumulated history BY CONSTRUCTION. Additive:
+ *  it JOINS the run's existing aiContext (the workflow scope + the inputs tray keep their seats). */
+export async function entityRunGrounding(
+  client: DBClient, userId: string, entityId: string, entityName: string,
+): Promise<string | null> {
+  try {
+    const { assembleRoomGrounding } = await import('@/lib/room/grounding');
+    const g = await assembleRoomGrounding(client, userId, { kind: 'entity', entityId });
+    if (!g?.text) return null;
+    return (
+      `[THE CASE THIS RUN BELONGS TO — "${entityName}". Everything this case has accumulated so ` +
+      `far (the same page its room reads), including what arrived on earlier runs. Use it to ` +
+      `compare, rank and decide against what is already here; never contradict it, and never ` +
+      `present its history as this run's news:]\n` +
+      g.text.replace(/\[(?:L|F)\d+\]\s?/g, '').slice(0, 3000)
+    );
+  } catch { return null; }
+}
+
 /** The run-time inheritance block: the scoped entity's CURRENT room page, compact, tags stripped
  *  (the same one grounding every other reasoner reads — a run must not contradict the room). */
 export async function workflowRunGrounding(

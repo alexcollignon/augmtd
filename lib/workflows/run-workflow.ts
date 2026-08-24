@@ -21,6 +21,7 @@ import type {
   HandoffStep,
 } from './types';
 import type { DocContent, DocSection, DocumentArtifact, DeliverableType } from '@/lib/types/inbox';
+import type { WorkspaceFeatures } from '@/lib/workspace/types';
 
 // ── Admin client (service role) ───────────────────────────────────────────────
 
@@ -336,8 +337,17 @@ export interface RunWorkflowOptions {
    *  seed the completed step outputs from the run row and continue PAST the approval step
    *  that parked it. Requires runId. */
   resumeFromApproval?: boolean;
+  /** THE SUBPROCESS RESUME (relay canvas W3): this run was parked at a ⧉ station and its child has
+   *  delivered — seed the completed step outputs from the run row EXACTLY like resumeFromApproval,
+   *  but pass NO human gate (the station's own output was already appended by resumeParentsOf, so
+   *  the loop simply starts after it). Never set together with resumeFromApproval. */
+  resumeSeeded?: boolean;
   /** STANDING REACTIONS (production arc step 6): the triggering event's context block — rides
-   *  every AI step (including the verify gate, for which it is legitimate source material). */
+   *  every AI step (including the verify gate, for which it is legitimate source material).
+   *  THE MATERIAL DOOR (relay canvas W2) reuses this exact channel: material handed in at Run-now
+   *  arrives as a `[MANUAL MATERIAL …]` block here. That is why a reaction workflow run by hand
+   *  WITH material does not hit the nothing-to-react-to refusal below — the refusal is keyed on
+   *  this context being empty, and material IS the event stand-in. Without it, it still refuses. */
   triggerContext?: string;
 }
 
@@ -390,6 +400,64 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       .eq('id', runId);
   }
 
+  // ── THE REFUSAL AT THE DOOR (THE READINESS WAVE) ───────────────────────────────────────────
+  // A run with nothing to work with refuses HERE, with a spoken reason — never a cascade of six
+  // steps politely narrating their own emptiness into a "deliverable" that is a failure report.
+  // A refusal is an ORDINARY failed run: no thread message, no narration, no deliverable, no
+  // artifact, no report-back, no email. The existing failed→needs_you lane carries the sentence.
+  const refuse = async (
+    reason: string,
+    extra?: { outputs?: StepOutput[]; threadId?: string | null },
+  ): Promise<RunWorkflowResult> => {
+    await admin.from('workflow_runs').update({
+      status: 'failed',
+      error: reason,
+      ...(extra?.outputs ? { step_outputs: extra.outputs } : {}),
+      completed_at: new Date().toISOString(),
+    }).eq('id', runId!);
+    // A REFUSED CHILD NEVER STRANDS ITS PARENT (relay canvas W3): every terminal end of a run
+    // reports back to whoever parked on it. Best-effort — a resume can never fail a refusal.
+    await notifySubprocessParent(runId!, { ok: false, error: reason });
+    return { runId: runId!, status: 'failed', threadId: extra?.threadId ?? null, error: reason };
+  };
+  // THE ONE REPORT-BACK SEAM: called from every terminal end of this run (refusal, thread failure,
+  // step failure, success). If nothing parked on this run it is a single cheap read that finds
+  // nothing. Never throws.
+  const notifySubprocessParent = async (
+    endedRunId: string,
+    outcome: { ok: boolean; deliverable?: string; error?: string },
+  ) => {
+    try {
+      const { resumeParentsOf } = await import('./subprocess');
+      await resumeParentsOf(admin, endedRunId, outcome);
+    } catch (e) { console.error('[run-workflow] subprocess parent resume failed:', e); }
+  };
+
+  // (a) NOT READY — the same derivation the ledger row and the dispatcher speak.
+  {
+    const { readinessOf, nothingToReactTo } = await import('./readiness');
+    let features: WorkspaceFeatures | null = null;
+    try {
+      const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
+      features = await getWorkspaceFeatures(workflow.user_id, admin);
+    } catch { /* unknown features never invent unreadiness */ }
+    const r = readinessOf(
+      { id: workflow.id, status: workflow.status, trigger: workflow.trigger as { type?: string; when?: string } | null, triggers: (workflow as unknown as { triggers?: unknown }).triggers, steps: workflow.steps ?? [] },
+      features,
+    );
+    if (!r.ready) return refuse(r.reason);
+
+    // (b) A REACTION WITHOUT ITS EVENT. The structural fact is the trigger context block: a real
+    // fire always carries it (lib/workflows/reactions.ts injects it at both the inline and the
+    // backstop door). No block = nothing happened. Manual AND test runs refuse alike — a test
+    // without material is the same emptiness, and the sentence already names the remedy.
+    // A resume is exempt: its event rode in on the original run.
+    const trig = workflow.trigger as { type?: string; when?: string; label?: string } | null;
+    if (trig?.type === 'reaction' && !opts.resumeFromApproval && !opts.resumeSeeded && !(opts.triggerContext ?? '').trim()) {
+      return refuse(nothingToReactTo(trig));
+    }
+  }
+
   // Find-or-create the task's persistent thread — ONE thread per (workflow, runner),
   // not one per run. Report-backs append to it like a colleague's recurring DM.
   // The thread title is the stable task name; deliverable titles stay date-stamped
@@ -402,6 +470,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       error: `Thread creation failed: ${threadErr}`,
       completed_at: new Date().toISOString(),
     }).eq('id', runId);
+    await notifySubprocessParent(runId, { ok: false, error: `Thread creation failed: ${threadErr}` });
     return { runId, status: 'failed', threadId: null, error: threadErr ?? 'no thread' };
   }
 
@@ -417,13 +486,17 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
   // a pipeline mixing owner approvals and teammate handoffs can never pass the wrong one) — that
   // one passes as approved; any later human gate parks again, naturally.
   let resumeApprovalAt = -1;
-  if (opts.resumeFromApproval && runId) {
+  if ((opts.resumeFromApproval || opts.resumeSeeded) && runId) {
     const { data: parked } = await admin.from('workflow_runs').select('step_outputs, status').eq('id', runId).maybeSingle();
     const seeded = (parked?.step_outputs ?? []) as StepOutput[];
     stepOutputs.push(...seeded);
-    for (let j = stepOutputs.length; j < steps.length; j++) {
-      const t = (steps[j] as { type?: string }).type;
-      if (t === 'approval' || t === 'handoff') { resumeApprovalAt = j; break; }
+    // THE SUBPROCESS RESUME passes NO human gate: its station's output is already seeded, so the
+    // loop resumes at the next step and any later approval/handoff parks naturally.
+    if (opts.resumeFromApproval) {
+      for (let j = stepOutputs.length; j < steps.length; j++) {
+        const t = (steps[j] as { type?: string }).type;
+        if (t === 'approval' || t === 'handoff') { resumeApprovalAt = j; break; }
+      }
     }
   }
   const workerAgentId = (workflow as Workflow & { agent_id?: string }).agent_id ?? undefined;
@@ -439,6 +512,27 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     const { workflowRunGrounding } = await import('@/lib/workflows/entity-edge');
     projectGrounding = await workflowRunGrounding(admin, workflow.user_id, workflow.id);
   } catch { /* non-fatal */ }
+
+  // ── THE INPUTS TRAY (THE RELAY CANVAS W2 — law 7: INPUTS ARE VISIBLE) ─────────────────────────
+  // The workflow's pinned reference material, built ONCE per run and carried into every ai step.
+  // IT RIDES THE `projectGrounding` CHANNEL ON PURPOSE: that channel is a system-prompt append, so
+  // (a) it never enters `previousOutputs` and therefore never competes with — or is eaten by —
+  // formatPreviousOutputs' middle-cut truncation of the step outputs, and (b) it inherits the
+  // channel's ONE exclusion: a verify gate (use_worker_identity: false) does not see it, because a
+  // gate must judge the draft against the run's own sources and not "correct" it from standing
+  // reference text. Nothing is built when the tray was never configured.
+  let inputsBlock: string | null = null;
+  try {
+    const { readWorkflowInputs, buildInputsBlock } = await import('@/lib/workflows/inputs');
+    const inputs = await readWorkflowInputs(admin, workflow.user_id, workflow.id);
+    if (inputs?.docs.length) {
+      inputsBlock = await buildInputsBlock(admin, workflow.user_id, inputs.docs);
+    }
+  } catch { /* non-fatal — a tray that cannot be read never fails a run */ }
+  // MUTABLE ON PURPOSE (relay canvas W4): a resolved case step APPENDS its case grounding here, so
+  // every step after the station reasons over the case's accumulated history. Additive — the
+  // workflow scope and the inputs tray keep their seats; nothing is swapped out.
+  let aiContext = [projectGrounding, inputsBlock].filter(Boolean).join('\n\n') || null;
 
   // ONE context builder for every executeStep call in this run — the guardrail retry re-runs two
   // steps with the same environment, and a second inline literal is how the two drift.
@@ -462,7 +556,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     isLastStep: index === steps.length - 1,
     workerInstructions,
     skillIds,
-    projectGrounding,
+    projectGrounding: aiContext,
     triggerEvent: opts.triggerContext ?? null,
     ...extra,
   });
@@ -569,6 +663,110 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       } catch { /* the parked status is the source of truth; the ask is a surface */ }
       return { runId: runId!, status: 'awaiting_approval', threadId };
     }
+    // ── THE SUBPROCESS STATION (relay canvas W3, law 5: A SUBPROCESS IS A HANDOFF TO A MACHINE).
+    // The same park as the human gates — the parent stops here and its CHILD runs its own rail.
+    // Nothing about the parent's shape changes: `awaiting_approval` is the existing status (the
+    // house lesson — a new CHECK-constraint value is a silent park failure), the outputs snapshot
+    // to the boundary, and `resumeParentsOf` continues it when the child terminates. ──
+    if ((step as { type?: string }).type === 'workflow') {
+      const sub = step as import('./types').SubprocessStep;
+      const label = sub.label || 'Process';
+      const {
+        checkSubprocessDoor, claimSubprocess, bindChildRun, batonFor, testModeSubprocessOutput,
+      } = await import('./subprocess');
+
+      if (opts.isTest) {
+        // TEST MODE NEVER FIRES THE CHILD — it stands in with the child's last real delivery.
+        const stand = await testModeSubprocessOutput(admin, workflow.user_id, sub);
+        stepOutputs.push({ step_id: step.id, step_type: 'workflow', label, output: stand });
+        await checkpoint();
+        continue;
+      }
+
+      // (a) THE DOOR CHECK — async at fire time (readiness stays pure). A failing check REFUSES
+      // the run with the reason spoken; it never parks on a door that cannot open.
+      const door = await checkSubprocessDoor(admin, workflow.user_id, sub, workflow.id);
+      if (!door.ok) return refuse(door.reason, { outputs: stepOutputs, threadId });
+
+      // (b) THE EXACTLY-ONCE CLAIM — insert-first. An unclaimed fire is a child that could never
+      // resume its parent, so a lost claim fails the run rather than orphaning a run pair.
+      const claimed = await claimSubprocess(admin, workflow.user_id, runId!, step.id, door.child.id);
+      if (!claimed) {
+        runError = `The '${label}' process step was already handed over for this run.`;
+        break;
+      }
+
+      // (c) FIRE THE CHILD — a queued run row first (the ledger sees it), then the run itself,
+      // carrying THE BATON: the parent's accumulated context so far, excerpt-honest.
+      const context = batonFor(workflow.name, stepOutputs);
+      const { data: childRun, error: childErr } = await admin.from('workflow_runs').insert({
+        workflow_id: door.child.id, user_id: workflow.user_id, status: 'queued', triggered_by: 'event',
+      }).select('id').single();
+      if (childErr || !childRun) {
+        runError = `The '${label}' process could not be started (${childErr?.message ?? 'no run row'}).`;
+        break;
+      }
+      const childRunId = (childRun as { id: string }).id;
+      await bindChildRun(admin, workflow.user_id, runId!, step.id, childRunId, context);
+
+      // (d) PARK THE PARENT — LOUD ON FAILURE (the handoffs precedent): a park that cannot
+      // persist is a FAILED run, never a lie.
+      const { error: parkErr } = await admin.from('workflow_runs').update({
+        status: 'awaiting_approval', step_outputs: stepOutputs,
+      }).eq('id', runId);
+      if (parkErr) {
+        runError = `The '${label}' process step could not park the run (${parkErr.message}). Apply migration 20260808_workflow_runs_approval_status.sql.`;
+        break;
+      }
+
+      const fire = async () => {
+        await runWorkflow({
+          workflowId: door.child.id, runId: childRunId, triggerSource: 'event', triggerContext: context,
+        }).catch((e) => console.error(`[subprocess] child run failed for "${door.child.name}":`, e));
+      };
+      try {
+        const { after } = await import('next/server');
+        after(fire);
+      } catch {
+        // No request scope (scripts/tests): run inline — the queued row + the dispatcher's stale
+        // event backstop cover a crash either way.
+        await fire();
+      }
+      return { runId: runId!, status: 'awaiting_approval', threadId };
+    }
+    // ── THE CASE STATION (relay canvas W4, THE DECIDING LAW: A CASE IS AN ENTITY). Engine-side
+    // like the ⧉ station, because it needs the stores: the workflow's case index, the one brain's
+    // registry, and the fire record that says what actually arrived. Non-fatal EVERYWHERE — a
+    // resolve failure outputs the honest none-card and the run proceeds on the static scope. ──
+    if ((step as { type?: string }).type === 'case') {
+      const cs = step as import('./types').CaseStep;
+      const label = cs.label || 'Case';
+      let cardText = 'The case step could not run — continuing without one.';
+      try {
+        const { resolveCaseForRun } = await import('./case-step');
+        const prior = stepOutputs[stepOutputs.length - 1]?.output;
+        const eventText = (opts.triggerContext ?? '').trim()
+          || (typeof prior === 'string' ? prior : JSON.stringify(prior ?? '')).trim();
+        const res = await resolveCaseForRun(admin, {
+          userId: workflow.user_id, workflowId: workflow.id, workflowName: workflow.name,
+          step: cs, eventText, runId: runId!,
+          // TEST MODE MATCHES BUT NEVER OPENS: a simulation must not populate the registry.
+          matchOnly: Boolean(opts.isTest),
+        });
+        cardText = res.cardText;
+        if (!res.none) {
+          // THE GROUNDING SWAP — from this step on, every ai step reads the case's page.
+          const { entityRunGrounding } = await import('@/lib/workflows/entity-edge');
+          const caseBlock = await entityRunGrounding(admin, workflow.user_id, res.entityId, res.name);
+          if (caseBlock) aiContext = [aiContext, caseBlock].filter(Boolean).join('\n\n');
+        }
+      } catch (e) {
+        console.error('[run-workflow] case step failed (non-fatal):', e);
+      }
+      stepOutputs.push({ step_id: step.id, step_type: 'case', label, output: cardText });
+      await checkpoint();
+      continue;
+    }
     const isGate = (step as { type?: string }).type === 'verify';
     const out = await executeStep(step, stepCtx(i, isGate
       ? { producingPrompt: producingPromptFor(i), stepChecks: stepChecksFor(i) }
@@ -582,6 +780,18 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     if (out.error) {
       runError = `Step "${out.label}" failed: ${out.error}`;
       break;
+    }
+
+    // ── (c) THE EMPTY-FIRST-MATERIAL FLOOR (THE READINESS WAVE) ──────────────────────────────
+    // The run's first material is the ground everything after it stands on. If the FIRST tool
+    // step came back structurally empty, every later step would be writing from nothing — the
+    // pilot's cascade. Refuse instead, with the reason spoken. CONSERVATIVE BY DESIGN: first
+    // tool step only, structural emptiness only — a "no new items" sentence is content.
+    if (i === 0 && (step as { type?: string }).type === 'tool') {
+      const { isStructurallyEmpty, emptyFirstMaterial } = await import('./readiness');
+      if (isStructurallyEmpty(out.output)) {
+        return refuse(emptyFirstMaterial(out.label), { outputs: stepOutputs, threadId });
+      }
     }
 
     // ── RETRY-THEN-HOLD (guardrails arc): a BLOCKED verdict means the user's own rule could not
@@ -681,6 +891,9 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     await admin.from('work_threads')
       .update({ updated_at: new Date().toISOString() })
       .eq('id', threadId);
+
+    // A FAILED CHILD NEVER STRANDS A PARKED PARENT (relay canvas W3).
+    await notifySubprocessParent(runId, { ok: false, error: runError });
 
     return { runId, status: 'failed', threadId, error: runError };
   }
@@ -904,6 +1117,34 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       await syncStandingCommitment(admin, wfRow, worker?.name ?? null, { fromSuccessfulRun: true });
       await narrateStandingRun(admin, wfRow, { ok: true, runId, threadId, workerName: worker?.name ?? 'Your coworker' });
     } catch { /* bookkeeping — never breaks a run */ }
+
+    // ── THE `workflow` FIRE DOOR (THE RELAY CANVAS W1 — docs/relay-canvas-plan.md) ──────────────
+    // "Another workflow delivers" — the STRUCTURAL source (no judge; the engine routes it by
+    // workflow id). It fires ONLY from this success tail: a refusal, a failure and an
+    // awaiting_approval park all return before here, and the whole block is `!opts.isTest`, so a
+    // test run delivers nothing and fires nothing.
+    // THE EVENT ID IS THE RUN's, never the workflow's — a second delivery must be able to fire.
+    // Self-loop: a door on THIS workflow naming ITSELF is dropped engine-side in `runDoors`
+    // (`c.sourceId !== wf.id`) — the exactly-once key is per run, so without that guard a
+    // self-door would re-fire on every delivery forever.
+    try {
+      const { checkSourceReactions } = await import('@/lib/workflows/reactions');
+      const gist = (materialised.title ? `${materialised.title}\n` : '')
+        + String(finalText ?? '').replace(/\s+/g, ' ').trim().slice(0, 300);
+      const rx = await checkSourceReactions(admin, workflow.user_id, 'workflow', [{
+        id: runId,
+        sourceId: workflow.id,
+        title: workflow.name,
+        gist: gist.trim() || workflow.name,
+      }]);
+      if (rx?.fired) console.log(`[reactions] workflow door fired ${rx.fired} run(s) from "${workflow.name}"`);
+    } catch (e) { console.error('[run-workflow] Non-fatal: workflow reaction check failed:', e); }
+
+    // ── THE SUBPROCESS RESUME (relay canvas W3, law 5) ────────────────────────────────────────
+    // If a parent parked at a ⧉ station on THIS run, its station now has its output: the very
+    // deliverable this seam already holds. Sits beside the workflow-delivers door for the same
+    // reason — a delivery is the one moment a child has something to hand back.
+    await notifySubprocessParent(runId, { ok: true, deliverable: finalText });
 
     // ── Auto-pause: don't keep producing output nobody reads ──
     // Runs AFTER the next_run_at write above so the pause's null isn't overwritten.

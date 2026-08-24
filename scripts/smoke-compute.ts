@@ -851,10 +851,19 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
   }
 
   // ── PA6 · STANDING REACTIONS (production arc step 6) — the brain as a trigger. ──
-  check('PA6a: the reaction shape is wired at every seam — a `reaction` TRIGGER TYPE (judged condition in plain words; the deterministic-spine law: reasoning at the trigger EDGE, the fixed pipeline fires); judged at the sync tail AFTER recognition (scope = the entity edge); the triggering event rides EVERY AI step incl. the verify gate (it IS source material, unlike projectGrounding); the hourly dispatcher re-fires stale queued event-runs (a crashed tail never silently eats an event); generate-config births reactions from "when/whenever" requests; schedule/standing machinery ignores reactions (no next_run_at, no standing commitment)',
+  // ⚠️ RE-POINTED (relay canvas W3b, Aug 24): the honest DAILY_CAP that LOGGED WHAT IT SKIPPED
+  // became THE THROTTLE, NEVER A SHREDDER — a per-workflow limit that QUEUES what it defers and
+  // says so. Same law (a bound on same-day spend, spoken never silent), lossless form: the
+  // assertion moved to the law's new home (lib/workflows/fire-limit.ts, read through
+  // readFireLimits) plus the honest queue line. The law was not weakened — it gained "nothing is
+  // ever lost". The full W3b floor lives in scripts/smoke-relay.ts (TL · TD · TR · TB · TS).
+  check('PA6a: the reaction shape is wired at every seam — a `reaction` TRIGGER TYPE (judged condition in plain words; the deterministic-spine law: reasoning at the trigger EDGE, the fixed pipeline fires); judged at the sync tail AFTER recognition (scope = the entity edge); the triggering event rides EVERY AI step incl. the verify gate (it IS source material, unlike projectGrounding); the per-workflow THROTTLE queues what it defers and says so (never a silent drop); the hourly dispatcher drains deferred fires and re-fires stale queued event-runs (a crashed tail never silently eats an event); generate-config births reactions from "when/whenever" requests; schedule/standing machinery ignores reactions (no next_run_at, no standing commitment)',
     src('lib/workflows/types.ts').includes("interface ReactionTrigger") &&
     src('lib/workflows/reactions.ts').includes('checkReactions') &&
-    src('lib/workflows/reactions.ts').includes('DAILY_CAP') &&
+    src('lib/workflows/reactions.ts').includes("from '@/lib/workflows/fire-limit'") &&
+    src('lib/workflows/reactions.ts').includes('readFireLimits') &&
+    src('lib/workflows/reactions.ts').includes('queued for the drain') &&
+    src('app/api/cron/workflows-dispatch/route.ts').includes('drainDeferredFires') &&
     src('lib/email-sync/sync-emails.ts').includes('checkReactions') &&
     src('lib/workflows/execute-step.ts').includes('triggering_event') &&
     src('app/api/cron/workflows-dispatch/route.ts').includes('refireStaleEventRuns') &&

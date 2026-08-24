@@ -5,6 +5,9 @@ import { makeStepId } from '@/lib/workflows/types';
 import { listConnectedProviders } from '@/lib/integrations/connection';
 import { INTEGRATIONS } from '@/lib/integrations/registry';
 import { getWorkspaceFeatures } from '@/lib/workspace/features';
+import { authorDoors, renderDoorCatalogue, doorNote, stepNote } from '@/lib/workflows/author-doors';
+import { clampFireLimit, fireLimitClampNote, FIRE_LIMIT_MIN, FIRE_LIMIT_MAX } from '@/lib/workflows/fire-limit';
+import type { ReactionDoor } from '@/lib/workflows/trigger-sources';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export interface GeneratedWorkflowConfig {
@@ -22,6 +25,32 @@ export interface GeneratedWorkflowConfig {
    *  not resolve to a workspace member (no match, or ambiguous — two Sams). One sentence the
    *  draft card can speak, so the gap is stated instead of silently shipping an empty gate. */
   needs_person_note?: string | null;
+  /** THE EVENT DOORS (relay canvas W1, law 1) — sanitised, registry-checked, resolution-complete.
+   *  Empty array = no event doors. Consumers store it with the SAME discipline as the workflows
+   *  PATCH (normalized array, NULL when empty). */
+  triggers: ReactionDoor[];
+  /** THE DROPPED-DOOR NOTE — the needs_person_note idiom for doors: a wish code refused (unknown
+   *  source, blank condition, unresolvable workflow name, a second schedule) is STATED, never
+   *  silently discarded. */
+  needs_door_note?: string | null;
+  /** THE INPUTS TRAY (relay canvas W2, law 7) — reference material the description PINNED, already
+   *  resolved to the caller's OWN knowledge_files, plus the run-time material door. `null` = the
+   *  description configured no tray (which is NOT the same as "a tray with nothing in it"). */
+  inputs?: { docs: Array<{ kbFileId: string; name: string }>; acceptMaterial: boolean } | null;
+  /** THE UNRESOLVED-DOCUMENT NOTE — a pinned name code could not find (or that matched two files).
+   *  Its own field, not folded into needs_door_note: a door and a document are different
+   *  primitives, each surface must be able to speak one without the other, and a field named for
+   *  doors carrying document refusals is a name that lies. */
+  needs_input_note?: string | null;
+  /** THE UNRESOLVED-PROCESS NOTE (relay canvas W3, law 5) — a subprocess station the description
+   *  named that code refused (no such process, ambiguous, still a draft, or one that already nests
+   *  a process of its own). A THIRD sibling channel: a field named for doors must not carry a
+   *  step's refusals, any more than it carries a document's. */
+  needs_step_note?: string | null;
+  /** THE THROTTLE (relay canvas W3b) — how many EVENT RUNS a day this work may start, when the
+   *  description states a pace ("at most 3 a day"). `null` = unsaid, which means the platform
+   *  default; a number here is already clamped to the engine's floors. */
+  fire_limit?: number | null;
 }
 
 const SYSTEM = `You are a workflow pipeline architect for a business automation platform. Given a plain-language description, generate a complete, production-quality workflow as a JSON object.
@@ -33,6 +62,9 @@ JSON shape:
   "name": "Short name (3–6 words)",
   "description": "One sentence — what this produces",
   "trigger": { "type": "manual" },
+  "triggers": [],
+  "fire_limit": null,
+  "input_doc_names": [],
   "steps": [],
   "output_config": { "destination": "message", "report_mode": "each_run" },
   "worker_instructions": null,
@@ -50,12 +82,83 @@ JSON shape:
 { "type": "reaction", "when": "a new public tender matching the client's construction profile arrives", "label": "When a matching tender lands" }
 
 Use schedule whenever the request mentions timing. Infer the most natural timezone from context (company, sources, language).
-Use reaction when the request says the workflow should fire WHEN/WHENEVER something happens ("when a matching tender lands", "whenever a client emails about pricing") — "when" states the condition in plain words (it is judged against each new arriving event), "label" is the short human rendering. A reaction workflow receives the triggering event as its first context block — its steps should work FROM that event (summarize, enrich, respond, produce), never re-fetch broad news/feeds the event doesn't call for.
+The legacy "reaction" trigger shape means "an email arrives matching this condition" — prefer the EVENT DOORS below, which say the same thing and can say more.
+
+━━━ EVENT DOORS ("triggers") ━━━
+
+"triggers" is a list of the ways this work can START, other than the schedule. It is [] by default.
+Emit ONE entry per DISTINCT way the work begins — "when applications arrive by email OR someone
+uploads a CV" is TWO doors, not one. Each entry:
+{ "source": "<key>", "when": "...", "label": "short human rendering", "filters": [{ "field": "…", "op": "is|contains|domain_is", "value": "…" }] }
+
+Available doors:
+${renderDoorCatalogue()}
+
+RULES for doors:
+- PREFER A FILTER OVER A CONDITION. A "filter" is EXACT and checked in code — no judgement, no
+  cost, and it behaves the same every time. Anything the request states structurally becomes one:
+  "from careers@acme.test" → {"field":"from_address","op":"is","value":"careers@acme.test"};
+  "from anyone at acme.test" → {"field":"from_address","op":"domain_is","value":"acme.test"};
+  "subject mentions application" → {"field":"subject","op":"contains","value":"application"};
+  "PDFs only" → {"field":"ext","op":"is","value":"pdf"}. Only the fields listed for that door above
+  exist — never invent a field, an operator, or a value the request didn't state.
+- Use "when" ONLY for what is genuinely fuzzy — something that needs reading and judgement ("it
+  looks like a strong candidate", "the email is actually a job application"). OMIT "when" ENTIRELY
+  when the filters already say everything the request stated: restating a filter as a condition
+  ("filters: subject contains invoice" + "when": "an invoice email arrives") buys nothing and makes
+  every arriving event pay for a judgement. Leave "when" out unless it adds something the filters
+  cannot check.
+- The two COMBINE and are ANDed: filters narrow first, then the condition is judged on what's left.
+  A door with filters and no "when" is perfectly valid — and cheaper. A door with neither cannot
+  fire, so give it at least one.
+- A "workflow" door is given BY NAME in "workflow_name" — the exact name of a task the user already
+  runs ("when my Interview process delivers"). NEVER emit a workflow id; the system resolves the
+  name. If no such task exists, don't invent one — just leave that door out.
+- NEVER put a schedule in "triggers" — timing lives on "trigger", and a workflow can hold only one.
+- Manual running is always available; never emit a door for it.
+- A workflow with doors receives the triggering event as its first context block — its steps should
+  work FROM that event (summarize, enrich, compare, respond, produce), never re-fetch broad
+  news/feeds the event doesn't call for.
+- Only emit a door the request actually asks for. Silence about how work starts means [].
+
+"fire_limit" is how many EVENT RUNS a day this work may START. Set it ONLY when the request states
+a pace ("at most 3 a day", "no more than a couple per day", "max 10 applications daily"): give the
+number (${FIRE_LIMIT_MIN}–${FIRE_LIMIT_MAX}). Silence means null — the platform default applies.
+Never use it to say "stop after N" — extra events are not dropped, they WAIT for the next day.
+
+━━━ INPUTS (reference material) ━━━
+
+Two optional top-level fields say what STANDING MATERIAL this work reads:
+
+"input_doc_names": ["Hiring Policy"] — the user's OWN words for a document the request PINS as
+  reference ("compare each application against our Hiring Policy", "using the brand guidelines
+  doc", "score it with our rubric"). Give the NAME as the request says it — NEVER an id, never a
+  path, never a file you invented. The system resolves the name against the user's documents and
+  says so if it can't find one. Omit the field entirely when the request pins nothing.
+"accept_material": true — set ONLY when the work is done ON something handed over at run time
+  ("when I upload a CV", "paste the transcript and…", "I'll give you the draft"). It opens a
+  material box on Run-now. Default is to omit it.
+
+A pinned document is the STANDING rulebook (policy, template, rubric); run-time material is the
+NEW thing each run works on. Don't confuse them, and never emit a read_kb_file step for a document
+you already named in "input_doc_names".
 
 ━━━ STEP TYPES ━━━
 
 Tool step — fetches data, always before AI steps:
 { "type": "tool", "id": "step_001", "label": "3–5 word label", "tool": "TOOL_ID", "config": {} }
+
+Case step — links each arriving event to ITS ongoing case/record (a job opening, a client matter,
+a deal) so later steps see everything that case has accumulated. It goes EARLY — before the steps
+that need the accumulated view:
+{ "type": "case", "id": "step_002", "label": "File it under its record", "case_instruction": "the job opening named in the application" }
+"case_instruction" is WHAT IDENTIFIES A CASE, in the request's own words — never a field name,
+never an id.
+RULE: emit it ONLY when the request describes per-event filing into an ongoing record ("link each
+application to its job opening", "file every invoice under its client", "keep each candidate with
+the role they applied for"). At most ONE per workflow. Place it before the steps that need the
+case's accumulated view (comparison, scoring, shortlisting). A plain one-shot pipeline — a digest,
+a briefing, a report — NEVER gets one.
 
 AI step — synthesises all previous outputs, always last and always exactly one:
 { "type": "ai", "id": "step_010", "label": "3–5 word label", "prompt": "...", "output_format": "markdown", "model_tier": "reasoning" }
@@ -91,6 +194,17 @@ NEVER emit "assignee_user_id" — you give the NAME exactly as the request says 
 resolves it to the real person. Inventing an id or an email is always wrong.
 "sla_hours" ONLY when the request states urgency or a deadline ("within a day", "by Friday",
 "chase them after 48h"); omit it otherwise.
+
+Process step — A NAMED PROCESS THE USER ALREADY OWNS runs inside this one, delivering its output
+to the next step (the run waits at this station until that process finishes):
+{ "type": "workflow", "id": "step_006", "label": "Run the interview process", "workflow_name": "<the process's name AS THE REQUEST NAMES IT>" }
+NEVER emit "workflow_id" — you give the NAME exactly as the request says it; the system resolves
+it to the user's real process. Inventing an id is always wrong.
+RULE: emit this step ONLY when the request NAMES a process the user already runs ("then run my
+Interview process", "hand it to the onboarding pipeline", "kick off my weekly report task").
+Never invent a process, and never use it for work THIS pipeline's own steps should simply do —
+if you would have to describe what the named process does, it isn't one that exists.
+At most a couple of process steps in one workflow, and never one pointing at this workflow itself.
 
 THE APPROVAL-VS-HANDOFF RULE (decide by WHO reviews):
 - The USER THEMSELF reviews/approves ("send it to me for approval", "let me check first",
@@ -317,6 +431,111 @@ export async function generateWorkflowConfig(
     }
   }
 
+  // ── THE STEP-REFUSAL CHANNEL. Both the subprocess stations and the case station speak through
+  // `needs_step_note` — it is the STEP channel (as needs_door_note is the door channel and
+  // needs_input_note the document channel), so a refused STEP of any kind belongs here. Collected
+  // as lines, joined once, so two refusals read as two sentences in one block.
+  const stepNotes: string[] = [];
+
+  // ── THE CASE STATION (relay canvas W4) — the model may say "link each application to its job
+  // opening"; code decides what can actually stand. NO RESOLVER IS INVOLVED, and none is needed: a
+  // case step carries an INSTRUCTION (what identifies a case, in the user's own words), never a
+  // name pointing at an existing object — so unlike a door, a pinned document, or a ⧉ station,
+  // there is nothing to look up and nothing to be ambiguous about. Only two things can be wrong:
+  //   1. MORE THAN ONE — one run carries ONE thing, so a second normalizer would re-file what the
+  //      first already filed. Keep the FIRST (it is the early station by nature) and refuse the
+  //      rest OUT LOUD (a dropped step is a step refusal — hence needs_step_note, not silence).
+  //   2. A BLANK INSTRUCTION — readiness would catch it at the door, but a draft should not be
+  //      BORN unready: the card would offer Confirm on a workflow that can't run.
+  {
+    let seatedCase = false;
+    const kept: Array<Record<string, unknown>> = [];
+    for (const s of steps) {
+      if (s.type !== 'case') { kept.push(s); continue; }
+      const instruction = typeof s.case_instruction === 'string' ? s.case_instruction.trim() : '';
+      if (!instruction) {
+        stepNotes.push('I left out the step that files each event under its own case — say what identifies a case (like "the job opening named in the application") and I\'ll add it.');
+        continue;
+      }
+      if (seatedCase) {
+        stepNotes.push('A run carries one thing, so it files under one case — I kept the first case step and left the others out.');
+        continue;
+      }
+      seatedCase = true;
+      kept.push({ ...s, case_instruction: instruction });
+    }
+    steps = kept;
+  }
+
+  // ── THE SUBPROCESS STATIONS (relay canvas W3, law 5) — the model named PROCESSES; the ONE
+  // resolver turns each name into one of the user's own workflows (or refuses it out loud: no such
+  // process, ambiguous, still a draft, already nests one of its own, itself). Same failure
+  // discipline as the doors and the tray: a resolver outage costs the stations, never the draft.
+  if (steps.some((s) => s.type === 'workflow')) {
+    try {
+      const { authorSubprocessSteps } = await import('@/lib/workflows/author-doors');
+      const authored = await authorSubprocessSteps(steps, { supabase, userId });
+      steps = authored.steps;
+      stepNotes.push(...authored.notes);
+    } catch {
+      steps = steps.filter((s) => s.type !== 'workflow');
+      stepNotes.push('I couldn\'t check your other processes, so I left the process step out — add it in Studio.');
+    }
+  }
+
+  const needsStepNote: string | null = stepNote(stepNotes);
+
+  // ── THE EVENT DOORS (relay canvas W1, law 1) — the model's doors are WISHES; the ONE sanitiser
+  // decides what can be stored (registry-checked, feature-checked, workflow names resolved to the
+  // user's own ids, a second schedule refused). Anything dropped is SAID, never silently lost.
+  let doors: ReactionDoor[] = [];
+  let needsDoorNote: string | null = null;
+  try {
+    let features = null;
+    try { features = await getWorkspaceFeatures(userId, supabase); } catch { /* unknown → abstain */ }
+    const authored = await authorDoors(generated.triggers, { supabase, userId, features });
+    doors = authored.doors;
+    needsDoorNote = doorNote(authored.notes);
+  } catch {
+    // A sanitiser failure must never lose the draft — the pipeline stands, on-demand only.
+    doors = [];
+  }
+
+  // ── THE THROTTLE (relay canvas W3b) — a stated pace becomes a real number, CLAMPED CODE-SIDE.
+  // THE NOTE CHANNEL IS `needs_door_note` ON PURPOSE: this number is trigger-side config — it
+  // paces EVENT RUNS, it exists only where doors do, and the card already speaks the doors in that
+  // same block. A fourth sibling channel would split one sentence about how the work starts across
+  // two boxes. (The tray and the subprocess stations are DIFFERENT primitives — hence their own.)
+  let fireLimit: number | null = null;
+  if (generated.fire_limit !== undefined && generated.fire_limit !== null && generated.fire_limit !== '') {
+    const { value, clamped } = clampFireLimit(generated.fire_limit);
+    fireLimit = value;
+    if (clamped) {
+      needsDoorNote = doorNote([
+        ...(needsDoorNote ? [needsDoorNote] : []),
+        fireLimitClampNote(generated.fire_limit, value),
+      ]);
+    }
+  }
+
+  // ── THE INPUTS TRAY (relay canvas W2, law 7) — the model spoke NAMES; the ONE resolver turns
+  // them into the caller's own knowledge_files (a name it can't find, or that matches two files,
+  // is REFUSED and SAID). Same failure discipline as the doors: a resolver outage costs the tray,
+  // never the draft.
+  let inputs: GeneratedWorkflowConfig['inputs'] = null;
+  let needsInputNote: string | null = null;
+  try {
+    const { authorInputs, inputNote, inputsForStorage } = await import('@/lib/workflows/author-doors');
+    const authored = await authorInputs(
+      { doc_names: generated.input_doc_names, accept_material: generated.accept_material },
+      { supabase, userId },
+    );
+    inputs = inputsForStorage(authored);
+    needsInputNote = inputNote(authored.notes);
+  } catch {
+    inputs = null;
+  }
+
   // If caller passed an explicit override, use it; otherwise use model-generated value.
   const workerInstructions =
     options?.workerInstructions?.trim()
@@ -329,6 +548,7 @@ export async function generateWorkflowConfig(
     name: String(generated.name).trim(),
     description: typeof generated.description === 'string' ? generated.description.trim() : null,
     trigger: (generated.trigger as Record<string, unknown>) ?? { type: 'manual' },
+    triggers: doors,
     steps,
     output_config: Object.keys(outputConfig).length
       ? outputConfig
@@ -338,5 +558,10 @@ export async function generateWorkflowConfig(
       ? generated.overlap_note.trim()
       : null,
     needs_person_note: needsPersonNote,
+    needs_door_note: needsDoorNote,
+    inputs,
+    needs_input_note: needsInputNote,
+    needs_step_note: needsStepNote,
+    fire_limit: fireLimit,
   };
 }

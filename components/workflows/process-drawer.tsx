@@ -14,7 +14,10 @@
 //     approval door, and appears only while someone ELSE holds the waiting gate. REASSIGN (B2) is
 //     its own deed too — the per-run gate moves to another workspace member (the workflow's authored
 //     step never mutates). It renders exactly where Nudge does (owner-side, on a handoff someone
-//     else holds) — never a disabled ghost anywhere else.
+//     else holds) — never a disabled ghost anywhere else. THE ⧉ STATION (relay canvas W3) joins the
+//     same numbered walk as a MACHINE gate: a subprocess is running, nobody can approve it and
+//     nobody can be nudged for it — the child's own delivery resumes the run — so it carries a door
+//     into the child and no human verbs at all.
 //   · Log — the RunAudit receipts (steps · durations · outputs · gate verdicts) re-seated.
 //
 // NOTES ON THIS PROCESS (mockup-fidelity wave): the run has ONE conversation — the `run:<runId>`
@@ -30,12 +33,13 @@
 // import (ledger → drawer), so the shared grammar can never fork and no cycle forms.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { XMarkIcon, ChevronDownIcon, ArrowPathIcon, BellIcon, ArrowRightCircleIcon, ChatBubbleLeftEllipsisIcon } from '@heroicons/react/24/outline';
 import { Button, Badge, TabBar } from '@/components/ui';
 import type { ProcessRow } from '@/lib/workflows/process-state';
+import { previewFromOutput } from '@/lib/workflows/handoff-context';
 import type { GateVerdict, WorkflowStep, HandoffStep } from '@/lib/workflows/types';
 
 // ── THE GATE'S RECEIPTS (guardrails arc): what the delivery check did — checked clean, fixed with
@@ -141,6 +145,8 @@ export default function ProcessDrawer({
   // The workflow's own steps — the ONLY source of the human-gate list (fetched once per drawer).
   // undefined = loading, null = unavailable (the list degrades to the single waiting card).
   const [steps, setSteps] = useState<WorkflowStep[] | null | undefined>(undefined);
+  // This run, read ONCE for the whole drawer (the Log tab's receipts + the gate's object).
+  const [run, setRun] = useState<DrawerRun | null | undefined>(undefined);
   // ── THE RUN'S NOTES — one thread, one fetch per drawer open. undefined = loading,
   // null = no affordance at all (unauthorized / unreachable), array = the thread. ──
   const [comments, setComments] = useState<RunComment[] | null | undefined>(undefined);
@@ -192,6 +198,33 @@ export default function ProcessDrawer({
       .catch(() => { if (!dead) setSteps(null); });
     return () => { dead = true; };
   }, [process.workflowId]);
+
+  // ── THE RUN, FETCHED ONCE (owner walk, Aug 20: "we're not showing what the person is approving").
+  // The Log tab's receipts and the gate's OBJECT are the same run — fetching it twice is two
+  // chances for one drawer to disagree with itself, so the fetch lives HERE and both read it.
+  // undefined = loading, null = unreadable (the gate keeps its Approve either way). ──
+  useEffect(() => {
+    let dead = false;
+    void fetch(`/api/workflows/${process.workflowId}/runs`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (dead) return;
+        setRun(((j?.runs ?? []) as DrawerRun[]).find((r) => r.id === process.runId) ?? null);
+      })
+      .catch(() => { if (!dead) setRun(null); });
+    return () => { dead = true; };
+  }, [process.runId, process.workflowId]);
+
+  // THE OBJECT: the parked run's last step output that actually carries content — the run's own
+  // bytes through the SAME derivation the commitment room's gate card uses (previewFromOutput).
+  const gateObject = useMemo(() => {
+    const outs = run?.step_outputs ?? [];
+    for (let i = outs.length - 1; i >= 0; i -= 1) {
+      const p = previewFromOutput(outs[i]?.output);
+      if (p) return p;
+    }
+    return null;
+  }, [run]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -277,17 +310,20 @@ export default function ProcessDrawer({
   const awaitingApproval = iHoldIt && !decided;
   const heldByOther = process.state === 'waiting_on_others';
 
-  // ── THE HUMAN-GATE LIST — derived, never stored: every approval/handoff step of the workflow,
-  // numbered in pipeline order; the run's step-output count says how far it got. ──
-  const humanGates = (steps ?? [])
+  // ── THE STATION LIST — derived, never stored: every station the run passes through, numbered in
+  // pipeline order; the run's step-output count says how far it got. Two families, one walk:
+  // HUMAN gates (approval/handoff — a person decides) and the MACHINE gate (relay canvas W3: a
+  // subprocess — another workflow is running and will resume this one itself). They share the
+  // numbering and the done/waiting/upcoming reading; they share NO verbs. ──
+  const stations = (steps ?? [])
     .map((s, i) => ({ s, i }))
-    .filter(({ s }) => s.type === 'approval' || s.type === 'handoff');
+    .filter(({ s }) => s.type === 'approval' || s.type === 'handoff' || s.type === 'workflow');
   const waitingIdx = parked ? process.stepsDone : -1;
   const gateStatus = (i: number): 'done' | 'waiting' | 'upcoming' =>
     i < process.stepsDone ? 'done' : i === waitingIdx ? (decided ? 'done' : 'waiting') : 'upcoming';
   // A blocked-verify hold parks on the OWNER even when the next step is someone else's gate —
   // in that case no gate is "waiting" and the generic card below carries the ask honestly.
-  const listCoversTheWait = !parked || humanGates.some(({ i }) => i === waitingIdx);
+  const listCoversTheWait = !parked || stations.some(({ i }) => i === waitingIdx);
 
   if (typeof document === 'undefined') return null;
 
@@ -332,10 +368,23 @@ export default function ProcessDrawer({
                 <div className="text-[12px] text-neutral-400">Loading this process&apos;s people…</div>
               )}
 
-              {humanGates.length > 0 && (
+              {stations.length > 0 && (
                 <div className="space-y-2">
-                  {humanGates.map(({ s, i }, n) => {
+                  {stations.map(({ s, i }, n) => {
                     const status = gateStatus(i);
+                    // THE MACHINE GATE — a subprocess is not a person: it wears the same number and
+                    // the same done/waiting/upcoming reading, and NONE of the human verbs.
+                    if (s.type === 'workflow') {
+                      return (
+                        <SubprocessStation
+                          key={s.id}
+                          n={n}
+                          step={s}
+                          status={status}
+                          waitingSince={process.startedAt}
+                        />
+                      );
+                    }
                     const isHandoff = s.type === 'handoff';
                     const h = isHandoff ? (s as HandoffStep) : null;
                     const holder = isHandoff ? (h?.assignee_name ?? 'A teammate') : 'Your approval';
@@ -372,6 +421,7 @@ export default function ProcessDrawer({
                                 ? `It ran ${process.stepsDone} of ${process.stepsTotal || process.stepsDone} steps and stopped here — nothing is delivered until you say so.`
                                 : `It ran ${process.stepsDone} of ${process.stepsTotal || process.stepsDone} steps and is waiting on ${holder}.`}
                             </div>
+                            <GateObject preview={gateObject} />
                             <div className="mt-3 flex items-center gap-2">
                               {iHoldIt && (
                                 <>
@@ -481,6 +531,7 @@ export default function ProcessDrawer({
                   <div className="mt-1.5 text-[12.5px] text-neutral-600">
                     It ran {process.stepsDone} of {process.stepsTotal || process.stepsDone} steps and stopped here — nothing is delivered until you say so.
                   </div>
+                  <GateObject preview={gateObject} />
                   <div className="mt-3 flex items-center gap-2">
                     <Button size="sm" onClick={() => void decide(true)} disabled={busy}>Approve — deliver it</Button>
                     <button onClick={() => void decide(false)} disabled={busy} className="text-[12px] text-neutral-500 hover:text-neutral-700">
@@ -512,14 +563,14 @@ export default function ProcessDrawer({
                 </div>
               )}
 
-              {steps !== undefined && humanGates.length === 0 && !awaitingApproval && !failed && !decided && (
+              {steps !== undefined && stations.length === 0 && !awaitingApproval && !failed && !decided && (
                 <div className="text-[13px] text-neutral-500">
                   No handoffs on this process — it runs start to finish.
                 </div>
               )}
             </div>
           ) : (
-            <ProcessLog runId={process.runId} workflowId={process.workflowId} />
+            <ProcessLog run={run} />
           )}
         </div>
 
@@ -531,6 +582,73 @@ export default function ProcessDrawer({
       </aside>
     </>,
     document.body,
+  );
+}
+
+// ── THE SUBPROCESS STATION (relay canvas W3, law 5) — the run is parked on a MACHINE, not on a
+// person. It carries no Approve, no Reject, no Nudge and no Reassign: nobody can decide it and
+// nobody can be chased for it — the child's own delivery resumes this run. There is nothing being
+// approved here either, so the gate's object never mounts. What it owes the reader is exactly two
+// things: that another workflow is running inside this one, and a quiet door into it.
+type SubprocessStepLike = Extract<WorkflowStep, { type: 'workflow' }>;
+
+function SubprocessStation({ n, step, status, waitingSince }: {
+  n: number;
+  step: SubprocessStepLike;
+  status: 'done' | 'waiting' | 'upcoming';
+  waitingSince: string;
+}) {
+  const name = (step.label ?? '').trim() || 'A process';
+  const waiting = status === 'waiting';
+  return (
+    <div className={`rounded-xl border px-4 py-3.5 ${waiting ? 'border-violet-200 bg-violet-50/60' : 'border-neutral-200 bg-white'}`}>
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-semibold tabular-nums text-neutral-400">{String(n + 1).padStart(2, '0')}</span>
+        <span className={`text-[13px] font-medium ${status === 'done' ? 'text-neutral-500' : 'text-neutral-800'}`}>
+          ⧉ {name}
+        </span>
+        {waiting && <Badge tone="indigo">Running</Badge>}
+        {status === 'done' && <span className="text-[12px] text-emerald-600">✓</span>}
+        <span className="flex-1" />
+        <span className="text-[12px] text-neutral-400">
+          {waiting ? sinceWord(waitingSince) : status === 'upcoming' ? 'Upcoming' : 'Delivered'}
+        </span>
+      </div>
+      <div className={`mt-1 text-[12.5px] ${waiting ? 'text-neutral-600' : 'text-neutral-400'}`}>
+        {waiting
+          ? `${name} is running inside this process — waiting on it to deliver.`
+          : status === 'done'
+            ? 'Delivered — this process picked up where it stopped.'
+            : 'Its own workflow — it will run inside this one.'}
+      </div>
+      {step.workflow_id && (
+        <a
+          href={`/workflows/${step.workflow_id}`}
+          className="mt-2 inline-block text-[12px] text-neutral-500 transition-colors hover:text-violet-700"
+        >
+          Open {name} →
+        </a>
+      )}
+    </div>
+  );
+}
+
+// ── THE GATE CARRIES ITS OBJECT (owner walk, Aug 20) — a decision asked without showing what it
+// decides is the whole find. The parked run's last step output, in its own bytes, in the SAME
+// grammar the commitment room's gate card uses. A run we couldn't read renders nothing at all:
+// the object is additive, and Approve never waits on it. ──
+function GateObject({ preview }: { preview: { text: string; truncated: boolean } | null }) {
+  if (!preview) return null;
+  return (
+    <div className="mt-3">
+      <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">What&apos;s being approved</div>
+      <div className="max-h-[280px] overflow-y-auto rounded-lg border border-neutral-200 bg-white px-3 py-2.5">
+        <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-neutral-700">{preview.text}</pre>
+      </div>
+      {preview.truncated && (
+        <div className="mt-1 text-[11px] text-neutral-400">— first 20,000 characters shown; the full output is in the Log.</div>
+      )}
+    </div>
   );
 }
 
@@ -585,23 +703,10 @@ function RunNotes({
   );
 }
 
-// ── THE LOG — this run's receipts, re-seated from the same route RunAudit reads. ──
-function ProcessLog({ runId, workflowId }: { runId: string; workflowId: string }) {
-  const [run, setRun] = useState<DrawerRun | null | undefined>(undefined); // undefined = loading
+// ── THE LOG — this run's receipts, re-seated from the same route RunAudit reads. The run itself is
+// fetched ONCE at the drawer level (the gate's object reads the same bytes) and handed down here. ──
+function ProcessLog({ run }: { run: DrawerRun | null | undefined }) {
   const [openOutput, setOpenOutput] = useState<number | null>(null);
-
-  useEffect(() => {
-    let dead = false;
-    void fetch(`/api/workflows/${workflowId}/runs`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
-        if (dead) return;
-        const found = ((j?.runs ?? []) as DrawerRun[]).find((r) => r.id === runId) ?? null;
-        setRun(found);
-      })
-      .catch(() => { if (!dead) setRun(null); });
-    return () => { dead = true; };
-  }, [runId, workflowId]);
 
   if (run === undefined) return <div className="text-[12px] text-neutral-400">Loading the log…</div>;
   if (!run) return <div className="text-[12px] text-neutral-400">No receipts recorded for this run.</div>;

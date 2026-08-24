@@ -206,6 +206,21 @@ behind the picker; the pre-series share machinery still forward-resolves legacy 
   storage.download() reads through the CDN and can serve DELETED objects — retention/existence
   assertions must use metadata list(), downloads only for byte comparisons.
 
+**THE FRAME KIT (Aug 20 — pilot feedback "ideally we have some stunning visuals"; suite
+216/216 ×2):** beauty is DETERMINISTIC — `lib/frames/kit.ts` (FRAME_KIT_VERSION 1: ~12KB CSS
+tokens/primitives + ~17KB `window.Kit` SVG chart builders — bar/hbar/line/donut/spark/expand,
+CVD-validated 6-color palette, round axis steps, real-pixel-width redraw, tooltips, designed
+empty states) is INJECTED BY CODE after every generation (idempotent marker, accent as a
+hex-sanitized custom property, charset guaranteed) — the model COMPOSES with the kit, never
+hand-rolls visuals (gated: zero own-SVG in generations; the kit itself passes the one
+validator). The design contract: A NUMBER NEVER STANDS ALONE (KPI carries context or its list
+behind Kit.expand) · chart chosen by the data's shape · .k-empty says something · header
+names scope/date · "Updated <date>" foot. Known limit (prompt rule, not code floor): a model
+re-declaring `.k-` classes in its own <style> could override the kit. NOT touched: the
+workflow word-trigger (René's "weird addition" — held until he clarifies). Demo: the owner's
+dashboard series regenerated as v3 through the kit (v1/v2 plain behind the picker — the
+evolution is visible).
+
 ## OWNER CALLS (defaults taken; flag to change)
 - Sharing v1 = workspace-only; sovereign tier never public. (Law 6)
 - No standalone Frames nav — frames live where their work lives. (Law 5)

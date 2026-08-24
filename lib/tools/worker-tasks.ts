@@ -5,6 +5,39 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkflowStep, OutputConfig, WorkflowTrigger } from '@/lib/workflows/types';
 import { normalizeOutput } from '@/lib/workflows/types';
 import type { WorkflowDraft } from '@/lib/workflows/draft-marker';
+import {
+  authorDoors, doorCatalogueOneLine, doorNote, doorsForStorage, describeDoors,
+  authorInputs, inputNote, inputsForStorage, describeInputs,
+} from '@/lib/workflows/author-doors';
+import { readWorkflowInputs, writeWorkflowInputs, type WorkflowInputs } from '@/lib/workflows/inputs';
+import {
+  clampFireLimit, fireLimitClampNote, readFireLimit, writeFireLimit,
+  FIRE_LIMIT_MIN, FIRE_LIMIT_MAX, FIRE_LIMIT_DEFAULT,
+} from '@/lib/workflows/fire-limit';
+import { normalizeTriggers, doorLabel, TRIGGER_SOURCES, type ReactionDoor } from '@/lib/workflows/trigger-sources';
+
+// ── THE DOOR FILTERS, TAUGHT FROM THE REGISTRY (relay canvas W5, law 3) ─────────────────────────
+// The chat tools and generate-config are the two authoring doors; both learn the FIELD VOCABULARY
+// from `filterFields`, so neither can offer a field the sanitiser would then drop. Compact form —
+// an argument description is a sentence, not a catalogue page.
+const FILTER_VOCAB = TRIGGER_SOURCES
+  .filter((s) => (s.filterFields?.length ?? 0) > 0)
+  .map((s) => `${s.key}: ${s.filterFields!.map((f) => `${f.key} (${f.ops.join('/')})`).join(', ')}`)
+  .join(' · ');
+
+const FILTER_ARG = {
+  type: 'array',
+  description: `Optional. EXACT conditions checked in code before any judgement — cheaper and more predictable than "when", so PREFER them for anything structural the user states ("from careers@acme.test" → from_address is/domain_is; "subject mentions application" → subject contains). Fields by source — ${FILTER_VOCAB}. All filters must pass (AND); they combine with "when", which should then carry only what is genuinely fuzzy. Never invent a field or a value the user didn't state.`,
+  items: {
+    type: 'object',
+    properties: {
+      field: { type: 'string', description: 'A field of THIS door\'s source (see the list above).' },
+      op: { type: 'string', enum: ['is', 'contains', 'domain_is'], description: '"is" = exact match · "contains" = substring · "domain_is" = the address\'s domain.' },
+      value: { type: 'string', description: "The value in the user's own words — an address, a domain, a word, a file extension." },
+    },
+    required: ['field', 'op', 'value'],
+  },
+} as const;
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────
 
@@ -32,6 +65,34 @@ export const createTaskDefinition = {
         type: 'array',
         items: { type: 'string' },
         description: "Optional. Names of skills (from the library — see list_skills) to enforce on this task's output. Omit to use the worker's assigned skills automatically.",
+      },
+      trigger_doors: {
+        type: 'array',
+        description: `Optional. The EVENT DOORS — the ways this task can start besides its schedule. One entry per distinct way ("when applications arrive by email OR someone uploads a CV" = two doors). Available sources: ${doorCatalogueOneLine()}. Never put a schedule here (timing goes in the description; a task holds only one).`,
+        items: {
+          type: 'object',
+          properties: {
+            source: { type: 'string', enum: ['mail', 'file', 'meeting', 'workflow'], description: 'Which door.' },
+            when: { type: 'string', description: 'For mail/file/meeting: the condition in plain words, judged against each arriving event.' },
+            workflow_name: { type: 'string', description: 'For source "workflow": the NAME of an existing task that should feed this one (never an id — the system resolves the name).' },
+            label: { type: 'string', description: 'Optional short human rendering of the door.' },
+            filters: FILTER_ARG,
+          },
+          required: ['source'],
+        },
+      },
+      input_doc_names: {
+        type: 'array',
+        items: { type: 'string' },
+        description: "Optional. The INPUTS TRAY — names of documents in the user's knowledge base this task should read as STANDING reference on every run (a policy, template, rubric, brand guide). Give the NAME as the user says it — never an id; the system resolves it and says so if it can't find one. Omit when nothing is pinned.",
+      },
+      input_accept_material: {
+        type: 'boolean',
+        description: 'Optional. True when the work is done ON something handed over at run time ("when I upload a CV", "paste the transcript and…") — it opens a material box on Run-now. Standing reference documents go in input_doc_names instead.',
+      },
+      daily_run_limit: {
+        type: 'number',
+        description: `Optional. THE THROTTLE — how many EVENT RUNS a day this task may start (${FIRE_LIMIT_MIN}–${FIRE_LIMIT_MAX}; default ${FIRE_LIMIT_DEFAULT}). Set it only when the user states a pace ("at most 3 a day"). Extra events queue — they wait for the next day, nothing is ever dropped. Out-of-range numbers are kept within ${FIRE_LIMIT_MIN}–${FIRE_LIMIT_MAX} and said out loud.`,
       },
     },
     required: ['description'],
@@ -70,6 +131,44 @@ export const updateTaskDefinition = {
           label: { type: 'string' },
         },
         required: ['type'],
+      },
+      add_trigger_doors: {
+        type: 'array',
+        description: `ADD event doors — the ways this task can start besides its schedule. ADDITIVE: doors already on the task are kept, so "also run it when a file lands" adds one door and touches nothing else. Available sources: ${doorCatalogueOneLine()}. Never put a schedule here — use "trigger" for timing (a task holds only one schedule).`,
+        items: {
+          type: 'object',
+          properties: {
+            source: { type: 'string', enum: ['mail', 'file', 'meeting', 'workflow'], description: 'Which door.' },
+            when: { type: 'string', description: 'For mail/file/meeting: the condition in plain words, judged against each arriving event.' },
+            workflow_name: { type: 'string', description: 'For source "workflow": the NAME of an existing task that should feed this one (never an id).' },
+            label: { type: 'string', description: 'Optional short human rendering of the door.' },
+            filters: FILTER_ARG,
+          },
+          required: ['source'],
+        },
+      },
+      remove_trigger_doors: {
+        type: 'array',
+        items: { type: 'string' },
+        description: `REMOVE event doors. Each entry is either a source key (${doorCatalogueOneLine()}) — which removes every door of that kind — or text matching the door's condition or label as get_task shows it. Doors you don't name are kept.`,
+      },
+      add_input_docs: {
+        type: 'array',
+        items: { type: 'string' },
+        description: "ADD documents to the INPUTS TRAY — the standing reference this task reads on every run. ADDITIVE: documents already pinned are kept, so \"also use the brand guide\" pins one and touches nothing else. Give NAMES as the user says them (never ids); the system resolves them against their knowledge base and says so if it can't find one.",
+      },
+      remove_input_docs: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'REMOVE documents from the inputs tray. Each entry is text matching a pinned document name as get_task shows it. Documents you don\'t name are kept.',
+      },
+      input_accept_material: {
+        type: 'boolean',
+        description: 'Whether the task accepts material handed over at run time (a CV, a transcript, a draft) — it opens a material box on Run-now. Standing reference documents go in add_input_docs instead.',
+      },
+      daily_run_limit: {
+        type: 'number',
+        description: `THE THROTTLE — how many EVENT RUNS a day this task may start (${FIRE_LIMIT_MIN}–${FIRE_LIMIT_MAX}; default ${FIRE_LIMIT_DEFAULT}). Use it when the user asks for a different pace ("keep it to 5 a day", "let it run more"). Extra events queue — they wait for the next day, nothing is ever dropped. Out-of-range numbers are kept within ${FIRE_LIMIT_MIN}–${FIRE_LIMIT_MAX} and said out loud.`,
       },
       output_language: { type: 'string', description: 'BCP-47 language code for output. Examples: "de" (German), "pt" (Portuguese), "fr" (French), "es" (Spanish)' },
       output_destination: { type: 'string', enum: ['message', 'document', 'slack', 'email'], description: "The deliverable's single home. message = a message in the run thread; document = a saved document in Documents/Drive; slack = posted to a Slack channel; email = emailed. The app always keeps a record regardless." },
@@ -225,6 +324,33 @@ type AdminClient = Record<string, unknown> & {
   from: (table: string) => unknown;
 };
 
+/** THE DEFENSIVE DOOR READ (relay canvas W1): `workflows.triggers` is additive and may be absent
+ *  in an environment where the migration hasn't been applied — a select naming a missing column
+ *  errors (42703) and PostgREST hands back data:null, so the read must be its own try/catch and
+ *  must SAY whether the column exists. `null` = no column (never "no doors"). */
+async function readDoorsRaw(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any, taskId: string, userId: string,
+): Promise<{ ok: boolean; triggers: unknown }> {
+  try {
+    const { data, error } = await adminClient
+      .from('workflows').select('triggers').eq('id', taskId).eq('user_id', userId).single();
+    if (error || !data) return { ok: false, triggers: null };
+    return { ok: true, triggers: (data as { triggers?: unknown }).triggers ?? null };
+  } catch {
+    return { ok: false, triggers: null };
+  }
+}
+
+/** The normalized doors of one task (legacy `trigger` reaction folds in, per THE ONE READER). */
+async function readDoors(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any, taskId: string, userId: string, trigger: unknown,
+): Promise<ReactionDoor[]> {
+  const raw = await readDoorsRaw(adminClient, taskId, userId);
+  return normalizeTriggers({ trigger, triggers: raw.triggers }).doors;
+}
+
 // ─── Executors ────────────────────────────────────────────────────────────────
 
 export async function executeListTasks(
@@ -268,6 +394,16 @@ export async function executeCreateTask(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   adminClient: any,
   skillNames?: string[] | string,
+  /** THE EVENT DOORS said out loud (relay canvas W1, law 1) — sanitised here, merged with any the
+   *  generator authored from the description itself. */
+  triggerDoors?: unknown,
+  /** THE INPUTS TRAY said out loud (relay canvas W2, law 7) — same shape of merge: spoken document
+   *  names ride the SAME resolver the generator used, on top of what the description pinned. */
+  inputDocNames?: unknown,
+  inputAcceptMaterial?: boolean,
+  /** THE THROTTLE said out loud (relay canvas W3b) — clamped here, and the correction is SPOKEN.
+   *  It overrides whatever pace the description itself authored (the user's explicit number wins). */
+  dailyRunLimit?: unknown,
 ): Promise<string> {
   // Fetch worker persona to shape the pipeline's AI step
   const { data: agent } = await adminClient
@@ -307,6 +443,48 @@ export async function executeCreateTask(
   // explicit: create_task no longer inserts. It DRAFTS, and the draft rides a marker the chat
   // runtimes turn into the review card; the user's Confirm fires the ONE create door
   // (POST /api/workflows — where entity adoption and everything else already lives).
+  // THE SPOKEN DOORS: whatever the coworker said explicitly rides the SAME sanitiser the generator
+  // used, merged onto the doors the description itself authored (dedupe lives in the sanitiser).
+  let doors: ReactionDoor[] = generated.triggers ?? [];
+  let doorNoteLine: string | null = generated.needs_door_note ?? null;
+  if (triggerDoors !== undefined) {
+    try {
+      const authored = await authorDoors(triggerDoors, { supabase, userId, existing: doors });
+      doors = authored.doors;
+      doorNoteLine = doorNote([...(doorNoteLine ? [doorNoteLine] : []), ...authored.notes]);
+    } catch { /* the draft stands with the generator's doors */ }
+  }
+
+  // THE SPOKEN INPUTS: the tray the description authored, plus whatever the coworker named out
+  // loud — one resolver, one merge (dedupe by file id lives in authorInputs).
+  let inputs = generated.inputs ?? null;
+  let inputNoteLine: string | null = generated.needs_input_note ?? null;
+  if (inputDocNames !== undefined || inputAcceptMaterial !== undefined) {
+    try {
+      const authored = await authorInputs(
+        { doc_names: inputDocNames, accept_material: inputAcceptMaterial },
+        { supabase, userId, existing: inputs?.docs ?? [], acceptMaterialDefault: inputs?.acceptMaterial ?? false },
+      );
+      inputs = inputsForStorage(authored);
+      inputNoteLine = inputNote([...(inputNoteLine ? [inputNoteLine] : []), ...authored.notes]);
+    } catch { /* the draft stands with the generator's tray */ }
+  }
+
+  // THE SPOKEN THROTTLE: an explicit number from the coworker's own argument outranks the pace the
+  // description authored; both ride the ONE clamp, and a moved number is SAID (never silently
+  // accepted as given). Unsaid = null = the platform default, which is not config at all.
+  let fireLimit: number | null = generated.fire_limit ?? null;
+  if (dailyRunLimit !== undefined && dailyRunLimit !== null && dailyRunLimit !== '') {
+    const { value, clamped } = clampFireLimit(dailyRunLimit);
+    fireLimit = value;
+    if (clamped) {
+      doorNoteLine = doorNote([
+        ...(doorNoteLine ? [doorNoteLine] : []),
+        fireLimitClampNote(dailyRunLimit, value),
+      ]);
+    }
+  }
+
   const { encodeWorkflowDraftMarker } = await import('@/lib/workflows/draft-marker');
   const { randomUUID } = await import('crypto');
   const schedule = formatSchedule(generated.trigger as { type: string; cron?: string; label?: string });
@@ -314,7 +492,28 @@ export async function executeCreateTask(
   // THE UNRESOLVED-PERSON NOTE (processes arc Phase B): a handoff named someone the roster
   // couldn't resolve — say it in the sentence AND ride it on the marker, so the card can speak it.
   const personLine = generated.needs_person_note ? `\n${generated.needs_person_note}` : '';
-  const draftPayload: WorkflowDraft & { needs_person_note?: string | null } = {
+  // THE DROPPED-DOOR NOTE rides the same way (a refused door is stated, never silently lost).
+  const doorNoteText = doorNoteLine ? `\n${doorNoteLine}` : '';
+  const doorLine = doors.length ? ` Doors: ${describeDoors(doors)}.` : '';
+  // THE INPUTS TRAY speaks the same way — what it reads, and what it couldn't find.
+  const inputNoteText = inputNoteLine ? `\n${inputNoteLine}` : '';
+  const inputLine = inputs ? ` Reads: ${describeInputs(inputs)}.` : '';
+  // THE UNRESOLVED-PROCESS NOTE rides the same way (W3): a refused subprocess station is stated.
+  const stepNoteText = generated.needs_step_note ? `\n${generated.needs_step_note}` : '';
+  // THE THROTTLE speaks only when it isn't the default — a stated pace is a claim to confirm;
+  // the platform default is not news.
+  const limitLine = fireLimit !== null && fireLimit !== FIRE_LIMIT_DEFAULT
+    ? ` Up to ${fireLimit} event runs a day — extra ones wait for tomorrow.`
+    : '';
+  const draftPayload: WorkflowDraft & {
+    needs_person_note?: string | null;
+    triggers?: ReactionDoor[];
+    needs_door_note?: string | null;
+    inputs?: WorkflowInputs | null;
+    needs_input_note?: string | null;
+    needs_step_note?: string | null;
+    fire_limit?: number | null;
+  } = {
     name: generated.name,
     description: generated.description ?? null,
     trigger: generated.trigger as { type: string; cron?: string; label?: string; timezone?: string; when?: string },
@@ -323,12 +522,18 @@ export async function executeCreateTask(
     worker_instructions: generated.worker_instructions ?? null,
     overlap_note: generated.overlap_note ?? null,
     needs_person_note: generated.needs_person_note ?? null,
+    ...(doors.length ? { triggers: doors } : {}),
+    needs_door_note: doorNoteLine,
+    ...(inputs ? { inputs } : {}),
+    needs_input_note: inputNoteLine,
+    needs_step_note: generated.needs_step_note ?? null,
+    ...(fireLimit !== null ? { fire_limit: fireLimit } : {}),
     ...(skillIds.length > 0 ? { skill_ids: skillIds } : {}),
     agent_id: agentId,
     token: randomUUID(),
   };
   const marker = encodeWorkflowDraftMarker(draftPayload);
-  return `Here's the plan for **${generated.name}** — ${schedule}. Nothing runs until you confirm on the card.${overlapLine}${personLine}\n${marker}`;
+  return `Here's the plan for **${generated.name}** — ${schedule}.${doorLine}${inputLine}${limitLine} Nothing runs until you confirm on the card.${overlapLine}${personLine}${doorNoteText}${inputNoteText}${stepNoteText}\n${marker}`;
 }
 
 export async function executeGetTask(
@@ -356,6 +561,17 @@ export async function executeGetTask(
     ? 'manual trigger'
     : `schedule: ${(t.trigger as { label?: string; cron?: string }).label ?? (t.trigger as { cron?: string }).cron ?? 'scheduled'}`;
 
+  // THE EVENT DOORS, read defensively — the `triggers` column is additive and may not exist yet
+  // (a select naming a missing column returns data:null, the silent-column trap). No column →
+  // the legacy fold still speaks whatever `trigger` carries.
+  const doors = await readDoors(adminClient, taskId, userId, t.trigger);
+  // THE INPUTS TRAY (relay canvas W2) — its own store; `null` means never configured, and the
+  // line says "none" rather than pretending the tray doesn't exist as a thing to configure.
+  const inputs = await readWorkflowInputs(adminClient as SupabaseClient, userId, taskId);
+  // THE THROTTLE (relay canvas W3b) — its own store; absent means the platform default, and the
+  // line SAYS "(default)" so the model never reads a default as a number somebody chose.
+  const fireLimit = await readFireLimit(adminClient as SupabaseClient, userId, taskId);
+
   const stepsText = (t.steps ?? []).map((s, i) => {
     if (s.type === 'tool') return `  ${i + 1}. [tool] id:${s.id} label:"${s.label}" tool:${s.tool}\n     config: ${JSON.stringify(s.config ?? {})}`;
     if (s.type === 'ai') return `  ${i + 1}. [ai] id:${s.id} label:"${s.label}"\n     prompt: ${s.prompt}`;
@@ -380,6 +596,9 @@ export async function executeGetTask(
     t.description ? `Description: ${t.description}` : null,
     `Status: ${t.status}`,
     `Schedule: ${trigger}`,
+    `Event doors: ${describeDoors(doors)}`,
+    `Inputs: ${describeInputs(inputs)}`,
+    `Daily event limit: ${fireLimit.dailyFires}${fireLimit.isDefault ? ' (default)' : ''} — extra events wait for the next day`,
     `Output:\n${outputLines}`,
     t.worker_instructions ? `Task instructions: ${t.worker_instructions}` : null,
     `Steps (${(t.steps ?? []).length}):\n${stepsText || '  (no steps)'}`,
@@ -393,6 +612,17 @@ export async function executeUpdateTask(
     description?: string;
     status?: 'active' | 'paused';
     trigger?: WorkflowTrigger;
+    /** ADDITIVE door verbs (relay canvas W1) — never a full replace: a coworker saying "also run it
+     *  when a file lands" must not clobber the doors it never mentioned. */
+    add_trigger_doors?: unknown;
+    remove_trigger_doors?: string[] | string;
+    /** ADDITIVE inputs-tray verbs (relay canvas W2) — same law as the doors: "also read the brand
+     *  guide" pins one document and leaves the rest of the tray alone. */
+    add_input_docs?: unknown;
+    remove_input_docs?: string[] | string;
+    input_accept_material?: boolean;
+    /** THE THROTTLE (relay canvas W3b) — event runs a day; its own store, clamped at the write. */
+    daily_run_limit?: unknown;
     output_language?: string;
     output_destination?: string;
     output_artifact_type?: string;
@@ -446,6 +676,101 @@ export async function executeUpdateTask(
       update.next_run_at = null;
     }
     changes.push('schedule updated');
+  }
+
+  // ── THE EVENT DOORS, ADDITIVELY (relay canvas W1, law 1) ─────────────────────────────────────
+  // add/remove verbs, never a full replace — a door the coworker didn't mention survives. The ONE
+  // sanitiser decides what may be stored; storage mirrors the workflows PATCH (normalized, or NULL
+  // when empty, so `triggers is not null` stays a real discovery filter).
+  let doorNoteLine: string | null = null;
+  if (fields.add_trigger_doors !== undefined || fields.remove_trigger_doors !== undefined) {
+    const raw = await readDoorsRaw(adminClient, taskId, userId);
+    if (!raw.ok) {
+      return `I can't change how "${row.name}" starts yet — event doors aren't available in this workspace. Its schedule and steps are untouched.`;
+    }
+    // THE LEGACY FOLD is preserved on write: a pre-W1 reaction trigger reads as a mail door, and
+    // storing the normalized list keeps it (the destroyer-bug floor — an edit never eats a trigger).
+    let doors = normalizeTriggers({ trigger: row.trigger, triggers: raw.triggers }).doors;
+
+    const removals = (Array.isArray(fields.remove_trigger_doors)
+      ? fields.remove_trigger_doors
+      : typeof fields.remove_trigger_doors === 'string' ? [fields.remove_trigger_doors] : [])
+      .map(s => String(s ?? '').trim().toLowerCase()).filter(Boolean);
+    if (removals.length) {
+      const before = doors.length;
+      doors = doors.filter(d => !removals.some(r =>
+        r === d.source
+        || doorLabel(d).toLowerCase().includes(r)
+        || (d.when ?? '').toLowerCase().includes(r)));
+      const gone = before - doors.length;
+      if (gone > 0) changes.push(`${gone} door${gone !== 1 ? 's' : ''} removed`);
+      else doorNoteLine = "I couldn't find a door matching that — nothing was removed.";
+    }
+
+    if (fields.add_trigger_doors !== undefined) {
+      const beforeAdd = doors.length;
+      const authored = await authorDoors(fields.add_trigger_doors, {
+        supabase: adminClient as SupabaseClient,
+        userId,
+        existing: doors,
+        selfWorkflowId: taskId,
+      });
+      doors = authored.doors;
+      const added = doors.length - beforeAdd;
+      if (added > 0) changes.push(`${added} door${added !== 1 ? 's' : ''} added`);
+      doorNoteLine = doorNote([...(doorNoteLine ? [doorNoteLine] : []), ...authored.notes]);
+    }
+
+    update.triggers = doorsForStorage(doors);
+    if (!changes.some(c => c.includes('door'))) changes.push(`doors: ${describeDoors(doors)}`);
+  }
+
+  // ── THE INPUTS TRAY, ADDITIVELY (relay canvas W2, law 7) ─────────────────────────────────────
+  // add/remove verbs on the SAME additive law as the doors. The tray is its own store, so the
+  // resolution happens here and the WRITE waits until the row update has succeeded (the [id] PATCH
+  // precedent) — a failed row edit must not leave the tray describing a workflow that didn't change.
+  let inputNoteLine: string | null = null;
+  let pendingInputs: WorkflowInputs | null | undefined;
+  if (fields.add_input_docs !== undefined || fields.remove_input_docs !== undefined || fields.input_accept_material !== undefined) {
+    const current = await readWorkflowInputs(adminClient as SupabaseClient, userId, taskId);
+    let docs = current?.docs ?? [];
+
+    const removals = (Array.isArray(fields.remove_input_docs)
+      ? fields.remove_input_docs
+      : typeof fields.remove_input_docs === 'string' ? [fields.remove_input_docs] : [])
+      .map(s => String(s ?? '').trim().toLowerCase()).filter(Boolean);
+    if (removals.length) {
+      const before = docs.length;
+      docs = docs.filter(d => !removals.some(r => d.name.toLowerCase().includes(r) || r.includes(d.name.toLowerCase())));
+      const gone = before - docs.length;
+      if (gone > 0) changes.push(`${gone} document${gone !== 1 ? 's' : ''} unpinned`);
+      else inputNoteLine = "I couldn't find a pinned document matching that — nothing was unpinned.";
+    }
+
+    const authored = await authorInputs(
+      { doc_names: fields.add_input_docs, accept_material: fields.input_accept_material },
+      { supabase: adminClient as SupabaseClient, userId, existing: docs, acceptMaterialDefault: current?.acceptMaterial ?? false },
+    );
+    const added = authored.docs.length - docs.length;
+    if (added > 0) changes.push(`${added} document${added !== 1 ? 's' : ''} pinned`);
+    if (fields.input_accept_material !== undefined && authored.acceptMaterial !== (current?.acceptMaterial ?? false)) {
+      changes.push(authored.acceptMaterial ? 'accepts material at run time' : 'no longer accepts run-time material');
+    }
+    inputNoteLine = inputNote([...(inputNoteLine ? [inputNoteLine] : []), ...authored.notes]);
+    pendingInputs = inputsForStorage(authored);
+    if (!changes.some(c => /document|material/.test(c))) changes.push(`inputs: ${describeInputs(pendingInputs)}`);
+  }
+
+  // ── THE THROTTLE (relay canvas W3b) ─────────────────────────────────────────────────────────
+  // Its own store (item_plans kind 'workflow_limit'), so it resolves here and LANDS after the row
+  // update succeeds — the tray's precedent. Out of range CLAMPS and is SAID; unsaid touches nothing.
+  let limitNoteLine: string | null = null;
+  let pendingLimit: number | undefined;
+  if (fields.daily_run_limit !== undefined && fields.daily_run_limit !== null && fields.daily_run_limit !== '') {
+    const { value, clamped } = clampFireLimit(fields.daily_run_limit);
+    pendingLimit = value;
+    if (clamped) limitNoteLine = fireLimitClampNote(fields.daily_run_limit, value);
+    changes.push(`up to ${value} event runs a day${value === FIRE_LIMIT_DEFAULT ? ' (the default)' : ''}`);
   }
 
   // output_config — merge all output fields together in one patch
@@ -503,17 +828,38 @@ export async function executeUpdateTask(
 
   if (fields.steps !== undefined) { update.steps = fields.steps; changes.push('pipeline steps replaced'); }
 
-  if (Object.keys(update).length === 0) return 'Nothing to update — no fields provided.';
+  if (Object.keys(update).length === 0 && pendingInputs === undefined && pendingLimit === undefined) {
+    return 'Nothing to update — no fields provided.';
+  }
 
-  const { error } = await adminClient
-    .from('workflows')
-    .update(update)
-    .eq('id', taskId)
-    .eq('user_id', userId);
+  if (Object.keys(update).length > 0) {
+    const { error } = await adminClient
+      .from('workflows')
+      .update(update)
+      .eq('id', taskId)
+      .eq('user_id', userId);
 
-  if (error) return `Failed to update "${row.name}": ${error.message}`;
+    if (error) return `Failed to update "${row.name}": ${error.message}`;
+  }
 
-  return `"${fields.name ?? row.name}" updated — ${changes.join(', ')}.`;
+  // THE TRAY lands after the row (its own store; ownership was proven by the load above). A store
+  // failure is SAID — the tray is never silently unchanged while the sentence claims it moved.
+  if (pendingInputs !== undefined) {
+    const res = await writeWorkflowInputs(adminClient as SupabaseClient, userId, taskId, pendingInputs ?? { docs: [], acceptMaterial: false });
+    if (!res.ok) inputNoteLine = inputNote([...(inputNoteLine ? [inputNoteLine] : []), `I couldn't save the inputs — ${res.error}.`]);
+  }
+
+  // THE THROTTLE lands the same way — after the row, through the ENGINE'S OWN WRITE (never a second
+  // writer), and a store failure is SAID rather than left as a sentence claiming a pace that isn't.
+  if (pendingLimit !== undefined) {
+    const res = await writeFireLimit(adminClient as SupabaseClient, userId, taskId, pendingLimit);
+    if (!res.ok) {
+      limitNoteLine = [limitNoteLine, `I couldn't save the daily limit — ${res.error}.`].filter(Boolean).join(' ');
+    }
+  }
+
+  const notesTail = [doorNoteLine, inputNoteLine, limitNoteLine].filter(Boolean).join(' ');
+  return `"${fields.name ?? row.name}" updated — ${changes.join(', ')}.${notesTail ? ` ${notesTail}` : ''}`;
 }
 
 export async function executeRunTask(

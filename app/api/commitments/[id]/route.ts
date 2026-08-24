@@ -57,6 +57,37 @@ export async function GET(
       }
     } catch { /* non-fatal — the commitment fields alone are enough */ }
 
+    // ── THE GATED WORK (processes arc; owner walk, Aug 20). A source='handoff' commitment is a
+    // decision on a parked workflow RUN — which is why the source-context read above finds nothing
+    // and the room used to say "no linked source" while asking for a decision about work it never
+    // showed. ONE derivation (lib/workflows/handoff-context.ts) serves the ask, who asked, and THE
+    // OBJECT (the run's last step output) on THIS payload — the decision card already learns
+    // source/sourceId here, so it never makes a second call to know what it is gating.
+    //
+    // AUTHORIZATION: the row above is the caller's OWN commitment (user-scoped, RLS-safe read).
+    // That row IS the entitlement — being handed a handoff gate is exactly the fact
+    // `canReadRunRecord` grants its 'holder' role on (a current OR PAST gate holder may read the
+    // record of the run they were asked about). The admin client below reads only the run and
+    // workflow that this very row points at; nothing else is reachable from it.
+    let handoff = null;
+    if (c.source === 'handoff' && c.source_id) {
+      try {
+        const { createClient: createAdmin } = await import('@supabase/supabase-js');
+        const admin = createAdmin(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        );
+        const { handoffContextFor } = await import('@/lib/workflows/handoff-context');
+        handoff = await handoffContextFor(admin, {
+          userId: user.id,
+          source: c.source ?? null,
+          sourceId: c.source_id ?? null,
+          description: c.description ?? null,
+          status: c.status ?? null,
+        });
+      } catch { /* additive — a gate we can't describe never breaks the room */ }
+    }
+
     return NextResponse.json({
       id: c.id,
       direction: c.direction,
@@ -68,6 +99,8 @@ export async function GET(
       // source_id IS the parked run, and the deep-dive's decision card posts to it (the one
       // /api/workflows/runs/[id]/resume door). Inert for every other source.
       sourceId: c.source_id ?? null,
+      // THE GATED WORK — present only on a handoff whose run reads; null everywhere else.
+      handoff,
       threadId: c.thread_id ?? null,
       status: c.status,
       createdAt: c.created_at ?? null,

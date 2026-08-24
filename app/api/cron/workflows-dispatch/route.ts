@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
   // Fetch due workflows
   const { data: due, error } = await supabase
     .from('workflows')
-    .select('id, user_id, name, trigger, next_run_at')
+    .select('id, user_id, name, trigger, next_run_at, status, steps')
     .eq('status', 'active')
     .not('next_run_at', 'is', null)
     .lte('next_run_at', now.toISOString())
@@ -48,12 +48,46 @@ export async function GET(request: NextRequest) {
     id: string; user_id: string; name: string;
     trigger: { type: string; cron?: string; timezone?: string };
     next_run_at: string;
+    status: string;
+    steps: Array<Record<string, unknown>> | null;
   }>;
 
   const enqueued: string[] = [];
   const skipped: string[] = [];
+  const notReady: string[] = [];
+
+  // THE READINESS WAVE at the dispatcher: a not-ready workflow never gets a doomed run row. It is
+  // SKIPPED and its schedule still rolls forward — unreadiness must not wedge the clock. The
+  // reason already stands on the ledger row (same derivation), so this needs no user-facing write.
+  const featuresByUser = new Map<string, import('@/lib/workspace/types').WorkspaceFeatures | null>();
+  const featuresFor = async (userId: string) => {
+    if (featuresByUser.has(userId)) return featuresByUser.get(userId)!;
+    let f: import('@/lib/workspace/types').WorkspaceFeatures | null = null;
+    try {
+      const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
+      f = await getWorkspaceFeatures(userId, supabase);
+    } catch { /* unknown features never invent unreadiness */ }
+    featuresByUser.set(userId, f);
+    return f;
+  };
+  const { readinessOf } = await import('@/lib/workflows/readiness');
 
   for (const wf of dueList) {
+    const r = readinessOf(
+      { id: wf.id, status: wf.status, trigger: wf.trigger, steps: wf.steps ?? [] },
+      await featuresFor(wf.user_id),
+    );
+    if (!r.ready) {
+      notReady.push(wf.id);
+      console.log(`[workflows-dispatch] not ready, skipped ${wf.id}: ${r.reason}`);
+      // Roll the schedule forward anyway — a not-ready workflow must not wedge the clock.
+      const nextRun = nextRunFromTrigger(wf.trigger, now);
+      await supabase.from('workflows').update({
+        next_run_at: nextRun ? nextRun.toISOString() : null,
+      }).eq('id', wf.id);
+      continue;
+    }
+
     // Concurrency guard: skip if there is already a queued or running run for this workflow
     const { data: existing } = await supabase
       .from('workflow_runs')
@@ -126,6 +160,29 @@ export async function GET(request: NextRequest) {
     } catch { /* bookkeeping — never breaks the dispatcher */ }
   });
 
+  // THE STRANDED-PARK SWEEP (relay canvas W3 — the subprocess station's backstop): a parent parked
+  // at a ⧉ station whose child is terminally done but whose resume was lost (a crash between the
+  // child's tail and the parent's claim) is continued or failed honestly here. ≤20 per pass.
+  after(async () => {
+    try {
+      const { sweepStrandedSubprocessParks } = await import('@/lib/workflows/subprocess');
+      const repaired = await sweepStrandedSubprocessParks(supabase);
+      if (repaired.length) console.log(`[workflows-dispatch] resumed ${repaired.length} stranded subprocess park(s)`);
+    } catch { /* bookkeeping — never breaks the dispatcher */ }
+  });
+
+  // THE DRAIN (relay canvas W3b — THE THROTTLE, NEVER A SHREDDER): events matched at a workflow's
+  // daily limit were recorded and queued, not dropped. Start what today's remaining headroom allows,
+  // oldest first. Runs BEFORE the stale-run backstop below (which deliberately skips these rows) so
+  // a drained run gets its own honest start before anything else looks at it.
+  after(async () => {
+    try {
+      const { drainDeferredFires } = await import('@/lib/workflows/reactions');
+      const { started } = await drainDeferredFires(supabase);
+      if (started) console.log(`[workflows-dispatch] drained ${started} deferred event fire(s)`);
+    } catch { /* bookkeeping — never breaks the dispatcher */ }
+  });
+
   // STANDING REACTIONS backstop (production arc step 6): an event-run still queued after 10
   // minutes lost its inline attempt (crashed tail, missing request scope) — re-fire it with its
   // stored trigger context. A crashed tail never silently eats an event.
@@ -143,5 +200,6 @@ export async function GET(request: NextRequest) {
     due_count: dueList.length,
     enqueued: enqueued.length,
     skipped: skipped.length,
+    not_ready: notReady.length,
   });
 }

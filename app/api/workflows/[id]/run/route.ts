@@ -20,8 +20,18 @@ export async function POST(
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try { await requireFeature('studio', supabase, user.id); } catch (err) { return handleWorkspaceError(err); }
 
-  const body = await request.json().catch(() => ({})) as { test?: boolean };
+  const body = await request.json().catch(() => ({})) as {
+    test?: boolean;
+    /** THE MATERIAL DOOR (relay canvas W2, law 7): the thing to work on, handed in by hand. It
+     *  rides as the run's TRIGGER CONTEXT — which is also what makes a reaction workflow
+     *  testable, since the reaction refusal is keyed on that context being empty. */
+    material?: { text?: string; name?: string };
+  };
   const isTest = body.test === true;
+
+  // Whitespace-honest, excerpt-marked (materialBlock owns the cut) — never a silent 20k chop.
+  const { materialBlock } = await import('@/lib/workflows/inputs');
+  const material = materialBlock(body.material);
 
   // Allow owner OR any company member if shared — RLS handles the access check
   const { data: wf, error: wfErr } = await supabase
@@ -74,7 +84,10 @@ export async function POST(
 
   // Fire the executor after the response is sent
   after(async () => {
-    await runWorkflow({ workflowId, runId, triggerSource: 'manual', runnerId: user.id, isTest });
+    await runWorkflow({
+      workflowId, runId, triggerSource: 'manual', runnerId: user.id, isTest,
+      ...(material ? { triggerContext: material } : {}),
+    });
   });
 
   return NextResponse.json({ run_id: runId, status: 'queued' });

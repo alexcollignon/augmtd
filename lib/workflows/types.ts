@@ -35,7 +35,7 @@ export type WorkflowTrigger = ManualTrigger | ScheduleTrigger | ReactionTrigger;
 
 // ── Steps ──────────────────────────────────────────────────────────────────────
 
-export type StepType = 'tool' | 'ai' | 'agent' | 'approval' | 'verify' | 'handoff';
+export type StepType = 'tool' | 'ai' | 'agent' | 'approval' | 'verify' | 'handoff' | 'workflow' | 'case';
 
 // Tool step — deterministic data fetch via the MCP registry or a built-in tool id.
 export interface ToolStep {
@@ -132,7 +132,40 @@ export interface HandoffStep {
   sla_hours?: number;
 }
 
-export type WorkflowStep = ToolStep | AIStep | AgentStep | ApprovalStep | VerifyStep | HandoffStep;
+// Subprocess step — A SUBPROCESS IS A HANDOFF TO A MACHINE (relay canvas W3, law 5,
+// docs/relay-canvas-plan.md). The parent parks at the ⧉ station through the SAME awaiting
+// machinery as the human gates; the child runs its own rail with its OWN gate/owner/SLA; its
+// completion resumes the parent with its deliverable as this step's output (the
+// get_workflow_output semantics, awaited instead of read from history).
+// FLOORS: depth cap 1 (a child may not itself contain a workflow step — the door check refuses,
+// which also makes circularity impossible beyond self-reference, which readiness refuses);
+// test mode NEVER fires the real child (it reads the child's latest delivered output).
+export interface SubprocessStep {
+  type: 'workflow';
+  id: string;
+  /** The CHILD'S NAME at authoring time — surfaces render the station without a lookup. */
+  label: string;
+  /** The workflow this station hands the baton to. */
+  workflow_id: string;
+}
+
+// Case step — THE CASE LAYER (relay canvas W4, law: A CASE IS AN ENTITY). The normalizer station:
+// it reads the ONE thing this run carries, resolves it against the workflow's own case index
+// (match-first, conservative), founds an UNTRACKED work_entities row when the material names a
+// case nobody has opened yet, links the triggering atom into the case's room — and SWAPS THE RUN'S
+// GROUNDING to the case, so every later step sees that case's accumulated history by construction.
+// Executed IN the run loop (engine-side, like the ⧉ station — it needs the stores).
+export interface CaseStep {
+  type: 'case';
+  id: string;
+  label: string;
+  /** What identifies a case, in the user's own words ("the job opening named in the application"). */
+  case_instruction: string;
+}
+
+export type WorkflowStep =
+  | ToolStep | AIStep | AgentStep | ApprovalStep | VerifyStep | HandoffStep | SubprocessStep
+  | CaseStep;
 
 // ── Output ─────────────────────────────────────────────────────────────────────
 
