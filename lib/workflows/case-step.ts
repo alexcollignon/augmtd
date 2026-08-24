@@ -115,7 +115,22 @@ export function deterministicCaseMatch(
 
 // ── The index (the workflow's own case list) ─────────────────────────────────────────────────────
 
-export interface IndexedCase { entityId: string; caseName: string; openedAt?: string }
+export interface CaseAtom { itemKind: string; itemId: string; at: string; note?: string }
+export interface IndexedCase { entityId: string; caseName: string; openedAt?: string; atoms?: CaseAtom[] }
+
+/** THE CASE CARRIES ITS OWN ATOMS (found live on a mature mailbox, Aug 24). The case's membership
+ *  USED to be readable only through `entity_links` — and on an account the one brain has already
+ *  worked, every arriving application was ALREADY FILED under its own recognized entity. THE
+ *  NEVER-OVERWRITE LAW (correct, untouchable) therefore refused every case link, the case held zero
+ *  atoms, `entityRunGrounding` served an empty page, and the cross-candidate comparison — the whole
+ *  point of the case layer — had nothing to read. It only ever worked on a fresh account, where the
+ *  items happened to arrive unfiled.
+ *
+ *  THE DECOUPLING: the one brain's filing stays exactly as it is (the fill-if-empty entity_links
+ *  attempt and the knowledge_files stamp are untouched). The case simply keeps ITS OWN LEDGER on
+ *  the per-workflow index row — every resolved event's atom is appended REGARDLESS of what
+ *  entity_links decided. A refused link is a filing fact, never a lost member. */
+const CASE_ATOM_CAP = 100;
 
 export async function readCaseIndex(
   admin: SupabaseClient, userId: string, workflowId: string,
@@ -125,14 +140,55 @@ export async function readCaseIndex(
       .eq('user_id', userId).eq('kind', CASE_INDEX_KIND)
       .like('entity_id', `${workflowId}:%`).limit(200);
     if (error) { console.error('[case] index read failed:', error.message); return []; }
-    return ((data ?? []) as Array<{ entity_id: string; tasks: { caseName?: string; openedAt?: string } | null }>)
+    return ((data ?? []) as Array<{ entity_id: string; tasks: { caseName?: string; openedAt?: string; atoms?: CaseAtom[] } | null }>)
       .map((r) => ({
         entityId: String(r.entity_id).slice(workflowId.length + 1),
         caseName: String(r.tasks?.caseName ?? '').trim(),
         openedAt: r.tasks?.openedAt,
+        atoms: Array.isArray(r.tasks?.atoms) ? r.tasks!.atoms! : [],
       }))
       .filter((c) => c.entityId && c.caseName);
   } catch (e) { console.error('[case] index read threw:', e); return []; }
+}
+
+/** Read ONE case's atom ledger (the index row is keyed `${workflowId}:${entityId}`). */
+export async function readCaseAtoms(
+  admin: SupabaseClient, userId: string, workflowId: string, entityId: string,
+): Promise<CaseAtom[]> {
+  try {
+    const { data } = await admin.from('item_plans').select('tasks')
+      .eq('user_id', userId).eq('kind', CASE_INDEX_KIND)
+      .eq('entity_id', `${workflowId}:${entityId}`).maybeSingle();
+    const atoms = (data as { tasks?: { atoms?: CaseAtom[] } } | null)?.tasks?.atoms;
+    return Array.isArray(atoms) ? atoms.filter((a) => a?.itemKind && a?.itemId) : [];
+  } catch { return []; }
+}
+
+/** APPEND — deduped by (itemKind,itemId), capped, and NEVER silently truncating. */
+export async function appendCaseAtom(
+  admin: SupabaseClient, userId: string, workflowId: string, entityId: string, atom: CaseAtom,
+): Promise<boolean> {
+  try {
+    const key = `${workflowId}:${entityId}`;
+    const { data } = await admin.from('item_plans').select('tasks')
+      .eq('user_id', userId).eq('kind', CASE_INDEX_KIND).eq('entity_id', key).maybeSingle();
+    const tasks = ((data as { tasks?: Record<string, unknown> } | null)?.tasks ?? {}) as
+      { caseName?: string; openedAt?: string; atoms?: CaseAtom[] };
+    const atoms = Array.isArray(tasks.atoms) ? tasks.atoms.filter((a) => a?.itemKind && a?.itemId) : [];
+    if (atoms.some((a) => a.itemKind === atom.itemKind && a.itemId === atom.itemId)) return false;
+    if (atoms.length >= CASE_ATOM_CAP) {
+      // NEVER SILENT: the ledger is full and the newest arrival is not being remembered. Loud.
+      console.error(`[case] ATOM CAP HIT (${CASE_ATOM_CAP}) on case ${entityId} of workflow ${workflowId} — `
+        + `"${atom.itemKind}:${atom.itemId}" was NOT recorded on the case's ledger.`);
+      return false;
+    }
+    atoms.push(atom);
+    const { error } = await admin.from('item_plans')
+      .update({ tasks: { ...tasks, atoms }, updated_at: new Date().toISOString() })
+      .eq('user_id', userId).eq('kind', CASE_INDEX_KIND).eq('entity_id', key);
+    if (error) { console.error('[case] atom append failed:', error.message); return false; }
+    return true;
+  } catch (e) { console.error('[case] atom append threw:', e); return false; }
 }
 
 // ── The reasoned resolve (ONE classification-tier call per run) ──────────────────────────────────
@@ -275,7 +331,13 @@ export async function resolveCaseForRun(
       const atom = await atomForRun(admin, userId, runId);
       if (atom) {
         linked = await linkAtomToCase(admin, userId, entityId, atom, workflowName);
-        if (!linked) linkNote = ' It was already filed elsewhere, so its own link stands.';
+        // THE CASE CARRIES ITS OWN ATOMS: the append happens whatever entity_links decided. A
+        // refused link means the one brain filed it first — the case still holds the item.
+        await appendCaseAtom(admin, userId, workflowId, entityId, {
+          ...atom, at: new Date().toISOString(),
+          ...(linked ? {} : { note: 'filed elsewhere by the one brain' }),
+        });
+        if (!linked) linkNote = ' It was already filed elsewhere, so its own link stands — the case holds it either way.';
       } else {
         linkNote = ' This one arrived as material, so there is nothing to file.';
       }
@@ -284,11 +346,11 @@ export async function resolveCaseForRun(
     // The run wears its case (one tiny durable row; the runs surfaces batch-read it).
     if (!matchOnly && runId) await stampRunCase(admin, userId, runId, entityId, name);
 
-    const held = await countCaseItems(admin, userId, entityId);
+    const held = await countCaseItems(admin, userId, workflowId, entityId);
     const arrival = firstLine(eventText);
     const cardText =
       `${founded ? 'Opened a new case: ' : ''}${name} — ${arrival}. ` +
-      `The case now holds ${held} linked item${held === 1 ? '' : 's'}.${linkNote}` +
+      `The case now holds ${held} filed item${held === 1 ? '' : 's'}.${linkNote}` +
       (matchOnly ? ' [test mode — no case opened]' : '');
     console.log(`[case] ${founded ? 'founded' : 'matched'} "${name}" via the ${hit ? path : 'reasoned'} path`);
     return { entityId, name, founded, linked, cardText: cardText.slice(0, 600) };
@@ -371,10 +433,76 @@ async function stampRunCase(
   if (error) console.error('[case] run stamp failed:', error.message);
 }
 
-async function countCaseItems(admin: SupabaseClient, userId: string, entityId: string): Promise<number> {
+/** THE CARD SPEAKS THE CASE'S OWN LEDGER — never entity_links, which on a mature mailbox reflects
+ *  the one brain's filing rather than the case's membership. */
+async function countCaseItems(
+  admin: SupabaseClient, userId: string, workflowId: string, entityId: string,
+): Promise<number> {
+  return (await readCaseAtoms(admin, userId, workflowId, entityId)).length;
+}
+
+// ── THE CASE'S PAGE (the accumulation the comparison actually reads) ─────────────────────────────
+
+/** Fetch one atom's content, clipped and excerpt-marked. Cheap reads only — the head of each. */
+async function atomContent(
+  admin: SupabaseClient, userId: string, atom: CaseAtom,
+): Promise<string | null> {
   try {
-    const { count } = await admin.from('entity_links').select('item_id', { count: 'exact', head: true })
-      .eq('user_id', userId).eq('entity_id', entityId);
-    return count ?? 0;
-  } catch { return 0; }
+    if (atom.itemKind === 'inbox_item') {
+      const { data } = await admin.from('inbox_items').select('work_title, source_data')
+        .eq('id', atom.itemId).eq('user_id', userId).maybeSingle();
+      if (!data) return null;
+      const sd = ((data as { source_data?: Record<string, unknown> }).source_data ?? {}) as Record<string, unknown>;
+      const subject = String(sd.subject ?? (data as { work_title?: string }).work_title ?? 'Email').trim();
+      const from = String(sd.from_name ?? sd.from_address ?? '').trim();
+      const body = String(sd.body ?? sd.snippet ?? sd.body_preview ?? '').replace(/\s+/g, ' ').trim();
+      return `${subject}${from ? `\nFrom: ${from}` : ''}\n${clipForPrompt(body, 1500)}`;
+    }
+    if (atom.itemKind === 'knowledge_file') {
+      const { data } = await admin.from('knowledge_files').select('filename, extracted_text')
+        .eq('id', atom.itemId).eq('user_id', userId).maybeSingle();
+      if (!data) return null;
+      const d = data as { filename?: string; extracted_text?: string | null };
+      return `${String(d.filename ?? 'document')}\n${clipForPrompt(String(d.extracted_text ?? '').trim(), 1500)}`;
+    }
+    if (atom.itemKind === 'meeting') {
+      const { data } = await admin.from('meeting_transcripts').select('title, summary')
+        .eq('id', atom.itemId).eq('user_id', userId).maybeSingle();
+      if (!data) return null;
+      const d = data as { title?: string; summary?: string | null };
+      return `${String(d.title ?? 'Meeting')}\n${clipForPrompt(String(d.summary ?? '').trim(), 1500)}`;
+    }
+    return null;
+  } catch { return null; }
+}
+
+/** THE CASE'S OWN PAGE — what this case has actually collected, newest first. The entity room's
+ *  grounding (entityRunGrounding) reads through entity_links and therefore CANNOT see an atom the
+ *  one brain filed elsewhere; this block reads the case's own ledger, so the comparison sees every
+ *  member regardless of where the brain homed it. Both blocks ride the run together. */
+export async function caseAtomsBlock(
+  admin: SupabaseClient, userId: string, workflowId: string, entityId: string, caseName: string,
+): Promise<string | null> {
+  try {
+    const atoms = (await readCaseAtoms(admin, userId, workflowId, entityId))
+      .slice()
+      .sort((a, b) => String(b.at ?? '').localeCompare(String(a.at ?? '')));
+    if (!atoms.length) return null;
+    const parts: string[] = [];
+    let used = 0;
+    for (const a of atoms) {
+      if (used >= 8000) break;
+      const body = await atomContent(admin, userId, a);
+      if (!body) continue;
+      const piece = `--- ${a.at ? String(a.at).slice(0, 10) : 'undated'} · ${a.itemKind} ---\n${body}`;
+      parts.push(piece);
+      used += piece.length;
+    }
+    if (!parts.length) return null;
+    return (
+      `[FILED IN THIS CASE — ${caseName}, ${parts.length} item${parts.length === 1 ? '' : 's'}, newest first. ` +
+      `These arrived on earlier runs of this workflow and belong to the same case as what arrived now. ` +
+      `${EXCERPT_RULE}]\n${parts.join('\n\n')}`
+    );
+  } catch (e) { console.error('[case] atoms block failed:', e); return null; }
 }

@@ -743,7 +743,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       const label = cs.label || 'Case';
       let cardText = 'The case step could not run — continuing without one.';
       try {
-        const { resolveCaseForRun } = await import('./case-step');
+        const { resolveCaseForRun, caseAtomsBlock } = await import('./case-step');
         const prior = stepOutputs[stepOutputs.length - 1]?.output;
         const eventText = (opts.triggerContext ?? '').trim()
           || (typeof prior === 'string' ? prior : JSON.stringify(prior ?? '')).trim();
@@ -758,7 +758,12 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
           // THE GROUNDING SWAP — from this step on, every ai step reads the case's page.
           const { entityRunGrounding } = await import('@/lib/workflows/entity-edge');
           const caseBlock = await entityRunGrounding(admin, workflow.user_id, res.entityId, res.name);
-          if (caseBlock) aiContext = [aiContext, caseBlock].filter(Boolean).join('\n\n');
+          // …AND THE CASE'S OWN LEDGER. The room page above reads through entity_links, which on a
+          // mature mailbox holds the one brain's filing, not the case's membership — so the atoms
+          // block carries what the case actually collected. Independent: either may serve alone.
+          const atomsBlock = await caseAtomsBlock(
+            admin, workflow.user_id, workflow.id, res.entityId, res.name);
+          aiContext = [aiContext, caseBlock, atomsBlock].filter(Boolean).join('\n\n') || null;
         }
       } catch (e) {
         console.error('[run-workflow] case step failed (non-fatal):', e);
