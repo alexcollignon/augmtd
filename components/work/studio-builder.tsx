@@ -62,6 +62,7 @@ import {
   DocumentPlusIcon,
   MicrophoneIcon,
   ArrowPathRoundedSquareIcon,
+  Square2StackIcon,
 } from '@heroicons/react/24/outline';
 import type {
   Workflow, WorkflowStep, WorkflowTrigger, OutputConfig,
@@ -77,6 +78,11 @@ import { builtinChecksFor, GATE_BUILTIN_LINES } from '@/lib/workflows/builtin-ch
 import type {
   WorkflowInputDoc as LibWorkflowInputDoc, WorkflowInputs as LibWorkflowInputs,
 } from '@/lib/workflows/inputs';
+// THE THROTTLE (relay canvas W3b) — ONE CAP, ONE HOME: the floors and the default are the
+// ENGINE's constants, imported, never re-typed here (a second copy of 1–100 is a second law).
+import {
+  FIRE_LIMIT_DEFAULT, FIRE_LIMIT_MIN, FIRE_LIMIT_MAX, clampFireLimit, type FireLimit,
+} from '@/lib/workflows/fire-limit';
 import { AnchoredPopover } from '@/components/ui/anchored-popover';
 import { SharingModeSelector } from '@/components/work/sharing-mode-selector';
 import { LINKEDIN_FRAMEWORKS } from '@/lib/tools/linkedin-post';
@@ -166,18 +172,53 @@ function normalizeInputs(raw: unknown): WorkflowInputs {
 // The doors column is additive (jsonb, may not exist in every environment yet), so the builder
 // carries it as an extension of Workflow rather than waiting on the shared type. `inputs` rides
 // the same way: `undefined` = not yet read (never write it), `null`/object = known.
-type WorkflowDraft = Workflow & { triggers?: ReactionDoor[]; inputs?: WorkflowInputs | null };
+type WorkflowDraft = Workflow & {
+  triggers?: ReactionDoor[];
+  inputs?: WorkflowInputs | null;
+  /** THE THROTTLE (W3b) — served on the workflow GET; `undefined` = not yet read (never write it). */
+  fireLimit?: FireLimit;
+};
+
+/** Whatever the route served, read as the throttle. Absence IS the default — the store keeps no
+ *  "unset" value, so a malformed or missing read is the platform default, never a zero. */
+function normalizeFireLimit(raw: unknown): FireLimit {
+  const o = (raw ?? null) as { dailyFires?: unknown; isDefault?: unknown } | null;
+  if (!o || o.dailyFires === undefined || o.dailyFires === null) {
+    return { dailyFires: FIRE_LIMIT_DEFAULT, isDefault: true };
+  }
+  const value = clampFireLimit(o.dailyFires).value;
+  return { dailyFires: value, isDefault: o.isDefault === true || value === FIRE_LIMIT_DEFAULT };
+}
+
+// THE SUBPROCESS STATION (relay canvas W3, law 5) — a step that hands the baton to ANOTHER
+// workflow: the parent parks, the child runs its own rail with its own gate, its deliverable
+// resumes the parent. Named off the union rather than off the engine's exported symbol, so the
+// surface binds to the SCHEMA, not to a name.
+type ProcessStep = Extract<WorkflowStep, { type: 'workflow' }>;
 
 // The `workflow` door binds a workflow_id — the picker reads the user's own tasks (self excluded).
-let _wfOptionsCache: Array<{ id: string; name: string }> | null = null;
-function useWorkflowOptions(): Array<{ id: string; name: string }> {
-  const [options, setOptions] = useState<Array<{ id: string; name: string }>>(_wfOptionsCache ?? []);
+// THE SUBPROCESS STATION (W3) reads the SAME list through the SAME cache, so a workflow named
+// once is named the same at both doors. It needs two more served facts to be honest about what it
+// may include: the row's status (a draft cannot be run by a parent) and whether the row ALREADY
+// contains a process (law 5's depth cap of one, refused at authoring time rather than at run time).
+type WorkflowOption = { id: string; name: string; status?: string; containsProcess: boolean };
+let _wfOptionsCache: WorkflowOption[] | null = null;
+function useWorkflowOptions(): WorkflowOption[] {
+  const [options, setOptions] = useState<WorkflowOption[]>(_wfOptionsCache ?? []);
   useEffect(() => {
     if (_wfOptionsCache) return;
-    fetch('/api/workflows').then(r => r.json()).then((d: { workflows?: Array<{ id: string; name: string; is_owned_by_me?: boolean }> }) => {
+    fetch('/api/workflows').then(r => r.json()).then((d: {
+      workflows?: Array<{ id: string; name: string; is_owned_by_me?: boolean; status?: string; steps?: unknown }>;
+    }) => {
       const list = (d.workflows ?? [])
         .filter(w => w.is_owned_by_me !== false)
-        .map(w => ({ id: w.id, name: w.name }));
+        .map(w => ({
+          id: w.id,
+          name: w.name,
+          status: w.status,
+          containsProcess: Array.isArray(w.steps)
+            && (w.steps as Array<{ type?: string }>).some(s => s?.type === 'workflow'),
+        }));
       _wfOptionsCache = list;
       setOptions(list);
     }).catch(() => {});
@@ -255,6 +296,7 @@ const STEP_TYPE_COLORS = {
   verify:   { bg: 'bg-teal-600',  activeBg: 'bg-teal-50',  activeText: 'text-teal-700' },
   approval: { bg: 'bg-amber-500', activeBg: 'bg-amber-50', activeText: 'text-amber-700' },
   handoff:  { bg: 'bg-violet-500', activeBg: 'bg-violet-50', activeText: 'text-violet-700' },
+  workflow: { bg: 'bg-violet-600', activeBg: 'bg-violet-50', activeText: 'text-violet-700' },
 };
 
 const STEP_TYPE_ICONS = {
@@ -264,6 +306,7 @@ const STEP_TYPE_ICONS = {
   verify:   ShieldCheckIcon,
   approval: HandRaisedIcon,
   handoff:  UsersIcon,
+  workflow: Square2StackIcon,
 };
 
 // ── THE PINNED STATION (guardrails v1.1) ──────────────────────────────────────
@@ -369,7 +412,13 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
         // `null` is the route's own word for NEVER CONFIGURED — kept as null so a save doesn't
         // write an empty tray nobody asked for. The rail draws its ghost line either way.
         const served = (j.workflow as { inputs?: unknown } | undefined)?.inputs ?? j.inputs ?? null;
-        setWorkflow(w => (w.inputs === undefined ? { ...w, inputs: served === null ? null : normalizeInputs(served) } : w));
+        // THE THROTTLE rides the SAME one read (W3b) — one door, no second endpoint.
+        const servedLimit = (j.workflow as { fireLimit?: unknown } | undefined)?.fireLimit ?? j.fireLimit ?? null;
+        setWorkflow(w => ({
+          ...w,
+          ...(w.inputs === undefined ? { inputs: served === null ? null : normalizeInputs(served) } : {}),
+          ...(w.fireLimit === undefined ? { fireLimit: normalizeFireLimit(servedLimit) } : {}),
+        }));
       })
       .catch(() => {});
     return () => { dead = true; };
@@ -377,6 +426,14 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
 
   const setInputs = useCallback((next: WorkflowInputs) => {
     setWorkflow(w => ({ ...w, inputs: next }));
+  }, []);
+
+  // THE THROTTLE (W3b) — the field holds a real number at all times; the FLOORS are the engine's.
+  // `isDefault` is derived from the value itself, exactly as the store reads it back (writing the
+  // default DELETES the row), so the "(default)" word can never disagree with what is stored.
+  const setFireLimit = useCallback((n: number) => {
+    const value = clampFireLimit(n).value;
+    setWorkflow(w => ({ ...w, fireLimit: { dailyFires: value, isDefault: value === FIRE_LIMIT_DEFAULT } }));
   }, []);
 
   const patchBulk = useCallback((updates: Partial<Workflow>) => {
@@ -418,16 +475,33 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
           // when there is a tray to write (null = never configured; writing it would be a no-op
           // delete). Sending an unhydrated value would let a save wipe material we never saw.
           ...(workflow.inputs ? { inputs: workflow.inputs } : {}),
+          // THE THROTTLE rides the same save, and only once READ (undefined = never seen). It is
+          // sent even at the default — the store's own rule is that the default DELETES the row,
+          // so "back to 20" must be sayable, not a value that can only ever go up.
+          ...(workflow.fireLimit ? { fire_limit: workflow.fireLimit.dailyFires } : {}),
         }),
       });
       if (res.ok) {
-        const { workflow: saved } = await res.json() as { workflow: WorkflowDraft };
+        const payload = await res.json() as {
+          workflow: WorkflowDraft; fireLimit?: unknown; fire_limit_clamped?: boolean;
+        };
+        const saved = payload.workflow;
         // A response that doesn't echo the additive column must not erase the doors we just wrote.
         setWorkflow(saved.triggers === undefined ? { ...saved, triggers: doors } : saved);
         // The same rule for the tray: a response that doesn't echo `inputs` must not erase it.
         if (saved.inputs === undefined && workflow.inputs !== undefined) {
           const keep = workflow.inputs;
           setWorkflow(w => ({ ...w, inputs: keep }));
+        }
+        // THE THROTTLE, same rule — the row echo carries no fireLimit, so the read must survive
+        // the save. A CLAMPED echo is the server's word: the field takes it, and we SAY it.
+        if (workflow.fireLimit !== undefined) {
+          const served = payload.fireLimit ?? saved.fireLimit;
+          const kept = served !== undefined ? normalizeFireLimit(served) : workflow.fireLimit;
+          setWorkflow(w => ({ ...w, fireLimit: kept }));
+          if (payload.fire_limit_clamped) {
+            toast.message(`Kept within ${FIRE_LIMIT_MIN}–${FIRE_LIMIT_MAX} — now ${kept.dailyFires} event runs a day.`);
+          }
         }
         setSavedAt(new Date());
         return saved;
@@ -473,6 +547,9 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
       step = { id, type: 'approval', label: 'Your approval' } as ApprovalStep;
     } else if (type === 'handoff') {
       step = { id, type: 'handoff', label: 'Wait on a person', assignee_user_id: '', ask: '', sla_hours: undefined } as HandoffStep;
+    } else if (type === 'workflow') {
+      // Born UNPICKED — the label is the child's own name, written on the pick, never guessed.
+      step = { id, type: 'workflow', label: '', workflow_id: '' } as ProcessStep;
     } else {
       step = { id, type: 'agent', label: 'Hand off to a teammate', agent_id: agents[0]?.id ?? '', prompt: '' } as AgentStep;
     }
@@ -664,7 +741,7 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
               <IdentitySection workflow={workflow} patch={patch} agents={agents} />
             )}
             {resolvedPanel === 'trigger' && (
-              <WhenSection workflow={workflow} selfId={workflow.id} onPrimary={setPrimary} onDoors={setDoors} />
+              <WhenSection workflow={workflow} selfId={workflow.id} onPrimary={setPrimary} onDoors={setDoors} onFireLimit={setFireLimit} />
             )}
             {resolvedPanel === 'output' && (
               <div className="space-y-5">
@@ -1100,6 +1177,8 @@ function InlineAddButton({ insertAt, agents, onAdd }: {
             { type: 'ai' as const,    Icon: SparklesIcon,          label: 'Write / produce',    disabled: false },
             { type: 'agent' as const, Icon: UserCircleIcon,        label: 'Hand off to a teammate', disabled: agents.length === 0 },
             { type: 'handoff' as const, Icon: UsersIcon,           label: 'Wait on a person',   disabled: false },
+            // THE SUBPROCESS STATION (W3) — a whole workflow, standing on this rail as one block.
+            { type: 'workflow' as const, Icon: Square2StackIcon,   label: 'Include a process',  disabled: false },
           ] as const).map(({ type, Icon, label, disabled }) => (
             <button key={type}
               onClick={() => { if (!disabled) { onAdd(type, insertAt); setOpen(false); } }}
@@ -1193,6 +1272,12 @@ function VisualWorkflowColumn({
             {step.type === 'verify' || step.type === 'approval' || step.type === 'handoff' ? (
               <GateFlowNode
                 step={step}
+                active={isActive}
+                onClick={() => onSelectPanel({ stepId: step.id })}
+              />
+            ) : step.type === 'workflow' ? (
+              <SubprocessFlowBlock
+                step={step as ProcessStep}
                 active={isActive}
                 onClick={() => onSelectPanel({ stepId: step.id })}
               />
@@ -1592,6 +1677,44 @@ function GateFlowNode({ step, active, onClick }: {
           )
         )}
       </div>
+    </div>
+  );
+}
+
+// ── THE SUBPROCESS STATION on the rail (relay canvas W3, laws 4+5) ────────────
+// A COMPOUND BLOCK, not a step card and not a pill: violet, double-bordered (the outline is the
+// second rail — this block has a rail of its own), the CHILD'S OWN NAME as the title, and one
+// meta line saying what it is. It carries its own receipt like every other block (law 4): an
+// unpicked process says so in the amber hint idiom rather than standing as a finished claim.
+function SubprocessFlowBlock({ step, active, onClick }: {
+  step: ProcessStep; active: boolean; onClick: () => void;
+}) {
+  const picked = !!step.workflow_id;
+  const title = picked ? (step.label?.trim() || 'A process') : 'Include a process';
+  const meta = picked
+    ? 'its own workflow — runs inside this one'
+    : 'no process chosen yet';
+
+  const shell = picked
+    ? `bg-violet-50 border-violet-200 ${active ? 'outline-violet-400 shadow-md' : 'outline-violet-200'}`
+    : `bg-amber-50 border-amber-300 ${active ? 'outline-amber-400 shadow-md' : 'outline-amber-300'}`;
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={e => e.key === 'Enter' && onClick()}
+      className={`w-full flex items-start gap-3 px-4 py-3.5 rounded-xl border cursor-pointer transition-all outline outline-1 outline-offset-[3px] ${shell}`}
+    >
+      <div className={`w-8 h-8 rounded-lg bg-white border flex items-center justify-center flex-shrink-0 ${picked ? 'border-violet-200' : 'border-amber-200'}`}>
+        <Square2StackIcon className={`w-4 h-4 ${picked ? 'text-violet-600' : 'text-amber-600'}`} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className={`text-[13px] font-semibold truncate leading-tight ${picked ? 'text-violet-700' : 'text-amber-800'}`}>{title}</div>
+        <div className={`text-[11.5px] truncate leading-tight mt-0.5 ${picked ? 'text-neutral-500' : 'text-amber-700/80'}`}>{meta}</div>
+      </div>
+      <ChevronRightIcon className={`w-4 h-4 flex-shrink-0 mt-0.5 ${picked ? 'text-violet-300' : 'text-amber-400'}`} />
     </div>
   );
 }
@@ -2034,7 +2157,7 @@ function StepConfigSection({
   const menuRef = useRef<HTMLDivElement>(null);
   const colors = STEP_TYPE_COLORS[step.type as keyof typeof STEP_TYPE_COLORS] ?? STEP_TYPE_COLORS.tool;
   const TypeIcon = STEP_TYPE_ICONS[step.type as keyof typeof STEP_TYPE_ICONS] ?? STEP_TYPE_ICONS.tool;
-  const typeLabel = ({ tool: 'Tool', ai: 'Produce', agent: 'Hand off', verify: 'Check', approval: 'Approval', handoff: 'Wait on a person' } as Record<string, string>)[step.type] ?? step.type;
+  const typeLabel = ({ tool: 'Tool', ai: 'Produce', agent: 'Hand off', verify: 'Check', approval: 'Approval', handoff: 'Wait on a person', workflow: 'Process' } as Record<string, string>)[step.type] ?? step.type;
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -2134,6 +2257,97 @@ function StepConfigSection({
       )}
       {step.type === 'handoff' && (
         <HandoffStepFields step={step as HandoffStep} onUpdate={onUpdate as (p: Partial<HandoffStep>) => void} />
+      )}
+      {step.type === 'workflow' && (
+        <SubprocessStepFields
+          step={step as ProcessStep}
+          onUpdate={onUpdate as (p: Partial<ProcessStep>) => void}
+          currentWorkflowId={currentWorkflowId ?? ''}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── THE SUBPROCESS STATION'S PANEL (relay canvas W3, law 5) ───────────────────────────────────
+// One decision and no more: WHICH process runs here. The label is the child's own name, written
+// on the pick (never typed twice, never guessed) — so the block on the rail always says what the
+// run will actually do.
+//
+// THE EXCLUSIONS ARE HONEST, NOT HIDDEN (law 5's floors, authored-side): a workflow that cannot
+// be a child still appears — greyed, with the reason on the row — because a missing name reads as
+// a bug, while a named refusal teaches the rule:
+//   · ITSELF — a process cannot contain itself (the circular reference, refused at the door).
+//   · A DRAFT — an unpublished workflow has nothing to deliver back.
+//   · ONE LEVEL DEEP — a workflow that already contains a process cannot be nested under another
+//     (the depth cap; the engine's readiness refuses it too — this is the same law, said earlier).
+function SubprocessStepFields({ step, onUpdate, currentWorkflowId }: {
+  step: ProcessStep;
+  onUpdate: (p: Partial<ProcessStep>) => void;
+  currentWorkflowId: string;
+}) {
+  const options = useWorkflowOptions();
+  const rows = options.map(o => ({
+    ...o,
+    refusal:
+      o.id === currentWorkflowId ? 'this one — a process cannot contain itself'
+      : o.status === 'draft' ? '(still a draft — nothing to deliver back yet)'
+      : o.containsProcess ? '(contains a process — one level deep)'
+      : null,
+  }));
+  const chosen = rows.find(r => r.id === step.workflow_id) ?? null;
+
+  return (
+    <div className="p-4 space-y-3">
+      <p className="text-[12.5px] text-neutral-500 leading-relaxed">
+        This step hands the baton to another workflow. It runs its own rail — its own steps, its own
+        check, its own people — and when it delivers, this one picks up where it stopped.
+      </p>
+
+      <Field label="Which process" hint="its name becomes this step's name">
+        <div className="space-y-1">
+          {rows.length === 0 && (
+            <div className="text-[12px] text-neutral-400 px-1 py-1.5">No other workflows yet.</div>
+          )}
+          {rows.map(r => {
+            const disabled = !!r.refusal;
+            const picked = r.id === step.workflow_id;
+            return (
+              <button
+                key={r.id}
+                type="button"
+                disabled={disabled}
+                onClick={() => onUpdate({ workflow_id: r.id, label: r.name })}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-left transition-all ${
+                  picked ? 'bg-violet-50 border-violet-200'
+                  : disabled ? 'bg-neutral-50 border-neutral-100 cursor-not-allowed'
+                  : 'bg-white border-neutral-200 hover:border-neutral-300'
+                }`}
+              >
+                <Square2StackIcon className={`w-4 h-4 flex-shrink-0 ${picked ? 'text-violet-600' : 'text-neutral-300'}`} />
+                <span className={`text-[12.5px] truncate ${disabled ? 'text-neutral-400' : picked ? 'text-violet-800 font-medium' : 'text-neutral-700'}`}>
+                  {r.name}
+                </span>
+                {r.refusal && <span className="ml-auto flex-shrink-0 text-[11px] text-neutral-400">{r.refusal}</span>}
+                {picked && <CheckIcon className="ml-auto w-3.5 h-3.5 text-violet-600 flex-shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+
+      {!step.workflow_id && (
+        <p className="text-[11.5px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          No process chosen yet — this step has nothing to run.
+        </p>
+      )}
+      {chosen && (
+        <a
+          href={`/workflows/${chosen.id}`}
+          className="inline-block text-[12px] text-neutral-500 hover:text-violet-700 transition-colors"
+        >
+          Open {chosen.name} →
+        </a>
       )}
     </div>
   );
@@ -2545,11 +2759,12 @@ function triggerShortTitle(trigger: WorkflowTrigger): string {
 // Editing any one of them never writes the others: the destroyer bug (one Manual click erasing a
 // reaction trigger) is structurally impossible here — there is no shared toggle any more.
 // ════════════════════════════════════════════════════════════════════════════
-function WhenSection({ workflow, selfId, onPrimary, onDoors }: {
+function WhenSection({ workflow, selfId, onPrimary, onDoors, onFireLimit }: {
   workflow: WorkflowDraft;
   selfId: string;
   onPrimary: (t: WorkflowTrigger) => void;
   onDoors: (doors: ReactionDoor[]) => void;
+  onFireLimit: (n: number) => void;
 }) {
   const features = useWorkspaceFeatures();
   const wfOptions = useWorkflowOptions();
@@ -2687,7 +2902,57 @@ function WhenSection({ workflow, selfId, onPrimary, onDoors }: {
             })}
           </div>
         </AnchoredPopover>
+
+        {/* THE THROTTLE, NEVER A SHREDDER (W3b) — only where there is something to throttle: a
+            doorless workflow has no event runs to pace, so this control does not exist for it
+            (no dead chrome). The floors are the engine's; the promise is that nothing is lost. */}
+        {doors.length > 0 && (
+          <ThrottleRow limit={workflow.fireLimit} onChange={onFireLimit} />
+        )}
       </div>
+    </div>
+  );
+}
+
+// THE THROTTLE control — a stepper on a real number. The field never holds "unset": absence is the
+// platform default, and the "(default)" word is worn only while the number IS the default.
+function ThrottleRow({ limit, onChange }: { limit?: FireLimit; onChange: (n: number) => void }) {
+  const value = limit?.dailyFires ?? FIRE_LIMIT_DEFAULT;
+  const [text, setText] = useState(String(value));
+  useEffect(() => { setText(String(value)); }, [value]);
+
+  const commit = (raw: string) => {
+    const n = Number(raw.trim());
+    if (!Number.isFinite(n)) { setText(String(value)); return; }
+    onChange(n);                       // clamped by the ONE clamp, never a second range here
+  };
+  const step = (d: number) => onChange(value + d);
+
+  return (
+    <div className="mt-3 px-3 py-2.5 rounded-lg bg-neutral-50 border border-neutral-100">
+      <div className="flex items-center gap-1.5 text-[12.5px] text-neutral-700">
+        <span>Up to</span>
+        <button type="button" onClick={() => step(-1)} disabled={value <= FIRE_LIMIT_MIN}
+          title="One fewer a day"
+          className="w-6 h-6 rounded-md border border-neutral-200 bg-white text-neutral-500 hover:text-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed leading-none">−</button>
+        <input
+          type="number" inputMode="numeric" min={FIRE_LIMIT_MIN} max={FIRE_LIMIT_MAX}
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onBlur={e => commit(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') commit((e.target as HTMLInputElement).value); }}
+          aria-label="Event runs a day"
+          className="w-14 px-1.5 py-1 text-center border border-neutral-200 rounded-md text-[12.5px] bg-white outline-none focus:border-indigo-300"
+        />
+        <button type="button" onClick={() => step(1)} disabled={value >= FIRE_LIMIT_MAX}
+          title="One more a day"
+          className="w-6 h-6 rounded-md border border-neutral-200 bg-white text-neutral-500 hover:text-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed leading-none">+</button>
+        <span>event runs a day</span>
+        {limit?.isDefault && <span className="text-[11px] text-neutral-400">(default)</span>}
+      </div>
+      <p className="mt-1 text-[11.5px] text-neutral-500 leading-snug">
+        Extra ones wait for tomorrow.
+      </p>
     </div>
   );
 }

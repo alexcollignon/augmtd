@@ -1,11 +1,12 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE AUTHORING RESOLVERS — ONE HOME (THE RELAY CANVAS — law 1: ONE SCHEMA, FOUR DOORS)
 //
-// Two primitives are authored BY A MODEL through two doors each (describe-it / coworker chat):
-// the EVENT DOORS (`authorDoors`, W1) and the INPUTS TRAY (`authorInputs`, W2). Both live here so
-// the two authoring doors cannot drift from each other OR from the two primitives: one ladder
-// idiom (registry/roster → exact → unique containment → REFUSAL WITH A SPOKEN NOTE), one notes
-// channel, one "the model says NAMES, code resolves IDS" law.
+// Three primitives are authored BY A MODEL through two doors each (describe-it / coworker chat):
+// the EVENT DOORS (`authorDoors`, W1), the INPUTS TRAY (`authorInputs`, W2) and the SUBPROCESS
+// STATION (`authorSubprocessSteps`, W3). All live here so the two authoring doors cannot drift from
+// each other OR from the three primitives: one ladder idiom (registry/roster → exact → unique
+// containment → REFUSAL WITH A SPOKEN NOTE), one note channel PER PRIMITIVE, one "the model says
+// NAMES, code resolves IDS" law.
 //
 // ── THE DOORS HALF (W1) ─────────────────────────────────────────────────────────────────────────
 //
@@ -39,6 +40,7 @@ import {
   type ReactionDoor,
 } from '@/lib/workflows/trigger-sources';
 import type { WorkflowInputDoc } from '@/lib/workflows/inputs';
+import { makeStepId } from '@/lib/workflows/types';
 
 export interface AuthoredDoors {
   /** Normalized, registry-checked, resolution-complete. Empty = author no doors. */
@@ -364,4 +366,156 @@ export function describeInputs(
   if (inputs.docs.length) parts.push(inputs.docs.map((d) => d.name).join(' · '));
   if (inputs.acceptMaterial) parts.push('accepts material at run time');
   return parts.join(' · ');
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE SUBPROCESS HALF (THE RELAY CANVAS, W3 — law 5: A SUBPROCESS IS A HANDOFF TO A MACHINE)
+//
+// Describe-it and coworker chat can put one of the user's OWN processes inside this one ("triage
+// the CVs, then run my Interview process"). The model emits `{type:'workflow', workflow_name}` —
+// THE NAME, never an id, for exactly the reason the doors and the tray emit names: a model-guessed
+// uuid would mount somebody else's pipeline as this workflow's machine handoff. It also may never
+// invent a process: only one the description NAMES as already existing.
+//
+// THE LADDER (per station — every rung either yields a station or DROPS it with a spoken note):
+//   1. roster:     the caller's own workflows. Roster read failed → every station drops, said.
+//   2. name:       the SHARED resolveByName ladder (exact → unique containment → refusal), run
+//                  against the FIREABLE rows (anything not a draft — the same set checkSubprocessDoor
+//                  accepts). A miss retries against the DRAFTS only, so "it exists but it's a
+//                  draft" is its own sentence instead of "I couldn't find it".
+//   3. self:       a workflow can't contain itself (law 5's circular floor, authored-side).
+//   4. depth cap:  the resolved child may not itself contain a `workflow` step — DEPTH CAP 1,
+//                  checked here from the same read, so the refusal is spoken at authoring time
+//                  instead of at fire time (checkSubprocessDoor stays the runtime floor either way).
+//   5. ceiling:    at most MAX_SUBPROCESS stations — a draft that parks on four machines is a
+//                  pipeline nobody can follow.
+// A survivor becomes `{type:'workflow', id, label: THE CHILD'S REAL NAME, workflow_id}` — the
+// label is the roster's spelling, never the spoken rendering (the tray's law, for the same reason).
+//
+// THE NOTE CHANNEL IS ITS OWN: `needs_step_note`, a THIRD sibling beside needs_door_note and
+// needs_input_note. A field named for doors must not carry a step's refusals — a door, a document
+// and a subprocess are different primitives, each surface must be able to speak one without the
+// others, and a name that carries another primitive's speech is a name that lies.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** A pipeline that parks on more machines than this is unreadable — and each park is a real wait. */
+export const MAX_SUBPROCESS = 2;
+
+export interface AuthoredSteps {
+  /** The steps array with every `{type:'workflow'}` wish either RESOLVED or REMOVED. */
+  steps: Array<Record<string, unknown>>;
+  /** One line per DROPPED station, in the user's words — the surface speaks these. */
+  notes: string[];
+}
+
+interface ChildRow { id: string; name: string; status: string; nested: boolean }
+
+async function listSubprocessCandidates(
+  supabase: SupabaseClient, userId: string,
+): Promise<ChildRow[] | null> {
+  try {
+    const { data, error } = await supabase
+      .from('workflows')
+      .select('id, name, status, steps')
+      .eq('user_id', userId)
+      .in('status', ['active', 'paused', 'draft'])
+      .limit(200);
+    if (error) return null;
+    return ((data ?? []) as Array<{ id: string; name: string | null; status: string | null; steps: unknown }>)
+      .filter((w) => !!w.id && !!w.name)
+      .map((w) => ({
+        id: w.id,
+        name: (w.name as string).trim(),
+        status: String(w.status ?? ''),
+        // DEPTH CAP 1, read from the same query the name resolves through.
+        nested: Array.isArray(w.steps)
+          && (w.steps as Array<Record<string, unknown>>).some((s) => s && typeof s === 'object' && str(s.type) === 'workflow'),
+      }));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * THE SUBPROCESS SANITISER. `steps` is whatever the model emitted (already id/label-stamped by the
+ * caller). Every `{type:'workflow'}` entry is resolved BY NAME or dropped with a sentence; every
+ * other step passes through untouched, in order.
+ */
+export async function authorSubprocessSteps(
+  steps: Array<Record<string, unknown>>,
+  opts: {
+    supabase: SupabaseClient;
+    userId: string;
+    /** The workflow being edited — a station pointed at itself is refused. */
+    selfWorkflowId?: string | null;
+  },
+): Promise<AuthoredSteps> {
+  const notes: string[] = [];
+  const all = Array.isArray(steps) ? steps : [];
+  const wants = all.filter((s) => s && typeof s === 'object' && str(s.type) === 'workflow');
+  if (!wants.length) return { steps: all, notes };
+
+  // The roster is read ONCE, and only when a station is actually asked for.
+  const roster = await listSubprocessCandidates(opts.supabase, opts.userId);
+  if (roster === null) {
+    notes.push('I couldn\'t check your other processes, so I left the process step out — add it in Studio.');
+    return { steps: all.filter((s) => str(s.type) !== 'workflow'), notes };
+  }
+  const fireable = roster.filter((w) => w.status !== 'draft');
+  const drafts = roster.filter((w) => w.status === 'draft');
+
+  const out: Array<Record<string, unknown>> = [];
+  let seated = 0;
+  for (const s of all) {
+    if (str(s.type) !== 'workflow') { out.push(s); continue; }
+
+    const spoken = str(s.workflow_name) || str(s.label);
+    if (!spoken) {
+      notes.push('I left out a process step — name the process it should run.');
+      continue;
+    }
+    if (seated >= MAX_SUBPROCESS) {
+      notes.push(`I kept the first ${MAX_SUBPROCESS} process steps and left "${spoken}" out — add it in Studio if it belongs here.`);
+      continue;
+    }
+
+    const m = resolveByName(fireable, spoken);
+    if (!m.hit) {
+      if (m.miss === 'ambiguous') {
+        notes.push(`More than one of your processes matches "${spoken}" — pick the exact one in Studio.`);
+        continue;
+      }
+      // EXISTS BUT ISN'T FIREABLE gets its OWN sentence — "I couldn't find it" would be a lie.
+      const asDraft = resolveByName(drafts, spoken);
+      notes.push(asDraft.hit
+        ? `"${asDraft.hit.name}" is still a draft, so it can't run inside another process yet — activate it, then add the step in Studio.`
+        : `I couldn't find a process called "${spoken}" — build it first, then it can run inside this one.`);
+      continue;
+    }
+    if (opts.selfWorkflowId && m.hit.id === opts.selfWorkflowId) {
+      notes.push('A process can\'t run itself as a step — I left that one out.');
+      continue;
+    }
+    if (m.hit.nested) {
+      // DEPTH CAP 1 — spoken at authoring time, enforced again by checkSubprocessDoor at fire time.
+      notes.push(`"${m.hit.name}" already runs a process of its own, and processes only nest one level deep — I left that step out.`);
+      continue;
+    }
+
+    seated += 1;
+    out.push({
+      type: 'workflow',
+      id: str(s.id) || makeStepId(),
+      // THE CHILD'S REAL NAME — never the spoken rendering (the tray's law, same reason).
+      label: m.hit.name,
+      workflow_id: m.hit.id,
+    });
+  }
+
+  return { steps: out, notes };
+}
+
+/** One sentence for a surface that must SAY what it refused (the needs-note idiom, steps side). */
+export function stepNote(notes: string[]): string | null {
+  return notes.length ? [...new Set(notes)].join(' ') : null;
 }

@@ -6,6 +6,7 @@ import { listConnectedProviders } from '@/lib/integrations/connection';
 import { INTEGRATIONS } from '@/lib/integrations/registry';
 import { getWorkspaceFeatures } from '@/lib/workspace/features';
 import { authorDoors, renderDoorCatalogue, doorNote } from '@/lib/workflows/author-doors';
+import { clampFireLimit, fireLimitClampNote, FIRE_LIMIT_MIN, FIRE_LIMIT_MAX } from '@/lib/workflows/fire-limit';
 import type { ReactionDoor } from '@/lib/workflows/trigger-sources';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -41,6 +42,15 @@ export interface GeneratedWorkflowConfig {
    *  primitives, each surface must be able to speak one without the other, and a field named for
    *  doors carrying document refusals is a name that lies. */
   needs_input_note?: string | null;
+  /** THE UNRESOLVED-PROCESS NOTE (relay canvas W3, law 5) — a subprocess station the description
+   *  named that code refused (no such process, ambiguous, still a draft, or one that already nests
+   *  a process of its own). A THIRD sibling channel: a field named for doors must not carry a
+   *  step's refusals, any more than it carries a document's. */
+  needs_step_note?: string | null;
+  /** THE THROTTLE (relay canvas W3b) — how many EVENT RUNS a day this work may start, when the
+   *  description states a pace ("at most 3 a day"). `null` = unsaid, which means the platform
+   *  default; a number here is already clamped to the engine's floors. */
+  fire_limit?: number | null;
 }
 
 const SYSTEM = `You are a workflow pipeline architect for a business automation platform. Given a plain-language description, generate a complete, production-quality workflow as a JSON object.
@@ -53,6 +63,7 @@ JSON shape:
   "description": "One sentence — what this produces",
   "trigger": { "type": "manual" },
   "triggers": [],
+  "fire_limit": null,
   "input_doc_names": [],
   "steps": [],
   "output_config": { "destination": "message", "report_mode": "each_run" },
@@ -94,6 +105,11 @@ RULES for doors:
   work FROM that event (summarize, enrich, compare, respond, produce), never re-fetch broad
   news/feeds the event doesn't call for.
 - Only emit a door the request actually asks for. Silence about how work starts means [].
+
+"fire_limit" is how many EVENT RUNS a day this work may START. Set it ONLY when the request states
+a pace ("at most 3 a day", "no more than a couple per day", "max 10 applications daily"): give the
+number (${FIRE_LIMIT_MIN}–${FIRE_LIMIT_MAX}). Silence means null — the platform default applies.
+Never use it to say "stop after N" — extra events are not dropped, they WAIT for the next day.
 
 ━━━ INPUTS (reference material) ━━━
 
@@ -151,6 +167,17 @@ NEVER emit "assignee_user_id" — you give the NAME exactly as the request says 
 resolves it to the real person. Inventing an id or an email is always wrong.
 "sla_hours" ONLY when the request states urgency or a deadline ("within a day", "by Friday",
 "chase them after 48h"); omit it otherwise.
+
+Process step — A NAMED PROCESS THE USER ALREADY OWNS runs inside this one, delivering its output
+to the next step (the run waits at this station until that process finishes):
+{ "type": "workflow", "id": "step_006", "label": "Run the interview process", "workflow_name": "<the process's name AS THE REQUEST NAMES IT>" }
+NEVER emit "workflow_id" — you give the NAME exactly as the request says it; the system resolves
+it to the user's real process. Inventing an id is always wrong.
+RULE: emit this step ONLY when the request NAMES a process the user already runs ("then run my
+Interview process", "hand it to the onboarding pipeline", "kick off my weekly report task").
+Never invent a process, and never use it for work THIS pipeline's own steps should simply do —
+if you would have to describe what the named process does, it isn't one that exists.
+At most a couple of process steps in one workflow, and never one pointing at this workflow itself.
 
 THE APPROVAL-VS-HANDOFF RULE (decide by WHO reviews):
 - The USER THEMSELF reviews/approves ("send it to me for approval", "let me check first",
@@ -377,6 +404,23 @@ export async function generateWorkflowConfig(
     }
   }
 
+  // ── THE SUBPROCESS STATIONS (relay canvas W3, law 5) — the model named PROCESSES; the ONE
+  // resolver turns each name into one of the user's own workflows (or refuses it out loud: no such
+  // process, ambiguous, still a draft, already nests one of its own, itself). Same failure
+  // discipline as the doors and the tray: a resolver outage costs the stations, never the draft.
+  let needsStepNote: string | null = null;
+  if (steps.some((s) => s.type === 'workflow')) {
+    try {
+      const { authorSubprocessSteps, stepNote } = await import('@/lib/workflows/author-doors');
+      const authored = await authorSubprocessSteps(steps, { supabase, userId });
+      steps = authored.steps;
+      needsStepNote = stepNote(authored.notes);
+    } catch {
+      steps = steps.filter((s) => s.type !== 'workflow');
+      needsStepNote = 'I couldn\'t check your other processes, so I left the process step out — add it in Studio.';
+    }
+  }
+
   // ── THE EVENT DOORS (relay canvas W1, law 1) — the model's doors are WISHES; the ONE sanitiser
   // decides what can be stored (registry-checked, feature-checked, workflow names resolved to the
   // user's own ids, a second schedule refused). Anything dropped is SAID, never silently lost.
@@ -391,6 +435,23 @@ export async function generateWorkflowConfig(
   } catch {
     // A sanitiser failure must never lose the draft — the pipeline stands, on-demand only.
     doors = [];
+  }
+
+  // ── THE THROTTLE (relay canvas W3b) — a stated pace becomes a real number, CLAMPED CODE-SIDE.
+  // THE NOTE CHANNEL IS `needs_door_note` ON PURPOSE: this number is trigger-side config — it
+  // paces EVENT RUNS, it exists only where doors do, and the card already speaks the doors in that
+  // same block. A fourth sibling channel would split one sentence about how the work starts across
+  // two boxes. (The tray and the subprocess stations are DIFFERENT primitives — hence their own.)
+  let fireLimit: number | null = null;
+  if (generated.fire_limit !== undefined && generated.fire_limit !== null && generated.fire_limit !== '') {
+    const { value, clamped } = clampFireLimit(generated.fire_limit);
+    fireLimit = value;
+    if (clamped) {
+      needsDoorNote = doorNote([
+        ...(needsDoorNote ? [needsDoorNote] : []),
+        fireLimitClampNote(generated.fire_limit, value),
+      ]);
+    }
   }
 
   // ── THE INPUTS TRAY (relay canvas W2, law 7) — the model spoke NAMES; the ONE resolver turns
@@ -436,5 +497,7 @@ export async function generateWorkflowConfig(
     needs_door_note: needsDoorNote,
     inputs,
     needs_input_note: needsInputNote,
+    needs_step_note: needsStepNote,
+    fire_limit: fireLimit,
   };
 }

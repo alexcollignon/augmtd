@@ -14,7 +14,10 @@
 //     approval door, and appears only while someone ELSE holds the waiting gate. REASSIGN (B2) is
 //     its own deed too — the per-run gate moves to another workspace member (the workflow's authored
 //     step never mutates). It renders exactly where Nudge does (owner-side, on a handoff someone
-//     else holds) — never a disabled ghost anywhere else.
+//     else holds) — never a disabled ghost anywhere else. THE ⧉ STATION (relay canvas W3) joins the
+//     same numbered walk as a MACHINE gate: a subprocess is running, nobody can approve it and
+//     nobody can be nudged for it — the child's own delivery resumes the run — so it carries a door
+//     into the child and no human verbs at all.
 //   · Log — the RunAudit receipts (steps · durations · outputs · gate verdicts) re-seated.
 //
 // NOTES ON THIS PROCESS (mockup-fidelity wave): the run has ONE conversation — the `run:<runId>`
@@ -307,17 +310,20 @@ export default function ProcessDrawer({
   const awaitingApproval = iHoldIt && !decided;
   const heldByOther = process.state === 'waiting_on_others';
 
-  // ── THE HUMAN-GATE LIST — derived, never stored: every approval/handoff step of the workflow,
-  // numbered in pipeline order; the run's step-output count says how far it got. ──
-  const humanGates = (steps ?? [])
+  // ── THE STATION LIST — derived, never stored: every station the run passes through, numbered in
+  // pipeline order; the run's step-output count says how far it got. Two families, one walk:
+  // HUMAN gates (approval/handoff — a person decides) and the MACHINE gate (relay canvas W3: a
+  // subprocess — another workflow is running and will resume this one itself). They share the
+  // numbering and the done/waiting/upcoming reading; they share NO verbs. ──
+  const stations = (steps ?? [])
     .map((s, i) => ({ s, i }))
-    .filter(({ s }) => s.type === 'approval' || s.type === 'handoff');
+    .filter(({ s }) => s.type === 'approval' || s.type === 'handoff' || s.type === 'workflow');
   const waitingIdx = parked ? process.stepsDone : -1;
   const gateStatus = (i: number): 'done' | 'waiting' | 'upcoming' =>
     i < process.stepsDone ? 'done' : i === waitingIdx ? (decided ? 'done' : 'waiting') : 'upcoming';
   // A blocked-verify hold parks on the OWNER even when the next step is someone else's gate —
   // in that case no gate is "waiting" and the generic card below carries the ask honestly.
-  const listCoversTheWait = !parked || humanGates.some(({ i }) => i === waitingIdx);
+  const listCoversTheWait = !parked || stations.some(({ i }) => i === waitingIdx);
 
   if (typeof document === 'undefined') return null;
 
@@ -362,10 +368,23 @@ export default function ProcessDrawer({
                 <div className="text-[12px] text-neutral-400">Loading this process&apos;s people…</div>
               )}
 
-              {humanGates.length > 0 && (
+              {stations.length > 0 && (
                 <div className="space-y-2">
-                  {humanGates.map(({ s, i }, n) => {
+                  {stations.map(({ s, i }, n) => {
                     const status = gateStatus(i);
+                    // THE MACHINE GATE — a subprocess is not a person: it wears the same number and
+                    // the same done/waiting/upcoming reading, and NONE of the human verbs.
+                    if (s.type === 'workflow') {
+                      return (
+                        <SubprocessStation
+                          key={s.id}
+                          n={n}
+                          step={s}
+                          status={status}
+                          waitingSince={process.startedAt}
+                        />
+                      );
+                    }
                     const isHandoff = s.type === 'handoff';
                     const h = isHandoff ? (s as HandoffStep) : null;
                     const holder = isHandoff ? (h?.assignee_name ?? 'A teammate') : 'Your approval';
@@ -544,7 +563,7 @@ export default function ProcessDrawer({
                 </div>
               )}
 
-              {steps !== undefined && humanGates.length === 0 && !awaitingApproval && !failed && !decided && (
+              {steps !== undefined && stations.length === 0 && !awaitingApproval && !failed && !decided && (
                 <div className="text-[13px] text-neutral-500">
                   No handoffs on this process — it runs start to finish.
                 </div>
@@ -563,6 +582,54 @@ export default function ProcessDrawer({
       </aside>
     </>,
     document.body,
+  );
+}
+
+// ── THE SUBPROCESS STATION (relay canvas W3, law 5) — the run is parked on a MACHINE, not on a
+// person. It carries no Approve, no Reject, no Nudge and no Reassign: nobody can decide it and
+// nobody can be chased for it — the child's own delivery resumes this run. There is nothing being
+// approved here either, so the gate's object never mounts. What it owes the reader is exactly two
+// things: that another workflow is running inside this one, and a quiet door into it.
+type SubprocessStepLike = Extract<WorkflowStep, { type: 'workflow' }>;
+
+function SubprocessStation({ n, step, status, waitingSince }: {
+  n: number;
+  step: SubprocessStepLike;
+  status: 'done' | 'waiting' | 'upcoming';
+  waitingSince: string;
+}) {
+  const name = (step.label ?? '').trim() || 'A process';
+  const waiting = status === 'waiting';
+  return (
+    <div className={`rounded-xl border px-4 py-3.5 ${waiting ? 'border-violet-200 bg-violet-50/60' : 'border-neutral-200 bg-white'}`}>
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-semibold tabular-nums text-neutral-400">{String(n + 1).padStart(2, '0')}</span>
+        <span className={`text-[13px] font-medium ${status === 'done' ? 'text-neutral-500' : 'text-neutral-800'}`}>
+          ⧉ {name}
+        </span>
+        {waiting && <Badge tone="indigo">Running</Badge>}
+        {status === 'done' && <span className="text-[12px] text-emerald-600">✓</span>}
+        <span className="flex-1" />
+        <span className="text-[12px] text-neutral-400">
+          {waiting ? sinceWord(waitingSince) : status === 'upcoming' ? 'Upcoming' : 'Delivered'}
+        </span>
+      </div>
+      <div className={`mt-1 text-[12.5px] ${waiting ? 'text-neutral-600' : 'text-neutral-400'}`}>
+        {waiting
+          ? `${name} is running inside this process — waiting on it to deliver.`
+          : status === 'done'
+            ? 'Delivered — this process picked up where it stopped.'
+            : 'Its own workflow — it will run inside this one.'}
+      </div>
+      {step.workflow_id && (
+        <a
+          href={`/workflows/${step.workflow_id}`}
+          className="mt-2 inline-block text-[12px] text-neutral-500 transition-colors hover:text-violet-700"
+        >
+          Open {name} →
+        </a>
+      )}
+    </div>
   );
 }
 

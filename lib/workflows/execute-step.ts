@@ -67,6 +67,9 @@ export async function executeStep(step: WorkflowStep, ctx: StepContext): Promise
       // harmlessly, never park.
       case 'approval': output = '[Approval gate — handled by the run loop]'; break;
       case 'handoff': output = '[Handoff gate — handled by the run loop]'; break;
+      // The SUBPROCESS station is a park too (relay canvas W3) — the run loop fires the child and
+      // resumes on its delivery. Reaching the dispatcher means a caller bypassed the loop.
+      case 'workflow': output = '[Process station — handled by the run loop]'; break;
       // The verify gate speaks TWICE: the corrected draft (a plain string, so every downstream
       // consumer is untouched) and its structured verdict, attached beside the output here.
       case 'verify': {

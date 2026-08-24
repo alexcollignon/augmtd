@@ -9,6 +9,7 @@ import { createClient } from '@/lib/supabase/server';
 import { normalizeOutput } from '@/lib/workflows/types';
 import type { OutputConfig, WorkflowStep, WorkflowTrigger } from '@/lib/workflows/types';
 import { requireFeature, handleWorkspaceError } from '@/lib/workspace/require-feature';
+import { DEFAULT_FIRE_LIMIT } from '@/lib/workflows/fire-limit';
 
 export const maxDuration = 30;
 
@@ -88,7 +89,7 @@ export async function GET() {
   }
   const overrideKeys = [...stepIdByRun.entries()].map(([runId, stepId]) => `${runId}:${stepId}`);
 
-  const [ownersOut, agentsOut, thsOut, ovsOut, teamOut, featuresOut, doorsOut, materialWfIds] = await Promise.all([
+  const [ownersOut, agentsOut, thsOut, ovsOut, teamOut, featuresOut, doorsOut, materialWfIds, limitsOut] = await Promise.all([
     // The accountability owner (B2) — served ONLY when explicitly assigned; failure = no names.
     (async () => {
       try {
@@ -159,6 +160,17 @@ export async function GET() {
           .filter((r) => r.tasks?.acceptMaterial === true).map((r) => r.entity_id));
       } catch { return new Set(); }
     })(),
+    // THE THROTTLE (relay canvas W3b) — the per-workflow daily event-run limit, batched for the
+    // whole ledger and riding THIS flight (no new sequential round-trip). Absent row = the default,
+    // which readFireLimits already fills in, so every row serves a real number.
+    (async () => {
+      try {
+        const { readFireLimits } = await import('@/lib/workflows/fire-limit');
+        return await readFireLimits(supabase, user.id, wfs.map((w) => w.id));
+      } catch {
+        return new Map(wfs.map((w) => [w.id, { ...DEFAULT_FIRE_LIMIT }]));
+      }
+    })(),
   ]);
 
   const ownerNames = new Map<string, string>();
@@ -170,7 +182,13 @@ export async function GET() {
 
   // Awaiting approval — the debt leads. The gate's instruction comes from the workflow's own
   // approval step at the parked boundary (step_outputs.length = the index it parked at).
-  const awaiting = runs.filter(r => r.status === 'awaiting_approval').map(r => {
+  // NO LYING DOOR (relay canvas W3): a ⧉ SUBPROCESS park wears the same `awaiting_approval` status
+  // but asks the human for NOTHING — it waits on a machine. It never joins the approval debt (an
+  // Approve/Reject row for a wait nobody holds); it lives in `processes` as waiting_on_others.
+  const awaiting = runs.filter(r => r.status === 'awaiting_approval').filter(r => {
+    const steps = (wfById.get(r.workflow_id)?.steps ?? []) as Array<{ type?: string }>;
+    return steps[(r.step_outputs ?? []).length]?.type !== 'workflow';
+  }).map(r => {
     const wf = wfById.get(r.workflow_id);
     const steps = (wf?.steps ?? []) as Array<{ type?: string; instruction?: string; label?: string }>;
     const gate = steps[(r.step_outputs ?? []).length];
@@ -210,8 +228,11 @@ export async function GET() {
       doors: doorsForServing({ trigger: trig, triggers: doorsOut.get(w.id) }),
       // The run door's one fact (W2): whether Run now should offer the material sheet here.
       inputs: { acceptMaterial: materialWfIds.has(w.id) },
+      // How many event runs this workflow may START in a day; extra matched events queue for the
+      // drain rather than being lost (W3b — the throttle, never a shredder).
+      fireLimit: limitsOut.get(w.id) ?? { ...DEFAULT_FIRE_LIMIT },
       readiness: readinessOf(
-        { status: w.status, trigger: trig, triggers: doorsOut.get(w.id), steps: w.steps ?? [] },
+        { id: w.id, status: w.status, trigger: trig, triggers: doorsOut.get(w.id), steps: w.steps ?? [] },
         featuresOut,
       ),
       workerName: w.agent_id ? (agentNames.get(w.agent_id) ?? null) : null,

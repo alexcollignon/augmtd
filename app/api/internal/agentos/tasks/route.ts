@@ -82,6 +82,9 @@ export async function POST(request: NextRequest) {
           args.skill_names as string[] | string | undefined, args.trigger_doors,
           args.input_doc_names,
           typeof args.input_accept_material === 'boolean' ? args.input_accept_material : undefined,
+          // THE THROTTLE (relay canvas W3b) rides the same way — the executor clamps and says so.
+          // (update_task's `daily_run_limit` already rides the `args as never` pass below.)
+          args.daily_run_limit,
         );
         break;
 

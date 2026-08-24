@@ -28,6 +28,20 @@
 // and the documented degradation (silent no-op, legacy-mail-only) is asserted natively. Every
 // section prints which mode it ran in.
 //
+// W3 (its own banner further down): SP the subprocess station · RL René's loop.
+// W3b (THE THROTTLE, NEVER A SHREDDER): TL the clamp + the store · TD live deferral · TR the drain
+// and its atomic claim · TB the drain/backstop partition · TS the serving + parity floors.
+//
+// ⚠️ THE HARNESS LESSON (W3b — the root of a whole red suite, recorded so it cannot recur):
+// AN IN-PROCESS ENV FENCE PLUS A MODULE-LEVEL CLIENT CACHE IS A POISONED PROCESS. This suite used
+// to delete the provider keys from its OWN process to prove a structural path spends nothing. Once
+// the throttle moved BEHIND the judge (W3b), section F began crossing judgeCandidates while the
+// fence was up — and `lib/ai/factory`'s module-level clientCache memoised the KEYLESS client for
+// the rest of the run, so every later live AI gate 401'd. Restoring the keys afterwards cannot
+// help: the cache is keyed on the user, not the env. THE RULE: a fence lives in a CHILD PROCESS
+// with poisoned env (the frames suite's L3 pattern), or the fixtures are refitted so no judge is
+// ever reached. Never `delete process.env[...]` in a suite that will later call AI.
+//
 // Run: npx tsx --env-file=.env.local scripts/smoke-relay.ts
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { readFileSync } from 'fs';
@@ -373,15 +387,11 @@ async function main() {
   const FPFX = `Probe relay fire ${stamp}`;
   const fireIds: string[] = [];
   const capKeys: string[] = [];
-  // THE AI FENCE: the `workflow` source is STRUCTURAL. With the provider keys removed from the
-  // process, ANY judged path can only return zero matches — so a fire here PROVES no judge ran.
-  const savedKeys: Record<string, string | undefined> = {};
-  const fenceAI = () => {
-    for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'AWS_BEDROCK_ACCESS_KEY_ID', 'AWS_BEDROCK_SECRET_ACCESS_KEY']) {
-      savedKeys[k] = process.env[k]; delete process.env[k];
-    }
-  };
-  const unfenceAI = () => { for (const [k, v] of Object.entries(savedKeys)) if (v !== undefined) process.env[k] = v; };
+  // ⚠️ THE AI FENCE LIVES IN A CHILD PROCESS — see THE HARNESS LESSON at the top of this file.
+  // It is applied below to the ONE gate that needs it (the structural door's zero-AI proof).
+  // Nothing in THIS process ever loses its keys.
+  let fenceScript: string | null = null;
+  const limitKeys: string[] = [];
 
   try {
     const mkWf = async (name: string, doors: ReactionDoor[] | null) => {
@@ -419,14 +429,20 @@ async function main() {
     const fixtureRow = (id: string | null, doors: ReactionDoor[]) =>
       ({ id, name: 'fixture', trigger: { type: 'manual' }, triggers: doors });
 
-    /** Seed the honest DAILY CAP so a candidate is COUNTED but never judged — the token gates below
-     *  are then fully deterministic and spend nothing. */
-    const seedCap = async (wfId: string) => {
-      for (let i = 0; i < 5; i++) {
-        const key = `${wfId}:cap:${stamp}-${i}`;
-        capKeys.push(key);
-        await admin.from('item_plans').insert({ user_id: userId, kind: 'reaction_fire', entity_id: key, tasks: { runId: null, reason: 'cap seed' } });
-      }
+    /** Put a workflow AT its throttle (W3b): a limit of 1 plus one already-STARTED fire record.
+     *  Whatever the judge decides below, nothing can START — so the token gates never depend on a
+     *  model's verdict, and the section starts no runs it would then have to reason about. */
+    const seedAtLimit = async (wfId: string) => {
+      limitKeys.push(wfId);
+      await admin.from('item_plans').insert({
+        user_id: userId, kind: 'workflow_limit', entity_id: wfId, tasks: { dailyFires: 1 },
+      });
+      const key = `${wfId}:seed:${stamp}`;
+      capKeys.push(key);
+      await admin.from('item_plans').insert({
+        user_id: userId, kind: 'reaction_fire', entity_id: key,
+        tasks: { runId: null, reason: 'throttle seed', startedAt: new Date().toISOString() },
+      });
     };
     const seedFire = async (key: string) => {
       capKeys.push(key);
@@ -436,8 +452,6 @@ async function main() {
       const { data } = await admin.from('workflow_runs').select('id, triggered_by').eq('workflow_id', wfId);
       return (data ?? []) as Array<{ id: string; triggered_by: string }>;
     };
-
-    fenceAI();
 
     // ── THE STRUCTURAL DOOR, once per available mode ──────────────────────────────────────────
     const modes: Array<{ tag: string; client: SupabaseClient }> = [];
@@ -461,8 +475,8 @@ async function main() {
       const r1 = await checkSourceReactions(mode.client, userId, 'workflow',
         [{ id: evA, sourceId: upId!, title: `${FPFX} upstream`, gist: 'the upstream delivered' }]);
       ok('an upstream delivery FIRES the bound workflow', r1?.fired === 1, JSON.stringify(r1));
-      ok('…with the AI provider keys REMOVED — a judged path could not have matched (structural, proven)',
-        r1?.fired === 1);
+      ok('…and it STARTED (the throttle is nowhere near its floor on a fresh fixture)',
+        r1?.fired === 1 && (r1?.deferred ?? 0) === 0, JSON.stringify(r1));
       {
         const { data: rec } = await admin.from('item_plans').select('entity_id, tasks')
           .eq('user_id', userId).eq('kind', 'reaction_fire').eq('entity_id', `${boundId}:workflow:${evA}`).maybeSingle();
@@ -494,7 +508,55 @@ async function main() {
       capKeys.push(`${boundId}:workflow:${evC}`);
     }
 
-    // ── THE SOURCE TOKENS (deterministic through the honest daily cap — zero AI) ────────────────
+    // ── THE ZERO-AI PROOF, IN A CHILD PROCESS ─────────────────────────────────────────────────
+    // The `workflow` source is STRUCTURAL: no judge is in its path. The proof is a fire with the
+    // provider keys POISONED — but the poison must never touch THIS process (the harness lesson at
+    // the top of the file), so it is applied to a fresh process's env before a single app module
+    // loads. The parent then reads the fire's real record out of the real table.
+    if (HAS_COLUMN && boundId && upId) {
+      console.log('\nF — THE STRUCTURAL DOOR IS ZERO-AI [mode: child process, poisoned env]:');
+      const { execSync } = await import('node:child_process');
+      const fs = await import('node:fs/promises');
+      const evZ = randomUUID();
+      capKeys.push(`${boundId}:workflow:${evZ}`);
+      fenceScript = 'scripts/.smoke-relay-zeroai.tmp.ts';
+      await fs.writeFile(fenceScript, [
+        `// TEMPORARY child of scripts/smoke-relay.ts (F). Deleted by the parent's finally block.`,
+        `for (const k of ['ANTHROPIC_API_KEY','OPENAI_API_KEY','AWS_BEDROCK_ACCESS_KEY_ID','AWS_BEDROCK_SECRET_ACCESS_KEY','AZURE_OPENAI_API_KEY']) {`,
+        `  delete process.env[k];`,
+        `}`,
+        `import { createClient } from '@supabase/supabase-js';`,
+        `import { checkSourceReactions } from '@/lib/workflows/reactions';`,
+        `(async () => {`,
+        `  const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);`,
+        `  const r = await checkSourceReactions(admin, ${JSON.stringify(userId)}, 'workflow', [{`,
+        `    id: ${JSON.stringify(evZ)}, sourceId: ${JSON.stringify(upId)},`,
+        `    title: 'probe upstream', gist: 'the upstream delivered',`,
+        `  }]);`,
+        `  console.log('__RELAY_ZEROAI__' + JSON.stringify(r ?? {}));`,
+        `})().catch((e) => { console.log('__RELAY_ZEROAI__' + JSON.stringify({ threw: String(e && e.message || e) })); });`,
+      ].join('\n'), 'utf8');
+
+      let child: { fired?: number; deferred?: number; considered?: number; threw?: string } = {};
+      try {
+        const raw = execSync(`npx tsx --env-file=.env.local ${fenceScript}`, {
+          cwd: process.cwd(), encoding: 'utf8', timeout: 240_000, stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        const line = raw.split('\n').find((l) => l.includes('__RELAY_ZEROAI__'));
+        child = line ? JSON.parse(line.slice(line.indexOf('__RELAY_ZEROAI__') + '__RELAY_ZEROAI__'.length)) : {};
+      } catch (e) {
+        child = { threw: `child process failed: ${(e as Error).message.slice(0, 200)}` };
+      }
+      ok('WITH EVERY PROVIDER KEY REMOVED the upstream delivery still FIRES (a judged path could not have matched)',
+        !child.threw && child.fired === 1, child.threw ?? JSON.stringify(child));
+      const { data: zrec } = await admin.from('item_plans').select('tasks')
+        .eq('user_id', userId).eq('kind', 'reaction_fire').eq('entity_id', `${boundId}:workflow:${evZ}`).maybeSingle();
+      ok('…leaving a real fire record whose reason is the ENGINE\'s own words, never a model\'s',
+        (zrec?.tasks as { reason?: string } | undefined)?.reason === 'the upstream workflow delivered',
+        String((zrec?.tasks as { reason?: string } | undefined)?.reason));
+    }
+
+    // ── THE SOURCE TOKENS (deterministic: the fixtures sit AT their throttle) ───────────────────
     const tokenMode = HAS_COLUMN ? 'live (stored triggers)' : 'fixture-proxy (migration-absent pattern)';
     console.log(`\nF — THE SOURCE TOKENS (exactly-once keys) [mode: ${tokenMode} · mail: live legacy]:`);
     const tokenClient = HAS_COLUMN ? admin : doorProxy(admin, (cols) => ({
@@ -504,7 +566,7 @@ async function main() {
         : [],
       error: null,
     }));
-    for (const id of [fileId, meetId, mailId]) if (id) await seedCap(id);
+    for (const id of [fileId, meetId, mailId]) if (id) await seedAtLimit(id);
 
     for (const [source, wfId, token, client] of [
       ['file', fileId, 'file', tokenClient],
@@ -512,9 +574,17 @@ async function main() {
       ['mail', mailId, 'inbox', admin],
     ] as Array<['file' | 'meeting' | 'mail', string, string, SupabaseClient]>) {
       const fresh = randomUUID(), seeded = randomUUID(), wrong = randomUUID();
+      const runsBeforeToken = (await runsOf(wfId)).filter(r => r.triggered_by === 'event').length;
       const rFresh = await checkSourceReactions(client, userId, source, [{ id: fresh, title: 'probe', gist: 'probe event' }]);
-      ok(`${source}: the door is DISCOVERED and the event considered (capped, never judged)`,
-        rFresh?.considered === 1 && rFresh?.capped === 1 && rFresh?.fired === 0, JSON.stringify(rFresh));
+      // THE TOKEN LAW is a PRE-JUDGE fact: discovery and candidacy are decided by the exactly-once
+      // key alone. The fixture sits AT its throttle, so whatever the judge says, nothing STARTS —
+      // the assertion never rides a model's verdict.
+      ok(`${source}: the door is DISCOVERED and the event considered (the exactly-once key is fresh)`,
+        rFresh?.considered === 1 && rFresh?.fired === 0, JSON.stringify(rFresh));
+      ok(`${source}: …and AT THE THROTTLE nothing started — a matched event would only be queued`,
+        (await runsOf(wfId)).filter(r => r.triggered_by === 'event').length
+          === runsBeforeToken + (rFresh?.deferred ?? 0),
+        `${(await runsOf(wfId)).length} runs · deferred ${rFresh?.deferred}`);
 
       await seedFire(`${wfId}:${token}:${seeded}`);
       const rSeeded = await checkSourceReactions(client, userId, source, [{ id: seeded, title: 'probe', gist: 'probe event' }]);
@@ -542,24 +612,37 @@ async function main() {
         ? { data: null, error: { code: '42703', message: 'column workflows.triggers does not exist' } }
         : { data: [{ id: mailId, name: `${FPFX} legacy mail`, trigger: { type: 'reaction', when: 'it is a probe email' } }], error: null }));
 
+      // THE NEW-DOOR HALF is where "zero runs" is the law: the three new sources must not exist at
+      // all before the migration. (The mail half below is scoped separately — the legacy door IS
+      // discovered there, and a discovered door is allowed to queue.)
       const runsBefore = (await admin.from('workflow_runs').select('id').in('workflow_id', fireIds)).data?.length ?? 0;
       for (const source of ['file', 'meeting', 'workflow'] as const) {
         const r = await checkSourceReactions(degraded, userId, source,
           [{ id: randomUUID(), sourceId: upId!, title: 'probe', gist: 'probe event' }]);
         ok(`${source}: a NEW door is a SILENT no-op before the migration (no throw, no fire)`, r === null, JSON.stringify(r));
       }
+      const runsAfter = (await admin.from('workflow_runs').select('id').in('workflow_id', fireIds)).data?.length ?? 0;
+      ok('…and the degraded NEW-DOOR pass created ZERO runs', runsAfter === runsBefore, `${runsBefore} → ${runsAfter}`);
+
       const rMail = await checkSourceReactions(degraded, userId, 'mail', [{ id: randomUUID(), title: 'probe', gist: 'probe event' }]);
       ok('mail: the LEGACY reaction is still discovered through the fallback (behaviour preserved)',
-        rMail?.considered === 1 && rMail?.capped === 1, JSON.stringify(rMail));
-      const runsAfter = (await admin.from('workflow_runs').select('id').in('workflow_id', fireIds)).data?.length ?? 0;
-      ok('…and the degraded pass created ZERO runs', runsAfter === runsBefore, `${runsBefore} → ${runsAfter}`);
+        rMail?.considered === 1, JSON.stringify(rMail));
+      ok('…and it STARTS nothing — the legacy fixture is at its throttle, so a match could only queue',
+        (rMail?.fired ?? 0) === 0, JSON.stringify(rMail));
     }
   } finally {
-    unfenceAI();
+    if (fenceScript) {
+      const fs = await import('node:fs/promises');
+      await fs.rm(fenceScript, { force: true });
+      ok('the zero-AI child script is removed', !(await fs.stat(fenceScript).then(() => true).catch(() => false)));
+    }
     for (const id of fireIds) {
       await admin.from('workflow_runs').delete().eq('workflow_id', id);
       await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', 'reaction_fire').like('entity_id', `${id}:%`);
       await admin.from('workflows').delete().eq('id', id);
+    }
+    for (const id of limitKeys) {
+      await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', 'workflow_limit').eq('entity_id', id);
     }
     for (const k of capKeys) await admin.from('item_plans').delete().eq('user_id', userId).eq('entity_id', k);
     const { data: leftWf } = await admin.from('workflows').select('id').eq('user_id', userId).like('name', `${FPFX}%`);
@@ -567,9 +650,12 @@ async function main() {
       .in('workflow_id', fireIds.length ? fireIds : ['00000000-0000-0000-0000-000000000000']);
     const { data: leftFires } = await admin.from('item_plans').select('id')
       .eq('user_id', userId).eq('kind', 'reaction_fire').gte('created_at', new Date(stamp - 60_000).toISOString());
-    ok('F probe leftovers are ZERO (workflows · runs · fire records)',
-      (leftWf ?? []).length === 0 && (leftRuns ?? []).length === 0 && (leftFires ?? []).length === 0,
-      `${(leftWf ?? []).length}/${(leftRuns ?? []).length}/${(leftFires ?? []).length}`);
+    const { data: leftLimits } = await admin.from('item_plans').select('id')
+      .eq('user_id', userId).eq('kind', 'workflow_limit').gte('created_at', new Date(stamp - 60_000).toISOString());
+    ok('F probe leftovers are ZERO (workflows · runs · fire records · limit rows)',
+      (leftWf ?? []).length === 0 && (leftRuns ?? []).length === 0
+      && (leftFires ?? []).length === 0 && (leftLimits ?? []).length === 0,
+      `${(leftWf ?? []).length}/${(leftRuns ?? []).length}/${(leftFires ?? []).length}/${(leftLimits ?? []).length}`);
   }
 
   // ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -1263,6 +1349,1169 @@ async function main() {
     ok('W2 probe leftovers are ZERO (workflows · knowledge files · tray rows)',
       (leftWf ?? []).length === 0 && (leftKb ?? []).length === 0 && (leftTray ?? []).length === 0,
       `${(leftWf ?? []).length}/${(leftKb ?? []).length}/${(leftTray ?? []).length}`);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  // ██ W3 — THE SUBPROCESS STATION (docs/relay-canvas-plan.md, law 5:
+  //         "A SUBPROCESS IS A HANDOFF TO A MACHINE") ██
+  //
+  //   SP  THE STATION LIVES — real parent/child runs on the probe host: the park at the ⧉ station,
+  //       the insert-first claim carrying THE BATON, the child fired exactly once, the resume that
+  //       passes NO human gate, the atomic claim that fences a second completion, the honest
+  //       failure, test mode's stand-in, the three door refusals VERBATIM, the stranded-park sweep,
+  //       and THE STALE-CHILD BATON (a re-fired child carries the link row's stored context).
+  //   RL  RENÉ'S LOOP — two linear pipelines composing into a CYCLE with no loop engine: A parks on
+  //       B, B's delivery both RESUMES A and fires A's "when another workflow delivers" door.
+  //       ⚠️ THE CEILING IS THE THROTTLE, NOT A CYCLE DETECTOR — asserted live (W3b: at the limit
+  //       the next lap is RECORDED and QUEUED, never dropped).
+  //   SF  SOURCE FLOORS — the machine gate carries NO human verbs, the ledger's approval debt
+  //       excludes it, the resume route 409s it with its sentence, resumeSeeded passes no gate,
+  //       readiness rules 6–7 (and 1–5 untouched), the parked-gate precedence, ONE name ladder,
+  //       the fireable-set alignment, needs_step_note as a THIRD sibling, and Studio's honest
+  //       exclusions.
+  //
+  // W1's and W2's sections above are untouched — a wave adds its floor, it never edits the
+  // previous wave's.
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  const {
+    resumeParentsOf, sweepStrandedSubprocessParks, checkSubprocessDoor, testModeSubprocessOutput,
+    subprocessRefusal, subprocessFailure, batonFor, linkEntityId, SUBPROCESS_LINK_KIND,
+  } = await import('../lib/workflows/subprocess');
+  const { parkedGateOf, deriveProcessRows } = await import('../lib/workflows/process-state');
+  const { authorSubprocessSteps, stepNote, MAX_SUBPROCESS } = await import('../lib/workflows/author-doors');
+  const { runWorkflow: runWf } = await import('../lib/workflows/run-workflow');
+  const { refireStaleEventRuns } = await import('../lib/workflows/reactions');
+
+  const WPFX = `Probe relay W3 ${stamp}`;
+  const w3WfIds: string[] = [];
+  const w3Start = new Date(Date.now() - 10_000).toISOString();
+  /** Code words: the ONLY honest way to prove a payload actually travelled a seam. */
+  const CHILD_WORD = 'LUMENFALL';   // the child's deliverable
+  const SWEEP_WORD = 'GLASSWEIR';   // a stranded child's stored output
+  const BATON_WORD = 'THORNGLASS';  // the baton a stale child must be re-fired with
+
+  type W3Out = { step_id: string; step_type: string; label: string; output: unknown; error?: string };
+  type W3Run = {
+    id: string; workflow_id: string; status: string; error: string | null;
+    step_outputs: W3Out[] | null; triggered_by: string | null;
+    started_at: string | null; completed_at: string | null; created_at: string;
+  };
+
+  const aiStep = (id: string, label: string, prompt: string) =>
+    ({ id, type: 'ai', label, model_tier: 'fast', prompt });
+  const stationStep = (id: string, label: string, workflowId: string) =>
+    ({ id, type: 'workflow', label, workflow_id: workflowId });
+  const ECHO_CHILD = `Reply with ONLY the single word ${CHILD_WORD}. No punctuation, no other text.`;
+  const CARRY = 'The previous step output contains exactly one word written in CAPITAL letters. '
+    + 'Reply with ONLY that word. No punctuation, no other text.';
+
+  const mkW3 = async (
+    name: string, steps: unknown[], opts?: { status?: string; triggers?: ReactionDoor[] },
+  ): Promise<string | null> => {
+    const { data, error } = await admin.from('workflows').insert({
+      user_id: userId, name, status: opts?.status ?? 'active',
+      trigger: { type: 'manual' }, steps, output_config: { destination: 'message' },
+      ...(HAS_COLUMN && opts?.triggers ? { triggers: opts.triggers } : {}),
+    }).select('id').single();
+    const id = (data as { id: string } | null)?.id ?? null;
+    if (!id) { console.log(`  ✗ W3 fixture "${name}" failed — ${error?.message}`); fail++; }
+    else w3WfIds.push(id);
+    return id;
+  };
+  const w3Run = async (runId: string): Promise<W3Run | null> => {
+    const { data } = await admin.from('workflow_runs')
+      .select('id, workflow_id, status, error, step_outputs, triggered_by, started_at, completed_at, created_at')
+      .eq('id', runId).maybeSingle();
+    return (data ?? null) as W3Run | null;
+  };
+  const w3Runs = async (wfId: string): Promise<W3Run[]> => {
+    const { data } = await admin.from('workflow_runs')
+      .select('id, workflow_id, status, error, step_outputs, triggered_by, started_at, completed_at, created_at')
+      .eq('workflow_id', wfId).order('created_at', { ascending: true });
+    return ((data ?? []) as W3Run[]);
+  };
+  const w3Link = async (parentRunId: string, stepId: string) => {
+    const { data } = await admin.from('item_plans').select('entity_id, tasks')
+      .eq('user_id', userId).eq('kind', SUBPROCESS_LINK_KIND)
+      .eq('entity_id', linkEntityId(parentRunId, stepId)).maybeSingle();
+    return (data ?? null) as { entity_id: string; tasks: Record<string, unknown> } | null;
+  };
+  const outText = (o?: W3Out) => (typeof o?.output === 'string' ? o.output : JSON.stringify(o?.output ?? ''));
+
+  try {
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // SP — THE STATION LIVES (real runs on the probe host; FOUR cheap fast-tier AI calls in total)
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    console.log('\nSP1 — PARK · FIRE · RESUME, end to end (mode: LIVE runs on the probe host):');
+    const childName = `${WPFX} interview`;
+    const childId = await mkW3(childName, [aiStep('c1', 'Interview note', ECHO_CHILD)]);
+    // THE STATION IS STEP ONE ON PURPOSE: the trailing step is the only honest proof that the
+    // resume continued PAST the station carrying the child's deliverable in hand.
+    const parentId = await mkW3(`${WPFX} triage`, [
+      stationStep('p1', childName, childId!),
+      aiStep('p2', 'Carry it forward', CARRY),
+    ]);
+    let sp1ParentRunId = '';
+    let sp1ChildRunId = '';
+    if (childId && parentId) {
+      const res = await runWf({ workflowId: parentId, triggerSource: 'manual' });
+      sp1ParentRunId = res.runId;
+      ok('the parent\'s own call RETURNS the park (awaiting_approval — the human-gate machinery, reused)',
+        res.status === 'awaiting_approval', `${res.status}/${res.error ?? ''}`);
+
+      const link = await w3Link(sp1ParentRunId, 'p1');
+      ok('THE LINK ROW landed at `<parentRunId>:<stepId>` (item_plans kind `subprocess_link`)',
+        !!link, linkEntityId(sp1ParentRunId, 'p1'));
+      ok('…carrying the child workflow id and the child RUN id (the resume reads the link BY it)',
+        link?.tasks?.childWorkflowId === childId && typeof link?.tasks?.childRunId === 'string',
+        JSON.stringify(link?.tasks ?? {}));
+      sp1ChildRunId = String(link?.tasks?.childRunId ?? '');
+      ok('…and THE BATON as actually handed over is STORED on the row (the fire is auditable)',
+        String(link?.tasks?.context ?? '').startsWith(`[SUBPROCESS — invoked by ${WPFX} triage]`),
+        String(link?.tasks?.context ?? '').slice(0, 60));
+      ok('…excerpt-honest by construction — the rule rides the baton\'s HEADER, never its tail',
+        String(link?.tasks?.context ?? '').includes(XRULE));
+
+      const childRuns = await w3Runs(childId);
+      ok('THE CHILD FIRED EXACTLY ONCE', childRuns.length === 1, String(childRuns.length));
+      ok('…as an EVENT run (the ledger sees a queued row before it runs)',
+        childRuns[0]?.triggered_by === 'event', String(childRuns[0]?.triggered_by));
+      ok('…and it is the run the link row bound', childRuns[0]?.id === sp1ChildRunId);
+      ok('…and it delivered (its own rail, its own gate, its own steps)',
+        childRuns[0]?.status === 'succeeded', `${childRuns[0]?.status}/${childRuns[0]?.error ?? ''}`);
+
+      const parent = await w3Run(sp1ParentRunId);
+      const outs = parent?.step_outputs ?? [];
+      ok('THE PARENT RESUMED AND COMPLETED (the child\'s completion is what continues it)',
+        parent?.status === 'succeeded', `${parent?.status}/${parent?.error ?? ''}`);
+      ok('THE STATION\'S OUTPUT IS THE CHILD\'S DELIVERABLE',
+        outText(outs[0]).includes(CHILD_WORD), outText(outs[0]).slice(0, 80));
+      ok('…typed `workflow`, labelled with the station\'s own label (a surface renders it lookup-free)',
+        outs[0]?.step_type === 'workflow' && outs[0]?.step_id === 'p1' && outs[0]?.label === childName,
+        JSON.stringify({ t: outs[0]?.step_type, l: outs[0]?.label }));
+      ok('…appended EXACTLY ONCE (a resumed run never re-runs the steps it already passed)',
+        outs.filter((o) => o.step_id === 'p1').length === 1, String(outs.length));
+      ok('THE STEP AFTER THE STATION RAN, with the deliverable in hand',
+        outs.length === 2 && outText(outs[1]).includes(CHILD_WORD), outText(outs[1]).slice(0, 80));
+      ok('NO HUMAN GATE WAS PASSED — no approval marker anywhere in the parent\'s outputs',
+        !outs.some((o) => outText(o).includes('[Approved')), JSON.stringify(outs.map(outText).map((t) => t.slice(0, 20))));
+    }
+
+    console.log('\nSP1b — resumeSeeded PASSES NO GATE (a later approval still parks; mode: LIVE):');
+    let sp1bRunId = '';
+    if (childId) {
+      const gatedId = await mkW3(`${WPFX} triage with a gate`, [
+        stationStep('g1', childName, childId),
+        { id: 'g2', type: 'approval', label: 'Your approval', instruction: 'Say go before it ships.' },
+        aiStep('g3', 'Never reached', CARRY),
+      ]);
+      if (gatedId) {
+        const res = await runWf({ workflowId: gatedId, triggerSource: 'manual' });
+        sp1bRunId = res.runId;
+        const row = await w3Run(sp1bRunId);
+        ok('the station resumed the run and it PARKED AGAIN at the human gate (never passed it)',
+          row?.status === 'awaiting_approval' && (row?.step_outputs ?? []).length === 1,
+          `${row?.status}/${(row?.step_outputs ?? []).length}`);
+        ok('…and the seeded station output is still the child\'s deliverable',
+          outText((row?.step_outputs ?? [])[0]).includes(CHILD_WORD));
+        const { data: gwf } = await admin.from('workflows').select('steps').eq('id', gatedId).maybeSingle();
+        const gate = parkedGateOf({ step_outputs: (row?.step_outputs ?? []) as never }, ((gwf as { steps?: unknown } | null)?.steps ?? null) as never);
+        ok('THE PARKED GATE now reads `approval` — a HUMAN holds this one', gate.kind === 'approval', gate.kind);
+        const rows = await deriveProcessRows(admin, userId, [row] as never, new Map([[row!.workflow_id, { name: 'x', steps: (gwf as { steps?: unknown } | null)?.steps }]]) as never);
+        ok('…and it derives as needs_you (the owner\'s attention, unlike a ⧉ park)',
+          rows[0]?.state === 'needs_you' && !rows[0]?.waitingOn, JSON.stringify(rows[0]?.state));
+      }
+    }
+
+    console.log('\nSP2 — THE ATOMIC CLAIM (a second completion claims nothing; mode: LIVE):');
+    if (sp1ChildRunId && sp1ParentRunId) {
+      const before = JSON.stringify(await w3Run(sp1ParentRunId));
+      const again = await resumeParentsOf(admin, sp1ChildRunId, { ok: true, deliverable: 'A SECOND DELIVERY' });
+      ok('a second resumeParentsOf on the SAME child resumes nothing and fails nothing',
+        again.resumed.length === 0 && again.failed.length === 0, JSON.stringify(again));
+      ok('…and the parent run is BYTE-IDENTICAL (the claim is the fence, not a guard clause)',
+        JSON.stringify(await w3Run(sp1ParentRunId)) === before);
+    }
+
+    console.log('\nSP3 — A FAILED CHILD NEVER STRANDS ITS PARENT (mode: LIVE):');
+    {
+      // A child that cannot run at all: readiness refuses it at ITS door, and that refusal is what
+      // the parent must hear — one terminal end reporting back through the ONE seam.
+      const emptyChildId = await mkW3(`${WPFX} empty child`, []);
+      const p3 = await mkW3(`${WPFX} parent of an empty child`, [
+        stationStep('f1', `${WPFX} empty child`, emptyChildId!),
+        aiStep('f2', 'Never reached', CARRY),
+      ]);
+      if (p3 && emptyChildId) {
+        const res = await runWf({ workflowId: p3, triggerSource: 'manual' });
+        const row = await w3Run(res.runId);
+        const childRow = (await w3Runs(emptyChildId))[0];
+        const expected = subprocessFailure(`${WPFX} empty child`, { ok: false, error: childRow?.error ?? '' });
+        ok('the child refused honestly (readiness spoke at its own door)',
+          childRow?.status === 'failed' && childRow?.error === 'No steps yet — build it in Studio.',
+          String(childRow?.error));
+        ok('THE PARENT FAILED with the spoken sentence, VERBATIM',
+          row?.status === 'failed' && row?.error === expected, `${row?.error} :: ${expected}`);
+        ok('…and ZERO steps re-ran (the park\'s snapshot is exactly what the failure kept)',
+          (row?.step_outputs ?? []).length === 0, String((row?.step_outputs ?? []).length));
+      }
+    }
+
+    console.log('\nSP4 — TEST MODE NEVER FIRES THE CHILD (mode: LIVE, zero AI):');
+    if (childId) {
+      const before = (await w3Runs(childId)).length;
+      const p4 = await mkW3(`${WPFX} test-mode parent`, [stationStep('t1', childName, childId)]);
+      if (p4) {
+        const res = await runWf({ workflowId: p4, triggerSource: 'manual', isTest: true });
+        const row = await w3Run(res.runId);
+        ok('THE CHILD WAS NOT FIRED (no new run row on it)',
+          (await w3Runs(childId)).length === before, `${before} → ${(await w3Runs(childId)).length}`);
+        ok('…and no claim was written either (a test never mounts the exactly-once contract)',
+          (await w3Link(res.runId, 't1')) === null);
+        ok('the run CONTINUED — it did not park (a paused simulation proves nothing)',
+          row?.status === 'succeeded', `${row?.status}/${row?.error ?? ''}`);
+        ok('THE STAND-IN WEARS ITS PREFIX — the child\'s last real delivery, said to be exactly that',
+          outText((row?.step_outputs ?? [])[0]).startsWith(`[from ${childName}'s last delivery — test mode]`),
+          outText((row?.step_outputs ?? [])[0]).slice(0, 70));
+        ok('…and it carries that delivery\'s own bytes', outText((row?.step_outputs ?? [])[0]).includes(CHILD_WORD));
+      }
+    }
+
+    console.log('\nSP5 — THE DOOR REFUSALS, VERBATIM (mode: LIVE, zero AI):');
+    {
+      const deepId = await mkW3(`${WPFX} deep child`, [aiStep('d1', 'Deep', ECHO_CHILD)]);
+      const nestedId = await mkW3(`${WPFX} nested child`, [stationStep('n1', `${WPFX} deep child`, deepId!)]);
+      const draftId = await mkW3(`${WPFX} draft child`, [aiStep('r1', 'Draft', ECHO_CHILD)], { status: 'draft' });
+      const ghost = randomUUID();
+
+      const cases: Array<[string, string, string]> = [
+        ['missing', ghost, subprocessRefusal('The missing one', "doesn't exist")],
+        ['draft', draftId!, subprocessRefusal('The draft one', 'is a draft')],
+        ['depth cap', nestedId!, subprocessRefusal('The nested one', 'itself contains a process step — one level deep only')],
+      ];
+      const labels = ['The missing one', 'The draft one', 'The nested one'];
+      for (let i = 0; i < cases.length; i++) {
+        const [what, target, expected] = cases[i];
+        const p = await mkW3(`${WPFX} refusal ${what}`, [
+          stationStep('x1', labels[i], target),
+          aiStep('x2', 'Never reached', CARRY),
+        ]);
+        if (!p) continue;
+        const res = await runWf({ workflowId: p, triggerSource: 'manual' });
+        const row = await w3Run(res.runId);
+        ok(`${what}: the run REFUSES with the door's sentence, verbatim`,
+          row?.status === 'failed' && row?.error === expected, `${row?.error} :: ${expected}`);
+        ok(`${what}: nothing was claimed (a station never parks on a door that cannot open)`,
+          (await w3Link(res.runId, 'x1')) === null);
+      }
+      ok('DEPTH CAP: the nested child never fired', (await w3Runs(nestedId!)).length === 0);
+      ok('…and neither did the workflow behind it (no run reached the second level)',
+        (await w3Runs(deepId!)).length === 0);
+      ok('…and the DRAFT child never fired either', (await w3Runs(draftId!)).length === 0);
+      // The pure half of the same law: the door check is async because ownership/status/depth are
+      // facts only the database holds.
+      const self = await checkSubprocessDoor(admin, userId, { label: 'Itself', workflow_id: parentId! }, parentId!);
+      ok('SELF-REFERENCE is refused at the door in READINESS\' OWN WORDS (one sentence, two homes)',
+        !self.ok && self.reason === "A workflow can't include itself as a step.", JSON.stringify(self));
+      const ok1 = await checkSubprocessDoor(admin, userId, { label: 'Fine', workflow_id: childId! }, parentId!);
+      ok('…and a real, active, flat child of the caller\'s own OPENS the door',
+        ok1.ok === true && ok1.ok && ok1.child.id === childId, JSON.stringify(ok1));
+    }
+
+    console.log('\nSP6 — THE SWEEP repairs a stranded park, idempotently (mode: LIVE, zero AI):');
+    {
+      const sweepChildId = await mkW3(`${WPFX} sweep child`, [aiStep('s1', 'Echo', ECHO_CHILD)]);
+      const sweepParentId = await mkW3(`${WPFX} sweep parent`, [stationStep('s1', 'Sweep station', sweepChildId!)]);
+      // A LOST RESUME, by hand: the child is terminally done, the parent is still parked, and
+      // nothing ever claimed it — the crash between the child's tail and the parent's claim.
+      const { data: cr } = await admin.from('workflow_runs').insert({
+        workflow_id: sweepChildId, user_id: userId, status: 'succeeded', triggered_by: 'event',
+        step_outputs: [{ step_id: 's1', step_type: 'ai', label: 'Echo', output: SWEEP_WORD }],
+        completed_at: new Date().toISOString(),
+      }).select('id').single();
+      const { data: pr } = await admin.from('workflow_runs').insert({
+        workflow_id: sweepParentId, user_id: userId, status: 'awaiting_approval', triggered_by: 'manual',
+        step_outputs: [], started_at: new Date().toISOString(),
+      }).select('id').single();
+      const strandedChild = (cr as { id: string } | null)?.id ?? '';
+      const strandedParent = (pr as { id: string } | null)?.id ?? '';
+      await admin.from('item_plans').insert({
+        user_id: userId, kind: SUBPROCESS_LINK_KIND, entity_id: linkEntityId(strandedParent, 's1'),
+        tasks: {
+          parentRunId: strandedParent, stepId: 's1', childRunId: strandedChild,
+          childWorkflowId: sweepChildId, firedAt: new Date().toISOString(),
+        },
+      });
+
+      // BEFORE the repair: this is what every surface must read while a station holds the line.
+      {
+        const parked = await w3Run(strandedParent);
+        const { data: swf } = await admin.from('workflows').select('name, steps').eq('id', sweepParentId).maybeSingle();
+        const steps = (swf as { steps?: unknown } | null)?.steps ?? null;
+        const gate = parkedGateOf({ step_outputs: (parked?.step_outputs ?? []) as never }, steps as never);
+        ok('THE PARKED GATE reads `subprocess` — the wait belongs to a MACHINE, not a person',
+          gate.kind === 'subprocess' && gate.stepId === 's1' && gate.label === 'Sweep station'
+          && gate.childWorkflowId === sweepChildId, JSON.stringify(gate));
+        const rows = await deriveProcessRows(admin, userId, [parked] as never,
+          new Map([[sweepParentId!, { name: `${WPFX} sweep parent`, steps }]]) as never);
+        ok('…so it derives as waiting_on_others FOR THE OWNER TOO (never anyone\'s needs_you)',
+          rows[0]?.state === 'waiting_on_others', String(rows[0]?.state));
+        ok('…wearing the SURFACE DISCRIMINATOR role `process` (a facepile of a process name is a lie)',
+          rows[0]?.waitingOn?.role === 'process' && rows[0]?.waitingOn?.name === 'Sweep station',
+          JSON.stringify(rows[0]?.waitingOn));
+        ok('…and it speaks no reason (there is nothing for a human to do about it)', !rows[0]?.reason);
+      }
+
+      const first = await sweepStrandedSubprocessParks(admin);
+      ok('THE SWEEP repaired the stranded park', first.includes(strandedParent), JSON.stringify(first.slice(0, 3)));
+      const repaired = await w3Run(strandedParent);
+      ok('…the parent completed', repaired?.status === 'succeeded', `${repaired?.status}/${repaired?.error ?? ''}`);
+      ok('…with the child\'s stored deliverable as the station\'s output, typed `workflow`',
+        (repaired?.step_outputs ?? [])[0]?.step_type === 'workflow'
+        && outText((repaired?.step_outputs ?? [])[0]).includes(SWEEP_WORD),
+        outText((repaired?.step_outputs ?? [])[0]).slice(0, 60));
+      const second = await sweepStrandedSubprocessParks(admin);
+      ok('A SECOND PASS IS A NO-OP for the same park (the atomic claim, again)',
+        !second.includes(strandedParent), JSON.stringify(second.slice(0, 3)));
+      ok('…and the repaired run is untouched by it', (await w3Run(strandedParent))?.status === 'succeeded');
+    }
+
+    console.log('\nSP7 — THE STALE-CHILD BATON (a re-fired child carries the link row\'s context; mode: LIVE):');
+    {
+      const staleChildId = await mkW3(`${WPFX} stale child`, [aiStep('e1', 'Echo the code word',
+        'The context contains a line beginning with CODEWORD:. Reply with ONLY the single word that follows it. No punctuation, no other text.')]);
+      const { data: sc } = await admin.from('workflow_runs').insert({
+        workflow_id: staleChildId, user_id: userId, status: 'queued', triggered_by: 'event',
+        created_at: new Date(Date.now() - 20 * 60_000).toISOString(),
+      }).select('id').single();
+      const staleRunId = (sc as { id: string } | null)?.id ?? '';
+      const baton = `${batonFor(`${WPFX} triage`, [])}\nCODEWORD: ${BATON_WORD}`;
+      // The link row is the ONLY place this child's context lives — a subprocess child writes no
+      // `reaction_fire` record, which is exactly the hole the lookup closes.
+      await admin.from('item_plans').insert({
+        user_id: userId, kind: SUBPROCESS_LINK_KIND, entity_id: linkEntityId(sp1ParentRunId || randomUUID(), 's7'),
+        tasks: {
+          parentRunId: sp1ParentRunId, stepId: 's7', childRunId: staleRunId,
+          childWorkflowId: staleChildId, firedAt: new Date().toISOString(), context: baton,
+        },
+      });
+      ok('the stale child has NO reaction_fire record (the class the lookup exists for)',
+        ((await admin.from('item_plans').select('id').eq('user_id', userId)
+          .eq('kind', 'reaction_fire').eq('tasks->>runId', staleRunId)).data ?? []).length === 0);
+
+      // THE RECORDING PROXY: the backstop's re-fire rides `after()`, which cannot run outside a
+      // request scope — so the LOOKUP is what a host-safe gate can observe, and it is the whole
+      // fix. Every read is the real client's.
+      const seen: string[] = [];
+      const wrapQ = (obj: Record<string, unknown>, table: string): Record<string, unknown> =>
+        new Proxy(obj, {
+          get(t, p, r) {
+            const v = Reflect.get(t, p, r);
+            if (typeof v !== 'function') return v;
+            return (...args: unknown[]) => {
+              if (p === 'eq') seen.push(`${table}.${String(args[0])}=${String(args[1])}`);
+              const out = (v as (...a: unknown[]) => unknown).apply(t, args);
+              return (out && typeof out === 'object' && typeof (out as Record<string, unknown>).eq === 'function')
+                ? wrapQ(out as Record<string, unknown>, table) : out;
+            };
+          },
+        });
+      const recorder = new Proxy(admin as unknown as Record<string, unknown>, {
+        get(target, prop, recv) {
+          if (prop === 'from') return (table: string) => wrapQ((admin.from as (t: string) => unknown)(table) as Record<string, unknown>, table);
+          const v = Reflect.get(target, prop, recv);
+          return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+        },
+      }) as unknown as SupabaseClient;
+
+      // ⚠️ RE-POINTED with the harness repair (W3b): these two lines used to assert the re-fire
+      // NEVER HAPPENED — that was collateral of the old in-process AI fence (a poisoned client
+      // cache made the inline re-fire die and throw). In a healthy process the fallback path
+      // (`after` has no request scope → run it inline) does exactly what it promises: the stale
+      // child is re-fired, WITH its baton, and completes. That is the stronger truth, so it is
+      // what the gate now pins.
+      let threw: string | null = null;
+      try { await refireStaleEventRuns(recorder); } catch (e) { threw = String((e as Error).message ?? e); }
+      const backstopped = await w3Run(staleRunId);
+      ok('THE BACKSTOP RE-FIRED the stale child and it RAN (a crashed tail never silently eats an event)',
+        backstopped?.status === 'succeeded', `${backstopped?.status}/${backstopped?.error ?? ''}`);
+      ok('…carrying THE BATON it had to go looking for — the code word came back out of the child\'s step',
+        outText((backstopped?.step_outputs ?? [])[0]).includes(BATON_WORD),
+        outText((backstopped?.step_outputs ?? [])[0]).slice(0, 60));
+      ok('THE FIRST LOOKUP is the reaction_fire record — and it MISSES for a subprocess child',
+        seen.some((s) => s === `item_plans.kind=reaction_fire`) && seen.includes(`item_plans.tasks->>runId=${staleRunId}`),
+        JSON.stringify(seen.slice(0, 12)));
+      ok('THE FALLBACK LOOKUP reads the SUBPROCESS LINK ROW by the child run id (the orchestrator\'s fix)',
+        seen.includes('item_plans.kind=subprocess_link') && seen.includes(`item_plans.tasks->>childRunId=${staleRunId}`),
+        JSON.stringify(seen.slice(-6)));
+      ok('…and the backstop lane NEVER THROWS at its caller (the dispatcher is non-fatal by contract)',
+        threw === null, String(threw).slice(0, 80));
+
+      // THE CODE WORD, live: the context that lookup returns IS the parent's baton, and it reaches
+      // the child's step as its trigger event.
+      const { data: lr } = await admin.from('item_plans').select('tasks')
+        .eq('user_id', userId).eq('kind', SUBPROCESS_LINK_KIND).eq('tasks->>childRunId', staleRunId).maybeSingle();
+      const stored = String((lr?.tasks as { context?: string } | undefined)?.context ?? '');
+      ok('the looked-up context IS the stored baton (the parent\'s material, not an empty run)',
+        stored.includes(BATON_WORD) && stored.startsWith('[SUBPROCESS — invoked by'), stored.slice(0, 50));
+      const refired = await runWf({ workflowId: staleChildId!, runId: staleRunId, triggerSource: 'event', triggerContext: stored });
+      const refiredRow = await w3Run(refired.runId);
+      ok('THE RE-FIRED CHILD RECEIVED THE BATON — the code word came back out of its step',
+        outText((refiredRow?.step_outputs ?? [])[0]).includes(BATON_WORD),
+        outText((refiredRow?.step_outputs ?? [])[0]).slice(0, 60));
+      ok('SOURCE: the value the fallback assigns is the SAME variable handed to the re-fired run',
+        /if \(!context\) \{[\s\S]{0,500}?'subprocess_link'[\s\S]{0,300}?context = \(linkRow\?\.tasks[\s\S]{0,400}?triggerContext: context \}\)/.test(reactionsSrc));
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // RL — RENÉ'S LOOP (the finale): two linear pipelines, one cycle, no loop engine.
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    console.log(`\nRL — RENÉ'S LOOP [mode: ${HAS_COLUMN ? 'LIVE (stored doors — the full cycle runs)' : 'SUBPROCESS HALF ONLY (workflows.triggers absent — the door cannot be stored)'}]:`);
+    {
+      const bName = `${WPFX} rene interview`;
+      const bId = await mkW3(bName, [aiStep('b1', 'Interview', ECHO_CHILD)]);
+      // A parks on B (⧉) AND opens its door on B's delivery — the SAME two pipelines forming the
+      // cycle. A carries no ai step of its own: its deliverable IS the station's output.
+      const aId = await mkW3(`${WPFX} rene triage`, [stationStep('a1', bName, bId!)], {
+        triggers: [{ type: 'reaction', source: 'workflow', workflow_id: bId! }] as ReactionDoor[],
+      });
+
+      if (aId && bId) {
+        // ── ITERATION 1 ────────────────────────────────────────────────────────────────────────
+        const r1 = await runWf({ workflowId: aId, triggerSource: 'manual' });
+        const aRuns1 = await w3Runs(aId);
+        const bRuns1 = await w3Runs(bId);
+        ok('A parked at its ⧉ station and B ran inside it', r1.status === 'awaiting_approval' && bRuns1.length === 1,
+          `${r1.status}/${bRuns1.length}`);
+        ok('B DELIVERED', bRuns1[0]?.status === 'succeeded', `${bRuns1[0]?.status}/${bRuns1[0]?.error ?? ''}`);
+        ok('(1) B\'s delivery RESUMED A — it completed with B\'s deliverable as its station output',
+          aRuns1[0]?.status === 'succeeded' && outText((aRuns1[0]?.step_outputs ?? [])[0]).includes(CHILD_WORD),
+          `${aRuns1[0]?.status}`);
+        if (HAS_COLUMN) {
+          ok('(2) …AND the SAME delivery opened A\'s door — a SECOND A run exists (THE CYCLE)',
+            aRuns1.length === 2, String(aRuns1.length));
+          const second = aRuns1.find((r) => r.id !== aRuns1[0]?.id);
+          ok('…the second A run is an EVENT run (it came through the door, not by hand)',
+            second?.triggered_by === 'event', String(second?.triggered_by));
+          const key = `${aId}:workflow:${bRuns1[0]?.id}`;
+          const { data: fire } = await admin.from('item_plans').select('entity_id, tasks')
+            .eq('user_id', userId).eq('kind', 'reaction_fire').eq('entity_id', key).maybeSingle();
+          ok('…carrying the door\'s own fire record, keyed by the DELIVERING RUN', !!fire, key);
+          ok('…with the engine\'s own words as the reason (structural composition, never a judge)',
+            (fire?.tasks as { reason?: string } | undefined)?.reason === 'the upstream workflow delivered');
+
+          // EXACTLY ONCE UNDER COMPOSITION — replaying B's delivery fires nothing; A's own
+          // delivery never opens A's door (the self-loop guard holds inside a cycle too).
+          const replay = await checkSourceReactions(admin, userId, 'workflow',
+            [{ id: bRuns1[0]!.id, sourceId: bId, title: bName, gist: 'the same delivery again' }]);
+          ok('NO THIRD FIRE — replaying B\'s delivery fires nothing (exactly-once holds under composition)',
+            replay?.fired === 0 && (await w3Runs(aId)).length === 2, JSON.stringify(replay));
+          const selfEcho = await checkSourceReactions(admin, userId, 'workflow',
+            [{ id: aRuns1[0]!.id, sourceId: aId, title: 'A', gist: 'A\'s own delivery' }]);
+          ok('THE SELF-LOOP GUARD holds inside the cycle — A\'s own delivery never opens A\'s door',
+            selfEcho?.fired === 0 && (await w3Runs(aId)).length === 2, JSON.stringify(selfEcho));
+
+          // ── ITERATION 2 — the composed loop's next lap, driven exactly as the dispatcher's
+          // backstop would drive the queued event run (a script has no request scope, so the
+          // inline after() attempt never ran; the queued row is the honest hand-off point).
+          const { data: fr } = await admin.from('item_plans').select('tasks')
+            .eq('user_id', userId).eq('kind', 'reaction_fire').eq('entity_id', key).maybeSingle();
+          const ctx = String((fr?.tasks as { context?: string } | undefined)?.context ?? '');
+          await runWf({ workflowId: aId, runId: second!.id, triggerSource: 'event', triggerContext: ctx });
+          const aRuns2 = await w3Runs(aId);
+          const bRuns2 = await w3Runs(bId);
+          ok('LAP 2: the second A run parked on B again, B ran again, and A resumed again',
+            bRuns2.length === 2 && aRuns2.filter((r) => r.status === 'succeeded').length === 2,
+            `${bRuns2.length}B/${aRuns2.filter((r) => r.status === 'succeeded').length}A`);
+          ok('…and B\'s second delivery opened A\'s door a SECOND time — a THIRD A run (the loop turns)',
+            aRuns2.length === 3, String(aRuns2.length));
+
+          // ── THE CYCLE DEFERS AT THE THROTTLE (W3b — re-pointed from "the cycle stops at the
+          // cap"). Same law, LOSSLESS form: nothing in the engine detects "A → B → A", and what
+          // bounds René's loop is the per-workflow daily THROTTLE on door fires. At the limit the
+          // next lap is still RECORDED and still QUEUED — it just doesn't start today.
+          const { data: firesToday } = await admin.from('item_plans').select('entity_id')
+            .eq('user_id', userId).eq('kind', 'reaction_fire').like('entity_id', `${aId}:%`);
+          const fireCount = (firesToday ?? []).length;
+          ok('the loop\'s laps ARE door fires — one per B delivery, counted on A', fireCount === 2, String(fireCount));
+          // Pin A's throttle at exactly what it has already spent today: the next lap is at the line.
+          await admin.from('item_plans').insert({
+            user_id: userId, kind: 'workflow_limit', entity_id: aId, tasks: { dailyFires: fireCount },
+          });
+          const runsAtCeiling = (await w3Runs(aId)).length;
+          const evLap = randomUUID();
+          const capped = await checkSourceReactions(admin, userId, 'workflow',
+            [{ id: evLap, sourceId: bId, title: bName, gist: 'a third delivery, at the throttle' }]);
+          ok(`AT THE THROTTLE (${fireCount}/day here) the next lap DEFERS — considered, never dropped`,
+            capped?.fired === 0 && capped?.deferred === 1 && (capped?.considered ?? 0) >= 1, JSON.stringify(capped));
+          const lapKey = `${aId}:workflow:${evLap}`;
+          const { data: lapRec } = await admin.from('item_plans').select('tasks')
+            .eq('user_id', userId).eq('kind', 'reaction_fire').eq('entity_id', lapKey).maybeSingle();
+          const lapTasks = (lapRec?.tasks ?? null) as { deferred?: boolean; runId?: string; startedAt?: string } | null;
+          ok('…its exactly-once record EXISTS and wears `deferred:true` (the lap is remembered)',
+            lapTasks?.deferred === true && !lapTasks?.startedAt, JSON.stringify(lapTasks));
+          const lapRuns = await w3Runs(aId);
+          ok('…and its run row EXISTS, queued and NOT started (a shredder would have neither)',
+            lapRuns.length === runsAtCeiling + 1
+            && lapRuns.find(r => r.id === lapTasks?.runId)?.status === 'queued',
+            `${lapRuns.length} vs ${runsAtCeiling}`);
+          ok('THE CEILING IS THE THROTTLE, NOT A CYCLE DETECTOR — the engine holds no ancestry/chain guard',
+            /readFireLimits/.test(reactionsSrc) && /FIRE_LIMIT_DEFAULT/.test(reactionsSrc)
+            && !/DAILY_CAP/.test(reactionsSrc)
+            && !/cycleDetect|ancestor|chainDepth|visitedWorkflows/i.test(reactionsSrc));
+          ok('…and the pacing is SPOKEN as a queue, never as a loss ("queued for the drain")',
+            /queued for the drain/.test(reactionsSrc));
+          console.log('    · FINDING (for the spec): a composed A→B→A cycle is THROTTLED, never dropped — bounded per day by the per-workflow fire limit, with every extra lap recorded and queued for the drain. There is still no cycle detector; the self-loop guard covers self-naming doors only.');
+          await admin.from('item_plans').delete().eq('user_id', userId)
+            .eq('kind', 'workflow_limit').eq('entity_id', aId);
+        } else {
+          ok('(2) THE DOOR HALF is not assertable before the migration (declared, never faked)', true);
+        }
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // SF — SOURCE FLOORS (comment-stripped: prose about a law is not the law)
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    const drawerSrc = stripComments(readFileSync('components/workflows/process-drawer.tsx', 'utf8'));
+    const ledgerSrc = stripComments(readFileSync('app/api/workflows/ledger/route.ts', 'utf8'));
+    const resumeSrc = stripComments(readFileSync('app/api/workflows/runs/[id]/resume/route.ts', 'utf8'));
+    const subprocessSrc = stripComments(readFileSync('lib/workflows/subprocess.ts', 'utf8'));
+    const authorSrc = stripComments(readFileSync('lib/workflows/author-doors.ts', 'utf8'));
+    const stateSrc = stripComments(readFileSync('lib/workflows/process-state.ts', 'utf8'));
+
+    console.log('\nSF — THE MACHINE GATE HAS NO HUMAN VERBS (mode: source):');
+    {
+      const stationAt = drawerSrc.indexOf('<SubprocessStation');
+      const approveAt = drawerSrc.indexOf('Approve — deliver it');
+      ok('the ⧉ station renders BEFORE the verb block, out of the human-gate branch entirely',
+        stationAt > 0 && approveAt > stationAt, `${stationAt}/${approveAt}`);
+      ok('…reached by a STRUCTURAL type check on the step, never a label or a state guess',
+        /if \(s\.type === 'workflow'\) \{[\s\S]{0,200}?<SubprocessStation/.test(drawerSrc));
+      const body = drawerSrc.slice(drawerSrc.indexOf('function SubprocessStation('));
+      const station = body.slice(0, body.indexOf('\nfunction '));
+      ok('SubprocessStation carries NO Approve / Reject / Nudge / Reassign',
+        !/Approve|Reject|Nudge|Reassign/.test(station), station.slice(0, 0) || 'a human verb leaked into the machine gate');
+      ok('…and NO GateObject (nothing is being decided, so the gate\'s object never mounts)',
+        !station.includes('GateObject'));
+      ok('…it owes the reader exactly two things: that a process is running, and a door into it',
+        /is running inside this process/.test(station) && /Open \{name\} →/.test(station));
+      ok('the ⧉ mark is the station\'s own word on the surface', station.includes('⧉ {name}'));
+    }
+
+    console.log('\nSF — NO LYING DOOR (the ledger and the resume route; mode: source):');
+    ok('the ledger\'s AWAITING list EXCLUDES a ⧉ park (never an Approve row for a wait nobody holds)',
+      /const awaiting = runs\.filter\(r => r\.status === 'awaiting_approval'\)\.filter\(r => \{[\s\S]{0,320}?steps\[\(r\.step_outputs \?\? \[\]\)\.length\]\?\.type !== 'workflow';/.test(ledgerSrc));
+    ok('the resume route refuses a ⧉ park through the SAME derivation (parkedGateOf, not a copy)',
+      /parkedGateOf\(/.test(resumeSrc) && /if \(gate\.kind === 'subprocess'\)/.test(resumeSrc));
+    ok('…with 409 and the sentence that says whose wait it is',
+      /waiting on the '\$\{gate\.label\}' process, not on you — it continues by itself when that delivers\.`,\s*\}, \{ status: 409 \}\)/.test(resumeSrc));
+    ok('…and a REJECTION still reports back (a held-back child never strands its parent)',
+      /resumeParentsOf\(admin, runId, \{ ok: false \}\)/.test(resumeSrc));
+
+    console.log('\nSF — resumeSeeded PASSES NO GATE (mode: source):');
+    ok('the human-gate scan is fenced to resumeFromApproval ALONE',
+      /if \(opts\.resumeFromApproval\) \{\s*for \(let j = stepOutputs\.length; j < steps\.length; j\+\+\) \{[\s\S]{0,240}?resumeApprovalAt = j;/.test(runWfCode));
+    ok('…so on the seeded path resumeApprovalAt stays -1 and no gate index can match',
+      /let resumeApprovalAt = -1;/.test(runWfCode));
+    ok('…and both flags seed the SAME outputs (one snapshot, two doors — never two seeders)',
+      /if \(\(opts\.resumeFromApproval \|\| opts\.resumeSeeded\) && runId\)/.test(runWfCode));
+    {
+      const seeded = [...subprocessSrc.matchAll(/resumeSeeded: true/g)].length;
+      ok('THE ONLY setter of resumeSeeded is the subprocess resume itself',
+        seeded === 1 && !/resumeSeeded/.test(stripComments(readFileSync('app/api/workflows/runs/[id]/resume/route.ts', 'utf8'))),
+        String(seeded));
+      ok('…and it NEVER sets resumeFromApproval in the same call',
+        !/resumeSeeded: true[\s\S]{0,80}resumeFromApproval|resumeFromApproval[\s\S]{0,80}resumeSeeded: true/.test(subprocessSrc));
+      // FOUR terminal ends, ONE seam (the definition reads `const notifySubprocessParent = async (`,
+      // so every match below is a CALL): refusal · thread failure · step failure · success.
+      ok('EVERY terminal end of a run reports back (refusal · thread failure · step failure · success)',
+        (runWfCode.match(/await notifySubprocessParent\(/g) ?? []).length === 4,
+        String((runWfCode.match(/await notifySubprocessParent\(/g) ?? []).length));
+      ok('…the success end hands over the very deliverable the run just materialised',
+        /await notifySubprocessParent\(runId, \{ ok: true, deliverable: finalText \}\);/.test(runWfCode));
+      ok('…and every other end hands over an honest failure, never silence',
+        (runWfCode.match(/await notifySubprocessParent\([^)]*\{ ok: false/g) ?? []).length === 3);
+    }
+
+    console.log('\nSF — READINESS rules 6 and 7 (mode: pure):');
+    {
+      const r6 = readinessOf({ id: 'w1', status: 'active', steps: [{ type: 'workflow', label: 'Interview', workflow_id: '' }] }, null);
+      ok('rule 6 — an unbound ⧉ station names ITSELF in the refusal',
+        reasonOf(r6) === "The 'Interview' process step needs a workflow.", String(reasonOf(r6)));
+      ok('…and a bound one abstains',
+        readinessOf({ id: 'w1', status: 'active', steps: [{ type: 'workflow', label: 'Interview', workflow_id: 'w2' }] }, null).ready);
+      const r7 = readinessOf({ id: 'w1', status: 'active', steps: [{ type: 'workflow', label: 'Itself', workflow_id: 'w1' }] }, null);
+      ok('rule 7 — a workflow naming ITSELF is refused, purely',
+        reasonOf(r7) === "A workflow can't include itself as a step.", String(reasonOf(r7)));
+      ok('…in the SAME sentence the async door check speaks (one law, two homes)',
+        subprocessSrc.includes(`"A workflow can't include itself as a step."`));
+      ok('rule 6 respects the budget on a long label',
+        (reasonOf(readinessOf({ id: 'w1', status: 'active', steps: [{ type: 'workflow', label: 'x'.repeat(200), workflow_id: '' }] }, null)) ?? '').length <= READINESS_REASON_MAX);
+      // RULES 1–5 UNTOUCHED: order IS severity, and the new rules sit at the END of the table.
+      ok('rule 1 still outranks 6 (no steps speaks first)',
+        reasonOf(readinessOf({ id: 'w1', status: 'active', steps: [] }, null)) === 'No steps yet — build it in Studio.');
+      ok('rule 2 still outranks 6 (a draft speaks first)',
+        reasonOf(readinessOf({ id: 'w1', status: 'draft', steps: [{ type: 'workflow', workflow_id: '' }] }, null)) === 'Still a draft — finish it in Studio.');
+      ok('rule 3 still outranks 6 (an orphan handoff speaks first)',
+        reasonOf(readinessOf({ id: 'w1', status: 'active', steps: [{ type: 'handoff', assignee_user_id: '' }, { type: 'workflow', workflow_id: '' }] }, null))
+        === "The 'Wait on a person' step needs a person.");
+      ok('rule 5 still outranks 6 (a door that cannot fire speaks first)',
+        reasonOf(readinessOf({ id: 'w1', status: 'active', triggers: [{ source: 'workflow' }], steps: [{ type: 'workflow', workflow_id: '' }] }, null))
+        === "The 'when another workflow delivers' door needs a workflow.");
+      ok('a flat, bound, active workflow with a ⧉ station is READY', readinessOf({ id: 'w1', status: 'active', steps: [{ type: 'workflow', label: 'Interview', workflow_id: 'w2' }] }, feats()).ready);
+    }
+
+    console.log('\nSF — THE PARKED-GATE PRECEDENCE (mode: pure):');
+    {
+      const steps = [{ id: 'a', type: 'verify', label: 'Check' }, { id: 'b', type: 'workflow', label: 'Interview', workflow_id: 'w2' }];
+      const blocked = parkedGateOf({ step_outputs: [{ verdict: { status: 'blocked' } }] as never }, steps as never);
+      ok('a BLOCKED verify tail still outranks the ⧉ station (the guardrail hold is the owner\'s)',
+        blocked.kind === 'guardrail', blocked.kind);
+      const sub = parkedGateOf({ step_outputs: [{ output: 'x' }] as never }, steps as never);
+      ok('…and with a clean tail the next step decides — here, `subprocess`',
+        sub.kind === 'subprocess' && sub.label === 'Interview' && sub.childWorkflowId === 'w2', JSON.stringify(sub));
+      const handoff = parkedGateOf({ step_outputs: [] as never }, [{ id: 'h', type: 'handoff', assignee_user_id: 'u1', assignee_name: 'Sam' }] as never);
+      ok('…a handoff still reads `handoff` (its assignee untouched)', handoff.kind === 'handoff' && handoff.assigneeUserId === 'u1');
+      ok('…and an approval still reads `approval`',
+        parkedGateOf({ step_outputs: [] as never }, [{ id: 'ap', type: 'approval' }] as never).kind === 'approval');
+      ok('ONLY the ⧉ station sets the surface discriminator `role: \'process\'`',
+        (stateSrc.match(/role: 'process'/g) ?? []).length === 1);
+    }
+
+    console.log('\nSF — THE PARITY HALF: ONE LADDER, ONE FIREABLE SET, A THIRD SIBLING (mode: source + live roster):');
+    ok('authorSubprocessSteps resolves BY NAME through the SHARED resolveByName ladder',
+      /const m = resolveByName\(fireable, spoken\);/.test(authorSrc) && /const asDraft = resolveByName\(drafts, spoken\);/.test(authorSrc));
+    ok('THE FIREABLE SET matches the runtime door EXACTLY (anything not a draft)',
+      /const fireable = roster\.filter\(\(w\) => w\.status !== 'draft'\);/.test(authorSrc)
+      && /if \(row\.status === 'draft'\) return \{ ok: false, reason: subprocessRefusal\(label, 'is a draft'\) \};/.test(subprocessSrc));
+    ok('…and the DEPTH CAP is read from the same roster query it resolves through',
+      /nested: Array\.isArray\(w\.steps\)/.test(authorSrc));
+    ok('the survivor wears THE CHILD\'S REAL NAME, never the spoken rendering',
+      /label: m\.hit\.name,\s*workflow_id: m\.hit\.id,/.test(authorSrc));
+    ok('needs_step_note is a THIRD SIBLING — generate-config emits it beside the door and input notes',
+      /needs_step_note\?: string \| null;/.test(genCfgCode) && /needs_step_note: needsStepNote,/.test(genCfgCode));
+    ok('…coworker chat speaks it in its own clause (a door\'s field never carries a step\'s refusal)',
+      /needs_step_note\?: string \| null;/.test(workerTasks) && /const stepNoteText = generated\.needs_step_note/.test(workerTasks)
+      && /needs_step_note: generated\.needs_step_note \?\? null,/.test(workerTasks));
+    ok('…and the draft card renders ALL THREE amber blocks, each its own channel',
+      /draft\.needs_door_note &&/.test(draftCard) && /draft\.needs_input_note &&/.test(draftCard) && /draft\.needs_step_note &&/.test(draftCard));
+    ok('THE ⧉ CARD WORD says what it is — a whole process of the user\'s own, not another step',
+      /if \(s\.type === 'workflow'\) return `⧉ \$\{s\.label \|\| 'a process'\} \(a process of its own\)`;/.test(draftCard));
+    {
+      // LIVE: the ladder against the real roster this section just built (zero AI).
+      const authored = await authorSubprocessSteps([
+        { id: 'k1', type: 'workflow', workflow_name: `${WPFX} interview` },
+        { id: 'k2', type: 'ai', label: 'Write it', prompt: 'x' },
+      ], { supabase: admin, userId });
+      const seat = authored.steps.find((s) => s.type === 'workflow') as { workflow_id?: string; label?: string } | undefined;
+      ok('LIVE: a NAMED process of the user\'s own is seated by id, labelled with the roster\'s spelling',
+        seat?.workflow_id === childId && seat?.label === `${WPFX} interview`, JSON.stringify(seat));
+      const draftWant = await authorSubprocessSteps(
+        [{ id: 'k1', type: 'workflow', workflow_name: `${WPFX} draft child` }], { supabase: admin, userId });
+      ok('LIVE: a DRAFT gets its own sentence ("I couldn\'t find it" would be a lie)',
+        draftWant.steps.length === 0 && /is still a draft, so it can't run inside another process yet/.test(stepNote(draftWant.notes) ?? ''),
+        String(stepNote(draftWant.notes)));
+      const nestedWant = await authorSubprocessSteps(
+        [{ id: 'k1', type: 'workflow', workflow_name: `${WPFX} nested child` }], { supabase: admin, userId });
+      ok('LIVE: the DEPTH CAP is spoken at authoring time, not left to fire time',
+        nestedWant.steps.length === 0 && /only nest one level deep/.test(stepNote(nestedWant.notes) ?? ''),
+        String(stepNote(nestedWant.notes)));
+      const selfWant = await authorSubprocessSteps(
+        [{ id: 'k1', type: 'workflow', workflow_name: `${WPFX} interview` }],
+        { supabase: admin, userId, selfWorkflowId: childId! });
+      ok('LIVE: a process pointed at ITSELF is left out, said plainly',
+        selfWant.steps.length === 0 && /can't run itself as a step/.test(stepNote(selfWant.notes) ?? ''),
+        String(stepNote(selfWant.notes)));
+      const many = await authorSubprocessSteps(
+        Array.from({ length: MAX_SUBPROCESS + 1 }, (_, i) => ({ id: `m${i}`, type: 'workflow', workflow_name: `${WPFX} interview` })),
+        { supabase: admin, userId });
+      ok(`LIVE: the ceiling holds at MAX_SUBPROCESS (${MAX_SUBPROCESS}) and says what it dropped`,
+        many.steps.length === MAX_SUBPROCESS && /I kept the first/.test(stepNote(many.notes) ?? ''),
+        `${many.steps.length}`);
+      const unknown = await authorSubprocessSteps(
+        [{ id: 'k1', type: 'workflow', workflow_name: `${WPFX} no such process at all` }], { supabase: admin, userId });
+      ok('LIVE: an INVENTED process is never created — it is dropped with a sentence',
+        unknown.steps.length === 0 && /I couldn't find a process called/.test(stepNote(unknown.notes) ?? ''),
+        String(stepNote(unknown.notes)));
+    }
+
+    console.log('\nSF — STUDIO: the ⧉ block, honest exclusions, ONE step list (mode: source):');
+    ok('the picker offers the station as a first-class block',
+      /\{ type: 'workflow' as const, Icon: Square2StackIcon,\s*label: 'Include a process',\s*disabled: false \}/.test(studioCode));
+    ok('the rail renders a COMPOUND ⧉ block for it (not a step card, not a pill)',
+      /step\.type === 'workflow' \? \(\s*<SubprocessFlowBlock/.test(studioCode));
+    ok('…which wears its OWN receipt when nothing is picked (law 4, the amber hint idiom)',
+      /const picked = !!step\.workflow_id;/.test(studioCode) && /no process chosen yet/.test(studioCode));
+    ok('THE EXCLUSIONS ARE NAMED, NOT HIDDEN — all three reasons ride the disabled row',
+      /this one — a process cannot contain itself/.test(studioCode)
+      && /\(still a draft — nothing to deliver back yet\)/.test(studioCode)
+      && /\(contains a process — one level deep\)/.test(studioCode));
+    ok('…and a refused row is DISABLED, never absent (a missing name reads as a bug)',
+      /const disabled = !!r\.refusal;/.test(studioCode) && /disabled=\{disabled\}/.test(studioCode));
+    ok('the pick writes BOTH the binding and the child\'s own name in one move',
+      /onUpdate\(\{ workflow_id: r\.id, label: r\.name \}\)/.test(studioCode));
+    ok('THE ONE STEP LIST — the ⧉ picker reads the same served workflows the `workflow` door does',
+      (studioCode.match(/function useWorkflowOptions\(/g) ?? []).length === 1
+      && (studioCode.match(/= useWorkflowOptions\(\);/g) ?? []).length === 2,
+      `${(studioCode.match(/= useWorkflowOptions\(\);/g) ?? []).length} consumers`);
+    {
+      const gateBody = studioCode.slice(studioCode.indexOf('function seatGate('));
+      const seat = gateBody.slice(0, gateBody.indexOf('\nfunction '));
+      ok('seatGate is UNTOUCHED by the new type — it moves the verify station and nothing else',
+        !seat.includes("'workflow'") && /verify/.test(seat));
+    }
+  } finally {
+    // ── ZERO LEFTOVERS: every run, thread, link row and fire record this section created ────────
+    for (const id of w3WfIds) {
+      const { data: rs } = await admin.from('workflow_runs').select('id').eq('workflow_id', id);
+      for (const r of ((rs ?? []) as Array<{ id: string }>)) {
+        await admin.from('item_plans').delete().eq('user_id', userId)
+          .eq('kind', SUBPROCESS_LINK_KIND).like('entity_id', `${r.id}:%`);
+      }
+      await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', 'reaction_fire').like('entity_id', `${id}:%`);
+      await admin.from('work_threads').delete().eq('workflow_id', id);
+      await admin.from('workflow_runs').delete().eq('workflow_id', id);
+      await admin.from('workflows').delete().eq('id', id);
+    }
+    // The SP7 link row hangs off an EARLIER parent run id — sweep the section's window instead.
+    await admin.from('item_plans').delete().eq('user_id', userId)
+      .eq('kind', SUBPROCESS_LINK_KIND).gte('created_at', w3Start);
+    await admin.from('item_plans').delete().eq('user_id', userId)
+      .eq('kind', 'reaction_fire').gte('created_at', w3Start);
+
+    const { data: leftWf } = await admin.from('workflows').select('id').eq('user_id', userId).like('name', `${WPFX}%`);
+    const { data: leftRuns } = await admin.from('workflow_runs').select('id')
+      .in('workflow_id', w3WfIds.length ? w3WfIds : ['00000000-0000-0000-0000-000000000000']);
+    const { data: leftLinks } = await admin.from('item_plans').select('id')
+      .eq('user_id', userId).eq('kind', SUBPROCESS_LINK_KIND).gte('created_at', w3Start);
+    const { data: leftFires } = await admin.from('item_plans').select('id')
+      .eq('user_id', userId).eq('kind', 'reaction_fire').gte('created_at', w3Start);
+    ok('W3 probe leftovers are ZERO (workflows · runs · link rows · fire records — the composed loop included)',
+      (leftWf ?? []).length === 0 && (leftRuns ?? []).length === 0
+      && (leftLinks ?? []).length === 0 && (leftFires ?? []).length === 0,
+      `${(leftWf ?? []).length}/${(leftRuns ?? []).length}/${(leftLinks ?? []).length}/${(leftFires ?? []).length}`);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  // ██ W3b — THE THROTTLE, NEVER A SHREDDER (docs/relay-canvas-plan.md "W3b") ██
+  //
+  //   TL  THE CLAMP TABLE + THE STORE — one clamp, floors 1–100, and ABSENT MEANS DEFAULT (writing
+  //       the default DELETES the row, so the platform default can move without a migration).
+  //   TD  LIVE DEFERRAL — at the limit a matched event is RECORDED and QUEUED, never dropped.
+  //   TR  THE DRAIN — oldest-first, bounded by the day's remaining headroom, with an ATOMIC start
+  //       claim only one caller can win.
+  //   TB  THE PARTITION — the drain owns unstarted runs, the stale-run backstop owns runs whose
+  //       START was lost; one flag decides, so they can never double-start a run.
+  //   TS  SERVING + PARITY — the number reaches every door of law 1 and is written by ONE writer.
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  const {
+    clampFireLimit, readFireLimit, readFireLimits, writeFireLimit, fireLimitClampNote,
+    FIRE_LIMIT_DEFAULT, FIRE_LIMIT_MIN, FIRE_LIMIT_MAX, FIRE_LIMIT_KIND,
+  } = await import('../lib/workflows/fire-limit');
+  const { drainDeferredFires } = await import('../lib/workflows/reactions');
+
+  const TPFX = `Probe relay W3b ${stamp}`;
+  const tWfIds: string[] = [];
+  const tPlanKeys: Array<{ kind: string; entity_id: string }> = [];
+  const tStart = new Date(Date.now() - 5_000).toISOString();
+  const YESTERDAY = new Date(Date.now() - 30 * 60 * 60_000).toISOString();
+
+  const tFire = async (key: string) => {
+    const { data } = await admin.from('item_plans').select('tasks')
+      .eq('user_id', userId).eq('kind', 'reaction_fire').eq('entity_id', key).maybeSingle();
+    return (data?.tasks ?? null) as
+      { runId?: string; deferred?: boolean; startedAt?: string; resolvedAt?: string } | null;
+  };
+  const tRuns = async (wfId: string) => {
+    const { data } = await admin.from('workflow_runs').select('id, status, triggered_by, created_at')
+      .eq('workflow_id', wfId).order('created_at', { ascending: true });
+    return (data ?? []) as Array<{ id: string; status: string; triggered_by: string; created_at: string }>;
+  };
+  const mkT = async (name: string, triggers?: ReactionDoor[]) => {
+    const { data, error } = await admin.from('workflows').insert({
+      user_id: userId, name, status: 'active', trigger: { type: 'manual' }, steps: [],
+      output_config: { destination: 'message' },
+      ...(HAS_COLUMN && triggers ? { triggers } : {}),
+    }).select('id').single();
+    const id = (data as { id: string } | null)?.id ?? null;
+    if (!id) { console.log(`  ✗ W3b fixture "${name}" failed — ${error?.message}`); fail++; }
+    else tWfIds.push(id);
+    return id;
+  };
+
+  try {
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // TL — THE CLAMP TABLE + THE STORE
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    console.log('\nTL — THE CLAMP TABLE (mode: pure):');
+    ok(`the floors are the SYSTEM's — ${FIRE_LIMIT_MIN}–${FIRE_LIMIT_MAX}, default ${FIRE_LIMIT_DEFAULT}`,
+      FIRE_LIMIT_MIN === 1 && FIRE_LIMIT_MAX === 100 && FIRE_LIMIT_DEFAULT === 20,
+      `${FIRE_LIMIT_MIN}/${FIRE_LIMIT_MAX}/${FIRE_LIMIT_DEFAULT}`);
+    ok('0 CLAMPS UP to the floor and SAYS so (never a silent refusal, never a zero that shreds)',
+      clampFireLimit(0).value === FIRE_LIMIT_MIN && clampFireLimit(0).clamped === true,
+      JSON.stringify(clampFireLimit(0)));
+    ok('250 clamps DOWN to the ceiling and says so',
+      clampFireLimit(250).value === FIRE_LIMIT_MAX && clampFireLimit(250).clamped === true,
+      JSON.stringify(clampFireLimit(250)));
+    ok('a number INSIDE the floors passes through untouched and unspoken',
+      clampFireLimit(7).value === 7 && clampFireLimit(7).clamped === false, JSON.stringify(clampFireLimit(7)));
+    ok('ABSENCE IS NOT A CLAMP — null/undefined/NaN/an object read as the default, silently',
+      [null, undefined, NaN, {}].every((v) =>
+        clampFireLimit(v).value === FIRE_LIMIT_DEFAULT && clampFireLimit(v).clamped === false),
+      JSON.stringify([clampFireLimit(null), clampFireLimit({})]));
+    // An empty string is the ONE non-number that coerces (Number('') === 0). It lands on the FLOOR,
+    // never on zero — a zero limit would be the shredder this whole arc exists to kill. Every door
+    // guards `!== ''` before calling, so this is belt-and-braces, and it is asserted as such.
+    ok('THE FLOOR IS THE FLOOR — an empty/zero-ish value can never produce a limit of 0',
+      clampFireLimit('').value === FIRE_LIMIT_MIN && clampFireLimit(0).value === FIRE_LIMIT_MIN
+      && clampFireLimit(-5).value === FIRE_LIMIT_MIN,
+      JSON.stringify([clampFireLimit(''), clampFireLimit(0), clampFireLimit(-5)]));
+    ok('a numeric STRING is a number (the surfaces hand over text fields)',
+      clampFireLimit(' 12 ').value === 12 && clampFireLimit(' 12 ').clamped === false);
+    ok('a fraction is ROUNDED, and rounding IS a move worth saying',
+      clampFireLimit(7.4).value === 7 && clampFireLimit(7.4).clamped === true, JSON.stringify(clampFireLimit(7.4)));
+    ok('the clamp NOTE names the floors and quotes what was asked for',
+      fireLimitClampNote(250, 100).includes('250')
+      && fireLimitClampNote(250, 100).includes(`${FIRE_LIMIT_MIN}–${FIRE_LIMIT_MAX}`)
+      && fireLimitClampNote(250, 100).includes('100'), fireLimitClampNote(250, 100));
+
+    console.log('\nTL — THE STORE (absent means default; mode: live store):');
+    {
+      const widA = randomUUID(), widB = randomUUID();
+      tPlanKeys.push({ kind: FIRE_LIMIT_KIND, entity_id: widA }, { kind: FIRE_LIMIT_KIND, entity_id: widB });
+      ok('an unwritten workflow reads the DEFAULT, marked as such',
+        (await readFireLimit(admin, userId, widA)).dailyFires === FIRE_LIMIT_DEFAULT
+        && (await readFireLimit(admin, userId, widA)).isDefault === true);
+      const w1 = await writeFireLimit(admin, userId, widA, 5);
+      ok('a written number ROUNDTRIPS and stops being the default',
+        w1.ok && (await readFireLimit(admin, userId, widA)).dailyFires === 5
+        && (await readFireLimit(admin, userId, widA)).isDefault === false, JSON.stringify(w1));
+      const wHigh = await writeFireLimit(admin, userId, widA, 500);
+      ok('an out-of-range write CLAMPS at the store and reports it (the door can speak)',
+        wHigh.ok && wHigh.clamped === true && wHigh.fireLimit.dailyFires === FIRE_LIMIT_MAX,
+        JSON.stringify(wHigh));
+      const wDef = await writeFireLimit(admin, userId, widA, FIRE_LIMIT_DEFAULT);
+      const { data: rowAfter } = await admin.from('item_plans').select('id')
+        .eq('user_id', userId).eq('kind', FIRE_LIMIT_KIND).eq('entity_id', widA);
+      ok('WRITING THE DEFAULT DELETES THE ROW — there is no stored "unset", so the default can move',
+        wDef.ok && wDef.fireLimit.isDefault === true && (rowAfter ?? []).length === 0,
+        `${JSON.stringify(wDef)} · rows ${(rowAfter ?? []).length}`);
+      await writeFireLimit(admin, userId, widA, 3);
+      const batch = await readFireLimits(admin, userId, [widA, widB]);
+      ok('THE BATCH READ fills EVERY id — a workflow with no row is present, wearing the default',
+        batch.get(widA)?.dailyFires === 3 && batch.get(widA)?.isDefault === false
+        && batch.get(widB)?.dailyFires === FIRE_LIMIT_DEFAULT && batch.get(widB)?.isDefault === true,
+        JSON.stringify([...batch.entries()]));
+      ok('…and an empty id list is an empty map, never a throw',
+        (await readFireLimits(admin, userId, [])).size === 0);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // TD — LIVE DEFERRAL (the whole law in one pass)
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    let bId: string | null = null;
+    const evs: string[] = [];
+    if (HAS_COLUMN) {
+      console.log('\nTD — AT THE LIMIT, RECORDED AND QUEUED (mode: LIVE, structural door — zero AI):');
+      const upId = await mkT(`${TPFX} upstream`);
+      bId = await mkT(`${TPFX} bound`, upId ? [{ type: 'reaction', source: 'workflow', workflow_id: upId }] : undefined);
+      if (upId && bId) {
+        tPlanKeys.push({ kind: FIRE_LIMIT_KIND, entity_id: bId });
+        await writeFireLimit(admin, userId, bId, 2);
+        for (let i = 0; i < 4; i++) evs.push(randomUUID());
+        const res = await checkSourceReactions(admin, userId, 'workflow',
+          evs.map((id) => ({ id, sourceId: upId, title: `${TPFX} upstream`, gist: 'the upstream delivered' })));
+        ok('FOUR events, a limit of TWO — two STARTED, two DEFERRED, none lost',
+          res?.considered === 4 && res?.fired === 2 && res?.deferred === 2, JSON.stringify(res));
+
+        const recs = await Promise.all(evs.map((id) => tFire(`${bId}:workflow:${id}`)));
+        ok('ALL FOUR wrote their exactly-once record (a deferral is remembered exactly like a start)',
+          recs.every((r) => !!r && typeof r.runId === 'string'), JSON.stringify(recs.map((r) => !!r)));
+        ok('…the first two wear `startedAt` and NO deferred flag',
+          recs.slice(0, 2).every((r) => r?.deferred !== true && !!r?.startedAt),
+          JSON.stringify(recs.slice(0, 2)));
+        ok('…the last two wear `deferred:true` and NO startedAt (queued, not started)',
+          recs.slice(2).every((r) => r?.deferred === true && !r?.startedAt),
+          JSON.stringify(recs.slice(2)));
+        const runs = await tRuns(bId);
+        ok('ALL FOUR have a real run row — the deferred ones are visible in the ledger, not invisible',
+          runs.length === 4 && runs.every((r) => r.triggered_by === 'event'), `${runs.length}`);
+        ok('…and the two deferred runs are still `queued` (recorded ≠ running)',
+          recs.slice(2).every((r) => runs.find((x) => x.id === r?.runId)?.status === 'queued'),
+          JSON.stringify(runs.map((r) => r.status)));
+
+        const replay = await checkSourceReactions(admin, userId, 'workflow',
+          evs.map((id) => ({ id, sourceId: upId, title: `${TPFX} upstream`, gist: 'the same deliveries again' })));
+        ok('REPLAY defers nothing and fires nothing — exactly-once covers a DEFERRED event too',
+          replay?.considered === 0 && replay?.fired === 0 && replay?.deferred === 0, JSON.stringify(replay));
+        ok('…and the queue did not grow', (await tRuns(bId)).length === 4, String((await tRuns(bId)).length));
+      }
+    } else {
+      console.log('\nTD — skipped: workflows.triggers is absent, so a stored door cannot exist (declared, never faked)');
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // TR — THE DRAIN (oldest-first, bounded by headroom, claimed atomically)
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    if (HAS_COLUMN && bId && evs.length === 4) {
+      console.log('\nTR — THE DRAIN (mode: LIVE):');
+      const keyOf = (i: number) => `${bId}:workflow:${evs[i]}`;
+      // Backdate the two STARTED records out of today: the day's headroom reopens, exactly as
+      // tomorrow's dispatcher would find it. The queue itself is untouched.
+      for (const i of [0, 1]) {
+        await admin.from('item_plans').update({ created_at: YESTERDAY })
+          .eq('user_id', userId).eq('kind', 'reaction_fire').eq('entity_id', keyOf(i));
+      }
+      await writeFireLimit(admin, userId, bId, 1);
+
+      await drainDeferredFires(admin);
+      const after1 = [await tFire(keyOf(2)), await tFire(keyOf(3))];
+      ok('WITH HEADROOM FOR ONE the drain starts EXACTLY the oldest queued event',
+        after1[0]?.deferred === false && !!after1[0]?.startedAt, JSON.stringify(after1[0]));
+      ok('…and the younger one is left waiting, still `deferred:true` (paced, not lost)',
+        after1[1]?.deferred === true && !after1[1]?.startedAt, JSON.stringify(after1[1]));
+
+      await drainDeferredFires(admin);
+      ok('A SECOND DRAIN AT THE LIMIT starts NOTHING — the drain respects the same throttle it serves',
+        (await tFire(keyOf(3)))?.deferred === true, JSON.stringify(await tFire(keyOf(3))));
+
+      // Reopen the headroom the drained run just spent — the next day, in one line.
+      await admin.from('item_plans').update({ created_at: YESTERDAY })
+        .eq('user_id', userId).eq('kind', 'reaction_fire').eq('entity_id', keyOf(2));
+      await drainDeferredFires(admin);
+      const after3 = await tFire(keyOf(3));
+      ok('WHEN HEADROOM REOPENS the rest of the queue drains — nothing was ever lost',
+        after3?.deferred === false && !!after3?.startedAt, JSON.stringify(after3));
+
+      const before4 = JSON.stringify([await tFire(keyOf(2)), await tFire(keyOf(3))]);
+      await drainDeferredFires(admin);
+      ok('AN EMPTY DRAIN IS A NO-OP (idempotent — a second pass touches nothing of ours)',
+        JSON.stringify([await tFire(keyOf(2)), await tFire(keyOf(3))]) === before4);
+
+      // ── THE ATOMIC START CLAIM, driven directly ─────────────────────────────────────────────
+      const claimKey = `${bId}:workflow:${randomUUID()}`;
+      tPlanKeys.push({ kind: 'reaction_fire', entity_id: claimKey });
+      await admin.from('item_plans').insert({
+        user_id: userId, kind: 'reaction_fire', entity_id: claimKey,
+        tasks: { runId: null, reason: 'claim probe', deferred: true },
+      });
+      const claim = () => admin.from('item_plans')
+        .update({ tasks: { runId: null, reason: 'claim probe', deferred: false, startedAt: new Date().toISOString() } })
+        .eq('user_id', userId).eq('kind', 'reaction_fire').eq('entity_id', claimKey)
+        .eq('tasks->>deferred', 'true').select('entity_id');
+      const [c1, c2] = await Promise.all([claim(), claim()]);
+      ok('THE ATOMIC START CLAIM — two concurrent flips, exactly ONE winner (no run can double-start)',
+        ((c1.data ?? []).length + (c2.data ?? []).length) === 1,
+        `${(c1.data ?? []).length}/${(c2.data ?? []).length}`);
+      ok('…and the loser leaves the record exactly as the winner wrote it',
+        (await tFire(claimKey))?.deferred === false);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // TB — THE PARTITION (the drain owns unstarted runs, the backstop owns lost starts)
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    console.log('\nTB — THE DRAIN/BACKSTOP PARTITION (mode: LIVE):');
+    {
+      const parkWf = await mkT(`${TPFX} partition`);
+      const mkStale = async (tasksExtra: Record<string, unknown>) => {
+        const { data } = await admin.from('workflow_runs').insert({
+          workflow_id: parkWf, user_id: userId, status: 'queued', triggered_by: 'event',
+          created_at: new Date(Date.now() - 20 * 60_000).toISOString(),
+        }).select('id').single();
+        const runId = (data as { id: string } | null)?.id ?? '';
+        const key = `${parkWf}:workflow:${randomUUID()}`;
+        tPlanKeys.push({ kind: 'reaction_fire', entity_id: key });
+        await admin.from('item_plans').insert({
+          user_id: userId, kind: 'reaction_fire', entity_id: key,
+          tasks: { runId, reason: 'partition probe', context: 'probe context', ...tasksExtra },
+        });
+        return { runId, key };
+      };
+      // THE RECORDING PROXY (the SP7 idiom): the backstop's re-fire rides `after()`, which cannot
+      // run outside a request scope — so what a host-safe gate observes is WHICH RUNS IT CLAIMED.
+      // A claim is the `workflow_runs.id=<run>` update; a refused run never reaches one.
+      const seen: string[] = [];
+      const wrapQ = (obj: Record<string, unknown>, table: string): Record<string, unknown> =>
+        new Proxy(obj, {
+          get(t, p, r) {
+            const v = Reflect.get(t, p, r);
+            if (typeof v !== 'function') return v;
+            return (...args: unknown[]) => {
+              if (p === 'eq') seen.push(`${table}.${String(args[0])}=${String(args[1])}`);
+              const out = (v as (...a: unknown[]) => unknown).apply(t, args);
+              return (out && typeof out === 'object' && typeof (out as Record<string, unknown>).eq === 'function')
+                ? wrapQ(out as Record<string, unknown>, table) : out;
+            };
+          },
+        });
+      const recorder = new Proxy(admin as unknown as Record<string, unknown>, {
+        get(target, prop, recv) {
+          if (prop === 'from') return (table: string) => wrapQ((admin.from as (t: string) => unknown)(table) as Record<string, unknown>, table);
+          const v = Reflect.get(target, prop, recv);
+          return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+        },
+      }) as unknown as SupabaseClient;
+
+      const census = async () => {
+        const { data } = await admin.from('workflow_runs').select('id')
+          .eq('status', 'queued').eq('triggered_by', 'event')
+          .lt('created_at', new Date(Date.now() - 10 * 60_000).toISOString()).limit(20);
+        return (data ?? []).length;
+      };
+
+      // ── PASS 1: the ONLY stale row of ours is a DEFERRED one. Nothing may be claimed.
+      const deferredRun = await mkStale({ deferred: true });
+      console.log(`    · ${await census()} stale queued event run(s) exist on this host (the backstop reads 5 at a time)`);
+      seen.length = 0;
+      try { await refireStaleEventRuns(recorder); } catch { /* the re-fire is host-bound; the LOOKUPS are the gate */ }
+      ok('THE BACKSTOP LOOKS AT the deferred run\'s fire record (the partition is read, not assumed)',
+        seen.includes(`item_plans.tasks->>runId=${deferredRun.runId}`), JSON.stringify(seen.slice(0, 8)));
+      ok('THE BACKSTOP REFUSES A DEFERRED RUN — it never reaches the claim (flushing it would undo the throttle)',
+        !seen.includes(`workflow_runs.id=${deferredRun.runId}`), JSON.stringify(seen.slice(0, 8)));
+      ok('…leaving it queued and still `deferred:true` for the drain to own',
+        (await tFire(deferredRun.key))?.deferred === true
+        && (await tRuns(parkWf!)).find(r => r.id === deferredRun.runId)?.status === 'queued',
+        JSON.stringify(await tFire(deferredRun.key)));
+
+      // ── PASS 2: a run whose START was lost — the other half of the partition.
+      const lostRun = await mkStale({ startedAt: new Date(Date.now() - 20 * 60_000).toISOString() });
+      seen.length = 0;
+      try { await refireStaleEventRuns(recorder); } catch { /* same host-bound tail */ }
+      ok('…while it STILL CLAIMS a run whose START was lost (the throttle never became an outage)',
+        seen.includes(`workflow_runs.id=${lostRun.runId}`), JSON.stringify(seen.slice(0, 10)));
+      ok('…and the deferred run was passed over a SECOND time (the flag, not a one-off)',
+        !seen.includes(`workflow_runs.id=${deferredRun.runId}`), JSON.stringify(seen.slice(0, 10)));
+
+      // A subprocess link is a DIFFERENT kind — the drain's work-list is `reaction_fire` alone, so a
+      // link row wearing the same flag is invisible to it (kinds are not a shared namespace).
+      const linkKey = `probe-w3b-link-${stamp}`;
+      tPlanKeys.push({ kind: 'subprocess_link', entity_id: linkKey });
+      await admin.from('item_plans').insert({
+        user_id: userId, kind: 'subprocess_link', entity_id: linkKey,
+        tasks: { childRunId: deferredRun.runId, deferred: true, context: 'probe baton' },
+      });
+      await drainDeferredFires(admin);
+      const { data: linkAfter } = await admin.from('item_plans').select('tasks')
+        .eq('user_id', userId).eq('kind', 'subprocess_link').eq('entity_id', linkKey).maybeSingle();
+      ok('A SUBPROCESS LINK wearing `deferred:true` is INVISIBLE to the drain (kind, not flag, selects)',
+        (linkAfter?.tasks as { deferred?: boolean } | undefined)?.deferred === true,
+        JSON.stringify(linkAfter?.tasks));
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // TS — SERVING + PARITY (law 1: one schema, four doors — comment-stripped)
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    console.log('\nTS — THE THROTTLE REACHES EVERY DOOR (mode: source):');
+    {
+      const wfGet = stripComments(readFileSync('app/api/workflows/[id]/route.ts', 'utf8'));
+      const ledger = stripComments(readFileSync('app/api/workflows/ledger/route.ts', 'utf8'));
+      const studioNow = stripComments(readFileSync('components/work/studio-builder.tsx', 'utf8'));
+      const genNow = stripComments(readFileSync('lib/workflows/generate-config.ts', 'utf8'));
+      const wtNow = stripComments(readFileSync('lib/tools/worker-tasks.ts', 'utf8'));
+      const cardNow = stripComments(readFileSync('components/workflows/workflow-draft-card.tsx', 'utf8'));
+      const postNow = stripComments(readFileSync('app/api/workflows/route.ts', 'utf8'));
+      const dispatchNow = stripComments(readFileSync('app/api/cron/workflows-dispatch/route.ts', 'utf8'));
+
+      ok('SERVED: the workflow GET reads the throttle and serves it in BOTH places (one derivation)',
+        /const fireLimit = await readFireLimit\(adminRead, data\.user_id, id\);/.test(wfGet)
+        && /workflow: \{ \.\.\.data,[^}]*fireLimit,/.test(wfGet) && /\n\s*fireLimit,\n/.test(wfGet));
+      ok('SERVED: the ledger batches it for every row and never serves null (absent = the default)',
+        /readFireLimits\(supabase, user\.id, wfs\.map\(\(w\) => w\.id\)\)/.test(ledger)
+        && /fireLimit: limitsOut\.get\(w\.id\) \?\? \{ \.\.\.DEFAULT_FIRE_LIMIT \}/.test(ledger));
+      ok('WRITTEN: the PATCH takes `fire_limit` OUT OF BAND (never a workflows column) …',
+        /const fireLimitBody = 'fire_limit' in body \? body\.fire_limit : undefined;/.test(wfGet)
+        && /delete update\.fire_limit;/.test(wfGet));
+      ok('…through the ENGINE\'S OWN WRITE, echoing the clamp so the surface can speak it',
+        /await writeFireLimit\(supabase, user\.id, id, fireLimitBody\)/.test(wfGet)
+        && /fire_limit_clamped: fireLimitClamped/.test(wfGet));
+      ok('THE CREATE PATH RIDES IT TOO (a pace the draft stated survives the Confirm) …',
+        /body\.fire_limit !== undefined/.test(postNow) && /await writeFireLimit\(supabase, user\.id, \(data as \{ id: string \}\)\.id, body\.fire_limit\)/.test(postNow));
+      ok('…best-effort and isolated — a store failure costs the number, never the creation',
+        /catch \(e\) \{[\s\S]{0,160}?fire limit not persisted/.test(postNow));
+
+      ok('STUDIO: the control exists ONLY where there are doors to throttle (no dead chrome)',
+        /\{doors\.length > 0 && \(\s*<ThrottleRow limit=\{workflow\.fireLimit\} onChange=\{onFireLimit\} \/>\s*\)\}/.test(studioNow));
+      ok('STUDIO: the floors are IMPORTED from the engine, never re-typed (a second copy is a second law)',
+        studioNow.includes("from '@/lib/workflows/fire-limit'")
+        && /clampFireLimit/.test(studioNow));
+      {
+        const body = studioNow.slice(studioNow.indexOf('function ThrottleRow('));
+        const row = body.slice(0, body.indexOf('\nfunction '));
+        // Class names are not the law (border-neutral-100 is a colour, not a ceiling) — strings are
+        // stripped before the literal hunt, so only real code numbers can offend.
+        const rowCode = row.replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
+        ok('…and the row itself contains NO bare 20/100 literal — only the imported constants',
+          !/\b(?:20|100)\b/.test(rowCode),
+          rowCode.split('\n').filter((l) => /\b(?:20|100)\b/.test(l)).join(' | ').slice(0, 160));
+        ok('…and it commits through THE ONE CLAMP, never a second range check',
+          /onChange\(n\);/.test(row) && !/Math\.(?:min|max)\(/.test(row));
+      }
+      ok('STUDIO: the save carries `fire_limit` and honours the clamped echo out loud',
+        /fire_limit: workflow\.fireLimit\.dailyFires/.test(studioNow) && /payload\.fire_limit_clamped/.test(studioNow));
+
+      ok('DOOR 1 (describe-it): generate-config may author a stated pace, through the ONE clamp',
+        /clampFireLimit\(generated\.fire_limit\)/.test(genNow) && /fire_limit: fireLimit,/.test(genNow));
+      ok('…and a moved number rides the DOOR note (trigger-side config, one sentence about how work starts)',
+        /needsDoorNote = doorNote\(\[[\s\S]{0,160}?fireLimitClampNote\(generated\.fire_limit, value\),/.test(genNow));
+      ok('…its prompt states the floors from the constants and forbids the "stop after N" reading',
+        /\$\{FIRE_LIMIT_MIN\}–\$\{FIRE_LIMIT_MAX\}/.test(genNow) && /extra events are not dropped/.test(genNow));
+      ok('DOOR 2 (coworker chat): create_task AND update_task both take `daily_run_limit`',
+        (wtNow.match(/daily_run_limit: \{/g) ?? []).length === 2);
+      ok('…create clamps and SAYS the move; update clamps and lands after the row',
+        /clampFireLimit\(dailyRunLimit\)/.test(wtNow) && /clampFireLimit\(fields\.daily_run_limit\)/.test(wtNow));
+      ok('…ONE WRITE PATH — the chat door stores through writeFireLimit, never its own upsert',
+        (wtNow.match(/await writeFireLimit\(/g) ?? []).length === 1
+        && !new RegExp(`from\\('item_plans'\\)[\\s\\S]{0,120}${FIRE_LIMIT_KIND}`).test(wtNow));
+      ok('…and get_task SPEAKS the number, marking the default as the default',
+        /Daily event limit: \$\{fireLimit\.dailyFires\}\$\{fireLimit\.isDefault \? ' \(default\)' : ''\}/.test(wtNow)
+        && /await readFireLimit\(/.test(wtNow));
+      ok('THE DRAFT CARD speaks it ONLY when it is not the default (never restate the settled)',
+        /typeof draft\.fire_limit === 'number' && draft\.fire_limit !== FIRE_LIMIT_DEFAULT/.test(cardNow)
+        && /up to \{draft\.fire_limit\} event runs a day/.test(cardNow));
+      ok('…and the Confirm body carries it to the create route (the draft\'s pace becomes the task\'s)',
+        /\.\.\.\(typeof draft\.fire_limit === 'number' \? \{ fire_limit: draft\.fire_limit \} : \{\}\)/.test(cardNow));
+
+      ok('THE DISPATCHER DRAINS BEFORE IT BACKSTOPS (a drained run gets its own honest start first)',
+        dispatchNow.indexOf('drainDeferredFires') > 0
+        && dispatchNow.indexOf('drainDeferredFires') < dispatchNow.indexOf('refireStaleEventRuns'),
+        `${dispatchNow.indexOf('drainDeferredFires')} vs ${dispatchNow.indexOf('refireStaleEventRuns')}`);
+      const reactionsNow = stripComments(readFileSync('lib/workflows/reactions.ts', 'utf8'));
+      ok('THE COUNTING FACT is ONE predicate with three readers — never a second copy of the rule',
+        /function fireStarted\(tasks: unknown\): boolean \{\s*return \(tasks as FireTasks \| null\)\?\.deferred !== true;/
+          .test(reactionsNow)
+        && (reactionsNow.match(/fireStarted\(/g) ?? []).length === 4,
+        String((reactionsNow.match(/fireStarted\(/g) ?? []).length));
+      ok('THE OLD SHREDDER IS GONE — no DAILY_CAP survives in the engine\'s code',
+        !/DAILY_CAP/.test(reactionsNow));
+      ok('…and the throttle is read through the ONE store module, batched (never a read per event)',
+        /import \{ readFireLimits, FIRE_LIMIT_DEFAULT \} from '@\/lib\/workflows\/fire-limit'/.test(reactionsNow)
+        && /const limits = await readFireLimits\(admin, userId, wfs\.map\(w => w\.id\)\);/.test(reactionsNow));
+    }
+  } finally {
+    for (const id of tWfIds) {
+      await admin.from('workflow_runs').delete().eq('workflow_id', id);
+      await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', 'reaction_fire').like('entity_id', `${id}:%`);
+      await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', FIRE_LIMIT_KIND).eq('entity_id', id);
+      await admin.from('work_threads').delete().eq('workflow_id', id);
+      await admin.from('workflows').delete().eq('id', id);
+    }
+    for (const k of tPlanKeys) {
+      await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', k.kind).eq('entity_id', k.entity_id);
+    }
+    const { data: leftWf } = await admin.from('workflows').select('id').eq('user_id', userId).like('name', `${TPFX}%`);
+    const { data: leftRuns } = await admin.from('workflow_runs').select('id')
+      .in('workflow_id', tWfIds.length ? tWfIds : ['00000000-0000-0000-0000-000000000000']);
+    const { data: leftFires } = await admin.from('item_plans').select('id')
+      .eq('user_id', userId).eq('kind', 'reaction_fire').gte('created_at', tStart);
+    const { data: leftLimits } = await admin.from('item_plans').select('id')
+      .eq('user_id', userId).eq('kind', FIRE_LIMIT_KIND).gte('created_at', tStart);
+    const { data: leftLinks } = await admin.from('item_plans').select('id')
+      .eq('user_id', userId).eq('kind', 'subprocess_link').gte('created_at', tStart);
+    ok('W3b probe leftovers are ZERO (workflows · runs · fire records · limit rows · link rows)',
+      (leftWf ?? []).length === 0 && (leftRuns ?? []).length === 0 && (leftFires ?? []).length === 0
+      && (leftLimits ?? []).length === 0 && (leftLinks ?? []).length === 0,
+      `${(leftWf ?? []).length}/${(leftRuns ?? []).length}/${(leftFires ?? []).length}/${(leftLimits ?? []).length}/${(leftLinks ?? []).length}`);
   }
 
   console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed`);

@@ -160,6 +160,74 @@ run-record 102 · build green):**
   document refusals); tri-state acceptMaterial (unsaid ≠ false — a partial utterance can't
   close a door the user opened); create-path ridden from birth this time.
 
+**W3 — THE SUBPROCESS STATION BUILT (Aug 24; relay 336/336 ×2 (+128) · processes 124/124 ·
+RENÉ'S LOOP LIVE):**
+- lib/workflows/subprocess.ts = the whole law: async door check at fire time (missing/draft/
+  depth-cap — readiness rule 7 and the door speak ONE identical self-reference sentence) ·
+  insert-first claim (`subprocess_link`, the BATON stored on the row — auditable + durable) ·
+  atomic parent claim on resume (double-completion can't double-resume) · failure propagation
+  (a failed child fails the parent with a spoken sentence, never strands it) · the stranded-park
+  sweep on the dispatcher · test mode borrows the last delivery, marked, never fires the child.
+- run-workflow: the park at the station; `resumeSeeded` (seeds outputs, passes NO human gate —
+  proven live: the resumed run parks again at its own later approval); FOUR terminal ends notify
+  the parent through one seam. reactions' stale-child backstop re-fires WITH the stored baton
+  (orchestrator fix). TWO LYING DOORS closed: the ledger's awaiting list excludes machine parks;
+  the resume route 409s them ("…it continues by itself when that delivers").
+- Surfaces: the ⧉ compound block (exclusions NAMED not hidden: self/draft/nested); the drawer's
+  SubprocessStation (machine gate, structurally zero human verbs, no GateObject);
+  waitingOn.role='process' (a process never renders as a person's face). Parity:
+  authorSubprocessSteps on the ONE ladder, FIREABLE-SET ALIGNED with the door (authoring can
+  never seat a station the fire door refuses), needs_step_note third sibling, the ⧉ card word.
+- **THE CYCLE CEILING — RESOLVED BY W3b (owner call, Aug 24)**: the cap became THE THROTTLE
+  (queue-not-drop, editable 1–100, default 20) — a composed cycle is throttled-and-lossless,
+  bounded per day, never dropped and never an explosion. Still no cycle detector (gated fact;
+  the ledger + auto-pause are the visibility net).
+
+**W3b — THE THROTTLE BUILT (Aug 24; relay 407/407 ×2 (+62 TL/TD/TR/TB/TS; F refit; RL matured
+to "the cycle DEFERS at the throttle") · processes 124/124 · smoke-compute PA6a re-pointed
+(stronger: "queues what it defers and says so"; 4 pre-existing unrelated reds on record —
+PA1/PA5/CS6/OP1)):**
+- reactions.ts: DAILY_CAP dead; THE COUNTING FACT = `deferred !== true` (one predicate, three
+  readers — reads every pre-W3b record with zero backfill); deferral = the same exactly-once
+  record + queued run, no start; the throttle sits BEHIND the judge (a deferred event costs no
+  second judge); `drainDeferredFires` (oldest-first, headroom = limit − startedToday, atomic
+  conditional-update start claim); the backstop skips deferred-unstarted (the flag PARTITIONS
+  the lanes — no double-start by construction); subprocess children uncapped by construction.
+- fire-limit.ts: default 20, floors 1–100 (SYSTEM ceiling — with queueing, "unlimited" only
+  buys unbounded same-day spend); default-write deletes the row; THE FLOOR IS THE FLOOR ('' /
+  0 / negatives land on 1, never 0 — gated).
+- Surfaces + parity: the WHEN-panel stepper (doors-only, constants imported — no literal
+  ceilings); "at most 3 a day" authors fire_limit; daily_run_limit on both chat verbs through
+  ONE write path; clamps SPOKEN everywhere; the draft card claims the pace only when
+  non-default; the POST create-path ride.
+- **SUITE LESSON (permanent, top of smoke-relay)**: an in-process env fence + a module-level
+  client cache = a poisoned process — fences live in CHILD PROCESSES (frames' L3 pattern);
+  structural proofs should be refit to structural fixtures so no fence is needed at all.
+- AgentOS Python arg mirror (daily_run_limit) lags a box redeploy, as with W1/W2 args.
+
+## W3b — THE THROTTLE, NEVER A SHREDDER (owner call, Aug 24 — resolves THE CYCLE CEILING)
+
+The daily fire cap's failure mode was wrong for intake: the 6th application of a busy day was
+SKIPPED (loud in a log, invisible to the user — a dropped job application is a trust violation).
+THE LAW: **the limit paces, it never loses.**
+
+- **QUEUE, NOT DROP**: at the limit, a matched event still writes its exactly-once fire record
+  and a `queued` event run — it just doesn't START. The drain (the dispatcher's backstop lane)
+  starts deferred runs up to `limit − startedToday`, oldest first; the stale-run backstop
+  RESPECTS the throttle (it must not flush the queue past the limit). Nothing is ever lost;
+  compute is bounded per day. A pathological composed cycle becomes a slow perpetual loop at
+  throttle rate — visible in the ledger, catchable by the existing auto-pause machinery — never
+  an explosion and never a silent stop.
+- **EDITABLE**: per-workflow `dailyFires`, store = item_plans kind `workflow_limit` (the house
+  storeless precedent), DEFAULT 20, floors 1–100 (the ceiling is SYSTEM, non-editable — with
+  queueing, "unlimited" only buys unbounded same-day spend). Studio: a stepper in the WHEN
+  panel — "Up to N event runs a day; extra ones wait for tomorrow."
+- **PARITY (law 1)**: generate-config may author it when the description says ("at most 3 a
+  day"); worker-tasks gains `daily_run_limit` on create/update; get_task speaks it; served on
+  the ledger/GET. Out-of-range values CLAMP with a spoken note, never refused silently.
+- Gate re-points declared: smoke-relay's RL ceiling gates (the cycle "stops at the cap") become
+  "the cycle DEFERS at the throttle" — same law, lossless form.
+
 ## GATES (laws-need-gates — each wave ships its floor)
 - The four-door parity sweep per primitive (generate-config emits · chat args accept · Studio
   edits · ledger serves) — the arc's standing gate.

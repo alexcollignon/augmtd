@@ -13,6 +13,7 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { CheckIcon, ShieldCheckIcon, BoltIcon } from '@heroicons/react/24/outline';
 import { Button } from '@/components/ui';
+import { FIRE_LIMIT_DEFAULT } from '@/lib/workflows/fire-limit';
 
 export type WorkflowDraft = {
   name: string;
@@ -33,6 +34,11 @@ export type WorkflowDraft = {
   inputs?: { docs: Array<{ kbFileId: string; name: string }>; acceptMaterial: boolean } | null;
   /** A document the resolver couldn't find, spoken — the same needs-note law as the doors. */
   needs_input_note?: string | null;
+  /** A subprocess station the resolver refused, spoken — the same needs-note law, third channel. */
+  needs_step_note?: string | null;
+  /** THE THROTTLE (relay canvas W3b) — a pace the description stated, already clamped. Absent =
+   *  the platform default; the Confirm must carry it or a said limit dies at creation. */
+  fire_limit?: number | null;
   /** The coworker whose conversation drafted it — becomes the delivery voice. */
   agent_id?: string | null;
   /** Idempotence token: a confirmed card renders as a receipt, never a second Confirm. */
@@ -47,6 +53,9 @@ const triggerWord = (t: WorkflowDraft['trigger']): string =>
 const stepWord = (s: WorkflowDraft['steps'][number]): string => {
   if (s.type === 'verify') return 'Verify against sources';
   if (s.type === 'approval') return 'Your approval';
+  // THE SUBPROCESS STATION (relay canvas W3, law 5): the child's own name, said as what it is —
+  // a whole process of the user's own running inside this one, not just another step.
+  if (s.type === 'workflow') return `⧉ ${s.label || 'a process'} (a process of its own)`;
   return s.label || s.tool || s.type;
 };
 
@@ -84,6 +93,7 @@ export function WorkflowDraftCard({
           ...(draft.skill_ids?.length ? { skill_ids: draft.skill_ids } : {}),
           ...(draft.triggers?.length ? { triggers: draft.triggers } : {}),
           ...(draft.inputs ? { inputs: draft.inputs } : {}),
+          ...(typeof draft.fire_limit === 'number' ? { fire_limit: draft.fire_limit } : {}),
         }),
       });
       const j = await r.json();
@@ -121,6 +131,11 @@ export function WorkflowDraftCard({
               <> · reads {draft.inputs!.docs.map((d) => d.name).join(' · ')}</>
             )}
             {draft.inputs?.acceptMaterial && <> · takes material at run time</>}
+            {/* THE THROTTLE speaks only when it ISN'T the default — a pace the user stated is a
+                claim worth confirming; the platform default is not news (never restate the settled). */}
+            {typeof draft.fire_limit === 'number' && draft.fire_limit !== FIRE_LIMIT_DEFAULT && (
+              <> · up to {draft.fire_limit} event runs a day</>
+            )}
             {' · delivers to '}{HOME_WORD[String((draft.output_config as { destination?: string }).destination ?? 'message')] ?? 'a message'}
           </div>
         </div>
@@ -153,6 +168,12 @@ export function WorkflowDraftCard({
       {draft.needs_input_note && (
         <div className="mt-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
           {draft.needs_input_note}
+        </div>
+      )}
+      {/* A process step the resolver refused is SPOKEN too — third channel, same block. */}
+      {draft.needs_step_note && (
+        <div className="mt-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+          {draft.needs_step_note}
         </div>
       )}
       <div className="mt-3 flex items-center gap-3">

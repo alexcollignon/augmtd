@@ -74,7 +74,7 @@ export async function GET(request: NextRequest) {
 
   for (const wf of dueList) {
     const r = readinessOf(
-      { status: wf.status, trigger: wf.trigger, steps: wf.steps ?? [] },
+      { id: wf.id, status: wf.status, trigger: wf.trigger, steps: wf.steps ?? [] },
       await featuresFor(wf.user_id),
     );
     if (!r.ready) {
@@ -157,6 +157,29 @@ export async function GET(request: NextRequest) {
     try {
       const { sweepHandoffSLAs } = await import('@/lib/workflows/handoffs');
       await sweepHandoffSLAs(supabase);
+    } catch { /* bookkeeping — never breaks the dispatcher */ }
+  });
+
+  // THE STRANDED-PARK SWEEP (relay canvas W3 — the subprocess station's backstop): a parent parked
+  // at a ⧉ station whose child is terminally done but whose resume was lost (a crash between the
+  // child's tail and the parent's claim) is continued or failed honestly here. ≤20 per pass.
+  after(async () => {
+    try {
+      const { sweepStrandedSubprocessParks } = await import('@/lib/workflows/subprocess');
+      const repaired = await sweepStrandedSubprocessParks(supabase);
+      if (repaired.length) console.log(`[workflows-dispatch] resumed ${repaired.length} stranded subprocess park(s)`);
+    } catch { /* bookkeeping — never breaks the dispatcher */ }
+  });
+
+  // THE DRAIN (relay canvas W3b — THE THROTTLE, NEVER A SHREDDER): events matched at a workflow's
+  // daily limit were recorded and queued, not dropped. Start what today's remaining headroom allows,
+  // oldest first. Runs BEFORE the stale-run backstop below (which deliberately skips these rows) so
+  // a drained run gets its own honest start before anything else looks at it.
+  after(async () => {
+    try {
+      const { drainDeferredFires } = await import('@/lib/workflows/reactions');
+      const { started } = await drainDeferredFires(supabase);
+      if (started) console.log(`[workflows-dispatch] drained ${started} deferred event fire(s)`);
     } catch { /* bookkeeping — never breaks the dispatcher */ }
   });
 

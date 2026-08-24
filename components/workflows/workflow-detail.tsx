@@ -566,7 +566,9 @@ function peopleFor(
 ): string[] {
   const names: string[] = [];
   const push = (n?: string | null) => { const v = (n ?? '').trim(); if (v && !names.includes(v)) names.push(v); };
-  if (p.waitingOn?.name) push(p.waitingOn.name);
+  // A MACHINE WAIT IS NOT A PERSON (relay canvas W3): a ⧉ station's holder is a workflow, so it
+  // never enters the facepile — the table's "Waiting on" cell already names it in words.
+  if (p.waitingOn?.name && p.waitingOn.role !== 'process') push(p.waitingOn.name);
   for (const n of rec?.peopleNames ?? []) push(n);
   if (ownerName && !ownerIsMe) push(ownerName);
   return names;
@@ -974,7 +976,7 @@ function TimelineTab({
   const span = Math.max(1, t1 - t0);
   const pctOf = (ms: number) => ((Math.min(t1, Math.max(t0, ms)) - t0) / span) * 100;
 
-  type Placed = { run: RunRow; state: ProcessState; waitingOn: string | null; reason?: string; left: number; width: number; done: number };
+  type Placed = { run: RunRow; state: ProcessState; waitingOn: string | null; waitingIsProcess: boolean; reason?: string; left: number; width: number; done: number };
   const placed: Placed[] = runs.map((r) => {
     const served = runIdToProcessRow.get(r.id);
     // THE SERVED ROW WINS. FALLBACK (safe by construction): the ledger caps at the most recent
@@ -983,12 +985,14 @@ function TimelineTab({
     // served). processStateOf(r) can only ever be reached for finished history here.
     const state: ProcessState = served ? served.state : processStateOf(r).state;
     const waitingOn = served?.waitingOn?.name ?? null;
+    // A ⧉ station's holder is a workflow — the bar-end label must not first-name it like a person.
+    const waitingIsProcess = served?.waitingOn?.role === 'process';
     const s = new Date(r.started_at ?? r.created_at).getTime();
     const e = r.completed_at ? new Date(r.completed_at).getTime() : now;
     const left = pctOf(s);
     const width = Math.max(1.5, pctOf(e) - left);
     return {
-      run: r, state, waitingOn,
+      run: r, state, waitingOn, waitingIsProcess,
       // The served reason (a failure) — the bar-end label must not call a failed run "You".
       ...(served?.reason ? { reason: served.reason } : {}),
       left, width, done: (r.step_outputs ?? []).length,
@@ -1045,7 +1049,7 @@ function TimelineTab({
                       const endLabel = p.state === 'needs_you' && !p.reason
                         ? 'You'
                         : p.waitingOn
-                          ? p.waitingOn.split(/\s+/)[0]
+                          ? (p.waitingIsProcess ? '⧉' : p.waitingOn.split(/\s+/)[0])
                           : null;
                       return (
                         <div key={p.run.id} className="relative h-5 mx-4">

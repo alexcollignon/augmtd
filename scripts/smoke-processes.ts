@@ -564,9 +564,13 @@ async function main() {
   const detailCode = stripComments(detail);
 
   console.log('\nP7f — THE RESUME EXEMPTION (a parked run is never re-refused):');
-  ok('the reaction refusal is gated on !opts.resumeFromApproval',
-    /trig\?\.type === 'reaction' && !opts\.resumeFromApproval && !\(opts\.triggerContext \?\? ''\)\.trim\(\)/.test(runWfCode),
-    'the refusal condition does not carry the resume exemption');
+  // DECLARED RE-POINT (relay canvas W3): the exemption GREW a second resume flag —
+  // `resumeSeeded` (a run continued past its ⧉ subprocess station). The law is unchanged and
+  // strictly stronger: EVERY resume is exempt from the nothing-to-react-to refusal, because the
+  // event rode in on the original run. Both flags are asserted, so neither can be dropped.
+  ok('the reaction refusal is gated on !opts.resumeFromApproval (and !opts.resumeSeeded — W3)',
+    /trig\?\.type === 'reaction' && !opts\.resumeFromApproval && !opts\.resumeSeeded && !\(opts\.triggerContext \?\? ''\)\.trim\(\)/.test(runWfCode),
+    'the refusal condition does not carry BOTH resume exemptions');
 
   console.log('\nP7g — ONE DERIVATION (readinessOf is the only rule table):');
   ok('run-workflow refuses through readinessOf',

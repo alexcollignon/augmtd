@@ -35,7 +35,7 @@ export async function GET(
     features = await getWorkspaceFeatures(user.id, supabase);
   } catch { /* unknown features → the feature rule abstains */ }
   const readiness = readinessOf(
-    { status: data.status, trigger: data.trigger, triggers: data.triggers, steps: data.steps ?? [] },
+    { id: data.id, status: data.status, trigger: data.trigger, triggers: data.triggers, steps: data.steps ?? [] },
     features,
   );
   // THE EVENT DOORS (relay canvas W1) — additive, normalized, registry-labelled. `select('*')`
@@ -58,14 +58,21 @@ export async function GET(
   );
   const inputs = await readWorkflowInputs(adminRead, data.user_id, id);
 
+  // THE THROTTLE (relay canvas W3b) — served ALWAYS, never null: absence in the store means the
+  // platform default, and the surface must be able to show the real number without knowing that
+  // rule. `isDefault` is what tells the stepper whether this workflow pinned its own.
+  const { readFireLimit } = await import('@/lib/workflows/fire-limit');
+  const fireLimit = await readFireLimit(adminRead, data.user_id, id);
+
   return NextResponse.json({
     // Served in BOTH places on purpose: `workflow.readiness` for consumers that hold only the
     // workflow object, and the top-level field for the route's own contract. One value, one
     // derivation — they can never disagree.
-    workflow: { ...data, is_owned_by_me: data.user_id === user.id, doors, inputs, readiness },
+    workflow: { ...data, is_owned_by_me: data.user_id === user.id, doors, inputs, fireLimit, readiness },
     doors,
     readiness,
     inputs,
+    fireLimit,
   });
 }
 
@@ -92,6 +99,9 @@ export async function PATCH(
     /** THE INPUTS TRAY (relay canvas W2) — `{ docs:[{kbFileId,name}], acceptMaterial }`. Stored
      *  OUT of band (item_plans kind 'workflow_inputs'), never a workflows column. */
     inputs: unknown;
+    /** THE THROTTLE (relay canvas W3b) — the per-workflow daily event-run limit. Stored OUT of
+     *  band (item_plans kind 'workflow_limit'); clamped to 1–100, never refused silently. */
+    fire_limit: unknown;
     steps: WorkflowStep[];
     output_config: OutputConfig;
     shared_with_company: boolean;
@@ -146,6 +156,9 @@ export async function PATCH(
   // update before the spread can send an unknown column to PostgREST.
   const inputsBody = 'inputs' in body ? body.inputs : undefined;
   delete update.inputs;
+  // Same discipline for the throttle — its own store, never a workflows column.
+  const fireLimitBody = 'fire_limit' in body ? body.fire_limit : undefined;
+  delete update.fire_limit;
   // Server-owned column — never client-settable (the body spread would pass it through).
   delete update.auto_paused_at;
   if (nextRunAt !== undefined) update.next_run_at = nextRunAt;
@@ -193,9 +206,27 @@ export async function PATCH(
     inputsDropped = res.dropped;
   }
 
+  // THE THROTTLE (relay canvas W3b) — written through the SAME after-the-row-update discipline.
+  // Out-of-range CLAMPS and says so (`fire_limit_clamped`), never a silent refusal; writing the
+  // default deletes the row, so `isDefault` keeps meaning "riding the platform default".
+  let fireLimit: unknown = undefined;
+  let fireLimitClamped = false;
+  if (fireLimitBody !== undefined) {
+    const { writeFireLimit } = await import('@/lib/workflows/fire-limit');
+    const res = await writeFireLimit(supabase, user.id, id, fireLimitBody);
+    if (!res.ok) return NextResponse.json({ error: res.error }, { status: 500 });
+    fireLimit = res.fireLimit;
+    fireLimitClamped = res.clamped;
+  }
+
   return NextResponse.json({
-    workflow: inputsBody !== undefined ? { ...data, inputs } : data,
+    workflow: {
+      ...data,
+      ...(inputsBody !== undefined ? { inputs } : {}),
+      ...(fireLimitBody !== undefined ? { fireLimit } : {}),
+    },
     ...(inputsBody !== undefined ? { inputs, inputs_dropped: inputsDropped } : {}),
+    ...(fireLimitBody !== undefined ? { fireLimit, fire_limit_clamped: fireLimitClamped } : {}),
   });
 }
 

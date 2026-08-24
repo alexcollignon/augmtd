@@ -35,7 +35,7 @@ export type WorkflowTrigger = ManualTrigger | ScheduleTrigger | ReactionTrigger;
 
 // ── Steps ──────────────────────────────────────────────────────────────────────
 
-export type StepType = 'tool' | 'ai' | 'agent' | 'approval' | 'verify' | 'handoff';
+export type StepType = 'tool' | 'ai' | 'agent' | 'approval' | 'verify' | 'handoff' | 'workflow';
 
 // Tool step — deterministic data fetch via the MCP registry or a built-in tool id.
 export interface ToolStep {
@@ -132,7 +132,25 @@ export interface HandoffStep {
   sla_hours?: number;
 }
 
-export type WorkflowStep = ToolStep | AIStep | AgentStep | ApprovalStep | VerifyStep | HandoffStep;
+// Subprocess step — A SUBPROCESS IS A HANDOFF TO A MACHINE (relay canvas W3, law 5,
+// docs/relay-canvas-plan.md). The parent parks at the ⧉ station through the SAME awaiting
+// machinery as the human gates; the child runs its own rail with its OWN gate/owner/SLA; its
+// completion resumes the parent with its deliverable as this step's output (the
+// get_workflow_output semantics, awaited instead of read from history).
+// FLOORS: depth cap 1 (a child may not itself contain a workflow step — the door check refuses,
+// which also makes circularity impossible beyond self-reference, which readiness refuses);
+// test mode NEVER fires the real child (it reads the child's latest delivered output).
+export interface SubprocessStep {
+  type: 'workflow';
+  id: string;
+  /** The CHILD'S NAME at authoring time — surfaces render the station without a lookup. */
+  label: string;
+  /** The workflow this station hands the baton to. */
+  workflow_id: string;
+}
+
+export type WorkflowStep =
+  | ToolStep | AIStep | AgentStep | ApprovalStep | VerifyStep | HandoffStep | SubprocessStep;
 
 // ── Output ─────────────────────────────────────────────────────────────────────
 

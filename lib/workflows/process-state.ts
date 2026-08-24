@@ -67,12 +67,26 @@ export function parkedGateOf(
   /** B2 REASSIGN: a per-run override (item_plans kind 'handoff_override') outranks the step's
    *  static assignee — a per-run decision never mutates the authored workflow. */
   override?: { assigneeUserId: string; assigneeName?: string } | null,
-): { kind: 'guardrail' | 'approval' | 'handoff'; assigneeUserId?: string; assigneeName?: string } {
+): {
+  kind: 'guardrail' | 'approval' | 'handoff' | 'subprocess';
+  assigneeUserId?: string; assigneeName?: string;
+  /** Subprocess parks only — the station's authored label + the child it handed the baton to. */
+  stepId?: string; label?: string; childWorkflowId?: string;
+} {
   const outs = run.step_outputs ?? [];
   const last = outs[outs.length - 1];
   const v = (last?.verdict ?? null) as GateVerdict | null;
   if (v?.status === 'blocked') return { kind: 'guardrail' };
   const current = (steps ?? [])[outs.length];
+  // THE ⧉ STATION (relay canvas W3): a subprocess park holds no human — the wait belongs to a
+  // MACHINE, so it is never anyone's needs_you. Sits beside the handoff branch, same precedence
+  // (the blocked-verify tail still outranks both).
+  if (current?.type === 'workflow') {
+    return {
+      kind: 'subprocess', stepId: current.id,
+      label: current.label || 'Process', childWorkflowId: current.workflow_id,
+    };
+  }
   if (current?.type === 'handoff') {
     if (override?.assigneeUserId) {
       return { kind: 'handoff', assigneeUserId: override.assigneeUserId, assigneeName: override.assigneeName };
@@ -157,10 +171,18 @@ export async function deriveProcessRows(
     const wfName = wf?.name ?? 'Workflow';
     const outs = r.step_outputs ?? [];
     // Phase B — viewer-aware park attribution (the handoff gate belongs to its assignee).
-    let waitingOn: { name: string } | null = null;
+    // `role` is the SURFACE DISCRIMINATOR: a machine wait must never be drawn in the people
+    // grammar (a facepile of a process name is a lie). Only the ⧉ station sets it.
+    let waitingOn: { name: string; role?: string } | null = null;
     if (r.status === 'awaiting_approval') {
       const gate = parkedGateOf(r, wf?.steps);
-      if (gate.kind === 'handoff' && gate.assigneeUserId && gate.assigneeUserId !== viewer) {
+      // A ⧉ STATION WAITS ON A MACHINE (relay canvas W3): no human holds this gate, so it reads
+      // waiting_on_others for EVERY viewer — the owner included. Never needs_you.
+      if (gate.kind === 'subprocess') {
+        state = 'waiting_on_others';
+        reason = undefined;
+        waitingOn = { name: gate.label ?? 'another process', role: 'process' };
+      } else if (gate.kind === 'handoff' && gate.assigneeUserId && gate.assigneeUserId !== viewer) {
         state = 'waiting_on_others';
         reason = undefined;
         waitingOn = { name: gate.assigneeName ?? 'a teammate' };

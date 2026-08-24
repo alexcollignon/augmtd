@@ -38,6 +38,21 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (run.status !== 'awaiting_approval') {
       return NextResponse.json({ error: `run is ${String(run.status)} — nothing to approve` }, { status: 409 });
     }
+    // NO LYING DOOR (relay canvas W3): a ⧉ SUBPROCESS park wears the same status but holds no
+    // human decision — the child's completion is what resumes it. Approving it would re-enter a
+    // station already claimed; rejecting it would strand a running child. Refuse, and say why.
+    {
+      const { parkedGateOf } = await import('@/lib/workflows/process-state');
+      const gate = parkedGateOf(
+        { step_outputs: (run.step_outputs ?? []) as never },
+        (auth.workflow.steps ?? null) as never,
+      );
+      if (gate.kind === 'subprocess') {
+        return NextResponse.json({
+          error: `This run is waiting on the '${gate.label}' process, not on you — it continues by itself when that delivers.`,
+        }, { status: 409 });
+      }
+    }
     const wf = auth.workflow;
     // The handoff half settles only when the gate the run is parked at IS a handoff.
     const handoffGate = Boolean(auth.step);
@@ -75,6 +90,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         } catch { /* the run status is the truth */ }
       }
       await settle();
+      // A HELD-BACK CHILD NEVER STRANDS ITS PARENT (relay canvas W3): a rejection is a terminal
+      // end like any other — whoever parked at a ⧉ station on this run hears about it.
+      try {
+        const { resumeParentsOf } = await import('@/lib/workflows/subprocess');
+        await resumeParentsOf(admin, runId, { ok: false });
+      } catch { /* the run status is the truth */ }
       return NextResponse.json({ ok: true, status: 'rejected' });
     }
 

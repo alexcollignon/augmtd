@@ -19,6 +19,10 @@
 //   5. an EVENT DOOR that cannot fire → judged door with no `when`: "The trigger needs an event to
 //      react to." · a 'workflow' door with no workflow bound · a door whose SOURCE feature is off
 //      (the doors are iterated through normalizeTriggers — legacy single reaction trigger folds in)
+//   6. a `workflow` (⧉ subprocess) step with no workflow bound
+//                                     → "The '<label>' process step needs a workflow."
+//   7. a `workflow` step naming THIS workflow
+//                                     → "A workflow can't include itself as a step."
 // Adding a rule = ONE entry in RULES below. Nothing else moves.
 //
 // PAUSED IS NOT UNREADINESS — a paused (or auto-paused) workflow is ready, just asleep.
@@ -45,6 +49,8 @@ const FEATURE_LABEL: Record<FeatureKey, string> = {
 
 /** The shape readiness needs — every caller already holds these three columns. */
 export interface ReadinessInput {
+  /** The workflow's own id — only rule 7 (self-reference) reads it; absent = that rule abstains. */
+  id?: string | null;
   status?: string | null;
   trigger?: { type?: string; when?: string; label?: string } | null;
   /** The event doors (relay canvas W1, additive jsonb). Read through normalizeTriggers. */
@@ -132,6 +138,32 @@ const RULES: Rule[] = [
       }
     }
     return null;
+  },
+
+  // 6 — THE ⧉ STATION WITH NOTHING BEHIND IT (relay canvas W3, law 5): a process step bound to no
+  // workflow can never hand the baton anywhere. Pure: existence/ownership/status/depth are facts
+  // only the database holds, so those live in the door check at fire time (lib/workflows/subprocess).
+  (wf) => {
+    for (const raw of wf.steps ?? []) {
+      const s = asRec(raw);
+      if (typeOf(s) !== 'workflow') continue;
+      if (String((s.workflow_id as string | undefined) ?? '').trim()) continue;
+      const fixed = `The '' process step needs a workflow.`.length;
+      return `The '${clip(stepLabel(s), Math.max(8, READINESS_REASON_MAX - fixed))}' process step needs a workflow.`;
+    }
+    return null;
+  },
+
+  // 7 — SELF-REFERENCE: a workflow that includes ITSELF would park on its own park, forever. The
+  // one circularity a pure rule can see (deeper cycles are impossible by the depth cap: the door
+  // check refuses a child that itself contains a process step).
+  (wf) => {
+    const self = String(wf.id ?? '').trim();
+    if (!self) return null;
+    const loops = (wf.steps ?? []).map(asRec).some(
+      (s) => typeOf(s) === 'workflow' && String((s.workflow_id as string | undefined) ?? '').trim() === self,
+    );
+    return loops ? "A workflow can't include itself as a step." : null;
   },
 ];
 

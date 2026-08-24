@@ -10,6 +10,10 @@ import {
   authorInputs, inputNote, inputsForStorage, describeInputs,
 } from '@/lib/workflows/author-doors';
 import { readWorkflowInputs, writeWorkflowInputs, type WorkflowInputs } from '@/lib/workflows/inputs';
+import {
+  clampFireLimit, fireLimitClampNote, readFireLimit, writeFireLimit,
+  FIRE_LIMIT_MIN, FIRE_LIMIT_MAX, FIRE_LIMIT_DEFAULT,
+} from '@/lib/workflows/fire-limit';
 import { normalizeTriggers, doorLabel, type ReactionDoor } from '@/lib/workflows/trigger-sources';
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────
@@ -61,6 +65,10 @@ export const createTaskDefinition = {
       input_accept_material: {
         type: 'boolean',
         description: 'Optional. True when the work is done ON something handed over at run time ("when I upload a CV", "paste the transcript and…") — it opens a material box on Run-now. Standing reference documents go in input_doc_names instead.',
+      },
+      daily_run_limit: {
+        type: 'number',
+        description: `Optional. THE THROTTLE — how many EVENT RUNS a day this task may start (${FIRE_LIMIT_MIN}–${FIRE_LIMIT_MAX}; default ${FIRE_LIMIT_DEFAULT}). Set it only when the user states a pace ("at most 3 a day"). Extra events queue — they wait for the next day, nothing is ever dropped. Out-of-range numbers are kept within ${FIRE_LIMIT_MIN}–${FIRE_LIMIT_MAX} and said out loud.`,
       },
     },
     required: ['description'],
@@ -132,6 +140,10 @@ export const updateTaskDefinition = {
       input_accept_material: {
         type: 'boolean',
         description: 'Whether the task accepts material handed over at run time (a CV, a transcript, a draft) — it opens a material box on Run-now. Standing reference documents go in add_input_docs instead.',
+      },
+      daily_run_limit: {
+        type: 'number',
+        description: `THE THROTTLE — how many EVENT RUNS a day this task may start (${FIRE_LIMIT_MIN}–${FIRE_LIMIT_MAX}; default ${FIRE_LIMIT_DEFAULT}). Use it when the user asks for a different pace ("keep it to 5 a day", "let it run more"). Extra events queue — they wait for the next day, nothing is ever dropped. Out-of-range numbers are kept within ${FIRE_LIMIT_MIN}–${FIRE_LIMIT_MAX} and said out loud.`,
       },
       output_language: { type: 'string', description: 'BCP-47 language code for output. Examples: "de" (German), "pt" (Portuguese), "fr" (French), "es" (Spanish)' },
       output_destination: { type: 'string', enum: ['message', 'document', 'slack', 'email'], description: "The deliverable's single home. message = a message in the run thread; document = a saved document in Documents/Drive; slack = posted to a Slack channel; email = emailed. The app always keeps a record regardless." },
@@ -364,6 +376,9 @@ export async function executeCreateTask(
    *  names ride the SAME resolver the generator used, on top of what the description pinned. */
   inputDocNames?: unknown,
   inputAcceptMaterial?: boolean,
+  /** THE THROTTLE said out loud (relay canvas W3b) — clamped here, and the correction is SPOKEN.
+   *  It overrides whatever pace the description itself authored (the user's explicit number wins). */
+  dailyRunLimit?: unknown,
 ): Promise<string> {
   // Fetch worker persona to shape the pipeline's AI step
   const { data: agent } = await adminClient
@@ -430,6 +445,21 @@ export async function executeCreateTask(
     } catch { /* the draft stands with the generator's tray */ }
   }
 
+  // THE SPOKEN THROTTLE: an explicit number from the coworker's own argument outranks the pace the
+  // description authored; both ride the ONE clamp, and a moved number is SAID (never silently
+  // accepted as given). Unsaid = null = the platform default, which is not config at all.
+  let fireLimit: number | null = generated.fire_limit ?? null;
+  if (dailyRunLimit !== undefined && dailyRunLimit !== null && dailyRunLimit !== '') {
+    const { value, clamped } = clampFireLimit(dailyRunLimit);
+    fireLimit = value;
+    if (clamped) {
+      doorNoteLine = doorNote([
+        ...(doorNoteLine ? [doorNoteLine] : []),
+        fireLimitClampNote(dailyRunLimit, value),
+      ]);
+    }
+  }
+
   const { encodeWorkflowDraftMarker } = await import('@/lib/workflows/draft-marker');
   const { randomUUID } = await import('crypto');
   const schedule = formatSchedule(generated.trigger as { type: string; cron?: string; label?: string });
@@ -443,12 +473,21 @@ export async function executeCreateTask(
   // THE INPUTS TRAY speaks the same way — what it reads, and what it couldn't find.
   const inputNoteText = inputNoteLine ? `\n${inputNoteLine}` : '';
   const inputLine = inputs ? ` Reads: ${describeInputs(inputs)}.` : '';
+  // THE UNRESOLVED-PROCESS NOTE rides the same way (W3): a refused subprocess station is stated.
+  const stepNoteText = generated.needs_step_note ? `\n${generated.needs_step_note}` : '';
+  // THE THROTTLE speaks only when it isn't the default — a stated pace is a claim to confirm;
+  // the platform default is not news.
+  const limitLine = fireLimit !== null && fireLimit !== FIRE_LIMIT_DEFAULT
+    ? ` Up to ${fireLimit} event runs a day — extra ones wait for tomorrow.`
+    : '';
   const draftPayload: WorkflowDraft & {
     needs_person_note?: string | null;
     triggers?: ReactionDoor[];
     needs_door_note?: string | null;
     inputs?: WorkflowInputs | null;
     needs_input_note?: string | null;
+    needs_step_note?: string | null;
+    fire_limit?: number | null;
   } = {
     name: generated.name,
     description: generated.description ?? null,
@@ -462,12 +501,14 @@ export async function executeCreateTask(
     needs_door_note: doorNoteLine,
     ...(inputs ? { inputs } : {}),
     needs_input_note: inputNoteLine,
+    needs_step_note: generated.needs_step_note ?? null,
+    ...(fireLimit !== null ? { fire_limit: fireLimit } : {}),
     ...(skillIds.length > 0 ? { skill_ids: skillIds } : {}),
     agent_id: agentId,
     token: randomUUID(),
   };
   const marker = encodeWorkflowDraftMarker(draftPayload);
-  return `Here's the plan for **${generated.name}** — ${schedule}.${doorLine}${inputLine} Nothing runs until you confirm on the card.${overlapLine}${personLine}${doorNoteText}${inputNoteText}\n${marker}`;
+  return `Here's the plan for **${generated.name}** — ${schedule}.${doorLine}${inputLine}${limitLine} Nothing runs until you confirm on the card.${overlapLine}${personLine}${doorNoteText}${inputNoteText}${stepNoteText}\n${marker}`;
 }
 
 export async function executeGetTask(
@@ -502,6 +543,9 @@ export async function executeGetTask(
   // THE INPUTS TRAY (relay canvas W2) — its own store; `null` means never configured, and the
   // line says "none" rather than pretending the tray doesn't exist as a thing to configure.
   const inputs = await readWorkflowInputs(adminClient as SupabaseClient, userId, taskId);
+  // THE THROTTLE (relay canvas W3b) — its own store; absent means the platform default, and the
+  // line SAYS "(default)" so the model never reads a default as a number somebody chose.
+  const fireLimit = await readFireLimit(adminClient as SupabaseClient, userId, taskId);
 
   const stepsText = (t.steps ?? []).map((s, i) => {
     if (s.type === 'tool') return `  ${i + 1}. [tool] id:${s.id} label:"${s.label}" tool:${s.tool}\n     config: ${JSON.stringify(s.config ?? {})}`;
@@ -529,6 +573,7 @@ export async function executeGetTask(
     `Schedule: ${trigger}`,
     `Event doors: ${describeDoors(doors)}`,
     `Inputs: ${describeInputs(inputs)}`,
+    `Daily event limit: ${fireLimit.dailyFires}${fireLimit.isDefault ? ' (default)' : ''} — extra events wait for the next day`,
     `Output:\n${outputLines}`,
     t.worker_instructions ? `Task instructions: ${t.worker_instructions}` : null,
     `Steps (${(t.steps ?? []).length}):\n${stepsText || '  (no steps)'}`,
@@ -551,6 +596,8 @@ export async function executeUpdateTask(
     add_input_docs?: unknown;
     remove_input_docs?: string[] | string;
     input_accept_material?: boolean;
+    /** THE THROTTLE (relay canvas W3b) — event runs a day; its own store, clamped at the write. */
+    daily_run_limit?: unknown;
     output_language?: string;
     output_destination?: string;
     output_artifact_type?: string;
@@ -689,6 +736,18 @@ export async function executeUpdateTask(
     if (!changes.some(c => /document|material/.test(c))) changes.push(`inputs: ${describeInputs(pendingInputs)}`);
   }
 
+  // ── THE THROTTLE (relay canvas W3b) ─────────────────────────────────────────────────────────
+  // Its own store (item_plans kind 'workflow_limit'), so it resolves here and LANDS after the row
+  // update succeeds — the tray's precedent. Out of range CLAMPS and is SAID; unsaid touches nothing.
+  let limitNoteLine: string | null = null;
+  let pendingLimit: number | undefined;
+  if (fields.daily_run_limit !== undefined && fields.daily_run_limit !== null && fields.daily_run_limit !== '') {
+    const { value, clamped } = clampFireLimit(fields.daily_run_limit);
+    pendingLimit = value;
+    if (clamped) limitNoteLine = fireLimitClampNote(fields.daily_run_limit, value);
+    changes.push(`up to ${value} event runs a day${value === FIRE_LIMIT_DEFAULT ? ' (the default)' : ''}`);
+  }
+
   // output_config — merge all output fields together in one patch
   const hasOutputChange = fields.output_language !== undefined
     || fields.output_destination !== undefined
@@ -744,7 +803,7 @@ export async function executeUpdateTask(
 
   if (fields.steps !== undefined) { update.steps = fields.steps; changes.push('pipeline steps replaced'); }
 
-  if (Object.keys(update).length === 0 && pendingInputs === undefined) {
+  if (Object.keys(update).length === 0 && pendingInputs === undefined && pendingLimit === undefined) {
     return 'Nothing to update — no fields provided.';
   }
 
@@ -765,7 +824,16 @@ export async function executeUpdateTask(
     if (!res.ok) inputNoteLine = inputNote([...(inputNoteLine ? [inputNoteLine] : []), `I couldn't save the inputs — ${res.error}.`]);
   }
 
-  const notesTail = [doorNoteLine, inputNoteLine].filter(Boolean).join(' ');
+  // THE THROTTLE lands the same way — after the row, through the ENGINE'S OWN WRITE (never a second
+  // writer), and a store failure is SAID rather than left as a sentence claiming a pace that isn't.
+  if (pendingLimit !== undefined) {
+    const res = await writeFireLimit(adminClient as SupabaseClient, userId, taskId, pendingLimit);
+    if (!res.ok) {
+      limitNoteLine = [limitNoteLine, `I couldn't save the daily limit — ${res.error}.`].filter(Boolean).join(' ');
+    }
+  }
+
+  const notesTail = [doorNoteLine, inputNoteLine, limitNoteLine].filter(Boolean).join(' ');
   return `"${fields.name ?? row.name}" updated — ${changes.join(', ')}.${notesTail ? ` ${notesTail}` : ''}`;
 }
 
