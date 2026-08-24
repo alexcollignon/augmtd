@@ -117,6 +117,12 @@ export interface ReactionEvent {
   material?: string;
 }
 
+/** Accent- and case-insensitive comparison folding (the house idiom) — used only to decide whether
+ *  the brain's read genuinely SAYS something the subject does not. */
+function fold(s: string): string {
+  return s.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
 /** Mail keeps its historical token so pre-W1 fire records never double-fire. */
 function sourceToken(source: TriggerSourceKey): string {
   return source === 'mail' ? 'inbox' : source;
@@ -176,6 +182,58 @@ function doorIsUsable(d: ReactionDoor): boolean {
   return (d.when ?? '').trim().length > 3 || !!d.filters?.length;
 }
 
+/** THE MAIL MAPPER — an inbox row reduced to the one event shape. EXPORTED so no other caller
+ *  (a backfill walk, a seeder, a probe) can drift from what production's judge actually sees:
+ *  a verbatim copy is a law waiting to decay. */
+export function mailEventFromItem(it: Record<string, unknown>): ReactionEvent {
+  const sd = (it.source_data ?? {}) as Record<string, unknown>;
+  // THE DETERMINISTIC FIELDS (W5). ⚠️ `from` is the SPOKEN sender (display name when there is
+  // one) — a filter must never read it: `from_address` is the REAL address, and it is the
+  // only thing `is`/`domain_is` may see. A missing address simply omits the field, and every
+  // sender filter then fails closed.
+  const fromAddress = typeof sd.from_address === 'string' ? sd.from_address.trim() : '';
+  const fromName = typeof sd.from_name === 'string' ? sd.from_name.trim() : '';
+  const subject = String(sd.subject ?? it.work_title ?? '').trim();
+  const fields: Record<string, string> = {};
+  if (fromAddress) fields.from_address = fromAddress;
+  if (fromName) fields.from_name = fromName;
+  if (subject) fields.subject = subject;
+  // THE MATERIAL LANE: the sync already downloaded + text-extracted this mail's attachments
+  // onto this very row (source_data.attachments[].extractedText) — the door carries them to
+  // the fired run instead of leaving a CV unread beside a 500-char gist. The judge sees only
+  // the attachment NAMES (in the gist — the fact of a CV, not its text: cheap and sufficient
+  // for "is this an application"-class conditions).
+  const atts = (Array.isArray(sd.attachments) ? sd.attachments : []) as Array<{
+    filename?: string; extractedText?: string | null;
+  }>;
+  const attNames = atts.map((a) => String(a.filename ?? '').trim()).filter(Boolean);
+  const material = atts
+    .filter((a) => (a.extractedText ?? '').trim())
+    .slice(0, 4)
+    .map((a) => `--- ${String(a.filename ?? 'attachment')} ---\n${clipForPrompt(String(a.extractedText), 2600)}`)
+    .join('\n');
+  // THE SUBJECT IS THE EVENT'S OWN NAME (found live, Aug 24 — a seeded CV-triage door passed
+  // over two real applications whose subjects literally named the opening). `work_title` is
+  // the BRAIN'S SYNTHESIZED READ of the item and it always exists, so leading with it meant
+  // the judge's list — whose line is labelled "Subject:" — never once showed a real subject,
+  // and the case step's eventText never carried the words the case is keyed on. The source's
+  // own words lead; the brain's read is not discarded, it is DECLARED as what it is.
+  const workTitle = String(it.work_title ?? '').trim();
+  const title = (subject || workTitle || 'Email').slice(0, 120);
+  const understood = workTitle && subject && fold(workTitle) !== fold(subject)
+    ? `[Understood as: ${workTitle.slice(0, 120)}]\n` : '';
+  return {
+    id: String(it.id),
+    title,
+    from: fromName || fromAddress || null,
+    gist: understood
+      + String(sd.snippet ?? sd.body_preview ?? sd.body ?? '').replace(/\s+/g, ' ').slice(0, 500)
+      + (attNames.length ? `\n[Attached: ${attNames.slice(0, 8).join(', ')}]` : ''),
+    fields,
+    ...(material ? { material } : {}),
+  };
+}
+
 /** Check the user's standing reactions against inbound items that arrived since `sinceIso`.
  *  Called from the sync tail (after recognition). Non-fatal by contract. */
 export async function checkReactions(
@@ -198,43 +256,7 @@ export async function checkReactions(
         const u = (sd.understanding ?? {}) as { bulk?: boolean };
         return u.bulk !== true;
       })
-      .map((it) => {
-        const sd = (it.source_data ?? {}) as Record<string, unknown>;
-        // THE DETERMINISTIC FIELDS (W5). ⚠️ `from` is the SPOKEN sender (display name when there is
-        // one) — a filter must never read it: `from_address` is the REAL address, and it is the
-        // only thing `is`/`domain_is` may see. A missing address simply omits the field, and every
-        // sender filter then fails closed.
-        const fromAddress = typeof sd.from_address === 'string' ? sd.from_address.trim() : '';
-        const fromName = typeof sd.from_name === 'string' ? sd.from_name.trim() : '';
-        const subject = String(sd.subject ?? it.work_title ?? '').trim();
-        const fields: Record<string, string> = {};
-        if (fromAddress) fields.from_address = fromAddress;
-        if (fromName) fields.from_name = fromName;
-        if (subject) fields.subject = subject;
-        // THE MATERIAL LANE: the sync already downloaded + text-extracted this mail's attachments
-        // onto this very row (source_data.attachments[].extractedText) — the door carries them to
-        // the fired run instead of leaving a CV unread beside a 500-char gist. The judge sees only
-        // the attachment NAMES (in the gist — the fact of a CV, not its text: cheap and sufficient
-        // for "is this an application"-class conditions).
-        const atts = (Array.isArray(sd.attachments) ? sd.attachments : []) as Array<{
-          filename?: string; extractedText?: string | null;
-        }>;
-        const attNames = atts.map((a) => String(a.filename ?? '').trim()).filter(Boolean);
-        const material = atts
-          .filter((a) => (a.extractedText ?? '').trim())
-          .slice(0, 4)
-          .map((a) => `--- ${String(a.filename ?? 'attachment')} ---\n${clipForPrompt(String(a.extractedText), 2600)}`)
-          .join('\n');
-        return {
-          id: String(it.id),
-          title: String(it.work_title ?? sd.subject ?? 'Email').slice(0, 120),
-          from: fromName || fromAddress || null,
-          gist: String(sd.snippet ?? sd.body_preview ?? sd.body ?? '').replace(/\s+/g, ' ').slice(0, 500)
-            + (attNames.length ? `\n[Attached: ${attNames.slice(0, 8).join(', ')}]` : ''),
-          fields,
-          ...(material ? { material } : {}),
-        };
-      });
+      .map(mailEventFromItem);
     if (!items.length) return { considered: 0, fired: 0, deferred: 0 };
 
     // The entity edge = the scope: a project-scoped reaction only sees its project's items.

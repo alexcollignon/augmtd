@@ -2635,7 +2635,10 @@ async function main() {
   const {
     resolveCaseForRun, deterministicCaseMatch, distinctiveTokens, readCaseIndex,
     atomForRun: atomForRunW4, CASE_INDEX_KIND, RUN_CASE_KIND,
+    readCaseAtoms: readCaseAtomsW4, caseAtomsBlock: caseAtomsBlockW4,
+    appendCaseAtom: appendCaseAtomW4,
   } = await import('../lib/workflows/case-step');
+  const { EXCERPT_RULE: EXCERPT_RULE_W4 } = await import('../lib/utils/clip-for-prompt');
   const { runWorkflow: runW4 } = await import('../lib/workflows/run-workflow');
   const { deriveProcessRows: deriveRowsW4 } = await import('../lib/workflows/process-state');
   const { entityRunGrounding } = await import('../lib/workflows/entity-edge');
@@ -2645,6 +2648,7 @@ async function main() {
   const c4WfIds: string[] = [];
   const c4EntityIds: string[] = [];
   const c4Atoms: string[] = [];
+  const c4Inbox: string[] = [];
   const c4RunIds: string[] = [];
   const c4Start = new Date(Date.now() - 10_000).toISOString();
   /** The ONLY honest proof a payload travelled a seam: a word reachable through one door alone. */
@@ -2794,7 +2798,14 @@ async function main() {
         JSON.stringify(link1));
       ok('THE CARD SPEAKS THE OPENING and what the case now holds',
         outAt(row, 0).startsWith(`Opened a new case: ${caseName} — `)
-        && outAt(row, 0).includes('The case now holds 1 linked item.'), outAt(row, 0).slice(0, 140));
+        // RE-POINTED (Aug 24, THE CASE CARRIES ITS OWN ATOMS): the count reads the case's OWN
+        // ledger, not entity_links — so the word is "filed", and it is true even where the one
+        // brain had already homed the item somewhere else.
+        && outAt(row, 0).includes('The case now holds 1 filed item.'), outAt(row, 0).slice(0, 140));
+      const atoms1 = wfCase ? await readCaseAtomsW4(admin, userId, wfCase, caseId) : [];
+      ok('THE CASE CARRIES ITS OWN ATOMS — the resolved event lands on the index\'s atom ledger',
+        atoms1.length === 1 && atoms1[0].itemKind === 'inbox_item' && atoms1[0].itemId === atom1
+        && !!atoms1[0].at, JSON.stringify(atoms1));
       ok('…and the run itself succeeded (a station files; it never becomes the deliverable\'s gate)',
         row?.status === 'succeeded', `${row?.status}/${row?.error ?? ''}`);
     }
@@ -2936,11 +2947,72 @@ async function main() {
       const linkC = await linkOf(atomC);
       ok('THE ORIGINAL LINK STANDS — the case layer only ever fills an EMPTY slot',
         linkC?.entity_id === decoyId && linkC?.via === 'recognized', JSON.stringify(linkC));
+      // RE-POINTED (Aug 24, THE CASE CARRIES ITS OWN ATOMS): the note is still honest about the
+      // brain's filing, but it no longer implies the case lost the item — because it did not.
       ok('…and the card says so rather than implying a filing that never happened',
-        outAt(rowC, 0).includes('It was already filed elsewhere, so its own link stands.'),
+        outAt(rowC, 0).includes('It was already filed elsewhere, so its own link stands — the case holds it either way.'),
         outAt(rowC, 0).slice(0, 200));
       ok('…while the run still WEARS the case it resolved (a refused filing is not a lost case)',
         (await stampOf(resC.runId))?.entityId === caseId);
+      // THE FIX THIS WAVE EXISTS FOR (found live on a mature mailbox): entity_links refused the
+      // case link — correctly — and the case used to end up holding NOTHING, which emptied the
+      // grounding and killed the cross-run comparison. The ledger is decoupled now.
+      const atomsC = await readCaseAtomsW4(admin, userId, wfCase, caseId);
+      ok('AN ALREADY-FILED ATOM STILL JOINS THE CASE\'S OWN LEDGER (the refusal is a filing fact, not a loss)',
+        atomsC.length === 2 && atomsC.some((a) => a.itemId === atomC)
+        && atomsC.find((a) => a.itemId === atomC)?.note === 'filed elsewhere by the one brain',
+        JSON.stringify(atomsC.map((a) => a.itemId)));
+      ok('…and THE CARD SPEAKS THAT COUNT (the case\'s ledger, never entity_links)',
+        outAt(rowC, 0).includes('The case now holds 2 filed items.'), outAt(rowC, 0).slice(0, 200));
+      ok('…while ENTITY_LINKS IS UNCHANGED — the case layer wrote no link for it at all',
+        ((await admin.from('entity_links').select('entity_id')
+          .eq('user_id', userId).eq('item_id', atomC)).data ?? []).length === 1
+        && (await linkOf(atomC))?.entity_id === decoyId);
+      const dupe = await appendCaseAtomW4(admin, userId, wfCase, caseId,
+        { itemKind: 'inbox_item', itemId: atomC, at: new Date().toISOString() });
+      ok('…and the ledger DEDUPES by (itemKind,itemId) — a re-arrival never doubles a member',
+        dupe === false && (await readCaseAtomsW4(admin, userId, wfCase, caseId)).length === 2);
+    }
+
+    // ── CA8 ───────────────────────────────────────────────────────────────────────────────────
+    console.log('\nCA8 — THE CASE\'S OWN PAGE: the atoms block serves what the case collected (mode: LIVE, zero AI):');
+    if (wfCase && caseId) {
+      // Real inbox rows, because the block reads REAL content — the fake-uuid atoms above resolve
+      // to nothing and must simply be skipped, never rendered as empty members.
+      const mk = async (subject: string, body: string) => {
+        const { data } = await admin.from('inbox_items').insert({
+          user_id: userId, source: 'email', work_title: subject, status: 'pending',
+          source_data: { subject, body, from_name: 'Probe Sender', is_from_user: false },
+        }).select('id').single();
+        const id = (data as { id: string } | null)?.id ?? '';
+        if (id) c4Inbox.push(id);
+        return id;
+      };
+      const older = await mk(`Application — ${caseName}`, 'CANDIDATEWORD-ALPHA. Ten years of warehouse analytics.');
+      const newer = await mk(`Application — ${caseName}`, 'CANDIDATEWORD-BETA. Five years of logistics planning.');
+      // Both events STATE the case name, so both take the deterministic path — zero AI.
+      await mkRun(wfCase, `Application for the ${caseName} opening. CANDIDATEWORD-ALPHA.`, { atomId: older });
+      const resN = await mkRun(wfCase, `Application for the ${caseName} opening. CANDIDATEWORD-BETA.`, { atomId: newer });
+      const rowN = await runRow(resN.runId);
+      const block = await caseAtomsBlockW4(admin, userId, wfCase, caseId, caseName);
+      ok('the block is headed as the case\'s FILED items, with a real count',
+        !!block && block.startsWith(`[FILED IN THIS CASE — ${caseName}, 2 items, newest first.`),
+        String(block ?? '').slice(0, 100));
+      ok('…it serves each atom\'s real CONTENT (subject · sender · body), not a bare id',
+        !!block && block.includes('CANDIDATEWORD-ALPHA') && block.includes('CANDIDATEWORD-BETA')
+        && block.includes('From: Probe Sender'));
+      ok('…NEWEST FIRST (a comparison reads the present against what came before)',
+        !!block && block.indexOf('CANDIDATEWORD-BETA') < block.indexOf('CANDIDATEWORD-ALPHA'));
+      ok('…and it carries the EXCERPT RULE (the excerpt-honesty law reaches the case\'s page)',
+        !!block && block.includes(EXCERPT_RULE_W4));
+      ok('AN UNRESOLVABLE ATOM IS SKIPPED, never rendered as an empty member',
+        !!block && (block.match(/^--- /gm) ?? []).length === 2
+        && (await readCaseAtomsW4(admin, userId, wfCase, caseId)).length === 4,
+        String((block ?? '').match(/^--- /gm)?.length));
+      ok('…and the card\'s count still speaks the LEDGER, fakes included (membership ≠ readability)',
+        outAt(rowN, 0).includes('The case now holds 4 filed items.'), outAt(rowN, 0).slice(0, 200));
+      ok('AN EMPTY LEDGER SERVES NOTHING — no header without members (never a hollow claim)',
+        (await caseAtomsBlockW4(admin, userId, wfCase, randomUUID(), 'nobody')) === null);
     }
 
     // ── CA7 ───────────────────────────────────────────────────────────────────────────────────
@@ -3084,15 +3156,42 @@ async function main() {
       && !/resolveCaseForRun/.test(execSrc));
     ok('…and the run loop owns it (the ⧉ station\'s precedent: it needs the stores)',
       /if \(\(step as \{ type\?: string \}\)\.type === 'case'\)/.test(runSrc)
-      && /const \{ resolveCaseForRun \} = await import\('\.\/case-step'\);/.test(runSrc));
+      // RE-POINTED (Aug 24): the same one import now also brings the case's own atom ledger.
+      && /const \{ resolveCaseForRun, caseAtomsBlock \} = await import\('\.\/case-step'\);/.test(runSrc));
     ok('…NON-FATAL EVERYWHERE — a resolve that throws outputs the honest card and the run proceeds',
       /catch \(e\) \{\s*console\.error\('\[run-workflow\] case step failed \(non-fatal\):', e\);/.test(runSrc)
       && /let cardText = 'The case step could not run — continuing without one\.';/.test(runSrc));
     ok('TEST MODE IS DECIDED AT THE CALL SITE — matchOnly rides isTest, never a second rule',
       /matchOnly: Boolean\(opts\.isTest\),/.test(runSrc));
+    // RE-POINTED (Aug 24): the swap now appends TWO blocks — the case's room page AND the case's
+    // own atom ledger (the room page reads entity_links, which cannot see an atom the one brain
+    // filed elsewhere). Same law, one more member.
     ok('THE SWAP IS ADDITIVE — scope + tray are assembled first, the case APPENDS to them',
       /let aiContext = \[projectGrounding, inputsBlock\]\.filter\(Boolean\)\.join\('\\n\\n'\) \|\| null;/.test(runSrc)
-      && /aiContext = \[aiContext, caseBlock\]\.filter\(Boolean\)\.join\('\\n\\n'\);/.test(runSrc));
+      && /aiContext = \[aiContext, caseBlock, atomsBlock\]\.filter\(Boolean\)\.join\('\\n\\n'\) \|\| null;/.test(runSrc));
+    ok('THE RUN CARRIES THE CASE\'S OWN LEDGER — caseAtomsBlock rides the same seam as the room page',
+      /const \{ resolveCaseForRun, caseAtomsBlock \} = await import\('\.\/case-step'\);/.test(runSrc)
+      && /const atomsBlock = await caseAtomsBlock\(/.test(runSrc)
+      && runSrc.indexOf('const caseBlock = await entityRunGrounding(')
+        < runSrc.indexOf('const atomsBlock = await caseAtomsBlock('));
+    ok('…and EITHER MAY SERVE ALONE — an empty room page never suppresses the ledger (no `if` between them)',
+      !/if \(caseBlock\)/.test(runSrc));
+    ok('THE LEDGER IS THE COUNT — the card reads the case\'s atoms, never entity_links',
+      /return \(await readCaseAtoms\(admin, userId, workflowId, entityId\)\)\.length;/.test(caseSrc)
+      && !/from\('entity_links'\)\.select\('item_id', \{ count: 'exact'/.test(caseSrc));
+    ok('THE APPEND IS UNCONDITIONAL — it happens whatever entity_links decided (the wave\'s whole point)',
+      (() => {
+        const i = caseSrc.indexOf('linked = await linkAtomToCase(');
+        const j = caseSrc.indexOf('await appendCaseAtom(', i);
+        const k = caseSrc.indexOf('if (!linked)', i);
+        return i > 0 && j > i && k > j;   // append lands BEFORE the linked/unlinked branch
+      })());
+    ok('…capped and LOUD — a full ledger says what it did not record, never a silent truncation',
+      /const CASE_ATOM_CAP = 100;/.test(caseSrc)
+      && /ATOM CAP HIT/.test(caseSrc) && /was NOT recorded on the case's ledger/.test(caseSrc));
+    ok('…and the never-overwrite writer is UNTOUCHED (the one brain\'s filing was never the target)',
+      /const \{ data: existing \} = await admin\.from\('entity_links'\)\.select\('entity_id'\)/.test(caseSrc)
+      && /if \(existing\) return \(existing as \{ entity_id: string \| null \}\)\.entity_id === entityId;/.test(caseSrc));
     ok('…and it rides the ONE system-prompt channel, inheriting that channel\'s single exclusion',
       /projectGrounding: aiContext,/.test(runSrc)
       && /if \(ctx\.projectGrounding && step\.use_worker_identity !== false\) \{/.test(execSrc));
@@ -3222,6 +3321,7 @@ async function main() {
       await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', RUN_CASE_KIND).eq('entity_id', rid);
     }
     for (const a of c4Atoms) await admin.from('entity_links').delete().eq('user_id', userId).eq('item_id', a);
+    for (const i of c4Inbox) await admin.from('inbox_items').delete().eq('id', i);
     for (const e of c4EntityIds) {
       await admin.from('entity_links').delete().eq('user_id', userId).eq('entity_id', e);
       await admin.from('work_entities').delete().eq('id', e);
@@ -3661,6 +3761,112 @@ async function main() {
       /return blank \? "The 'file it under its record' step needs to know what identifies a case\." : null;/.test(readySrc));
     ok('…and "Link to its case" survives NOWHERE in the three surfaces (comment-stripped)',
       !studioCode.includes('Link to its case') && !genCfgCode.includes('Link to its case') && !readySrc.includes('Link to its case'));
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  // MM — THE SUBJECT IS THE EVENT'S OWN NAME (found live, Aug 24)
+  //
+  // The mail mapper led with `work_title` — the BRAIN'S SYNTHESIZED READ, which always exists — so
+  // the judge's candidate list, whose line is literally labelled "Subject:", never once showed a
+  // real subject, and the case step's eventText never carried the words a case is keyed on. Two
+  // real job applications whose subjects NAMED the opening were passed over. The source's own
+  // words lead now; the brain's read is declared as what it is rather than impersonating a subject.
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  console.log('\nMM — THE MAIL MAPPER: the subject leads, the brain\'s read is declared (mode: source + LIVE, zero AI):');
+  {
+    const rxSrc = stripComments(readFileSync('lib/workflows/reactions.ts', 'utf8'));
+    ok('THE SOURCE FLOOR — the mapper\'s title reads the SUBJECT before work_title',
+      /const title = \(subject \|\| workTitle \|\| 'Email'\)\.slice\(0, 120\);/.test(rxSrc)
+      && !/title: String\(it\.work_title \?\? sd\.subject/.test(rxSrc));
+    ok('…and `subject` is itself the source\'s own field first (the ladder is one direction throughout)',
+      /const subject = String\(sd\.subject \?\? it\.work_title \?\? ''\)\.trim\(\);/.test(rxSrc));
+    ok('THE BRAIN\'S READ IS NOT DISCARDED — it rides the gist, DECLARED, and only when distinct',
+      /\[Understood as: \$\{workTitle\.slice\(0, 120\)\}\]/.test(rxSrc)
+      && /workTitle && subject && fold\(workTitle\) !== fold\(subject\)/.test(rxSrc));
+    ok('…and it leads the gist, BEFORE the body snippet (the judge reads the frame first)',
+      /gist: understood\s*\n?\s*\+ String\(sd\.snippet/.test(rxSrc));
+    ok('THE FILTER FIELD IS UNTOUCHED — `fields.subject` still reads sd.subject, as W5 wrote it',
+      /if \(subject\) fields\.subject = subject;/.test(rxSrc));
+    // A LAW IS ONLY ALIVE WHILE A GATE ENFORCES IT — and a VERBATIM COPY is a law waiting to decay
+    // (the seeder's copy of this mapper is exactly what let the live account keep the old behaviour
+    // after the engine was fixed). ONE MAPPER, exported; no second one may exist.
+    ok('ONE MAPPER — it is EXPORTED, and checkReactions uses that one function, not an inline copy',
+      /export function mailEventFromItem\(it: Record<string, unknown>\): ReactionEvent \{/.test(rxSrc)
+      && /\.map\(mailEventFromItem\);/.test(rxSrc));
+    ok('…and NO caller in the repo carries a copy of it (every walk imports the real thing)',
+      (() => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { execSync } = require('node:child_process') as typeof import('node:child_process');
+        const copies = execSync(
+          // The needle is assembled, never written whole — a gate must not match ITSELF.
+          `grep -rln ${JSON.stringify(['sd.snippet ??', 'sd.body_preview ??', 'sd.body'].join(' '))} lib app scripts components 2>/dev/null || true`,
+          { encoding: 'utf8' },
+        ).split('\n').map((l) => l.trim()).filter(Boolean);
+        return copies.length === 1 && copies[0] === 'lib/workflows/reactions.ts';
+      })());
+
+    // LIVE, zero AI: a FILTERS-ONLY mail door fires deterministically, and the fire record carries
+    // the trigger block verbatim — the only honest place to read what the run (and the case step)
+    // will actually see.
+    const MPFX = `Probe relay MM ${stamp}`;
+    const mmInbox: string[] = [];
+    let mmWf = '';
+    try {
+      const { data: wfRow } = await admin.from('workflows').insert({
+        user_id: userId, name: `${MPFX} door`, status: 'active', trigger: { type: 'manual' },
+        triggers: [{ type: 'reaction', source: 'mail', filters: [{ field: 'subject', op: 'contains', value: 'mmprobe' }] }],
+        steps: [{ id: 's1', type: 'ai', label: 'Never runs here', model_tier: 'fast', prompt: 'x' }],
+        output_config: { destination: 'message' },
+      }).select('id').single();
+      mmWf = (wfRow as { id: string } | null)?.id ?? '';
+
+      const since = new Date(Date.now() - 5_000).toISOString();
+      const mkMail = async (subject: string, workTitle: string, body: string) => {
+        const { data } = await admin.from('inbox_items').insert({
+          user_id: userId, source: 'email', work_title: workTitle, status: 'pending',
+          source_data: { subject, snippet: body, from_name: 'Probe Applicant', is_from_user: false },
+        }).select('id').single();
+        const id = (data as { id: string } | null)?.id ?? '';
+        if (id) mmInbox.push(id);
+        return id;
+      };
+      const distinct = await mkMail(
+        'mmprobe — Application, Senior Data Analyst', 'Design rationale clarification received',
+        'Please find my CV attached.');
+      const same = await mkMail('mmprobe — same words', 'mmprobe — same words', 'Nothing synthesized here.');
+
+      const { checkReactions } = await import('../lib/workflows/reactions');
+      const r = await checkReactions(admin, userId, since);
+      const { data: fires } = await admin.from('item_plans').select('entity_id, tasks')
+        .eq('user_id', userId).eq('kind', 'reaction_fire').like('entity_id', `${mmWf}:%`);
+      const ctxOf = (itemId: string) => String(((fires ?? []) as Array<{ entity_id: string; tasks: { context?: string } }>)
+        .find((f) => f.entity_id.endsWith(`:${itemId}`))?.tasks?.context ?? '');
+
+      ok('LIVE: the filters-only door fired on both probes with ZERO AI',
+        (r?.fired ?? 0) >= 2 && (fires ?? []).length === 2, JSON.stringify(r));
+      ok('THE PAYOFF: the run\'s trigger block leads with the MAIL\'S REAL SUBJECT',
+        ctxOf(distinct).includes('mmprobe — Application, Senior Data Analyst'),
+        ctxOf(distinct).slice(0, 120));
+      ok('…and the synthesized read NEVER stands in the subject\'s place',
+        !/\n mmprobe/.test(ctxOf(distinct))
+        && ctxOf(distinct).indexOf('mmprobe — Application, Senior Data Analyst')
+          < ctxOf(distinct).indexOf('Design rationale clarification received'),
+        ctxOf(distinct).slice(0, 200));
+      ok('…while the brain\'s read is still THERE, declared as its own claim',
+        ctxOf(distinct).includes('[Understood as: Design rationale clarification received]'));
+      ok('THE UNDERSTOOD-AS LINE APPEARS ONLY WHEN DISTINCT — no line when the read IS the subject',
+        !ctxOf(same).includes('[Understood as:'), ctxOf(same).slice(0, 140));
+    } finally {
+      if (mmWf) {
+        await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', 'reaction_fire').like('entity_id', `${mmWf}:%`);
+        await admin.from('work_threads').delete().eq('workflow_id', mmWf);
+        await admin.from('workflow_runs').delete().eq('workflow_id', mmWf);
+        await admin.from('workflows').delete().eq('id', mmWf);
+      }
+      for (const id of mmInbox) await admin.from('inbox_items').delete().eq('id', id);
+      const { data: leftMM } = await admin.from('workflows').select('id').eq('user_id', userId).like('name', `${MPFX}%`);
+      ok('MM probe leftovers are ZERO', (leftMM ?? []).length === 0);
+    }
   }
 
   console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed`);
