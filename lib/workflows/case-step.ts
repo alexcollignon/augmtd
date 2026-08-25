@@ -135,7 +135,11 @@ export function deterministicCaseMatch(
 
 // ── The index (the workflow's own case list) ─────────────────────────────────────────────────────
 
-export interface CaseAtom { itemKind: string; itemId: string; at: string; note?: string }
+export interface CaseAtom {
+  itemKind: string; itemId: string; at: string; note?: string;
+  /** A SETTLED SCORE STAYS SETTLED — what the run that filed this atom concluded about it. */
+  outcome?: string;
+}
 export interface IndexedCase { entityId: string; caseName: string; openedAt?: string; atoms?: CaseAtom[] }
 
 /** THE CASE CARRIES ITS OWN ATOMS (found live on a mature mailbox, Aug 24). The case's membership
@@ -209,6 +213,49 @@ export async function appendCaseAtom(
     if (error) { console.error('[case] atom append failed:', error.message); return false; }
     return true;
   } catch (e) { console.error('[case] atom append threw:', e); return false; }
+}
+
+/** THE ATOM CARRIES ITS RUN'S VERDICT (Aug 25, found live on the frozen-prompt retest).
+ *  Run 2's accumulated ranking restated run 1's SETTLED "Experience 10/10 · Overall 9.5" as
+ *  "9/10 · 9.0": the later run re-derived the earlier candidate's numbers from the raw grounding,
+ *  because the grounding is all it had — the case's ledger remembered THAT the item arrived and
+ *  nothing about what was concluded. A conclusion the user has already read is a fact of the
+ *  record; re-deriving it is drift dressed as reasoning.
+ *
+ *  So the atom gains its run's OUTCOME, written at run end: the digest of what THAT run concluded,
+ *  clipped under the excerpt law. Resolution is purely structural — the run's case comes from its
+ *  `run_case` stamp, the run's atom from its `reaction_fire` record (the same two seams the resolve
+ *  wrote). FILL-OR-REPLACE ITS OWN ATOM ONLY: a run may restate what IT concluded, never touch
+ *  another atom's verdict. No stamp on a failed run: only a delivered run has concluded anything. */
+export async function stampAtomOutcome(
+  admin: SupabaseClient, userId: string, workflowId: string, runId: string, digest: string,
+): Promise<boolean> {
+  try {
+    const text = clipForPrompt(String(digest ?? '').replace(/\s+/g, ' ').trim(), 500);
+    if (!text) return false;
+    // 1 — the run's case (the stamp the resolve wrote), 2 — the run's atom (the fire record).
+    const { data: stamp } = await admin.from('item_plans').select('tasks')
+      .eq('user_id', userId).eq('kind', RUN_CASE_KIND).eq('entity_id', runId).maybeSingle();
+    const entityId = String((stamp as { tasks?: { entityId?: string } } | null)?.tasks?.entityId ?? '');
+    if (!entityId) return false;
+    const atom = await atomForRun(admin, userId, runId);
+    if (!atom) return false;
+
+    const key = `${workflowId}:${entityId}`;
+    const { data } = await admin.from('item_plans').select('tasks')
+      .eq('user_id', userId).eq('kind', CASE_INDEX_KIND).eq('entity_id', key).maybeSingle();
+    const tasks = ((data as { tasks?: Record<string, unknown> } | null)?.tasks ?? {}) as
+      { caseName?: string; openedAt?: string; atoms?: CaseAtom[] };
+    const atoms = Array.isArray(tasks.atoms) ? tasks.atoms.filter((a) => a?.itemKind && a?.itemId) : [];
+    const i = atoms.findIndex((a) => a.itemKind === atom.itemKind && a.itemId === atom.itemId);
+    if (i < 0) return false;                       // this run filed nothing — there is nothing to stamp
+    atoms[i] = { ...atoms[i], outcome: text };     // ITS OWN atom, and only its own
+    const { error } = await admin.from('item_plans')
+      .update({ tasks: { ...tasks, atoms }, updated_at: new Date().toISOString() })
+      .eq('user_id', userId).eq('kind', CASE_INDEX_KIND).eq('entity_id', key);
+    if (error) { console.error('[case] outcome stamp failed:', error.message); return false; }
+    return true;
+  } catch (e) { console.error('[case] outcome stamp threw:', e); return false; }
 }
 
 // ── The reasoned resolve (ONE classification-tier call per run) ──────────────────────────────────
@@ -535,7 +582,11 @@ export async function caseAtomsBlock(
       if (used >= 8000) break;
       const body = await atomContent(admin, userId, a);
       if (!body) continue;
-      const piece = `--- ${a.at ? String(a.at).slice(0, 10) : 'undated'} · ${a.itemKind} ---\n${body}`;
+      // A SETTLED SCORE STAYS SETTLED: the atom's own run said what it concluded — it rides WITH
+      // the material, so a later run reads a recorded verdict instead of re-deriving one.
+      const settled = String(a.outcome ?? '').trim();
+      const piece = `--- ${a.at ? String(a.at).slice(0, 10) : 'undated'} · ${a.itemKind} ---\n${body}`
+        + (settled ? `\n— what the run that filed this concluded: ${settled}` : '');
       parts.push(piece);
       used += piece.length;
     }
@@ -543,7 +594,11 @@ export async function caseAtomsBlock(
     return (
       `[FILED IN THIS CASE — ${caseName}, ${parts.length} item${parts.length === 1 ? '' : 's'}, newest first. ` +
       `These arrived on earlier runs of this workflow and belong to the same case as what arrived now. ` +
-      `${EXCERPT_RULE}]\n${parts.join('\n\n')}`
+      `RECORDED CONCLUSIONS BELOW ARE SETTLED: where an item carries what the run that filed it ` +
+      `concluded, restate that conclusion AS RECORDED when ranking or comparing a previously ` +
+      `screened item — do not re-derive its scores or verdict from the material here. Re-derive ` +
+      `only when the new arrival's material genuinely changes the picture, and then SAY that the ` +
+      `score moved and why. ${EXCERPT_RULE}]\n${parts.join('\n\n')}`
     );
   } catch (e) { console.error('[case] atoms block failed:', e); return null; }
 }

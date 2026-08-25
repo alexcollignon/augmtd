@@ -2695,6 +2695,7 @@ async function main() {
     atomForRun: atomForRunW4, CASE_INDEX_KIND, RUN_CASE_KIND,
     readCaseAtoms: readCaseAtomsW4, caseAtomsBlock: caseAtomsBlockW4,
     appendCaseAtom: appendCaseAtomW4,
+    stampAtomOutcome: stampAtomOutcomeW4,
   } = await import('../lib/workflows/case-step');
   const { EXCERPT_RULE: EXCERPT_RULE_W4 } = await import('../lib/utils/clip-for-prompt');
   const { runWorkflow: runW4 } = await import('../lib/workflows/run-workflow');
@@ -3049,7 +3050,7 @@ async function main() {
       const older = await mk(`Application — ${caseName}`, 'CANDIDATEWORD-ALPHA. Ten years of warehouse analytics.');
       const newer = await mk(`Application — ${caseName}`, 'CANDIDATEWORD-BETA. Five years of logistics planning.');
       // Both events STATE the case name, so both take the deterministic path — zero AI.
-      await mkRun(wfCase, `Application for the ${caseName} opening. CANDIDATEWORD-ALPHA.`, { atomId: older });
+      const resO = await mkRun(wfCase, `Application for the ${caseName} opening. CANDIDATEWORD-ALPHA.`, { atomId: older });
       const resN = await mkRun(wfCase, `Application for the ${caseName} opening. CANDIDATEWORD-BETA.`, { atomId: newer });
       const rowN = await runRow(resN.runId);
       const block = await caseAtomsBlockW4(admin, userId, wfCase, caseId, caseName);
@@ -3071,6 +3072,54 @@ async function main() {
         outAt(rowN, 0).includes('The case now holds 4 filed items.'), outAt(rowN, 0).slice(0, 200));
       ok('AN EMPTY LEDGER SERVES NOTHING — no header without members (never a hollow claim)',
         (await caseAtomsBlockW4(admin, userId, wfCase, randomUUID(), 'nobody')) === null);
+
+      // ── CA10 — A SETTLED SCORE STAYS SETTLED (Aug 25, found live on the frozen-prompt retest)
+      // Run 2's accumulated ranking restated run 1's settled "Experience 10/10 · Overall 9.5" as
+      // "9/10 · 9.0": the ledger remembered THAT an item arrived and nothing about what was
+      // concluded, so the later run re-derived the earlier candidate's numbers from raw material.
+      // The atom now carries its run's verdict, and the block serves it as SETTLED.
+      console.log('\nCA10 — THE ATOM CARRIES ITS RUN\'S VERDICT (mode: LIVE, zero AI):');
+      const VERDICT_A = 'ALPHA — Experience 10/10 · Overall 9.5. Strongest warehouse analytics record so far.';
+      const VERDICT_B = 'BETA — Experience 7/10 · Overall 7.5. Solid logistics planning, thinner analytics.';
+      ok('THE STAMP RESOLVES STRUCTURALLY — the run_case stamp gives the case, the fire record the atom',
+        (await stampAtomOutcomeW4(admin, userId, wfCase, resO.runId, VERDICT_A)) === true);
+      const afterA = await readCaseAtomsW4(admin, userId, wfCase, caseId);
+      ok('…it writes ONLY ITS OWN ATOM (every other member\'s verdict is untouched)',
+        afterA.find((a) => a.itemId === older)?.outcome === VERDICT_A
+        && afterA.filter((a) => a.outcome).length === 1
+        && afterA.length === 4,
+        JSON.stringify(afterA.map((a) => [a.itemId === older ? 'older' : 'other', !!a.outcome])));
+      ok('…and the atom keeps everything else it carried (fill-or-replace, never a rewrite)',
+        afterA.find((a) => a.itemId === older)?.itemKind === 'inbox_item'
+        && !!afterA.find((a) => a.itemId === older)?.at);
+      ok('A RUN THAT WORE NO CASE STAMPS NOTHING (no case, no verdict to record)',
+        (await stampAtomOutcomeW4(admin, userId, wfCase, randomUUID(), VERDICT_B)) === false);
+      ok('…and an EMPTY digest is not a conclusion (a blank verdict is never recorded)',
+        (await stampAtomOutcomeW4(admin, userId, wfCase, resO.runId, '   ')) === false
+        && (await readCaseAtomsW4(admin, userId, wfCase, caseId))
+          .find((a) => a.itemId === older)?.outcome === VERDICT_A);
+      ok('A SECOND RUN RECORDS ITS OWN — two members, two distinct settled verdicts',
+        (await stampAtomOutcomeW4(admin, userId, wfCase, resN.runId, VERDICT_B)) === true
+        && (await readCaseAtomsW4(admin, userId, wfCase, caseId))
+          .find((a) => a.itemId === newer)?.outcome === VERDICT_B
+        && (await readCaseAtomsW4(admin, userId, wfCase, caseId))
+          .find((a) => a.itemId === older)?.outcome === VERDICT_A);
+
+      const blockV = await caseAtomsBlockW4(admin, userId, wfCase, caseId, caseName);
+      ok('THE PAYOFF: the case\'s page SERVES each recorded conclusion beside its item',
+        !!blockV && blockV.includes(`— what the run that filed this concluded: ${VERDICT_A}`)
+        && blockV.includes(`— what the run that filed this concluded: ${VERDICT_B}`),
+        String(blockV ?? '').slice(0, 120));
+      ok('…and the HEADER carries the settled-verdict rule, so it travels with the data',
+        !!blockV && blockV.includes('RECORDED CONCLUSIONS BELOW ARE SETTLED')
+        && blockV.includes('restate that conclusion AS RECORDED')
+        && blockV.includes('do not re-derive its scores or verdict'));
+      ok('…while still allowing an HONEST MOVE — a changed picture must SAY the score moved and why',
+        !!blockV && blockV.includes('genuinely changes the picture')
+        && blockV.includes('SAY that the score moved and why'));
+      ok('…and the line FOLLOWS THE RECORD — the same page carried none before anything was recorded',
+        !!block && !block.includes('— what the run that filed this concluded:')
+        && (blockV?.match(/— what the run that filed this concluded:/g) ?? []).length === 2);
     }
 
     // ── CA7 ───────────────────────────────────────────────────────────────────────────────────
@@ -3328,6 +3377,45 @@ async function main() {
     ok('…and the never-overwrite writer is UNTOUCHED (the one brain\'s filing was never the target)',
       /const \{ data: existing \} = await admin\.from\('entity_links'\)\.select\('entity_id'\)/.test(caseSrc)
       && /if \(existing\) return \(existing as \{ entity_id: string \| null \}\)\.entity_id === entityId;/.test(caseSrc));
+    // ── A SETTLED SCORE STAYS SETTLED — the source floors (Aug 25) ────────────────────────────
+    ok('THE DIGEST IS CLIPPED UNDER THE EXCERPT LAW — never a raw hard cut into a later prompt',
+      /const text = clipForPrompt\(String\(digest \?\? ''\)\.replace\(\/\\s\+\/g, ' '\)\.trim\(\), 500\);/.test(caseSrc)
+      && /if \(!text\) return false;/.test(caseSrc));
+    ok('…and it resolves through the TWO SEAMS THE RESOLVE ALREADY WROTE (run_case + the fire record)',
+      (() => {
+        const i = caseSrc.indexOf('export async function stampAtomOutcome(');
+        const j = caseSrc.indexOf('export async function', i + 10);
+        const fn = i > 0 ? caseSrc.slice(i, j > i ? j : undefined) : '';
+        return /\.eq\('kind', RUN_CASE_KIND\)\.eq\('entity_id', runId\)/.test(fn)
+          && /await atomForRun\(admin, userId, runId\)/.test(fn)
+          && /if \(!entityId\) return false;/.test(fn) && /if \(!atom\) return false;/.test(fn);
+      })());
+    ok('…and it touches ITS OWN ATOM ONLY — an index-position write, never a whole-ledger rewrite',
+      /const i = atoms\.findIndex\(\(a\) => a\.itemKind === atom\.itemKind && a\.itemId === atom\.itemId\);/.test(caseSrc)
+      && /if \(i < 0\) return false;/.test(caseSrc)
+      && /atoms\[i\] = \{ \.\.\.atoms\[i\], outcome: text \};/.test(caseSrc));
+    ok('THE PAGE SERVES THE VERDICT WITH ITS ITEM, and the settled rule rides the HEADER (with the data)',
+      /— what the run that filed this concluded: \$\{settled\}/.test(caseSrc)
+      && /RECORDED CONCLUSIONS BELOW ARE SETTLED/.test(caseSrc)
+      && caseSrc.indexOf('RECORDED CONCLUSIONS BELOW ARE SETTLED') > caseSrc.indexOf('[FILED IN THIS CASE —'));
+    ok('THE STAMP IS THE SUCCESS TAIL\'S — never on a failed run, never in test mode, never fatal',
+      (() => {
+        const i = runSrc.indexOf('const { stampAtomOutcome } = await import(\'./case-step\');');
+        if (i < 0) return false;
+        const before = runSrc.slice(0, i);
+        // Inside the `!opts.isTest` success block (the standing binding's own neighbourhood), and
+        // wrapped in its own try/catch: a bookkeeping write never breaks a delivered run.
+        const w = runSrc.slice(i - 400, i + 500);
+        return /if \(!opts\.isTest\) \{/.test(before)
+          && before.lastIndexOf('if (!opts.isTest) {') > before.lastIndexOf("status: 'failed'")
+          && /try \{/.test(w) && /catch \(e\) \{ console\.error\('\[run-workflow\] Non-fatal: case outcome stamp failed:', e\); \}/.test(w);
+      })());
+    ok('…and only a run that PRODUCED CONTENT records a verdict (a filing card is not a conclusion)',
+      /const lastContent = contentOutputs\[contentOutputs\.length - 1\];/.test(runSrc)
+      && /if \(lastContent && \(workflow\.steps \?\? \[\]\)\.some\(\(s\) => \(s as \{ type\?: string \}\)\.type === 'case'\)\) \{/.test(runSrc));
+    ok('…the digest IS that step\'s own output (the same structural picker the door materialises from)',
+      /typeof lastContent\.output === 'string'/.test(runSrc)
+      && runSrc.indexOf('const contentOutputs = stepOutputs.filter(') < runSrc.indexOf('const lastContent = contentOutputs['));
     ok('…and it rides the ONE system-prompt channel, inheriting that channel\'s single exclusion',
       /projectGrounding: aiContext,/.test(runSrc)
       && /if \(ctx\.projectGrounding && step\.use_worker_identity !== false\) \{/.test(execSrc));

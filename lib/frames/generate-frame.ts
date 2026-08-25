@@ -80,6 +80,7 @@ const FRAME_CONTRACT = [
   'THE CONTENT FLOOR (the one law above craft): the material below IS the content. You FORMAT and VISUALISE it — you never AUTHOR it. Every entity, name, person, organisation, date, label, category, ranking and number in the frame must appear in the material. Invent nothing: no example rows, no placeholder people, no illustrative figures, no "sample data", no filled-in blanks. If the material names one item, the frame shows one item — never a plausible list around it.',
   'HONEST ABSENCE: where the material has no value for something the layout would like, render it as plainly absent ("—", "not stated", or simply omit the tile/section). An empty section with an honest line is correct; a populated section with synthesised content is a fabrication.',
   'IF THE MATERIAL IS TOO THIN to fill a view, build the smaller, honest view it supports. Never pad.',
+  'THE CHROME CARRIES NO INVENTED DATE: every date, time, year, period label, "as of" line and "last updated" stamp the frame displays — in the header, the footer, a tile, a caption or an axis — must either appear in the material or be THE PROVIDED TODAY stated below. Never derive a date, never infer one from context, never write a plausible year. When you are not sure what a date should be, omit the date entirely: a header or footer is complete without one.',
   'THE DATA (the truth floor): inline the material verbatim — as a JSON literal in an inline <script> and/or as rendered values. Never invent a number, never recompute a figure, never round or extrapolate. If a number is not in the material, it does not appear in the frame. When computed facts are given, they are AUTHORITATIVE — use them exactly as stated.',
   '',
   'INTERACTIVITY (read-only, over the inlined data only): tabs, filters, search, column sorting, chart hover/tooltips, collapsible sections. All state lives in the page. Nothing calls out, nothing writes back.',
@@ -88,6 +89,19 @@ const FRAME_CONTRACT = [
   '',
   'CRAFT: a calm, dense, professional view built out of the kit — header, KPI tiles, then sections of cards, charts and dense rows. Responsive with no horizontal page scroll (tables scroll inside .k-table-wrap). Readable in a narrow iframe. Keep the whole file under 1.4MB.',
 ].join('\n');
+
+/** THE CLOCK REACHES FRAME CHROME (Aug 25, found live): a generated frame's footer read
+ *  "Updated 2024" — a year no material stated and nobody supplied, standing on a share-linkable
+ *  surface. THE DATED-SOURCE LAW, in the same idiom executeAIStep's clock uses: A MODEL NEVER
+ *  DERIVES A DATE. The date is code-supplied or it does not appear — the content floor held for
+ *  candidate facts and leaked in decorative chrome, so the clock travels with the contract. */
+function frameDateLine(now: Date = new Date()): string {
+  return (
+    `TODAY: ${now.toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' })}, ` +
+    `${now.toISOString().slice(0, 10)} (UTC). This is the ONLY date you may write that is not ` +
+    `already stated in the material.`
+  );
+}
 
 export async function generateFrameHtml(
   client: SupabaseClient,
@@ -143,7 +157,7 @@ export async function generateFrameHtml(
           role: 'user',
           content:
             `Build an interactive FRAME — a self-contained HTML view of the material below.\n\n` +
-            `${FRAME_CONTRACT}\n\n` +
+            `${FRAME_CONTRACT}\n\n${frameDateLine()}\n\n` +
             (repairReasons?.length
               ? `YOUR PREVIOUS OUTPUT WAS REJECTED BY THE NO-EGRESS VALIDATOR. Fix every one of these and return the corrected complete document:\n` +
                 repairReasons.map((r) => `· ${r}`).join('\n') + '\n\n'

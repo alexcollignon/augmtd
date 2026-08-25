@@ -392,7 +392,29 @@ end to end (relay 669/669 · frames 228 · processes 136 · run-record 102 · ha
   mitigation for the dry-OpenAI-key incident, the mirror of Aug 11); and smoke-relay's
   W3 lap crashed the whole suite on a live failure (`second!.id`) — a missing prerequisite
   is now a red gate, the suite always reaches its total.
-- **Retest residue (queued)**: frame chrome invented "Updated 2024" (the clock rule must
-  reach frame chrome — a date comes from code or doesn't appear); cross-run score drift
-  (run 2 restated run 1's settled 9.5 as 9.0 — the case atom should carry its run's verdict
-  forward instead of re-deriving).
+- **Retest residue — BOTH CLOSED (Aug 25, same day)**:
+  - **F6 THE CLOCK REACHES FRAME CHROME**: a frame's footer read "Updated 2024" — an invented
+    year on a share-linkable surface. The content floor held for candidate facts and leaked in
+    DECORATIVE chrome, so the clock now travels with the contract: `frameDateLine()` computes
+    today IN CODE (executeAIStep's weekday + ISO-day UTC idiom) into the prompt assembly, and
+    FRAME_CONTRACT carries THE CHROME CARRIES NO INVENTED DATE — every date, time, year, period
+    label, "as of" line and "last updated" stamp, in header/footer/tile/caption/axis, must
+    appear in the material or BE the provided today; never derived, never inferred, never a
+    plausible year; unsure → omit the date entirely, a footer is complete without one. One
+    contract string, so the repair pass carries it by construction. Gates FC (frames 235).
+  - **F7 A SETTLED SCORE STAYS SETTLED**: run 2 re-derived run 1's settled "Experience 10/10 ·
+    Overall 9.5" as "9/10 · 9.0" — the ledger remembered THAT an item arrived and nothing about
+    what was concluded, so the grounding was all a later run had. THE CASE ATOM NOW CARRIES ITS
+    RUN'S VERDICT: `stampAtomOutcome` (case-step) resolves purely structurally — the run's case
+    from its `run_case` stamp, the run's atom from its `reaction_fire` record, the two seams the
+    resolve already wrote — and fills/replaces ITS OWN atom's `outcome` only; the digest is the
+    run's LAST CONTENT step's output, clipped 500 under the excerpt law. Written from
+    run-workflow's SUCCESS TAIL (a failure and a park both return before it; `!opts.isTest`; its
+    own try/catch — bookkeeping never breaks a delivered run; a parked run stamps when it later
+    succeeds, since /resume re-enters runWorkflow on the same runId; a content-less pipeline
+    records nothing rather than passing its own filing card off as a conclusion).
+    `caseAtomsBlock` serves each verdict beside its item and its HEADER carries the rule — so it
+    travels with the data, no per-workflow prompt edit: recorded conclusions are SETTLED,
+    restate AS RECORDED when ranking a previously screened candidate, re-derive only when the
+    new arrival's material genuinely changes the picture and then SAY the score moved and why.
+    Gates CA10 (live, zero AI) + the CS source floors (relay 686).
