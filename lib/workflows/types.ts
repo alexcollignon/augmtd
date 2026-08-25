@@ -159,8 +159,13 @@ export interface CaseStep {
   type: 'case';
   id: string;
   label: string;
-  /** What identifies a case, in the user's own words ("the job opening named in the application"). */
+  /** What identifies a case, in the user's own words ("the job opening named in the application").
+   *  THE IDENTITY QUESTION each arriving event answers about itself — per-event filing. */
   case_instruction: string;
+  /** THE STATED CASE (Aug 25): the case itself, named once by the author ("the Customer Service
+   *  Representative opening at Acme") — one standing case for every run. Present = the resolve is
+   *  FULLY DETERMINISTIC (zero AI). Exactly one of the two shapes is authored. */
+  case_name?: string;
 }
 
 export type WorkflowStep =

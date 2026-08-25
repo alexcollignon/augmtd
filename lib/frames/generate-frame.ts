@@ -42,6 +42,30 @@ export type GeneratedFrame = { html: string; provenance: { computed: boolean } }
 const MAX_CONTENT = 24_000;
 const MAX_CSV = 40_000;
 
+/** THE THIN-INPUT FLOOR (severity-1 repair, Aug 25). A frame is a VIEW OF WORK; with no work to
+ *  view, a generative lane fills the emptiness with invention — found live: an approval step's
+ *  one-line marker became a ranked dashboard of eight fabricated people. This is CODE, not a
+ *  prompt rule (the v3–v5 guardrails lesson: prompt-only enforcement of a floor coin-flips).
+ *
+ *  Substance is anything a frame could honestly render: tabular rows, code-computed facts, or a
+ *  written deliverable of real length. 200 collapsed chars ≈ two or three sentences — the floor
+ *  below which nothing that could carry a KPI tile, a series, or a table has been written, so a
+ *  generation would necessarily be authored rather than presented.
+ *  MARKER-SHAPED is structural too: one single line fully wrapped in brackets is the engine's own
+ *  gate/marker grammar ("[Approved by the user — …]", "[Approved]"). The SHAPE is matched, never
+ *  the wording — copy changes, the grammar does not. */
+export const FRAME_MIN_CONTENT_CHARS = 200;
+
+export function isThinFrameSource(
+  args: { content?: string | null; csvText?: string | null; computedFacts?: string | null },
+): boolean {
+  if ((args.csvText ?? '').trim().length > 0) return false;
+  if ((args.computedFacts ?? '').trim().length > 0) return false;
+  const text = (args.content ?? '').trim();
+  if (/^\[[^\n\]]*\]$/.test(text)) return true;            // a lone gate/marker line
+  return text.replace(/\s+/g, ' ').trim().length < FRAME_MIN_CONTENT_CHARS;
+}
+
 /** The whole no-egress contract, said to the model in the same words the validator enforces. */
 const FRAME_CONTRACT = [
   'THE OUTPUT: ONE complete, self-contained HTML document and nothing else — start at <html>, end at </html>. No prose, no explanation, no markdown fence.',
@@ -53,7 +77,10 @@ const FRAME_CONTRACT = [
   '· No navigation: never assign to location, never call location.replace() or window.open().',
   '· No chart library, no CDN, no web font, no remote image. Charts are drawn by the injected kit (below) as inline SVG. System font stack only.',
   '',
-  'THE DATA (the truth floor): the material below IS the data. Inline it verbatim — as a JSON literal in an inline <script> and/or as rendered values. Never invent a number, never recompute a figure, never round or extrapolate. If a number is not in the material, it does not appear in the frame. When computed facts are given, they are AUTHORITATIVE — use them exactly as stated.',
+  'THE CONTENT FLOOR (the one law above craft): the material below IS the content. You FORMAT and VISUALISE it — you never AUTHOR it. Every entity, name, person, organisation, date, label, category, ranking and number in the frame must appear in the material. Invent nothing: no example rows, no placeholder people, no illustrative figures, no "sample data", no filled-in blanks. If the material names one item, the frame shows one item — never a plausible list around it.',
+  'HONEST ABSENCE: where the material has no value for something the layout would like, render it as plainly absent ("—", "not stated", or simply omit the tile/section). An empty section with an honest line is correct; a populated section with synthesised content is a fabrication.',
+  'IF THE MATERIAL IS TOO THIN to fill a view, build the smaller, honest view it supports. Never pad.',
+  'THE DATA (the truth floor): inline the material verbatim — as a JSON literal in an inline <script> and/or as rendered values. Never invent a number, never recompute a figure, never round or extrapolate. If a number is not in the material, it does not appear in the frame. When computed facts are given, they are AUTHORITATIVE — use them exactly as stated.',
   '',
   'INTERACTIVITY (read-only, over the inlined data only): tabs, filters, search, column sorting, chart hover/tooltips, collapsible sections. All state lives in the page. Nothing calls out, nothing writes back.',
   '',
@@ -68,6 +95,12 @@ export async function generateFrameHtml(
   args: GenerateFrameArgs,
 ): Promise<GeneratedFrame | null> {
   try {
+    // ── THE THIN-INPUT FLOOR — refuse BEFORE any AI spend. An honest null: the door falls
+    // through to its document tiers and the user gets a plain, truthful deliverable. ──
+    if (isThinFrameSource(args)) {
+      console.warn('[frames] refusing to generate: the source has no work to view (thin input).');
+      return null;
+    }
     const title = (args.title || 'Frame').slice(0, 120);
     const request = (args.request ?? '').slice(0, 800);
     const csv = args.csvText ? args.csvText.slice(0, MAX_CSV) : null;

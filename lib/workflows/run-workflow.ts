@@ -275,6 +275,16 @@ function gateNoteFrom(stepOutputs: StepOutput[]): string | undefined {
 // opens invisible to us) and silent tasks (no notifications → nothing to review).
 const UNREVIEWED_PAUSE_THRESHOLD = 3;
 
+/** THE GATE IS NEVER THE DELIVERABLE: step types whose output is a MARKER or a CARD, never work.
+ *  Structural by type — the marker's wording is copy and must never be matched. See the full
+ *  per-type decision comment at the deliverable picker. */
+export const NON_CONTENT_STEP_TYPES: ReadonlySet<string> = new Set(['approval', 'handoff', 'case']);
+
+/** Pure + exported so the gate can assert the law without running a workflow. */
+export function isContentStepOutput(o: { step_type?: string }): boolean {
+  return !NON_CONTENT_STEP_TYPES.has(String(o.step_type ?? ''));
+}
+
 async function maybeAutoPause(
   admin: SupabaseClient,
   workflow: Workflow,
@@ -903,12 +913,29 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     return { runId, status: 'failed', threadId, error: runError };
   }
 
-  // Materialise the deliverable from the last CONTENT step — Slack "send" steps are
-  // side-effects (notifications), never the deliverable.
+  // ── THE GATE IS NEVER THE DELIVERABLE (severity-1 repair, Aug 25) ──────────────────────────
+  // Materialise from the last CONTENT-PRODUCING step. The exclusion is STRUCTURAL — by step
+  // type and by tool id, never by matching the marker's words (a marker's wording is copy; the
+  // step's type is its nature). Every step type is decided here, deliberately:
+  //   · approval  EXCLUDED — its output is a gate MARKER ("[Approved by the user — …]"), not
+  //                work. generate-config's own rule teaches one approval directly before
+  //                delivery, so a pipeline ENDING at a gate is the common shape; treating the
+  //                marker as content is how a one-line sentence became a fabricated dashboard.
+  //   · handoff   EXCLUDED — the same marker shape ("[Approved]"), a teammate's decision.
+  //   · case      EXCLUDED — the case CARD names the subject the run is about; a subject is not
+  //                a deliverable (its grounding already rode into the ai steps that follow).
+  //   · verify    INCLUDED — the delivery gate RETURNS THE CORRECTED DRAFT. It IS content, and
+  //                it is deliberately the preferred final word when it runs last.
+  //   · workflow  INCLUDED — a subprocess station's output is the CHILD'S delivered text.
+  //   · tool/ai/agent INCLUDED, except:
+  //   · tool slack_send EXCLUDED — a send is a side-effect (notification), never the deliverable.
   const sendStepIds = new Set(
     (workflow.steps ?? []).filter(s => s.type === 'tool' && (s as { tool?: string }).tool === 'slack_send').map(s => s.id),
   );
-  const contentOutputs = stepOutputs.filter(o => !sendStepIds.has(o.step_id));
+  const contentOutputs = stepOutputs.filter(o => !sendStepIds.has(o.step_id) && isContentStepOutput(o));
+  // The fallback exists so a run always delivers SOMETHING rather than silently nothing; it can
+  // only be reached by a pipeline with zero content steps, where the frame/document lanes' own
+  // thin-input floors then refuse to author over a marker.
   const finalStep = contentOutputs[contentOutputs.length - 1] ?? stepOutputs[stepOutputs.length - 1];
   const out = normalizeOutput(workflow.output_config);
   const materialised = await materialiseOutput(

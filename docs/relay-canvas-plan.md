@@ -343,3 +343,56 @@ attention surface.
   fire door fires exactly-once on the probe · readiness iterates doors · one-schedule constraint
   refused honestly · registry-driven rendering (no hardcoded source list outside the registry).
 - W3 preview: depth-cap + circular refusal in readiness · test-never-fires-the-child.
+
+## THE POWER-PROMPT WAVE (Aug 25 — the pilot's slide flow proven, five classes killed)
+
+The test: a workflow-creation prompt authored OUTSIDE the product (the pilot's "Power Prompt"
+idea), pasted ONCE, frozen — no tuning, no hand-fixing; whatever one paste produces IS the
+result. First pass: the authoring was excellent (all nine asks authored in 16s) and the
+execution broke five ways. All five fixed, gated, and the IDENTICAL prompt retested green
+end to end (relay 669/669 · frames 228 · processes 136 · run-record 102 · handoffs 250).
+
+- **F1 THE GATE IS NEVER THE DELIVERABLE + THE CONTENT FLOOR ON FRAMES (severity 1, trust)**:
+  a pipeline ending at its approval gate handed the door the gate's MARKER LINE as the
+  deliverable, and the frame lane authored a whole dashboard from that one sentence — a
+  share-linkable frame ranking eight people who do not exist. Now: the picker excludes
+  approval/handoff/case outputs STRUCTURALLY by step type (verify stays — it returns the
+  corrected draft; each type's decision stated in a comment at the picker), and
+  `isThinFrameSource` refuses thin/marker-shaped sources IN CODE before any AI client is
+  built (prompt-only enforcement coin-flips — the guardrails lesson). Canary-proven: the
+  eight invented names, all absent on retest.
+- **F2 THE SCOPING GUARD**: `adoptWorkflowEntity`'s matcher bound "…Rep Screening…Service…"
+  to an unrelated project on the single generic token "Service" → `workflow_scope` written →
+  every event door silently dead (file events carry no entity) while readiness said ready.
+  Now candidacy passes the distinctive-token law (`namesStatedIn`, ONE implementation shared
+  with the case pre-pass), the registry says which sources can carry an entity
+  (`carriesEntity`: file/workflow false), and readiness rule 9 SPEAKS when a scope makes
+  every door unhearable. Fail-closed door semantics untouched.
+- **F3 THE WORKFLOW-LEVEL CASE KEY (THE TWO SHAPES)**: the case may be the CONSTANT the user
+  stated (`case_name` — "the CSR opening at Acme") or the per-event identity question
+  (`case_instruction` — "the opening the application names"); exactly one, never both. The
+  stated path resolves DETERMINISTICALLY, zero AI — the anti-fabrication floor holds because
+  the user said the name. This is how single-opening workflows file at all: a CV never
+  states which opening it was sent for. Studio: explicit two-option toggle, never
+  auto-detect.
+- **F4 DOORS ARE STRUCTURAL-BROAD**: a door's `when` names THE KIND OF THING THAT ARRIVES,
+  never fit to a role/topic — a door refusal is silent, a pipeline mismatch is visible and
+  parked (a real applicant was dropped with no receipt by "a resume FOR THE CSR OPENING").
+  Seated inside generate-config's rules beside PREFER-A-FILTER; accept_material true when
+  people hand material over.
+- **F5 THE LEDGER CONFIRM CARRIES THE WHOLE DRAFT**: workflows-ledger holds its own FORK of
+  the draft card (predates the arc) and its confirm doors posted a hand-picked subset —
+  doors/inputs/limit never reached creation, four of five note channels never rendered. Now
+  both doors spread `...draft` (the worker-tasks-tab discipline — no second allowlist to
+  drift), the review speaks doors/docs/pace, all five notes render in both surfaces
+  (needs_person_note existed in NO renderer).
+- **Suite lessons**: the smoke-frames AI fence poisoned the WRONG Bedrock env names
+  (`*_ACCESS_KEY_ID` vs the factory's `*_ACCESS_KEY`) — a fence with wrong names fences
+  nothing, latent until the probe hosts moved to bedrock_optimised (the tenant_configs
+  mitigation for the dry-OpenAI-key incident, the mirror of Aug 11); and smoke-relay's
+  W3 lap crashed the whole suite on a live failure (`second!.id`) — a missing prerequisite
+  is now a red gate, the suite always reaches its total.
+- **Retest residue (queued)**: frame chrome invented "Updated 2024" (the clock rule must
+  reach frame chrome — a date comes from code or doesn't appear); cross-run score drift
+  (run 2 restated run 1's settled 9.5 as 9.0 — the case atom should carry its run's verdict
+  forward instead of re-deriving).

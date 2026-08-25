@@ -21,6 +21,10 @@
 type DBClient = any;
 
 import { findEntityFocus } from '@/lib/home/ask';
+// THE ONE IDENTITY PRIMITIVE — never a second generic-word list. `namesStatedIn` is built on
+// `distinctiveTokens` → `GENERIC_WORK_WORDS` (lib/entities/recognize), the same law the case
+// pre-pass and the named-subject veto speak.
+import { namesStatedIn } from '@/lib/workflows/case-step';
 
 export interface WorkflowScope {
   entityId: string;
@@ -30,6 +34,21 @@ export interface WorkflowScope {
 }
 
 const SCOPE_KIND = 'workflow_scope';
+
+/** THE SCOPING GUARD (Aug 25, found live — a workflow born with silently dead doors): a candidate
+ *  is only a candidate when the text STATES one of its names WHOLE. `findEntityFocus` scores by
+ *  matched-token LENGTH and needs only ONE token, so "Customer Service Rep Screening" bound itself
+ *  to the unrelated "Idealista Property Listing Service" on the single word "Service" — a scope was
+ *  written, and runDoors' fail-closed pre-filter then excluded that workflow from EVERY file and
+ *  mail event while readiness still said ready. Candidacy is now THE DISTINCTIVE-TOKEN LAW; the
+ *  house scorer still RANKS the qualified. Exported for the gates. */
+export function entitiesNamedIn(
+  text: string, ents: Array<{ id: string; name: string; aliases?: string[] | null }>,
+): Array<{ id: string; name: string; aliases?: string[] | null }> {
+  return ents.filter((e) => [e.name, ...(Array.isArray(e.aliases) ? e.aliases : [])]
+    .filter(Boolean)
+    .some((n) => namesStatedIn(text, String(n))));
+}
 
 /** The deterministic matcher: does this text NAME a registered project? (No AI, no side effects.) */
 export async function recognizeWorkflowEntity(
@@ -41,7 +60,10 @@ export async function recognizeWorkflowEntity(
     const { data: ents } = await client.from('work_entities').select('id, name, aliases')
       .eq('user_id', userId).eq('kind', 'initiative').eq('status', 'active')
       .order('last_event_at', { ascending: false }).limit(200);
-    return findEntityFocus(q, (ents ?? []) as Array<{ id: string; name: string; aliases?: string[] | null }>) ?? null;
+    // Candidacy by the law, ranking by the house scorer — a partial overlap can no longer scope.
+    const stated = entitiesNamedIn(q, (ents ?? []) as Array<{ id: string; name: string; aliases?: string[] | null }>);
+    if (!stated.length) return null;
+    return findEntityFocus(q, stated) ?? null;
   } catch { return null; }
 }
 

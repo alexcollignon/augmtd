@@ -684,6 +684,52 @@ async function main() {
   ok('…and the state slot yields to the reason (running · reason · parked · last run)',
     /\) : notReady \? \(/.test(stripCode));
 
+  // ── P7l — THE GATE IS NEVER THE DELIVERABLE (severity-1 repair, Aug 25) ────────────────────
+  // Found live: a [case → ai → approval] pipeline shipped a share-linkable frame built from the
+  // approval step's one-line marker — eight fabricated candidates, the real one nowhere. The
+  // deliverable picker must skip every non-content step, STRUCTURALLY (by step type), and must
+  // keep the verify gate (it returns the CORRECTED DRAFT — it IS content).
+  console.log('\nP7l — THE GATE IS NEVER THE DELIVERABLE (the deliverable picker):');
+  {
+    const { NON_CONTENT_STEP_TYPES, isContentStepOutput } =
+      await import('../lib/workflows/run-workflow');
+    ok('approval is EXCLUDED (its output is a gate marker, not work)',
+      NON_CONTENT_STEP_TYPES.has('approval') && !isContentStepOutput({ step_type: 'approval' }));
+    ok('handoff is EXCLUDED (the same marker shape, a teammate\'s decision)',
+      NON_CONTENT_STEP_TYPES.has('handoff') && !isContentStepOutput({ step_type: 'handoff' }));
+    ok('case is EXCLUDED (the card names the subject; a subject is not a deliverable)',
+      NON_CONTENT_STEP_TYPES.has('case') && !isContentStepOutput({ step_type: 'case' }));
+    ok('verify is INCLUDED (the delivery gate RETURNS the corrected draft)',
+      isContentStepOutput({ step_type: 'verify' }));
+    ok('workflow (subprocess) is INCLUDED (its output is the child\'s delivered text)',
+      isContentStepOutput({ step_type: 'workflow' }));
+    ok('tool · ai · agent are INCLUDED',
+      ['tool', 'ai', 'agent'].every((t) => isContentStepOutput({ step_type: t })));
+    ok('an unknown/absent step type degrades to CONTENT (never silently drops a deliverable)',
+      isContentStepOutput({}) && isContentStepOutput({ step_type: 'some_future_type' }));
+
+    // THE PICKER ITSELF: the filter consults the predicate, and slack_send stays excluded.
+    ok('the picker filters through isContentStepOutput AND the slack_send id set',
+      /const contentOutputs = stepOutputs\.filter\(o => !sendStepIds\.has\(o\.step_id\) && isContentStepOutput\(o\)\)/.test(runWfCode),
+      'the picker no longer carries both exclusions');
+    ok('slack_send is still excluded structurally (by tool id, never by text)',
+      /s\.type === 'tool' && \(s as \{ tool\?: string \}\)\.tool === 'slack_send'/.test(runWfCode));
+    {
+      const from = runWfCode.indexOf('const sendStepIds');
+      const picker = from >= 0 ? runWfCode.slice(from, runWfCode.indexOf('const out = normalizeOutput', from)) : '';
+      ok('the exclusion is STRUCTURAL — the picker matches no marker text at all',
+        picker.length > 0 && !/Approved|\[Approval|marker/i.test(picker), 'the picker text-matches a marker');
+    }
+
+    // THE DECISION COMMENT: every step type is decided out loud, at the picker.
+    const pickerIdx = runWf.indexOf('THE GATE IS NEVER THE DELIVERABLE (severity-1 repair');
+    const comment = pickerIdx >= 0 ? runWf.slice(pickerIdx, runWf.indexOf('const sendStepIds', pickerIdx)) : '';
+    ok('the picker carries a per-type decision comment naming EVERY step type',
+      ['approval', 'handoff', 'case', 'verify', 'workflow', 'slack_send', 'agent']
+        .every((t) => comment.includes(t)),
+      'a step type is undecided at the picker');
+  }
+
   console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed`);
   if (fail > 0) process.exit(1);
 }
