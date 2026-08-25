@@ -12,6 +12,17 @@
 // recognition, portfolio visibility, and THE EXISTING ONE-GROUNDING MACHINERY BECOMES THE CASE'S
 // MEMORY — the accumulation store already exists.
 //
+// ── THE TWO SHAPES A CASE KEY CAN HAVE (Aug 25, found live) ─────────────────────────────────────
+// `case_instruction` is THE IDENTITY QUESTION each event answers about ITSELF ("the job opening
+// named in the application") — per-event filing, resolved by the ladder below.
+// `case_name` is THE CASE ITSELF, stated once by the author ("the Customer Service Representative
+// opening at Acme") — one standing case for every run of this workflow. It exists because the
+// instruction shape is structurally unable to serve a SINGLE-opening workflow: `judgeCase` may only
+// report a key THE ITEM ITSELF states (the anti-fabrication floor), and a CV never names the
+// opening it was sent for — so those workflows filed nothing, forever, while looking healthy. The
+// floor is not weakened by the constant: the key is not invented, THE USER STATED IT.
+// Exactly one shape per step; `case_name` wins where both somehow exist, and its lane is ZERO-AI.
+//
 // ── THE RESOLVE LADDER (match-first; found only when nothing matched) ────────────────────────────
 //   0. THE INDEX READ  — item_plans kind 'workflow_case', entity_id `${workflowId}:${entityId}`,
 //      tasks {caseName, openedAt}. ONE read; the workflow's own case list (the house storeless
@@ -98,16 +109,25 @@ function textHasToken(foldedText: string, token: string): boolean {
   return new RegExp(`(^|[^a-z0-9])${esc}([^a-z0-9]|$)`).test(foldedText);
 }
 
+/** THE DISTINCTIVE-TOKEN LAW, AS ONE PREDICATE: does this text actually STATE this name? EVERY
+ *  distinctive token of the name must appear, word-bounded; a name with no distinctive token of its
+ *  own (all generic) can never be stated. THE ONE IMPLEMENTATION — the case pre-pass below and the
+ *  workflow-scope adoption seam (lib/workflows/entity-edge) both call THIS, so a single shared
+ *  overlapping word ("…Service") can never pass for identity anywhere. Pure, gate-testable. */
+export function namesStatedIn(text: string, name: string): boolean {
+  const hay = fold(String(text ?? ''));
+  if (!hay.trim()) return false;
+  const toks = distinctiveTokens(name);
+  return toks.length > 0 && toks.every((t) => textHasToken(hay, t));
+}
+
 /** THE PRE-PASS: a case name ALL of whose distinctive tokens the event states. Pure, gate-testable. */
 export function deterministicCaseMatch(
   eventText: string, cases: Array<{ entityId: string; caseName: string }>,
 ): { entityId: string; caseName: string } | null {
   const hay = fold(String(eventText ?? ''));
   if (!hay.trim()) return null;
-  const hits = cases.filter((c) => {
-    const toks = distinctiveTokens(c.caseName);
-    return toks.length > 0 && toks.every((t) => textHasToken(hay, t));
-  });
+  const hits = cases.filter((c) => namesStatedIn(eventText, c.caseName));
   // A UNIQUE confident hit only — two indexed cases both stated means the event is ambiguous, and
   // ambiguity is exactly what the reasoned pass is for.
   return hits.length === 1 ? hits[0] : null;
@@ -280,25 +300,44 @@ export async function resolveCaseForRun(
 ): Promise<CaseOutcome> {
   const { userId, workflowId, workflowName, step, eventText, runId, matchOnly } = args;
   const instruction = String(step.case_instruction ?? '').trim();
+  // THE WORKFLOW-LEVEL CASE KEY (Aug 25, found live): the case may be supplied BY THE WORKFLOW.
+  const constant = String(step.case_name ?? '').trim();
   const noneCard = (why: string): CaseNone => ({ none: true, cardText: why });
 
   try {
     const index = await readCaseIndex(admin, userId, workflowId);
 
     // 1 + 2 — the ladder.
-    let hit = deterministicCaseMatch(eventText, index);
-    let path: 'deterministic' | 'reasoned' = 'deterministic';
+    let hit: { entityId: string; caseName: string } | null = null;
+    let path: 'deterministic' | 'reasoned' | 'stated' = 'deterministic';
     let caseKey: string | null = null;
-    if (!hit) {
-      path = 'reasoned';
-      const verdict = await judgeCase(admin, userId, instruction, eventText, index);
-      if (verdict.match) {
-        const m = fold(verdict.match);
-        hit = index.find((c) => fold(c.caseName) === m)
-          ?? index.find((c) => fold(c.caseName).includes(m) || m.includes(fold(c.caseName)))
-          ?? null;
+    if (constant) {
+      // ── THE STATED CASE — FULLY DETERMINISTIC, ZERO AI ─────────────────────────────────────
+      // The author named the case ONCE, on the step ("the Customer Service Representative opening
+      // at Acme"). Every run of this workflow files under it, so there is nothing to recognize:
+      // the exact index name, else the SAME distinctive-token pre-pass against the index, else the
+      // case is opened under the author's own words. THE ANTI-FABRICATION FLOOR IS UNTOUCHED — a
+      // key is invented only when nobody stated one, and here THE USER STATED IT. (Without this,
+      // a single-opening workflow filed nothing forever: a CV never names the opening it was sent
+      // for, so judgeCase — which may only report a key THE ITEM ITSELF states — correctly
+      // returned null on every run, and accumulation was structurally dead.)
+      path = 'stated';
+      const c = fold(constant);
+      hit = index.find((x) => fold(x.caseName) === c) ?? deterministicCaseMatch(constant, index);
+      caseKey = hit ? null : constant;
+    } else {
+      hit = deterministicCaseMatch(eventText, index);
+      if (!hit) {
+        path = 'reasoned';
+        const verdict = await judgeCase(admin, userId, instruction, eventText, index);
+        if (verdict.match) {
+          const m = fold(verdict.match);
+          hit = index.find((c2) => fold(c2.caseName) === m)
+            ?? index.find((c2) => fold(c2.caseName).includes(m) || m.includes(fold(c2.caseName)))
+            ?? null;
+        }
+        caseKey = verdict.caseKey;
       }
-      caseKey = verdict.caseKey;
     }
 
     if (!hit && !caseKey) {
@@ -352,7 +391,9 @@ export async function resolveCaseForRun(
       `${founded ? 'Opened a new case: ' : ''}${name} — ${arrival}. ` +
       `The case now holds ${held} filed item${held === 1 ? '' : 's'}.${linkNote}` +
       (matchOnly ? ' [test mode — no case opened]' : '');
-    console.log(`[case] ${founded ? 'founded' : 'matched'} "${name}" via the ${hit ? path : 'reasoned'} path`);
+    // The log says which path actually decided — a stated case that FOUNDS is still `stated`
+    // (it never touched the judge), so the line can never claim reasoning that never happened.
+    console.log(`[case] ${founded ? 'founded' : 'matched'} "${name}" via the ${hit || path === 'stated' ? path : 'reasoned'} path`);
     return { entityId, name, founded, linked, cardText: cardText.slice(0, 600) };
   } catch (e) {
     console.error('[case] resolve threw:', e);

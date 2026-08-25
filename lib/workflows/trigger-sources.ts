@@ -75,6 +75,14 @@ export interface TriggerSourceDef {
   feature: keyof WorkspaceFeatures | null;
   /** mail/file/meeting judge a CONDITION over content; `workflow` binds a workflow_id instead. */
   needsWhen: boolean;
+  /** CAN AN EVENT OF THIS SOURCE EVER CARRY THE ENTITY IT BELONGS TO? (Aug 25.) The scope
+   *  pre-filter in runDoors is FAIL-CLOSED — `!scopeEntity || event.entityId === scopeEntity` — so
+   *  on a SCOPED workflow a source that cannot supply `entityId` can never fire at all. This is a
+   *  fact about the seam, not about a workflow: mail reads entity_links before the doors run and
+   *  the meeting seam looks its transcript's link up, while an upload is unfiled at fire time and a
+   *  delivering RUN is not an atom. It lives on the registry row (law 3) so readiness can SAY it
+   *  and nothing has to hardcode a source list. */
+  carriesEntity: boolean;
   /** The deterministic fields this source's events carry. Absent/empty = no filters (structural
    *  sources): a filter on such a door is dropped by normalizeTriggers and by the sanitiser. */
   filterFields?: FilterFieldDef[];
@@ -82,21 +90,27 @@ export interface TriggerSourceDef {
 
 export const TRIGGER_SOURCES: TriggerSourceDef[] = [
   { key: 'mail',     label: 'An email arrives',            icon: 'EnvelopeIcon',              feature: 'email',    needsWhen: true,
+    carriesEntity: true,
     filterFields: [
       { key: 'from_address', label: 'Sender',  ops: ['is', 'domain_is'] },
       { key: 'subject',      label: 'Subject', ops: ['contains'] },
     ] },
+  // An upload is UNFILED at fire time (the confirm seam supplies no entityId), so a scoped
+  // workflow's file door can never match. Readiness says so out loud (rule 9).
   { key: 'file',     label: 'A file lands in Knowledge',   icon: 'DocumentPlusIcon',          feature: 'drive',    needsWhen: true,
+    carriesEntity: false,
     filterFields: [
       { key: 'filename', label: 'File name', ops: ['contains'] },
       { key: 'ext',      label: 'Type',      ops: ['is'] },
     ] },
   { key: 'meeting',  label: 'A meeting is recorded',       icon: 'MicrophoneIcon',            feature: 'meetings', needsWhen: true,
+    carriesEntity: true,
     filterFields: [
       { key: 'title', label: 'Title', ops: ['contains'] },
     ] },
   // `workflow` is STRUCTURAL composition — it matches by bound id, so it has nothing to filter.
-  { key: 'workflow', label: 'Another workflow delivers',   icon: 'ArrowPathRoundedSquareIcon', feature: null,      needsWhen: false },
+  { key: 'workflow', label: 'Another workflow delivers',   icon: 'ArrowPathRoundedSquareIcon', feature: null,      needsWhen: false,
+    carriesEntity: false },
 ];
 
 const SOURCE_BY_KEY = new Map<string, TriggerSourceDef>(TRIGGER_SOURCES.map((s) => [s.key, s]));

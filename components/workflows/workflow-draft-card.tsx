@@ -41,6 +41,9 @@ export type WorkflowDraft = {
   needs_input_note?: string | null;
   /** A subprocess station the resolver refused, spoken — the same needs-note law, third channel. */
   needs_step_note?: string | null;
+  /** A handoff person code could not resolve (no match, or two Sams) — the ORIGINAL needs-note
+   *  channel, and the one this card silently dropped until the F5 parity sweep. */
+  needs_person_note?: string | null;
   /** THE THROTTLE (relay canvas W3b) — a pace the description stated, already clamped. Absent =
    *  the platform default; the Confirm must carry it or a said limit dies at creation. */
   fire_limit?: number | null;
@@ -64,7 +67,10 @@ const stepWord = (s: WorkflowDraft['steps'][number]): string => {
   // THE CASE STATION (relay canvas W4): the deed said in the same grammar as the other stations —
   // what it does, then what it recognizes a case BY (the user's own words, head-clipped).
   if (s.type === 'case') {
-    const raw = typeof s.case_instruction === 'string' ? s.case_instruction.trim() : '';
+    // Either shape speaks here (Aug 25): the STATED case if the request named one, else the
+    // identity question. A card that showed neither would promise a station with no key.
+    const stated = typeof s.case_name === 'string' ? s.case_name.trim() : '';
+    const raw = stated || (typeof s.case_instruction === 'string' ? s.case_instruction.trim() : '');
     const head = raw.length > 40 ? `${raw.slice(0, 40).trimEnd()}…` : raw;
     return head ? `File each under its record — ${head}` : 'File each under its record';
   }
@@ -198,6 +204,13 @@ export function WorkflowDraftCard({
       {draft.needs_step_note && (
         <div className="mt-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
           {draft.needs_step_note}
+        </div>
+      )}
+      {/* An unresolved PERSON is spoken too — fourth channel, same block. The gate would otherwise
+          ship with an empty assignee and the user would learn it at the first park. */}
+      {draft.needs_person_note && (
+        <div className="mt-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+          {draft.needs_person_note}
         </div>
       )}
       <div className="mt-3 flex items-center gap-3">

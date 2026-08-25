@@ -194,6 +194,10 @@ export const updateTaskDefinition = {
           label: { type: 'string', description: 'New label for this step' },
           prompt: { type: 'string', description: 'New prompt for ai or agent steps' },
           config: { type: 'object', description: 'New config fields for tool steps — merged into existing config' },
+          // THE CASE STATION'S KEY (relay canvas W4 + the stated case, Aug 25) — the two shapes,
+          // described the same way both authoring doors describe them. Setting one CLEARS the other.
+          case_instruction: { type: 'string', description: 'For a "case" step: what identifies a case, when it DIFFERS per event ("the job opening named in the application"). Setting this clears case_name.' },
+          case_name: { type: 'string', description: 'For a "case" step: the ONE case every run files under, when the user named a specific opening/client/matter ("the Customer Service Representative opening"). Setting this clears case_instruction.' },
         },
         required: ['step_id'],
       },
@@ -576,6 +580,13 @@ export async function executeGetTask(
     if (s.type === 'tool') return `  ${i + 1}. [tool] id:${s.id} label:"${s.label}" tool:${s.tool}\n     config: ${JSON.stringify(s.config ?? {})}`;
     if (s.type === 'ai') return `  ${i + 1}. [ai] id:${s.id} label:"${s.label}"\n     prompt: ${s.prompt}`;
     if (s.type === 'agent') return `  ${i + 1}. [agent] id:${s.id} label:"${s.label}" agent_id:${s.agent_id}\n     prompt: ${s.prompt}`;
+    // THE CASE STATION says its key and WHICH SHAPE it is — a step the model cannot read is a step
+    // it will happily replace with something else (it used to print "[unknown]").
+    if (s.type === 'case') {
+      const stated = (s.case_name ?? '').trim();
+      return `  ${i + 1}. [case] id:${s.id} label:"${s.label}"\n     `
+        + (stated ? `case_name (one standing case): ${stated}` : `case_instruction (the case each event names): ${s.case_instruction ?? ''}`);
+    }
     return `  ${i + 1}. [unknown]`;
   }).join('\n\n');
 
@@ -636,7 +647,10 @@ export async function executeUpdateTask(
     output_notification?: string;  // legacy alias → report_mode
     worker_instructions?: string;
     skill_names?: string[] | string;
-    step_patch?: { step_id: string; label?: string; prompt?: string; config?: Record<string, unknown> };
+    step_patch?: {
+      step_id: string; label?: string; prompt?: string; config?: Record<string, unknown>;
+      case_instruction?: string; case_name?: string;
+    };
     steps?: WorkflowStep[];
   },
   userId: string,
@@ -813,7 +827,7 @@ export async function executeUpdateTask(
 
   // step_patch — targeted single-step edit by id
   if (fields.step_patch !== undefined) {
-    const { step_id, label, prompt, config } = fields.step_patch;
+    const { step_id, label, prompt, config, case_instruction, case_name } = fields.step_patch;
     const steps = [...(row.steps ?? [])];
     const idx = steps.findIndex(s => s.id === step_id);
     if (idx === -1) return `Step "${step_id}" not found. Call get_task to see current step ids.`;
@@ -821,6 +835,10 @@ export async function executeUpdateTask(
     if (label !== undefined) step.label = label;
     if (prompt !== undefined && (step.type === 'ai' || step.type === 'agent')) step.prompt = prompt;
     if (config !== undefined && step.type === 'tool') step.config = { ...(step.config as Record<string, unknown> ?? {}), ...config };
+    // EXACTLY ONE CASE KEY LIVES ON A CASE STEP — setting either shape clears the other, so two
+    // competing keys can never sit on one station (the Studio toggle's law, said in code).
+    if (step.type === 'case' && case_name !== undefined) { step.case_name = case_name; step.case_instruction = ''; }
+    else if (step.type === 'case' && case_instruction !== undefined) { step.case_instruction = case_instruction; step.case_name = ''; }
     steps[idx] = step as WorkflowStep;
     update.steps = steps;
     changes.push(`step "${steps[idx].label}" updated`);

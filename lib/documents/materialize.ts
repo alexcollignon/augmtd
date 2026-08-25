@@ -106,7 +106,12 @@ export async function materializeDocument(
 
   // ── TIER 0 — THE FRAME (frames plan Phase 1, law 1): a deliverable you can look INTO. Runs
   // BEFORE the compiler because a dashboard ask is not a document ask; on null it FALLS THROUGH
-  // to every tier below untouched — the user always gets a deliverable. ──
+  // to every tier below untouched — the user always gets a deliverable.
+  // THE CONTENT FLOOR REACHES HERE TOO (severity-1 repair, Aug 25): the lane refuses in CODE on a
+  // thin source (isThinFrameSource) — a frame is a VIEW OF WORK, and with no work to view a
+  // generative lane invents one (found live: a gate's one-line marker became a ranked dashboard
+  // of eight fabricated people). Its refusal arrives as the honest null this fall-through already
+  // handles, so a thin ask lands as a plain, truthful document instead. ──
   const wantsFrame = !args.revise && !args.templateFile
     && (args.forceType === 'frame' || FRAME_WORDS.test(request) || FRAME_WORDS.test(title));
   if (wantsFrame) {

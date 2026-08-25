@@ -1765,9 +1765,11 @@ function SubprocessFlowBlock({ step, active, onClick }: {
 function CaseFlowBlock({ step, active, onClick }: {
   step: CaseStepDraft; active: boolean; onClick: () => void;
 }) {
-  const instruction = step.case_instruction?.trim() ?? '';
-  const meta = instruction
-    ? (instruction.length > 46 ? `${instruction.slice(0, 46)}…` : instruction)
+  // Either shape is a key (Aug 25) — the STATED case leads when there is one, since it is what
+  // every run of this workflow will actually file under.
+  const key = step.case_name?.trim() || step.case_instruction?.trim() || '';
+  const meta = key
+    ? (key.length > 46 ? `${key.slice(0, 46)}…` : key)
     : 'what identifies a case? e.g. “the job opening named in the application”';
 
   return (
@@ -1778,7 +1780,7 @@ function CaseFlowBlock({ step, active, onClick }: {
       onKeyDown={e => e.key === 'Enter' && onClick()}
       className={`w-full flex items-center gap-3 px-4 py-3.5 bg-white rounded-xl border-2 cursor-pointer transition-all ${
         active ? 'border-indigo-400 shadow-md'
-        : instruction ? 'border-neutral-100 hover:border-neutral-200 shadow-sm'
+        : key ? 'border-neutral-100 hover:border-neutral-200 shadow-sm'
         : 'border-amber-200 hover:border-amber-300 shadow-sm'
       }`}
     >
@@ -1792,7 +1794,7 @@ function CaseFlowBlock({ step, active, onClick }: {
           </span>
           <span className="flex-shrink-0 text-[10px] rounded-full px-1.5 py-[1px] bg-indigo-50 text-indigo-600">case</span>
         </div>
-        <div className={`text-[11.5px] truncate leading-tight mt-0.5 ${instruction ? 'text-neutral-400' : 'text-amber-700/90'}`}>
+        <div className={`text-[11.5px] truncate leading-tight mt-0.5 ${key ? 'text-neutral-400' : 'text-amber-700/90'}`}>
           {meta}
         </div>
       </div>
@@ -2364,7 +2366,16 @@ function CaseStepFields({ step, onUpdate }: {
   step: CaseStepDraft;
   onUpdate: (p: Partial<CaseStepDraft>) => void;
 }) {
-  const blank = !step.case_instruction?.trim();
+  // THE TWO SHAPES, SAID OUT LOUD (Aug 25). Deliberately NOT auto-detected from one field: "the
+  // Customer Service Representative opening" and "the job opening named in the application" are
+  // both plain English, and guessing which one the author meant would put words in their mouth —
+  // the difference decides whether every run files under ONE case or under the case each event
+  // names. Two options, one field, and only the chosen key is ever stored.
+  const stated = !!step.case_name?.trim();
+  const blank = !step.case_instruction?.trim() && !stated;
+  const pick = (toStated: boolean) => onUpdate(toStated
+    ? { case_name: step.case_name ?? '', case_instruction: '' }
+    : { case_name: '', case_instruction: step.case_instruction ?? '' });
   return (
     <div className="p-4 space-y-3">
       <p className="text-[12.5px] text-neutral-500 leading-relaxed">
@@ -2372,15 +2383,43 @@ function CaseStepFields({ step, onUpdate }: {
         case you already have, or opening a new one when it names a case nobody opened yet. From
         here on, the run sees everything that case has accumulated.
       </p>
-      <Field label="What identifies a case" hint="in your own words">
-        <textarea
-          value={step.case_instruction ?? ''}
-          onChange={e => onUpdate({ case_instruction: e.target.value })}
-          rows={3}
-          placeholder="the job opening named in the application"
-          className="w-full text-[13px] bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-indigo-300 focus:bg-white resize-none placeholder-neutral-300"
-        />
-      </Field>
+      <div className="flex gap-1 p-0.5 bg-neutral-100 rounded-lg">
+        {[
+          { key: false, label: "It's named in each event" },
+          { key: true, label: 'Always the same case' },
+        ].map(o => (
+          <button
+            key={String(o.key)}
+            type="button"
+            onClick={() => pick(o.key)}
+            className={`flex-1 text-[12px] px-2 py-1.5 rounded-md transition-colors ${
+              stated === o.key ? 'bg-white text-neutral-800 shadow-sm font-medium' : 'text-neutral-500 hover:text-neutral-700'
+            }`}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+      {stated ? (
+        <Field label="The case everything files under" hint="its name, in your own words">
+          <textarea
+            value={step.case_name ?? ''}
+            onChange={e => onUpdate({ case_name: e.target.value })}
+            rows={2}
+            placeholder="the Customer Service Representative opening"
+            className="w-full text-[13px] bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-indigo-300 focus:bg-white resize-none placeholder-neutral-300"
+          />
+        </Field>
+      ) : (
+        <Field label="What identifies a case" hint="in your own words">
+          <textarea
+            value={step.case_instruction ?? ''}
+            onChange={e => onUpdate({ case_instruction: e.target.value })}
+            rows={3}
+            placeholder="the job opening named in the application"
+            className="w-full text-[13px] bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-indigo-300 focus:bg-white resize-none placeholder-neutral-300"
+          />
+        </Field>
+      )}
       {blank && (
         <p className="text-[11.5px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
           The &lsquo;file it under its record&rsquo; step needs to know what identifies a case.

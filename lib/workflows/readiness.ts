@@ -24,10 +24,18 @@
 //                                     → "The '<label>' process step needs a workflow."
 //   7. a `workflow` step naming THIS workflow
 //                                     → "A workflow can't include itself as a step."
-//   8. a `case` step with a blank instruction
+//   8. a `case` step with NEITHER shape of case key (no instruction AND no stated case name)
 //                                     → "The 'file it under its record' step needs to know what identifies
 //                                        a case."
+//   9. a SCOPED workflow whose every event door reacts to a source that cannot carry an entity
+//                                     → "Scoped to “X” — no file event can arrive inside that project."
 // Adding a rule = ONE entry in RULES below. Nothing else moves.
+//
+// ⚠️ RULE 9 IS VISIBILITY, NEVER A NEW REFUSAL (Aug 25). The scope is a SERVED fact, so only the
+// surface that already holds it passes it (the ledger row). The dispatcher and the run door pass no
+// scope, the rule abstains there by construction, and no run that would have happened is refused.
+// The fail-closed scope semantics in runDoors are untouched — this rule only makes their
+// consequence SAYABLE, where the workflow's own row can be fixed.
 //
 // PAUSED IS NOT UNREADINESS — a paused (or auto-paused) workflow is ready, just asleep.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -61,6 +69,9 @@ export interface ReadinessInput {
   triggers?: unknown;
   /** Any step array shape — WorkflowStep[] or raw jsonb rows. Read structurally, never trusted. */
   steps?: readonly unknown[] | null;
+  /** THE PROJECT SCOPE (item_plans kind 'workflow_scope'), when the caller already holds it.
+   *  Absent = rule 9 abstains — a caller that does not read the scope never invents unreadiness. */
+  scope?: { entityName?: string | null } | null;
 }
 
 function asRec(s: unknown): Record<string, unknown> {
@@ -178,11 +189,34 @@ const RULES: Rule[] = [
   // 8 — THE CASE STATION WITH NOTHING TO RECOGNIZE (relay canvas W4): a case step whose
   // instruction is blank cannot tell one case from another, so every run would either found a
   // duplicate or file nothing. The sentence names the missing knowledge, not the field.
+  // EITHER SHAPE SATISFIES IT (Aug 25): the identity QUESTION each event answers about itself
+  // (`case_instruction`), or the case the author STATED once for every run (`case_name`). Both are
+  // a case key; only having neither leaves the station unable to tell one case from another.
   (wf) => {
     const blank = (wf.steps ?? []).map(asRec).some(
-      (s) => typeOf(s) === 'case' && !String((s.case_instruction as string | undefined) ?? '').trim(),
+      (s) => typeOf(s) === 'case'
+        && !String((s.case_instruction as string | undefined) ?? '').trim()
+        && !String((s.case_name as string | undefined) ?? '').trim(),
     );
     return blank ? "The 'file it under its record' step needs to know what identifies a case." : null;
+  },
+
+  // 9 — THE SCOPE THAT SILENCES EVERY DOOR (Aug 25, found live). A workflow scoped to a project
+  // only ever sees THAT project's events (runDoors' fail-closed pre-filter). Where every door it
+  // holds reacts to a source whose events cannot carry an entity at all, nothing can ever match —
+  // the workflow looks armed and is deaf. Said, so the row can be fixed (un-scope it, or react to
+  // a source that carries its project). ONE door that CAN carry the scope makes the workflow work,
+  // so partial deadness is not unreadiness — it is not a fact about whether this workflow runs.
+  (wf) => {
+    const project = String(wf.scope?.entityName ?? '').trim();
+    if (!project) return null;
+    const { doors } = normalizeTriggers(wf);
+    if (!doors.length) return null;
+    if (doors.some((d) => triggerSource(d.source)?.carriesEntity !== false)) return null;
+    const sources = [...new Set(doors.map((d) => d.source))].join('/');
+    const fixed = `Scoped to “” — no ${sources} event can arrive inside that project.`.length;
+    return `Scoped to “${clip(project, Math.max(8, READINESS_REASON_MAX - fixed))}” — `
+      + `no ${sources} event can arrive inside that project.`;
   },
 ];
 

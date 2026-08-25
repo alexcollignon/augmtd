@@ -102,6 +102,14 @@ RULES for doors:
   "subject mentions application" → {"field":"subject","op":"contains","value":"application"};
   "PDFs only" → {"field":"ext","op":"is","value":"pdf"}. Only the fields listed for that door above
   exist — never invent a field, an operator, or a value the request didn't state.
+- A DOOR DESCRIBES THE KIND OF THING THAT ARRIVES — NEVER ITS RELEVANCE. Write "when" as the class
+  of event ("a resume or CV file", "an email where someone applies to a job", "a signed contract
+  comes back"). NEVER narrow it to a topic, a role, a client or a project ("a resume FOR THE
+  CUSTOMER SERVICE REPRESENTATIVE OPENING", "an email about the Bramley tender") even when the
+  request is about exactly one of those. WHY: a door refusal is SILENT — a real applicant the door
+  reads as off-topic is dropped with no receipt anywhere — while a mismatch inside the pipeline is
+  VISIBLE, and the steps (and the verify gate) can say so and park it. Let the door be broad and
+  structural; let judgement of fit happen where it leaves a trace.
 - Use "when" ONLY for what is genuinely fuzzy — something that needs reading and judgement ("it
   looks like a strong candidate", "the email is actually a job application"). OMIT "when" ENTIRELY
   when the filters already say everything the request stated: restating a filter as a condition
@@ -135,9 +143,11 @@ Two optional top-level fields say what STANDING MATERIAL this work reads:
   doc", "score it with our rubric"). Give the NAME as the request says it — NEVER an id, never a
   path, never a file you invented. The system resolves the name against the user's documents and
   says so if it can't find one. Omit the field entirely when the request pins nothing.
-"accept_material": true — set ONLY when the work is done ON something handed over at run time
-  ("when I upload a CV", "paste the transcript and…", "I'll give you the draft"). It opens a
-  material box on Run-now. Default is to omit it.
+"accept_material": true — set when the work is done ON something HANDED TO IT at run time: the
+  user themselves ("when I upload a CV", "paste the transcript and…", "I'll give you the draft")
+  OR other people handing files/material in ("candidates send us their CVs", "applications arrive
+  as PDFs", "people submit their documents"). If material is what this work chews on, the box must
+  be there — a run with nothing to work on is the failure it prevents. Default is to omit it.
 
 A pinned document is the STANDING rulebook (policy, template, rubric); run-time material is the
 NEW thing each run works on. Don't confuse them, and never emit a read_kb_file step for a document
@@ -154,6 +164,19 @@ that need the accumulated view:
 { "type": "case", "id": "step_002", "label": "File it under its record", "case_instruction": "the job opening named in the application" }
 "case_instruction" is WHAT IDENTIFIES A CASE, in the request's own words — never a field name,
 never an id.
+
+THE TWO SHAPES — give EXACTLY ONE of them, never both:
+"case_instruction" is the QUESTION each event answers about itself — use it when the case DIFFERS
+  per event ("file each application under the job opening it names", "put every invoice under its
+  client"). Example: "case_instruction": "the job opening named in the application".
+"case_name" is the case ITSELF, named once and the same for every run — use it when the request
+  names ONE specific opening, client or matter ("screen applications for the Customer Service
+  Representative opening at Acme Consumer Finance", "track everything on the Bramley Freight
+  tender"). Example:
+{ "type": "case", "id": "step_002", "label": "File it under its record", "case_name": "the Customer Service Representative opening at Acme Consumer Finance" }
+Choosing wrongly breaks the work SILENTLY: an instruction on a single-opening workflow files
+nothing at all, because the arriving item (a CV) never states which opening it was sent for. If the
+request names the one case, state it in "case_name" — that is the user's own words, not a guess.
 RULE: emit it ONLY when the request describes per-event filing into an ongoing record ("link each
 application to its job opening", "file every invoice under its client", "keep each candidate with
 the role they applied for"). At most ONE per workflow. Place it before the steps that need the
@@ -453,7 +476,10 @@ export async function generateWorkflowConfig(
     for (const s of steps) {
       if (s.type !== 'case') { kept.push(s); continue; }
       const instruction = typeof s.case_instruction === 'string' ? s.case_instruction.trim() : '';
-      if (!instruction) {
+      // THE STATED CASE is the second honest shape (Aug 25): either the identity QUESTION or the
+      // case the request itself NAMED. Only having neither leaves the station blind.
+      const stated = typeof s.case_name === 'string' ? s.case_name.trim() : '';
+      if (!instruction && !stated) {
         stepNotes.push('I left out the step that files each event under its own case — say what identifies a case (like "the job opening named in the application") and I\'ll add it.');
         continue;
       }
@@ -462,7 +488,11 @@ export async function generateWorkflowConfig(
         continue;
       }
       seatedCase = true;
-      kept.push({ ...s, case_instruction: instruction });
+      // EXACTLY ONE SHAPE SURVIVES: a stated case is the whole answer, so an instruction beside it
+      // would be a second, competing key on one station (and only one of them can decide).
+      kept.push(stated
+        ? { ...s, case_name: stated, case_instruction: '' }
+        : { ...s, case_instruction: instruction });
     }
     steps = kept;
   }

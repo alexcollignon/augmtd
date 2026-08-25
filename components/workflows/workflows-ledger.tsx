@@ -28,6 +28,9 @@ import ProcessDrawer, { GateChip, GateFindings } from '@/components/workflows/pr
 import RunMaterialSheet, { asksForMaterial, type RunMaterial } from '@/components/workflows/run-material-sheet';
 import { WorkflowMark } from '@/components/workflows/workflow-detail';
 import { PROCESS_BUCKETS } from '@/lib/workflows/process-state';
+import { FIRE_LIMIT_DEFAULT } from '@/lib/workflows/fire-limit';
+import { doorLabel } from '@/lib/workflows/trigger-sources';
+import type { ReactionDoor } from '@/lib/workflows/trigger-sources';
 import type { ProcessRow } from '@/lib/workflows/process-state';
 import type { DocumentArtifact } from '@/lib/types/inbox';
 import type { GateVerdict } from '@/lib/workflows/types';
@@ -88,6 +91,23 @@ type Draft = {
   trigger: { type: string; cron?: string; label?: string; timezone?: string; when?: string };
   steps: DraftStep[]; output_config: Record<string, unknown>;
   worker_instructions?: string | null; overlap_note?: string | null;
+  // ── THE FOUR-DOOR PARITY LAW (F5, found live): everything the describe door AUTHORS must reach
+  // creation from EVERY confirm door — the doors, the pinned documents, the throttle. This page's
+  // Confirm used to POST a hand-written field list that predated the relay-canvas arc, so a pilot
+  // pasting a power prompt HERE got a workflow with no doors, no pinned material and no pace.
+  // The bodies below now SPREAD the authored draft (the worker-tasks-tab discipline) — a new
+  // authored field reaches creation the day generate-config emits it, with no second allowlist
+  // to drift. ──
+  triggers?: ReactionDoor[];
+  inputs?: { docs: Array<{ kbFileId: string; name: string }>; acceptMaterial: boolean } | null;
+  fire_limit?: number | null;
+  // ── THE NOTE CHANNELS — every gap the authoring code refused is SPOKEN, never silently absent
+  // (the needs_person_note idiom). Five siblings; a surface that renders four is a surface that
+  // drops one class of refusal on the floor. ──
+  needs_door_note?: string | null;
+  needs_input_note?: string | null;
+  needs_step_note?: string | null;
+  needs_person_note?: string | null;
 };
 
 const triggerWord = (t: Draft['trigger']): string =>
@@ -237,7 +257,12 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
     try {
       const r = await fetch('/api/workflows', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
+        // THE WHOLE AUTHORED CONFIG RIDES (four-door parity): spread first — triggers, inputs,
+        // fire_limit and anything generate-config adds later — then the fields this door owns.
+        // POST /api/workflows inserts an explicit column allowlist, so the note channels riding
+        // along are inert (they are the card's words, never storage).
         body: JSON.stringify({
+          ...draft,
           name: draft.name, description: draft.description, trigger: draft.trigger,
           steps: draft.steps, output_config: outputConfigWithBaseline(), status: 'active',
           agent_id: presenterId, worker_instructions: draft.worker_instructions ?? null,
@@ -260,7 +285,10 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
     try {
       const r = await fetch('/api/workflows', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
+        // Same parity here — the Studio door must open on the FULL authored config, or "Adjust"
+        // would quietly become "lose the doors you just described".
         body: JSON.stringify({
+          ...draft,
           name: draft.name, description: draft.description, trigger: draft.trigger,
           steps: draft.steps, output_config: outputConfigWithBaseline(), status: 'draft',
           agent_id: presenterId, worker_instructions: draft.worker_instructions ?? null,
@@ -430,6 +458,19 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                 <div className="text-[15px] font-semibold text-neutral-900">{draft.name}</div>
                 <div className="mt-0.5 text-[12px] text-neutral-500">
                   {triggerWord(draft.trigger)}
+                  {/* The authored doors / pinned documents / stated pace SAY themselves here, in the
+                      same words the shared creation card uses — a config that rides the Confirm but
+                      never appears on the review is a config the user confirmed unseen. */}
+                  {(draft.triggers?.length ?? 0) > 0 && (
+                    <> · runs when {draft.triggers!.map(doorLabel).join(' · when ')}</>
+                  )}
+                  {(draft.inputs?.docs.length ?? 0) > 0 && (
+                    <> · reads {draft.inputs!.docs.map((d) => d.name).join(' · ')}</>
+                  )}
+                  {draft.inputs?.acceptMaterial && <> · takes material at run time</>}
+                  {typeof draft.fire_limit === 'number' && draft.fire_limit !== FIRE_LIMIT_DEFAULT && (
+                    <> · up to {draft.fire_limit} event runs a day</>
+                  )}
                   {' · delivers to '}{HOME_WORD[String((draft.output_config as { destination?: string }).destination ?? 'message')] ?? 'a message'}
                 </div>
               </div>
@@ -448,6 +489,29 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
             {draft.overlap_note && (
               <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
                 {draft.overlap_note}
+              </div>
+            )}
+            {/* THE FIVE NOTE CHANNELS — a door the sanitiser refused, a document the resolver could
+                not find, a subprocess station it refused, a person it could not resolve. Each is its
+                own sentence in the same amber block: a gap is STATED, never silently shipped. */}
+            {draft.needs_door_note && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+                {draft.needs_door_note}
+              </div>
+            )}
+            {draft.needs_input_note && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+                {draft.needs_input_note}
+              </div>
+            )}
+            {draft.needs_step_note && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+                {draft.needs_step_note}
+              </div>
+            )}
+            {draft.needs_person_note && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+                {draft.needs_person_note}
               </div>
             )}
             {/* THE BASELINE, ASKED AT BIRTH — optional, and the only honest source of time saved. */}

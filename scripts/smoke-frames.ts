@@ -33,6 +33,14 @@
 //   L4  TRIGGER HONESTY — no frame word, no forceType, no csv → the frame lane is never entered
 //       (the deterministic template tier answers). No AI involved.
 //
+// TF — THE THIN-INPUT FLOOR (severity-1 repair, Aug 25 — pure table + one zero-AI door probe):
+//   a frame is a VIEW OF WORK. Found live: a run ending at an approval gate handed the door the
+//   gate's one-line marker and the lane AUTHORED a ranked dashboard of eight fabricated people,
+//   share-linkable. isThinFrameSource refuses in CODE before any spend (marker SHAPE, not
+//   wording; csv/computed facts count as substance), the door falls through to a plain honest
+//   document, and the prompt carries THE CONTENT FLOOR + HONEST ABSENCE. The other half of this
+//   repair — the deliverable picker skipping gate steps — is gated in smoke-processes P7l.
+//
 // S — THE SOURCE FLOORS (comment-stripped where counting — a sentence about a call site is not a
 //     call site):
 //   S1  ONE RENDERER, ONE SANDBOX — `sandbox=` for frames exists in exactly ONE component file and
@@ -242,10 +250,16 @@ const SMALL_CSV = [
 ].join('\n');
 
 const FRAME_REQUEST = 'a dashboard of the hiring pipeline by stage, with the offer counts';
+// RE-POINTED (Aug 25, the thin-input floor): this fixture stood at ~180 collapsed chars, just
+// under FRAME_MIN_CONTENT_CHARS, so the L3 fall-through probe (which passes NO csv) would have
+// been refused by the new floor before reaching the AI at all — L3 would still pass, but for the
+// wrong reason. It is now a deliverable of realistic length. The floor itself is gated in TF.
 const FRAME_CONTENT = [
   'Hiring pipeline — week 34.',
   'Screening carries 60 candidates across two roles; the onsite stage holds 18.',
   'Engineering converts at a visibly higher rate than Design at the offer stage.',
+  'Time-to-offer lengthened by four days against week 33, concentrated in the onsite scheduling step.',
+  'Two offers are outstanding and both sit past their stated decision date.',
 ].join('\n');
 
 async function main() {
@@ -444,7 +458,10 @@ async function main() {
     childScript = 'scripts/.smoke-frames-fallthrough.tmp.ts';
     await fs.writeFile(childScript, [
       `// TEMPORARY child of scripts/smoke-frames.ts (L3). Deleted by the parent's finally block.`,
-      `for (const k of ['ANTHROPIC_API_KEY','OPENAI_API_KEY','AWS_BEDROCK_ACCESS_KEY_ID','AWS_BEDROCK_SECRET_ACCESS_KEY','AZURE_OPENAI_API_KEY']) {`,
+      // ⚠️ The factory reads AWS_BEDROCK_ACCESS_KEY / AWS_BEDROCK_SECRET_KEY — the *_ID/_SECRET_ACCESS_KEY
+      // names fenced nothing (latent while probes ran on standard tier; exposed the day the probe host
+      // moved to bedrock_optimised and "AI unreachable" quietly became reachable). Both sets stay fenced.
+      `for (const k of ['ANTHROPIC_API_KEY','OPENAI_API_KEY','AWS_BEDROCK_ACCESS_KEY_ID','AWS_BEDROCK_SECRET_ACCESS_KEY','AWS_BEDROCK_ACCESS_KEY','AWS_BEDROCK_SECRET_KEY','AZURE_OPENAI_API_KEY']) {`,
       `  process.env[k] = 'invalid-key-for-the-fall-through-gate';`,
       `}`,
       `// No compute service either — the whole AI half of the lane must be unreachable.`,
@@ -477,6 +494,57 @@ async function main() {
       child.tier !== undefined && child.tier !== 'frame' && child.type !== 'frame', JSON.stringify(child));
     ok('L3 …and the user still gets a real deliverable (non-empty bytes)',
       (child.bytes ?? 0) > 0, String(child.bytes));
+
+    // ══ TF — THE THIN-INPUT FLOOR (severity-1 repair, Aug 25) ════════════════════════════════
+    // Found live: a workflow ending at an approval gate handed the door the gate's one-line
+    // marker; the frame lane AUTHORED a ranked dashboard of eight fabricated people over it and
+    // the result was share-linkable. The picker fix (smoke-processes P7l) is one half; this is
+    // the other — a frame is a VIEW OF WORK, so with no work to view the lane must REFUSE. In
+    // CODE, before any spend (the v3–v5 lesson: prompt-only enforcement of a floor coin-flips).
+    console.log('\nTF — the thin-input floor (the content floor reaches the frame lane):');
+    {
+      const { isThinFrameSource, FRAME_MIN_CONTENT_CHARS } = await import('@/lib/frames/generate-frame');
+      const marker = '[Approved by the user — looks good, ship it]';
+      ok('TF a lone gate marker line is THIN (structural shape, never the wording)',
+        isThinFrameSource({ content: marker }));
+      ok('TF …the SHAPE is what is matched — a differently-worded marker is thin too',
+        isThinFrameSource({ content: '[Approved]' })
+        && isThinFrameSource({ content: '[Approval gate — auto-passed in test mode]' }));
+      ok('TF a short sentence under the floor is THIN',
+        isThinFrameSource({ content: 'Ranked the candidates.' }));
+      ok('TF a real written deliverable is NOT thin',
+        !isThinFrameSource({ content: 'x'.repeat(FRAME_MIN_CONTENT_CHARS + 1) }));
+      ok('TF whitespace never buys length past the floor',
+        isThinFrameSource({ content: 'a b'.padEnd(FRAME_MIN_CONTENT_CHARS * 3, ' \n') }));
+      ok('TF tabular material is substance on its own (a thin note over real rows is a frame)',
+        !isThinFrameSource({ content: marker, csvText: 'name,score\nA,1\nB,2' }));
+      ok('TF code-computed facts are substance on their own',
+        !isThinFrameSource({ content: marker, computedFacts: 'TOTAL ROWS: 9' }));
+
+      // THE LIVE DOOR PROOF — zero AI: the refusal happens before the lane spends anything, so
+      // a marker-shaped source can NEVER come back as a populated dashboard.
+      const overGate = await materializeDocument(admin, probeId, {
+        title: 'Candidate ranking dashboard',
+        content: marker,
+        request: 'build an interactive dashboard ranking the candidates',
+        forceType: 'frame', theme: null,
+      });
+      ok('TF the door REFUSES to frame a marker line (falls through to the document tiers)',
+        overGate.tier !== 'frame' && overGate.type !== 'frame' && overGate.ext !== 'html',
+        `${overGate.tier}/${overGate.type}/${overGate.ext}`);
+      ok('TF …and the user still gets an honest deliverable (non-empty bytes, no provenance claim)',
+        overGate.bytes.length > 0 && overGate.provenance === undefined, String(overGate.bytes.length));
+      // The lane's floor is CODE, not a sentence — and the prompt carries the content floor too.
+      const laneSrc = await readSrc('lib/frames/generate-frame.ts');
+      ok('TF the refusal is CODE at the top of the lane (before any AI client is built)',
+        laneSrc.indexOf('if (isThinFrameSource(args))') > 0
+        && laneSrc.indexOf('if (isThinFrameSource(args))') < laneSrc.indexOf("await import('@/lib/ai/factory')"));
+      ok('TF the prompt states THE CONTENT FLOOR (format, never author) and HONEST ABSENCE',
+        /THE CONTENT FLOOR/.test(laneSrc) && /never AUTHOR/.test(laneSrc)
+        && /HONEST ABSENCE/.test(laneSrc) && /Invent nothing/.test(laneSrc));
+      ok('TF …and the door documents the same floor at the frame tier',
+        /isThinFrameSource/.test(await readSrc('lib/documents/materialize.ts')));
+    }
 
     // ══ S — THE SOURCE FLOORS ════════════════════════════════════════════════════════════════
     console.log('\nS — the source floors:');

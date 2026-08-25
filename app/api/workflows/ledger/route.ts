@@ -232,7 +232,12 @@ export async function GET() {
       // drain rather than being lost (W3b — the throttle, never a shredder).
       fireLimit: limitsOut.get(w.id) ?? { ...DEFAULT_FIRE_LIMIT },
       readiness: readinessOf(
-        { id: w.id, status: w.status, trigger: trig, triggers: doorsOut.get(w.id), steps: w.steps ?? [] },
+        {
+          id: w.id, status: w.status, trigger: trig, triggers: doorsOut.get(w.id), steps: w.steps ?? [],
+          // THE SCOPE IS PART OF WHETHER THE DOORS CAN FIRE (readiness rule 9): this row already
+          // holds it, and a scope that silences every door must be readable where it is fixable.
+          scope: scopeByWf.get(w.id) ?? null,
+        },
         featuresOut,
       ),
       workerName: w.agent_id ? (agentNames.get(w.agent_id) ?? null) : null,

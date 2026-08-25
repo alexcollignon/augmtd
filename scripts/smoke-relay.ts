@@ -811,6 +811,54 @@ async function main() {
     /draft\.needs_door_note && \(/.test(draftCard) && /\{draft\.needs_door_note\}/.test(draftCard));
   ok('…and it renders the doors beside the trigger (the card says how the work starts)',
     /draft\.triggers!\.map\(/.test(draftCard));
+  {
+    // ── DOOR 5 — THE WORKFLOWS PAGE'S OWN CONFIRM (F5, found live on a frozen-prompt walk).
+    // The four-door law was whole everywhere EXCEPT the door a pilot actually uses: this page's
+    // Confirm POSTed a hand-written field list that predated the relay-canvas arc, so a described
+    // door / pinned document / stated pace died silently at creation, and four of the five note
+    // channels were never rendered. The floor is STRUCTURAL — the body must SPREAD the authored
+    // draft (no second allowlist to drift), and every note channel must reach a render site.
+    // Windows are brace-matched from the callback's own declaration, never char offsets. ──
+    const ledgerP = stripComments(readFileSync('components/workflows/workflows-ledger.tsx', 'utf8'));
+    const cbBody = (name: string) => {
+      const at = ledgerP.indexOf(`const ${name} = useCallback(`);
+      if (at < 0) return '';
+      let depth = 0;
+      for (let i = ledgerP.indexOf('{', at); i < ledgerP.length; i++) {
+        if (ledgerP[i] === '{') depth++;
+        else if (ledgerP[i] === '}') { depth--; if (depth === 0) return ledgerP.slice(at, i + 1); }
+      }
+      return '';
+    };
+    const confirmBody = cbBody('confirmDraft');
+    const adjustBody = cbBody('adjustInStudio');
+    ok('DOOR 5 (the Workflows page): confirmDraft POSTs to the ONE create door',
+      confirmBody.includes("fetch('/api/workflows'") && /status: 'active'/.test(confirmBody),
+      'confirmDraft body not found');
+    ok('…and it SPREADS the authored draft (no second allowlist — a new authored field rides free)',
+      /body: JSON\.stringify\(\{\s*\.\.\.draft,/.test(confirmBody),
+      'the confirm body enumerates fields — triggers/inputs/fire_limit die at creation');
+    ok('…Adjust in Studio carries the SAME whole config (Adjust never means "lose the doors")',
+      /body: JSON\.stringify\(\{\s*\.\.\.draft,/.test(adjustBody) && /status: 'draft'/.test(adjustBody),
+      'adjustInStudio drops the authored config');
+    ok('…and the page\'s Draft type DECLARES the arc\'s three carriers (they are typed, not accidental)',
+      /triggers\?: ReactionDoor\[\];/.test(ledgerP)
+      && /inputs\?: \{ docs: Array<\{ kbFileId: string; name: string \}>; acceptMaterial: boolean \} \| null;/.test(ledgerP)
+      && /fire_limit\?: number \| null;/.test(ledgerP));
+    ok('…and the review SAYS what it will create (doors · pinned docs · stated pace)',
+      /draft\.triggers!\.map\(doorLabel\)/.test(ledgerP)
+      && /draft\.inputs!\.docs\.map\(/.test(ledgerP)
+      && /draft\.fire_limit !== FIRE_LIMIT_DEFAULT/.test(ledgerP));
+    // THE FIVE NOTE CHANNELS — one per class of refusal. A surface rendering four drops a whole
+    // class of gap on the floor, which is exactly what both draft surfaces were doing.
+    const NOTES = ['overlap_note', 'needs_door_note', 'needs_input_note', 'needs_step_note', 'needs_person_note'];
+    const unrenderedLedger = NOTES.filter((n) => !ledgerP.includes(`{draft.${n}}`));
+    const unrenderedCard = NOTES.filter((n) => !draftCard.includes(`{draft.${n}}`));
+    ok('…and ALL FIVE note channels reach a render site on the Workflows page (no silent refusal)',
+      unrenderedLedger.length === 0, `unrendered: ${unrenderedLedger.join(', ')}`);
+    ok('…and all five reach one on THE ONE CREATION CARD too (both draft surfaces speak the same gaps)',
+      unrenderedCard.length === 0, `unrendered: ${unrenderedCard.join(', ')}`);
+  }
 
   console.log('\nH — THE HUMAN-ACT + TEST FLOORS (mode: source, repo-wide):');
   {
@@ -1911,7 +1959,15 @@ async function main() {
           const { data: fr } = await admin.from('item_plans').select('tasks')
             .eq('user_id', userId).eq('kind', 'reaction_fire').eq('entity_id', key).maybeSingle();
           const ctx = String((fr?.tasks as { context?: string } | undefined)?.context ?? '');
-          await runWf({ workflowId: aId, runId: second!.id, triggerSource: 'event', triggerContext: ctx });
+          // ⚠️ A SUITE MUST ALWAYS REACH ITS TOTAL (hardened Aug 25). This lap used to drive
+          // `second!.id` — and when lap 1 failed for an environmental reason (the day the standard
+          // tier's provider ran out of credits), `second` was undefined and the non-null assertion
+          // THREW OUT OF main(): every later section — W4, W5, MM — never ran, and the suite
+          // printed no total at all. A missing prerequisite is a RED GATE, never an exception.
+          if (!second?.id) {
+            ok('LAP 2: skipped — lap 1 produced no second A run (see the failures above)', false, 'no second run');
+          } else {
+          await runWf({ workflowId: aId, runId: second.id, triggerSource: 'event', triggerContext: ctx });
           const aRuns2 = await w3Runs(aId);
           const bRuns2 = await w3Runs(bId);
           ok('LAP 2: the second A run parked on B again, B ran again, and A resumed again',
@@ -1958,6 +2014,7 @@ async function main() {
           console.log('    · FINDING (for the spec): a composed A→B→A cycle is THROTTLED, never dropped — bounded per day by the per-workflow fire limit, with every extra lap recorded and queued for the drain. There is still no cycle detector; the self-loop guard covers self-naming doors only.');
           await admin.from('item_plans').delete().eq('user_id', userId)
             .eq('kind', 'workflow_limit').eq('entity_id', aId);
+          } // end: lap 2 ran (the `second` guard above)
         } else {
           ok('(2) THE DOOR HALF is not assertable before the migration (declared, never faked)', true);
         }
@@ -2634,6 +2691,7 @@ async function main() {
   // ══════════════════════════════════════════════════════════════════════════════════════════════
   const {
     resolveCaseForRun, deterministicCaseMatch, distinctiveTokens, readCaseIndex,
+    namesStatedIn: namesStatedInW4,
     atomForRun: atomForRunW4, CASE_INDEX_KIND, RUN_CASE_KIND,
     readCaseAtoms: readCaseAtomsW4, caseAtomsBlock: caseAtomsBlockW4,
     appendCaseAtom: appendCaseAtomW4,
@@ -3070,6 +3128,84 @@ async function main() {
       }
     }
 
+    // ── CA9 ───────────────────────────────────────────────────────────────────────────────────
+    // THE WORKFLOW-LEVEL CASE KEY (Aug 25, found live by a frozen-prompt walk on a real account).
+    // A single-opening workflow authored `case_instruction` "the Customer Service Representative
+    // opening at Acme" — a CONSTANT, not a question. `judgeCase` may only report a key THE ITEM
+    // ITSELF states (the anti-fabrication floor, correct and untouched), and a CV never names the
+    // opening it was sent for — so every run filed NOTHING and accumulation was structurally dead
+    // while the workflow looked healthy. THE FIX IS A SECOND HONEST SHAPE: the case supplied BY THE
+    // WORKFLOW, resolved with ZERO AI, on the user's own words.
+    console.log('\nCA9 — THE STATED CASE: the workflow supplies the key, deterministically (mode: LIVE, ZERO AI):');
+    {
+      const caseSrcEarly = stripComments(readFileSync('lib/workflows/case-step.ts', 'utf8'));
+      const STATED = `Probe relay opening ${stamp} — Customer Service Representative`;
+      const namedStep = (id: string) =>
+        ({ id, type: 'case', label: 'File it under its record', case_name: STATED });
+      const wf9 = await mkW4(`${CPFX} stated`, [namedStep('c1')]);
+      if (wf9) {
+        // THE MATERIAL NEVER STATES THE CASE — a bare CV, exactly the live shape that broke.
+        const CV = [
+          'Curriculum Vitae — Jordan Vale',
+          '',
+          'Five years in customer operations. Available from October.',
+          'References on request.',
+        ].join('\n');
+        ok('THE NEGATIVE CONTROL — the arriving item names no case at all (the live failure shape)',
+          !namesStatedInW4(CV, STATED)
+          && deterministicCaseMatch(CV, [{ entityId: 'x', caseName: STATED }]) === null);
+
+        const atom9 = randomUUID();
+        const res9 = await mkRun(wf9, CV, { atomId: atom9 });
+        const row9 = await runRow(res9.runId);
+        const stamp9 = await stampOf(res9.runId);
+        const c9 = String(stamp9?.entityId ?? '');
+        if (c9) c4EntityIds.push(c9);
+        ok('THE RUN FILES ANYWAY — the case the WORKFLOW states is opened and stamped on the run',
+          !!c9 && stamp9?.name === STATED, JSON.stringify(stamp9));
+        ok('…and the entity is founded under the AUTHOR\'S OWN WORDS (nothing invented)',
+          (await entityRow(c9))?.name === STATED, String((await entityRow(c9))?.name));
+        ok('THE ATOM LANDS — the case\'s ledger holds what arrived, though the item named no case',
+          (await readCaseAtomsW4(admin, userId, wf9, c9)).length === 1
+          && (await linkOf(atom9))?.entity_id === c9);
+        ok('…the card speaks the opening in the ordinary grammar',
+          outAt(row9, 0).startsWith(`Opened a new case: ${STATED} — `)
+          && outAt(row9, 0).includes('The case now holds 1 filed item.'), outAt(row9, 0).slice(0, 160));
+
+        // THE SECOND EVENT MATCHES, NEVER FOUNDS — the whole point: accumulation.
+        const before9 = await entitiesNamed(STATED);
+        const atom9b = randomUUID();
+        const res9b = await mkRun(wf9, 'Curriculum Vitae — Ashwin Rao\n\nEight years in support.', { atomId: atom9b });
+        const stamp9b = await stampOf(res9b.runId);
+        ok('THE SECOND EVENT MATCHES THE SAME CASE (a second CV naming nothing still files here)',
+          stamp9b?.entityId === c9, JSON.stringify(stamp9b));
+        ok('…and NO second entity was founded (dedupe, the accumulation the live bug never reached)',
+          (await entitiesNamed(STATED)) === before9, `${before9} → ${await entitiesNamed(STATED)}`);
+        ok('…the case now holds BOTH candidates — the comparison finally has something to compare',
+          (await readCaseAtomsW4(admin, userId, wf9, c9)).length === 2);
+        ok('…and the workflow\'s index still holds exactly ONE row for it',
+          (await readCaseIndex(admin, userId, wf9)).length === 1);
+
+        // ZERO AI, STRUCTURALLY: the stated lane never reaches judgeCase. Proven by the pure
+        // resolution table (a total function of its inputs) beside the live runs above.
+        ok('THE STATED LANE IS ZERO-AI BY CONSTRUCTION — the source takes the judge out of the path',
+          /if \(constant\) \{/.test(caseSrcEarly)
+          && /path = 'stated';/.test(caseSrcEarly)
+          && /hit = index\.find\(\(x\) => fold\(x\.caseName\) === c\) \?\? deterministicCaseMatch\(constant, index\);/.test(caseSrcEarly)
+          && /caseKey = hit \? null : constant;/.test(caseSrcEarly));
+        ok('…and the judge is reached ONLY in the instruction lane (the else branch)',
+          caseSrcEarly.indexOf('} else {') < caseSrcEarly.indexOf('await judgeCase(')
+          && caseSrcEarly.indexOf("path = 'stated';") < caseSrcEarly.indexOf('} else {'));
+
+        // TEST MODE still opens nothing (the stated lane obeys the same floor).
+        const res9t = await mkRun(wf9, 'Curriculum Vitae — someone else', { isTest: true });
+        const row9t = await runRow(res9t.runId);
+        ok('TEST MODE on a stated case MATCHES but never populates (the simulation floor holds)',
+          outAt(row9t, 0).includes('[test mode — no case opened]')
+          && (await entitiesNamed(STATED)) === before9, outAt(row9t, 0).slice(0, 120));
+      }
+    }
+
     // ── CS ────────────────────────────────────────────────────────────────────────────────────
     console.log('\nCS — THE FOUNDING WRITER, THE IDIOM, THE JUDGE, THE SEAM (mode: source + LIVE):');
     const caseSrc = stripComments(readFileSync('lib/workflows/case-step.ts', 'utf8'));
@@ -3220,8 +3356,15 @@ async function main() {
         && reasonOf(readinessOf(withCase(CASE_INSTRUCTION, [{ id: 'p', type: 'workflow', label: 'Me', workflow_id: 'wf-self' }]), feats()))
           === "A workflow can't include itself as a step.");
       ok('…and the rule lives in THE ONE TABLE (one entry, nothing else moved)',
-        /=> typeOf\(s\) === 'case' && !String\(\(s\.case_instruction as string \| undefined\) \?\? ''\)\.trim\(\),/.test(readySrc)
+        // RE-POINTED (Aug 25, THE WORKFLOW-LEVEL CASE KEY): the rule now reads BOTH shapes of a
+        // case key — the identity question, or the case the author stated once.
+        /typeOf\(s\) === 'case'\s*&& !String\(\(s\.case_instruction as string \| undefined\) \?\? ''\)\.trim\(\)\s*&& !String\(\(s\.case_name as string \| undefined\) \?\? ''\)\.trim\(\),/.test(readySrc)
         && (readySrc.match(/const RULES: Rule\[\] = \[/g) ?? []).length === 1);
+      // ── F3: EITHER SHAPE SATISFIES RULE 8 (the whole point — a single-opening workflow is ready)
+      ok('RULE 8 — a STATED case (case_name, no instruction) is READY',
+        readinessOf({ id: 'w', status: 'active', steps: [{ id: 'c1', type: 'case', label: 'File it under its record', case_name: 'the Customer Service Representative opening' }] }, feats()).ready === true);
+      ok('…and BOTH blank is still the one absence that speaks',
+        reasonOf(readinessOf({ id: 'w', status: 'active', steps: [{ id: 'c1', type: 'case', label: 'F', case_name: '  ', case_instruction: '' }] }, feats())) === RULE8);
     }
 
     console.log('\nCS — THE SUBJECT LADDER + THE CHIP (mode: LIVE derivation, zero AI):');
@@ -3292,10 +3435,13 @@ async function main() {
     ok('…and the instruction is the REQUEST\'S OWN WORDS, never a field name or an id',
       /"case_instruction" is WHAT IDENTIFIES A CASE, in the request's own words — never a field name,/.test(genW4));
     ok('A BLANK INSTRUCTION IS DROPPED — a draft is never BORN unready',
-      /if \(!instruction\) \{\s*stepNotes\.push\('I left out the step that files each event under its own case/.test(genW4));
+      // RE-POINTED (Aug 25): "blank" now means NEITHER shape — a stated case is a key too.
+      /if \(!instruction && !stated\) \{\s*stepNotes\.push\('I left out the step that files each event under its own case/.test(genW4));
     ok('ONE CASE PER WORKFLOW — the first is kept, the rest are refused OUT LOUD',
       /if \(seatedCase\) \{\s*stepNotes\.push\('A run carries one thing, so it files under one case/.test(genW4)
-      && /seatedCase = true;\s*kept\.push\(\{ \.\.\.s, case_instruction: instruction \}\);/.test(genW4));
+      // RE-POINTED (Aug 25, THE WORKFLOW-LEVEL CASE KEY): the survivor now carries EXACTLY ONE of
+      // the two shapes — a stated case clears the instruction, so one station never holds two keys.
+      && /kept\.push\(stated\s*\? \{ \.\.\.s, case_name: stated, case_instruction: '' \}\s*: \{ \.\.\.s, case_instruction: instruction \}\);/.test(genW4));
     ok('…and the survivor carries the TRIMMED instruction (a whitespace key is not a key)',
       /const instruction = typeof s\.case_instruction === 'string' \? s\.case_instruction\.trim\(\) : '';/.test(genW4));
     ok('THE COLLECTOR IS ONE CHANNEL — case + ⧉ refusals join into ONE needs_step_note',
@@ -3867,6 +4013,240 @@ async function main() {
       const { data: leftMM } = await admin.from('workflows').select('id').eq('user_id', userId).like('name', `${MPFX}%`);
       ok('MM probe leftovers are ZERO', (leftMM ?? []).length === 0);
     }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  // ██ THE FROZEN-PROMPT REPAIRS (Aug 25 — three engine faults found live on a real account by a
+  //    frozen-prompt walk; each one a CLASS, each one silent) ██
+  //
+  //   SG  THE SCOPING GUARD — a workflow born with silently dead doors. The adoption seam paired
+  //       "Customer Service Rep Screening…" with an unrelated "…Property Listing Service" on the
+  //       single generic token "Service", wrote a workflow_scope row, and runDoors' fail-closed
+  //       pre-filter then excluded that workflow from EVERY file and mail event — while readiness
+  //       said ready:true. Candidacy is now THE DISTINCTIVE-TOKEN LAW (one shared primitive), and
+  //       a scope that silences every door SPEAKS on the row (readiness rule 9).
+  //   GA  THE AUTHORING SHAPES — the two case keys (the identity QUESTION vs the STATED case) and
+  //       the door law: A DOOR DESCRIBES THE KIND OF THING THAT ARRIVES, never its relevance to a
+  //       topic (a door refusal is SILENT; a pipeline mismatch is visible and parkable).
+  //
+  // AI BUDGET: two completions, both in GA.
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  console.log('\nSG — THE SCOPING GUARD (pure + LIVE adoption seam, zero AI):');
+  {
+    const { entitiesNamedIn, adoptWorkflowEntity, getWorkflowScope, recognizeWorkflowEntity } =
+      await import('../lib/workflows/entity-edge');
+    const edgeSrc = stripComments(readFileSync('lib/workflows/entity-edge.ts', 'utf8'));
+    const caseSrcSG = stripComments(readFileSync('lib/workflows/case-step.ts', 'utf8'));
+    const readySrcSG = stripComments(readFileSync('lib/workflows/readiness.ts', 'utf8'));
+    const ledgerSrcSG = stripComments(readFileSync('app/api/workflows/ledger/route.ts', 'utf8'));
+
+    // ── THE PURE HALF — the live pairing, reproduced exactly (fake names only). ──
+    const INTRUDER = { id: 'e-listing', name: 'Meadowbank Property Listing Service' };
+    const WF_TEXT = 'Customer Service Rep Screening. Screens incoming job applications and shortlists candidates.';
+    ok('THE LIVE FAULT IS REFUSED — a single shared generic-ish word ("Service") never scopes',
+      entitiesNamedIn(WF_TEXT, [INTRUDER]).length === 0);
+    ok('…while the name STATED WHOLE still binds (the guard narrows nothing it should keep)',
+      entitiesNamedIn('Weekly digest for the Meadowbank Property Listing Service', [INTRUDER])
+        .map((e) => e.id).join() === 'e-listing');
+    ok('…an ALIAS counts as a name of its own (identity is names, not one column)',
+      entitiesNamedIn('the Meadowbank rollout', [{ ...INTRUDER, aliases: ['Meadowbank'] }]).length === 1);
+    ok('…and an ALL-GENERIC entity name can never bind on its own (the one-brain idiom)',
+      entitiesNamedIn('the project review for the new program', [{ id: 'g', name: 'The Project Review' }]).length === 0);
+
+    // ── THE ONE-PRIMITIVE FLOOR — never a second generic-word list. ──
+    ok('THE SEAM IMPORTS THE PRIMITIVE — namesStatedIn, from the ONE identity module',
+      /import \{ namesStatedIn \} from '@\/lib\/workflows\/case-step';/.test(edgeSrc)
+      && /namesStatedIn\(text, String\(n\)\)/.test(edgeSrc));
+    ok('…which is itself built on distinctiveTokens → GENERIC_WORK_WORDS (lib/entities/recognize)',
+      /export function namesStatedIn\(/.test(caseSrcSG)
+      && /const toks = distinctiveTokens\(name\);/.test(caseSrcSG)
+      && /import \{ GENERIC_WORK_WORDS, entityEmbedText \} from '@\/lib\/entities\/recognize';/.test(caseSrcSG));
+    ok('…and NO re-declared word list lives in the adoption seam (a copy is a law waiting to decay)',
+      !/GENERIC|generic[A-Z_]*\s*=\s*(new Set|\[)/.test(edgeSrc));
+    ok('THE PRE-PASS AND THE SEAM SHARE ONE IMPLEMENTATION (deterministicCaseMatch calls it too)',
+      /const hits = cases\.filter\(\(c\) => namesStatedIn\(eventText, c\.caseName\)\);/.test(caseSrcSG));
+
+    // ── THE LIVE HALF — the real matcher, the real store, on the probe host. ──
+    const SGPFX = `Probe relay SG ${stamp}`;
+    let sgEnt = '';
+    let sgWfBad = '';
+    let sgWfGood = '';
+    try {
+      const { data: ent } = await admin.from('work_entities').insert({
+        user_id: userId, kind: 'initiative', name: `${SGPFX} Property Listing Service`,
+        status: 'active', last_event_at: new Date().toISOString(),
+      }).select('id').single();
+      sgEnt = (ent as { id: string } | null)?.id ?? '';
+
+      const mkSG = async (name: string) => {
+        const { data } = await admin.from('workflows').insert({
+          user_id: userId, name, status: 'active', trigger: { type: 'manual' },
+          steps: [{ id: 's1', type: 'ai', label: 'Never runs here', model_tier: 'fast', prompt: 'x' }],
+          output_config: { destination: 'message' },
+        }).select('id').single();
+        return (data as { id: string } | null)?.id ?? '';
+      };
+      sgWfBad = await mkSG(`${SGPFX} Customer Service Rep Screening`);
+      sgWfGood = await mkSG(`${SGPFX} listings digest`);
+
+      const bad = await adoptWorkflowEntity(admin, userId, sgWfBad,
+        `${SGPFX} Customer Service Rep Screening. Screens incoming job applications for one opening.`);
+      ok('LIVE: the adoption seam REFUSES the generic-token-only pairing (no scope is written)',
+        bad === null && (await getWorkflowScope(admin, userId, sgWfBad)) === null, JSON.stringify(bad));
+      ok('…and the same refusal at the matcher itself (one door, not a caller-side patch)',
+        (await recognizeWorkflowEntity(admin, userId, 'a screening workflow for a service role')) === null);
+
+      const good = await adoptWorkflowEntity(admin, userId, sgWfGood,
+        `${SGPFX} listings digest. Weekly digest of the ${SGPFX} Property Listing Service.`);
+      ok('LIVE: a workflow that STATES the project whole still adopts it (nothing lost)',
+        good?.id === sgEnt && (await getWorkflowScope(admin, userId, sgWfGood))?.entityId === sgEnt,
+        JSON.stringify(good));
+    } finally {
+      for (const id of [sgWfBad, sgWfGood].filter(Boolean)) {
+        await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', 'workflow_scope').eq('entity_id', id);
+        await admin.from('workflows').delete().eq('id', id);
+      }
+      if (sgEnt) {
+        await admin.from('entity_links').delete().eq('user_id', userId).eq('entity_id', sgEnt);
+        await admin.from('work_entities').delete().eq('id', sgEnt);
+      }
+      const { data: leftSG } = await admin.from('workflows').select('id').eq('user_id', userId).like('name', `${SGPFX}%`);
+      const { data: leftSGE } = await admin.from('work_entities').select('id').eq('user_id', userId).like('name', `${SGPFX}%`);
+      ok('SG probe leftovers are ZERO (workflows · scope rows · the entity itself)',
+        (leftSG ?? []).length === 0 && (leftSGE ?? []).length === 0);
+    }
+
+    // ── READINESS RULE 9 — the scope that silences every door SPEAKS (pure). ──
+    console.log('\nSG — READINESS RULE 9: a scope that silences every door (mode: pure):');
+    const scoped = (source: string, scope: string | null) => ({
+      id: 'wf-sg', status: 'active',
+      steps: [{ id: 's1', type: 'ai', label: 'x', prompt: 'y' }],
+      triggers: [{ type: 'reaction', source, when: 'a resume or CV file' }],
+      ...(scope ? { scope: { entityName: scope } } : {}),
+    });
+    const PROJECT = 'Meadowbank Listings';
+    const fileReason = reasonOf(readinessOf(scoped('file', PROJECT), feats()));
+    ok('A SCOPED workflow whose only door is `file` is NOT ready — and the sentence names both facts',
+      typeof fileReason === 'string'
+      && fileReason.includes(PROJECT) && fileReason.includes('file')
+      && /can never fire|can arrive inside that project/.test(fileReason), String(fileReason));
+    ok('…it fits the ledger row\'s budget', (fileReason ?? '').length <= READINESS_REASON_MAX);
+    ok('THE SAME WORKFLOW UNSCOPED IS READY — the door is fine; the scope was the fault',
+      readinessOf(scoped('file', null), feats()).ready === true);
+    ok('A SCOPED `mail` door IS ready — mail events carry their entity (the registry says so)',
+      readinessOf(scoped('mail', PROJECT), feats()).ready === true);
+    ok('A SCOPED `workflow` door is NOT ready — a delivering run is not an atom of any project',
+      readinessOf({ ...scoped('workflow', PROJECT), triggers: [{ type: 'reaction', source: 'workflow', workflow_id: 'w2' }] }, feats()).ready === false);
+    ok('ONE LIVE DOOR IS ENOUGH — a scoped mail+file workflow is READY (partial deadness is not a refusal)',
+      readinessOf({
+        ...scoped('file', PROJECT),
+        triggers: [
+          { type: 'reaction', source: 'file', when: 'a resume or CV file' },
+          { type: 'reaction', source: 'mail', when: 'an application arrives' },
+        ],
+      }, feats()).ready === true);
+    ok('NO DOORS, NO CLAIM — a scoped scheduled/manual workflow is untouched by rule 9',
+      readinessOf({ id: 'w', status: 'active', steps: [{ id: 's1', type: 'ai', label: 'x', prompt: 'y' }], scope: { entityName: PROJECT } }, feats()).ready === true);
+    ok('ORDER IS SEVERITY — rule 5 still speaks first (a door with nothing to react to outranks)',
+      reasonOf(readinessOf({ ...scoped('file', PROJECT), triggers: [{ type: 'reaction', source: 'file' }] }, feats()))
+        === 'The trigger needs a condition or a filter to react to.');
+
+    ok('THE FACT LIVES ON THE REGISTRY ROW (law 3) — readiness hardcodes no source list',
+      TRIGGER_SOURCES.every((s) => typeof s.carriesEntity === 'boolean')
+      && triggerSource('mail')?.carriesEntity === true && triggerSource('meeting')?.carriesEntity === true
+      && triggerSource('file')?.carriesEntity === false && triggerSource('workflow')?.carriesEntity === false
+      && /triggerSource\(d\.source\)\?\.carriesEntity !== false/.test(readySrcSG)
+      && !/'file'|"file"/.test(readySrcSG));
+    ok('RULE 9 IS VISIBILITY, NEVER A NEW REFUSAL — only the LEDGER passes a scope to readiness',
+      /scope: scopeByWf\.get\(w\.id\) \?\? null,/.test(ledgerSrcSG)
+      && !/scope:/.test(stripComments(readFileSync('app/api/cron/workflows-dispatch/route.ts', 'utf8')))
+      && !/readinessOf\([\s\S]{0,400}scope:/.test(stripComments(readFileSync('lib/workflows/run-workflow.ts', 'utf8'))));
+    ok('…and runDoors\' fail-closed scope pre-filter is UNTOUCHED (this wave changed no semantics)',
+      /\(!scopeEntity \|\| \(i\.entityId \?\? null\) === scopeEntity\)/.test(
+        stripComments(readFileSync('lib/workflows/reactions.ts', 'utf8'))));
+  }
+
+  console.log('\nGA — THE AUTHORING SHAPES (mode: LIVE generate-config, 2 AI calls):');
+  {
+    const { generateWorkflowConfig } = await import('../lib/workflows/generate-config');
+    const genSrc = stripComments(readFileSync('lib/workflows/generate-config.ts', 'utf8'));
+
+    // 1 — THE FROZEN CSR PROMPT SHAPE (the live one, fake company). ONE named opening + material
+    //     handed in by other people + doors on two sources.
+    const cfg = await generateWorkflowConfig(
+      'Screen incoming job applications for the Customer Service Representative opening at Acme Consumer Finance. '
+      + 'Candidates send their CVs by email and sometimes we upload them ourselves. Compare each new applicant '
+      + 'against the ones we already have and give me a shortlist.',
+      userId, admin as never,
+    );
+    const caseSteps = (cfg?.steps ?? []).filter((s) => s.type === 'case');
+    const stated = String((caseSteps[0]?.case_name as string | undefined) ?? '').trim();
+    ok('F3: A SINGLE-OPENING REQUEST AUTHORS A STATED CASE (`case_name`, the request\'s own words)',
+      caseSteps.length === 1 && stated.length > 0 && /customer service representative/i.test(stated), stated);
+    ok('…and NOT the identity question (two keys on one station is the shape that filed nothing)',
+      !String((caseSteps[0]?.case_instruction as string | undefined) ?? '').trim(), JSON.stringify(caseSteps[0]));
+    ok('…so the workflow is BORN READY on the stated shape alone',
+      readinessOf({ id: 'x', status: 'active', steps: cfg?.steps ?? [] }, feats()).ready === true,
+      String(reasonOf(readinessOf({ id: 'x', status: 'active', steps: cfg?.steps ?? [] }, feats()))));
+
+    const whens = (cfg?.triggers ?? []).map((d) => String(d.when ?? '')).filter(Boolean);
+    ok('F4: THE DOORS ARE STRUCTURAL-BROAD — every authored condition exists',
+      (cfg?.triggers ?? []).length > 0 && whens.length > 0, JSON.stringify(cfg?.triggers));
+    ok('…and NONE narrows itself to the ROLE (a topical door drops a real applicant silently)',
+      whens.every((w) => !/customer service|representative|acme/i.test(w)), JSON.stringify(whens));
+    ok('…they describe THE KIND OF THING THAT ARRIVES (a CV/resume, an application email)',
+      whens.some((w) => /\b(cv|resume|applies|application|applicant)\b/i.test(w)), JSON.stringify(whens));
+    ok('F4: ACCEPT_MATERIAL is authored when people hand files to the work',
+      cfg?.inputs?.acceptMaterial === true, JSON.stringify(cfg?.inputs));
+
+    // 2 — THE PER-EVENT SHAPE: the case differs per event, so the QUESTION is right.
+    const cfg2 = await generateWorkflowConfig(
+      'Every invoice that arrives by email should be filed under the client it belongs to, then summarised '
+      + 'for me with that client\'s recent invoices in view.',
+      userId, admin as never,
+    );
+    const case2 = (cfg2?.steps ?? []).filter((s) => s.type === 'case');
+    ok('F3: A PER-EVENT REQUEST AUTHORS THE IDENTITY QUESTION (`case_instruction`)',
+      case2.length === 1 && String((case2[0]?.case_instruction as string | undefined) ?? '').trim().length > 0,
+      JSON.stringify(case2[0]));
+    ok('…and states NO constant (nothing is invented about which client this is)',
+      !String((case2[0]?.case_name as string | undefined) ?? '').trim(), JSON.stringify(case2[0]));
+
+    // ── THE PROMPT ITSELF — the laws that produced the two shapes above, pinned. ──
+    ok('THE TWO SHAPES ARE TAUGHT WITH BOTH EXAMPLES, and exactly one is allowed',
+      /THE TWO SHAPES — give EXACTLY ONE of them, never both:/.test(genSrc)
+      && /"case_name" is the case ITSELF, named once and the same for every run/.test(genSrc)
+      && /"case_instruction" is the QUESTION each event answers about itself/.test(genSrc)
+      && /"case_name": "the Customer Service Representative opening at Acme Consumer Finance"/.test(genSrc));
+    ok('…and the SILENT failure is named, so the rule carries its own reason',
+      /files\nnothing at all, because the arriving item \(a CV\) never states which opening it was sent for/.test(genSrc));
+    ok('F4: the door law sits INSIDE the door rules, beside PREFER A FILTER',
+      /A DOOR DESCRIBES THE KIND OF THING THAT ARRIVES — NEVER ITS RELEVANCE\./.test(genSrc)
+      && genSrc.indexOf('PREFER A FILTER OVER A CONDITION.') < genSrc.indexOf('A DOOR DESCRIBES THE KIND OF THING THAT ARRIVES')
+      && genSrc.indexOf('A DOOR DESCRIBES THE KIND OF THING THAT ARRIVES') < genSrc.indexOf('Use "when" ONLY for what is genuinely fuzzy'));
+    ok('…carrying WHY: a door refusal is SILENT, a pipeline mismatch is visible',
+      /a door refusal is SILENT[\s\S]{0,220}VISIBLE/.test(genSrc));
+    ok('F4: accept_material covers OTHER PEOPLE handing material in, not just the user',
+      /OR other people handing files\/material in/.test(genSrc));
+
+    // ── PARITY: both authoring doors and both surfaces speak the two shapes. ──
+    const tasksSrcGA = stripComments(readFileSync('lib/tools/worker-tasks.ts', 'utf8'));
+    const studioGA = stripComments(readFileSync('components/work/studio-builder.tsx', 'utf8'));
+    const cardGA = stripComments(readFileSync('components/workflows/workflow-draft-card.tsx', 'utf8'));
+    ok('PARITY — the chat tool can EDIT either shape, and setting one CLEARS the other',
+      /case_name: \{ type: 'string'/.test(tasksSrcGA)
+      && /case_instruction: \{ type: 'string'/.test(tasksSrcGA)
+      && /step\.case_name = case_name; step\.case_instruction = '';/.test(tasksSrcGA)
+      && /step\.case_instruction = case_instruction; step\.case_name = '';/.test(tasksSrcGA));
+    ok('…and get_task RENDERS a case station (it used to print "\[unknown\]" — an unreadable step gets replaced)',
+      /if \(s\.type === 'case'\) \{/.test(tasksSrcGA) && /case_name \(one standing case\)/.test(tasksSrcGA));
+    ok('PARITY — Studio offers the two shapes as an explicit choice, never a guess',
+      /It's named in each event/.test(studioGA) && /Always the same case/.test(studioGA)
+      && /\{ case_name: step\.case_name \?\? '', case_instruction: '' \}/.test(studioGA)
+      && /\{ case_name: '', case_instruction: step\.case_instruction \?\? '' \}/.test(studioGA));
+    ok('…and the rail block + the draft card both SAY the stated case when there is one',
+      /const key = step\.case_name\?\.trim\(\) \|\| step\.case_instruction\?\.trim\(\) \|\| '';/.test(studioGA)
+      && /const stated = typeof s\.case_name === 'string' \? s\.case_name\.trim\(\) : '';/.test(cardGA));
   }
 
   console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed`);
