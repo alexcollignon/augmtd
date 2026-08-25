@@ -177,6 +177,13 @@ THE TWO SHAPES — give EXACTLY ONE of them, never both:
 Choosing wrongly breaks the work SILENTLY: an instruction on a single-opening workflow files
 nothing at all, because the arriving item (a CV) never states which opening it was sent for. If the
 request names the one case, state it in "case_name" — that is the user's own words, not a guess.
+THE UNNAMED SINGLE CASE — SAY IT, NEVER GUESS IT. When the request plainly works on ONE specific
+case ("one approved requisition", "the open role", "our current client") but NEVER NAMES it, you
+cannot use "case_name" (inventing a name is always wrong) and "case_instruction" will file nothing.
+Emit the step with "case_instruction" as usual AND add, on that same step:
+  "case_unnamed": "<the request's OWN noun for it — requisition, opening, client, matter>"
+The system then tells the user what to name so the work can accumulate. Never set it when the
+request names the case, and never when the case genuinely differs per event.
 RULE: emit it ONLY when the request describes per-event filing into an ongoing record ("link each
 application to its job opening", "file every invoice under its client", "keep each candidate with
 the role they applied for"). At most ONE per workflow. Place it before the steps that need the
@@ -217,6 +224,25 @@ NEVER emit "assignee_user_id" — you give the NAME exactly as the request says 
 resolves it to the real person. Inventing an id or an email is always wrong.
 "sla_hours" ONLY when the request states urgency or a deadline ("within a day", "by Friday",
 "chase them after 48h"); omit it otherwise.
+
+Input step — THE RUN STOPS AND ASKS THE USER for something only THEY have at that moment. The run
+parks, the ask lands on their deck, they paste it (or pin a document), and the run continues with
+what they gave:
+{ "type": "input", "id": "step_003", "label": "Ask me for something", "ask": "<what it asks for, in the request's own words>", "accepts": "both" }
+"accepts" is "both" (paste or a document — the default), "text" (paste only) or "doc" (a document).
+THE BOUNDARY — get this wrong and you build a chore:
+- Something that ARRIVES ON ITS OWN (an email, an uploaded file, a finished meeting, another
+  process delivering) is a DOOR in "triggers" — never an input step.
+- A STANDING reference the same every run (a policy, a template, a rubric, a scoring guide) is a
+  pinned document in "input_doc_names" — never an input step.
+- Something the machine can FETCH (news, the web, the user's own mail, a feed) is a tool step —
+  never an input step.
+- ONLY what the person alone holds at run time, fresh each run — numbers from a system we can't
+  read, their own notes, a decision-in-words — is an input step.
+RULE: emit it when the request says the user will be ASKED each run ("ask me for the numbers each
+time", "I'll paste the figures when it runs", "prompt me for this week's notes"). At most ONE per
+workflow — a run should stop to ask once. Never as the last step (nothing would produce anything
+from it), and never for material that a door or a pinned document already brings in.
 
 Process step — A NAMED PROCESS THE USER ALREADY OWNS runs inside this one, delivering its output
 to the next step (the run waits at this station until that process finishes):
@@ -291,6 +317,368 @@ Default to "document" for scheduled reports and "message" for quick output. Use 
    time-saved/effort figure anywhere in the JSON — that baseline is AUTHORED by the user, never
    guessed; a fabricated number would be presented to them as their own estimate.`;
 
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// THE PROMPT ADAPTER (Aug 25, found live: a pilot pasted a ~450-word ChatGPT-style OPERATING
+// RUBRIC — "You are an AI recruiting workflow assistant… Inputs: [PASTE JOB DESCRIPTION]… 10
+// numbered evaluation rules… Output: sections A–D" — into the workflow door).
+//
+// The user does not know our ideal shape, and should not have to. Two shapes arrive at this door:
+//   A MACHINE DESCRIPTION — what arrives → what's produced → where the human gates. Our shape.
+//   AN OPERATING RUBRIC   — per-run rules written AT an assistant: a persona, hand-fed input
+//                           placeholders, numbered evaluation rules, an output format spec.
+// The rubric is not a description of a machine; it is the WORK the machine's producing step must
+// do. So we build the machine AROUND it and let the rubric ride the producing step VERBATIM.
+//
+// THE CONTENT FLOOR APPLIED TO AUTHORING: the model NEVER copies the rubric into its JSON — that
+// is output-token bloat (the very thing that timed the route out) plus copy degradation. It marks
+// the PLACE with a sentinel; code substitutes the user's own words, word for word.
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+
+/** The literal token the authoring call writes where the user's rubric belongs. Code replaces it
+ *  after parsing; it never survives into a stored config. */
+export const RUBRIC_SENTINEL = '{{USER_RUBRIC}}';
+
+/** THE UNNAMED-CASE SENTENCE — code's, always, so its presence is structural and its words never
+ *  drift. The model contributes ONE noun (the request's own word for the thing) and nothing else;
+ *  no name is ever invented, and creation is never blocked. */
+export function unnamedCaseNote(noun: string): string {
+  return `Your prompt works on one ${noun} but never names it — the workflow can't group what arrives `
+    + `into one record until it knows what to file under, so nothing accumulates between runs. Name it `
+    + `(e.g. "the Senior Analyst requisition") in the description or the filing step, and every run will `
+    + `build on the ones before.`;
+}
+
+/** THE HAND-FED INPUT PLACEHOLDER — "[PASTE JOB DESCRIPTION]", "[UPLOAD RESUMES]". In a chat
+ *  session these are filled by hand each time; a standing machine reads named documents and
+ *  run-time material instead, so the lines are stripped and the gap is SAID. */
+const PASTE_PLACEHOLDER = /\[\s*(?:paste|pasted|upload|uploaded|insert|attach|attached|provide|drop)\b[^\]\n]{0,100}\]/i;
+const PASTE_PLACEHOLDER_G = new RegExp(PASTE_PLACEHOLDER.source, 'gi');
+/** "You are an AI recruiting workflow assistant" / "Act as a senior analyst" — a persona opening
+ *  addresses a MODEL, never describes a machine. */
+const PERSONA_OPENING = /(?:^|\n)\s*(?:#+\s*)?(?:you are|you're|you shall act as|act as)\s+(?:a|an|the)\s+[^\n.]{0,90}?\b(assistant|agent|expert|analyst|specialist|recruiter|screener|reviewer|copilot|consultant|advisor|coach|writer|editor|evaluator|bot|gpt|model)\b/i;
+const NUMBERED_RULE = /^\s*\d{1,2}[.)]\s+\S/;
+const OUTPUT_SPEC = /(?:^|\n)\s*(?:#+\s*)?(?:output|outputs|deliverable|response|format)\s*(?:format|structure|sections?|template)?\s*:/i;
+const LETTERED_SECTION = /^\s*(?:section\s+)?[A-F][).]\s+\S/i;
+
+export interface RubricSignals {
+  placeholders: number;
+  persona: boolean;
+  numberedRules: number;
+  outputSpec: boolean;
+  letteredSections: number;
+  /** 0 = plainly a machine description · ≥2 = plainly a rubric · 1 = ambiguous (judged read). */
+  score: number;
+}
+
+/** THE DETERMINISTIC READ — signals, not vibes, and no AI call in the common case.
+ *  Weights: a [PASTE …] placeholder or a persona opening is DECISIVE on its own (+2 each — neither
+ *  can appear in an honest description of a machine); a long numbered rule list (+1) and an output
+ *  format spec (+1) are corroborating (a careful machine description can carry either one alone). */
+export function rubricSignals(text: string): RubricSignals {
+  const lines = text.split('\n');
+  const placeholders = (text.match(PASTE_PLACEHOLDER_G) ?? []).length;
+  const persona = PERSONA_OPENING.test(text.slice(0, 400));
+  const numberedRules = lines.filter((l) => NUMBERED_RULE.test(l)).length;
+  const outputSpec = OUTPUT_SPEC.test(text);
+  const letteredSections = lines.filter((l) => LETTERED_SECTION.test(l)).length;
+  const score =
+    (placeholders > 0 ? 2 : 0) +
+    (persona ? 2 : 0) +
+    (numberedRules >= 4 ? 1 : 0) +
+    (outputSpec || letteredSections >= 2 ? 1 : 0);
+  return { placeholders, persona, numberedRules, outputSpec, letteredSections, score };
+}
+
+/** THE SHAPE. Deterministic signals decide first and decide alone whenever they are clear; the
+ *  judged read is the narrow ambiguous band ONLY (one corroborating signal on a long text), and
+ *  its failure falls back to 'machine' — the shape we must never break. */
+export async function detectPromptShape(
+  text: string,
+  userId: string,
+  supabase: SupabaseClient,
+): Promise<'machine' | 'rubric'> {
+  const sig = rubricSignals(text);
+  if (sig.score >= 2) return 'rubric';
+  if (sig.score === 0 || text.length < 500) return 'machine';
+  try {
+    const { client, model } = await getAIClient(userId, 'classification', supabase);
+    const c = await aiCreate(client, {
+      model,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Classify a piece of text a user pasted into a workflow builder. Answer with ONE word.\n'
+            + 'MACHINE — it describes a process: what arrives, what gets produced, who reviews, when it runs.\n'
+            + 'RUBRIC — it is an instruction prompt written AT an AI assistant: a persona, per-run rules, '
+            + 'evaluation criteria, an output format it should follow.\nAnswer: MACHINE or RUBRIC.',
+        },
+        { role: 'user', content: text.slice(0, 4000) },
+      ],
+      max_tokens: 5,
+      temperature: 0,
+    });
+    return /rubric/i.test(c.choices[0]?.message?.content ?? '') ? 'rubric' : 'machine';
+  } catch {
+    return 'machine';
+  }
+}
+
+/** Strip the hand-fed placeholder SPANS — the bracketed tokens themselves, never whole lines.
+ *
+ *  ⚠️ FOUND LIVE (the frozen-paste flow test): the pilot's real paste is ONE LINE — 2,024 chars,
+ *  no newlines, numbered rules and sections separated by double spaces. A LINE-scoped strip took
+ *  the placeholder's line and, that being the whole document, took the whole rubric with it (0
+ *  chars survived). The doc-comment law ("everything else survives byte-for-byte") held only while
+ *  placeholders happened to sit on their own lines — an accident of shape, not a property of the
+ *  code. Span-scoped is shape-independent BY CONSTRUCTION: a paragraph, a bullet list and a
+ *  one-liner all lose exactly the bracketed tokens and nothing else. */
+export function stripPastePlaceholders(text: string): { text: string; stripped: string[] } {
+  const stripped: string[] = [];
+  const MARK = '\u0000';
+  let marked = text.replace(PASTE_PLACEHOLDER_G, (m) => { stripped.push(m.trim()); return MARK; });
+  if (!stripped.length) return { text, stripped };
+
+  // Adjacent placeholders ("[PASTE JD] [UPLOAD CVs]") collapse to one hole before any tidying.
+  marked = marked.replace(new RegExp(`${MARK}(?:[ \\t]*${MARK})+`, 'g'), MARK);
+  // THE ONE TIDY, and only this one: a short label whose entire content WAS the placeholder
+  // ("Inputs: [PASTE JOB DESCRIPTION]") is left dangling and meaningless by the strip. It is
+  // removed ONLY when the hole is all that followed it — anything else after the colon is the
+  // user's own words and is never touched.
+  marked = marked.replace(
+    new RegExp(`(^|\\n|[ \\t]{2,})[A-Za-z][A-Za-z /-]{0,24}:[ \\t]*${MARK}(?=[ \\t]{2,}|[ \\t]*\\n|[ \\t]*$)`, 'g'),
+    (_m, lead: string) => lead,
+  );
+  const cleaned = marked
+    .split(MARK).join('')
+    .replace(/[ \t]{3,}/g, '  ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return { text: cleaned, stripped };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// THE DECLARED INPUTS (Aug 25, found live: the same pilot paste, one door further in). A rubric
+// that DECLARES what it must be given —
+//     "Inputs: 1. Approved job description: [PASTE JOB DESCRIPTION]
+//              2. Candidate resumes: [PASTE OR UPLOAD RESUMES]"
+// — authored NO station at all, so the run reached the generic material sheet ("what is this?"),
+// which knows nothing about what this workflow needs. The user had already said what it needs, BY
+// NAME, and we asked them a question they had answered before they started.
+//
+// THE LAW: A DECLARED INPUT IS A STATION. A placeholder inside the prompt's own inputs section is
+// not an ambiguity to be guessed at — it is the user telling us, in their words, the thing they
+// will hand over. Each one becomes ONE station whose ask is THEIR OWN LABEL, seated before the
+// steps that consume it. A placeholder OUTSIDE such a section keeps the old default (a pin-note
+// with the ask-me-each-run alternative) — nothing there says the material must be handed over.
+//
+// THE BOUNDARY STILL HOLDS AND IS STILL THE MODEL'S TO JUDGE (`input_homes`): a declared input
+// that plainly ARRIVES ON ITS OWN is a door, and one that is a standing document we already hold
+// is a pin. What code guarantees is that a declared input is never simply DROPPED — the default,
+// when nothing else homes it, is the station, because the prompt itself said it must be given.
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+
+/** A run that stops more than this many times is a chore, not a workflow. Beyond it the stations
+ *  are refused OUT LOUD, naming what was left out (the house's step-refusal discipline). */
+export const MAX_INPUT_STATIONS = 4;
+
+/** The prompt's own inputs section — "Inputs:", "Required inputs:", "You will be given:". */
+const INPUTS_HEADER = /(?:^|\n|[.;]\s|\s{2,}|^)\s*(?:#+\s*)?(?:required\s+inputs?|inputs?\s*(?:needed|required|provided)?|materials?\s*(?:needed|required)?|you\s+will\s+(?:be\s+given|receive))\s*:/i;
+/** What ENDS that section — the next section header of any kind. */
+// The `]`/`.` boundary is a LOOKBEHIND on purpose: consuming it would cut the previous entry's own
+// closing bracket out of the section, and a half-eaten placeholder is no placeholder at all.
+const NEXT_SECTION = /(?:^|\n|\s{2,}|(?<=[.;\]])\s+)\s*(?:#+\s*)?(?:output|outputs|deliverables?|evaluation|evaluations?\s+rules?|rules?|scoring|criteria|instructions?|process|steps?|task|method|format|response|constraints?|tone|style)\b[^\n:]{0,30}:/i;
+
+export interface DeclaredInput {
+  /** The user's own words for the thing ("Approved job description"), never ours. */
+  label: string;
+  /** The placeholder span it came from — so the never-both law can compare by identity. */
+  placeholder: string;
+}
+
+/** The placeholder's own shout, when the entry carried no label of its own:
+ *  "[PASTE OR UPLOAD RESUMES]" → "resumes". */
+function labelFromPlaceholder(ph: string): string {
+  const inner = ph.replace(/^\[|\]$/g, '').trim();
+  const words = inner.replace(/\s+/g, ' ')
+    .replace(/^(?:(?:please\s+)?(?:paste|pasted|upload|uploaded|insert|attach|attached|provide|drop|or|the|a|an|your|here|in)\s+)+/i, '')
+    .trim();
+  const out = words || inner;
+  // ALL-CAPS placeholders are a shouting convention, not the user's casing.
+  return (out === out.toUpperCase() ? out.toLowerCase() : out).slice(0, 80).trim();
+}
+
+/** The words immediately before a placeholder, reduced to the entry's own label. */
+function labelBefore(chunk: string): string {
+  let c = chunk.replace(/\s+/g, ' ').trim();
+  // Keep only what follows the LAST enumerator ("1." / "-" / "•") — everything before it belongs
+  // to the previous entry or to the header.
+  const enumRe = /(?:^|\s)(?:\d{1,2}[.)]|[-–—•*])\s*/g;
+  let cut = 0;
+  for (let m = enumRe.exec(c); m; m = enumRe.exec(c)) cut = m.index + m[0].length;
+  c = c.slice(cut).trim().replace(/^[:\-–—]\s*/, '').replace(/[:\-–—,;]\s*$/, '').trim();
+  if (c.length > 80) c = c.slice(-80).trim();
+  // A whole sentence is not a label — an entry label is a NOUN PHRASE the user wrote as a name.
+  return /[.!?]/.test(c) ? '' : c;
+}
+
+/**
+ * THE DETERMINISTIC READ (no AI): the prompt's declared inputs, in the order it declares them.
+ *
+ * Shape-independent BY CONSTRUCTION — the same lesson the strip learned: entries are found by
+ * walking the PLACEHOLDERS inside the inputs section and reading backwards to the nearest
+ * boundary (a previous placeholder, a newline, an enumerator, the header). A numbered list, a
+ * bullet list and the pilot's single-line paste all read identically.
+ */
+export function declaredInputs(text: string): DeclaredInput[] {
+  const h = INPUTS_HEADER.exec(text);
+  if (!h) return [];
+  const from = h.index + h[0].length;
+  const rest = text.slice(from);
+  const end = NEXT_SECTION.exec(rest);
+  const region = rest.slice(0, end ? end.index : rest.length);
+
+  const out: DeclaredInput[] = [];
+  const seen = new Set<string>();
+  const re = new RegExp(PASTE_PLACEHOLDER.source, 'gi');
+  let cursor = 0;
+  for (let m = re.exec(region); m; m = re.exec(region)) {
+    const label = labelBefore(region.slice(cursor, m.index)) || labelFromPlaceholder(m[0]);
+    cursor = m.index + m[0].length;
+    const key = label.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ label, placeholder: m[0].trim() });
+  }
+  return out;
+}
+
+/** Distinctive-token overlap — the house primitive for "is this the same thing, said differently".
+ *  Deliberately narrow: it decides only whether a station or a pinned doc ALREADY homes a declared
+ *  input, and a miss costs one extra station, never a lost one. */
+const STOP_WORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'of', 'for', 'to', 'in', 'on', 'with', 'this', 'that', 'each',
+  'run', 'me', 'my', 'your', 'you', 'it', 'send', 'ask', 'paste', 'upload', 'attach', 'provide',
+  'document', 'documents', 'file', 'files', 'approved', 'new', 'latest', 'current',
+]);
+function keyTokens(s: string): Set<string> {
+  return new Set(
+    s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ')
+      .filter((w) => w.length > 2 && !STOP_WORDS.has(w)),
+  );
+}
+function sameThing(a: string, b: string): boolean {
+  const ta = keyTokens(a); const tb = keyTokens(b);
+  if (!ta.size || !tb.size) return false;
+  for (const w of ta) if (tb.has(w)) return true;
+  return false;
+}
+
+/** The ask a station wears when CODE seats it: the user's own label, untouched. The step's own
+ *  name says what it does; only the ask is theirs. */
+function stationFor(d: DeclaredInput): Record<string, unknown> {
+  return {
+    type: 'input',
+    id: makeStepId(),
+    label: `Ask me for ${d.label}`.slice(0, 80),
+    ask: d.label.slice(0, 200),
+    accepts: 'both',
+  };
+}
+
+/** THE ADAPTATION'S OWN SENTENCE — code's, always (the model contributes the LABELS, which are the
+ *  user's own words, and nothing else). */
+export function declaredStationsNote(labels: string[]): string {
+  const list = labels.length === 1
+    ? labels[0]
+    : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+  return `Your prompt names the material it needs, so I made each one a stop — the workflow asks you for ${list} on each run, and you send each from your deck as it stops.`;
+}
+
+export function declaredStationsCapNote(kept: string[], dropped: string[]): string {
+  return `Your prompt names ${kept.length + dropped.length} things it needs each run — a run that stops more than ${MAX_INPUT_STATIONS} times is a chore, so it asks you for ${kept.join(', ')} and I left ${dropped.join(', ')} out. Add them in Studio if the run really needs them.`;
+}
+
+/** THE EMPTY-RUBRIC FLOOR — how much of the user's text a strip may cost before we refuse it.
+ *  Keeping the placeholders beats losing the rubric: a `[PASTE …]` the producing step reads is a
+ *  line the user can see and fix; a vanished rubric is silent. */
+const RUBRIC_SURVIVAL_FLOOR = 0.6;
+
+/** The adapter's instruction to the authoring call. It rides the USER message, never SYSTEM — a
+ *  machine description must author BYTE-IDENTICALLY to before this arc. */
+function rubricAdapterBlock(declared: DeclaredInput[] = []): string {
+  const declaredBlock = declared.length ? `
+
+[THIS RUBRIC DECLARES WHAT IT MUST BE GIVEN — ONE STATION EACH]
+Its own inputs section names ${declared.length === 1 ? 'this thing' : 'these things'}, in this order:
+${declared.map((d, i) => `${i + 1}. ${d.label}`).join('\n')}
+Emit ONE "input" step for EACH of them, in that order, seated BEFORE any step that works on them (before a case step, before the producing step) — this REPLACES the one-station-per-workflow rule above for this request. Each station's "ask" is that line's OWN words, exactly as written; never reword it into a question of your own.
+Then, for each one, say where it really belongs in "input_homes": [{ "input": "<the line, verbatim>", "home": "station" | "document" | "arrives" }].
+- "station" — the person hands it over each run. THE DEFAULT: the rubric said it must be given, so this is what it means unless one of the other two is plainly true.
+- "document" — it is the SAME standing reference every run (a policy, a template, a scoring guide we already hold): name it in "input_doc_names" as well, and it needs no station.
+- "arrives" — it comes in on its own (mail, uploads, another process): put the door in "triggers" or set "accept_material", and it needs no station.
+DECLARING INPUTS SAYS NOTHING ABOUT THE CASE: still emit the case step, and still set "case_unnamed" when the rubric works on ONE case it never names — a station that asks for the job description does not tell the machine WHICH opening it is filing under.` : '';
+  return `[THE TEXT ABOVE IS AN OPERATING RUBRIC — BUILD THE MACHINE AROUND IT]${declaredBlock}
+What the user pasted is not a description of a machine; it is the RULES a person would hand an assistant each time (a persona, per-run evaluation rules, an output format). Your job is to build the machine that runs those rules on a schedule or on arrival:
+- DOORS for what arrives (whatever the rubric expects to be pasted or uploaded is what arrives at run time — set "accept_material": true when people hand material in, and name any standing rulebook it cites in "input_doc_names").
+- THE PLACEHOLDER'S TWO READINGS. A "[PASTE …]" / "[UPLOAD …]" line names material that was hand-fed in a chat session; decide what it becomes in a standing machine: if the SAME thing every run (a job description, a policy, a rubric) it is a pinned document — name it in "input_doc_names" and add NO step for it. If the rubric's own words say it DIFFERS each run and only the person has it (this week's figures, their notes), emit ONE "input" step whose "ask" is that placeholder's own words. Never both for the same placeholder, and when you cannot tell, treat it as a pinned document — a standing reference that turns out to change is one edit; a station that stops every run for something we already had is a chore the user must live with.
+- A CASE step when the rubric implies an ongoing record each item is filed under (one opening, one client, one matter) — the two shapes rule still decides which key. A rubric that works on ONE case it never names (a single "[PASTE JOB DESCRIPTION]", "the open role", "one approved requisition") is the UNNAMED SINGLE CASE: keep "case_instruction" and set "case_unnamed" — never invent the name.
+- ONE producing "ai" step that DOES the rubric's work.
+- The HUMAN GATE the rubric's own words ask for — a rubric that says a person decides, shortlists, approves or signs off means an "approval" step (or a "handoff" when it names another person) directly before delivery.
+- The OUTPUT HOME the rubric's output section describes.
+
+DO NOT COPY THE RUBRIC INTO YOUR JSON. Write the literal token ${RUBRIC_SENTINEL} inside the producing ai step's "prompt", at the exact place the rubric's rules belong. The system substitutes the user's own words there, word for word — copying it yourself would degrade it and blow the response budget. Everything around the token is yours: say what material the step works from, what to do when something is missing, and what the deliverable looks like.`;
+}
+
+/** THE SWEEP — a stray sentinel is a wire token the user would read as gibberish, so it must be
+ *  STRUCTURALLY UNREACHABLE, never merely unlikely.
+ *
+ *  ⚠️ FOUND LIVE (the frozen-paste flow test): the sweep used to live inside placeRubric, called
+ *  behind `if (rubric)`. A one-line paste whose whole text was eaten by the line-scoped strip left
+ *  `rubric === ''`, the guard read that as "no rubric", and the raw `{{USER_RUBRIC}}` shipped in
+ *  the producing step's prompt. A guarantee guarded by a happy path is not a guarantee: the sweep
+ *  now runs on EVERY authored config, rubric or not, machine shape included. */
+function sweepSentinel(steps: Array<Record<string, unknown>>): void {
+  const FIELDS = ['prompt', 'instruction', 'label', 'ask', 'case_instruction', 'case_name'] as const;
+  for (const s of steps) {
+    for (const f of FIELDS) {
+      const v = s[f];
+      if (typeof v === 'string' && v.includes(RUBRIC_SENTINEL)) {
+        s[f] = v.split(RUBRIC_SENTINEL).join('').replace(/\n{3,}/g, '\n\n').trim();
+      }
+    }
+  }
+}
+
+/** THE SUBSTITUTION — code, never the model. The sentinel is replaced with the user's own rubric;
+ *  if the model omitted it, the rubric is APPENDED under an explicit header (the rubric must never
+ *  be lost or paraphrased). The sweep is NOT called from here — see sweepSentinel. */
+function placeRubric(
+  steps: Array<Record<string, unknown>>,
+  rubric: string,
+): { placed: boolean; via: 'sentinel' | 'append' | null } {
+  const hasPrompt = (s: Record<string, unknown>) => typeof s.prompt === 'string';
+  const target =
+    steps.find((s) => hasPrompt(s) && (s.prompt as string).includes(RUBRIC_SENTINEL))
+    ?? steps.find((s) => s.type === 'ai' && hasPrompt(s))
+    ?? steps.find(hasPrompt)
+    ?? null;
+
+  let via: 'sentinel' | 'append' | null = null;
+  if (target) {
+    const p = target.prompt as string;
+    if (p.includes(RUBRIC_SENTINEL)) {
+      target.prompt = p.replace(RUBRIC_SENTINEL, rubric);
+      via = 'sentinel';
+    } else {
+      target.prompt = `${p.trim()}\n\nFOLLOW THIS RUBRIC EXACTLY:\n${rubric}`;
+      via = 'append';
+    }
+  }
+
+  return { placed: via !== null, via };
+}
+
 export async function generateWorkflowConfig(
   description: string,
   userId: string,
@@ -302,6 +690,33 @@ export async function generateWorkflowConfig(
   },
 ): Promise<GeneratedWorkflowConfig | null> {
   const parts: string[] = [`User request: "${description.trim()}"`];
+
+  // ── THE PROMPT ADAPTER (see the block above generateWorkflowConfig). A machine description takes
+  // NONE of this: `shape === 'machine'` leaves the prompt, the message and the parse untouched.
+  const shape = await detectPromptShape(description.trim(), userId, supabase);
+  let rubric: string | null = null;
+  let strippedPlaceholders: string[] = [];
+  let placeholdersKept = false;
+  let declared: DeclaredInput[] = [];
+  if (shape === 'rubric') {
+    const original = description.trim();
+    // THE DECLARED INPUTS are read from the UNTOUCHED paste — the strip removes the very spans the
+    // declaration is made of, so this read must happen before it.
+    declared = declaredInputs(original);
+    const s = stripPastePlaceholders(original);
+    // THE EMPTY-RUBRIC FLOOR: a strip that costs most of the text is a strip that misread the
+    // shape, and the rubric is the one thing this adapter exists to carry. Keeping the
+    // placeholders is a visible imperfection the user can fix; losing the rubric is silent.
+    if (s.text.trim().length < original.length * RUBRIC_SURVIVAL_FLOOR) {
+      rubric = original;
+      strippedPlaceholders = [];
+      placeholdersKept = s.stripped.length > 0;
+    } else {
+      rubric = s.text;
+      strippedPlaceholders = s.stripped;
+    }
+    parts.push(rubricAdapterBlock(declared));
+  }
 
   if (options?.companyName) {
     parts.push(`User's company: ${options.companyName}`);
@@ -470,11 +885,30 @@ export async function generateWorkflowConfig(
   //      rest OUT LOUD (a dropped step is a step refusal — hence needs_step_note, not silence).
   //   2. A BLANK INSTRUCTION — readiness would catch it at the door, but a draft should not be
   //      BORN unready: the card would offer Confirm on a workflow that can't run.
+  //   3. AN UNSATISFIABLE CASE (Aug 25, found live): the paste said "one approved requisition" and
+  //      never named it, so the model authored the identity QUESTION — and every run filed nothing
+  //      ("No case named in this material — continuing without one"), which made the rubric's own
+  //      "ranked shortlist" and "same rubric every candidate" STRUCTURALLY UNREACHABLE. Nothing
+  //      told the user. The machine knew at authoring time, so it says so at authoring time: the
+  //      step still stands (never block creation, never invent a name) and the note names the gap.
+  //      THE JUDGMENT IS THE MODEL'S (`case_unnamed` — is this ONE case, unnamed?); THE SENTENCE IS
+  //      CODE'S, and its presence is therefore structural.
   {
     let seatedCase = false;
+    let statedCase = false;
+    let unnamedNoun: string | null = null;
+    /** The model's own noun, trusted for ONE word inside a sentence code owns. */
+    const noun = (v: unknown): string | null => {
+      if (v === true) return 'case';
+      if (typeof v !== 'string') return null;
+      const w = v.replace(/["'`\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
+      return w.length >= 3 ? w : (v ? 'case' : null);
+    };
     const kept: Array<Record<string, unknown>> = [];
     for (const s of steps) {
       if (s.type !== 'case') { kept.push(s); continue; }
+      unnamedNoun ??= noun(s.case_unnamed);
+      delete (s as { case_unnamed?: unknown }).case_unnamed; // a signal, never stored config
       const instruction = typeof s.case_instruction === 'string' ? s.case_instruction.trim() : '';
       // THE STATED CASE is the second honest shape (Aug 25): either the identity QUESTION or the
       // case the request itself NAMED. Only having neither leaves the station blind.
@@ -488,6 +922,7 @@ export async function generateWorkflowConfig(
         continue;
       }
       seatedCase = true;
+      statedCase = stated.length > 0;
       // EXACTLY ONE SHAPE SURVIVES: a stated case is the whole answer, so an instruction beside it
       // would be a second, competing key on one station (and only one of them can decide).
       kept.push(stated
@@ -495,6 +930,188 @@ export async function generateWorkflowConfig(
         : { ...s, case_instruction: instruction });
     }
     steps = kept;
+    // The flag may also arrive top-level (models drift on placement); the reading is identical.
+    unnamedNoun ??= noun((generated as Record<string, unknown>).case_unnamed);
+    // A NAMED case makes the note false — the gap it describes doesn't exist. Otherwise it is said,
+    // whether or not a station survived: the missing NAME is the same gap either way.
+    if (unnamedNoun && !statedCase) {
+      stepNotes.push(unnamedCaseNote(unnamedNoun));
+    }
+  }
+
+  // ── THE INPUTS TRAY (relay canvas W2, law 7) — the model spoke NAMES; the ONE resolver turns
+  // them into the caller's own knowledge_files (a name it can't find, or that matches two files,
+  // is REFUSED and SAID). Same failure discipline as the doors: a resolver outage costs the tray,
+  // never the draft.
+  //
+  // IT RESOLVES BEFORE THE STATIONS ARE SEATED, ON PURPOSE (Aug 25): "pin it if we already hold it,
+  // ask only when there is nothing to pin" is the best experience there is — and it can only be
+  // decided once we KNOW whether the named document exists. A model's "document" judgment whose
+  // document does not resolve is not a home; that declared input still needs a station.
+  // ── THE EVENT DOORS (relay canvas W1, law 1) — the model's doors are WISHES; the ONE sanitiser
+  // decides what can be stored (registry-checked, feature-checked, workflow names resolved to the
+  // user's own ids, a second schedule refused). Anything dropped is SAID, never silently lost.
+  //
+  // ⚠️ IT RUNS BEFORE THE STATIONS ARE SEATED (Aug 25, FOUND LIVE on the pilot paste): the station
+  // enforcement asks "does this declared input arrive through a door?", and the only honest answer
+  // is the SANITISED one. Reading `generated.triggers` there let a WISH satisfy the question — the
+  // model claimed the resumes "arrive", authorDoors then dropped every door it had asked for, and
+  // the run shipped with a door-less workflow that never asks for the resumes at all. A wish is
+  // not a door; nothing may be homed against one.
+  let doors: ReactionDoor[] = [];
+  let needsDoorNote: string | null = null;
+  try {
+    let features = null;
+    try { features = await getWorkspaceFeatures(userId, supabase); } catch { /* unknown → abstain */ }
+    const authored = await authorDoors(generated.triggers, { supabase, userId, features });
+    doors = authored.doors;
+    needsDoorNote = doorNote(authored.notes);
+  } catch {
+    // A sanitiser failure must never lose the draft — the pipeline stands, on-demand only.
+    doors = [];
+  }
+
+  let inputs: GeneratedWorkflowConfig['inputs'] = null;
+  const trayNotes: string[] = [];
+  let trayResolved = false;
+  try {
+    const { authorInputs, inputsForStorage } = await import('@/lib/workflows/author-doors');
+    const authored = await authorInputs(
+      { doc_names: generated.input_doc_names, accept_material: generated.accept_material },
+      { supabase, userId },
+    );
+    inputs = inputsForStorage(authored);
+    trayNotes.push(...authored.notes);
+    trayResolved = true;
+  } catch {
+    inputs = null;
+  }
+
+  // ── THE INPUT STATIONS (relay canvas, THE WAVE) — the model may say "ask me for the figures each
+  // run"; code decides what can actually stand. Two things can be wrong, and both are SAID:
+  //   1. A BLANK ASK — the station would park the run behind a question nobody wrote (readiness
+  //      rule 10 would catch it at the door, but a draft should not be BORN unready).
+  //   2. MORE THAN THE RUN CAN CARRY — a run that stops many times is a chore. The ceiling is ONE
+  //      station normally (one stop, one ask), and ONE PER DECLARED INPUT when the prompt itself
+  //      named the things it must be given (up to MAX_INPUT_STATIONS) — see THE DECLARED INPUTS.
+  // `accepts` is normalized here too: a value outside the three is not a refusal, it is a default.
+  const declaredStationLabels: string[] = [];
+  let declaredCapDropped: string[] = [];
+  {
+    const capacity = declared.length ? Math.min(declared.length, MAX_INPUT_STATIONS) : 1;
+    let seated = 0;
+    const kept: Array<Record<string, unknown>> = [];
+    for (const st of steps) {
+      if (st.type !== 'input') { kept.push(st); continue; }
+      // A STATION NEVER ASKS IN WIRE TOKENS. A `[PASTE …]` span is the chat-session convention, not
+      // a question a person can answer — it becomes the words inside it ("[PASTE JOB DESCRIPTION]"
+      // → "job description"). Applies to every station, declared or not: the deck must never show
+      // a bracket where a request belongs.
+      const rawAsk = typeof st.ask === 'string' ? st.ask.trim() : '';
+      const ask = PASTE_PLACEHOLDER.test(rawAsk)
+        ? (rawAsk.replace(PASTE_PLACEHOLDER_G, (m) => labelFromPlaceholder(m)).replace(/\s{2,}/g, ' ').trim())
+        : rawAsk;
+      if (!ask) {
+        stepNotes.push('I left out the step that stops and asks you for something — say what it should ask for and I\'ll add it.');
+        continue;
+      }
+      if (seated >= capacity) {
+        stepNotes.push(declared.length
+          ? `A run should not stop more than ${MAX_INPUT_STATIONS} times — I kept the things your prompt says it must be given and left the extra stops out.`
+          : 'A run should stop to ask once — I kept the first thing it asks you for and left the others out.');
+        continue;
+      }
+      seated += 1;
+      const accepts = st.accepts === 'text' || st.accepts === 'doc' ? st.accepts : 'both';
+      kept.push({ ...st, ask, accepts });
+    }
+    steps = kept;
+
+    // ── A DECLARED INPUT IS NEVER SIMPLY DROPPED. The model's judgment homes it (`input_homes`);
+    // code seats a station for anything left unhomed — including a "document" whose document does
+    // not actually exist, and an "arrives" with no door to arrive through. The prompt said it must
+    // be given; the honest floor is to ask for it by its own name.
+    if (declared.length) {
+      const homes = new Map<string, string>();
+      const rawHomes = (generated as Record<string, unknown>).input_homes;
+      if (Array.isArray(rawHomes)) {
+        for (const h of rawHomes as Array<Record<string, unknown>>) {
+          const name = typeof h?.input === 'string' ? h.input : '';
+          const home = typeof h?.home === 'string' ? h.home.toLowerCase() : '';
+          if (name && home) homes.set(name.toLowerCase().trim(), home);
+        }
+      }
+      const homeOf = (label: string): string => {
+        const exact = homes.get(label.toLowerCase().trim());
+        if (exact) return exact;
+        for (const [k, v] of homes) if (sameThing(k, label)) return v;
+        return 'station';
+      };
+      const pinnedDocs = (inputs?.docs ?? []).map((d) => d.name);
+
+      // THE "ARRIVES" CLAIM IS ONLY AS REAL AS THE THING IT NAMES — and it is checked against
+      // SANITISED doors, never the model's wish list (see THE EVENT DOORS above).
+      //
+      // THE INCOHERENCE RULE (Aug 25): `accept_material` is the generic run-start material sheet,
+      // and a workflow whose own steps stop and ask BY NAME suppresses that sheet — so on a
+      // workflow with any station, "it arrives through accept_material" describes a door the user
+      // will never be shown. With ≥1 station, only a REAL door satisfies "arrives".
+      const willHaveStation = steps.some((st) => st.type === 'input')
+        || declared.some((d) => homeOf(d.label) === 'station');
+      const arrivesSatisfied = doors.length > 0
+        || (!willHaveStation && inputs?.acceptMaterial === true);
+
+      const missing: DeclaredInput[] = [];
+      for (const d of declared) {
+        // ALREADY HOMED, in the order a home actually beats an ask:
+        //   a station the model already wrote · a document we really hold · a door it arrives by.
+        const mine = steps.find((st) => st.type === 'input'
+          && sameThing(String(st.ask ?? ''), d.label));
+        if (mine) {
+          // THE ASK IS THE USER'S LABEL, NOT THEIR WIRE TOKEN (found live in the first live probe:
+          // the model wrote `ask: "[PASTE JOB DESCRIPTION]"`, so the deck would have asked for a
+          // bracketed placeholder). The model's judgment decides WHETHER a station stands; the
+          // words it wears are the declaration's own, always.
+          mine.ask = d.label.slice(0, 200);
+          mine.label = `Ask me for ${d.label}`.slice(0, 80);
+          continue;
+        }
+        // A HOME IS A THING THAT EXISTS, NOT A CLAIM THAT ONE DOES. Each branch is checked against
+        // what actually resolved; a "document" naming nothing we hold and an "arrives" with nothing
+        // to arrive through are both simply UNHOMED, and fall to the station default below.
+        const home = homeOf(d.label);
+        if (home === 'document' && trayResolved && pinnedDocs.some((n) => sameThing(n, d.label))) continue;
+        if (home === 'arrives' && arrivesSatisfied) continue;
+        missing.push(d);
+      }
+
+      const room = Math.max(0, Math.min(declared.length, MAX_INPUT_STATIONS)
+        - steps.filter((st) => st.type === 'input').length);
+      const seatNow = missing.slice(0, room);
+      declaredCapDropped = missing.slice(room).map((d) => d.label);
+
+      if (seatNow.length) {
+        const newStations = seatNow.map((d) => stationFor(d));
+        // THE STATIONS LEAD: what a run must be GIVEN is asked for before anything works on it —
+        // before the case step that files it, before the step that produces from it. Any station
+        // the model already wrote keeps its own seat; the new ones join at the front, in the order
+        // the prompt declares them.
+        steps = [...newStations, ...steps];
+      }
+      // ── THE NOTE SPEAKS ONLY WHAT EXISTS (Aug 25, FOUND LIVE: the sentence read "the workflow
+      // asks you for the approved job description and candidate resumes" on a workflow carrying ONE
+      // station — it was reading the DECLARED list, so a declared input that never got a home was
+      // still announced as a stop. A note is a promise about the machine; it is derived from the
+      // machine.) The match is EXACT, not fuzzy: code owns the ask of every declared station — both
+      // the ones it seated and the ones it rewrote — so a station's ask IS its declaration's label,
+      // and one station can never answer for two.
+      const seatedAsks = new Set(
+        steps.filter((st) => st.type === 'input').map((st) => String(st.ask ?? '').trim()),
+      );
+      declaredStationLabels.push(
+        ...declared.map((d) => d.label).filter((l) => seatedAsks.has(l.slice(0, 200))),
+      );
+    }
   }
 
   // ── THE SUBPROCESS STATIONS (relay canvas W3, law 5) — the model named PROCESSES; the ONE
@@ -513,23 +1130,47 @@ export async function generateWorkflowConfig(
     }
   }
 
-  const needsStepNote: string | null = stepNote(stepNotes);
-
-  // ── THE EVENT DOORS (relay canvas W1, law 1) — the model's doors are WISHES; the ONE sanitiser
-  // decides what can be stored (registry-checked, feature-checked, workflow names resolved to the
-  // user's own ids, a second schedule refused). Anything dropped is SAID, never silently lost.
-  let doors: ReactionDoor[] = [];
-  let needsDoorNote: string | null = null;
-  try {
-    let features = null;
-    try { features = await getWorkspaceFeatures(userId, supabase); } catch { /* unknown → abstain */ }
-    const authored = await authorDoors(generated.triggers, { supabase, userId, features });
-    doors = authored.doors;
-    needsDoorNote = doorNote(authored.notes);
-  } catch {
-    // A sanitiser failure must never lose the draft — the pipeline stands, on-demand only.
-    doors = [];
+  // ── THE RUBRIC RIDES VERBATIM, SUBSTITUTED IN CODE. Last, so it lands on the steps that actually
+  // survived (a refused subprocess station or a second case step is already gone).
+  const rubricNotes: string[] = [];
+  if (rubric?.trim()) {
+    const { placed } = placeRubric(steps, rubric);
+    if (placed) {
+      rubricNotes.push('Your text read as an operating rubric — I built the workflow around it, and the rubric rides the producing step word-for-word.');
+    }
+    // THE DECLARED INPUTS SPEAK FIRST AND IN THEIR OWN SENTENCE — the model contributed the labels
+    // (which are the user's own words); every word around them is code's.
+    if (declaredStationLabels.length) {
+      rubricNotes.push(declaredCapDropped.length
+        ? declaredStationsCapNote(declaredStationLabels, declaredCapDropped)
+        : declaredStationsNote(declaredStationLabels));
+    }
+    // NEVER BOTH FOR THE SAME PLACEHOLDER: a placeholder that became a station gets NO pin sentence
+    // — the station IS the answer, and the pin sentence would send the user to configure a document
+    // the workflow was never going to read. The sentence is owed only to placeholders that got no
+    // station: the ones the prompt never declared as inputs.
+    {
+      const homedByStation = new Set(
+        declared
+          .filter((d) => declaredStationLabels.includes(d.label))
+          .map((d) => d.placeholder.toLowerCase()),
+      );
+      const undeclared = strippedPlaceholders.filter((p) => !homedByStation.has(p.toLowerCase()));
+      if (undeclared.length) {
+        rubricNotes.push(steps.some((st) => st.type === 'input') && !declaredStationLabels.length
+          ? 'Your prompt expects material pasted in by hand — I made that a stop: the workflow asks you for it on each run, and you send it from your deck.'
+          : 'Your prompt expects material pasted in by hand — pin the document in WORKS WITH (or name it in the description) and the workflow reads it every run. If it is different every run, say "ask me each run" and the workflow will stop and ask you for it instead.');
+      }
+    }
+    if (placeholdersKept) {
+      rubricNotes.push('Your prompt\'s input placeholders sit inside its own sentences, so I left them in the rubric rather than cut into your words — pin the real document in WORKS WITH and tell the step to use it instead of the placeholder.');
+    }
   }
+  // THE SWEEP RUNS ON EVERY SHAPE, OUTSIDE EVERY GUARD (see sweepSentinel): rubric or machine,
+  // placed or not, no config leaves this function wearing the wire token.
+  sweepSentinel(steps);
+
+  const needsStepNote: string | null = stepNote(stepNotes);
 
   // ── THE THROTTLE (relay canvas W3b) — a stated pace becomes a real number, CLAMPED CODE-SIDE.
   // THE NOTE CHANNEL IS `needs_door_note` ON PURPOSE: this number is trigger-side config — it
@@ -548,22 +1189,20 @@ export async function generateWorkflowConfig(
     }
   }
 
-  // ── THE INPUTS TRAY (relay canvas W2, law 7) — the model spoke NAMES; the ONE resolver turns
-  // them into the caller's own knowledge_files (a name it can't find, or that matches two files,
-  // is REFUSED and SAID). Same failure discipline as the doors: a resolver outage costs the tray,
-  // never the draft.
-  let inputs: GeneratedWorkflowConfig['inputs'] = null;
+  // ── THE MATERIAL CHANNEL SPEAKS ONCE (the tray resolved earlier — see THE INPUTS TRAY above,
+  // which now runs before the stations are seated so "pin what we hold, ask for what we don't" can
+  // actually be decided). THE ADAPTATION SPEAKS THROUGH THIS CHANNEL, not a sixth one: what changed
+  // IS about the material — where the rubric went, what the run will stop and ask for, and which
+  // placeholders still need a real document. One block, one subject.
   let needsInputNote: string | null = null;
   try {
-    const { authorInputs, inputNote, inputsForStorage } = await import('@/lib/workflows/author-doors');
-    const authored = await authorInputs(
-      { doc_names: generated.input_doc_names, accept_material: generated.accept_material },
-      { supabase, userId },
-    );
-    inputs = inputsForStorage(authored);
-    needsInputNote = inputNote(authored.notes);
+    const { inputNote } = await import('@/lib/workflows/author-doors');
+    needsInputNote = inputNote([...rubricNotes, ...trayNotes]);
   } catch {
-    inputs = null;
+    // An import failure costs the tidy join, never the adaptation's own sentence.
+    needsInputNote = rubricNotes.length || trayNotes.length
+      ? [...new Set([...rubricNotes, ...trayNotes])].join(' ')
+      : null;
   }
 
   // If caller passed an explicit override, use it; otherwise use model-generated value.
@@ -574,16 +1213,19 @@ export async function generateWorkflowConfig(
           ? generated.worker_instructions.trim()
           : null);
 
+  // The sentinel is a wire token, never speech: it never reaches a name, a description or a voice.
+  const noSentinel = (v: string) => v.split(RUBRIC_SENTINEL).join('').replace(/\s{2,}/g, ' ').trim();
+
   return {
-    name: String(generated.name).trim(),
-    description: typeof generated.description === 'string' ? generated.description.trim() : null,
+    name: noSentinel(String(generated.name)),
+    description: typeof generated.description === 'string' ? (noSentinel(generated.description) || null) : null,
     trigger: (generated.trigger as Record<string, unknown>) ?? { type: 'manual' },
     triggers: doors,
     steps,
     output_config: Object.keys(outputConfig).length
       ? outputConfig
       : { destination: 'message', report_mode: 'each_run' },
-    worker_instructions: workerInstructions,
+    worker_instructions: workerInstructions ? (noSentinel(workerInstructions) || null) : null,
     overlap_note: typeof generated.overlap_note === 'string' && generated.overlap_note.trim()
       ? generated.overlap_note.trim()
       : null,

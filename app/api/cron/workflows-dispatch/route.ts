@@ -150,6 +150,16 @@ export async function GET(request: NextRequest) {
     } catch { /* bookkeeping — never breaks the dispatcher */ }
   });
 
+  // THE ORPHAN-ASK SWEEP (the unbound approval ask, Aug 25): a deck ask never outlives its run.
+  // A run deleted out-of-band would otherwise leave an undecidable row on the owner's deck.
+  after(async () => {
+    try {
+      const { sweepOrphanedRunAsks } = await import('@/lib/workflows/standing');
+      const closedAsks = await sweepOrphanedRunAsks(supabase);
+      if (closedAsks) console.log(`[workflows-dispatch] closed ${closedAsks} orphaned run ask(s)`);
+    } catch { /* bookkeeping — never breaks the dispatcher */ }
+  });
+
   // THE SLA CHASE (processes arc Phase B — the missed-promise floor, generalized to people): a
   // handoff parked longer than its sla_hours gets chased by the coworker, ≤1/day per run, with
   // the owner's room told. A gate quietly rotting on someone's desk is the class this kills.

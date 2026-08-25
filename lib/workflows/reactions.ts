@@ -52,7 +52,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { parseModelJSON } from '@/lib/ai/parse-json';
-import { clipForPrompt } from '@/lib/utils/clip-for-prompt';
+import { clipForPrompt, EXCERPT_MARK, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 import {
   normalizeTriggers, doorFiltersPass,
   type ReactionDoor, type TriggerSourceKey,
@@ -128,17 +128,56 @@ function sourceToken(source: TriggerSourceKey): string {
   return source === 'mail' ? 'inbox' : source;
 }
 
+/** THE GIST YIELDS TO THE MATERIAL (Aug 25, found live — the fairness incident): a run PENALISED a
+ *  candidate (−2, "CV clipped by system; recruiter must verify no disqualifying information in the
+ *  unextracted portion") because the assembled context showed the SAME document twice — the gist's
+ *  clipped head beside the material's whole text — and the model believed the truncated copy.
+ *
+ *  Structural, never a site list: a gist LINE whose own words already sit inside the material is a
+ *  duplicate of what the material carries whole, and is dropped. Identity lines the material does
+ *  NOT carry (the file door's `name · PDF · 120KB` label, mail's `[Attached: …]` and
+ *  `[Understood as: …]`) are never touched — they survive by the same one rule. A short line is
+ *  never a document head, so it always stands. */
+function gistBesideMaterial(gist: string, material: string): string {
+  const hay = fold(material);
+  return gist
+    .split('\n')
+    .filter((line) => {
+      // Compare the line's OWN words — never our marker, which the material's copy won't carry.
+      const own = fold(line.split(EXCERPT_MARK)[0]);
+      if (own.length < 40) return true;
+      return !hay.includes(own.slice(0, 120));
+    })
+    .join('\n')
+    .trim();
+}
+
 /** The trigger-context block a fired run carries — every AI step (and the verify gate, for which
- *  this is legitimate source material) sees WHY it is running. */
-function triggerBlock(item: { title: string; from?: string | null; gist: string; material?: string }): string {
-  const head =
-    `[THE TRIGGERING EVENT — this run fired because this arrived:]\n` +
-    `${item.title}${item.from ? `\nFrom: ${item.from}` : ''}\n${item.gist}`.slice(0, 2400);
+ *  this is legitimate source material) sees WHY it is running.
+ *
+ *  ⚠️ THE EXCERPT-HONESTY LAW LIVES HERE TOO (Aug 25, the law's third manifestation): the seams
+ *  pre-clip what they hand us (mail's attachment text, the file door's extracted head) and the
+ *  clipper's marker rides in with it — so this assembler both clips and feeds a prompt, and MUST
+ *  declare its own cuts. The rule sits in the HEADER, outside the head's own 2400 cap: a tail-clip
+ *  can never strip it (the Aug 17 lesson).
+ *
+ *  EXPORTED for the gates (the mailEventFromItem idiom): a probe that rebuilt this assembly
+ *  verbatim would be a copy of the law, free to drift from what production actually assembles. */
+export function triggerBlock(item: { title: string; from?: string | null; gist: string; material?: string }): string {
+  const material = (item.material ?? '').trim();
   // THE MATERIAL LANE: the event's fuller text (attachments / the uploaded document) joins the
   // fired run's context AFTER the head's own cap — the head slice must never decapitate it.
-  const material = (item.material ?? '').trim();
-  if (!material) return head;
-  return `${head}\n\n[WHAT IT CARRIED — extracted text:]\n${clipForPrompt(material, 9000)}`;
+  const carried = material ? clipForPrompt(material, 9000) : '';
+  const gist = carried ? gistBesideMaterial(item.gist, carried) : item.gist;
+  // The head's OWN cap is honest too — a raw .slice() here was the same undeclared cut one layer up.
+  const headBody = clipForPrompt(`${item.title}${item.from ? `\nFrom: ${item.from}` : ''}\n${gist}`, 2400);
+  const marked = `${headBody}\n${carried}`.includes(EXCERPT_MARK);
+  const head =
+    `[THE TRIGGERING EVENT — this run fired because this arrived:]\n` +
+    (marked ? `${EXCERPT_RULE}\n` : '') +
+    headBody;
+  if (!carried) return head;
+  return `${head}\n\n[WHAT IT CARRIED — extracted text:]\n${carried}`;
 }
 
 type DoorWf = { id: string; name: string; doors: ReactionDoor[] };
@@ -462,19 +501,31 @@ async function fireReaction(
     });
 
     // AT THE LIMIT WE STOP HERE. The event is durable (record + queued run); the drain owns its
-    // start. No after(), no inline run — and the stale-run backstop skips it BY THE SAME FLAG, so
-    // exactly one lane can ever start it.
+    // start. No after(), no kick — and the stale-run backstop skips it BY THE SAME FLAG, so
+    // exactly one lane can ever start it. THE COUNTING FACT (`deferred !== true`) is therefore
+    // also what makes a deferred fire STRUCTURALLY UNREACHABLE by the kick below: we return here.
     if (defer) return 'deferred';
 
-    // Inline attempt — after() outlives the sync response; reaction pipelines are short by
-    // design (the event rides in; they don't re-fetch the world). The backstop covers a crash.
+    // ── THE KICK (Aug 25 — found live: a real mail-door fire sat queued for the better part of an
+    // hour). The enqueuing caller is usually a WEBHOOK with a small budget: its after() is killed
+    // with the response, the inline attempt dies with it, and the run waits for the hourly
+    // backstop. So the start moves to a route of its own — the house 202 pattern (the recording
+    // confirm's shape): a fire-and-forget POST dispatched HERE, IN REQUEST SCOPE, which is already
+    // in flight when this function's own scope dies. Never awaited beyond dispatch.
     try {
       const { after } = await import('next/server');
-      const { runWorkflow } = await import('@/lib/workflows/run-workflow');
-      after(async () => {
-        await runWorkflow({ workflowId: wf.id, runId, triggerSource: 'event', triggerContext: context })
-          .catch((e) => console.error(`[reactions] run failed for "${wf.name}":`, e));
-      });
+      // THE REQUEST-SCOPE PROBE: after() throws outside one. Scripts, cron-less contexts and
+      // tests must never reach the kick — they would call a DEPLOYED app about a local run.
+      after(() => {});
+      if (!dispatchKick(runId)) {
+        // No kick door configured (no base URL / no secret) — the historical inline attempt
+        // stands, and the backstop still covers a crash.
+        const { runWorkflow } = await import('@/lib/workflows/run-workflow');
+        after(async () => {
+          await runWorkflow({ workflowId: wf.id, runId, triggerSource: 'event', triggerContext: context })
+            .catch((e) => console.error(`[reactions] run failed for "${wf.name}":`, e));
+        });
+      }
     } catch {
       // No request scope (scripts/tests): leave the queued row — the backstop fires it.
     }
@@ -483,6 +534,66 @@ async function fireReaction(
     console.error('[reactions] fire failed:', e);
     return false;
   }
+}
+
+// ── THE KICK ─────────────────────────────────────────────────────────────────────────────────────
+
+/** The self-call base — the ESTABLISHED idiom (lib/tools/worker-tasks.ts's internal run dispatch):
+ *  AUGMTD_WEBHOOK_BASE_URL, then NEXT_PUBLIC_APP_URL, and NOTHING invented when neither is set. A
+ *  hardcoded production fallback would make a local script kick the deployed app. */
+function kickBaseUrl(): string {
+  return (process.env.AUGMTD_WEBHOOK_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || '').replace(/\/$/, '');
+}
+
+/** Fire-and-forget POST to the kick route. Returns whether a kick was DISPATCHED (not whether it
+ *  succeeded — the run row is durable and the backstop is the net either way). Bearer-authed with
+ *  AGENTOS_SECRET, the same secret the existing internal run dispatcher uses. */
+function dispatchKick(runId: string): boolean {
+  const base = kickBaseUrl();
+  const secret = process.env.AGENTOS_SECRET;
+  if (!base || !secret) return false;
+  void fetch(`${base}/api/internal/runs/kick`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
+    body: JSON.stringify({ runId }),
+  }).catch(() => { /* the backstop owns a kick that never landed */ });
+  return true;
+}
+
+/** THE ONE CLAIM on a queued event run — the kick, the drain's re-fire path and the backstop all
+ *  race safely through THIS function, so exactly one of them can ever start a run. The claim is a
+ *  conditional update (queued → running) that only one caller can win; the row is put straight
+ *  back to `queued` because runWorkflow owns the running transition — the flip only fences racers. */
+export async function claimQueuedEventRun(admin: SupabaseClient, runId: string): Promise<boolean> {
+  const { data: claimed } = await admin.from('workflow_runs')
+    .update({ status: 'running' }).eq('id', runId).eq('status', 'queued').select('id');
+  if (!claimed?.length) return false;
+  await admin.from('workflow_runs').update({ status: 'queued' }).eq('id', runId);
+  return true;
+}
+
+/** THE ONE CONTEXT REBUILD for a queued event run — what the kick and the backstop both need.
+ *  `started` is THE COUNTING FACT read for this run: false means the fire is DEFERRED and belongs
+ *  to the drain, never to a start lane. A run with no fire record at all (a SUBPROCESS CHILD)
+ *  reads started, and its BATON is recovered from the `subprocess_link` row. */
+export async function eventRunContext(
+  admin: SupabaseClient, userId: string, runId: string,
+): Promise<{ context?: string; started: boolean }> {
+  const { data: fireRow } = await admin.from('item_plans').select('tasks')
+    .eq('user_id', userId).eq('kind', FIRE_KIND).eq('tasks->>runId', runId).maybeSingle();
+  if (fireRow && !fireStarted(fireRow.tasks)) return { started: false };
+  let context = (fireRow?.tasks as { context?: string } | undefined)?.context;
+  if (!context) {
+    // A SUBPROCESS CHILD writes a `subprocess_link` row, not a reaction_fire — its BATON (the
+    // parent's handed-over context) lives on that row. Without this lookup such a run starts
+    // context-less: it still runs and still resumes its parent, but the parent's material is
+    // silently lost in that rare path.
+    const { data: linkRow } = await admin.from('item_plans').select('tasks')
+      .eq('user_id', userId).eq('kind', 'subprocess_link')
+      .eq('tasks->>childRunId', runId).maybeSingle();
+    context = (linkRow?.tasks as { context?: string } | undefined)?.context;
+  }
+  return { ...(context ? { context } : {}), started: true };
 }
 
 // ── THE DRAIN ────────────────────────────────────────────────────────────────────────────────────
@@ -605,26 +716,11 @@ export async function refireStaleEventRuns(admin: SupabaseClient): Promise<strin
     .lt('created_at', cutoff).limit(5);
   const refired: string[] = [];
   for (const r of (stale ?? []) as Array<{ id: string; workflow_id: string; user_id: string }>) {
-    // Read the record BEFORE any claim — a deferred run must not even be touched here.
-    const { data: fireRow } = await admin.from('item_plans').select('tasks')
-      .eq('user_id', r.user_id).eq('kind', FIRE_KIND).eq('tasks->>runId', r.id).maybeSingle();
-    if (fireRow && !fireStarted(fireRow.tasks)) continue; // throttled, waiting for the drain
-    const { data: claimed } = await admin.from('workflow_runs')
-      .update({ status: 'running' }).eq('id', r.id).eq('status', 'queued').select('id');
-    if (!claimed?.length) continue; // someone else took it
-    // Put it back to queued — runWorkflow owns the running transition; the claim only fenced racers.
-    await admin.from('workflow_runs').update({ status: 'queued' }).eq('id', r.id);
-    let context = (fireRow?.tasks as { context?: string } | undefined)?.context;
-    if (!context) {
-      // A SUBPROCESS CHILD writes a `subprocess_link` row, not a reaction_fire — its BATON (the
-      // parent's handed-over context) lives on that row. Without this lookup a stale child
-      // re-fires context-less: it still runs and still resumes its parent, but the parent's
-      // material is silently lost in that rare path (W3 engine's noted gap, closed here).
-      const { data: linkRow } = await admin.from('item_plans').select('tasks')
-        .eq('user_id', r.user_id).eq('kind', 'subprocess_link')
-        .eq('tasks->>childRunId', r.id).maybeSingle();
-      context = (linkRow?.tasks as { context?: string } | undefined)?.context;
-    }
+    // Read the record BEFORE any claim — a deferred run must not even be touched here. ONE
+    // rebuild, shared with the kick route (baton fallback included).
+    const { context, started } = await eventRunContext(admin, r.user_id, r.id);
+    if (!started) continue; // throttled, waiting for the drain
+    if (!await claimQueuedEventRun(admin, r.id)) continue; // someone else took it
     refired.push(r.id);
     const go = async () => {
       const { runWorkflow } = await import('@/lib/workflows/run-workflow');

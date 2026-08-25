@@ -12,6 +12,11 @@ export const maxDuration = 300;
 // stays visible until a run lands). Exactly-once: only an `awaiting_approval` run resumes — a
 // double-click finds it already 'running'/'rejected' and refuses.
 //
+// THE WAVE — THE GATE MAY ASK FOR MATERIAL, NOT A YES/NO: an `input` station parks the run for
+// something only the person has, and the same door takes it (`{ input: { text?, kbFileId?, pin? } }`).
+// It is still ONE DOOR: one authorization read, one settle seam, one after() resume — the payload
+// says which kind of answer this park could accept, and the wrong kind is refused, never guessed.
+//
 // PHASE B — THE GATE MAY BELONG TO A TEAMMATE: authorization is no longer "the run is mine" but
 // `canResumeRun` (lib/workflows/handoffs.ts), THE ONE authorization read — the owner always, an
 // assignee only for THEIR parked handoff. Still ONE DOOR: same route, same response contract,
@@ -23,7 +28,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const supabase = await createClient();
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    const body = (await request.json().catch(() => ({}))) as { approve?: boolean; note?: string };
+    const body = (await request.json().catch(() => ({}))) as {
+      approve?: boolean; note?: string;
+      /** THE INPUT STATION (relay canvas, THE WAVE): what the person hands the parked run —
+       *  pasted text, a pinned knowledge document, or both. `pin` also keeps the document in the
+       *  workflow's inputs tray so later runs read it as standing reference. */
+      input?: { text?: string; kbFileId?: string; pin?: boolean };
+    };
     const approve = body.approve === true;
 
     const { createClient: createAdmin } = await import('@supabase/supabase-js');
@@ -41,32 +52,75 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     // NO LYING DOOR (relay canvas W3): a ⧉ SUBPROCESS park wears the same status but holds no
     // human decision — the child's completion is what resumes it. Approving it would re-enter a
     // station already claimed; rejecting it would strand a running child. Refuse, and say why.
-    {
-      const { parkedGateOf } = await import('@/lib/workflows/process-state');
-      const gate = parkedGateOf(
-        { step_outputs: (run.step_outputs ?? []) as never },
-        (auth.workflow.steps ?? null) as never,
-      );
-      if (gate.kind === 'subprocess') {
-        return NextResponse.json({
-          error: `This run is waiting on the '${gate.label}' process, not on you — it continues by itself when that delivers.`,
-        }, { status: 409 });
-      }
+    const { parkedGateOf } = await import('@/lib/workflows/process-state');
+    const gate = parkedGateOf(
+      { step_outputs: (run.step_outputs ?? []) as never },
+      (auth.workflow.steps ?? null) as never,
+    );
+    if (gate.kind === 'subprocess') {
+      return NextResponse.json({
+        error: `This run is waiting on the '${gate.label}' process, not on you — it continues by itself when that delivers.`,
+      }, { status: 409 });
     }
     const wf = auth.workflow;
     // The handoff half settles only when the gate the run is parked at IS a handoff.
     const handoffGate = Boolean(auth.step);
     const settle = async () => {
-      if (!handoffGate || !wf) return;
+      if (!wf) return;
       try {
-        await settleHandoffDecision(admin, {
-          runId,
-          workflow: { id: wf.id, user_id: wf.user_id, name: wf.name, agent_id: wf.agent_id ?? null },
-          callerId: user.id,
-          approved: approve,
-        });
+        if (handoffGate) {
+          await settleHandoffDecision(admin, {
+            runId,
+            workflow: { id: wf.id, user_id: wf.user_id, name: wf.name, agent_id: wf.agent_id ?? null },
+            callerId: user.id,
+            approved: approve,
+          });
+          return;
+        }
+        // THE OWNER'S GATE (approval · guardrail hold) — ONE DEED ONE DOOR: the same resume that
+        // decides the run clears the deck ask an UNBOUND park raised (lib/workflows/standing.ts).
+        // A workflow with a standing binding raised no such row, and this read finds none.
+        const { settleApprovalAsk } = await import('@/lib/workflows/standing');
+        await settleApprovalAsk(admin, { runId, approved: approve, supplied: gate.kind === 'input' });
       } catch { /* the run row already carries the decision */ }
     };
+
+    // ── THE INPUT STATION (relay canvas, THE WAVE): this park asks for MATERIAL, so the door that
+    // answers it takes material. NO LYING DOOR in either direction: a bare approve is refused here
+    // (approving supplies nothing, and the station would resume on an empty page), while a REJECT
+    // falls through to the ordinary hold-back below — declining to supply is a real answer.
+    //
+    // WHAT THE PERSON SUPPLIED BECOMES THE STATION'S OWN STEP OUTPUT, appended under the SAME
+    // conditional claim that takes the run out of its park (a double-send can only win once). The
+    // run then re-enters through `resumeSeeded`, which passes NO human gate — so a later approval
+    // parks again by construction, never silently passed by an input answer. ──
+    if (gate.kind === 'input' && approve !== false) {
+      if (!body.input || (!String(body.input.text ?? '').trim() && !String(body.input.kbFileId ?? '').trim())) {
+        return NextResponse.json({
+          error: 'This run is waiting for something from you, not a yes or no — paste it, or pin a document.',
+        }, { status: 409 });
+      }
+      // THE ONE ANSWER (THE WAVE part 2): everything a supply IS — the ownership read, the size
+      // ceiling, the document's own-user rule, the exactly-once claim, the settled deck ask, the
+      // tray pin — lives in `answerInputStation` and is shared BYTE-FOR-BYTE with the sayable door
+      // (`supply_run_input` in lib/tools/worker-tasks.ts). A second door must not mean a second set
+      // of rules. What stays HERE is only what is this door's own shape: the bare-approve refusal
+      // above, and the after() re-entry below.
+      const { answerInputStation } = await import('@/lib/workflows/input-station');
+      const answered = await answerInputStation(admin, {
+        runId, callerId: user.id, input: body.input,
+      });
+      if (!answered.ok) return NextResponse.json({ error: answered.error }, { status: answered.status });
+      const pinned = answered.pinned;
+
+      after(async () => {
+        try {
+          const { runWorkflow } = await import('@/lib/workflows/run-workflow');
+          await runWorkflow({ workflowId: run.workflow_id, runId, triggerSource: 'manual', resumeSeeded: true });
+        } catch (e) { console.error('[runs/resume:input]', e); }
+      });
+      return NextResponse.json({ ok: true, status: 'resuming', supplied: true, pinned });
+    }
 
     if (!approve) {
       const { error: rejErr } = await admin.from('workflow_runs').update({

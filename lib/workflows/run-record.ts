@@ -133,6 +133,44 @@ async function peopleOf(
   return out;
 }
 
+/** The batched half of `decisionsOf`, for a whole page of runs. */
+export type DecisionInputs = {
+  commitmentsByRun: Map<string, CommitmentRow[]>;
+  people: Map<string, { name: string | null; role: string | null }>;
+};
+
+/** ONE READ FOR A PAGE OF RUNS (latency, Aug 25 — the deep-dive's cold paint).
+ *
+ *  `decisionsOf` reads a run's handoff commitments and then the deciders' names; done per run over
+ *  a 30-run history that is ~90 round-trips for a single paint. The rows are keyed by
+ *  `source_id = run.id`, so the whole page is ONE `.in()` — and every decider on the page is ONE
+ *  more. Semantics are byte-identical: same columns, same `created_at` ordering, same 50-row cap
+ *  per run, and a failed read degrades to an empty map exactly as the per-run try/catch did. */
+export async function prefetchDecisionInputs(
+  admin: SupabaseClient,
+  runIds: string[],
+): Promise<DecisionInputs> {
+  const commitmentsByRun = new Map<string, CommitmentRow[]>();
+  const ids = [...new Set(runIds.map(String).filter(Boolean))];
+  if (!ids.length) return { commitmentsByRun, people: new Map() };
+  let rows: Array<CommitmentRow & { source_id: string }> = [];
+  try {
+    const { data } = await admin.from('commitments')
+      .select('id, user_id, description, status, resolved_reason, resolved_at, created_at, source_id')
+      .eq('source', 'handoff').in('source_id', ids)
+      .order('created_at', { ascending: true });
+    rows = (data ?? []) as Array<CommitmentRow & { source_id: string }>;
+  } catch { /* an unreadable ledger is a run with no handoff decisions, never a wrong one */ }
+  for (const r of rows) {
+    const key = String(r.source_id);
+    const arr = commitmentsByRun.get(key) ?? [];
+    if (arr.length < 50) arr.push(r); // the per-run cap the single-run read applies
+    commitmentsByRun.set(key, arr);
+  }
+  const people = await peopleOf(admin, rows.map((r) => String(r.user_id)));
+  return { commitmentsByRun, people };
+}
+
 /** EVERY HUMAN GATE OF THIS RUN, oldest first.
  *
  *  APPROVAL steps: the gate's own step output is the record — `[Approved by the user…]` means
@@ -149,6 +187,12 @@ export async function decisionsOf(
   args: {
     run: Pick<RunLike, 'id' | 'status' | 'step_outputs' | 'completed_at'>;
     workflow: { steps?: WorkflowStep[] | null };
+    /** THE BATCHED READ (latency): the handoff commitments and their people, already fetched for a
+     *  WHOLE PAGE of runs by `prefetchDecisionInputs`. Per-run this module issued 1 commitments
+     *  read + 2 people reads, so a 30-run deep-dive fired ~90 queries for one paint. When present
+     *  the rows are read from here instead — same rows, same order, same decisions; absent, the
+     *  single-run path below is untouched (the run-record drawer still calls it that way). */
+    prefetch?: DecisionInputs;
   },
 ): Promise<Decision[]> {
   const { run, workflow } = args;
@@ -206,16 +250,21 @@ export async function decisionsOf(
     WorkflowStep & { label?: string; ask?: string; sla_hours?: number }
   >;
   let rows: CommitmentRow[] = [];
-  try {
-    const { data } = await admin.from('commitments')
-      .select('id, user_id, description, status, resolved_reason, resolved_at, created_at')
-      .eq('source', 'handoff').eq('source_id', run.id)
-      .order('created_at', { ascending: true }).limit(50);
-    rows = (data ?? []) as CommitmentRow[];
-  } catch { rows = []; }
+  if (args.prefetch) {
+    rows = args.prefetch.commitmentsByRun.get(String(run.id)) ?? [];
+  } else {
+    try {
+      const { data } = await admin.from('commitments')
+        .select('id, user_id, description, status, resolved_reason, resolved_at, created_at')
+        .eq('source', 'handoff').eq('source_id', run.id)
+        .order('created_at', { ascending: true }).limit(50);
+      rows = (data ?? []) as CommitmentRow[];
+    } catch { rows = []; }
+  }
 
   if (rows.length) {
-    const people = await peopleOf(admin, rows.map((r) => String(r.user_id)));
+    const people = args.prefetch?.people
+      ?? await peopleOf(admin, rows.map((r) => String(r.user_id)));
     // A run with exactly ONE handoff step can name its gate and its SLA with certainty. With
     // several, the commitment rows carry no step id — so the ask is read from the row's own
     // description and the SLA stays null rather than being guessed from the wrong step.
@@ -256,6 +305,8 @@ export async function summarizeRun(
   admin: SupabaseClient,
   run: Pick<RunLike, 'id' | 'workflow_id' | 'status' | 'step_outputs' | 'started_at' | 'completed_at' | 'created_at'>,
   workflow: { steps?: WorkflowStep[] | null },
+  /** Batched decision inputs for a page of runs — see `prefetchDecisionInputs`. */
+  prefetch?: DecisionInputs,
 ): Promise<RunSummary> {
   const outs = outputsOf(run);
   const startedAt = run.started_at ?? run.created_at;
@@ -281,7 +332,7 @@ export async function summarizeRun(
     executedStepLabels,
     reviewStepLabels,
     gateFindings,
-    decisions: await decisionsOf(admin, { run, workflow }),
+    decisions: await decisionsOf(admin, { run, workflow, prefetch }),
   };
 }
 

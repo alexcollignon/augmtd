@@ -68,8 +68,12 @@ export const getMyWorkspace = cache(fetchWorkspace);
 
 // Features-only, works with any client (incl. the admin client used by internal/AgentOS
 // routes that have no cookie session). Falls back to DEFAULT_FEATURES.
+// LATENCY: it reads through getMyWorkspace, NOT fetchWorkspace — a route that BOTH gates on a
+// feature (requireFeature → getMyWorkspace) and reads the feature map used to fire the identical
+// `company_members` select twice per request. React's cache() is keyed on (userId, client), so a
+// caller with its own admin client simply misses the cache and pays what it paid before.
 export async function getWorkspaceFeatures(userId: string, supabase: SupabaseClient) {
-  const ws = await fetchWorkspace(userId, supabase);
+  const ws = await getMyWorkspace(userId, supabase);
   const { DEFAULT_FEATURES } = await import('./types');
   return ws?.features ?? DEFAULT_FEATURES;
 }

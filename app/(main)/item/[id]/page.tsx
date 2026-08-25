@@ -1,5 +1,4 @@
-import Link from 'next/link';
-import { ArrowLeftIcon } from '@heroicons/react/24/outline';
+import { BackLink } from '@/components/ui';
 import { guardFeaturePage } from '@/lib/workspace/guards';
 import { ItemDetail, type ItemKind } from '@/components/home/item-detail';
 
@@ -22,12 +21,12 @@ export default async function ItemPage({
     <div className="flex-1 min-w-0 h-full flex flex-col bg-white">
       {/* Back bar — mirrors the deep-dive shell */}
       <div className="flex-shrink-0 flex items-center px-5 py-3 border-b border-neutral-200 bg-white/95 backdrop-blur">
-        <Link
-          href="/home"
-          className="inline-flex items-center gap-1.5 text-[13px] font-medium text-neutral-500 hover:text-indigo-600 transition-colors"
-        >
-          <ArrowLeftIcon className="w-4 h-4" />Back to Home
-        </Link>
+        {/* THE SAME CLASS as the frame address: this page is reached from an entity room, a
+            workflow's standing commitment, the timeline — not only the Home. Back returns where
+            you came from; the Home is the fallback for a genuinely cold arrival (a refresh or a
+            deep link), which is this page's whole reason to exist. The @modal twin keeps its own
+            router.back() self-dismiss — that intercept ALWAYS has the Home underneath it. */}
+        <BackLink fallback="/home">Back to Home</BackLink>
       </div>
       {/* Body — the ItemDetail owns its own scroll (thread scrolls, composer docks) AND its own
           centering/width: single column caps at the classic readable width; a two-column breakdown

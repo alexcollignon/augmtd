@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import Link from 'next/link';
 import { MarkdownText } from '@/components/work/chat-message';
 import {
   ChevronLeftIcon,
@@ -428,12 +429,14 @@ function ArtifactDetailView({ artifact, threadId, allArtifacts, onBack, onClose,
             {/* The ADDRESS is one more click from the panel (the Claude idiom): chat card →
                 side panel → full screen. */}
             <div className="flex items-center justify-end px-4 py-1.5 border-b border-neutral-100 flex-shrink-0">
-              <a
+              {/* A Link, NOT a plain <a>: a full document navigation would land the address on a
+                  fresh history, and its back arrow could then only guess where you came from. */}
+              <Link
                 href={`/frames/${artifact.id}`}
                 className="text-[11.5px] font-medium text-neutral-400 hover:text-indigo-600 transition-colors"
               >
                 Full screen →
-              </a>
+              </Link>
             </div>
             <div className="flex-1 min-h-0">
               <FrameCard artifactId={artifact.id} title={artifact.title} full />

@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import {
   BoltIcon, CheckIcon, FolderIcon, PauseIcon, PlayIcon,
@@ -27,7 +28,7 @@ import { ExpandableRows } from '@/components/home/expandable-rows';
 import ProcessDrawer, { GateChip, GateFindings } from '@/components/workflows/process-drawer';
 import RunMaterialSheet, { asksForMaterial, type RunMaterial } from '@/components/workflows/run-material-sheet';
 import { WorkflowMark } from '@/components/workflows/workflow-detail';
-import { PROCESS_BUCKETS } from '@/lib/workflows/process-state';
+import { PROCESS_BUCKETS, GATE_WORDS } from '@/lib/workflows/process-state';
 import { FIRE_LIMIT_DEFAULT } from '@/lib/workflows/fire-limit';
 import { doorLabel } from '@/lib/workflows/trigger-sources';
 import type { ReactionDoor } from '@/lib/workflows/trigger-sources';
@@ -55,7 +56,9 @@ type LedgerRow = {
    *  what this run works on — the event doors and the inputs tray's flag. Both optional: unserved
    *  means the row keeps exactly today's one-click Run. */
   doors?: Array<{ source: string; label: string }>;
-  inputs?: { acceptMaterial?: boolean } | null;
+  /** `stations` = how many ⌨ INPUT stations this workflow carries; ≥1 means the run asks by name
+   *  and the generic sheet steps aside (see asksForMaterial). */
+  inputs?: { acceptMaterial?: boolean; stations?: number } | null;
 };
 
 /** Served readiness — the reason ALREADY names the first missing thing, so no surface rewords it. */
@@ -85,7 +88,7 @@ type LedgerPayload = {
   workers: Worker[]; team?: Array<{ id: string; name: string; scheduleLabel: string | null; ownerName: string }>; emailFeature?: boolean;
 };
 
-type DraftStep = { type: string; label?: string; tool?: string };
+type DraftStep = { type: string; label?: string; tool?: string; ask?: string };
 type Draft = {
   name: string; description: string | null;
   trigger: { type: string; cron?: string; label?: string; timezone?: string; when?: string };
@@ -121,6 +124,13 @@ const HOME_WORD: Record<string, string> = { message: 'a message', document: 'a d
 const stepWord = (s: DraftStep): string => {
   if (s.type === 'verify') return 'Verify against sources';
   if (s.type === 'approval') return 'Your approval';
+  // THE INPUT STATION (relay canvas, THE WAVE): the card promises a PAUSE, so it says what will be
+  // asked for — a station whose question the reader can't see is a surprise, not a plan.
+  if (s.type === 'input') {
+    const ask = typeof s.ask === 'string' ? s.ask.trim() : '';
+    const head = ask.length > 40 ? `${ask.slice(0, 40).trimEnd()}…` : ask;
+    return head ? `It asks you for — ${head}` : 'It asks you for something';
+  }
   return s.label || s.tool || s.type;
 };
 const shortDate = (at: string | null) => (at ? new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
@@ -336,7 +346,11 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
     if (blocked) { toast(blocked); return; }
     // THE MATERIAL DOOR opens only for a workflow that asks for material; every other row keeps
     // its one-click Run exactly as it was.
-    if (asksForMaterial({ acceptsMaterial: w.inputs?.acceptMaterial, hasReactionDoors: (w.doors?.length ?? 0) > 0 })) {
+    if (asksForMaterial({
+      acceptsMaterial: w.inputs?.acceptMaterial,
+      hasReactionDoors: (w.doors?.length ?? 0) > 0,
+      hasInputStations: (w.inputs?.stations ?? 0) > 0,
+    })) {
       setMaterialFor(w);
       return;
     }
@@ -432,14 +446,25 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
         {!draft ? (
           <form
             onSubmit={(e) => { e.preventDefault(); void draftIt(); }}
-            className="flex items-center gap-2 rounded-2xl border border-neutral-200 bg-white px-4 py-2.5 focus-within:border-indigo-300"
+            className="flex items-end gap-2 rounded-2xl border border-neutral-200 bg-white px-4 py-2.5 focus-within:border-indigo-300"
           >
-            <BoltIcon className="w-[18px] h-[18px] text-neutral-400 flex-shrink-0" />
-            <input
+            <BoltIcon className="w-[18px] h-[18px] text-neutral-400 flex-shrink-0 mb-[5px]" />
+            {/* Grows with its content to a cap, then scrolls (a pasted brief must be READABLE,
+                not a horizontal ticker). Enter drafts; Shift+Enter is a newline. */}
+            <textarea
               value={describe}
-              onChange={(e) => setDescribe(e.target.value)}
+              onChange={(e) => {
+                setDescribe(e.target.value);
+                const el = e.currentTarget;
+                el.style.height = 'auto';
+                el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void draftIt(); }
+              }}
+              rows={1}
               placeholder='Describe one — "Every Monday at 9, a competitor digest to my inbox"'
-              className="flex-1 bg-transparent text-[13px] text-neutral-800 placeholder:text-neutral-400 outline-none"
+              className="flex-1 bg-transparent text-[13px] text-neutral-800 placeholder:text-neutral-400 outline-none resize-none min-h-[28px] max-h-[220px] overflow-y-auto leading-5 py-1"
             />
             <Button size="sm" type="submit" disabled={!describe.trim() || drafting}>
               {drafting ? 'Drafting…' : 'Draft it'}
@@ -650,8 +675,10 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      {/* The name is the door to the workflow's own home (the deep-dive). */}
-                      <a href={`/workflows/${w.id}`} className="truncate text-[13px] font-medium text-neutral-800 hover:text-indigo-600 transition-colors">{w.name}</a>
+                      {/* The name is the door to the workflow's own home (the deep-dive). A Link,
+                          NOT a plain <a>: a full document navigation resets the in-app history
+                          the deep-dive's back affordance reads, so back could only ever guess. */}
+                      <Link href={`/workflows/${w.id}`} className="truncate text-[13px] font-medium text-neutral-800 hover:text-indigo-600 transition-colors">{w.name}</Link>
                       {w.hasVerify && <ShieldCheckIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" title="Verified against sources before delivery" />}
                       {w.hasApproval && <CheckIcon className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" title="Waits for your approval before delivering" />}
                       {/* THE READINESS CHIP — quiet, and it carries its own reason on hover. The
@@ -682,7 +709,9 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                       {parked && (
                         <>
                           <span className={parkedOnYou ? 'text-amber-600' : 'text-violet-600'}>
-                            {parkedOnYou ? 'waiting for your approval' : `waiting on ${parked.waitingOn?.name ?? 'a teammate'}`}
+                            {parkedOnYou
+                              ? GATE_WORDS[parked.gateKind ?? 'approval'].waiting
+                              : `waiting on ${parked.waitingOn?.name ?? 'a teammate'}`}
                           </span>
                           <span className="text-neutral-300">·</span>
                         </>
@@ -730,10 +759,12 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                       className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors">
                       {w.status === 'paused' ? <PlayIcon className="w-4 h-4" /> : <PauseIcon className="w-4 h-4" />}
                     </button>
-                    <a href={`/studio?workflow=${w.id}&from=workflows`}
+                    {/* A soft nav, like the deep-dive's own pencil: a plain <a> here reloaded the
+                        whole document (and threw away the ledger's warm cache with it). */}
+                    <Link href={`/studio?workflow=${w.id}&from=workflows`}
                       className="rounded-lg px-2 py-1 text-[12px] text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 transition-colors whitespace-nowrap">
                       Edit in Studio
-                    </a>
+                    </Link>
                     {confirmDelete === w.id ? (
                       <button onClick={() => void deleteWorkflow(w)}
                         className="rounded-lg px-2 py-1 text-[12px] text-red-600 bg-red-50 hover:bg-red-100 transition-colors whitespace-nowrap">

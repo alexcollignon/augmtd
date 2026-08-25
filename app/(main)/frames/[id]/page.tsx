@@ -21,6 +21,9 @@ export default async function FramePage({ params }: { params: Promise<{ id: stri
   // Failure = live:false and no history (a bar that over-claims is worse than one that stays quiet).
   let live = false;
   let versions: FrameVersionMeta[] = [];
+  // THE NATURAL PARENT of a bound frame is the workflow it belongs to — the same binding the
+  // share moment reads. A cold arrival on an unbound frame has no parent but the Home.
+  let parentWorkflowId: string | null = null;
   try {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -31,9 +34,10 @@ export default async function FramePage({ params }: { params: Promise<{ id: stri
         versions?: unknown;
       } | null;
       live = !!loose?.binding?.workflowId;
+      parentWorkflowId = loose?.binding?.workflowId ?? null;
       versions = usableVersions(loose?.versions);
     }
   } catch { /* the card's own door still tells the truth about the frame */ }
 
-  return <FrameFullView artifactId={id} live={live} versions={versions} />;
+  return <FrameFullView artifactId={id} live={live} versions={versions} parentWorkflowId={parentWorkflowId} />;
 }

@@ -4,6 +4,7 @@ import {
   executeListTasks, executeCreateTask, executeGetTask, executeUpdateTask,
   executeRunTask, executeDuplicateTask, executeShareTask, executeListTeamTasks,
   executeUseTask, executeDeleteTask, executeListWorkerDocuments, executeGetWorkerDocument,
+  executeSupplyRunInput,
 } from '@/lib/tools/worker-tasks';
 import { executeListSkills, executeApplySkill } from '@/lib/tools/worker-skills';
 
@@ -98,6 +99,18 @@ export async function POST(request: NextRequest) {
 
       case 'run_task':
         result = await executeRunTask(String(args.task_id ?? ''), user_id, ac, args.thread_id as string | undefined);
+        break;
+
+      // THE SAYABLE SUPPLY (THE WAVE) — the AgentOS half of the same deed. The executor holds the
+      // rules; both runtimes are passthrough. (The Python tool ships on the next box redeploy; the
+      // TS side accepts it today, exactly as `trigger_doors` did.)
+      case 'supply_run_input':
+        result = await executeSupplyRunInput({
+          run_id: args.run_id as string | undefined,
+          text: args.text as string | undefined,
+          kb_file_name: args.kb_file_name as string | undefined,
+          pin: args.pin === true,
+        }, user_id, ac);
         break;
 
       case 'duplicate_task':

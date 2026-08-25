@@ -278,7 +278,7 @@ const UNREVIEWED_PAUSE_THRESHOLD = 3;
 /** THE GATE IS NEVER THE DELIVERABLE: step types whose output is a MARKER or a CARD, never work.
  *  Structural by type — the marker's wording is copy and must never be matched. See the full
  *  per-type decision comment at the deliverable picker. */
-export const NON_CONTENT_STEP_TYPES: ReadonlySet<string> = new Set(['approval', 'handoff', 'case']);
+export const NON_CONTENT_STEP_TYPES: ReadonlySet<string> = new Set(['approval', 'handoff', 'case', 'input']);
 
 /** Pure + exported so the gate can assert the law without running a workflow. */
 export function isContentStepOutput(o: { step_type?: string }): boolean {
@@ -347,10 +347,13 @@ export interface RunWorkflowOptions {
    *  seed the completed step outputs from the run row and continue PAST the approval step
    *  that parked it. Requires runId. */
   resumeFromApproval?: boolean;
-  /** THE SUBPROCESS RESUME (relay canvas W3): this run was parked at a ⧉ station and its child has
-   *  delivered — seed the completed step outputs from the run row EXACTLY like resumeFromApproval,
-   *  but pass NO human gate (the station's own output was already appended by resumeParentsOf, so
-   *  the loop simply starts after it). Never set together with resumeFromApproval. */
+  /** THE SEEDED RESUME (relay canvas W3, extended by THE INPUT STATION): this run was parked at a
+   *  station whose OWN OUTPUT has already been appended by the door that answered it — the ⧉
+   *  station (resumeParentsOf writes the child's deliverable) or the input station (the resume
+   *  route writes what the person supplied). Seed the completed step outputs from the run row
+   *  EXACTLY like resumeFromApproval, but pass NO human gate: the loop simply starts after the
+   *  answered station, so a LATER approval/handoff parks again, naturally. Never set together with
+   *  resumeFromApproval. */
   resumeSeeded?: boolean;
   /** STANDING REACTIONS (production arc step 6): the triggering event's context block — rides
    *  every AI step (including the verify gate, for which it is legitimate source material).
@@ -500,8 +503,9 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
     const { data: parked } = await admin.from('workflow_runs').select('step_outputs, status').eq('id', runId).maybeSingle();
     const seeded = (parked?.step_outputs ?? []) as StepOutput[];
     stepOutputs.push(...seeded);
-    // THE SUBPROCESS RESUME passes NO human gate: its station's output is already seeded, so the
-    // loop resumes at the next step and any later approval/handoff parks naturally.
+    // THE SEEDED RESUME passes NO human gate: the answered station's output is already seeded (a ⧉
+    // child's deliverable, or what a person supplied at an input station), so the loop resumes at
+    // the next step and any later approval/handoff parks naturally.
     if (opts.resumeFromApproval) {
       for (let j = stepOutputs.length; j < steps.length; j++) {
         const t = (steps[j] as { type?: string }).type;
@@ -670,6 +674,44 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
           id: workflow.id, user_id: workflow.user_id, name: workflow.name,
           agent_id: (workflow as Workflow & { agent_id?: string }).agent_id ?? null,
         }, handoff, { runId: runId!, subject: workflow.name, preview });
+      } catch { /* the parked status is the source of truth; the ask is a surface */ }
+      return { runId: runId!, status: 'awaiting_approval', threadId };
+    }
+    // ── THE INPUT STATION (relay canvas, THE WAVE): the run stops and ASKS THE PERSON for what only
+    // they have at run time. Mechanically the approval branch's sibling — the same
+    // `awaiting_approval` park, the same loud-on-failure law — with two differences that follow
+    // from what it is: (1) its ask is a SUPPLY ask, raised on the owner's deck for EVERY park
+    // (bound or not — see narrateInputAsk's stated asymmetry: no standing room can hold a paste
+    // box); (2) it is never "passed" by a resume — the resume APPENDS what the person supplied as
+    // this step's own output and re-enters through `resumeSeeded`, so the loop starts after it and
+    // any later human gate parks again, naturally. ──
+    if ((step as { type?: string }).type === 'input') {
+      const inputStep = step as import('./types').InputStep;
+      const { inputAskOf } = await import('./input-station');
+      const askText = inputAskOf(inputStep);
+      if (opts.isTest) {
+        // Test/cadence-simulation runs never park — and never put an ask on anyone's deck. The
+        // stand-in is MARKED, so a test deliverable can never read as one built on real material.
+        stepOutputs.push({
+          step_id: step.id, step_type: 'input', label: step.label || 'Ask me for something',
+          output: `[Sample input — test mode] ${askText}`,
+        });
+        await checkpoint();
+        continue;
+      }
+      // PARK: same law as the approval branch — a park that cannot persist is a FAILED run.
+      const { error: parkErr } = await admin.from('workflow_runs').update({
+        status: 'awaiting_approval', step_outputs: stepOutputs,
+      }).eq('id', runId);
+      if (parkErr) {
+        runError = `The '${step.label || 'input'}' step could not park the run (${parkErr.message}). Apply migration 20260808_workflow_runs_approval_status.sql.`;
+        break;
+      }
+      try {
+        const { narrateInputAsk } = await import('@/lib/workflows/standing');
+        const prev = stepOutputs[stepOutputs.length - 1]?.output;
+        const preview = (typeof prev === 'string' ? prev : JSON.stringify(prev ?? '')).slice(0, 400);
+        await narrateInputAsk(admin, workflow, { runId: runId!, ask: askText, preview, stepId: step.id });
       } catch { /* the parked status is the source of truth; the ask is a surface */ }
       return { runId: runId!, status: 'awaiting_approval', threadId };
     }
@@ -922,6 +964,9 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
   //                delivery, so a pipeline ENDING at a gate is the common shape; treating the
   //                marker as content is how a one-line sentence became a fabricated dashboard.
   //   · handoff   EXCLUDED — the same marker shape ("[Approved]"), a teammate's decision.
+  //   · input     EXCLUDED — the station's output is what the PERSON handed over: the run's raw
+  //                source material, never its product. Delivering it would hand the user their own
+  //                paste back as the work (and let a marked test sample stand as a deliverable).
   //   · case      EXCLUDED — the case CARD names the subject the run is about; a subject is not
   //                a deliverable (its grounding already rode into the ai steps that follow).
   //   · verify    INCLUDED — the delivery gate RETURNS THE CORRECTED DRAFT. It IS content, and

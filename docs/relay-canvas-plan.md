@@ -331,10 +331,43 @@ zero-AI · file · loop), Hiring Policy tray, case filing (2 openings; accumulat
 output (validated series head), winner/decline emails as DRAFTS inside the gated deliverable.
 Spoken simplifications: ONE approval (not the whiteboard's two); emails never send.
 
-**⚠️ OPEN ENGINE GAP (owner call pending)**: an EVENT-FIRED run parked at approval gets NO deck
-ask — `narrateApprovalAsk` rides `openStandingCommitment`, which only a SCHEDULED workflow has;
-event-driven approvals are reachable via the workflows page + drawer only, never the Home
-attention surface.
+**⚠️ OPEN ENGINE GAP — CLOSED (THE WAVE, Aug 25)**: an EVENT-FIRED run parked at approval got NO
+deck ask — `narrateApprovalAsk` rides `openStandingCommitment`, which only a SCHEDULED workflow
+has; event-driven approvals were reachable via the workflows page + drawer only, never the Home
+attention surface (found live: a pilot had six runs waiting at his approval and his Home never
+said so). See THE WAVE below.
+
+## THE WAVE (Aug 25) — AN EVENT-FIRED RUN THAT DID THE RIGHT THING MUST REACH THE USER
+
+Two live pilot finds, one theme; suite `scripts/smoke-relay.ts` **733/733 ×2** (+47: AK · KK),
+processes 158/158, tsc green.
+
+- **A — THE UNBOUND APPROVAL ASK** (`lib/workflows/standing.ts`): a park with NO standing binding
+  raises the SAME deck ask the handoff limb raises — a `commitments` row (you_owe ·
+  `source='handoff'` · `source_id=<runId>` · due TODAY) on the OWNER'S deck (`ownerOf`, reused)
+  plus the same `approval` component turn in its room. Reusing the handoff SOURCE WORD is the
+  whole design: the judge's handoff floor (deciding IS the work), the deck row, and the commitment
+  deep-dive's decision card (which already serves the gated work through `handoffContextFor` and
+  posts to the ONE resume door) are all correct with ZERO new surface. THE GUARD IS STRUCTURAL —
+  it fires only from the `!c` branch of `narrateApprovalAsk`/`narrateGuardrailHold`, so a
+  scheduled park keeps its standing-room narration and no run ever wears two attention rows.
+  Titled from the EXISTING subject ladder (`deriveProcessRows`, never a second derivation),
+  exactly-once per run (an open ask is read before any insert), cleared on approve AND reject
+  through the ONE resume door (`settleApprovalAsk` in the route's single settle seam), swept off
+  the dispatcher when its run is deleted (`sweepOrphanedRunAsks`). Test mode raises nothing (both
+  parks return before their narration). Every limb best-effort.
+- **B — THE KICK** (`app/api/internal/runs/kick`): a live-fired run sat queued up to an hour — the
+  enqueuing caller is usually a WEBHOOK whose `after()` dies with its response, leaving the hourly
+  backstop as the only start. Now the house 202 pattern: `fireReaction` dispatches a
+  fire-and-forget POST **in request scope** (behind a request-scope probe, so a script can never
+  kick a deployed app; base = `AUGMTD_WEBHOOK_BASE_URL || NEXT_PUBLIC_APP_URL`, nothing invented;
+  bearer `AGENTOS_SECRET`, the established internal secret) and the route runs it in its own 300s
+  window. **ONE CLAIM, THREE LANES**: `claimQueuedEventRun` + `eventRunContext` (context rebuild
+  incl. the subprocess baton fallback) are now shared functions the kick AND the backstop call —
+  the drain keeps its own fire-record claim, and the deferred flag still partitions the lanes (a
+  deferred fire returns before the kick, and the route refuses one anyway). The inline `after()`
+  fallback survives for a host with no kick door; the backstop is untouched (proved live: with the
+  kick door unreachable the run stays queued and the backstop still starts it).
 
 ## GATES (laws-need-gates — each wave ships its floor)
 - The four-door parity sweep per primitive (generate-config emits · chat args accept · Studio
@@ -402,6 +435,34 @@ end to end (relay 669/669 · frames 228 · processes 136 · run-record 102 · ha
     appear in the material or BE the provided today; never derived, never inferred, never a
     plausible year; unsure → omit the date entirely, a footer is complete without one. One
     contract string, so the repair pass carries it by construction. Gates FC (frames 235).
+  - **THE INPUT STATION (Aug 25, owner-approved — "the run stops and asks ME")**: a step type
+    `input {ask, accepts}`. The run PARKS on the EXISTING `awaiting_approval` status (a new status
+    value is a silent park failure) and the GATE KIND distinguishes it in served state, exactly as
+    the handoff and ⧉ stations do — `parkedGateOf` gains kind `'input'`, `ProcessRow` gains
+    `gateKind`/`gateAsk`, and **ONE WORD TABLE** (`GATE_WORDS`) replaces every surface's literal
+    ("Needs input from you" · "waiting for something from you"). THE BOUNDARY LAW: things that
+    arrive on their own are DOORS, standing references are PINNED DOCS, an input station is only for
+    what the human alone has at run time. THE ASK: the wave's unbound limb, raised for EVERY park
+    (bound or not — stated asymmetry: no standing room can hold a paste box) and written WITHOUT the
+    `approval` component (a paste is not a yes/no). THE ANSWER IS THE STATION'S OWN STEP OUTPUT —
+    the ONE resume door takes `{input:{text?,kbFileId?,pin?}}`, appends the excerpt-marked
+    `[WHAT YOU SUPPLIED — <ask>]` block under a conditional claim, and re-enters through
+    `resumeSeeded`, which passes NO gate (proved live: input→ai→approval parks TWICE, and the ai
+    step read the paste's code word). Refusals are honest and named: nothing supplied (400) · an
+    oversized paste (413, pointing at the document door) · a foreign/absent doc (404,
+    indistinguishable) · a doc with no text in hand (409 — nothing hollow continues). Test mode
+    parks nobody and marks its sample. Surfaces: the deck card IS the door (paste box + the one
+    knowledge picker + an honest pin line — pinning writes the inputs tray, and the copy claims
+    "read on every run", never "won't ask again"); the drawer shows the station with NO verb it
+    cannot honour; the ledger's approval-debt list excludes it. Parity: Studio authors it,
+    `step_patch` edits it, `get_task` reads it, generate-config authors it from prose and gives the
+    rubric adapter's `[PASTE …]` placeholder its SECOND reading (per-run ask vs pinned document —
+    never both, pinned by default when ambiguous). Gates: relay **814/814 ×2** (+65: IN1–IN6),
+    processes 158/158; declared re-points — the ledger exclusion names two kinds, `resumeSeeded` has
+    two answered-station doors, `settle()` has three endings, the `!c` guard is asserted on the two
+    DECISION parks (raiseRunDecisionAsk now has three callers). Known inherited seam: a supply ask
+    is a `source='handoff'` commitment, so `run-record`'s decisionsOf lists it as a handoff decision
+    ("approved") — the same class the unbound approval ask already had; queued.
   - **F7 A SETTLED SCORE STAYS SETTLED**: run 2 re-derived run 1's settled "Experience 10/10 ·
     Overall 9.5" as "9/10 · 9.0" — the ledger remembered THAT an item arrived and nothing about
     what was concluded, so the grounding was all a later run had. THE CASE ATOM NOW CARRIES ITS
@@ -418,3 +479,38 @@ end to end (relay 669/669 · frames 228 · processes 136 · run-record 102 · ha
     restate AS RECORDED when ranking a previously screened candidate, re-derive only when the
     new arrival's material genuinely changes the picture and then SAY the score moved and why.
     Gates CA10 (live, zero AI) + the CS source floors (relay 686).
+
+## THE STATION DAY (Aug 25 — pilot-walk-driven; suites at close: relay 925/925 · processes 210/210 · excerpt-law 25/25 · frames 235/235 · run-record 102 · handoffs 250)
+
+One day, ten waves, every one traced to the owner's or the pilot's own walk:
+
+- **THE ATTENTION WAVE**: the unbound approval park raises a real deck ask (handoff-shaped,
+  exactly-once, cleared by the one resume door both directions, dispatcher-swept); THE KICK
+  starts event runs in seconds (one shared claim across kick/backstop/drain; deferred fires
+  unreachable — the drain owns them).
+- **THE PROMPT ADAPTER**: 300s ceiling; rubric-shape detection (deterministic-first); the
+  rubric rides VERBATIM by code sentinel-substitution with an unconditional sweep; span-scoped
+  placeholder stripping + the 60% survival floor (the paragraph-paste incident — a line-scoped
+  strip deleted a one-line paste's whole rubric while the gate fixture had newlines); the
+  unnamed-single-case authoring note.
+- **THE INPUT STATION**, whole: the step, the park, the deck ask (every park — no standing room
+  can hold a paste box), the resume payload, station-owned outputs (later gates re-park by
+  construction), readiness rule 10; DECLARED INPUTS AUTHOR STATIONS (a home is a thing that
+  exists — enforcement reads sanitised doors, never the model's wish list; the note speaks only
+  seated stations); ONE shared supply form (paste · pin w/ per-door presumption · attach) at
+  BOTH doors — THE GATE CARRIES ITS DEED (in-place answering in the drawer; the loading-flash
+  floor); ATTACH (sync extraction, KB-indexed, A SUPPLY IS AN ANSWER NOT AN ARRIVAL — the door
+  seam never fires); SAYABLE supply (`supply_run_input`, one implementation with the door,
+  ambiguity refuses by listing).
+- **NAV + PERF**: BackLink (back returns where you came from), New-chat removed (Home is the
+  chat door, first-click caret), Save & turn on (the draft dead-end loop), the grow-to-cap
+  describe composer, the instant-load doctrine over every workflows surface (the 90-query N+1
+  died; warm Back).
+- **Suite lessons of the day**: the smoke-frames AI fence had poisoned the WRONG Bedrock env
+  names (fenced nothing until the probe tier flip exposed it); tsx-eval module interop wraps
+  named exports (a proof harness false-alarmed twice); the `title` silent-column trap bit the
+  orchestrator's own verification (the house rule existed; recite it); a killed suite's probe
+  leftovers poison the next run — sweep before rerunning.
+- **Owner calls recorded**: supply-attach skips doors; pin presumption per door; attach capped
+  at sync-extraction size v1; the case wording stays as-is (case-as-property idea remains on
+  the table).

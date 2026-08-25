@@ -13,15 +13,14 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import { useState } from 'react';
-import Link from 'next/link';
-import { ArrowLeftIcon } from '@heroicons/react/24/outline';
+import { BackLink } from '@/components/ui';
 import { FrameCard } from '@/components/frames/frame-card';
 import { FrameShareControl } from './frame-share-control';
 import { FrameVersionPicker, sortVersions, versionBanner, type FrameVersionMeta } from './frame-version-picker';
 
 export function FrameFullView({
-  artifactId, live, versions,
-}: { artifactId: string; live: boolean; versions: FrameVersionMeta[] }) {
+  artifactId, live, versions, parentWorkflowId = null,
+}: { artifactId: string; live: boolean; versions: FrameVersionMeta[]; parentWorkflowId?: string | null }) {
   const [selected, setSelected] = useState<number | null>(null);
   const sel = selected === null ? null : sortVersions(versions).find((r) => r.v === selected) ?? null;
   // Current → the plain door; a version → the same door, keyed. One endpoint, one renderer.
@@ -30,12 +29,14 @@ export function FrameFullView({
   return (
     <div className="flex-1 min-w-0 h-full flex flex-col bg-white">
       <div className="flex-shrink-0 flex items-center gap-3 px-5 py-3 border-b border-neutral-200 bg-white/95 backdrop-blur">
-        <Link
-          href="/home"
-          className="inline-flex items-center gap-1.5 text-[13px] font-medium text-neutral-500 hover:text-indigo-600 transition-colors"
-        >
-          <ArrowLeftIcon className="w-4 h-4" />Back to Home
-        </Link>
+        {/* BACK RETURNS WHERE YOU CAME FROM (owner walk — "back throws to home"). This bar used to
+            say `href="/home"` verbatim, so a reader who arrived from the workflow's Frames tab, a
+            chat card, or the artifact panel was thrown to a screen they never came from. The
+            fallback is the frame's OWN parent when it has one (its bound workflow), the Home only
+            when it genuinely has none. */}
+        <BackLink fallback={parentWorkflowId ? `/workflows/${parentWorkflowId}` : '/home'}>
+          {parentWorkflowId ? 'Back to the workflow' : 'Back to Home'}
+        </BackLink>
         <div className="ml-auto flex items-center gap-3 min-w-0">
           <FrameVersionPicker versions={versions} value={selected} onChange={setSelected} />
           {/* THE SHARE MOMENT (law 6) — quiet until asked, and only ever about the present. */}

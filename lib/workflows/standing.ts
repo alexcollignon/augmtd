@@ -130,6 +130,222 @@ export async function narrateStandingRun(
   } catch { /* narration is bookkeeping — never breaks a run */ }
 }
 
+// ── THE UNBOUND APPROVAL ASK (Aug 25 — found live: a pilot had six runs waiting at his approval
+// and his Home never said so) ─────────────────────────────────────────────────────────────────────
+//
+// THE DECK IS THE ATTENTION SURFACE (experience spec). A parked run's ask reached it only through
+// the standing commitment's room — which ONLY A SCHEDULED workflow has. Event-fired, material and
+// manual runs parked INVISIBLY: reachable from the workflows page and the drawer, absent from the
+// Home. This limb closes that, and ONLY that: it fires from the `!c` branch of the two narrations
+// above, so a scheduled park keeps its standing-room narration byte-for-byte and no run ever wears
+// two attention rows.
+//
+// THE SHAPE IS THE HANDOFF LIMB'S (lib/workflows/handoffs.ts `askAssignee`), deliberately: a
+// `commitments` row (direction you_owe, source='handoff', source_id=<runId>, due TODAY) plus the
+// same `approval` component turn in that commitment's room. Same source word = every existing
+// reader is already correct, with zero new surface: the judge's HANDOFF FLOOR (deciding IS the
+// work — no drafter, no delegation), the deck row, the commitment deep-dive's decision card (which
+// serves the gated work through `handoffContextFor` and posts Approve/Hold to the ONE resume door),
+// and the clearing read below.
+//
+// Every limb is best-effort: a failed ask never costs the park (the parked run status is the
+// truth). Test mode never reaches here — both parks return before their narration when isTest.
+const DECISION_SOURCE = 'handoff';
+
+const sameWords = (a: string, b: string) =>
+  a.trim().toLowerCase().replace(/\s+/g, ' ') === b.trim().toLowerCase().replace(/\s+/g, ' ');
+
+/** THE RUN'S SUBJECT, through THE EXISTING DERIVATION (process-state's subject ladder — the event's
+ *  own title for an event run, the deliverable title for a manual one, the case, then the workflow
+ *  name). Never re-derived here: two readings of "what is this run about" is the drift class. */
+async function runSubject(admin: SupabaseClient, wf: WfRow, runId: string): Promise<string> {
+  try {
+    const { data: r } = await admin.from('workflow_runs')
+      .select('id, workflow_id, status, triggered_by, error, started_at, completed_at, created_at')
+      .eq('id', runId).maybeSingle();
+    if (!r) return '';
+    const { deriveProcessRows } = await import('./process-state');
+    // step_outputs is deliberately not selected: only the SUBJECT is read here, and a park's
+    // snapshot can be large.
+    const rows = await deriveProcessRows(
+      admin, wf.user_id,
+      [{ ...(r as Record<string, unknown>), step_outputs: null }] as never,
+      new Map([[wf.id, { name: wf.name }]]),
+    );
+    return String(rows[0]?.subject ?? '').trim();
+  } catch { return ''; }
+}
+
+/** Raise (or re-use) the owner's deck ask for a run parked on a human decision.
+ *  EXACTLY-ONCE PER RUN: an open ask for this run is never doubled — a re-park after a retry finds
+ *  the standing row and only re-speaks its card (which the dedupe key folds in place). */
+async function raiseRunDecisionAsk(
+  admin: SupabaseClient, wf: WfRow,
+  ask: {
+    runId: string; instruction: string; preview: string; text: string; dedupeKey: string; held?: boolean;
+    /** THE INPUT STATION: the ask is for MATERIAL, not a yes/no — the row's description leads with
+     *  the station's own words and NO `approval` component is written (see narrateInputAsk). */
+    supply?: string;
+  },
+): Promise<void> {
+  try {
+    // THE ACCOUNTABILITY LAYER, REUSED (lib/workflows/owner.ts): the ask belongs to whoever owns
+    // the workflow — the explicit owner row if there is one, else the creator.
+    const { ownerOf } = await import('./owner');
+    const owner = await ownerOf(admin, wf.id, wf.user_id);
+
+    const { data: existing } = await admin.from('commitments').select('id, description')
+      .eq('source', DECISION_SOURCE).eq('source_id', ask.runId).eq('status', 'open')
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+
+    let commitmentId = existing?.id ? String(existing.id) : null;
+    // THE ASK ON THE DECK NAMES WHAT THE RUN IS ACTUALLY WAITING FOR (Aug 25, the multi-station
+    // wave). Re-use is keyed on the RUN, but a run with several stations parks several times — and
+    // an open row still wearing station 1's words while the run waits at station 2 is a lie the
+    // person would answer with the wrong material. If a re-used row's description no longer leads
+    // with this station's ask, it is rewritten to it. (Approval asks are unaffected: their text is
+    // the same sentence every time, so this never fires for them.)
+    if (commitmentId && ask.supply) {
+      const now = String(existing?.description ?? '');
+      if (!now.startsWith(ask.supply.slice(0, 60))) {
+        const subject = await runSubject(admin, wf, ask.runId);
+        const title = subject && !sameWords(subject, wf.name) ? `${subject} — ${wf.name}` : wf.name;
+        await admin.from('commitments')
+          .update({ description: `${ask.supply} — ${title}`.slice(0, 200) })
+          .eq('id', commitmentId);
+      }
+    }
+    if (!commitmentId) {
+      const subject = await runSubject(admin, wf, ask.runId);
+      const title = subject && !sameWords(subject, wf.name) ? `${subject} — ${wf.name}` : wf.name;
+      const { data: created } = await admin.from('commitments').insert({
+        user_id: owner.userId,
+        direction: 'you_owe',
+        // The supply ask wears `<ask> — <subject>` — the SAME shape askAssignee writes, which is
+        // what `askFromDescription` (handoff-context, run-record) parses back into the ask.
+        description: (ask.supply ? `${ask.supply} — ${title}` : `Approve before it delivers: ${title}`).slice(0, 200),
+        counterparty: 'Your team',
+        // Due TODAY — the same stamp the standing park uses: a decision owed now.
+        due_date: new Date().toISOString().slice(0, 10),
+        source: DECISION_SOURCE,
+        source_id: ask.runId,
+        status: 'open',
+      }).select('id').maybeSingle();
+      commitmentId = created?.id ? String(created.id) : null;
+    }
+    if (!commitmentId) return;
+
+    const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
+    const roomKey = await roomKeyForItem(admin, owner.userId, 'commitment', commitmentId);
+    await writeRoomTurn(admin, owner.userId, roomKey, {
+      role: 'system',
+      text: ask.text,
+      // NO LYING DOOR: the `approval` component renders Approve / Hold back. A station waiting for
+      // MATERIAL cannot be answered with a yes/no (the resume door refuses a bare approve there),
+      // so the supply ask writes the narration alone — the deep-dive's input card, served on the
+      // commitment payload, is the door that can actually be answered.
+      ...(ask.supply ? {} : {
+        component: {
+          key: 'approval' as const, refId: ask.runId,
+          state: {
+            runId: ask.runId, workflowId: wf.id, name: wf.name,
+            instruction: ask.instruction, preview: ask.preview,
+            ...(ask.held ? { held: true } : {}),
+          },
+        },
+      }),
+      dedupeKey: ask.dedupeKey,
+    });
+  } catch { /* the parked run status is the source of truth; the ask is a surface */ }
+}
+
+/** THE INPUT STATION'S ASK (relay canvas, THE WAVE): a run parked at an `input` step needs
+ *  something only the owner has. It raises the SAME deck ask the unbound approval raises — one
+ *  `commitments` row on the owner's deck, cleared through the ONE resume door.
+ *
+ *  THE ASYMMETRY, STATED: unlike the approval ask, this one fires for EVERY park, bound or not —
+ *  a scheduled workflow included. The bound approval can live in the standing commitment's room
+ *  because that room can render the `approval` component and the whole decision is a yes/no. There
+ *  is no standing-room equivalent for SUPPLYING CONTENT: the paste box and the pin-a-document door
+ *  live on the input ask's own deep-dive, so a scheduled run with no ask row would be a park no
+ *  surface could answer. The standing row keeps its own meaning (the next scheduled deliverable);
+ *  this row is about THIS parked run, and it closes when the run moves on. */
+export async function narrateInputAsk(
+  admin: SupabaseClient, wf: WfRow,
+  ask: { runId: string; ask: string; preview: string; stepId?: string },
+): Promise<void> {
+  await raiseRunDecisionAsk(admin, wf, {
+    runId: ask.runId, instruction: ask.ask, preview: ask.preview, supply: ask.ask.slice(0, 120),
+    text: `"${wf.name}" ran as far as it can and needs something from you: ${ask.ask}`,
+    // KEYED PER RUN **AND** PER STATION (Aug 25): a workflow that declares several inputs parks
+    // several times in ONE run, and each park is a different question. A run-only key would fold
+    // station 2's ask into station 1's line and the person would never see what is actually owed.
+    // Exactly-once still holds where it means something — per station, not per run.
+    dedupeKey: `input:${ask.runId}:${ask.stepId ?? 'station'}`,
+  });
+}
+
+/** THE ONE RESUME DOOR CLEARS IT (ONE DEED ONE DOOR). Called from
+ *  /api/workflows/runs/[id]/resume for the gates that are the OWNER'S (approval · guardrail hold);
+ *  a handoff gate settles through `settleHandoffDecision`, which owns the same closing law for the
+ *  assignee's ask. Approve and reject BOTH clear — a decided run owes nothing. Best-effort. */
+export async function settleApprovalAsk(
+  admin: SupabaseClient,
+  /** `supplied` = the ask was an INPUT STATION's and the person sent what it needed — the same
+   *  closing law, said in the deed's own words (they answered, they did not approve). */
+  args: { runId: string; approved: boolean; supplied?: boolean },
+): Promise<void> {
+  try {
+    const { data: c } = await admin.from('commitments').select('id, user_id')
+      .eq('source', DECISION_SOURCE).eq('source_id', args.runId).eq('status', 'open')
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (!c?.id) return;
+    await admin.from('commitments').update({
+      status: args.approved ? 'completed' : 'dismissed',
+      resolved_reason: args.supplied && args.approved ? 'input supplied' : args.approved ? 'approved' : 'held back',
+      resolved_at: new Date().toISOString(),
+    }).eq('id', c.id);
+    try {
+      const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
+      const roomKey = await roomKeyForItem(admin, String(c.user_id), 'commitment', String(c.id));
+      await writeRoomTurn(admin, String(c.user_id), roomKey, {
+        role: 'system',
+        text: args.approved
+          ? (args.supplied ? 'You sent it — the run picked up from there.' : 'You approved — the run continued.')
+          : 'You held this back — nothing was delivered.',
+        dedupeKey: `approval-decided:${args.runId}`,
+      });
+    } catch { /* the closed commitment is the truth */ }
+  } catch { /* the run row already carries the decision */ }
+}
+
+/** THE ORPHAN SWEEP (the dispatcher's tail): an ask never outlives its work. A run DELETED
+ *  out-of-band (a workflow removed, a run purged) would otherwise leave a permanent undecidable
+ *  row on someone's deck — the deck's own version of the missed-promise class. Runs that merely
+ *  moved on are left alone: the resume door closes those, and a still-parked run keeps its ask. */
+export async function sweepOrphanedRunAsks(admin: SupabaseClient): Promise<number> {
+  let closed = 0;
+  try {
+    const { data: asks } = await admin.from('commitments').select('id, source_id')
+      .eq('source', DECISION_SOURCE).eq('status', 'open').limit(200);
+    const rows = ((asks ?? []) as Array<{ id: string; source_id: string | null }>)
+      .filter((a) => !!a.source_id);
+    if (!rows.length) return 0;
+    const { data: runs } = await admin.from('workflow_runs').select('id')
+      .in('id', [...new Set(rows.map((a) => String(a.source_id)))]);
+    const alive = new Set(((runs ?? []) as Array<{ id: string }>).map((r) => String(r.id)));
+    for (const a of rows) {
+      if (alive.has(String(a.source_id))) continue;
+      await admin.from('commitments').update({
+        status: 'dismissed', resolved_reason: 'the run no longer exists',
+        resolved_at: new Date().toISOString(),
+      }).eq('id', a.id);
+      closed++;
+    }
+  } catch { /* never break the dispatcher */ }
+  return closed;
+}
+
 /** THE APPROVAL ASK (production arc step 2): a run PARKED at an approval step surfaces its ask
  *  in the standing commitment's room — an `approval` component turn (Approve resumes · Reject
  *  ends, both through /api/workflows/runs/[id]/resume) — and stamps the commitment due TODAY so
@@ -143,7 +359,17 @@ export async function narrateApprovalAsk(
     // THE OWNER'S ROOM (B2): the ask parks on whoever is accountable, not whoever created it.
     const { openStandingCommitment } = await import('./owner');
     const c = await openStandingCommitment(admin, wf);
-    if (!c) return;
+    // THE GUARD (stated once, held in both parks): the unbound ask fires ONLY here — where a
+    // standing commitment does not exist. A SCHEDULED workflow keeps this narration and never
+    // raises the second row, so no run can ever wear two attention rows.
+    if (!c) {
+      await raiseRunDecisionAsk(admin, wf, {
+        runId: ask.runId, instruction: ask.instruction, preview: ask.preview,
+        text: `"${wf.name}" is ready and WAITING ON YOUR APPROVAL before it delivers${ask.instruction ? ` — ${ask.instruction}` : ''}.`,
+        dedupeKey: `approval:${ask.runId}`,
+      });
+      return;
+    }
     await admin.from('commitments').update({ due_date: new Date().toISOString().slice(0, 10) }).eq('id', c.id);
     const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
     const roomKey = await roomKeyForItem(admin, c.userId, 'commitment', String(c.id));
@@ -169,7 +395,15 @@ export async function narrateGuardrailHold(
     // THE OWNER'S ROOM (B2): the ask parks on whoever is accountable, not whoever created it.
     const { openStandingCommitment } = await import('./owner');
     const c = await openStandingCommitment(admin, wf);
-    if (!c) return;
+    // Same guard as narrateApprovalAsk: no binding → the unbound ask carries it to the deck.
+    if (!c) {
+      await raiseRunDecisionAsk(admin, wf, {
+        runId: ask.runId, instruction: ask.ruleLine, preview: ask.preview, held: true,
+        text: `"${wf.name}" is HELD by your delivery check — ${ask.ruleLine}. Review it before it goes anywhere.`,
+        dedupeKey: `guardrail-hold:${ask.runId}`,
+      });
+      return;
+    }
     await admin.from('commitments').update({ due_date: new Date().toISOString().slice(0, 10) }).eq('id', c.id);
     const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
     const roomKey = await roomKeyForItem(admin, c.userId, 'commitment', String(c.id));

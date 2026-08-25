@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import { isToolAllowed } from '@/lib/workspace/tool-capabilities';
 import { DEFAULT_FEATURES, type WorkspaceFeatures } from '@/lib/workspace/types';
@@ -198,6 +199,9 @@ function normalizeFireLimit(raw: unknown): FireLimit {
 // surface binds to the SCHEMA, not to a name.
 type ProcessStep = Extract<WorkflowStep, { type: 'workflow' }>;
 type CaseStepDraft = Extract<WorkflowStep, { type: 'case' }>;
+// THE INPUT STATION (relay canvas, THE WAVE) — the station that stops the run and ASKS the person
+// for what only they have at run time. Named off the union, like every other station's draft type.
+type InputStepDraft = Extract<WorkflowStep, { type: 'input' }>;
 
 // The `workflow` door binds a workflow_id — the picker reads the user's own tasks (self excluded).
 // THE SUBPROCESS STATION (W3) reads the SAME list through the SAME cache, so a workflow named
@@ -451,7 +455,9 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
     });
   }, []);
 
-  const save = useCallback(async (): Promise<Workflow | null> => {
+  // `statusOverride` exists for THE ACTIVATION DOOR below — state updates are async, so the
+  // activating save must carry the new status itself rather than race a setState.
+  const save = useCallback(async (statusOverride?: Workflow['status']): Promise<Workflow | null> => {
     setSaving(true);
     try {
       // ONE PERSISTENCE PATH for the WHEN block: both halves are written from the SAME normalized
@@ -473,7 +479,7 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
           triggers: doors,
           steps: workflow.steps,
           output_config: workflow.output_config,
-          status: workflow.status,
+          status: statusOverride ?? workflow.status,
           agent_id: workflow.agent_id ?? null,
           worker_instructions: workflow.worker_instructions ?? null,
           skill_ids: workflow.skill_ids ?? [],
@@ -526,6 +532,15 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
     onClose(saved ?? workflow);
   }, [save, onClose, workflow]);
 
+  // THE ACTIVATION DOOR (found live: "Adjust in Studio" creates a DRAFT, the ledger row says
+  // "finish it in Studio", and Studio had no way to finish — a dead-end loop of the lying-door
+  // class). A draft's primary action turns it on EXPLICITLY — the word is the deed; no save
+  // ever flips status silently.
+  const saveAndActivate = useCallback(async () => {
+    const saved = await save('active');
+    onClose(saved ?? { ...workflow, status: 'active' });
+  }, [save, onClose, workflow]);
+
   const startTestRun = useCallback(async () => {
     const saved = await save();
     const wfId = (saved ?? workflow).id;
@@ -556,6 +571,10 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
     } else if (type === 'workflow') {
       // Born UNPICKED — the label is the child's own name, written on the pick, never guessed.
       step = { id, type: 'workflow', label: '', workflow_id: '' } as ProcessStep;
+    } else if (type === 'input') {
+      // Born with its verb as the label and NOTHING to ask yet; readiness rule 10 speaks until the
+      // author writes the question. `accepts` starts at 'both' — the paste box AND the pin door.
+      step = { id, type: 'input', label: 'Ask me for something', ask: '', accepts: 'both' } as InputStepDraft;
     } else if (type === 'case') {
       // THE CASE STATION (W4) — born with its verb as the label and NOTHING to recognize yet;
       // readiness rule 8 speaks until the author says what identifies a case.
@@ -715,10 +734,17 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
             className="px-3 py-1.5 border border-neutral-200 text-neutral-700 text-[12px] font-medium rounded-md hover:bg-neutral-50 transition-colors disabled:opacity-50">
             {saving ? 'Saving…' : 'Save'}
           </button>
-          <button onClick={saveAndClose} disabled={saving}
-            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[12px] font-medium rounded-md transition-colors disabled:opacity-50">
-            Save & close
-          </button>
+          {workflow.status === 'draft' ? (
+            <button onClick={saveAndActivate} disabled={saving}
+              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[12px] font-medium rounded-md transition-colors disabled:opacity-50">
+              Save & turn on
+            </button>
+          ) : (
+            <button onClick={saveAndClose} disabled={saving}
+              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[12px] font-medium rounded-md transition-colors disabled:opacity-50">
+              Save & close
+            </button>
+          )}
         </div>
       </header>
 
@@ -1192,6 +1218,8 @@ function InlineAddButton({ insertAt, agents, onAdd }: {
             // THE CASE STATION (W4) — the normalizer verb, in the SAME one list as every other
             // structural step: what arrived gets filed against the thing it belongs to.
             { type: 'case' as const, Icon: ArrowsRightLeftIcon,    label: 'File it under its record',   disabled: false },
+            // THE INPUT STATION (THE WAVE) — the run stops and asks YOU for something only you have.
+            { type: 'input' as const, Icon: HandRaisedIcon,        label: 'Ask me for something',       disabled: false },
           ] as const).map(({ type, Icon, label, disabled }) => (
             <button key={type}
               onClick={() => { if (!disabled) { onAdd(type, insertAt); setOpen(false); } }}
@@ -1283,7 +1311,7 @@ function VisualWorkflowColumn({
             {canAddAt(idx)
               ? <InlineDivider insertAt={idx} agents={agents} onAdd={onAddStep} />
               : <FlowConnector />}
-            {step.type === 'verify' || step.type === 'approval' || step.type === 'handoff' ? (
+            {step.type === 'verify' || step.type === 'approval' || step.type === 'handoff' || step.type === 'input' ? (
               <GateFlowNode
                 step={step}
                 active={isActive}
@@ -1663,6 +1691,11 @@ function GateFlowNode({ step, active, onClick }: {
   const isHandoff = step.type === 'handoff';
   const handoff = isHandoff ? (step as HandoffStep) : null;
   const unassigned = isHandoff && !handoff?.assignee_user_id;
+  // THE INPUT STATION (relay canvas, THE WAVE): a FOURTH family on the same pill — the run stops
+  // here and asks the person. Indigo (it is the user's own turn, not a hold and not a check); an
+  // unasked station wears the amber hint idiom, the sentence readiness rule 10 will speak.
+  const isInput = step.type === 'input';
+  const inputAsk = isInput ? String((step as { ask?: string }).ask ?? '').trim() : '';
   const rules = isVerify ? ((step as VerifyStep).rules ?? []) : [];
   const instruction = (step as { instruction?: string }).instruction?.trim();
 
@@ -1670,11 +1703,15 @@ function GateFlowNode({ step, active, onClick }: {
     ? 'Checked before delivery'
     : isHandoff
       ? (step.label?.trim() || 'Wait on a person')
-      : 'Your approval';
+      : isInput
+        ? (step.label?.trim() || 'Ask me for something')
+        : 'Your approval';
   const handoffSub = handoff?.assignee_name
     ? `waits on ${handoff.assignee_name}${handoff.sla_hours ? ` · ${handoff.sla_hours}h SLA` : ''}`
     : 'no person chosen yet';
-  const sub = isHandoff
+  const sub = isInput
+    ? (inputAsk ? (inputAsk.length > 46 ? inputAsk.slice(0, 46) + '…' : inputAsk) : 'what should it ask you for?')
+    : isHandoff
     ? handoffSub
     : instruction
       ? (instruction.length > 46 ? instruction.slice(0, 46) + '…' : instruction)
@@ -1682,15 +1719,21 @@ function GateFlowNode({ step, active, onClick }: {
         ? 'checks & fixes the draft against this run’s sources'
         : 'pauses here — nothing goes out until you OK it';
 
-  const shell = isVerify
+  const shell = isInput
+    ? (inputAsk
+        ? `bg-indigo-50 text-indigo-800 ${active ? 'border-indigo-400 shadow-md' : 'border-indigo-200 hover:border-indigo-300'}`
+        : `bg-amber-50 text-amber-800 ${active ? 'border-amber-400 shadow-md' : 'border-amber-300 hover:border-amber-400'}`)
+    : isVerify
     ? `bg-teal-50 text-teal-800 ${active ? 'border-teal-400 shadow-md' : 'border-teal-200 hover:border-teal-300'}`
     : isHandoff
       ? (unassigned
           ? `bg-amber-50 text-amber-800 ${active ? 'border-amber-400 shadow-md' : 'border-amber-300 hover:border-amber-400'}`
           : `bg-violet-50 text-violet-800 ${active ? 'border-violet-400 shadow-md' : 'border-violet-200 hover:border-violet-300'}`)
       : `bg-amber-50 text-amber-800 ${active ? 'border-amber-400 shadow-md' : 'border-amber-200 hover:border-amber-300'}`;
-  const disc = isVerify ? 'bg-teal-600' : isHandoff ? (unassigned ? 'bg-amber-500' : 'bg-violet-500') : 'bg-amber-500';
-  const Icon = isVerify ? ShieldCheckIcon : isHandoff ? UsersIcon : HandRaisedIcon;
+  const disc = isInput ? (inputAsk ? 'bg-indigo-500' : 'bg-amber-500')
+    : isVerify ? 'bg-teal-600' : isHandoff ? (unassigned ? 'bg-amber-500' : 'bg-violet-500') : 'bg-amber-500';
+  const Icon = isVerify ? ShieldCheckIcon : isHandoff ? UsersIcon
+    : isInput ? ChatBubbleLeftRightIcon : HandRaisedIcon;
 
   return (
     <div className="w-full flex justify-center">
@@ -2352,6 +2395,58 @@ function StepConfigSection({
       {step.type === 'case' && (
         <CaseStepFields step={step as CaseStepDraft} onUpdate={onUpdate as (p: Partial<CaseStepDraft>) => void} />
       )}
+      {step.type === 'input' && (
+        <InputStepFields step={step as InputStepDraft} onUpdate={onUpdate as (p: Partial<InputStepDraft>) => void} />
+      )}
+    </div>
+  );
+}
+
+// ── THE INPUT STATION'S PANEL (relay canvas, THE WAVE) ────────────────────────────────────────
+// TWO things to say: the QUESTION the run will ask, and what the person may hand over. The
+// boundary law is stated here, where it is authored — a station that asks for something the
+// machine could fetch is a chore, not a gate.
+function InputStepFields({ step, onUpdate }: {
+  step: InputStepDraft;
+  onUpdate: (p: Partial<InputStepDraft>) => void;
+}) {
+  const accepts = step.accepts ?? 'both';
+  return (
+    <div className="p-4 space-y-3">
+      <p className="text-[12.5px] text-neutral-500 leading-relaxed">
+        The run stops here and asks you for this, on your deck. What you send becomes the run&apos;s
+        material and everything after it works from it. Use this only for what you alone have at
+        run time — things that arrive on their own belong in a trigger, and standing references
+        (a policy, a template) belong in <span className="text-neutral-600">Works with</span>.
+      </p>
+      <Field label="What it asks you for" hint="in your own words">
+        <textarea
+          value={step.ask ?? ''}
+          onChange={e => onUpdate({ ask: e.target.value })}
+          rows={2}
+          placeholder="this week&#39;s numbers from the finance system"
+          className="w-full text-[13px] bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-indigo-300 focus:bg-white resize-none placeholder-neutral-300"
+        />
+      </Field>
+      <Field label="What you can send" hint="both, unless you know">
+        <div className="flex gap-1 p-0.5 bg-neutral-100 rounded-lg">
+          {([
+            { key: 'both', label: 'Paste or a document' },
+            { key: 'text', label: 'Paste only' },
+            { key: 'doc', label: 'A document only' },
+          ] as const).map(o => (
+            <button
+              key={o.key}
+              type="button"
+              onClick={() => onUpdate({ accepts: o.key })}
+              className={`flex-1 text-[12px] px-2 py-1.5 rounded-md transition-colors ${
+                accepts === o.key ? 'bg-white text-neutral-800 shadow-sm font-medium' : 'text-neutral-500 hover:text-neutral-700'
+              }`}>
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </Field>
     </div>
   );
 }
@@ -2502,12 +2597,12 @@ function SubprocessStepFields({ step, onUpdate, currentWorkflowId }: {
         </p>
       )}
       {chosen && (
-        <a
+        <Link
           href={`/workflows/${chosen.id}`}
           className="inline-block text-[12px] text-neutral-500 hover:text-violet-700 transition-colors"
         >
           Open {chosen.name} →
-        </a>
+        </Link>
       )}
     </div>
   );

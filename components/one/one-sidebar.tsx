@@ -3,7 +3,8 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE ONE-SURFACE SIDEBAR (Arc 3 THE SHELL, S1 — docs/one-surface-plan.md; the settled design,
 // mockup rev 4). THE FOLD HAPPENS HERE, WHOLESALE: this frame is owned by the CONVERSATIONAL
-// dimension — New chat · Pinned rooms · Recent conversations · All conversations — with the two
+// dimension — Home (the chat door) · Pinned rooms · Recent conversations · All conversations —
+// with the two
 // untouched SOURCES (Inbox · Meetings) and the team/Settings footer. Workers / Chat / Drive have
 // NO seats (their routes survive; Settings carries the Team + Knowledge doors). The ladder's laws:
 // the sidebar lists CONVERSATIONS, attention stays on the deck; nothing here is ever the item
@@ -14,7 +15,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import {
-  HomeIcon, EnvelopeIcon, VideoCameraIcon, PlusIcon, FolderIcon,
+  HomeIcon, EnvelopeIcon, VideoCameraIcon, FolderIcon,
   Cog6ToothIcon, ArrowRightOnRectangleIcon, ShieldCheckIcon,
   ChatBubbleLeftEllipsisIcon, UserCircleIcon, BoltIcon,
 } from '@heroicons/react/24/outline';
@@ -124,13 +125,9 @@ export default function OneSidebar({
     return () => document.removeEventListener('mousedown', onDown);
   }, [showUserMenu]);
 
-  // New chat: land on the Home with a fresh chat room OPEN (the composer focuses; HomeAsk
-  // listens; the sessionStorage intent covers the cross-page mount).
-  const newChat = () => {
-    try { localStorage.removeItem('aug-home-chat-key'); sessionStorage.setItem('aug-open-chat-intent', '1'); } catch { /* no LS */ }
-    window.dispatchEvent(new CustomEvent('aug:new-chat'));
-    if (pathname !== '/home') router.push('/home');
-  };
+  // NB: the sidebar's "New chat" seat is retired (Home is the chat door). The `aug:new-chat`
+  // EVENT stays live — the project room's own "New chat" door still fires it, and HomeAsk still
+  // listens; only this nav item is gone.
   // Opening a past chat: set the key, open the panel (same-page via the event; cross-page via
   // the intent flag — a click must never load turns into a CLOSED card).
   const openChat = (key: string) => {
@@ -212,15 +209,40 @@ export default function OneSidebar({
       </div>
 
       <nav className="flex-1 overflow-y-auto py-2 px-2 [scrollbar-width:thin]">
+        {/* HOME IS THE CHAT DOOR (owner, Aug 25 — "home and new chat isn't very intuitive, it's the
+            same thing with a cursor... focus cursor on chat from home and remove the New chat").
+            The two seats WERE one deed: both reset to the empty chief chat, and only one of them
+            put the cursor there. So the nav keeps ONE door and it lands ready to type.
+
+            THE FRESH FLOOR IS UNCHANGED: `augmtd:home-reset` still does the complete reset (DM
+            mode · turns · scope · stored key) and still leaves the DECK as the default view — the
+            focus rides ALONGSIDE it, it does not open the panel. Same-page clicks fire the event
+            directly; a click from another route can't (this component unmounts nothing but the
+            Home isn't mounted yet), so it leaves the one-shot intent the Home consumes on mount —
+            the established `aug-*-intent` idiom. Ordinary loads carry no intent and never steal
+            the caret. */}
         <Link href="/home" className={item(lensIs('dashboard', 'timeline') || pathname.startsWith('/item'))}
-          onClick={() => { if (pathname === '/home') window.dispatchEvent(new CustomEvent('augmtd:home-reset')); }}>
+          onClick={(e) => {
+            if (pathname !== '/home') {
+              try { sessionStorage.setItem('aug-home-focus-intent', '1'); } catch { /* no storage */ }
+              return;
+            }
+            // ALREADY HOME → THE CLICK IS THE RESET, NOT A NAVIGATION (owner: "the caret only
+            // lands on the SECOND click"). /home is an async SERVER component (it awaits
+            // guardFeaturePage), so a same-path <Link> click fires a real RSC round-trip; the
+            // payload landed AFTER the focus did and the re-render took the caret with it. The
+            // second click only "worked" because the router cache made that re-render instant.
+            // Navigating to the page you are already on buys nothing, so we don't: the reset
+            // event is the whole deed. THE URL still self-corrects — home-view's own reset
+            // handler drops ?view= through its existing replaceState.
+            // Modifier/middle clicks are left alone: those mean "open it over there".
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+            e.preventDefault();
+            window.dispatchEvent(new CustomEvent('augmtd:home-reset'));
+          }}>
           <HomeIcon className={`w-[17px] h-[17px] flex-shrink-0 ${lensIs('dashboard', 'timeline') ? 'text-indigo-500' : 'text-neutral-400'}`} />
           Home
         </Link>
-        <button onClick={newChat} className={`${item(false)} w-full text-left`}>
-          <PlusIcon className="w-[17px] h-[17px] flex-shrink-0 text-neutral-400" />
-          New chat
-        </button>
 
         {/* ONE NAME EVERYWHERE (owner call, refined Aug 7): Projects is ONE menu item — the
             portfolio lens is the destination; the sidebar never carries the project LIST

@@ -198,6 +198,10 @@ export const updateTaskDefinition = {
           // described the same way both authoring doors describe them. Setting one CLEARS the other.
           case_instruction: { type: 'string', description: 'For a "case" step: what identifies a case, when it DIFFERS per event ("the job opening named in the application"). Setting this clears case_name.' },
           case_name: { type: 'string', description: 'For a "case" step: the ONE case every run files under, when the user named a specific opening/client/matter ("the Customer Service Representative opening"). Setting this clears case_instruction.' },
+          // THE INPUT STATION (relay canvas, THE WAVE) — the station that stops the run and asks the
+          // USER for something only they have at run time.
+          ask: { type: 'string', description: 'For an "input" step: what the run asks the user for, in their own words ("this week\'s numbers from the finance system").' },
+          accepts: { type: 'string', enum: ['text', 'doc', 'both'], description: 'For an "input" step: what the user may hand over — paste ("text"), a knowledge document ("doc"), or either ("both", the default).' },
         },
         required: ['step_id'],
       },
@@ -307,6 +311,135 @@ export const getWorkerDocumentDefinition = {
     required: ['artifact_id'],
   },
 };
+
+// ── THE SAYABLE SUPPLY (relay canvas, THE WAVE part 2 — THE PARITY LAW: every UI verb is sayable).
+// A run parked at an input station is answered on the deck by a paste box. It must also be
+// answerable by SAYING the thing to a coworker, because that is where the person already is when
+// they have it ("here are this week's numbers"). Same deed, same rules — the executor calls
+// `answerInputStation`, THE ONE implementation the resume door calls.
+//
+// THE HUMAN-IN-THE-LOOP LAW IS UNTOUCHED: supplying material to a run the user owns is the user's
+// own deed, spoken in their own words. The run re-enters SEEDED, so every later approval gate still
+// parks — an answer to a question has never passed a decision.
+export const supplyRunInputDefinition = {
+  name: 'supply_run_input',
+  description:
+    "Give a paused task run the material it stopped to ask for. Call this when the user hands you something a run is waiting on — pasted text, figures, a brief, or a file they attached ('here are the numbers', 'here's the JD'). An attached file lands in the user's Knowledge automatically, so supply it by name with kb_file_name. If you don't know which run is waiting, omit run_id and it resolves the one parked run; if several are waiting it will tell you which, and you should ask the user which one they mean. Supplying continues the run from where it stopped.",
+  input_schema: {
+    type: 'object',
+    properties: {
+      run_id: {
+        type: 'string',
+        description: 'Optional. The paused run to answer. Omit it when the user did not name one — the tool resolves the single run waiting for input, and refuses (naming them) if there is more than one.',
+      },
+      text: {
+        type: 'string',
+        description: "The material itself, in the user's own words — what they pasted or told you. Do not summarise or rewrite it; the run reads exactly what you pass. Use this OR kb_file_name.",
+      },
+      kb_file_name: {
+        type: 'string',
+        description: "The name of a document in the user's Knowledge to hand over — including a file they just attached to this conversation (attachments land in Knowledge under their own filename). Use this OR text.",
+      },
+      pin: {
+        type: 'boolean',
+        description: 'Only with kb_file_name. True when the user says this document should be used for EVERY future run (standing reference), not just this one.',
+      },
+    },
+    required: [] as string[],
+  },
+};
+
+/** Documents matching a spoken name, LADDERED (exact → containment) — AMBIGUITY IS A REFUSAL, so
+ *  every rung returns ALL its matches and the caller refuses on more than one. */
+async function knowledgeDocsByName(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any, userId: string, name: string,
+): Promise<Array<{ id: string; filename: string }>> {
+  const q = name.trim();
+  if (!q) return [];
+  const sel = 'id, filename';
+  let { data } = await adminClient.from('knowledge_files')
+    .select(sel).eq('user_id', userId).ilike('filename', q).limit(6);
+  if (!(data ?? []).length) {
+    ({ data } = await adminClient.from('knowledge_files')
+      .select(sel).eq('user_id', userId).ilike('filename', `%${q}%`).limit(6));
+  }
+  return (data ?? []) as Array<{ id: string; filename: string }>;
+}
+
+export async function executeSupplyRunInput(
+  args: { run_id?: string; text?: string; kb_file_name?: string; pin?: boolean },
+  userId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+): Promise<string> {
+  const text = typeof args.text === 'string' ? args.text.trim() : '';
+  const docName = typeof args.kb_file_name === 'string' ? args.kb_file_name.trim() : '';
+
+  // ONE OF, NEVER NEITHER, NEVER GUESSED: two kinds of material in one answer would leave the
+  // person unsure which one the run actually read.
+  if (!text && !docName) {
+    return 'I need the material itself — either what the user pasted (text) or the name of a document in their Knowledge (kb_file_name).';
+  }
+  if (text && docName) {
+    return 'Send one or the other: the pasted text, or the document name. Ask the user which one the run should read.';
+  }
+
+  const { answerInputStation, parkedInputStationsFor } = await import('@/lib/workflows/input-station');
+
+  // WHICH RUN. Named → that one. Unnamed → the ONE parked station; several is a refusal that names
+  // them, because picking for the person would put their material on the wrong run.
+  let runId = typeof args.run_id === 'string' ? args.run_id.trim() : '';
+  if (!runId) {
+    const parked = await parkedInputStationsFor(adminClient, userId);
+    if (parked.length === 0) {
+      return 'Nothing is paused waiting for material right now — no run is asking for anything.';
+    }
+    if (parked.length > 1) {
+      const list = parked.map((p) => `• "${p.workflowName}" is asking for ${p.ask} (run ${p.runId})`).join('\n');
+      return `More than one run is waiting for something:\n${list}\nAsk the user which one this is for, then call again with that run_id.`;
+    }
+    runId = parked[0].runId;
+  }
+
+  // WHICH DOCUMENT (when one was named) — laddered, and ambiguity refuses with the candidates.
+  let kbFileId: string | undefined;
+  if (docName) {
+    const docs = await knowledgeDocsByName(adminClient, userId, docName);
+    if (docs.length === 0) {
+      return `I can't find a document called "${docName}" in the user's Knowledge. If they attached it just now, use its exact filename; otherwise ask them to paste the content instead.`;
+    }
+    if (docs.length > 1) {
+      const list = docs.map((d) => `• ${d.filename}`).join('\n');
+      return `More than one document matches "${docName}":\n${list}\nAsk the user which one they mean, then call again with the exact filename.`;
+    }
+    kbFileId = docs[0].id;
+  }
+
+  const answered = await answerInputStation(adminClient, {
+    runId, callerId: userId,
+    input: { ...(text ? { text } : {}), ...(kbFileId ? { kbFileId } : {}), ...(args.pin ? { pin: true } : {}) },
+  });
+  if (!answered.ok) {
+    return answered.status === 404
+      ? "I couldn't find that paused run — ask the user to point at it from their deck."
+      : answered.error;
+  }
+
+  // THE RE-ENTRY happens in the dispatcher's own window: this tool runs inside a 60s chat route,
+  // and a real run takes minutes. The claim is already durable — the run cannot be answered twice
+  // even if the kick is late, and the standing backstop restarts a kick that never landed.
+  const base = (process.env.AUGMTD_WEBHOOK_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || '').replace(/\/$/, '');
+  await fetch(`${base}/api/internal/run-workflow`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.AGENTOS_SECRET ?? ''}` },
+    body: JSON.stringify({ workflowId: answered.workflowId, runId, runnerId: userId, resumeSeeded: true }),
+  }).catch(() => {});
+
+  const what = answered.docName ? `"${answered.docName}"` : 'what you gave me';
+  return `Sent ${what} to "${answered.workflowName}", which was asking for ${answered.ask} — the run picked up from there and will finish on its own.`
+    + (answered.pinned ? ' It is also pinned to that workflow now, so every future run reads it.' : '');
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -587,6 +720,12 @@ export async function executeGetTask(
       return `  ${i + 1}. [case] id:${s.id} label:"${s.label}"\n     `
         + (stated ? `case_name (one standing case): ${stated}` : `case_instruction (the case each event names): ${s.case_instruction ?? ''}`);
     }
+    // THE INPUT STATION says what it asks for and what it takes — a station the model cannot read
+    // is a station it will happily replace with something else.
+    if (s.type === 'input') {
+      return `  ${i + 1}. [input] id:${s.id} label:"${s.label}"\n     `
+        + `ask (what the run asks YOU for, each run): ${s.ask ?? ''}\n     accepts: ${s.accepts ?? 'both'}`;
+    }
     return `  ${i + 1}. [unknown]`;
   }).join('\n\n');
 
@@ -650,6 +789,7 @@ export async function executeUpdateTask(
     step_patch?: {
       step_id: string; label?: string; prompt?: string; config?: Record<string, unknown>;
       case_instruction?: string; case_name?: string;
+      ask?: string; accepts?: 'text' | 'doc' | 'both';
     };
     steps?: WorkflowStep[];
   },
@@ -827,7 +967,7 @@ export async function executeUpdateTask(
 
   // step_patch — targeted single-step edit by id
   if (fields.step_patch !== undefined) {
-    const { step_id, label, prompt, config, case_instruction, case_name } = fields.step_patch;
+    const { step_id, label, prompt, config, case_instruction, case_name, ask, accepts } = fields.step_patch;
     const steps = [...(row.steps ?? [])];
     const idx = steps.findIndex(s => s.id === step_id);
     if (idx === -1) return `Step "${step_id}" not found. Call get_task to see current step ids.`;
@@ -839,6 +979,10 @@ export async function executeUpdateTask(
     // competing keys can never sit on one station (the Studio toggle's law, said in code).
     if (step.type === 'case' && case_name !== undefined) { step.case_name = case_name; step.case_instruction = ''; }
     else if (step.type === 'case' && case_instruction !== undefined) { step.case_instruction = case_instruction; step.case_name = ''; }
+    // THE INPUT STATION's two fields — only ever on an input step (a stray `ask` must not land on a
+    // handoff, whose `ask` means something else: a decision, not material).
+    if (step.type === 'input' && ask !== undefined) step.ask = ask;
+    if (step.type === 'input' && accepts !== undefined) step.accepts = accepts;
     steps[idx] = step as WorkflowStep;
     update.steps = steps;
     changes.push(`step "${steps[idx].label}" updated`);
