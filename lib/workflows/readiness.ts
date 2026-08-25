@@ -29,6 +29,8 @@
 //                                        a case."
 //   9. a SCOPED workflow whose every event door reacts to a source that cannot carry an entity
 //                                     → "Scoped to “X” — no file event can arrive inside that project."
+//  10. an `input` station with a blank ask
+//                                     → "The 'Ask me for something' step needs a question."
 // Adding a rule = ONE entry in RULES below. Nothing else moves.
 //
 // ⚠️ RULE 9 IS VISIBILITY, NEVER A NEW REFUSAL (Aug 25). The scope is a SERVED fact, so only the
@@ -217,6 +219,18 @@ const RULES: Rule[] = [
     const fixed = `Scoped to “” — no ${sources} event can arrive inside that project.`.length;
     return `Scoped to “${clip(project, Math.max(8, READINESS_REASON_MAX - fixed))}” — `
       + `no ${sources} event can arrive inside that project.`;
+  },
+
+  // 10 — THE INPUT STATION WITH NOTHING TO ASK (relay canvas, THE WAVE): the station parks the run
+  // and puts an ask on the owner's deck. With a blank `ask` that deck row would say nothing and the
+  // person would face a paste box with no question — a park nobody can answer. The sentence names
+  // the missing knowledge, in rule 3's grammar (the step type, not its label: the label is theirs
+  // to rename and the fix is always the same field).
+  (wf) => {
+    const blank = (wf.steps ?? []).map(asRec).some(
+      (s) => typeOf(s) === 'input' && !String((s.ask as string | undefined) ?? '').trim(),
+    );
+    return blank ? "The 'Ask me for something' step needs a question." : null;
   },
 ];
 

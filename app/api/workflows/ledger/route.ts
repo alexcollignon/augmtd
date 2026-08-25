@@ -4,7 +4,7 @@
 // scope, worker, schedule, deliverable home), runs awaiting approval (the debt, first), and
 // the recent run trail. Studio stays one click deep as the method editor.
 
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { normalizeOutput } from '@/lib/workflows/types';
 import type { OutputConfig, WorkflowStep, WorkflowTrigger } from '@/lib/workflows/types';
@@ -13,28 +13,46 @@ import { DEFAULT_FIRE_LIMIT } from '@/lib/workflows/fire-limit';
 
 export const maxDuration = 30;
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try { await requireFeature('studio', supabase, user.id); } catch (err) { return handleWorkspaceError(err); }
 
+  // ── THE SCOPED DOOR (latency, Aug 25 — the deep-dive's cold paint) ────────────────────────────
+  // The workflow deep-dive consumes exactly two things from this payload: the PROCESS ROWS of its
+  // own workflow and that workflow's ledger row (mark + scope). It used to read the whole ledger —
+  // every workflow, 25 runs across all of them, the trail, the team, the gallery flag — to filter
+  // ONE id on the client. `?scope=<id>` narrows the SAME code path (same derivation, same override
+  // patch, so the two surfaces structurally cannot disagree) and drops the sections that belong to
+  // the list surface. No new machine, no second opinion — a filter, exactly like the Frames tab.
+  const scopeId = request.nextUrl.searchParams.get('scope');
+
   const [wfRes, scopeRes, runRes, workerRes, unreviewedRes] = await Promise.all([
-    supabase.from('workflows')
-      .select('id, name, description, status, trigger, steps, output_config, last_run_at, next_run_at, auto_paused_at, agent_id, icon, color')
-      .eq('user_id', user.id)
-      .order('next_run_at', { ascending: true, nullsFirst: false }),
+    (() => {
+      const q = supabase.from('workflows')
+        .select('id, name, description, status, trigger, steps, output_config, last_run_at, next_run_at, auto_paused_at, agent_id, icon, color')
+        .eq('user_id', user.id);
+      return (scopeId ? q.eq('id', scopeId) : q)
+        .order('next_run_at', { ascending: true, nullsFirst: false });
+    })(),
     supabase.from('item_plans')
       .select('entity_id, tasks')
       .eq('user_id', user.id).eq('kind', 'workflow_scope'),
-    supabase.from('workflow_runs')
-      .select('id, workflow_id, status, triggered_by, step_outputs, error, created_at, started_at, completed_at, thread_id')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(25),
-    supabase.from('custom_agents')
-      .select('id, name, worker_role')
-      .eq('user_id', user.id).eq('is_worker', true).eq('is_active', true),
+    (() => {
+      const q = supabase.from('workflow_runs')
+        .select('id, workflow_id, status, triggered_by, step_outputs, error, created_at, started_at, completed_at, thread_id')
+        .eq('user_id', user.id);
+      return (scopeId ? q.eq('workflow_id', scopeId) : q)
+        .order('created_at', { ascending: false })
+        .limit(25);
+    })(),
+    // The presenter roster belongs to the LIST surface (the draft card's coworker picker).
+    scopeId
+      ? Promise.resolve({ data: [] as Array<{ id: string; name: string; worker_role: string }> })
+      : supabase.from('custom_agents')
+          .select('id, name, worker_role')
+          .eq('user_id', user.id).eq('is_worker', true).eq('is_active', true),
     // THE BADGE'S BREAKDOWN (owner walk, Aug 19: "we see 3 on the nav bar, but we don't know
     // which ones it's referring to") — the sidebar's Workflows badge counts unreviewed succeeded
     // runs (rooms/recent: status succeeded · reviewed_at null · last 30 days). This is the SAME
@@ -113,6 +131,9 @@ export async function GET() {
       : Promise.resolve([]),
     // Teammates' shared workflows (read-only rows; its internal profile read rides this lane).
     (async (): Promise<Array<{ id: string; name: string; scheduleLabel: string | null; ownerName: string }>> => {
+      // A teammates' shelf is a LIST-surface section — the scoped door never renders it, so it
+      // never pays for it (two reads: the shared rows and their owners' names).
+      if (scopeId) return [];
       try {
         const { data: shared } = await supabase.from('workflows')
           .select('id, name, trigger, user_id, sharing_mode')
@@ -144,8 +165,8 @@ export async function GET() {
     // exist yet must cost the doors, never the whole ledger.
     (async (): Promise<Map<string, unknown>> => {
       try {
-        const { data, error } = await supabase.from('workflows')
-          .select('id, triggers').eq('user_id', user.id);
+        const q = supabase.from('workflows').select('id, triggers').eq('user_id', user.id);
+        const { data, error } = await (scopeId ? q.eq('id', scopeId) : q);
         if (error) return new Map();
         return new Map(((data ?? []) as Array<{ id: string; triggers: unknown }>).map((r) => [r.id, r.triggers]));
       } catch { return new Map(); }
@@ -185,9 +206,13 @@ export async function GET() {
   // NO LYING DOOR (relay canvas W3): a ⧉ SUBPROCESS park wears the same `awaiting_approval` status
   // but asks the human for NOTHING — it waits on a machine. It never joins the approval debt (an
   // Approve/Reject row for a wait nobody holds); it lives in `processes` as waiting_on_others.
+  // An INPUT station park (THE WAVE) is excluded for the same reason in its own words: it asks for
+  // MATERIAL, and an Approve/Reject row would be a door that cannot answer it. It lives in
+  // `processes` as needs_you, wearing the gate word its own kind maps to.
   const awaiting = runs.filter(r => r.status === 'awaiting_approval').filter(r => {
     const steps = (wfById.get(r.workflow_id)?.steps ?? []) as Array<{ type?: string }>;
-    return steps[(r.step_outputs ?? []).length]?.type !== 'workflow';
+    const t = steps[(r.step_outputs ?? []).length]?.type;
+    return t !== 'workflow' && t !== 'input';
   }).map(r => {
     const wf = wfById.get(r.workflow_id);
     const steps = (wf?.steps ?? []) as Array<{ type?: string; instruction?: string; label?: string }>;
@@ -227,7 +252,13 @@ export async function GET() {
       hasVerify: (w.steps ?? []).some(s => (s as { type?: string }).type === 'verify'),
       doors: doorsForServing({ trigger: trig, triggers: doorsOut.get(w.id) }),
       // The run door's one fact (W2): whether Run now should offer the material sheet here.
-      inputs: { acceptMaterial: materialWfIds.has(w.id) },
+      // `stations` is the second half (THE STATIONS ASK BY NAME): a workflow whose own steps stop
+      // and ask by name never wants the generic sheet in front of them. Read off the steps already
+      // in hand — no extra query.
+      inputs: {
+        acceptMaterial: materialWfIds.has(w.id),
+        stations: (w.steps ?? []).filter(s => (s as { type?: string }).type === 'input').length,
+      },
       // How many event runs this workflow may START in a day; extra matched events queue for the
       // drain rather than being lost (W3b — the throttle, never a shredder).
       fireLimit: limitsOut.get(w.id) ?? { ...DEFAULT_FIRE_LIMIT },
@@ -322,6 +353,24 @@ export async function GET() {
   const stepsTotalByWf = new Map(wfs.map((w) => [w.id, (w.steps ?? []).length]));
   let processes = (await deriveProcessRows(supabase, user.id, runs, wfById, artTitleByRun))
     .map((p) => ({ ...p, stepsTotal: stepsTotalByWf.get(p.workflowId) ?? p.stepsDone }));
+
+  // ── THE GATE CARRIES ITS DOOR (found live: the drawer's input card said "it's on your deck —
+  // open it there" with nothing clickable; prose pointing at another surface is the fragmentation
+  // class the spec bans). An input-gated row serves its open supply ask's id, so the drawer can
+  // BE a door to the one answerable surface. One batched read, only when input gates exist. ──
+  {
+    const inputRunIds = processes.filter((p) => p.gateKind === 'input').map((p) => p.runId);
+    if (inputRunIds.length) {
+      const { data: askRows } = await supabase.from('commitments').select('id, source_id')
+        .eq('user_id', user.id).eq('source', 'handoff').eq('status', 'open')
+        .in('source_id', inputRunIds);
+      const askByRun = new Map(((askRows ?? []) as Array<{ id: string; source_id: string }>).map((a) => [a.source_id, a.id]));
+      processes = processes.map((p) => {
+        const askId = askByRun.get(p.runId);
+        return askId ? { ...p, askId } : p;
+      });
+    }
+  }
 
   // ── THE REASSIGN OVERRIDE IS SERVED TRUTH (B2): a parked handoff can have moved to another
   // person for THIS RUN ONLY (item_plans kind='handoff_override' — the reassign route is its one

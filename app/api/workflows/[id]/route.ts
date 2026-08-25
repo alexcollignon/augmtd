@@ -16,24 +16,29 @@ export async function GET(
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  try { await requireFeature('studio', supabase, user.id); } catch (err) { return handleWorkspaceError(err); }
+  // ── WAVE ONE (latency): the gate, the row and the feature map are mutually independent reads —
+  // they used to be three sequential round-trips at the top of a route the deep-dive header, the
+  // process drawer and the Studio door all block on. The gate's verdict is still honoured before
+  // anything is served; it is only no longer WAITED FOR alone. ──
+  const { readinessOf } = await import('@/lib/workflows/readiness');
+  const [gate, wfRes, features] = await Promise.all([
+    requireFeature('studio', supabase, user.id).then(() => null).catch((err: unknown) => err),
+    supabase.from('workflows').select('*').eq('id', id).single(),
+    // A features read failure never invents unreadiness.
+    (async (): Promise<WorkspaceFeatures | null> => {
+      try {
+        const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
+        return await getWorkspaceFeatures(user.id, supabase);
+      } catch { return null; /* unknown features → the feature rule abstains */ }
+    })(),
+  ]);
+  if (gate) return handleWorkspaceError(gate);
 
-  const { data, error } = await supabase
-    .from('workflows')
-    .select('*')
-    .eq('id', id)
-    .single();
-
+  const { data, error } = wfRes;
   if (error || !data) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   // THE READINESS WAVE: the same derivation the ledger row and the run door speak — additive,
-  // never a second opinion. A features read failure never invents unreadiness.
-  const { readinessOf } = await import('@/lib/workflows/readiness');
-  let features: WorkspaceFeatures | null = null;
-  try {
-    const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
-    features = await getWorkspaceFeatures(user.id, supabase);
-  } catch { /* unknown features → the feature rule abstains */ }
+  // never a second opinion.
   const readiness = readinessOf(
     { id: data.id, status: data.status, trigger: data.trigger, triggers: data.triggers, steps: data.steps ?? [] },
     features,
@@ -56,13 +61,15 @@ export async function GET(
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { autoRefreshToken: false, persistSession: false } },
   );
-  const inputs = await readWorkflowInputs(adminRead, data.user_id, id);
-
   // THE THROTTLE (relay canvas W3b) — served ALWAYS, never null: absence in the store means the
   // platform default, and the surface must be able to show the real number without knowing that
   // rule. `isDefault` is what tells the stepper whether this workflow pinned its own.
+  // WAVE TWO: both store reads need only `data.user_id`, so they fly together.
   const { readFireLimit } = await import('@/lib/workflows/fire-limit');
-  const fireLimit = await readFireLimit(adminRead, data.user_id, id);
+  const [inputs, fireLimit] = await Promise.all([
+    readWorkflowInputs(adminRead, data.user_id, id),
+    readFireLimit(adminRead, data.user_id, id),
+  ]);
 
   return NextResponse.json({
     // Served in BOTH places on purpose: `workflow.readiness` for consumers that hold only the

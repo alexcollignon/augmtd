@@ -46,13 +46,30 @@ export async function GET(
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try { await requireFeature('studio', supabase, user.id); } catch (err) { return handleWorkspaceError(err); }
 
+  // ── ONE FLIGHT: the baseline, the runs and the spend are three mutually independent reads over
+  // the same (workflow_id, user_id) key. They used to be awaited one after another, and the Metrics
+  // tab's whole paint is this route's latency. Nothing here depends on anything else here. ──
   // The baseline lives on the workflow's own output_config — one existing save path, no migration.
-  const { data: wf, error: wfError } = await supabase
-    .from('workflows')
-    .select('id, output_config')
-    .eq('id', workflowId)
-    .eq('user_id', user.id)
-    .maybeSingle();
+  const [wfRes, runsRes, usageRes] = await Promise.all([
+    supabase
+      .from('workflows')
+      .select('id, output_config')
+      .eq('id', workflowId)
+      .eq('user_id', user.id)
+      .maybeSingle(),
+    supabase
+      .from('workflow_runs')
+      .select('status, step_outputs, started_at, completed_at, created_at')
+      .eq('workflow_id', workflowId)
+      .eq('user_id', user.id),
+    supabase
+      .from('ai_usage_events')
+      .select('prompt_tokens, completion_tokens, cost_eur')
+      .eq('workflow_id', workflowId)
+      .eq('user_id', user.id),
+  ]);
+
+  const { data: wf, error: wfError } = wfRes;
   if (wfError) return NextResponse.json({ error: sanitizeError(wfError) }, { status: 500 });
   if (!wf) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
@@ -63,11 +80,7 @@ export async function GET(
       ? Math.round(rawBaseline)
       : null;
 
-  const { data: runData, error: runError } = await supabase
-    .from('workflow_runs')
-    .select('status, step_outputs, started_at, completed_at, created_at')
-    .eq('workflow_id', workflowId)
-    .eq('user_id', user.id);
+  const { data: runData, error: runError } = runsRes;
   if (runError) return NextResponse.json({ error: sanitizeError(runError) }, { status: 500 });
 
   const runs = (runData ?? []) as RunRow[];
@@ -108,11 +121,7 @@ export async function GET(
 
   // ── real spend for THIS workflow (tolerant of the apply-manually migration being absent) ──
   let usage: { promptTokens: number; completionTokens: number; costEur: number; events: number } | null = null;
-  const { data: usageRows, error: usageError } = await supabase
-    .from('ai_usage_events')
-    .select('prompt_tokens, completion_tokens, cost_eur')
-    .eq('workflow_id', workflowId)
-    .eq('user_id', user.id);
+  const { data: usageRows, error: usageError } = usageRes;
   if (usageError) {
     console.warn('[workflow-metrics] ai_usage_events unavailable:', usageError.message);
   } else {

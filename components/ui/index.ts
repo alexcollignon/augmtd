@@ -11,3 +11,5 @@ export { SegmentedControl, TabBar } from './segmented';
 export type { SegmentItem, SegmentedControlProps, TabItem, TabBarProps } from './segmented';
 export { EmptyState } from './empty-state';
 export type { EmptyStateProps } from './empty-state';
+export { BackLink, NavHistoryTracker, hasInAppHistory } from './back-link';
+export type { BackLinkProps } from './back-link';

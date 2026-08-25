@@ -17,6 +17,7 @@ import {
   ArrowUturnLeftIcon,
   ChevronRightIcon,
   ChevronDownIcon,
+  DocumentTextIcon,
 } from '@heroicons/react/24/outline';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import { RoomShell } from '@/components/room/room-shell';
@@ -35,6 +36,8 @@ import dynamic from 'next/dynamic';
 // handoff gate — a rare shape of one deep-dive — never weighs on every item open.
 const RunRecordDrawer = dynamic(() => import('@/components/workflows/run-record-drawer'), { ssr: false });
 import type { RecordRunOutputs } from '@/components/workflows/run-record-drawer';
+// THE ONE SUPPLY DEED — shared with the process drawer's input station (see InputStationCard).
+import InputSupplyForm from '@/components/workflows/input-supply-form';
 
 // THE STRUCTURAL FRAME (UX arc): the room's two panes mount from frame one — before the view
 // loads, the rail receives this empty shell (+ pending) instead of not existing. Structure never
@@ -2356,6 +2359,20 @@ type HandoffBlock = {
   workerName: string | null;
   parked: boolean;
   preview: { text: string; truncated: boolean } | null;
+  /** WHICH GATE raised this ask (relay canvas, THE WAVE) — the source word alone no longer says.
+   *  Absent on a payload cached before the field existed: the decision card is the safe fallback. */
+  gateKind?: 'approval' | 'guardrail' | 'handoff' | 'subprocess' | 'input' | null;
+  /** THE INPUT STATION only: what the person may hand over. */
+  accepts?: 'text' | 'doc' | 'both';
+  /** THE INPUT STATION only — THE ASK CARRIES ITS CONTEXT (served by GET /api/commitments/[id]).
+   *  Absent on an older payload / a stale cache: the card degrades to the ask alone, never to an
+   *  empty box claiming context it wasn't given. */
+  station?: {
+    feeds: { label: string; type: string } | null;
+    startedBy: string | null;
+    arrived: Array<{ label: string; type: string; text: string }>;
+    earlier: number;
+  } | null;
 };
 
 function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boolean }) {
@@ -2470,8 +2487,19 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
           </div>
         ) : (
           <>
-            {/* THE HANDOFF DECISION — the whole move, first thing on the stage. */}
-            {isHandoff ? (
+            {/* THE HANDOFF DECISION — the whole move, first thing on the stage. THE INPUT STATION
+                (relay canvas, THE WAVE) takes the same seat with a different deed: this park asks
+                for MATERIAL, so the card is a paste box and a pin-a-document door, never a yes/no
+                (which the resume route refuses at an input gate). */}
+            {isHandoff && handoff?.gateKind === 'input' ? (
+              <InputStationCard
+                title={data.description}
+                runId={handoffRunId}
+                open={handoffOpen}
+                handoff={handoff}
+                onDecided={() => setReload((n) => n + 1)}
+              />
+            ) : isHandoff ? (
               <HandoffDecisionCard
                 title={data.description}
                 runId={handoffRunId}
@@ -2597,6 +2625,101 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
       </div>
       )}
     </DeepDiveShell>
+  );
+}
+
+// ── THE INPUT STATION CARD (relay canvas, THE WAVE) ───────────────────────────────────────────
+// A parked run asking for something only this person has. ONE deed, ONE door: "Send it" posts
+// `{ input: { text?, kbFileId?, pin? } }` to /api/workflows/runs/<runId>/resume — the same route
+// every other gate answers through; the server appends what was sent as the station's own step
+// output and continues the run from there.
+//
+// THE PASTE IS FRONT AND CENTRE (owner call: "for a demo could be easier too") and the document
+// door sits right beside it — same card, no second surface.
+//
+// THE DEED IS SHARED, THE IDENTITY IS NOT (owner walk, Aug 25). The answering half — paste box,
+// pin-a-document picker, Send it / Hold it back, the one resume door — moved WHOLE into
+// components/workflows/input-supply-form.tsx, so the process drawer's station card can answer in
+// place instead of linking here ("why are we sending him to another screen"). What stays here is
+// this surface's own identity: the ask, the provenance line, and the arrived trail — the full-
+// context reading of the same gate. A second paste form anywhere would be a fork of the law.
+function InputStationCard({
+  title, runId, open, handoff, onDecided,
+}: { title: string; runId: string | null; open: boolean; handoff: HandoffBlock; onDecided: () => void }) {
+  const [sent, setSent] = useState<'supplied' | 'held' | null>(null);
+
+  // THE ASK CARRIES ITS CONTEXT — served, never inferred. The trail folds by default: the ask is
+  // the headline and the paste box is the deed; the situation is one click away, not in the way.
+  const station = handoff.station ?? null;
+  const arrived = station?.arrived ?? [];
+  const [showArrived, setShowArrived] = useState(false);
+
+  // A stale cache knows the source but not the run — say nothing until the refetch lands.
+  if (!runId && open && !sent) return null;
+  const settled = !!sent || !open || !runId;
+  const settledWord = sent === 'supplied' ? 'Sent — the run picked up from there.'
+    : sent === 'held' ? 'Held back — the run stopped here.'
+    : 'This one has already been answered.';
+
+  return (
+    <div className={`rounded-xl border px-4 py-3.5 ${settled ? 'border-neutral-200 bg-neutral-50/60' : 'border-indigo-200 bg-indigo-50/40'}`}>
+      <p className="text-[13.5px] font-medium text-neutral-800 leading-snug">{handoff.ask?.trim() || title}</p>
+      {/* THE PROVENANCE LINE — the same grammar the decision card speaks, plus the one fact only a
+          station has: WHAT THE SUPPLY FEEDS. "feeds X" is why this paste matters. */}
+      <p className="mt-0.5 text-[12px] text-neutral-500 leading-relaxed">
+        {handoff.workflowName} stopped here and needs this from you
+        {handoff.runAt ? ` · run of ${fmtDateTime(handoff.runAt)}` : ''}
+        {station?.feeds ? ` · feeds ${station.feeds.label}` : station ? ' · the last step of the run' : ''}
+        {handoff.workerName ? ` · prepared by ${handoff.workerName}` : ''}
+        {settled ? ` · ${settledWord}` : ''}
+      </p>
+
+      {/* WHAT HAS ALREADY ARRIVED — the situation this ask sits in. Served, clipped, excerpt-marked
+          (never a raw dump): the person can see what the run already has before deciding what to
+          add. Absent context renders NOTHING — an empty box would claim a situation we don't hold. */}
+      {arrived.length > 0 && (
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => setShowArrived((v) => !v)}
+            className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 hover:text-neutral-700 transition-colors"
+            aria-expanded={showArrived}
+          >
+            Already in this run
+            <span className="font-normal normal-case tracking-normal text-neutral-400">
+              ({arrived.length}{station!.earlier > 0 ? ` of ${arrived.length + station!.earlier}` : ''})
+            </span>
+            <ChevronDownIcon className={`w-3 h-3 transition-transform motion-reduce:transition-none ${showArrived ? 'rotate-180' : ''}`} />
+          </button>
+          {showArrived && (
+            <div className="mt-1.5 max-h-[260px] overflow-y-auto rounded-lg border border-neutral-200 bg-white divide-y divide-neutral-100">
+              {arrived.map((a, i) => (
+                <div key={`${a.label}-${i}`} className="px-3 py-2">
+                  <p className="text-[11px] font-medium text-neutral-500">{a.label}</p>
+                  <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-neutral-700">{a.text}</pre>
+                </div>
+              ))}
+              {station!.earlier > 0 && (
+                <p className="px-3 py-2 text-[11px] text-neutral-400">
+                  {station!.earlier} earlier step{station!.earlier === 1 ? '' : 's'} not shown — the full trail is in the run&apos;s receipts.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* THE DEED — the ONE shared supply form (components/workflows/input-supply-form.tsx), the
+          same component the process drawer's station card mounts. This card owns the identity (the
+          ask, the provenance line, the arrived trail); the answering itself is never forked. */}
+      {!settled && (
+        <InputSupplyForm
+          runId={runId}
+          accepts={handoff.accepts ?? 'both'}
+          onSettled={(outcome) => { setSent(outcome); onDecided(); }}
+        />
+      )}
+    </div>
   );
 }
 

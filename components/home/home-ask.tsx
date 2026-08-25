@@ -148,8 +148,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   const features = useFeatures(); // the sovereign intake gate (Clara's first-contact question)
   const [turns, setTurns] = useState<Turn[]>([]);
   // Rehydrate the current chat room on mount (last-known conversation, the ChatGPT-parity habit) +
-  // the SHELL'S WIRES: the sidebar's "New chat" resets this panel; opening a past conversation
-  // from the sidebar / All-conversations view loads it here.
+  // the SHELL'S WIRES: the sidebar's Home resets this panel (and lands the caret in the composer);
+  // opening a past conversation from the sidebar / All-conversations view loads it here.
   useEffect(() => {
     try {
       // THE SEAM DOOR: a project room's "Open the conversation" ref lands here with ?chat= —
@@ -158,6 +158,13 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // A PRE-FILED NEW CHAT (the project room's "New chat" door): the intent carries the
       // project — the fresh conversation starts already scoped, binding written up front.
       const scopeIntent = sessionStorage.getItem('aug-new-chat-scope');
+      // HOME IS THE CHAT DOOR, from another route: the sidebar can't fire `augmtd:home-reset`
+      // across a navigation (this panel isn't mounted yet), so it leaves a ONE-SHOT intent.
+      // Consumed here unconditionally — an unread flag must never steal the caret on a later,
+      // ordinary load. It only ACTS on the fresh-floor branch below; a more specific intent
+      // (?chat=, a scoped new chat, an open-conversation click) owns the landing when present.
+      const homeFocusIntent = sessionStorage.getItem('aug-home-focus-intent');
+      if (homeFocusIntent) sessionStorage.removeItem('aug-home-focus-intent');
       if (chatParam?.startsWith('chat:')) {
         loadRoom(chatParam); setOpen(true);
         try { window.history.replaceState(null, '', '/home'); } catch { /* no history */ }
@@ -195,6 +202,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         // explicit doors (sidebar, All conversations, History, ?chat=). The stale key clears
         // so the next persisted turn mints a fresh room, never appends to an unseen old one.
         try { localStorage.removeItem(CHAT_KEY_LS); } catch { /* no LS */ }
+        // ...and if the reader got here by CLICKING Home, the caret is waiting for them. The deck
+        // still leads (setOpen stays untouched) — this is a ready door, not an opened panel.
+        if (homeFocusIntent) focusComposerWhenSettled();
       }
     } catch { /* no LS */ }
     const onNew = () => { setTurns([]); setTemp(false); setScope(null); setScopeHint(null); workerRoomRef.current = null; setOpen(true); setTimeout(() => focusComposer(), 60); };
@@ -216,6 +226,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       setTurns([]); setTemp(false); setScope(null); setScopeHint(null);
       workerRoomRef.current = null;
       try { localStorage.removeItem(CHAT_KEY_LS); } catch { /* no LS */ }
+      // HOME IS THE CHAT DOOR: the reset above is unchanged (the deck stays the default) — the
+      // caret simply lands in the composer so the door is ready to type into. It waits for the
+      // reset's own state flush to paint, so the FIRST click lands it (see focusComposerWhenSettled).
+      focusComposerWhenSettled();
     };
     // THE FACEPILE'S CHAT VERB (coherence slice #4): open the coworker's DM conversation
     // (find-or-create the "Chat with" thread) — same door as addressing them by name.
@@ -508,6 +522,27 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerWrapRef = useRef<HTMLDivElement>(null);
   const focusComposer = () => composerWrapRef.current?.querySelector('textarea')?.focus();
+  // THE CARET WITHOUT THE PANEL (Home-is-the-chat-door, Aug 25). The composer wrapper opens the
+  // chat on ANY focus — right for a human click, wrong for the Home button, whose whole contract
+  // is THE FRESH FLOOR: the deck is the default view. So the Home's focus is announced as
+  // programmatic and the open-on-focus rule stands down for exactly that one event. The reader
+  // gets a ready caret over the deck; typing (or clicking) still opens the panel as it always did.
+  const programmaticFocusRef = useRef(false);
+  const focusComposerQuietly = () => {
+    programmaticFocusRef.current = true;
+    focusComposer();
+    // Cleared after the focus event has finished bubbling — never left armed for a real click.
+    setTimeout(() => { programmaticFocusRef.current = false; }, 0);
+  };
+  // …AND IT WAITS FOR THE RESET TO SETTLE. The reset sets five pieces of state; a caret placed on
+  // a guessed timer races that flush, and a re-render lands it back on <body>. Two frames is the
+  // honest wait: the first is scheduled before React's flush completes, the second runs after the
+  // resulting paint — so the textarea we focus is the one the reader is actually looking at. No
+  // duration is guessed, so it cannot rot on a slower machine.
+  const focusComposerWhenSettled = () => {
+    if (typeof requestAnimationFrame !== 'function') { focusComposerQuietly(); return; }
+    requestAnimationFrame(() => requestAnimationFrame(() => focusComposerQuietly()));
+  };
   // Which assistant turn TYPES in live (only the newest — history never re-animates). Staged via a
   // ref from the setTurns updater (no setState-in-updater), committed by the effect below.
   const [animateIdx, setAnimateIdx] = useState<number | null>(null);
@@ -900,8 +935,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         <div className={`grid transition-all duration-300 ease-out ${showThread ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
           <div className="overflow-hidden min-h-0">
             {/* NO conversation chrome (owner, Aug 7 — "is New/Close best practice? that's not
-                how others do it"): the SIDEBAR is the navigation — Home shows the day, New chat
-                starts fresh, All conversations manages. The thread is just the thread. */}
+                how others do it"): the SIDEBAR is the navigation — Home shows the day AND starts
+                fresh (one door, cursor ready), All conversations manages. The thread is just
+                the thread. */}
             {/* THE TAKEOVER (Claude-feel): a live conversation gets a CHAT'S room to breathe —
                 tall column, same smooth grid morph in, composer fixed as the floor. */}
             {/* DM MODE IS LEGIBLE (owner, Aug 10 — "even in the DM we still have the mention
@@ -1025,7 +1061,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             files route to the addressed thread (chat-attach) or into the knowledge base (chief). */}
         <div
           ref={composerWrapRef}
-          onFocusCapture={() => setOpen(true)}
+          onFocusCapture={() => { if (!programmaticFocusRef.current) setOpen(true); }}
           className="rounded-2xl border overflow-hidden transition-all duration-300 border-neutral-200 bg-white shadow-[0_4px_28px_-12px_rgba(23,23,23,0.22)] focus-within:border-indigo-300 focus-within:shadow-[0_4px_32px_-10px_rgba(79,70,229,0.28)]">
           <WorkerMentionInput
             frameless

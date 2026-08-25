@@ -25,18 +25,41 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import {
-  ArrowLeftIcon, ArrowPathIcon, BoltIcon, BookOpenIcon, BriefcaseIcon, CalendarDaysIcon, ChartBarIcon,
+  ArrowPathIcon, BoltIcon, BookOpenIcon, BriefcaseIcon, CalendarDaysIcon, ChartBarIcon,
   ClockIcon, CpuChipIcon, DocumentTextIcon, EnvelopeIcon, FunnelIcon, GlobeAltIcon, InboxIcon,
   MagnifyingGlassIcon, MegaphoneIcon, NewspaperIcon, PencilSquareIcon, PlayIcon,
   PresentationChartLineIcon, TableCellsIcon,
 } from '@heroicons/react/24/outline';
-import { Badge, Button, SegmentedControl } from '@/components/ui';
+import { Badge, BackLink, Button, SegmentedControl } from '@/components/ui';
 import ProcessDrawer from '@/components/workflows/process-drawer';
 import RunRecordDrawer, { type RecordRunOutputs } from '@/components/workflows/run-record-drawer';
 import RunMaterialSheet, { asksForMaterial, type RunMaterial } from '@/components/workflows/run-material-sheet';
 import { FramesTab } from '@/components/frames/frames-tab';
-import { PROCESS_BUCKETS, gateDeltaOf, processStateOf } from '@/lib/workflows/process-state';
+import { PROCESS_BUCKETS, GATE_WORDS, gateDeltaOf, processStateOf } from '@/lib/workflows/process-state';
 import type { ProcessRow, ProcessState, StepOutputLike } from '@/lib/workflows/process-state';
+import { loadLS, saveLS } from '@/lib/utils/local-cache';
+
+// ── THE WARM RETURN (instant-load doctrine, Aug 25) ──────────────────────────────────────────────
+// This page used to open COLD every single time — four uncached fetches on mount, a skeleton in
+// every tab, and the same white wait after pressing Back. It now hydrates its last-known payload
+// from a STAMPED cache and refreshes behind the paint; the skeleton is gated on `loading && !cached`.
+//
+// FRESHNESS, PER THE LAW: the processes are the ACTION half of this page (what needs YOU) and
+// demand a fresh-enough cache (15 min) — a stale needs-you row that flashes then retracts is a
+// show-then-retract violation, not instant-load. The run history and the metrics receipt are
+// AMBIENT records of what already happened and hydrate ageless.
+//
+// Keys carry a version suffix — bump it on ANY shape change (a stale blob of the old shape is how
+// the Gantt once NaN-crashed).
+const LS_PROC = (id: string) => `aug-wfdetail-proc-v1:${id}`;
+const LS_RUNS = (id: string) => `aug-wfdetail-runs-v1:${id}`;
+const LS_META = (id: string) => `aug-wfdetail-meta-v1:${id}`;
+const LS_METRICS = (id: string) => `aug-wfdetail-metrics-v1:${id}`;
+const PROC_MAX_AGE_MS = 15 * 60_000;
+
+type ProcCache = { processes: ProcessRow[]; mark: LedgerMark | null; scope: Scope | null };
+type RunsCache = { runs: RunRow[]; standing: StandingBinding | null; sharedFrameIds: string[] };
+type MetaCache = { selfUserId: string | null; notReady: string | null; hasDoors: boolean; acceptsMaterial: boolean; stations?: number; owner: OwnerInfo | null };
 
 // THE FRAMES ARC Phase 1 has landed: the seat is live. The tab is a FILTER over this workflow's
 // frame artifacts (frames plan law 1 + law 5) — not a feature, not a second surface.
@@ -235,23 +258,28 @@ export function WorkflowDetail({
   const [hasDoors, setHasDoors] = useState(false);
   const [acceptsMaterial, setAcceptsMaterial] = useState(false);
 
-  // THE SCOPED PROJECTION: one ledger read, filtered to this workflow. Same payload the strip uses.
+  // THE SCOPED PROJECTION: one ledger read, filtered to this workflow. Same payload the strip uses
+  // — and now asked for scoped (`?scope=`), so the deep-dive stops paying for every OTHER workflow's
+  // rows, the recent trail and the teammates' shelf to render one id's processes.
   const loadProcesses = useCallback(async () => {
     try {
-      const r = await fetch('/api/workflows/ledger');
+      const r = await fetch(`/api/workflows/ledger?scope=${encodeURIComponent(workflowId)}`);
       if (!r.ok) { setProcesses((p) => p ?? []); return; }
       const j = (await r.json()) as {
         processes?: ProcessRow[];
         ledger?: Array<{ id: string; icon?: string | null; color?: string | null; project?: Scope | null }>;
       };
-      setProcesses((j.processes ?? []).filter((p) => p.workflowId === workflowId));
+      const rows = (j.processes ?? []).filter((p) => p.workflowId === workflowId);
+      setProcesses(rows);
       // The identity mark rides the SAME payload — optional fields, no second fetch, and the
       // header simply carries no tile when the route doesn't serve them.
       const row = (j.ledger ?? []).find((w) => w.id === workflowId);
-      if (row && (row.icon || row.color)) setMark({ icon: row.icon ?? null, color: row.color ?? null });
+      const nextMark = row && (row.icon || row.color) ? { icon: row.icon ?? null, color: row.color ?? null } : null;
+      if (nextMark) setMark(nextMark);
       // THE CUSTOMER CHIP reads the SERVED entity scope (item_plans kind 'workflow_scope', already
       // resolved by the ledger route) — never a client-side guess at who this work is for.
       setScope(row?.project ?? null);
+      saveLS(LS_PROC(workflowId), { processes: rows, mark: nextMark, scope: row?.project ?? null } satisfies ProcCache);
     } catch { setProcesses((p) => p ?? []); }
   }, [workflowId]);
 
@@ -267,7 +295,30 @@ export function WorkflowDetail({
       // SERVED TRUTH ONLY: the Frames tab's visibility word comes from the live share rows the
       // route resolves — never from anything this client could infer.
       setSharedFrameIds(j.sharedFrameIds ?? []);
+      saveLS(LS_RUNS(workflowId), {
+        runs: j.runs ?? [], standing: j.standing ?? null, sharedFrameIds: j.sharedFrameIds ?? [],
+      } satisfies RunsCache);
     } catch { setRuns((p) => p ?? []); }
+  }, [workflowId]);
+
+  // THE WARM PAINT: hydrate last-known state BEFORE the fetches land, so a return (Back included)
+  // shows the page it left instead of a skeleton. Cache reads live in an effect, never in a
+  // useState initializer — this page is SSR'd and an initializer read would diverge on hydration.
+  useEffect(() => {
+    const p = loadLS<ProcCache>(LS_PROC(workflowId), { maxAgeMs: PROC_MAX_AGE_MS });
+    if (p) { setProcesses(p.processes); setMark(p.mark); setScope(p.scope); }
+    const r = loadLS<RunsCache>(LS_RUNS(workflowId));
+    if (r) { setRuns(r.runs); setStanding(r.standing); setSharedFrameIds(r.sharedFrameIds); }
+    const m = loadLS<MetaCache>(LS_META(workflowId));
+    if (m) {
+      setSelfUserId(m.selfUserId); setNotReady(m.notReady);
+      setHasDoors(m.hasDoors); setAcceptsMaterial(m.acceptsMaterial);
+      setWantsMaterial(asksForMaterial({
+        acceptsMaterial: m.acceptsMaterial, hasReactionDoors: m.hasDoors,
+        hasInputStations: (m.stations ?? 0) > 0,
+      }));
+      if (m.owner) setOwner(m.owner);
+    }
   }, [workflowId]);
 
   useEffect(() => { void loadProcesses(); void loadRuns(); }, [loadProcesses, loadRuns]);
@@ -289,28 +340,44 @@ export function WorkflowDetail({
   // (never a guessed one) — the accountability layer is either known or silent.
   useEffect(() => {
     let dead = false;
-    void fetch(`/api/workflows/${workflowId}/owner`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => { if (!dead && j?.owner?.userId) setOwner(j.owner as OwnerInfo); })
-      .catch(() => {});
-    void fetch(`/api/workflows/${workflowId}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
-        const w = j?.workflow as {
-          user_id?: string; is_owned_by_me?: boolean; readiness?: Readiness;
-          doors?: unknown[]; inputs?: { acceptMaterial?: boolean } | null;
-        } | undefined;
-        if (dead) return;
-        if (w?.is_owned_by_me && w.user_id) setSelfUserId(w.user_id);
-        setNotReady(notReadyReason((j as { readiness?: Readiness } | null)?.readiness ?? w?.readiness));
-        const doors = (j as { doors?: unknown[] } | null)?.doors ?? w?.doors;
-        const openDoors = Array.isArray(doors) && doors.length > 0;
-        const accepts = w?.inputs?.acceptMaterial === true;
-        setHasDoors(openDoors);
-        setAcceptsMaterial(accepts);
-        setWantsMaterial(asksForMaterial({ acceptsMaterial: accepts, hasReactionDoors: openDoors }));
-      })
-      .catch(() => {});
+    // ONE FLIGHT, ONE WRITE: both reads are independent, and the header's warm cache is only
+    // honest when it is stamped from the SAME moment — so the cache lands once, after both.
+    void Promise.all([
+      fetch(`/api/workflows/${workflowId}/owner`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      fetch(`/api/workflows/${workflowId}`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    ]).then(([o, j]) => {
+      if (dead) return;
+      const nextOwner = (o?.owner?.userId ? (o.owner as OwnerInfo) : null);
+      if (nextOwner) setOwner(nextOwner);
+      const w = j?.workflow as {
+        user_id?: string; is_owned_by_me?: boolean; readiness?: Readiness;
+        doors?: unknown[]; inputs?: { acceptMaterial?: boolean } | null;
+        steps?: Array<{ type?: string }> | null;
+      } | undefined;
+      const self = w?.is_owned_by_me && w.user_id ? w.user_id : null;
+      if (self) setSelfUserId(self);
+      const reason = notReadyReason((j as { readiness?: Readiness } | null)?.readiness ?? w?.readiness);
+      setNotReady(reason);
+      const doors = (j as { doors?: unknown[] } | null)?.doors ?? w?.doors;
+      const openDoors = Array.isArray(doors) && doors.length > 0;
+      const accepts = w?.inputs?.acceptMaterial === true;
+      // THE STATIONS ASK BY NAME: read off the workflow's OWN steps (already on this payload) —
+      // a station-bearing workflow never gets the generic material sheet in front of its run.
+      const stations = (w?.steps ?? []).filter((s) => s?.type === 'input').length;
+      setHasDoors(openDoors);
+      setAcceptsMaterial(accepts);
+      setWantsMaterial(asksForMaterial({
+        acceptsMaterial: accepts, hasReactionDoors: openDoors, hasInputStations: stations > 0,
+      }));
+      // Only a real read is cached — a failed flight must never freeze an owner line or a
+      // readiness reason that the next visit would then repeat as if it were current.
+      if (j) {
+        saveLS(LS_META(workflowId), {
+          selfUserId: self, notReady: reason, hasDoors: openDoors,
+          acceptsMaterial: accepts, stations, owner: nextOwner,
+        } satisfies MetaCache);
+      }
+    });
     return () => { dead = true; };
   }, [workflowId]);
 
@@ -385,12 +452,10 @@ export function WorkflowDetail({
       {/* ── HEADER ─────────────────────────────────────────────────────────────────────────── */}
       <div className="flex-shrink-0 border-b border-neutral-200 bg-white/95 backdrop-blur">
         <div className="px-5 pt-3">
-          <Link
-            href="/home?view=workflows"
-            className="inline-flex items-center gap-1.5 text-[13px] font-medium text-neutral-500 hover:text-indigo-600 transition-colors"
-          >
-            <ArrowLeftIcon className="w-4 h-4" />Workflows
-          </Link>
+          {/* BACK RETURNS WHERE YOU CAME FROM: a process is opened from the ledger, from a run
+              notification, from a project room, from a frame. The ledger is only its NATURAL
+              PARENT — the fallback for a cold arrival, never a claim about provenance. */}
+          <BackLink fallback="/home?view=workflows">Workflows</BackLink>
         </div>
         <div className="px-5 py-3 flex items-start gap-3">
           <div className="min-w-0 flex-1">
@@ -414,7 +479,7 @@ export function WorkflowDetail({
             {parkedNow && (
               <div className={`mt-1 text-[12.5px] ${parkedNow.state === 'needs_you' ? 'text-amber-600' : 'text-violet-600'}`}>
                 {parkedNow.state === 'needs_you'
-                  ? 'waiting for your approval'
+                  ? GATE_WORDS[parkedNow.gateKind ?? 'approval'].waiting
                   : `waiting on ${parkedNow.waitingOn?.name ?? 'a teammate'}`}
               </div>
             )}
@@ -842,12 +907,21 @@ function MetricsTab({ workflowId }: { workflowId: string }) {
   const load = useCallback(async () => {
     try {
       const r = await fetch(`/api/workflows/${workflowId}/metrics`);
-      if (!r.ok) { setM(null); return; }
-      setM((await r.json()) as Metrics);
-    } catch { setM(null); }
+      if (!r.ok) { setM((prev) => prev ?? null); return; }
+      const j = (await r.json()) as Metrics;
+      setM(j);
+      saveLS(LS_METRICS(workflowId), j);
+    } catch { setM((prev) => prev ?? null); }
   }, [workflowId]);
 
-  useEffect(() => { void load(); }, [load]);
+  // THE TAB BODY UNMOUNTS ON SWITCH, so this used to refetch on EVERY visit to Metrics and show a
+  // skeleton each time. The receipt is an AMBIENT record of what already ran — it hydrates ageless,
+  // then refreshes behind the paint. The skeleton is now gated on `loading && !cached`.
+  useEffect(() => {
+    const cached = loadLS<Metrics>(LS_METRICS(workflowId));
+    if (cached) setM(cached);
+    void load();
+  }, [load, workflowId]);
 
   // THE ONE SAVE PATH: the baseline lives on output_config, written through the normal workflow
   // PATCH (which replaces the whole object — so it is READ and MERGED, never clobbered).

@@ -51,7 +51,14 @@ export interface HandoffContext {
   selfGate: boolean;
   /** The presenting coworker — attribution only, never authority. */
   workerName: string | null;
-  /** The run is STILL awaiting this decision (open ask + a parked handoff gate). */
+  /** WHICH GATE this ask belongs to (relay canvas, THE WAVE). A source='handoff' commitment is
+   *  raised by three limbs now — a teammate's handoff, the owner's unbound approval/guardrail hold,
+   *  and the INPUT STATION — and they are answered by different doors. The room reads THIS, never
+   *  the source word alone. `null` = the run moved on / could not be read. */
+  gateKind: 'approval' | 'guardrail' | 'handoff' | 'subprocess' | 'input' | null;
+  /** THE INPUT STATION only: what the person may hand over (default 'both' — paste or pin). */
+  accepts?: 'text' | 'doc' | 'both';
+  /** The run is STILL awaiting this ask (open ask + the run parked at a HUMAN gate). */
   parked: boolean;
   /** THE OBJECT: the parked run's last step output. null when the run produced nothing yet. */
   preview: { text: string; truncated: boolean } | null;
@@ -146,7 +153,10 @@ export async function handoffContextFor(
       ? parkedGateOf({ step_outputs: outs as RunLike['step_outputs'] }, steps)
       : null;
     const askOpen = ['open', 'pending', 'in_progress'].includes(String(commitment.status ?? 'open'));
-    const parked = gate?.kind === 'handoff' && askOpen;
+    // PARKED = the run still awaits THIS ask. Every HUMAN gate counts (the wave's unbound approval
+    // and the input station raise the same source='handoff' row and are equally live); a ⧉ station
+    // never does — nobody holds a machine's wait.
+    const parked = !!gate && gate.kind !== 'subprocess' && askOpen;
 
     // The presenting coworker — attribution only (the same agent that signs the ask email).
     let workerName: string | null = null;
@@ -167,7 +177,15 @@ export async function handoffContextFor(
       workflowName: String(wf.name ?? '').trim() || 'A process',
       runId,
       runAt: (run.started_at as string | null) ?? (run.created_at as string | null) ?? null,
-      ask: (step?.ask ?? '').trim() || askFromDescription(commitment.description),
+      gateKind: gate?.kind ?? null,
+      ...(gate?.kind === 'input'
+        ? { accepts: (((steps ?? [])[outs.length] as { accepts?: 'text' | 'doc' | 'both' } | undefined)?.accepts) ?? 'both' }
+        : {}),
+      // THE ASK IN ITS OWN WORDS, from whichever station holds this gate: a handoff step's `ask`,
+      // an INPUT station's question, else the description's head (which every limb writes in the
+      // same `<ask> — <subject>` shape).
+      ask: (gate?.kind === 'input' ? (gate.ask ?? '') : (step?.ask ?? '')).trim()
+        || askFromDescription(commitment.description),
       slaHours: typeof step?.sla_hours === 'number' ? step.sla_hours : null,
       askedByFirst,
       // The assignee IS the workflow owner: they hold both ends of this gate.

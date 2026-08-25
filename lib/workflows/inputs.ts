@@ -168,6 +168,25 @@ async function textsFor(
   return out;
 }
 
+/** ONE DOCUMENT'S TEXT, through the SAME derivation the tray uses (extracted_text, chunks as the
+ *  fallback) — so the INPUT STATION's pinned doc and a tray doc can never read differently.
+ *  Scoped to the caller's own files: a foreign id reads as absent, never as a document.
+ *  `null` = no such file of theirs; `text: ''` = the row exists but nothing is indexed yet. */
+export async function documentTextFor(
+  admin: SupabaseClient, userId: string, kbFileId: string,
+): Promise<{ name: string; text: string } | null> {
+  try {
+    const { data } = await admin.from('knowledge_files')
+      .select('id, filename').eq('user_id', userId).eq('id', kbFileId).maybeSingle();
+    if (!data) return null;
+    const texts = await textsFor(admin, userId, [kbFileId]);
+    return {
+      name: String((data as { filename?: string }).filename ?? '').trim() || 'Document',
+      text: texts.get(kbFileId) ?? '',
+    };
+  } catch { return null; }
+}
+
 /** THE BLOCK THE RUN CARRIES. One `[WORKFLOW INPUTS …]` section, one entry per pinned doc, every
  *  cut whitespace-bounded and declared. Returns null when there is nothing to say. */
 export async function buildInputsBlock(

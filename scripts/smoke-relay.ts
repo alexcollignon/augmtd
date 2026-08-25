@@ -32,6 +32,11 @@
 // floors. Plus the W5 RE-POINTS: readiness rule 5 now names BOTH remedies ("a condition or a
 // filter"), and rule 8's station is "file it under its record".
 //
+// THE WAVE (its own banner at the tail): AK the unbound approval ask · KK the kick · IN THE INPUT
+// STATION — the park and its supply ask, the resolver's honest refusals, the answer becoming the
+// station's OWN step output (so the run parks AGAIN at a later gate, passing none), test mode
+// asking nobody, and the four-door parity of the new primitive.
+//
 // W3 (its own banner further down): SP the subprocess station · RL René's loop.
 // W3b (THE THROTTLE, NEVER A SHREDDER): TL the clamp + the store · TD live deferral · TR the drain
 // and its atomic claim · TB the drain/backstop partition · TS the serving + parity floors.
@@ -967,12 +972,23 @@ async function main() {
   // ── THE MATERIAL LANE (found live: a mail-fired run knew an application arrived but never saw
   //    the attached CV; a file-fired run read a 400-char gist of the document it fired on) ───────
   {
+    // ⚠️ RE-POINTED (Aug 25, the fairness incident): the assembly shape changed — the material is
+    // clipped ONCE into `carried`, the head's own cut went from a raw .slice to clipForPrompt, and
+    // the gist YIELDS to the material. The properties asserted are the same three; the shapes are new.
     ok('THE MATERIAL LANE — the fired run\'s context carries the event\'s fuller text, honestly clipped',
       /material\?: string;/.test(reactionsSrc)
-      && /\[WHAT IT CARRIED — extracted text:\]\\n\$\{clipForPrompt\(material, 9000\)\}/.test(reactionsSrc));
-    ok('…appended AFTER the head\'s own cap (the 2400 slice can never decapitate the material)',
-      /\\n\$\{item\.gist\}`\.slice\(0, 2400\);/.test(reactionsSrc)
-      && /if \(!material\) return head;/.test(reactionsSrc));
+      && /const carried = material \? clipForPrompt\(material, 9000\) : '';/.test(reactionsSrc)
+      && /\[WHAT IT CARRIED — extracted text:\]\\n\$\{carried\}/.test(reactionsSrc));
+    ok('…appended AFTER the head\'s own cap (the 2400 cut can never decapitate the material)',
+      /clipForPrompt\(`\$\{item\.title\}[\s\S]{0,140}, 2400\);/.test(reactionsSrc)
+      && /if \(!carried\) return head;/.test(reactionsSrc));
+    // THE EXCERPT-HONESTY LAW AT THIS SEAM (the incident: a run scored a candidate DOWN for our own
+    // clip marker). The whole floor lives in scripts/smoke-excerpt-law.ts — the structural sweep,
+    // the header position and the live assembly; here we hold only the shape this suite owns.
+    ok('THE FIRE CONTEXT DECLARES ITS OWN CUTS — the rule rides the header, the gist yields to the material',
+      /import \{ clipForPrompt, EXCERPT_MARK, EXCERPT_RULE \}/.test(reactionsSrc)
+      && /\(marked \? `\$\{EXCERPT_RULE\}\\n` : ''\)/.test(reactionsSrc)
+      && /const gist = carried \? gistBesideMaterial\(item\.gist, carried\) : item\.gist;/.test(reactionsSrc));
     {
       const judgeBody = reactionsSrc.slice(reactionsSrc.indexOf('async function judgeCandidates'));
       const judgeFn = judgeBody.slice(0, judgeBody.indexOf('\n}\n') + 3);
@@ -1411,12 +1427,21 @@ async function main() {
     }
     {
       const ledgerRouteCode = stripComments(readFileSync('app/api/workflows/ledger/route.ts', 'utf8'));
+      // RE-POINTED (the stations-ask-by-name wave, Aug 25): the served inputs object grew a
+      // `stations` count (the sheet-vs-stations predicate's input) and went multi-line. The LAW is
+      // unchanged: acceptMaterial per row, read from the ONE store.
       ok('THE LEDGER SERVES inputs.acceptMaterial per row, read from the ONE store',
         /\.eq\('kind', 'workflow_inputs'\)/.test(ledgerRouteCode)
-        && /inputs: \{ acceptMaterial: materialWfIds\.has\(w\.id\) \}/.test(ledgerRouteCode));
+        && /acceptMaterial: materialWfIds\.has\(w\.id\),/.test(ledgerRouteCode));
+      // RE-POINTED (latency wave, Aug 25): the GET's two store reads share one input (`data.user_id`)
+      // and now fly in ONE Promise.all instead of two sequential awaits, so the anchor no longer
+      // matches a bare `const inputs = await readWorkflowInputs(`. The LAW is untouched and
+      // unweakened — the tray is still read WHOLE, through readWorkflowInputs, scoped to the
+      // workflow's CREATOR with the admin client. Only the await's shape moved.
       ok('…and the deep-dive GET serves the WHOLE tray through readWorkflowInputs',
         /const \{ readWorkflowInputs \} = await import\('@\/lib\/workflows\/inputs'\);/.test(wfPatch)
-        && /const inputs = await readWorkflowInputs\(/.test(wfPatch));
+        && /readWorkflowInputs\(adminRead, data\.user_id, id\)/.test(wfPatch)
+        && /\binputs,/.test(wfPatch));
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -1436,15 +1461,26 @@ async function main() {
       ok('…and inputsForStorage keeps NULL meaning "never configured" (notes are speech, not config)',
         /return \(inputs\.docs\.length \|\| inputs\.acceptMaterial\)[\s\S]{0,120}?: null;/.test(authorSrc));
     }
+    // RE-POINTED (Aug 25, THE DECLARED INPUTS): the tray now resolves BEFORE the stations are
+    // seated ("pin what we hold, ask for what we don't" can only be decided once we know whether
+    // the named document exists), so the note helper is imported on its own line at the join. The
+    // LAW is untouched — one resolver, one store, one channel.
     ok('DOOR 1 (describe-it): generate-config emits input_doc_names THROUGH the one resolver',
       /"input_doc_names": \[\]/.test(genCfg)
-      && /const \{ authorInputs, inputNote, inputsForStorage \} = await import\('@\/lib\/workflows\/author-doors'\);/.test(genCfgCode)
+      && /const \{ authorInputs, inputsForStorage \} = await import\('@\/lib\/workflows\/author-doors'\);/.test(genCfgCode)
+      && /const \{ inputNote \} = await import\('@\/lib\/workflows\/author-doors'\);/.test(genCfgCode)
       && /doc_names: generated\.input_doc_names, accept_material: generated\.accept_material/.test(genCfgCode));
     ok('…and needs_input_note is a SIBLING channel of needs_door_note (two refusals, two sentences)',
       /needs_door_note: needsDoorNote,/.test(genCfgCode) && /needs_input_note: needsInputNote,/.test(genCfgCode)
       && /inputs,/.test(genCfgCode));
-    ok('…and a resolver outage costs the tray, never the draft',
-      /\} catch \{\s*inputs = null;\s*\}/.test(genCfgCode));
+    // RE-POINTED (Aug 25, THE PROMPT ADAPTER): the catch still drops the tray and never the draft —
+    // and it now also keeps the ADAPTATION'S OWN SENTENCE, whose join is inlined precisely because
+    // the import that carries inputNote is what failed. Same law, one more thing that must survive.
+    // RE-POINTED with the split above: the outage now costs the tray in one catch and the tidy join
+    // in another; NEITHER may cost the draft or the adaptation's own sentence.
+    ok('…and a resolver outage costs the tray, never the draft (nor the adaptation sentence)',
+      /\} catch \{\s*inputs = null;\s*\}/.test(genCfgCode)
+      && /needsInputNote = rubricNotes\.length \|\| trayNotes\.length\s*\?\s*\[\.\.\.new Set\(\[\.\.\.rubricNotes, \.\.\.trayNotes\]\)\]\.join\(' '\)\s*: null;/.test(genCfgCode));
     ok('…and BOTH amber blocks render on the draft card (a refused door AND a missing document speak)',
       /\{draft\.needs_door_note\}/.test(draftCard) && /\{draft\.needs_input_note\}/.test(draftCard));
     ok('DOOR 2 (coworker chat): create_task takes input_doc_names + input_accept_material',
@@ -1901,8 +1937,13 @@ async function main() {
       ok('THE RE-FIRED CHILD RECEIVED THE BATON — the code word came back out of its step',
         outText((refiredRow?.step_outputs ?? [])[0]).includes(BATON_WORD),
         outText((refiredRow?.step_outputs ?? [])[0]).slice(0, 60));
+      // ⚠️ RE-POINTED (THE WAVE, Aug 25): the baton fallback moved out of the backstop's body into
+      // the SHARED `eventRunContext` (one rebuild for the backstop AND the kick). Same law, one
+      // implementation instead of two: the value the fallback assigns must still be the value the
+      // re-fired run is handed — now across the function boundary, asserted in both halves.
       ok('SOURCE: the value the fallback assigns is the SAME variable handed to the re-fired run',
-        /if \(!context\) \{[\s\S]{0,500}?'subprocess_link'[\s\S]{0,300}?context = \(linkRow\?\.tasks[\s\S]{0,400}?triggerContext: context \}\)/.test(reactionsSrc));
+        /if \(!context\) \{[\s\S]{0,500}?'subprocess_link'[\s\S]{0,300}?context = \(linkRow\?\.tasks/.test(reactionsSrc)
+        && /const \{ context, started \} = await eventRunContext\(admin, r\.user_id, r\.id\);[\s\S]{0,900}?triggerContext: context \}\)/.test(reactionsSrc));
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -2051,8 +2092,10 @@ async function main() {
     }
 
     console.log('\nSF — NO LYING DOOR (the ledger and the resume route; mode: source):');
+    // RE-POINTED BY THE INPUT STATION (THE WAVE): the same exclusion now names TWO kinds — a ⧉ park
+    // (a wait nobody holds) and an input park (a wait an Approve row cannot answer). One law.
     ok('the ledger\'s AWAITING list EXCLUDES a ⧉ park (never an Approve row for a wait nobody holds)',
-      /const awaiting = runs\.filter\(r => r\.status === 'awaiting_approval'\)\.filter\(r => \{[\s\S]{0,320}?steps\[\(r\.step_outputs \?\? \[\]\)\.length\]\?\.type !== 'workflow';/.test(ledgerSrc));
+      /const awaiting = runs\.filter\(r => r\.status === 'awaiting_approval'\)\.filter\(r => \{[\s\S]{0,400}?return t !== 'workflow' && t !== 'input';/.test(ledgerSrc));
     ok('the resume route refuses a ⧉ park through the SAME derivation (parkedGateOf, not a copy)',
       /parkedGateOf\(/.test(resumeSrc) && /if \(gate\.kind === 'subprocess'\)/.test(resumeSrc));
     ok('…with 409 and the sentence that says whose wait it is',
@@ -2069,9 +2112,19 @@ async function main() {
       /if \(\(opts\.resumeFromApproval \|\| opts\.resumeSeeded\) && runId\)/.test(runWfCode));
     {
       const seeded = [...subprocessSrc.matchAll(/resumeSeeded: true/g)].length;
-      ok('THE ONLY setter of resumeSeeded is the subprocess resume itself',
-        seeded === 1 && !/resumeSeeded/.test(stripComments(readFileSync('app/api/workflows/runs/[id]/resume/route.ts', 'utf8'))),
+      // RE-POINTED BY THE INPUT STATION (THE WAVE): a SECOND door now answers a station by writing
+      // that station's own output and re-entering seeded — the input door. The law is unchanged and
+      // stated exactly: a seeded resume passes NO human gate, so each setter is checked for the
+      // absence of resumeFromApproval in the same call, and nothing else sets it anywhere.
+      const resumeSeedSrc = stripComments(readFileSync('app/api/workflows/runs/[id]/resume/route.ts', 'utf8'));
+      ok('THE SETTERS OF resumeSeeded ARE THE TWO ANSWERED-STATION DOORS, and only those',
+        seeded === 1
+        && [...resumeSeedSrc.matchAll(/resumeSeeded: true/g)].length === 1
+        && /triggerSource: 'manual', resumeSeeded: true/.test(resumeSeedSrc),
         String(seeded));
+      ok('…and the input door never sets resumeFromApproval beside it (it passes no gate either)',
+        !/resumeSeeded: true[^)]*resumeFromApproval/.test(resumeSeedSrc)
+        && !/resumeFromApproval[^)]*resumeSeeded: true/.test(resumeSeedSrc));
       ok('…and it NEVER sets resumeFromApproval in the same call',
         !/resumeSeeded: true[\s\S]{0,80}resumeFromApproval|resumeFromApproval[\s\S]{0,80}resumeSeeded: true/.test(subprocessSrc));
       // FOUR terminal ends, ONE seam (the definition reads `const notifySubprocessParent = async (`,
@@ -2219,6 +2272,9 @@ async function main() {
       for (const r of ((rs ?? []) as Array<{ id: string }>)) {
         await admin.from('item_plans').delete().eq('user_id', userId)
           .eq('kind', SUBPROCESS_LINK_KIND).like('entity_id', `${r.id}:%`);
+        // THE WAVE (Aug 25): a park with no standing binding now raises a DECK ASK on the owner —
+        // SP1b's gated parent parks exactly that way, so this section owns its clean-up too.
+        await admin.from('commitments').delete().eq('source', 'handoff').eq('source_id', r.id);
       }
       await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', 'reaction_fire').like('entity_id', `${id}:%`);
       await admin.from('work_threads').delete().eq('workflow_id', id);
@@ -2564,8 +2620,12 @@ async function main() {
       const postNow = stripComments(readFileSync('app/api/workflows/route.ts', 'utf8'));
       const dispatchNow = stripComments(readFileSync('app/api/cron/workflows-dispatch/route.ts', 'utf8'));
 
+      // RE-POINTED (latency wave, Aug 25): same reason as the tray gate above — the throttle read
+      // now rides the GET's one flight with readWorkflowInputs. STILL read through readFireLimit,
+      // STILL scoped to the creator, STILL served in BOTH places (the two `fireLimit` assertions
+      // below are the half of this law that actually matters, and they are unchanged).
       ok('SERVED: the workflow GET reads the throttle and serves it in BOTH places (one derivation)',
-        /const fireLimit = await readFireLimit\(adminRead, data\.user_id, id\);/.test(wfGet)
+        /readFireLimit\(adminRead, data\.user_id, id\)/.test(wfGet)
         && /workflow: \{ \.\.\.data,[^}]*fireLimit,/.test(wfGet) && /\n\s*fireLimit,\n/.test(wfGet));
       ok('SERVED: the ledger batches it for every row and never serves null (absent = the default)',
         /readFireLimits\(supabase, user\.id, wfs\.map\(\(w\) => w\.id\)\)/.test(ledger)
@@ -4335,6 +4395,1498 @@ async function main() {
     ok('…and the rail block + the draft card both SAY the stated case when there is one',
       /const key = step\.case_name\?\.trim\(\) \|\| step\.case_instruction\?\.trim\(\) \|\| '';/.test(studioGA)
       && /const stated = typeof s\.case_name === 'string' \? s\.case_name\.trim\(\) : '';/.test(cardGA));
+
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    // GR — THE PROMPT ADAPTER (Aug 25, found live: a pilot pasted a ChatGPT-style OPERATING
+    //      RUBRIC into the workflow door and the route timed out). The user does not know our
+    //      ideal shape. A rubric must author a MACHINE with the rubric riding the producing step
+    //      VERBATIM (THE CONTENT FLOOR applied to authoring) — and a machine description must be
+    //      byte-identical in behaviour to before the adapter existed.
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    const { rubricSignals, RUBRIC_SENTINEL, stripPastePlaceholders } =
+      await import('../lib/workflows/generate-config');
+
+    // The pilot's real paste, re-cut with fake names (NO REAL NAMES, ever).
+    const VERBATIM = 'Score every candidate on the same five dimensions and never invent a dimension';
+    const RUBRIC = [
+      'You are an AI recruiting workflow assistant for Northwind Retail Group.',
+      '',
+      'Inputs:',
+      '[PASTE JOB DESCRIPTION]',
+      '[PASTE OR UPLOAD RESUMES]',
+      '',
+      'Evaluation rules:',
+      '1. Read the job description first and extract the must-have requirements before opening any resume.',
+      `2. ${VERBATIM} the job description does not ask for.`,
+      '3. Treat years of experience as evidence, never as a threshold on its own.',
+      '4. Flag any gap longer than six months and describe it neutrally.',
+      '5. Ignore photographs, age, gender and nationality entirely.',
+      '6. Quote the resume when you make a claim about a candidate.',
+      '7. Where the resume is silent, write "not stated" rather than guessing.',
+      '8. Rank candidates only against the requirements, never against each other\'s tone.',
+      '9. Keep every score on a 1-10 scale with one sentence of justification.',
+      '10. Never recommend rejection outright — a human recruiter decides.',
+      '',
+      'Output:',
+      'A. Summary table of all candidates',
+      'B. Top three shortlist with reasons',
+      'C. Risks and gaps for each shortlisted candidate',
+      'D. Suggested interview questions',
+      '',
+      'A human recruiter must approve the shortlist before anything reaches a hiring manager.',
+    ].join('\n');
+
+    // ── THE DETERMINISTIC READ decides both fixtures with ZERO AI. ──
+    const sigR = rubricSignals(RUBRIC);
+    ok('GR: the DETERMINISTIC signals read the pilot paste as a rubric (placeholders + persona + rules + output spec)',
+      sigR.placeholders >= 2 && sigR.persona === true && sigR.numberedRules >= 4
+      && (sigR.outputSpec || sigR.letteredSections >= 2) && sigR.score >= 2, JSON.stringify(sigR));
+    const sigM = rubricSignals(
+      'Screen incoming job applications for the Customer Service Representative opening at Acme Consumer '
+      + 'Finance. Candidates send their CVs by email and sometimes we upload them ourselves.');
+    ok('…and reads a MACHINE DESCRIPTION as score 0 — the common case never pays for a judged read',
+      sigM.score === 0, JSON.stringify(sigM));
+    const strip = stripPastePlaceholders(RUBRIC);
+    ok('…the [PASTE …] lines are stripped and NOTHING else is (the rubric survives byte-for-byte)',
+      strip.stripped.length === 2 && !/\[\s*PASTE/i.test(strip.text) && strip.text.includes(VERBATIM)
+      && strip.text.includes('D. Suggested interview questions'));
+
+    // ── ONE LIVE AUTHORING CALL on the rubric fixture. ──
+    const cfgR = await generateWorkflowConfig(RUBRIC, userId, admin as never);
+    const stepsR = cfgR?.steps ?? [];
+    const promptsR = stepsR.map((s) => String((s as { prompt?: string }).prompt ?? ''));
+    ok('GR: A RUBRIC AUTHORS A MACHINE — at least one door for what arrives',
+      (cfgR?.triggers ?? []).length > 0 || cfgR?.inputs?.acceptMaterial === true,
+      JSON.stringify({ triggers: cfgR?.triggers, inputs: cfgR?.inputs }));
+    ok('…and the HUMAN GATE the rubric\'s own words demand ("a human recruiter decides")',
+      stepsR.some((s) => s.type === 'approval' || s.type === 'handoff'),
+      stepsR.map((s) => s.type).join(','));
+    ok('…and a producing step that carries the rubric VERBATIM (the content floor, at authoring)',
+      promptsR.some((p) => p.includes(VERBATIM)),
+      promptsR.map((p) => p.slice(0, 120)).join(' | '));
+    ok('…the hand-fed [PASTE …] lines NEVER survive into a step prompt',
+      !promptsR.some((p) => /\[\s*PASTE/i.test(p)));
+    ok('…the ADAPTATION IS SPOKEN through the existing note channel, never silently done',
+      /operating rubric/i.test(cfgR?.needs_input_note ?? '')
+      && /word-for-word/i.test(cfgR?.needs_input_note ?? ''), String(cfgR?.needs_input_note));
+    // RE-POINTED (Aug 25, THE DECLARED INPUTS): this fixture declares its inputs under an "Inputs:"
+    // header, so its placeholders are no longer answered with "pin a document" — they are answered
+    // with a STATION EACH. The pin-note default lives on in GR3's undeclared fixture.
+    ok('…and the declared placeholders are answered with a STOP EACH, named in the user\'s own words',
+      /I made each one a stop/.test(cfgR?.needs_input_note ?? '')
+      && !/WORKS WITH/.test(cfgR?.needs_input_note ?? ''), String(cfgR?.needs_input_note));
+    ok('…THE SENTINEL NEVER LEAKS — it is a wire token, absent from the whole stored config',
+      !JSON.stringify(cfgR).includes(RUBRIC_SENTINEL));
+
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    // GU — THE UNSATISFIABLE CASE SPEAKS AT AUTHORING (Aug 25, found live on the same run as the
+    //      fairness incident). The paste worked on ONE approved requisition and never named it, so
+    //      the case station got the identity QUESTION — and every run filed nothing ("No case named
+    //      in this material — continuing without one"), which made the rubric's own ranked
+    //      shortlist and "same rubric every candidate" STRUCTURALLY UNREACHABLE. Nothing told the
+    //      user. The machine knew at authoring time. THE JUDGMENT IS THE MODEL'S, THE SENTENCE IS
+    //      CODE'S — so the note's presence is gated structurally here, on the two fixtures that
+    //      differ in exactly this one property (the pilot rubric names no opening; the CSR machine
+    //      description names one).
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    const { unnamedCaseNote } = await import('../lib/workflows/generate-config');
+    ok('GU: THE UNNAMED SINGLE CASE IS SAID — the pilot-shaped fixture names no opening, so the draft says so',
+      /but never names it/.test(cfgR?.needs_step_note ?? ''), String(cfgR?.needs_step_note));
+    ok('…and the sentence is CODE\'S, word for word (the model contributes one noun, never the wording)',
+      (cfgR?.needs_step_note ?? '').includes(unnamedCaseNote(
+        (/works on one (.{1,40}?) but never names it/.exec(cfgR?.needs_step_note ?? '')?.[1] ?? 'case'))),
+      String(cfgR?.needs_step_note));
+    ok('…CREATION IS NEVER BLOCKED — the draft still stands, with its steps',
+      (cfgR?.steps ?? []).length > 0);
+    ok('…and NO NAME IS INVENTED — nothing on the config claims a case it was never told',
+      (cfgR?.steps ?? []).filter((s) => s.type === 'case')
+        .every((s) => !String((s.case_name as string | undefined) ?? '').trim()),
+      JSON.stringify((cfgR?.steps ?? []).filter((s) => s.type === 'case')));
+    ok('…the signal is a WIRE FIELD — `case_unnamed` never survives into the stored config',
+      !JSON.stringify(cfgR?.steps ?? []).includes('case_unnamed'));
+    ok('GU: THE NAMED CASE STAYS SILENT — the CSR fixture names its opening, so the note is FALSE and absent',
+      !/but never names it/.test(cfg?.needs_step_note ?? ''), String(cfg?.needs_step_note));
+
+    // ── STRUCTURAL FLOORS: the law, not the two fixtures. ──
+    ok('GU: the prompt teaches the shape and FORBIDS the invented name',
+      /THE UNNAMED SINGLE CASE — SAY IT, NEVER GUESS IT\./.test(genSrc)
+      && /"case_unnamed": "<the request's OWN noun for it/.test(genSrc)
+      && /A rubric that works on ONE case it never names/.test(genSrc));
+    ok('GU: the flag is a SIGNAL, deleted at the station, and a STATED case suppresses the note',
+      /delete \(s as \{ case_unnamed\?: unknown \}\)\.case_unnamed;/.test(genSrc)
+      && /if \(unnamedNoun && !statedCase\) \{/.test(genSrc));
+    ok('GU: it speaks on THE EXISTING STEP CHANNEL — one more sentence, never a sixth box',
+      /stepNotes\.push\(unnamedCaseNote\(unnamedNoun\)\);/.test(genSrc)
+      && /export function unnamedCaseNote\(noun: string\): string \{/.test(genSrc));
+
+    // ── THE MACHINE PATH IS UNTOUCHED (the frozen CSR config above is the fixture — no second call). ──
+    ok('GR: a MACHINE DESCRIPTION takes none of the adapter — no rubric sentence on its notes',
+      !/operating rubric/i.test(cfg?.needs_input_note ?? '')
+      && !/FOLLOW THIS RUBRIC EXACTLY/.test(JSON.stringify(cfg)),
+      String(cfg?.needs_input_note));
+    {
+      const sysStart = genSrc.indexOf('const SYSTEM = `');
+      const sysBody = genSrc.slice(sysStart, genSrc.indexOf('`;', sysStart));
+      ok('…because the adapter rides the USER MESSAGE, never SYSTEM (the frozen prompt is untouched)',
+        /parts\.push\(rubricAdapterBlock\(declared\)\)/.test(genSrc)
+        && sysStart > 0 && !sysBody.includes('USER_RUBRIC')
+        && !/OPERATING RUBRIC|rubricAdapterBlock/.test(sysBody));
+    }
+
+    // ── STRUCTURAL FLOORS. ──
+    ok('GR: THE SUBSTITUTION IS CODE — the replace AND the append-fallback both exist',
+      /target\.prompt = p\.replace\(RUBRIC_SENTINEL, rubric\);/.test(genSrc)
+      && /FOLLOW THIS RUBRIC EXACTLY:/.test(genSrc)
+      && /DO NOT COPY THE RUBRIC INTO YOUR JSON/.test(genSrc));
+    {
+      const body = genSrc.slice(genSrc.indexOf('export async function detectPromptShape'));
+      const head = body.slice(0, body.indexOf('export function stripPastePlaceholders'));
+      ok('GR: DETERMINISTIC SIGNALS PRECEDE ANY JUDGED READ (and its failure falls back to machine)',
+        head.indexOf('rubricSignals(text)') < head.indexOf('getAIClient')
+        && /if \(sig\.score >= 2\) return 'rubric';/.test(head)
+        && /if \(sig\.score === 0 \|\| text\.length < 500\) return 'machine';/.test(head)
+        && /catch \{\s*return 'machine';/.test(head));
+    }
+    ok('GR: THE CEILING — the drafting door runs the 300s budget class, not 60',
+      /export const maxDuration = 300;/.test(
+        stripComments(readFileSync('app/api/workflows/generate-from-description/route.ts', 'utf8'))));
+    ok('GR: PARITY IS FREE — the chat door\'s create_task authors through the SAME function',
+      /generateWorkflowConfig\(description, userId, supabase/.test(tasksSrcGA));
+
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    // GR2 — THE PARAGRAPH-SHAPED PASTE (the frozen-paste flow test STOPPED here). The pilot's real
+    //       paste is ONE LINE: no newlines, numbered rules and output sections inline, double-space
+    //       separated. A LINE-scoped strip took the placeholder's line — which WAS the document —
+    //       and the whole rubric went with it (0 chars survived); `if (rubric)` then read "" as
+    //       "no rubric", so neither the placement nor the sweep ran and the raw sentinel shipped.
+    //       THE LESSON: a law that holds only for one text shape is an accident, not a law.
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    const ONE_LINE = [
+      'You are an AI recruiting workflow assistant for Northwind Retail Group.',
+      'Inputs: [PASTE JOB DESCRIPTION] [PASTE OR UPLOAD RESUMES]',
+      'Evaluation rules: 1. Read the job description first and extract the must-have requirements before opening any resume.',
+      `2. ${VERBATIM} the job description does not ask for.`,
+      '3. Treat years of experience as evidence, never as a threshold on its own.',
+      '4. Flag any gap longer than six months and describe it neutrally.',
+      '5. Ignore photographs, age, gender and nationality entirely.',
+      'Output: A. Summary table of all candidates',
+      'B. Top three shortlist with reasons',
+      'C. Risks and gaps for each shortlisted candidate',
+      'D. Suggested interview questions',
+      'A human recruiter must approve the shortlist before anything reaches a hiring manager.',
+    ].join('  '); // ← ONE LINE, double-space separated: the pilot's actual shape.
+
+    ok('GR2: the DETERMINISTIC read still fires on a PARAGRAPH (the decisive signals are shape-blind)',
+      !ONE_LINE.includes('\n') && rubricSignals(ONE_LINE).score >= 2,
+      JSON.stringify(rubricSignals(ONE_LINE)));
+    const strip1 = stripPastePlaceholders(ONE_LINE);
+    ok('GR2: THE STRIP IS SPAN-SCOPED — the rubric survives ≥90% of its characters',
+      strip1.text.length >= ONE_LINE.length * 0.9,
+      `${strip1.text.length}/${ONE_LINE.length}`);
+    ok('…with the 13-word verbatim run intact and NO [PASTE …] span left standing',
+      strip1.text.includes(VERBATIM) && !/\[\s*PASTE/i.test(strip1.text)
+      && strip1.stripped.length === 2, JSON.stringify(strip1.stripped));
+    ok('…and the tail of the rubric is still there (the old strip took the whole document)',
+      strip1.text.includes('D. Suggested interview questions')
+      && strip1.text.includes('A human recruiter must approve the shortlist'));
+
+    const cfgP = await generateWorkflowConfig(ONE_LINE, userId, admin as never);
+    const promptsP = (cfgP?.steps ?? []).map((s) => String((s as { prompt?: string }).prompt ?? ''));
+    ok('GR2: A ONE-LINE PASTE AUTHORS A MACHINE carrying the rubric VERBATIM',
+      promptsP.some((p) => p.includes(VERBATIM)),
+      promptsP.map((p) => p.slice(0, 100)).join(' | '));
+    ok('…THE SENTINEL IS ABSENT from the stringified config (the residue that shipped, gated)',
+      !JSON.stringify(cfgP).includes(RUBRIC_SENTINEL));
+    ok('…no [PASTE …] span survives into any step prompt',
+      !promptsP.some((p) => /\[\s*PASTE/i.test(p)));
+    // RE-POINTED (Aug 25, THE DECLARED INPUTS): this fixture declares its inputs too, so the second
+    // sentence is now the STATIONS sentence, not the pin sentence. What the gate protects is
+    // unchanged — the silent drop is what made this a stop, so BOTH notes must still be spoken.
+    ok('…and BOTH notes are spoken (the silent drop is what made this a stop)',
+      /operating rubric/i.test(cfgP?.needs_input_note ?? '')
+      && /I made each one a stop/i.test(cfgP?.needs_input_note ?? ''), String(cfgP?.needs_input_note));
+
+    // ── STRUCTURAL FLOORS for the three repairs. ──
+    {
+      const stripBody = genSrc.slice(
+        genSrc.indexOf('export function stripPastePlaceholders'),
+        genSrc.indexOf('const RUBRIC_SURVIVAL_FLOOR'));
+      ok('GR2 FLOOR 1: the strip removes SPANS, never lines (shape-independent by construction)',
+        /text\.replace\(PASTE_PLACEHOLDER_G/.test(stripBody)
+        && !/split\('\\n'\)/.test(stripBody) && stripBody.length > 0);
+    }
+    ok('GR2 FLOOR 2: THE SWEEP IS UNCONDITIONAL — outside every `if (rubric)` guard',
+      /\n  sweepSentinel\(steps\);/.test(genSrc)          // function-body indentation = ungated
+      && !/\n    sweepSentinel\(steps\);/.test(genSrc)     // never nested inside the guard
+      && !/function placeRubric\([\s\S]*?\n\}/.exec(genSrc)?.[0].includes('sweepSentinel'));
+    ok('GR2 FLOOR 3: THE EMPTY-RUBRIC FLOOR — a costly strip falls back to the user\'s own text',
+      /const RUBRIC_SURVIVAL_FLOOR = 0\.\d+;/.test(genSrc)
+      && /s\.text\.trim\(\)\.length < original\.length \* RUBRIC_SURVIVAL_FLOOR/.test(genSrc)
+      && /rubric = original;/.test(genSrc)
+      && /placeholdersKept/.test(genSrc));
+
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    // GR3 — A DECLARED INPUT IS A STATION (Aug 25, found live by the owner). The pilot's prompt
+    //       DECLARES what it must be given — "Inputs: 1. Approved job description: [PASTE JOB
+    //       DESCRIPTION] 2. Candidate resumes: [PASTE OR UPLOAD RESUMES]" — and the authored
+    //       workflow got NO station at all: running it landed in the generic run-start material
+    //       sheet ("what is this?"), which knows nothing about what this workflow needs. The user
+    //       had already said what it needs, BY NAME, before they started.
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    const { declaredInputs, MAX_INPUT_STATIONS, declaredStationsNote, declaredStationsCapNote } =
+      await import('../lib/workflows/generate-config');
+
+    // ── THE DETERMINISTIC READ decides this with ZERO AI, on every shape the paste can take. ──
+    const PILOT_INPUTS = 'Inputs: 1. Approved job description: [PASTE JOB DESCRIPTION] '
+      + '2. Candidate resumes: [PASTE OR UPLOAD RESUMES] Evaluation rules: 1. Read the job description first.';
+    const d1 = declaredInputs(`You are an AI recruiting workflow assistant. ${PILOT_INPUTS}`);
+    ok('GR3: THE PILOT\'S OWN SHAPE — a numbered inputs list yields ONE declared input per entry',
+      d1.length === 2, JSON.stringify(d1));
+    ok('…each carrying THE USER\'S OWN LABEL, never our paraphrase and never the placeholder\'s shout',
+      d1[0]?.label === 'Approved job description' && d1[1]?.label === 'Candidate resumes',
+      JSON.stringify(d1.map((d) => d.label)));
+    const d2 = declaredInputs([
+      'You are an AI recruiting assistant.', '', 'Inputs:',
+      '1. Approved job description: [PASTE JOB DESCRIPTION]',
+      '2. Candidate resumes: [PASTE OR UPLOAD RESUMES]', '', 'Output:', 'A. Table',
+    ].join('\n'));
+    ok('…and the read is SHAPE-INDEPENDENT — the multi-line list reads identically to the one-liner',
+      JSON.stringify(d2.map((d) => d.label)) === JSON.stringify(d1.map((d) => d.label)), JSON.stringify(d2));
+    const d3 = declaredInputs(RUBRIC);
+    ok('…a bare placeholder under the header still declares an input, named by its own words',
+      d3.length === 2 && d3[0].label === 'job description' && d3[1].label === 'resumes', JSON.stringify(d3));
+    ok('GR3: A PLACEHOLDER OUTSIDE A DECLARED LIST IS NOT ONE (the section, not the bracket, declares)',
+      declaredInputs('Every Monday summarise the week. Use [PASTE LAST WEEK NOTES] as background.').length === 0
+      && declaredInputs('Rules: 1. Never invent a figure. Output: a one-pager.').length === 0);
+    ok('…and the section ENDS at the next header (a placeholder in the rules is not a declared input)',
+      declaredInputs('Inputs: 1. The brief: [PASTE BRIEF] Rules: 1. Compare it against [PASTE LAST WEEK] carefully.')
+        .length === 1);
+
+    // ── THE NOTE IS CODE'S, word for word; the model contributes only the labels. ──
+    ok('GR3: THE NOTE IS CODE\'S — one sentence, naming the things in the user\'s own words',
+      declaredStationsNote(['the approved job description', 'candidate resumes'])
+        === 'Your prompt names the material it needs, so I made each one a stop — the workflow asks '
+        + 'you for the approved job description and candidate resumes on each run, and you send each '
+        + 'from your deck as it stops.',
+      declaredStationsNote(['the approved job description', 'candidate resumes']));
+    ok(`…and beyond ${MAX_INPUT_STATIONS} stops it REFUSES OUT LOUD, naming what it left out`,
+      /left b, c out/.test(declaredStationsCapNote(['a'], ['b', 'c']))
+      && new RegExp(`more than ${MAX_INPUT_STATIONS} times is a chore`).test(declaredStationsCapNote(['a'], ['b'])),
+      declaredStationsCapNote(['a'], ['b', 'c']));
+
+    // ── THE LIVE PROOF rides the fixture already authored above (no extra AI call): GR's rubric
+    //    declares two inputs, so its config must now carry a station for each. ──
+    const stationsR = stepsR.filter((s) => s.type === 'input');
+    ok('GR3: THE DECLARED INPUTS BECAME STATIONS — one per declared thing, none dropped',
+      stationsR.length === 2, JSON.stringify(stepsR.map((s) => s.type)));
+    ok('…each ASKING IN THE USER\'S OWN WORDS (the label the prompt declared, not our question)',
+      stationsR.some((s) => /job description/i.test(String((s as { ask?: string }).ask ?? '')))
+      && stationsR.some((s) => /resume/i.test(String((s as { ask?: string }).ask ?? ''))),
+      JSON.stringify(stationsR.map((s) => (s as { ask?: string }).ask)));
+    ok('…and NO STATION ASKS IN A WIRE TOKEN (found live: the model wrote `ask: "[PASTE JOB …]"`)',
+      stepsR.every((s) => !/\[\s*(?:paste|upload|attach|insert|provide|drop)/i
+        .test(`${(s as { ask?: string }).ask ?? ''} ${(s as { label?: string }).label ?? ''}`)),
+      JSON.stringify(stationsR.map((s) => (s as { ask?: string }).ask)));
+    ok('…and every station takes EITHER door (a paste or a document — never narrowed for them)',
+      stationsR.every((s) => (s as { accepts?: string }).accepts === 'both'),
+      JSON.stringify(stationsR.map((s) => (s as { accepts?: string }).accepts)));
+    {
+      const lastStation = stepsR.map((s) => s.type).lastIndexOf('input');
+      const firstConsumer = stepsR.findIndex((s) => s.type === 'ai' || s.type === 'case' || s.type === 'agent');
+      ok('THE STATIONS LEAD — what a run must be GIVEN is asked for before anything works on it',
+        firstConsumer === -1 || lastStation < firstConsumer,
+        JSON.stringify({ steps: stepsR.map((s) => s.type), lastStation, firstConsumer }));
+    }
+    ok('NEVER BOTH — a placeholder that became a station is NEVER also sent to be pinned',
+      !/WORKS WITH/.test(cfgR?.needs_input_note ?? ''), String(cfgR?.needs_input_note));
+
+    // ── A DECLARED INPUT MUST NEVER BE HOMELESS (Aug 25, FOUND LIVE by the owner on the pilot
+    //    paste: steps were input → case → ai → approval with triggers = [] and no pinned doc, so
+    //    the RESUMES had no home at all — the model claimed they "arrive", the enforcement believed
+    //    the claim, and authorDoors then dropped every door it had asked for. A wish is not a door.
+    //    THE SAME BREATH: the note announced BOTH declared inputs as stops while one station stood.
+    //
+    //    Asserted on BOTH already-authored declared fixtures — the bare-placeholder rubric and the
+    //    one-line paste — at ZERO extra AI cost, so the law is proven on two live shapes, not one. ──
+    const homeCheck = (
+      label: string,
+      cfg: { steps?: Array<Record<string, unknown>>; triggers?: unknown[]; inputs?: { docs?: Array<{ name: string }>; acceptMaterial?: boolean } | null; needs_input_note?: string | null } | null,
+      declaredFor: string[],
+    ) => {
+      const st = (cfg?.steps ?? []).filter((s) => s.type === 'input');
+      const asks = st.map((s) => String(s.ask ?? '').trim());
+      const pins = (cfg?.inputs?.docs ?? []).map((d) => d.name);
+      const doorCount = (cfg?.triggers ?? []).length;
+      const homeless = declaredFor.filter((d) => !asks.includes(d)
+        && !pins.some((p) => p.toLowerCase().includes(d.toLowerCase()))
+        && doorCount === 0);
+      ok(`GR3 [${label}]: EVERY DECLARED INPUT HAS A REAL HOME — a station, a resolved pin, or a door`,
+        homeless.length === 0,
+        JSON.stringify({ declared: declaredFor, stations: asks, pins, doors: doorCount, homeless }));
+      // THE NOTE SPEAKS ONLY WHAT EXISTS: the stops it names are exactly the stations that stand.
+      const note = cfg?.needs_input_note ?? '';
+      const named = declaredFor.filter((d) => note.includes(d));
+      ok(`…and the note's named stops EQUAL the seated stations exactly (never the declared list)`,
+        !/I made each one a stop/.test(note)
+        || (named.length === asks.filter((a) => declaredFor.includes(a)).length
+          && named.every((n) => asks.includes(n))),
+        JSON.stringify({ named, stations: asks, note }));
+    };
+    homeCheck('bare-placeholder rubric', cfgR as never, d3.map((d) => d.label));
+    homeCheck('one-line paste', cfgP as never, declaredInputs(ONE_LINE).map((d) => d.label));
+
+    // ── THE UNDECLARED PLACEHOLDER KEEPS TODAY'S DEFAULT (one live call — the other half of the
+    //    law: a bracket inside the prompt's own sentences is not a declaration). ──
+    const UNDECLARED = [
+      'You are an AI market analyst for Northwind Retail Group.',
+      'Each Monday, write a one-page trading update. When you write it, use [PASTE LAST WEEK NOTES]',
+      'as background for the comparison.',
+      'Rules:',
+      '1. Never invent a figure that is not in the material.',
+      '2. Quote the source whenever you make a claim.',
+      '3. Keep it to one page.',
+      '4. Say "not stated" rather than guessing.',
+      'Output: a one-page update with a summary line and three bullets.',
+    ].join('\n');
+    ok('GR3: the undeclared fixture is read as a RUBRIC but declares NOTHING (the two reads differ)',
+      rubricSignals(UNDECLARED).score >= 2 && declaredInputs(UNDECLARED).length === 0,
+      JSON.stringify(rubricSignals(UNDECLARED)));
+    const cfgU = await generateWorkflowConfig(UNDECLARED, userId, admin as never);
+    ok('GR3: A PLACEHOLDER OUTSIDE A DECLARED LIST KEEPS TODAY\'S DEFAULT (the pre-arc sentence pair)',
+      /pasted in by hand/.test(cfgU?.needs_input_note ?? '')
+      && (/WORKS WITH/.test(cfgU?.needs_input_note ?? '') || /I made that a stop/.test(cfgU?.needs_input_note ?? '')),
+      String(cfgU?.needs_input_note));
+    ok('…and the DECLARED sentence is ABSENT (nothing was declared, so nothing was named as a stop)',
+      !/I made each one a stop/.test(cfgU?.needs_input_note ?? ''), String(cfgU?.needs_input_note));
+    ok('…and the ONE-STATION CEILING still holds where nothing was declared',
+      (cfgU?.steps ?? []).filter((s) => s.type === 'input').length <= 1,
+      JSON.stringify((cfgU?.steps ?? []).map((s) => s.type)));
+
+    // ── STRUCTURAL FLOORS: the law, not the fixtures. ──
+    ok('GR3 FLOOR: A DECLARED INPUT IS NEVER SIMPLY DROPPED — code seats what the model left unhomed',
+      /const missing: DeclaredInput\[\] = \[\];/.test(genSrc)
+      && /steps = \[\.\.\.newStations, \.\.\.steps\];/.test(genSrc));
+    ok('GR3 FLOOR: THE BOUNDARY IS STILL THE MODEL\'S TO JUDGE — `input_homes`, with the station as default',
+      /"home": "station" \| "document" \| "arrives"/.test(genSrc)
+      && /return 'station';/.test(genSrc)
+      && /THE DEFAULT: the rubric said it must be given/.test(genSrc));
+    ok('GR3 FLOOR: PIN WHAT WE HOLD, ASK FOR WHAT WE DO NOT — a "document" home must actually resolve',
+      /if \(home === 'document' && trayResolved && pinnedDocs\.some/.test(genSrc)
+      && genSrc.indexOf('const trayNotes: string[] = []') < genSrc.indexOf('const declaredStationLabels'));
+    ok('GR3 FLOOR: A WISH IS NOT A DOOR — the doors are SANITISED before anything is homed against them',
+      genSrc.indexOf('const authored = await authorDoors(generated.triggers') < genSrc.indexOf('const arrivesSatisfied')
+      && /const arrivesSatisfied = doors\.length > 0/.test(genSrc)
+      && !/hasDoor = \(Array\.isArray\(generated\.triggers\)/.test(genSrc));
+    ok('GR3 FLOOR: THE INCOHERENCE RULE — with a station standing, only a REAL door satisfies "arrives"',
+      /const willHaveStation = steps\.some\(\(st\) => st\.type === 'input'\)/.test(genSrc)
+      && /\|\| \(!willHaveStation && inputs\?\.acceptMaterial === true\);/.test(genSrc));
+    ok('GR3 FLOOR: A HOME IS A THING THAT EXISTS — each branch checked against what actually resolved',
+      /if \(home === 'document' && trayResolved && pinnedDocs\.some/.test(genSrc)
+      && /if \(home === 'arrives' && arrivesSatisfied\) continue;/.test(genSrc));
+    ok('GR3 FLOOR: THE NOTE IS DERIVED FROM THE MACHINE — from seated asks, by EXACT match',
+      /const seatedAsks = new Set\(/.test(genSrc)
+      && /steps\.filter\(\(st\) => st\.type === 'input'\)\.map\(\(st\) => String\(st\.ask \?\? ''\)\.trim\(\)\)/.test(genSrc)
+      && /declared\.map\(\(d\) => d\.label\)\.filter\(\(l\) => seatedAsks\.has\(l\.slice\(0, 200\)\)\)/.test(genSrc));
+    ok('GR3 FLOOR: THE ASK IS THE USER\'S LABEL, NEVER THEIR WIRE TOKEN — both halves in code',
+      /const ask = PASTE_PLACEHOLDER\.test\(rawAsk\)/.test(genSrc)
+      && /mine\.ask = d\.label\.slice\(0, 200\);/.test(genSrc));
+    ok('GR3 FLOOR: THE DECLARED READ RUNS ON THE UNTOUCHED PASTE (the strip removes its very spans)',
+      /declared = declaredInputs\(original\);\s*\n\s*const s = stripPastePlaceholders\(original\);/
+        .test(stripComments(genSrc)));
+    ok('GR3 FLOOR: the adapter block TELLS THE MODEL what was declared, and overrides the one-station rule',
+      /THIS RUBRIC DECLARES WHAT IT MUST BE GIVEN — ONE STATION EACH/.test(genSrc)
+      && /this REPLACES the one-station-per-workflow rule above/.test(genSrc));
+    {
+      const sysStart2 = genSrc.indexOf('const SYSTEM = `');
+      const sysBody2 = genSrc.slice(sysStart2, genSrc.indexOf('`;', sysStart2));
+      ok('GR3 FLOOR: THE FROZEN PROMPT IS UNTOUCHED — the declared block rides the USER message',
+        !/DECLARES WHAT IT MUST BE GIVEN|input_homes/.test(sysBody2)
+        && /At most ONE per\nworkflow/.test(sysBody2));
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  // ██ THE WAVE (Aug 25) — AN EVENT-FIRED RUN THAT DID THE RIGHT THING MUST REACH THE USER ██
+  //
+  //   AK  THE UNBOUND APPROVAL ASK — a park with no standing binding raises the SAME deck ask the
+  //       handoff limb raises, exactly once, cleared by the ONE resume door; a SCHEDULED park keeps
+  //       its standing narration and never raises a second row; test mode raises nothing.
+  //   KK  THE KICK — arrival to run in seconds: one shared atomic claim for the kick, the drain and
+  //       the backstop; a deferred fire structurally unreachable; the backstop untouched.
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  const KPFX = `Probe relay wave ${stamp}`;
+  const kWfIds: string[] = [];
+  const kCommitmentIds: string[] = [];
+  const kStart = new Date(Date.now() - 5_000).toISOString();
+  const today = new Date().toISOString().slice(0, 10);
+
+  const mkK = async (name: string, steps: unknown[], extra: Record<string, unknown> = {}) => {
+    const { data, error } = await admin.from('workflows').insert({
+      user_id: userId, name, status: 'active', trigger: { type: 'manual' }, steps,
+      output_config: { destination: 'message' }, ...extra,
+    }).select('id').single();
+    const id = (data as { id: string } | null)?.id ?? null;
+    if (!id) { console.log(`  ✗ wave fixture "${name}" failed — ${error?.message}`); fail++; }
+    else kWfIds.push(id);
+    return id;
+  };
+  /** A queued EVENT run plus the fire record that carries its subject — exactly the two rows a
+   *  real door fire writes, so the subject ladder reads production's own shape. */
+  const mkEventRun = async (wfId: string, eventTitle: string) => {
+    const { data } = await admin.from('workflow_runs').insert({
+      workflow_id: wfId, user_id: userId, status: 'queued', triggered_by: 'event',
+    }).select('id').single();
+    const runId = (data as { id: string } | null)?.id ?? '';
+    const context = `[THE TRIGGERING EVENT — this run fired because this arrived:]\n${eventTitle}\nA probe event body.`;
+    await admin.from('item_plans').insert({
+      user_id: userId, kind: 'reaction_fire', entity_id: `${wfId}:inbox:${randomUUID()}`,
+      tasks: { runId, reason: 'probe', context, firedAt: new Date().toISOString(), startedAt: new Date().toISOString() },
+    });
+    return { runId, context };
+  };
+  const asksFor = async (runId: string) => {
+    const { data } = await admin.from('commitments')
+      .select('id, user_id, description, direction, counterparty, due_date, status, source, resolved_reason')
+      .eq('source', 'handoff').eq('source_id', runId);
+    const rows = (data ?? []) as Array<{
+      id: string; user_id: string; description: string; direction: string; counterparty: string | null;
+      due_date: string | null; status: string; source: string; resolved_reason: string | null;
+    }>;
+    for (const r of rows) if (!kCommitmentIds.includes(r.id)) kCommitmentIds.push(r.id);
+    return rows;
+  };
+  const turnsFor = async (commitmentId: string) => {
+    const { roomKeyForItem } = await import('../lib/room/turns');
+    const roomKey = await roomKeyForItem(admin, userId, 'commitment', commitmentId);
+    const { data } = await admin.from('room_turns').select('text, component, dedupe_key')
+      .eq('user_id', userId).eq('room_key', roomKey).order('created_at', { ascending: true });
+    return (data ?? []) as Array<{ text: string; component: Record<string, unknown> | null; dedupe_key: string | null }>;
+  };
+
+  try {
+    console.log('\nAK — THE UNBOUND APPROVAL ASK REACHES THE DECK (mode: LIVE runs, 1 fast AI call):');
+    const EVENT_TITLE = `${KPFX} — an application from a probe candidate`;
+    const unboundId = await mkK(`${KPFX} unbound`, [
+      aiStep('u1', 'Draft it', 'Reply with ONLY the single word DECKWARD. No punctuation, no other text.'),
+      { id: 'u2', type: 'approval', label: 'Your approval', instruction: 'Say go before it ships.' },
+    ]);
+    let unboundRunId = '';
+    if (unboundId) {
+      const ev = await mkEventRun(unboundId, EVENT_TITLE);
+      unboundRunId = ev.runId;
+      const res = await runWf({
+        workflowId: unboundId, runId: unboundRunId, triggerSource: 'event', triggerContext: ev.context,
+      });
+      ok('an EVENT-fired run parks at its approval step', res.status === 'awaiting_approval', `${res.status}/${res.error ?? ''}`);
+
+      const asks = await asksFor(unboundRunId);
+      ok('THE PARK RAISES EXACTLY ONE DECK ASK (the class: it used to raise none)',
+        asks.length === 1, `${asks.length} row(s)`);
+      const ask = asks[0];
+      ok('…on the OWNER\'S deck, in the handoff limb\'s own shape (you_owe · source=handoff · due today)',
+        ask?.user_id === userId && ask?.direction === 'you_owe' && ask?.status === 'open'
+        && ask?.source === 'handoff' && ask?.due_date === today,
+        JSON.stringify(ask));
+      ok('…titled from THE RUN\'S SUBJECT and its workflow (the existing derivation, never re-read)',
+        !!ask && ask.description.includes(EVENT_TITLE.slice(0, 40)) && ask.description.includes(`${KPFX} unbound`),
+        String(ask?.description));
+
+      const turns = ask?.id ? await turnsFor(ask.id) : [];
+      const card = turns.find((t) => (t.component as { key?: string } | null)?.key === 'approval');
+      ok('…and its room carries the SAME `approval` component the standing park writes',
+        !!card && (card!.component as { refId?: string }).refId === unboundRunId
+        && (((card!.component as { state?: Record<string, unknown> }).state ?? {}).runId) === unboundRunId,
+        JSON.stringify(card?.component ?? null));
+      ok('…keyed `approval:<runId>` (one card per park — the dedupe key is the existing one)',
+        card?.dedupe_key === `approval:${unboundRunId}`, String(card?.dedupe_key));
+      ok('…carrying the preview of what is being approved (the gated work, not just a title)',
+        String((((card?.component as { state?: Record<string, unknown> })?.state ?? {}).preview ?? '')).includes('DECKWARD'),
+        String((((card?.component as { state?: Record<string, unknown> })?.state ?? {}).preview ?? '')).slice(0, 60));
+
+      // RE-PARK: the same park narrating twice (a retry, a re-served park) must not stack asks.
+      const { narrateApprovalAsk } = await import('../lib/workflows/standing');
+      const { data: wfRow } = await admin.from('workflows')
+        .select('id, user_id, name, status, trigger, next_run_at, agent_id').eq('id', unboundId).maybeSingle();
+      await narrateApprovalAsk(admin, wfRow as never, {
+        runId: unboundRunId, instruction: 'Say go before it ships.', preview: 'DECKWARD',
+      });
+      const again = await asksFor(unboundRunId);
+      ok('A RE-PARK RAISES NOTHING NEW — exactly-once per run (an ask never stacks)',
+        again.length === 1 && again[0]?.id === ask?.id, `${again.length} row(s)`);
+      ok('…and the room still holds ONE card (the dedupe key folds it in place)',
+        (await turnsFor(ask!.id)).filter((t) => (t.component as { key?: string } | null)?.key === 'approval').length === 1);
+    }
+
+    console.log('\nAK2 — THE ONE RESUME DOOR CLEARS IT (approve AND reject; mode: LIVE + source):');
+    {
+      const { settleApprovalAsk } = await import('../lib/workflows/standing');
+      if (unboundRunId) {
+        await settleApprovalAsk(admin, { runId: unboundRunId, approved: true });
+        const after = await asksFor(unboundRunId);
+        ok('APPROVE closes the ask (the deck row cannot outlive the decision)',
+          after.length === 1 && after[0]?.status === 'completed' && after[0]?.resolved_reason === 'approved',
+          JSON.stringify(after[0]));
+        const closing = (await turnsFor(after[0]!.id)).find((t) => t.dedupe_key === `approval-decided:${unboundRunId}`);
+        ok('…and the room says why it is no longer waiting', !!closing && /approved/i.test(closing!.text), String(closing?.text));
+        await settleApprovalAsk(admin, { runId: unboundRunId, approved: true });
+        ok('…and a second settle is a no-op (nothing open left to close)',
+          (await asksFor(unboundRunId)).length === 1);
+      }
+      // REJECT — its own run, so the two endings are proven independently.
+      const rejId = await mkK(`${KPFX} rejected`, [
+        { id: 'r1', type: 'approval', label: 'Your approval', instruction: 'Decide.' },
+      ]);
+      if (rejId) {
+        const ev = await mkEventRun(rejId, `${KPFX} — a second probe event`);
+        await runWf({ workflowId: rejId, runId: ev.runId, triggerSource: 'event', triggerContext: ev.context });
+        ok('a park with no prior step still raises its ask', (await asksFor(ev.runId)).length === 1);
+        await settleApprovalAsk(admin, { runId: ev.runId, approved: false });
+        const after = await asksFor(ev.runId);
+        ok('REJECT clears it too — a held-back run owes the deck nothing',
+          after[0]?.status === 'dismissed' && after[0]?.resolved_reason === 'held back', JSON.stringify(after[0]));
+      }
+
+      const resumeSrcAK = stripComments(readFileSync('app/api/workflows/runs/[id]/resume/route.ts', 'utf8'));
+      ok('ONE DEED ONE DOOR — the resume\'s single settle seam clears the OWNER\'S gate too',
+        /const \{ settleApprovalAsk \} = await import\('@\/lib\/workflows\/standing'\);/.test(resumeSrcAK)
+        && /await settleApprovalAsk\(admin, \{ runId, approved: approve, supplied: gate\.kind === 'input' \}\);/.test(resumeSrcAK));
+      // RE-POINTED BY THE INPUT STATION: a THIRD ending (a supplied answer) goes through the SAME
+      // one seam — the count moves, the law ("every ending settles through settle()") does not.
+      // ⟲ RE-POINTED (THE WAVE part 2): the SUPPLY ending moved into `answerInputStation` with the
+      // rest of the shared core, so the route's own body now carries the reject and the approve.
+      // The law is unchanged — EVERY ending settles through the one seam — and is now read across
+      // the two files that hold the two doors' endings.
+      ok('…on EVERY ending — the reject and the approve at the door, the supply at the shared core',
+        (resumeSrcAK.match(/await settle\(\);/g) ?? []).length === 2
+        && /await settleApprovalAsk\(admin, \{ runId: args\.runId, approved: true, supplied: true \}\);/
+          .test(stripComments(readFileSync('lib/workflows/input-station.ts', 'utf8'))));
+      ok('…and a handoff gate still settles through ITS own door (no lane stole the other\'s)',
+        /if \(handoffGate\) \{[\s\S]{0,300}?settleHandoffDecision\(admin, \{/.test(resumeSrcAK));
+    }
+
+    console.log('\nAK3 — A SCHEDULED PARK IS UNCHANGED (no double attention row; mode: LIVE):');
+    {
+      const schedId = await mkK(`${KPFX} scheduled`, [
+        { id: 's1', type: 'approval', label: 'Your approval', instruction: 'Decide.' },
+      ], { trigger: { type: 'schedule', cron: '0 9 * * 1' }, next_run_at: new Date(Date.now() + 86400_000).toISOString() });
+      if (schedId) {
+        const { data: wfRow } = await admin.from('workflows')
+          .select('id, user_id, name, status, trigger, next_run_at, agent_id').eq('id', schedId).maybeSingle();
+        const { syncStandingCommitment } = await import('../lib/workflows/standing');
+        await syncStandingCommitment(admin, wfRow as never);
+        const { data: standing } = await admin.from('commitments').select('id, due_date')
+          .eq('user_id', userId).eq('source', 'workflow').eq('source_id', schedId).eq('status', 'open').maybeSingle();
+        ok('the scheduled workflow holds its standing commitment (the binding this lane depends on)',
+          !!standing?.id, JSON.stringify(standing));
+        if (standing?.id) kCommitmentIds.push(String(standing.id));
+
+        const res = await runWf({ workflowId: schedId, triggerSource: 'schedule' });
+        ok('it parks at its approval step', res.status === 'awaiting_approval', `${res.status}/${res.error ?? ''}`);
+        ok('THE STANDING NARRATION IS UNCHANGED — the ask lands in the standing room, due today',
+          !!standing?.id
+          && (await turnsFor(String(standing!.id))).some((t) => t.dedupe_key === `approval:${res.runId}`),
+          'no standing-room approval card');
+        ok('…and NO second row was raised (a scheduled park never wears two attention rows)',
+          (await asksFor(res.runId)).length === 0, JSON.stringify(await asksFor(res.runId)));
+      }
+    }
+
+    console.log('\nAK4 — TEST MODE RAISES NOTHING + THE SOURCE FLOORS (mode: LIVE + source):');
+    {
+      const testId = await mkK(`${KPFX} test mode`, [
+        { id: 't1', type: 'approval', label: 'Your approval', instruction: 'Decide.' },
+      ]);
+      if (testId) {
+        const res = await runWf({ workflowId: testId, triggerSource: 'manual', isTest: true });
+        ok('a TEST run never parks (the gate auto-passes) and therefore never asks',
+          res.status !== 'awaiting_approval' && (await asksFor(res.runId)).length === 0,
+          `${res.status}/${(await asksFor(res.runId)).length}`);
+        const { data: anyAsk } = await admin.from('commitments').select('id')
+          .eq('user_id', userId).eq('source', 'handoff').gte('created_at', kStart);
+        for (const a of (anyAsk ?? []) as Array<{ id: string }>) if (!kCommitmentIds.includes(a.id)) kCommitmentIds.push(a.id);
+      }
+
+      const standingSrc = stripComments(readFileSync('lib/workflows/standing.ts', 'utf8'));
+      // RE-POINTED BY THE INPUT STATION (THE WAVE): raiseRunDecisionAsk gained a THIRD caller,
+      // narrateInputAsk — deliberately UNGUARDED (a scheduled input park must ask too; there is no
+      // standing-room paste box). The guard law itself is unchanged and asserted more precisely:
+      // the two PARK narrations still fire only from their `!c` branch, and no fourth caller exists.
+      ok('THE GUARD IS STRUCTURAL — the two DECISION parks fire only from their `!c` branch',
+        (standingSrc.match(/if \(!c\) \{\s*await raiseRunDecisionAsk\(/g) ?? []).length === 2
+        && (standingSrc.match(/await raiseRunDecisionAsk\(/g) ?? []).length === 3
+        && /export async function narrateInputAsk\(/.test(standingSrc));
+      ok('OWNER RESOLUTION IS REUSED, never re-implemented (ownerOf, not a second store read)',
+        /const \{ ownerOf \} = await import\('\.\/owner'\);/.test(standingSrc)
+        && !new RegExp("workflow_owner").test(standingSrc));
+      ok('THE SUBJECT IS THE EXISTING DERIVATION (deriveProcessRows — no second subject ladder)',
+        /const \{ deriveProcessRows \} = await import\('\.\/process-state'\);/.test(standingSrc)
+        && !/THE TRIGGERING EVENT/.test(standingSrc));
+      ok('EXACTLY-ONCE — an open ask for the run is read before anything is inserted',
+        /\.eq\('source', DECISION_SOURCE\)\.eq\('source_id', ask\.runId\)\.eq\('status', 'open'\)/.test(standingSrc));
+      ok('EVERY LIMB IS BEST-EFFORT — a failed ask never costs the park',
+        /async function raiseRunDecisionAsk\([\s\S]{0,400}?\{\s*try \{/.test(standingSrc)
+        && /export async function settleApprovalAsk\([\s\S]{0,200}?\{\s*try \{/.test(standingSrc));
+      ok('THE ORPHAN SWEEP is wired on the dispatcher (an ask never outlives its run)',
+        /const \{ sweepOrphanedRunAsks \} = await import\('@\/lib\/workflows\/standing'\);/
+          .test(stripComments(readFileSync('app/api/cron/workflows-dispatch/route.ts', 'utf8')))
+        && /export async function sweepOrphanedRunAsks\(/.test(standingSrc));
+      ok('…and it closes ONLY asks whose run is GONE (a parked run keeps its ask)',
+        /if \(alive\.has\(String\(a\.source_id\)\)\) continue;/.test(standingSrc));
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // IN — THE INPUT STATION (THE WAVE): the run stops and ASKS the person for what only they have.
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    console.log('\nIN1 — THE PARK AND ITS SUPPLY ASK (mode: LIVE runs):');
+    const SUPPLY_ASK = 'this week\'s numbers from the finance system';
+    const PASTE_WORD = 'HALLOWDRIFT';   // the code word only the paste can carry
+    let inputWfId: string | null = null;
+    let inputRunId = '';
+    let inputAskId = '';
+    {
+      inputWfId = await mkK(`${KPFX} input station`, [
+        { id: 'i1', type: 'input', label: 'Ask me for something', ask: SUPPLY_ASK, accepts: 'both' },
+        aiStep('i2', 'Use what arrived', 'The material above contains exactly one word written in CAPITAL letters. Reply with ONLY that word. No punctuation, no other text.'),
+        { id: 'i3', type: 'approval', label: 'Your approval', instruction: 'Say go before it ships.' },
+      ]);
+      if (inputWfId) {
+        const ev = await mkEventRun(inputWfId, `${KPFX} — an event that needs your numbers`);
+        inputRunId = ev.runId;
+        const res = await runWf({
+          workflowId: inputWfId, runId: inputRunId, triggerSource: 'event', triggerContext: ev.context,
+        });
+        ok('a run PARKS at its input station, on the EXISTING awaiting status (no new status value)',
+          res.status === 'awaiting_approval', `${res.status}/${res.error ?? ''}`);
+
+        const asks = await asksFor(inputRunId);
+        ok('THE PARK RAISES EXACTLY ONE DECK ASK (the deck is the one attention surface)',
+          asks.length === 1, `${asks.length} row(s)`);
+        inputAskId = asks[0]?.id ?? '';
+        ok('…in the handoff limb\'s own shape (owner · you_owe · source=handoff · due today)',
+          asks[0]?.user_id === userId && asks[0]?.direction === 'you_owe' && asks[0]?.status === 'open'
+          && asks[0]?.source === 'handoff' && asks[0]?.due_date === today, JSON.stringify(asks[0]));
+        ok('…LED BY THE STATION\'S OWN ASK, in the `<ask> — <subject>` shape every ask parses back',
+          !!asks[0] && asks[0].description.startsWith(SUPPLY_ASK), String(asks[0]?.description));
+
+        const turns = inputAskId ? await turnsFor(inputAskId) : [];
+        // RE-POINTED (Aug 25, the multi-station wave): the key is per run AND per STATION. A
+        // run-only key folded station 2's ask into station 1's line — see IN5.
+        const line = turns.find((t) => t.dedupe_key === `input:${inputRunId}:i1`);
+        ok('…and the room says what is needed, keyed `input:<runId>:<stepId>` (one card per STATION)',
+          !!line && line!.text.includes(SUPPLY_ASK), String(line?.text));
+        ok('NO LYING DOOR — the supply ask writes NO `approval` component (a paste is not a yes/no)',
+          turns.every((t) => (t.component as { key?: string } | null)?.key !== 'approval'),
+          JSON.stringify(turns.map((t) => (t.component as { key?: string } | null)?.key)));
+
+        // THE ONE DERIVATION reads the park as its own kind — every surface's word follows.
+        const { parkedGateOf, deriveProcessRows, GATE_WORDS } = await import('../lib/workflows/process-state');
+        const { data: parkedRow } = await admin.from('workflow_runs')
+          .select('id, workflow_id, status, triggered_by, step_outputs, error, started_at, completed_at, created_at')
+          .eq('id', inputRunId).maybeSingle();
+        const { data: wfSteps } = await admin.from('workflows').select('steps').eq('id', inputWfId).maybeSingle();
+        const gate = parkedGateOf(
+          { step_outputs: ((parkedRow as { step_outputs?: unknown } | null)?.step_outputs ?? []) as never },
+          ((wfSteps as { steps?: unknown } | null)?.steps ?? null) as never,
+        );
+        ok('parkedGateOf reads kind \'input\' and carries the station\'s ask',
+          gate.kind === 'input' && gate.ask === SUPPLY_ASK, JSON.stringify(gate));
+        const rows = await deriveProcessRows(
+          admin, userId, [parkedRow as never], new Map([[inputWfId, { name: `${KPFX} input station`, steps: ((wfSteps as { steps?: never }).steps) }]]),
+        );
+        ok('…the served row wears gateKind + gateAsk and buckets under NEEDS-YOU (it is the owner\'s)',
+          rows[0]?.gateKind === 'input' && rows[0]?.gateAsk === SUPPLY_ASK && rows[0]?.state === 'needs_you',
+          JSON.stringify({ k: rows[0]?.gateKind, s: rows[0]?.state }));
+        ok('ONE WORD TABLE — the input park\'s words come from GATE_WORDS, never from a status',
+          GATE_WORDS.input.station === 'Needs input from you'
+          && GATE_WORDS.input.waiting === 'waiting for something from you'
+          && GATE_WORDS.approval.station === 'Your approval', JSON.stringify(GATE_WORDS.input));
+      }
+    }
+
+    console.log('\nIN2 — WHAT THE PERSON SUPPLIES (the resolver: refuses honestly, clips honestly):');
+    let goodKbId = '';
+    const inKbIds: string[] = [];
+    {
+      const { resolveSuppliedInput, INPUT_TEXT_MAX, suppliedBlock } = await import('../lib/workflows/input-station');
+      const { getOrCreateUploadSource } = await import('../lib/knowledge/indexer');
+      const srcId = await getOrCreateUploadSource(userId, admin);
+      const mkDoc = async (filename: string, text: string | null) => {
+        const { data } = await admin.from('knowledge_files').insert({
+          user_id: userId, source_id: srcId, provider_file_id: `probe-relay-wave/${stamp}/${filename}`,
+          filename, mime_type: 'text/plain', extracted_text: text,
+        }).select('id').single();
+        const id = (data as { id: string } | null)?.id ?? '';
+        if (id) inKbIds.push(id);
+        return id;
+      };
+      goodKbId = await mkDoc(`${stamp}-supplied.txt`, `The finance extract says ${PASTE_WORD} for this week.`);
+      const rawKbId = await mkDoc(`${stamp}-not-indexed.txt`, null);
+
+      const empty = await resolveSuppliedInput(admin, userId, SUPPLY_ASK, { text: '   ' });
+      ok('NOTHING SUPPLIED is refused with the remedy in the sentence (400)',
+        !empty.ok && empty.status === 400 && /paste it, or pin a document/i.test(empty.error), JSON.stringify(empty));
+      const huge = await resolveSuppliedInput(admin, userId, SUPPLY_ASK, { text: 'x'.repeat(INPUT_TEXT_MAX + 1) });
+      ok('AN OVERSIZED PASTE is refused honestly and names the other door (413, never a silent head)',
+        !huge.ok && huge.status === 413 && /pin it as a document/i.test(huge.error), JSON.stringify(huge));
+      const foreign = await resolveSuppliedInput(admin, userId, SUPPLY_ASK, { kbFileId: randomUUID() });
+      ok('A DOCUMENT THAT IS NOT THEIRS is indistinguishable from one that does not exist (404)',
+        !foreign.ok && foreign.status === 404, JSON.stringify(foreign));
+      const hollow = rawKbId ? await resolveSuppliedInput(admin, userId, SUPPLY_ASK, { kbFileId: rawKbId }) : null;
+      ok('NOTHING HOLLOW CONTINUES — a doc with no text in hand refuses rather than resuming on a name',
+        !!hollow && !hollow.ok && hollow.status === 409 && /indexing/i.test(hollow.error), JSON.stringify(hollow));
+      const doc = goodKbId ? await resolveSuppliedInput(admin, userId, SUPPLY_ASK, { kbFileId: goodKbId }) : null;
+      ok('A PINNED DOCUMENT resolves to its real text, named in the block\'s own header',
+        !!doc && doc.ok && doc.block.includes(PASTE_WORD) && doc.block.includes(`${stamp}-supplied.txt`),
+        String(doc && doc.ok ? doc.block.slice(0, 80) : doc));
+
+      const { EXCERPT_RULE, EXCERPT_MARK } = await import('../lib/utils/clip-for-prompt');
+      const block = suppliedBlock({ ask: SUPPLY_ASK, text: 'a'.repeat(INPUT_TEXT_MAX + 500) });
+      ok('THE EXCERPT-HONESTY LAW — the block declares its cut and carries the rule verbatim',
+        block.startsWith(`[WHAT YOU SUPPLIED — ${SUPPLY_ASK}]`)
+        && block.includes(EXCERPT_RULE) && block.includes(EXCERPT_MARK)
+        && block.length < INPUT_TEXT_MAX + 2_000, `${block.length}`);
+    }
+
+    console.log('\nIN3 — THE ANSWER IS THE STATION\'S OWN OUTPUT, AND THE RUN PARKS AGAIN (mode: LIVE):');
+    {
+      if (inputWfId && inputRunId) {
+        // The resume door's engine half, driven exactly as the route drives it: append what was
+        // supplied as the station's own step output, then re-enter through `resumeSeeded`.
+        const { resolveSuppliedInput } = await import('../lib/workflows/input-station');
+        const supplied = await resolveSuppliedInput(admin, userId, SUPPLY_ASK, {
+          text: `Here are the figures: ${PASTE_WORD}.`,
+        });
+        const { data: before } = await admin.from('workflow_runs').select('step_outputs').eq('id', inputRunId).maybeSingle();
+        const outs = [
+          ...(((before as { step_outputs?: unknown[] } | null)?.step_outputs ?? []) as unknown[]),
+          { step_id: 'i1', step_type: 'input', label: 'Ask me for something', output: supplied.ok ? supplied.block : '' },
+        ];
+        const { data: claimed } = await admin.from('workflow_runs')
+          .update({ status: 'running', step_outputs: outs })
+          .eq('id', inputRunId).eq('status', 'awaiting_approval').select('id').maybeSingle();
+        ok('THE EXACTLY-ONCE CLAIM — only a run still in its park can be answered',
+          !!claimed, JSON.stringify(claimed));
+        const { data: second } = await admin.from('workflow_runs')
+          .update({ status: 'running' }).eq('id', inputRunId).eq('status', 'awaiting_approval').select('id').maybeSingle();
+        ok('…and a second send finds nothing to claim (a double-click cannot answer twice)', !second);
+
+        const { settleApprovalAsk } = await import('../lib/workflows/standing');
+        await settleApprovalAsk(admin, { runId: inputRunId, approved: true, supplied: true });
+        const cleared = await asksFor(inputRunId);
+        ok('THE ONE RESUME DOOR CLEARS THE SUPPLY ASK, in the deed\'s own words',
+          cleared[0]?.status === 'completed' && cleared[0]?.resolved_reason === 'input supplied',
+          JSON.stringify(cleared[0]));
+        const closing = inputAskId ? (await turnsFor(inputAskId)).find((t) => t.dedupe_key === `approval-decided:${inputRunId}`) : null;
+        ok('…and the room says they SENT it (never "approved" — they answered a question)',
+          !!closing && /sent it/i.test(closing!.text), String(closing?.text));
+
+        const res = await runWf({
+          workflowId: inputWfId, runId: inputRunId, triggerSource: 'manual', resumeSeeded: true,
+        });
+        ok('THE RUN PARKS A SECOND TIME — at its LATER approval gate (a supply answer passes no gate)',
+          res.status === 'awaiting_approval', `${res.status}/${res.error ?? ''}`);
+        const { data: after } = await admin.from('workflow_runs').select('step_outputs').eq('id', inputRunId).maybeSingle();
+        const outs2 = (((after as { step_outputs?: Array<{ step_type?: string; output?: unknown }> } | null)?.step_outputs) ?? []);
+        ok('…the station\'s output IS what the person supplied (durable, in the run\'s own receipts)',
+          outs2.some((o) => o.step_type === 'input' && String(o.output ?? '').includes(PASTE_WORD)),
+          JSON.stringify(outs2.map((o) => o.step_type)));
+        ok('…and the NEXT step read it — the material lane reaches the work, not just the record',
+          outs2.some((o) => o.step_type === 'ai' && String(o.output ?? '').includes(PASTE_WORD)),
+          JSON.stringify(outs2.filter((o) => o.step_type === 'ai').map((o) => String(o.output ?? '').slice(0, 40))));
+
+        const second2 = await asksFor(inputRunId);
+        ok('…and the SECOND park raised its own ask (the approval gate, on the same deck)',
+          second2.some((r) => r.status === 'open'), JSON.stringify(second2.map((r) => r.status)));
+      }
+    }
+
+    console.log('\nIN4 — TEST MODE ASKS NOBODY + THE ENGINE FLOORS (mode: LIVE + source):');
+    {
+      const tId = await mkK(`${KPFX} input test mode`, [
+        { id: 'q1', type: 'input', label: 'Ask me for something', ask: SUPPLY_ASK, accepts: 'both' },
+      ]);
+      if (tId) {
+        const res = await runWf({ workflowId: tId, triggerSource: 'manual', isTest: true });
+        ok('a TEST run never parks at an input station and never puts an ask on a deck',
+          res.status !== 'awaiting_approval' && (await asksFor(res.runId)).length === 0,
+          `${res.status}/${(await asksFor(res.runId)).length}`);
+        const { data: tr } = await admin.from('workflow_runs').select('step_outputs').eq('id', res.runId).maybeSingle();
+        const o = (((tr as { step_outputs?: Array<{ output?: unknown }> } | null)?.step_outputs) ?? [])[0];
+        ok('…and its stand-in is MARKED as a sample (a test deliverable can never read as real material)',
+          String(o?.output ?? '').includes('[Sample input — test mode]'), String(o?.output ?? ''));
+      }
+
+      const runSrc = stripComments(readFileSync('lib/workflows/run-workflow.ts', 'utf8'));
+      ok('THE PARK USES THE EXISTING STATUS (a new CHECK value is a silent park failure)',
+        /type === 'input'\)/.test(runSrc)
+        && /status: 'awaiting_approval', step_outputs: stepOutputs,/.test(runSrc));
+      ok('…LOUD ON FAILURE — a park that cannot persist is a FAILED run, never a lie',
+        /if \(parkErr\) \{\s*runError = `The '\$\{step\.label \|\| 'input'\}' step could not park the run/.test(runSrc));
+      ok('THE ASK RIDES THE ONE LIMB (narrateInputAsk — no second commitment writer in the loop)',
+        /const \{ narrateInputAsk \} = await import\('@\/lib\/workflows\/standing'\);/.test(runSrc)
+        && !/from\('commitments'\)\.insert/.test(runSrc));
+      ok('THE GATE IS NEVER THE DELIVERABLE — a person\'s own paste can never be shipped back as work',
+        /NON_CONTENT_STEP_TYPES: ReadonlySet<string> = new Set\(\['approval', 'handoff', 'case', 'input'\]\)/.test(runSrc));
+
+      const readySrc = stripComments(readFileSync('lib/workflows/readiness.ts', 'utf8'));
+      ok('READINESS RULE 10 — a station with no question is refused before anyone runs it',
+        /typeOf\(s\) === 'input' && !String\(\(s\.ask as string \| undefined\) \?\? ''\)\.trim\(\)/.test(readySrc)
+        && /The 'Ask me for something' step needs a question\./.test(readySrc));
+      const r10 = readinessOf(
+        { status: 'active', steps: [{ type: 'input', id: 'x', label: 'Ask me for something', ask: '  ' }] }, null,
+      );
+      ok('…and it SPEAKS, inside the ledger row\'s budget',
+        r10.ready === false && r10.reason === "The 'Ask me for something' step needs a question."
+        && r10.reason.length <= READINESS_REASON_MAX, JSON.stringify(r10));
+      ok('…while an asked station is READY (the rule refuses a blank, never the primitive)',
+        readinessOf({ status: 'active', steps: [{ type: 'input', id: 'x', ask: SUPPLY_ASK }] }, null).ready === true);
+    }
+
+    console.log('\nIN5 — THE ONE RESUME DOOR TAKES MATERIAL (mode: source):');
+    {
+      const resumeSrc = stripComments(readFileSync('app/api/workflows/runs/[id]/resume/route.ts', 'utf8'));
+      ok('the door accepts the supply payload alongside the existing approve/reject shapes',
+        /input\?: \{ text\?: string; kbFileId\?: string; pin\?: boolean \}/.test(resumeSrc)
+        && /gate\.kind === 'input' && approve !== false/.test(resumeSrc));
+      ok('NO LYING DOOR — a bare approve at an input gate is REFUSED, and says what it wants instead',
+        /waiting for something from you, not a yes or no/.test(resumeSrc));
+      ok('…while a REJECT still falls through to the ordinary hold-back (declining is a real answer)',
+        resumeSrc.indexOf("gate.kind === 'input' && approve !== false") < resumeSrc.indexOf('if (!approve) {'));
+      // ⟲ RE-POINTED (THE WAVE part 2, THE SAYABLE SUPPLY): the four laws below used to be asserted
+      // against the ROUTE's own body. A second door (the chat tool) now answers the same station, so
+      // the whole core — ownership, the claim, the settle, the pin — moved into `answerInputStation`
+      // and the route DELEGATES. The laws are unchanged and still gated; they are now read at their
+      // one home (section SS3 proves there is exactly one), and here we prove the route rides it.
+      const coreSrc = stripComments(readFileSync('lib/workflows/input-station.ts', 'utf8'));
+      ok('THE ROUTE DELEGATES TO THE ONE CORE (its input branch holds no rules of its own)',
+        /const \{ answerInputStation \} = await import\('@\/lib\/workflows\/input-station'\);/.test(resumeSrc)
+        && /answerInputStation\(admin, \{\s*\n?\s*runId, callerId: user\.id, input: body\.input,/.test(resumeSrc));
+      ok('OWNERSHIP IS THE CALLER\'S OWN — the resolver reads documents under the CALLER\'s id, never the run\'s',
+        /resolveSuppliedInput\(admin, args\.callerId, ask, args\.input\)/.test(coreSrc)
+        && /canResumeRun\(admin, args\.runId, args\.callerId\)/.test(coreSrc));
+      ok('THE CLAIM IS CONDITIONAL — only a still-parked run may be answered (exactly-once)',
+        /\.eq\('id', args\.runId\)\.eq\('status', 'awaiting_approval'\)\s*\n?\s*\.select\('id'\)\.maybeSingle\(\);/.test(coreSrc));
+      ok('IT RESUMES SEEDED — never `resumeFromApproval` (which would pass a gate nobody decided)',
+        /resumeSeeded: true/.test(resumeSrc)
+        && !/resumeFromApproval: true[\s\S]{0,200}runs\/resume:input/.test(resumeSrc));
+      ok('THE PIN IS CLAIMED ONLY IF IT LANDED (a dropped foreign doc never becomes a promise)',
+        /pinned = res\.ok && \(res\.inputs\?\.docs \?\? \[\]\)\.some/.test(coreSrc));
+      ok('…and it rides the EXISTING tray store, never a second writer',
+        /const \{ readWorkflowInputs, writeWorkflowInputs \} = await import\('\.\/inputs'\);/.test(coreSrc));
+
+      const standSrc = stripComments(readFileSync('lib/workflows/standing.ts', 'utf8'));
+      ok('THE ASYMMETRY IS DELIBERATE — the supply ask has NO `!c` guard (a scheduled park asks too)',
+        /export async function narrateInputAsk\([\s\S]{0,600}?await raiseRunDecisionAsk\(/.test(standSrc)
+        && !/export async function narrateInputAsk\([\s\S]{0,600}?if \(!c\)/.test(standSrc));
+      ok('…and the supply ask writes NO approval component (the component is the approval limb\'s)',
+        /\.\.\.\(ask\.supply \? \{\} : \{/.test(standSrc));
+
+      const drawerSrc = stripComments(readFileSync('components/workflows/process-drawer.tsx', 'utf8'));
+      ok('THE DRAWER SHOWS THE STATION and offers NO verb it cannot honour',
+        /s\.type === 'input'/.test(drawerSrc) && /iHoldIt && !isInput &&/.test(drawerSrc));
+      ok('…speaking the ONE word table, never its own literal',
+        /GATE_WORDS\[isInput \? 'input' : 'approval'\]\.station/.test(drawerSrc));
+      const ledgerUiSrc = stripComments(readFileSync('components/workflows/workflows-ledger.tsx', 'utf8'));
+      const detailSrc = stripComments(readFileSync('components/workflows/workflow-detail.tsx', 'utf8'));
+      ok('NO SURFACE INVENTS A PARKED-WAIT WORD — both ledger surfaces read GATE_WORDS',
+        /GATE_WORDS\[parked\.gateKind \?\? 'approval'\]\.waiting/.test(ledgerUiSrc)
+        && /GATE_WORDS\[parkedNow\.gateKind \?\? 'approval'\]\.waiting/.test(detailSrc)
+        && !/'waiting for your approval'/.test(ledgerUiSrc) && !/'waiting for your approval'/.test(detailSrc));
+      const ledgerSrc = stripComments(readFileSync('app/api/workflows/ledger/route.ts', 'utf8'));
+      ok('…and an input park never joins the APPROVAL debt list (an Approve row it cannot answer)',
+        /return t !== 'workflow' && t !== 'input';/.test(ledgerSrc));
+
+      // ⟲ RE-POINTED (THE WAVE part 2): the paste box was extracted out of the deck card into ONE
+      // shared form (components/workflows/input-supply-form.tsx) so the deck and the process drawer
+      // speak the same deed. The laws are unchanged — the card is still the door, it still posts
+      // the ONE resume route, and it still reuses the one knowledge read — they are simply asserted
+      // at the form's own home now, plus the mount that seats it on the deck's card.
+      const cardSrc = stripComments(readFileSync('components/home/item-detail.tsx', 'utf8'));
+      const formSrc = stripComments(readFileSync('components/workflows/input-supply-form.tsx', 'utf8'));
+      ok('THE DECK\'S CARD IS THE DOOR — the paste box and the pin option post to the ONE resume route',
+        /handoff\?\.gateKind === 'input' \? \(/.test(cardSrc)
+        && /<InputStationCard/.test(cardSrc)
+        && /body: JSON\.stringify\(\{ input: \{/.test(formSrc)
+        && /\/api\/workflows\/runs\/\$\{runId\}\/resume/.test(formSrc));
+      ok('…reusing the ONE knowledge door (no second KB endpoint for the pin picker)',
+        /\/api\/workers\/mentions\?types=document/.test(formSrc));
+      ok('THE PIN LINE CLAIMS ONLY WHAT PINNING DOES (read every run — never "won\'t ask again")',
+        /read on every run/.test(formSrc) && !/won&apos;t ask for this again/.test(formSrc));
+      ok('THE ATTACH HAND RIDES THE SAME FORM — upload first, then the SAME resume door sends it',
+        /\/api\/workflows\/runs\/\$\{runId\}\/supply-upload/.test(formSrc)
+        && formSrc.indexOf('supply-upload') < formSrc.indexOf('body: JSON.stringify({ input: {')
+        && /kbFileId: doc\.id, pin/.test(formSrc));
+      const ctxSrc = stripComments(readFileSync('lib/workflows/handoff-context.ts', 'utf8'));
+      ok('THE ROOM KNOWS WHICH GATE IT HOLDS — the served block carries gateKind, not the source word',
+        /gateKind: gate\?\.kind \?\? null,/.test(ctxSrc));
+    }
+
+    console.log('\nIN6 — AUTHORING: THE BOUNDARY IS TAUGHT AND ENFORCED (mode: LIVE 1 call + source):');
+    {
+      const genSrc = readFileSync('lib/workflows/generate-config.ts', 'utf8');
+      ok('THE PROMPT TEACHES THE STATION and states the boundary law in the same breath',
+        /Input step — THE RUN STOPS AND ASKS THE USER/.test(genSrc)
+        && /is a DOOR in "triggers" — never an input step/.test(genSrc)
+        && /pinned document in "input_doc_names" — never an input step/.test(genSrc));
+      ok('THE ADAPTER GAINS THE PLACEHOLDER\'S SECOND READING, defaulting to the pinned document',
+        /THE PLACEHOLDER'S TWO READINGS/.test(genSrc)
+        && /when you cannot tell, treat it as a pinned document/.test(genSrc));
+      const genCode = stripComments(genSrc);
+      // RE-POINTED (Aug 25, the declared-inputs wave): the never-both law is now PER PLACEHOLDER —
+      // the pin sentence is owed only to placeholders that got no station (see GR3).
+      ok('NEVER BOTH — the pin sentence is computed per placeholder, from the ones a station homed',
+        /const homedByStation = new Set\(/.test(genCode)
+        && /const undeclared = strippedPlaceholders\.filter\(\(p\) => !homedByStation\.has\(p\.toLowerCase\(\)\)\);/.test(genCode)
+        && /if \(undeclared\.length\) \{/.test(genCode));
+      ok('…and the pin note names the alternative in the same sentence (one subject, one box)',
+        /say "ask me each run" and the workflow will stop and ask you for it instead/.test(genCode));
+      ok('A BLANK ASK IS REFUSED OUT LOUD, never born unready (the case station\'s discipline)',
+        /I left out the step that stops and asks you for something/.test(genCode));
+      // RE-POINTED: the ceiling is ONE station normally, and ONE PER DECLARED INPUT (capped) when
+      // the prompt itself named what it must be given.
+      ok('THE CEILING — one stop by default, one per DECLARED input otherwise, the rest refused out loud',
+        /A run should stop to ask once/.test(genCode)
+        && /const capacity = declared\.length \? Math\.min\(declared\.length, MAX_INPUT_STATIONS\) : 1;/.test(genCode)
+        && /if \(seated >= capacity\) \{/.test(genCode));
+      ok('`accepts` is NORMALIZED, never refused (an odd value is a default, not a lost step)',
+        /st\.accepts === 'text' \|\| st\.accepts === 'doc' \? st\.accepts : 'both'/.test(genCode));
+
+      const chatSrc = stripComments(readFileSync('lib/tools/worker-tasks.ts', 'utf8'));
+      ok('PARITY — the chat door can EDIT a station (ask + accepts, only ever on an input step)',
+        /if \(step\.type === 'input' && ask !== undefined\) step\.ask = ask;/.test(chatSrc)
+        && /if \(step\.type === 'input' && accepts !== undefined\) step\.accepts = accepts;/.test(chatSrc));
+      ok('…and READ one back (a station the model cannot read is one it will replace)',
+        /s\.type === 'input'/.test(chatSrc) && /ask \(what the run asks YOU for, each run\)/.test(chatSrc));
+      const studioSrc = stripComments(readFileSync('components/work/studio-builder.tsx', 'utf8'));
+      ok('…and Studio can AUTHOR one (the picker, the station on the rail, its two fields)',
+        /type: 'input' as const/.test(studioSrc)
+        && /function InputStepFields\(/.test(studioSrc)
+        && /step\.type === 'handoff' \|\| step\.type === 'input'/.test(studioSrc));
+      const draftSrc = stripComments(readFileSync('components/workflows/workflow-draft-card.tsx', 'utf8'));
+      ok('…and the draft card PROMISES THE PAUSE before anyone confirms it',
+        /if \(s\.type === 'input'\)/.test(draftSrc) && /It asks you for/.test(draftSrc));
+
+      // THE LIVE AUTHORING PROBE — one call, on prose that states a per-run human input.
+      const { generateWorkflowConfig } = await import('../lib/workflows/generate-config');
+      const gen = await generateWorkflowConfig(
+        'Every Monday at 9am, ask me for this week\'s revenue numbers from our finance system — '
+        + 'I will paste them in when it runs — then write a one-page trading update from them and '
+        + 'save it as a document.',
+        userId, admin,
+      );
+      const genSteps = (gen?.steps ?? []) as Array<Record<string, unknown>>;
+      const station = genSteps.find((st) => st.type === 'input');
+      ok('AUTHORED FROM PROSE — "ask me for X each run" seats exactly one input station',
+        genSteps.filter((st) => st.type === 'input').length === 1,
+        JSON.stringify(genSteps.map((st) => st.type)));
+      ok('…carrying a real question in the user\'s own terms (never blank, never a field name)',
+        !!station && typeof station.ask === 'string' && (station.ask as string).trim().length > 3
+        && /number|revenue|figure/i.test(station.ask as string), JSON.stringify(station));
+      ok('…and something PRODUCES from it (a station is never the last word of a pipeline)',
+        genSteps.length > 1 && genSteps[genSteps.length - 1]?.type !== 'input',
+        JSON.stringify(genSteps.map((st) => st.type)));
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // IN7 — THE MULTI-STATION RUN (Aug 25, the declared-inputs wave). A prompt that DECLARES two
+    //       inputs authors two stations, so one run must stop TWICE — each time with its OWN
+    //       question on the deck, each answer landing as its OWN labelled output, and a later
+    //       human gate still parking after both. ZERO AI: three stations of pure park/resume.
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    console.log('\nIN7 — TWO STATIONS, ONE RUN (mode: LIVE runs, zero AI):');
+    {
+      const ASK_A = 'the approved job description';
+      const ASK_B = 'candidate resumes';
+      const WORD_A = 'ALPHAWARD';
+      const WORD_B = 'BETAWARD';
+      const multiId = await mkK(`${KPFX} two stations`, [
+        { id: 'm1', type: 'input', label: `Ask me for ${ASK_A}`, ask: ASK_A, accepts: 'both' },
+        { id: 'm2', type: 'input', label: `Ask me for ${ASK_B}`, ask: ASK_B, accepts: 'both' },
+        { id: 'm3', type: 'approval', label: 'Your approval', instruction: 'Say go before it ships.' },
+      ]);
+      if (multiId) {
+        const ev = await mkEventRun(multiId, `${KPFX} — an event needing two things`);
+        const mRunId = ev.runId;
+        /** The resume door's engine half, driven exactly as the route drives it. */
+        const supplyOnce = async (word: string) => {
+          const { data: rowNow } = await admin.from('workflow_runs').select('step_outputs').eq('id', mRunId).maybeSingle();
+          const { data: wfNow } = await admin.from('workflows').select('steps').eq('id', multiId).maybeSingle();
+          const { parkedGateOf } = await import('../lib/workflows/process-state');
+          const g = parkedGateOf(
+            { step_outputs: (((rowNow as { step_outputs?: unknown } | null)?.step_outputs) ?? []) as never },
+            (((wfNow as { steps?: unknown } | null)?.steps) ?? null) as never,
+          );
+          const { resolveSuppliedInput } = await import('../lib/workflows/input-station');
+          const sup = await resolveSuppliedInput(admin, userId, g.ask ?? '', { text: `Here it is: ${word}.` });
+          const outs = [
+            ...((((rowNow as { step_outputs?: unknown[] } | null)?.step_outputs) ?? []) as unknown[]),
+            { step_id: g.stepId, step_type: 'input', label: g.label, output: sup.ok ? sup.block : '' },
+          ];
+          await admin.from('workflow_runs').update({ status: 'running', step_outputs: outs })
+            .eq('id', mRunId).eq('status', 'awaiting_approval');
+          const { settleApprovalAsk } = await import('../lib/workflows/standing');
+          await settleApprovalAsk(admin, { runId: mRunId, approved: true, supplied: true });
+          return runWf({ workflowId: multiId, runId: mRunId, triggerSource: 'manual', resumeSeeded: true });
+        };
+
+        const p1 = await runWf({
+          workflowId: multiId, runId: mRunId, triggerSource: 'event', triggerContext: ev.context,
+        });
+        ok('THE FIRST PARK — the run stops at station 1',
+          p1.status === 'awaiting_approval', `${p1.status}/${p1.error ?? ''}`);
+        const asks1 = await asksFor(mRunId);
+        const open1 = asks1.filter((a) => a.status === 'open');
+        ok('…raising exactly ONE open deck ask, LED BY STATION 1\'S OWN WORDS',
+          open1.length === 1 && open1[0].description.startsWith(ASK_A), JSON.stringify(open1.map((a) => a.description)));
+        const key1 = open1[0] ? (await turnsFor(open1[0].id)).find((t) => t.dedupe_key === `input:${mRunId}:m1`) : null;
+        ok('…keyed PER RUN AND PER STATION (a run-only key would fold the next ask into this line)',
+          !!key1 && key1!.text.includes(ASK_A), String(key1?.text));
+
+        const p2 = await supplyOnce(WORD_A);
+        ok('THE SECOND PARK — supplying station 1 does not pass station 2; the run stops again',
+          p2.status === 'awaiting_approval', `${p2.status}/${p2.error ?? ''}`);
+        const asks2 = await asksFor(mRunId);
+        const open2 = asks2.filter((a) => a.status === 'open');
+        ok('…with its OWN open ask, naming STATION 2 — never still wearing station 1\'s question',
+          open2.length === 1 && open2[0].description.startsWith(ASK_B),
+          JSON.stringify(open2.map((a) => a.description)));
+        ok('…and station 1\'s ask is CLOSED in the deed\'s own words (one owed thing at a time)',
+          asks2.some((a) => a.status === 'completed' && a.resolved_reason === 'input supplied'),
+          JSON.stringify(asks2.map((a) => `${a.status}:${a.resolved_reason ?? ''}`)));
+        const turns2 = open2[0] ? await turnsFor(open2[0].id) : [];
+        const keys2 = turns2.map((t) => t.dedupe_key).filter((k) => String(k).startsWith(`input:${mRunId}`));
+        ok('…the room carries TWO DISTINCT station keys, not one folded line',
+          new Set(keys2).size === keys2.length && keys2.some((k) => String(k).endsWith(':m2')),
+          JSON.stringify(keys2));
+        ok('…and the room line for station 2 says what STATION 2 needs',
+          turns2.some((t) => t.dedupe_key === `input:${mRunId}:m2` && t.text.includes(ASK_B)),
+          JSON.stringify(turns2.map((t) => t.text.slice(0, 60))));
+
+        // EXACTLY-ONCE ON RE-PARK: a second narration of the same park never doubles the row.
+        const { narrateInputAsk } = await import('../lib/workflows/standing');
+        const { data: wfRow } = await admin.from('workflows').select('id, user_id, name, agent_id').eq('id', multiId).maybeSingle();
+        await narrateInputAsk(admin, wfRow as never, { runId: mRunId, ask: ASK_B, preview: '', stepId: 'm2' });
+        const open2b = (await asksFor(mRunId)).filter((a) => a.status === 'open');
+        ok('EXACTLY-ONCE ON RE-PARK — re-speaking the same station never raises a second open row',
+          open2b.length === 1 && open2b[0].id === open2[0]?.id, JSON.stringify(open2b.map((a) => a.id)));
+
+        const p3 = await supplyOnce(WORD_B);
+        ok('THE THIRD PARK — a later approval gate still parks, after BOTH stations were answered',
+          p3.status === 'awaiting_approval', `${p3.status}/${p3.error ?? ''}`);
+        const asks3 = await asksFor(mRunId);   // (also enrols the third park's ask for the sweep)
+        ok('…raising the APPROVAL gate\'s own ask, and only one open row at a time',
+          asks3.filter((a) => a.status === 'open').length === 1,
+          JSON.stringify(asks3.map((a) => `${a.status}:${a.description.slice(0, 40)}`)));
+        const { data: fin } = await admin.from('workflow_runs').select('step_outputs').eq('id', mRunId).maybeSingle();
+        const outs = ((((fin as { step_outputs?: Array<{ step_type?: string; label?: string; output?: string }> } | null)?.step_outputs) ?? []));
+        const inputs2 = outs.filter((o) => o.step_type === 'input');
+        ok('EACH SUPPLY IS ITS OWN STEP OUTPUT — two blocks, in the order the run asked for them',
+          inputs2.length === 2 && String(inputs2[0].output ?? '').includes(WORD_A)
+          && String(inputs2[1].output ?? '').includes(WORD_B),
+          JSON.stringify(inputs2.map((o) => String(o.output ?? '').slice(0, 40))));
+        ok('…each LABELLED WITH ITS OWN ASK (a later step reads WHY this material is here)',
+          String(inputs2[0]?.output ?? '').includes(`[WHAT YOU SUPPLIED — ${ASK_A}`)
+          && String(inputs2[1]?.output ?? '').includes(`[WHAT YOU SUPPLIED — ${ASK_B}`),
+          JSON.stringify(inputs2.map((o) => String(o.output ?? '').slice(0, 60))));
+
+        const standSrc2 = stripComments(readFileSync('lib/workflows/standing.ts', 'utf8'));
+        ok('THE KEY IS STRUCTURAL — the dedupe key carries the station, not just the run',
+          /dedupeKey: `input:\$\{ask\.runId\}:\$\{ask\.stepId \?\? 'station'\}`/.test(standSrc2));
+        ok('…and a RE-USED ask row is rewritten to the station the run actually waits at',
+          /if \(commitmentId && ask\.supply\) \{/.test(standSrc2)
+          && /if \(!now\.startsWith\(ask\.supply\.slice\(0, 60\)\)\) \{/.test(standSrc2));
+        const runSrc2 = stripComments(readFileSync('lib/workflows/run-workflow.ts', 'utf8'));
+        ok('…and the loop hands the station\'s own id to the one limb',
+          /narrateInputAsk\(admin, workflow, \{ runId: runId!, ask: askText, preview, stepId: step\.id \}\)/.test(runSrc2));
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // KK — THE KICK
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    console.log('\nKK — THE KICK: ONE CLAIM, THREE LANES (mode: source):');
+    {
+      const reactSrc = stripComments(readFileSync('lib/workflows/reactions.ts', 'utf8'));
+      const kickSrc = stripComments(readFileSync('app/api/internal/runs/kick/route.ts', 'utf8'));
+
+      ok('THE CLAIM IS ONE FUNCTION — the queued→running conditional update exists exactly once',
+        (reactSrc.match(/\.update\(\{ status: 'running' \}\)\.eq\('id', runId\)\.eq\('status', 'queued'\)/g) ?? []).length === 1
+        && /export async function claimQueuedEventRun\(/.test(reactSrc));
+      ok('…and the backstop RIDES it (no copy left behind in the backstop\'s own body)',
+        /if \(!await claimQueuedEventRun\(admin, r\.id\)\) continue;/.test(reactSrc));
+      ok('THE CONTEXT REBUILD IS ONE FUNCTION TOO — baton fallback included, both lanes share it',
+        /export async function eventRunContext\(/.test(reactSrc)
+        && (reactSrc.match(/tasks->>childRunId/g) ?? []).length === 1
+        && /const \{ context, started \} = await eventRunContext\(admin, r\.user_id, r\.id\);/.test(reactSrc));
+      ok('THE KICK ROUTE uses BOTH shared functions, never its own claim',
+        /const \{ claimQueuedEventRun, eventRunContext \} = await import\('@\/lib\/workflows\/reactions'\);/.test(kickSrc)
+        && !/update\(\{ status: 'running' \}\)/.test(kickSrc));
+      ok('…bearer-authed with the established internal secret (no new env var invented)',
+        /const secret = process\.env\.AGENTOS_SECRET;/.test(kickSrc)
+        && /!== `Bearer \$\{secret\}`/.test(kickSrc)
+        && /export const maxDuration = 300;/.test(kickSrc));
+      ok('…and it refuses anything that is not a QUEUED EVENT run (a race is an outcome, not an error)',
+        /run\.status !== 'queued' \|\| run\.triggered_by !== 'event'/.test(kickSrc));
+      ok('…and a DEFERRED fire is refused here as well as unreachable (the counting fact, again)',
+        /if \(!started\) return NextResponse\.json\(\{ ok: true, started: false, reason: 'deferred/.test(kickSrc));
+      ok('THE RUN RIDES THE STORED CONTEXT in the route\'s own window (after(), maxDuration 300)',
+        /after\(async \(\) => \{[\s\S]{0,300}?triggerSource: 'event', triggerContext: context,/.test(kickSrc));
+
+      ok('FIREREACTION DISPATCHES THE KICK IN REQUEST SCOPE and never awaits the run',
+        /if \(!dispatchKick\(runId\)\) \{/.test(reactSrc)
+        && /void fetch\(`\$\{base\}\/api\/internal\/runs\/kick`/.test(reactSrc)
+        && !/await fetch\(`\$\{base\}\/api\/internal\/runs\/kick`/.test(reactSrc));
+      ok('…behind THE REQUEST-SCOPE PROBE — a script can never kick a deployed app',
+        /after\(\(\) => \{\}\);\s*\n\s*if \(!dispatchKick\(runId\)\)/.test(reactSrc));
+      ok('…and the base URL is the ESTABLISHED one, with NOTHING invented when it is unset',
+        /process\.env\.AUGMTD_WEBHOOK_BASE_URL \|\| process\.env\.NEXT_PUBLIC_APP_URL \|\| ''/.test(reactSrc)
+        && !/app\.augmtd\.ai/.test(reactSrc));
+      ok('A DEFERRED FIRE IS STRUCTURALLY UNREACHABLE — the throttle returns BEFORE the kick',
+        reactSrc.indexOf("if (defer) return 'deferred';") > 0
+        && reactSrc.indexOf("if (defer) return 'deferred';") < reactSrc.indexOf('dispatchKick(runId)'));
+      ok('THE INLINE FALLBACK SURVIVES for a host with no kick door (the old path, not deleted)',
+        /const \{ runWorkflow \} = await import\('@\/lib\/workflows\/run-workflow'\);\s*\n\s*after\(async \(\) => \{/.test(reactSrc));
+      ok('THE DRAIN IS UNTOUCHED — its own atomic claim on the fire record still stands',
+        /\.eq\('tasks->>deferred', 'true'\)\s*\n\s*\.select\('entity_id'\);/.test(reactSrc)
+        && !/claimQueuedEventRun/.test(reactSrc.slice(reactSrc.indexOf('export async function drainDeferredFires'),
+          reactSrc.indexOf('export async function refireStaleEventRuns'))));
+    }
+
+    console.log('\nKK2 — THE SAFETY NET HOLDS (an unreachable kick never costs a run; mode: LIVE):');
+    {
+      const netWf = await mkK(`${KPFX} safety net`, []);
+      if (netWf) {
+        // A fire in THIS process reaches no request scope, so no kick is dispatched at all — the
+        // honest hand-off point is the queued row. Point the kick door at an unreachable host for
+        // the duration anyway: the proof must not depend on the door being absent.
+        const prevBase = process.env.AUGMTD_WEBHOOK_BASE_URL;
+        process.env.AUGMTD_WEBHOOK_BASE_URL = 'http://127.0.0.1:1';
+        const { data: runRow } = await admin.from('workflow_runs').insert({
+          workflow_id: netWf, user_id: userId, status: 'queued', triggered_by: 'event',
+          created_at: new Date(Date.now() - 20 * 60_000).toISOString(),
+        }).select('id').single();
+        const runId = (runRow as { id: string } | null)?.id ?? '';
+        await admin.from('item_plans').insert({
+          user_id: userId, kind: 'reaction_fire', entity_id: `${netWf}:inbox:${randomUUID()}`,
+          tasks: { runId, reason: 'safety-net probe', context: 'probe context', startedAt: new Date().toISOString() },
+        });
+        ok('the run sits QUEUED after the fire — durable, visible, owed to a start lane',
+          (await admin.from('workflow_runs').select('status').eq('id', runId).maybeSingle()).data?.status === 'queued');
+
+        const seen: string[] = [];
+        const wrapQ2 = (obj: Record<string, unknown>, table: string): Record<string, unknown> =>
+          new Proxy(obj, {
+            get(t, p, r) {
+              const v = Reflect.get(t, p, r);
+              if (typeof v !== 'function') return v;
+              return (...args: unknown[]) => {
+                if (p === 'eq') seen.push(`${table}.${String(args[0])}=${String(args[1])}`);
+                const out = (v as (...a: unknown[]) => unknown).apply(t, args);
+                return (out && typeof out === 'object' && typeof (out as Record<string, unknown>).eq === 'function')
+                  ? wrapQ2(out as Record<string, unknown>, table) : out;
+              };
+            },
+          });
+        const recorder2 = new Proxy(admin as unknown as Record<string, unknown>, {
+          get(target, prop, recv) {
+            if (prop === 'from') return (table: string) => wrapQ2((admin.from as (t: string) => unknown)(table) as Record<string, unknown>, table);
+            const v = Reflect.get(target, prop, recv);
+            return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+          },
+        }) as unknown as SupabaseClient;
+        const { refireStaleEventRuns } = await import('../lib/workflows/reactions');
+        try { await refireStaleEventRuns(recorder2); } catch { /* the re-fire is host-bound; the CLAIM is the gate */ }
+        ok('THE BACKSTOP STILL STARTS IT — a kick that never lands costs a delay, never the event',
+          seen.includes(`workflow_runs.id=${runId}`), JSON.stringify(seen.slice(0, 10)));
+        ok('…having read its stored context through the SHARED rebuild (same rows as before)',
+          seen.includes(`item_plans.tasks->>runId=${runId}`), JSON.stringify(seen.slice(0, 10)));
+        if (prevBase === undefined) delete process.env.AUGMTD_WEBHOOK_BASE_URL;
+        else process.env.AUGMTD_WEBHOOK_BASE_URL = prevBase;
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // SS — THE SAYABLE SUPPLY (THE WAVE part 2). THE PARITY LAW: every UI verb is sayable. A run
+    //      parked at an input station is answered on the deck by a paste box; it must also be
+    //      answerable by SAYING the thing to a coworker. SAME DEED, SAME RULES — the chat tool
+    //      calls `answerInputStation`, the ONE core the resume door calls. Zero AI: the executor is
+    //      driven directly, and the internal kick is pointed at an unreachable host (the KK2 idiom)
+    //      so a suite can never start a run on a deployed box.
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    console.log('\nSS1 — A COWORKER CAN ANSWER THE STATION (mode: LIVE runs, zero AI):');
+    const SAY_ASK = 'the approved headcount plan';
+    const SAY_ASK_B = 'the finance sign-off';
+    const SAY_WORD = 'GLIMMERCAST';
+    const DOC_WORD = 'TIDEWRACK';
+    let sayWfId: string | null = null;
+    let sayRunId = '';
+    const prevKickBase = process.env.AUGMTD_WEBHOOK_BASE_URL;
+    const prevAppUrl = process.env.NEXT_PUBLIC_APP_URL;
+    try {
+      // THE SUITE NEVER KICKS A DEPLOYED APP: the tool dispatches its re-entry to the internal
+      // runner; here that door must be unreachable, and the suite drives the engine itself.
+      process.env.AUGMTD_WEBHOOK_BASE_URL = 'http://127.0.0.1:1';
+      process.env.NEXT_PUBLIC_APP_URL = 'http://127.0.0.1:1';
+
+      const { executeSupplyRunInput } = await import('../lib/tools/worker-tasks');
+      const { parkedInputStationsFor } = await import('../lib/workflows/input-station');
+
+      sayWfId = await mkK(`${KPFX} sayable`, [
+        { id: 's1', type: 'input', label: `Ask me for ${SAY_ASK}`, ask: SAY_ASK, accepts: 'both' },
+        { id: 's2', type: 'input', label: `Ask me for ${SAY_ASK_B}`, ask: SAY_ASK_B, accepts: 'both' },
+        { id: 's3', type: 'approval', label: 'Your approval', instruction: 'Say go before it ships.' },
+      ]);
+      if (sayWfId) {
+        const ev = await mkEventRun(sayWfId, `${KPFX} — an event answered in words`);
+        sayRunId = ev.runId;
+        const p1 = await runWf({
+          workflowId: sayWfId, runId: sayRunId, triggerSource: 'event', triggerContext: ev.context,
+        });
+        ok('the run PARKS at station 1, exactly as it does for the deck door',
+          p1.status === 'awaiting_approval', `${p1.status}/${p1.error ?? ''}`);
+
+        const parked = await parkedInputStationsFor(admin, userId);
+        ok('THE UNNAMED DOOR FINDS THE ONE PARKED STATION (run · workflow · the station\'s own ask)',
+          parked.length === 1 && parked[0].runId === sayRunId && parked[0].ask === SAY_ASK
+          && parked[0].workflowName === `${KPFX} sayable`, JSON.stringify(parked));
+
+        const said = await executeSupplyRunInput({ text: `Here it is: ${SAY_WORD}.` }, userId, admin);
+        ok('THE SPOKEN CONFIRMATION NAMES THE STATION AND WHAT HAPPENS NEXT (never a bare "done")',
+          said.includes(`${KPFX} sayable`) && said.includes(SAY_ASK) && /picked up/.test(said), said);
+
+        const { data: afterRow } = await admin.from('workflow_runs')
+          .select('status, step_outputs').eq('id', sayRunId).maybeSingle();
+        const outs = (((afterRow as { step_outputs?: Array<Record<string, unknown>> } | null)?.step_outputs) ?? []);
+        const last = outs[outs.length - 1] ?? {};
+        ok('THE SAME STEP OUTPUT SHAPE THE DOOR WRITES — id · type · label · the excerpt-honest block',
+          last.step_id === 's1' && last.step_type === 'input' && last.label === `Ask me for ${SAY_ASK}`
+          && String(last.output ?? '').startsWith(`[WHAT YOU SUPPLIED — ${SAY_ASK}]`)
+          && String(last.output ?? '').includes(SAY_WORD), JSON.stringify(last).slice(0, 200));
+        ok('…and the run left its park through the SHARED claim (status running, not a new value)',
+          (afterRow as { status?: string } | null)?.status === 'running',
+          String((afterRow as { status?: string } | null)?.status));
+        const settled = await asksFor(sayRunId);
+        ok('THE DECK ASK IS SETTLED IN THE DEED\'S OWN WORDS (one deed, one door, either door)',
+          settled.some((a) => a.status === 'completed' && a.resolved_reason === 'input supplied'),
+          JSON.stringify(settled.map((a) => `${a.status}:${a.resolved_reason ?? ''}`)));
+
+        const again = await executeSupplyRunInput({ run_id: sayRunId, text: 'more' }, userId, admin);
+        ok('EXACTLY-ONCE — a second telling finds nothing waiting, and says so plainly',
+          /nothing waiting on you/i.test(again), again);
+
+        const p2 = await runWf({
+          workflowId: sayWfId, runId: sayRunId, triggerSource: 'manual', resumeSeeded: true,
+        });
+        ok('THE RUN PARKS AGAIN at station 2 — a spoken answer passes no later gate',
+          p2.status === 'awaiting_approval', `${p2.status}/${p2.error ?? ''}`);
+        const open2 = (await asksFor(sayRunId)).filter((a) => a.status === 'open');
+        ok('…with station 2\'s own ask on the deck (the words follow the station, not the door)',
+          open2.length === 1 && open2[0].description.startsWith(SAY_ASK_B),
+          JSON.stringify(open2.map((a) => a.description)));
+      }
+
+      console.log('\nSS2 — WHAT IT REFUSES (one-of · ambiguity · a stranger\'s run; mode: LIVE):');
+      const neither = await executeSupplyRunInput({}, userId, admin);
+      ok('NEITHER — no material at all is refused with both remedies named',
+        /text/.test(neither) && /kb_file_name/.test(neither), neither);
+      const both = await executeSupplyRunInput(
+        { text: 'x', kb_file_name: 'y' }, userId, admin);
+      ok('BOTH — two kinds of material in one answer is refused, never silently merged',
+        /one or the other/i.test(both), both);
+      const stranger = await executeSupplyRunInput({ run_id: randomUUID(), text: 'x' }, userId, admin);
+      ok('A RUN THAT IS NOT THEIRS is indistinguishable from one that does not exist',
+        /couldn't find that paused run/i.test(stranger), stranger);
+
+      // TWO DOCUMENTS, ONE SPOKEN NAME — AMBIGUITY IS A REFUSAL that names the candidates.
+      const { getOrCreateUploadSource } = await import('../lib/knowledge/indexer');
+      const srcId2 = await getOrCreateUploadSource(userId, admin);
+      const mkDoc2 = async (filename: string, text: string | null) => {
+        const { data } = await admin.from('knowledge_files').insert({
+          user_id: userId, source_id: srcId2, provider_file_id: `probe-relay-wave/${stamp}/${filename}`,
+          filename, mime_type: 'text/plain', extracted_text: text,
+        }).select('id').single();
+        return (data as { id: string } | null)?.id ?? '';
+      };
+      await mkDoc2(`${stamp}-headcount-plan-v1.txt`, `Plan one says ${DOC_WORD}.`);
+      await mkDoc2(`${stamp}-headcount-plan-v2.txt`, `Plan two says ${DOC_WORD}.`);
+      const twoDocs = await executeSupplyRunInput(
+        { run_id: sayRunId, kb_file_name: `${stamp}-headcount-plan` }, userId, admin);
+      ok('TWO MATCHING DOCUMENTS — the refusal LISTS them and asks, it never picks',
+        /More than one document matches/.test(twoDocs)
+        && twoDocs.includes(`${stamp}-headcount-plan-v1.txt`) && twoDocs.includes(`${stamp}-headcount-plan-v2.txt`),
+        twoDocs);
+      const noDoc = await executeSupplyRunInput(
+        { run_id: sayRunId, kb_file_name: `${stamp}-nothing-like-this` }, userId, admin);
+      ok('NO MATCHING DOCUMENT — refused honestly, naming the paste as the way through',
+        /can't find a document/i.test(noDoc) && /paste/i.test(noDoc), noDoc);
+
+      // ONE MATCH — the exact-name rung wins over the containment rung, and lands as real material.
+      const exactName = `${stamp}-signoff.txt`;
+      await mkDoc2(exactName, `The sign-off reads ${DOC_WORD}.`);
+      const byName = sayRunId
+        ? await executeSupplyRunInput({ run_id: sayRunId, kb_file_name: exactName }, userId, admin)
+        : '';
+      ok('A NAMED DOCUMENT resolves and is handed over, the confirmation naming the document itself',
+        byName.includes(exactName) && /picked up/.test(byName), byName);
+      const { data: docRow } = await admin.from('workflow_runs')
+        .select('step_outputs').eq('id', sayRunId).maybeSingle();
+      const dOuts = (((docRow as { step_outputs?: Array<Record<string, unknown>> } | null)?.step_outputs) ?? []);
+      const dLast = dOuts[dOuts.length - 1] ?? {};
+      ok('…as station 2\'s OWN output, carrying the document\'s real text (never a filename)',
+        dLast.step_id === 's2' && String(dLast.output ?? '').includes(DOC_WORD)
+        && String(dLast.output ?? '').includes(exactName), JSON.stringify(dLast).slice(0, 200));
+
+      // TWO PARKED RUNS — the unnamed door refuses, naming each by ask AND workflow.
+      const otherId = await mkK(`${KPFX} sayable second`, [
+        { id: 'o1', type: 'input', label: 'Ask me for something', ask: 'the vendor quote', accepts: 'both' },
+      ]);
+      if (otherId && sayWfId) {
+        const evA = await mkEventRun(otherId, `${KPFX} — a second thing to answer`);
+        await runWf({ workflowId: otherId, runId: evA.runId, triggerSource: 'event', triggerContext: evA.context });
+        // Park the first workflow again so two input stations wait at the same moment.
+        const evB = await mkEventRun(sayWfId, `${KPFX} — a third thing to answer`);
+        await runWf({ workflowId: sayWfId, runId: evB.runId, triggerSource: 'event', triggerContext: evB.context });
+        await asksFor(evA.runId); await asksFor(evB.runId);   // enrol both parks for the sweep
+        const many = await executeSupplyRunInput({ text: 'here you go' }, userId, admin);
+        ok('AMBIGUITY IS A REFUSAL — two parked runs are LISTED by ask and workflow, never guessed between',
+          /More than one run is waiting/.test(many)
+          && many.includes('the vendor quote') && many.includes(SAY_ASK)
+          && many.includes(`${KPFX} sayable second`), many);
+        ok('…and the refusal hands back the ids so the next call can be exact',
+          many.includes(evA.runId) && many.includes(evB.runId), many);
+      }
+    } finally {
+      if (prevKickBase === undefined) delete process.env.AUGMTD_WEBHOOK_BASE_URL;
+      else process.env.AUGMTD_WEBHOOK_BASE_URL = prevKickBase;
+      if (prevAppUrl === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+      else process.env.NEXT_PUBLIC_APP_URL = prevAppUrl;
+    }
+
+    console.log('\nSS3 — ONE IMPLEMENTATION, TWO DOORS (mode: source):');
+    {
+      const coreSrc = readFileSync('lib/workflows/input-station.ts', 'utf8');
+      const resumeSrc = readFileSync('app/api/workflows/runs/[id]/resume/route.ts', 'utf8');
+      const toolSrc = readFileSync('lib/tools/worker-tasks.ts', 'utf8');
+      const everywhere = coreSrc + resumeSrc + toolSrc;
+
+      ok('BOTH DOORS CALL THE SAME FUNCTION (the route and the tool, one core)',
+        /answerInputStation\(admin, \{/.test(resumeSrc)
+        && /answerInputStation\(adminClient, \{/.test(toolSrc)
+        && /export async function answerInputStation\(/.test(coreSrc));
+      ok('THE EXACTLY-ONCE CLAIM EXISTS ONCE — no door keeps a copy of it',
+        (everywhere.match(/\.eq\('status', 'awaiting_approval'\)\s*\n?\s*\.select\('id'\)\.maybeSingle\(\)/g) ?? []).length === 1);
+      ok('THE VALIDATION LITERALS EXIST ONCE — one sentence per law, at its one home',
+        (everywhere.match(/this run already moved on/g) ?? []).length === 1
+        && (everywhere.match(/hasn't finished indexing yet/g) ?? []).length === 1
+        && (everywhere.match(/Pin it as a document instead/g) ?? []).length === 1);
+      ok('THE TOOL HOLDS NO RULES OF ITS OWN — it never resolves supply or writes the run itself',
+        !/resolveSuppliedInput/.test(toolSrc)
+        && !/from\('workflow_runs'\)[\s\S]{0,120}update\(\{ status: 'running'/.test(toolSrc));
+      ok('…and it never resumes inside the chat\'s 60s window (the dispatcher owns the re-entry)',
+        /internal\/run-workflow/.test(toolSrc) && /resumeSeeded: true/.test(toolSrc)
+        && !/runWorkflow\(/.test(toolSrc));
+      const dispatchSrc = stripComments(readFileSync('app/api/internal/run-workflow/route.ts', 'utf8'));
+      ok('THE DISPATCHER CARRIES THE SEEDED FLAG EXPLICITLY (never a default, never guessed)',
+        /resumeSeeded === true \? \{ resumeSeeded: true \} : \{\}/.test(dispatchSrc));
+
+      const chatSrc = stripComments(readFileSync('app/api/work/threads/[id]/chat/route.ts', 'utf8'));
+      ok('FOUR-DOOR PARITY — the native loop registers AND dispatches the verb',
+        /supplyRunInputDefinition,/.test(chatSrc) && /case 'supply_run_input': \{/.test(chatSrc)
+        && /executeSupplyRunInput\(/.test(chatSrc));
+      const internalSrc = stripComments(readFileSync('app/api/internal/agentos/tasks/route.ts', 'utf8'));
+      ok('…and the AgentOS runtime passes it through to the SAME executor',
+        /case 'supply_run_input':/.test(internalSrc) && /executeSupplyRunInput\(\{/.test(internalSrc));
+      const pySrc = readFileSync('infra/agentos/tools_tasks.py', 'utf8');
+      ok('…with the Python tool mirrored and registered (box redeploy pending, TS accepts it today)',
+        /def supply_run_input\(/.test(pySrc) && /_call\("supply_run_input"/.test(pySrc)
+        && /run_task, supply_run_input, duplicate_task/.test(pySrc));
+      ok('THE PROMPT TEACHES THE ATTACHMENT PATH (an attached file is supplied BY NAME)',
+        /supply_run_input — a run can STOP and ask/.test(chatSrc)
+        && /lands in the user's Knowledge under its own filename/.test(chatSrc));
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // SU — THE ATTACH DOOR (THE WAVE part 1). A parked station takes a FILE: upload → extract →
+    //      index into Knowledge → hand back a kbFileId the caller supplies through THE ONE RESUME
+    //      DOOR. Two laws, both structural: A SUPPLY IS AN ANSWER, NOT AN ARRIVAL (this route never
+    //      fires the file door), and THE TEXT IS REAL AT RETURN (sync extraction, honest 422).
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    console.log('\nSU — THE ATTACH DOOR: AN ANSWER, NOT AN ARRIVAL (mode: source):');
+    {
+      const upPath = 'app/api/workflows/runs/[id]/supply-upload/route.ts';
+      const upSrc = stripComments(readFileSync(upPath, 'utf8'));
+      const upRaw = readFileSync(upPath, 'utf8');
+
+      ok('A SUPPLY IS AN ANSWER, NOT AN ARRIVAL — no door seam is reachable from this route',
+        !/checkSourceReactions/.test(upSrc) && !/reactions/.test(upSrc) && !/onIndexed/.test(upSrc));
+      ok('…and the law is WRITTEN DOWN where the next author will read it (the loop it prevents)',
+        /A SUPPLY IS AN ANSWER, NOT AN ARRIVAL/.test(upRaw) && /spawn run 2/.test(upRaw));
+      ok('THE OWNERSHIP RULE IS THE RESUME DOOR\'S OWN — canResumeRun, imported, never re-implemented',
+        /const \{ canResumeRun \} = await import\('@\/lib\/workflows\/handoffs'\);/.test(upSrc)
+        && /canResumeRun\(admin, runId, user\.id\)/.test(upSrc)
+        && /error: 'run not found' \}, \{ status: 404 \}/.test(upSrc)
+        && !/from\('workflows'\)[\s\S]{0,120}\.eq\('user_id'/.test(upSrc));
+      ok('THE TEXT IS REAL AT RETURN — extraction is AWAITED, then verified on the row itself',
+        /await indexUploadedFile\(/.test(upSrc)
+        && /\.select\('id, filename, extracted_text'\)/.test(upSrc)
+        && upSrc.indexOf('await indexUploadedFile(') < upSrc.indexOf("extracted_text'"));
+      ok('…and an unreadable file is an HONEST 422 that names the remedy — never a hollow KB row',
+        /status: 422/.test(upSrc) && /no readable text in/.test(upSrc) && /try pasting it instead/.test(upSrc)
+        && /await cleanUp\(kbFileId\);/.test(upSrc));
+      ok('…with the storage object AND the row removed on every refusal path (nothing left behind)',
+        /storage\.from\('drive-uploads'\)\.remove\(\[storagePath\]\)/.test(upSrc)
+        && /from\('knowledge_chunks'\)\.delete\(\)\.eq\('file_id', fileId\)/.test(upSrc)
+        && /from\('knowledge_files'\)\.delete\(\)\.eq\('id', fileId\)/.test(upSrc));
+      ok('THE SIZE CEILING IS THE CHAT-ATTACH GUARD\'S CLASS, and it refuses in a human sentence',
+        /const MAX_SUPPLY_BYTES = 4 \* 1024 \* 1024;/.test(upSrc)
+        && /status: 413/.test(upSrc) && /Upload it in Knowledge instead/.test(upSrc));
+      ok('THE FILE IS USER-SCOPED AND MARKED AS WHAT IT IS (a supply for this run)',
+        /`\$\{user\.id\}\/supply\/\$\{runId\}\//.test(upSrc)
+        && /ref: `run:\$\{runId\}`/.test(upSrc));
+      ok('THE CONTRACT — the client gets { kbFileId, name } and hands it to the EXISTING resume door',
+        /kbFileId,\s*\n\s*name: String\(/.test(upSrc)
+        && !/resume/.test(upSrc.replace(/canResumeRun/g, '')));
+      ok('THE ALLOWLIST NEVER DRIFTS BELOW THE EXTRACTOR (the Aug 10 class: pptx/xlsx/csv/doc)',
+        ['presentationml', 'spreadsheetml', 'text/csv', 'msword', 'application/pdf']
+          .every((t) => upSrc.includes(t)));
+
+      // THE CONTRAST THAT MAKES LAW 1 LEGIBLE: the real file DOOR still hands the indexer its seam.
+      const confirmSrc = stripComments(readFileSync('app/api/drive/upload/confirm/route.ts', 'utf8'));
+      ok('…while the REAL file door still fires (the seam is opted into, and only there)',
+        /onIndexed: async \(\{ fileId, extractedText \}\) => \{/.test(confirmSrc)
+        && /checkSourceReactions/.test(confirmSrc));
+    }
+
+  } finally {
+    for (const id of kCommitmentIds) {
+      const { roomKeyForItem } = await import('../lib/room/turns');
+      try {
+        const roomKey = await roomKeyForItem(admin, userId, 'commitment', id);
+        await admin.from('room_turns').delete().eq('user_id', userId).eq('room_key', roomKey);
+      } catch { /* the row goes either way */ }
+      await admin.from('commitments').delete().eq('id', id);
+    }
+    const { data: waveDocs } = await admin.from('knowledge_files').select('id')
+      .eq('user_id', userId).like('provider_file_id', `probe-relay-wave/${stamp}/%`);
+    for (const d of (waveDocs ?? []) as Array<{ id: string }>) {
+      await admin.from('knowledge_chunks').delete().eq('file_id', d.id);
+      await admin.from('knowledge_files').delete().eq('id', d.id);
+    }
+    for (const id of kWfIds) {
+      await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', 'workflow_inputs').eq('entity_id', id);
+      await admin.from('workflow_runs').delete().eq('workflow_id', id);
+      await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', 'reaction_fire').like('entity_id', `${id}:%`);
+      await admin.from('work_threads').delete().eq('workflow_id', id);
+      await admin.from('workflows').delete().eq('id', id);
+    }
+    const { data: leftWf } = await admin.from('workflows').select('id').eq('user_id', userId).like('name', `${KPFX}%`);
+    const { data: leftAsks } = await admin.from('commitments').select('id')
+      .eq('user_id', userId).eq('source', 'handoff').gte('created_at', kStart);
+    const { data: leftStanding } = await admin.from('commitments').select('id')
+      .eq('user_id', userId).eq('source', 'workflow').gte('created_at', kStart);
+    ok('WAVE probe leftovers are ZERO (workflows · asks · standing rows)',
+      (leftWf ?? []).length === 0 && (leftAsks ?? []).length === 0 && (leftStanding ?? []).length === 0,
+      `${(leftWf ?? []).length}/${(leftAsks ?? []).length}/${(leftStanding ?? []).length}`);
   }
 
   console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed`);

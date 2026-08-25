@@ -35,10 +35,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import { XMarkIcon, ChevronDownIcon, ArrowPathIcon, BellIcon, ArrowRightCircleIcon, ChatBubbleLeftEllipsisIcon } from '@heroicons/react/24/outline';
 import { Button, Badge, TabBar } from '@/components/ui';
-import type { ProcessRow } from '@/lib/workflows/process-state';
+import { GATE_WORDS, type ProcessRow } from '@/lib/workflows/process-state';
+// THE ONE SUPPLY DEED — shared with the commitment deep-dive's InputStationCard. A station's ask
+// is answered where it is shown; neither door owns a paste box of its own.
+import InputSupplyForm, { type SupplyOutcome } from '@/components/workflows/input-supply-form';
 import { previewFromOutput } from '@/lib/workflows/handoff-context';
 import type { GateVerdict, WorkflowStep, HandoffStep } from '@/lib/workflows/types';
 
@@ -133,7 +137,9 @@ export default function ProcessDrawer({
 }) {
   const [tab, setTab] = useState<'handoffs' | 'log'>(initialTab ?? 'handoffs');
   const [busy, setBusy] = useState(false);
-  const [decided, setDecided] = useState<'approved' | 'rejected' | null>(null);
+  // 'supplied' = an INPUT STATION was answered in place (the wave's third settle word — a supply
+  // is neither an approval nor a rejection, and the settled banner must not call it one).
+  const [decided, setDecided] = useState<'approved' | 'rejected' | 'supplied' | null>(null);
   const [rerunning, setRerunning] = useState(false);
   const [nudging, setNudging] = useState(false);
   // REASSIGN (B2): the roster is fetched only when the picker is opened — never on drawer mount.
@@ -190,28 +196,26 @@ export default function ProcessDrawer({
     } finally { setSendingNote(false); }
   }, [noteDraft, sendingNote, process.runId]);
 
+  // ── THE RUN AND THE METHOD, FETCHED ONCE (owner walk, Aug 20: "we're not showing what the person
+  // is approving"). The Log tab's receipts and the gate's OBJECT are the same run — fetching it
+  // twice is two chances for one drawer to disagree with itself, so the fetch lives HERE and both
+  // read it. undefined = loading, null = unreadable (the gate keeps its Approve either way).
+  //
+  // LATENCY (Aug 25): this drawer used to open on TWO requests — the whole run history of the
+  // workflow (30 rows, every one of them record-enriched: ~90 queries) only to `.find()` one row,
+  // plus GET /api/workflows/[id] purely for `steps`. `?run=<id>` narrows the server query to this
+  // one row and carries `steps` back with it: one request, one row, same two facts. ──
   useEffect(() => {
     let dead = false;
-    void fetch(`/api/workflows/${process.workflowId}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => { if (!dead) setSteps((j?.workflow?.steps ?? null) as WorkflowStep[] | null); })
-      .catch(() => { if (!dead) setSteps(null); });
-    return () => { dead = true; };
-  }, [process.workflowId]);
-
-  // ── THE RUN, FETCHED ONCE (owner walk, Aug 20: "we're not showing what the person is approving").
-  // The Log tab's receipts and the gate's OBJECT are the same run — fetching it twice is two
-  // chances for one drawer to disagree with itself, so the fetch lives HERE and both read it.
-  // undefined = loading, null = unreadable (the gate keeps its Approve either way). ──
-  useEffect(() => {
-    let dead = false;
-    void fetch(`/api/workflows/${process.workflowId}/runs`)
+    void fetch(`/api/workflows/${process.workflowId}/runs?run=${encodeURIComponent(process.runId)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
         if (dead) return;
-        setRun(((j?.runs ?? []) as DrawerRun[]).find((r) => r.id === process.runId) ?? null);
+        if (!j) { setRun(null); setSteps(null); return; }
+        setRun(((j.runs ?? []) as DrawerRun[]).find((r) => r.id === process.runId) ?? null);
+        setSteps((j.steps ?? null) as WorkflowStep[] | null);
       })
-      .catch(() => { if (!dead) setRun(null); });
+      .catch(() => { if (!dead) { setRun(null); setSteps(null); } });
     return () => { dead = true; };
   }, [process.runId, process.workflowId]);
 
@@ -246,6 +250,17 @@ export default function ProcessDrawer({
       onDecided?.();
     } catch { toast.error('That decision did not land — try again.'); } finally { setBusy(false); }
   }, [busy, process.runId, process.workflowName, onDecided]);
+
+  // ── THE SUPPLY SETTLES THE SAME WAY A DECISION DOES. InputSupplyForm owns the POST (the one
+  // resume door); this is only the drawer's reaction — the SAME seam decide() uses, so the station
+  // card advances in place and the ledger behind the drawer re-reads. The user never leaves. ──
+  const onSupplied = useCallback((outcome: SupplyOutcome) => {
+    setDecided(outcome === 'supplied' ? 'supplied' : 'rejected');
+    toast.success(outcome === 'supplied'
+      ? `Sent — "${process.workflowName}" picked up from there.`
+      : 'Held back — the run stopped here.');
+    onDecided?.();
+  }, [process.workflowName, onDecided]);
 
   // ── A DIFFERENT DEED, ITS OWN DOOR: nudge chases the person holding the gate. Owner-only and
   // capped server-side; the cap is spoken plainly, never dressed as a failure. ──
@@ -317,7 +332,7 @@ export default function ProcessDrawer({
   // numbering and the done/waiting/upcoming reading; they share NO verbs. ──
   const stations = (steps ?? [])
     .map((s, i) => ({ s, i }))
-    .filter(({ s }) => s.type === 'approval' || s.type === 'handoff' || s.type === 'workflow');
+    .filter(({ s }) => s.type === 'approval' || s.type === 'handoff' || s.type === 'workflow' || s.type === 'input');
   const waitingIdx = parked ? process.stepsDone : -1;
   const gateStatus = (i: number): 'done' | 'waiting' | 'upcoming' =>
     i < process.stepsDone ? 'done' : i === waitingIdx ? (decided ? 'done' : 'waiting') : 'upcoming';
@@ -386,9 +401,20 @@ export default function ProcessDrawer({
                       );
                     }
                     const isHandoff = s.type === 'handoff';
+                    // THE INPUT STATION (relay canvas, THE WAVE) — a human gate that asks for
+                    // MATERIAL. It joins the numbered walk and wears the gate word its kind maps to
+                    // (GATE_WORDS, the one table), and it carries NO Approve/Reject: this drawer
+                    // cannot answer it, and offering a door that refuses is the lying-door class.
+                    const isInput = s.type === 'input';
                     const h = isHandoff ? (s as HandoffStep) : null;
-                    const holder = isHandoff ? (h?.assignee_name ?? 'A teammate') : 'Your approval';
-                    const ask = isHandoff ? (h?.ask ?? '').trim() : ((s as { instruction?: string }).instruction ?? '').trim();
+                    const holder = isHandoff
+                      ? (h?.assignee_name ?? 'A teammate')
+                      : GATE_WORDS[isInput ? 'input' : 'approval'].station;
+                    const ask = isHandoff
+                      ? (h?.ask ?? '').trim()
+                      : isInput
+                        ? String((s as { ask?: string }).ask ?? '').trim()
+                        : ((s as { instruction?: string }).instruction ?? '').trim();
                     const waiting = status === 'waiting';
                     return (
                       <div
@@ -417,13 +443,31 @@ export default function ProcessDrawer({
                         {waiting && !decided && (
                           <>
                             <div className="mt-1.5 text-[12.5px] text-neutral-600">
-                              {iHoldIt
-                                ? `It ran ${process.stepsDone} of ${process.stepsTotal || process.stepsDone} steps and stopped here — nothing is delivered until you say so.`
-                                : `It ran ${process.stepsDone} of ${process.stepsTotal || process.stepsDone} steps and is waiting on ${holder}.`}
+                              {isInput
+                                ? `It ran ${process.stepsDone} of ${process.stepsTotal || process.stepsDone} steps and stopped here — it needs this from you before it can go on.`
+                                : iHoldIt
+                                  ? `It ran ${process.stepsDone} of ${process.stepsTotal || process.stepsDone} steps and stopped here — nothing is delivered until you say so.`
+                                  : `It ran ${process.stepsDone} of ${process.stepsTotal || process.stepsDone} steps and is waiting on ${holder}.`}
                             </div>
-                            <GateObject preview={gateObject} />
+                            {!isInput && <GateObject preview={gateObject} />}
+                            {/* THE GATE CARRIES ITS DEED (owner walk, Aug 25: "why are we sending
+                                him to another screen"). The input station used to SAY "it's on your
+                                deck" and then, briefly, hand out a link to the deep-dive — both are
+                                the disconnected-door class: the ask is shown HERE, so answering
+                                happens HERE. The ONE shared supply form
+                                (components/workflows/input-supply-form.tsx — the same component the
+                                deep-dive's InputStationCard mounts) posts to the ONE resume door and
+                                the drawer advances IN PLACE. The deep-dive stays the full-context
+                                reading of the same gate; it is no longer a detour. */}
+                            {isInput && (
+                              <InputSupplyForm
+                                runId={process.runId}
+                                accepts={(s as { accepts?: 'text' | 'doc' | 'both' }).accepts ?? 'both'}
+                                onSettled={onSupplied}
+                              />
+                            )}
                             <div className="mt-3 flex items-center gap-2">
-                              {iHoldIt && (
+                              {iHoldIt && !isInput && (
                                 <>
                                   <Button size="sm" onClick={() => void decide(true)} disabled={busy}>Approve — deliver it</Button>
                                   <button onClick={() => void decide(false)} disabled={busy} className="text-[12px] text-neutral-500 hover:text-neutral-700">
@@ -519,25 +563,41 @@ export default function ProcessDrawer({
               )}
 
               {/* The park the list can't name (a guardrail hold, or steps we couldn't read) still
-                  gets its one door — never a silent parked run. */}
-              {awaitingApproval && !listCoversTheWait && (
+                  gets its one door — never a silent parked run. TWO FLOORS (found live): it waits
+                  for the steps to be READ (while they load, the empty list made this flash with
+                  approval verbs — an unserved fact never claims, and the loading line above is the
+                  honest state), and it respects the SERVED gate kind — an input park gets the
+                  supply deed here too, never a yes/no it would refuse. */}
+              {awaitingApproval && !listCoversTheWait && steps !== undefined && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3.5">
                   <div className="flex items-center gap-2">
-                    <span className="text-[13px] font-medium text-neutral-800">Your approval</span>
+                    <span className="text-[13px] font-medium text-neutral-800">{GATE_WORDS[process.gateKind ?? 'approval'].station}</span>
                     <Badge tone="amber">Waiting</Badge>
                     <span className="flex-1" />
                     <span className="text-[12px] text-neutral-500">{sinceWord(process.startedAt)}</span>
                   </div>
-                  <div className="mt-1.5 text-[12.5px] text-neutral-600">
-                    It ran {process.stepsDone} of {process.stepsTotal || process.stepsDone} steps and stopped here — nothing is delivered until you say so.
-                  </div>
-                  <GateObject preview={gateObject} />
-                  <div className="mt-3 flex items-center gap-2">
-                    <Button size="sm" onClick={() => void decide(true)} disabled={busy}>Approve — deliver it</Button>
-                    <button onClick={() => void decide(false)} disabled={busy} className="text-[12px] text-neutral-500 hover:text-neutral-700">
-                      Reject — hold it back
-                    </button>
-                  </div>
+                  {process.gateKind === 'input' ? (
+                    <>
+                      {process.gateAsk && <div className="mt-1 text-[12.5px] text-neutral-600">{process.gateAsk}</div>}
+                      <div className="mt-1.5 text-[12.5px] text-neutral-600">
+                        It ran {process.stepsDone} of {process.stepsTotal || process.stepsDone} steps and stopped here — it needs this from you before it can go on.
+                      </div>
+                      <InputSupplyForm runId={process.runId} onSettled={onSupplied} />
+                    </>
+                  ) : (
+                    <>
+                      <div className="mt-1.5 text-[12.5px] text-neutral-600">
+                        It ran {process.stepsDone} of {process.stepsTotal || process.stepsDone} steps and stopped here — nothing is delivered until you say so.
+                      </div>
+                      <GateObject preview={gateObject} />
+                      <div className="mt-3 flex items-center gap-2">
+                        <Button size="sm" onClick={() => void decide(true)} disabled={busy}>Approve — deliver it</Button>
+                        <button onClick={() => void decide(false)} disabled={busy} className="text-[12px] text-neutral-500 hover:text-neutral-700">
+                          Reject — hold it back
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -545,7 +605,9 @@ export default function ProcessDrawer({
                 <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-[13px] text-neutral-700">
                   {decided === 'approved'
                     ? 'Approved — it is delivering now.'
-                    : 'Held back — nothing was delivered.'}
+                    : decided === 'supplied'
+                      ? 'Sent — the run picked up from there.'
+                      : 'Held back — nothing was delivered.'}
                 </div>
               )}
 
@@ -575,9 +637,11 @@ export default function ProcessDrawer({
         </div>
 
         <div className="border-t border-neutral-100 px-5 py-3">
-          <a href={`/workflows/${process.workflowId}`} className="text-[12px] text-neutral-500 transition-colors hover:text-indigo-600">
+          {/* A Link, NOT a plain <a>: a full document navigation resets the in-app history the
+              workflow deep-dive's back affordance reads, so its back could only ever guess. */}
+          <Link href={`/workflows/${process.workflowId}`} className="text-[12px] text-neutral-500 transition-colors hover:text-indigo-600">
             Open workflow →
-          </a>
+          </Link>
         </div>
       </aside>
     </>,
@@ -622,12 +686,12 @@ function SubprocessStation({ n, step, status, waitingSince }: {
             : 'Its own workflow — it will run inside this one.'}
       </div>
       {step.workflow_id && (
-        <a
+        <Link
           href={`/workflows/${step.workflow_id}`}
           className="mt-2 inline-block text-[12px] text-neutral-500 transition-colors hover:text-violet-700"
         >
           Open {name} →
-        </a>
+        </Link>
       )}
     </div>
   );

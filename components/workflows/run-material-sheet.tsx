@@ -15,6 +15,11 @@
 //   2. NO NEW FRICTION ON PLAIN WORKFLOWS. The sheet opens only when the workflow has reaction
 //      doors or accepts material; everything else keeps its one-click Run exactly as it was.
 //   3. "Run without material" is always present — opening the door never traps the plain run.
+//   4. THE STATIONS ASK BY NAME (owner walk, Aug 25). A workflow carrying an ⌨ INPUT STATION never
+//      sees this sheet at all — `asksForMaterial` returns false for it at BOTH mounts, so the run
+//      starts and the station asks, by name, in the panel. That also settles the footer line
+//      below ("for a file, upload it to Knowledge…"): a station's card has a real pin-a-document
+//      door, so the sentence pointing elsewhere is structurally unreachable where it would lie.
 //
 // v1 IS HONEST ABOUT ITSELF: pasted text only. A file would have to be extracted somewhere, and
 // the place that already extracts, indexes and remembers files is Knowledge — so the sheet says
@@ -35,8 +40,21 @@ export type RunMaterial = { text: string; name?: string };
  * THE ONE PREDICATE both mounts read — a workflow "asks" for material when it has an event door
  * (running it by hand is otherwise a hollow test) or when its inputs tray says it accepts some.
  * Absent config answers false: a surface that was served nothing claims nothing.
+ *
+ * THE STATIONS ASK BY NAME (owner walk, Aug 25). A workflow carrying ≥1 ⌨ INPUT STATION already
+ * has a door for "what should this run work on" — and a far better one: the station names what it
+ * wants, at the moment the run needs it, in the panel. This generic sheet knows NONE of that; it
+ * asks "what is this?" about a run whose own steps are about to ask precisely. So a station-bearing
+ * workflow SKIPS the sheet entirely and runs — the wave does the asking. One rule, one place: both
+ * Run-now mounts read this predicate, so neither can drift from the other.
  */
-export function asksForMaterial(o: { acceptsMaterial?: boolean | null; hasReactionDoors?: boolean | null }): boolean {
+export function asksForMaterial(o: {
+  acceptsMaterial?: boolean | null;
+  hasReactionDoors?: boolean | null;
+  /** ≥1 `input` step in the workflow's steps. Unserved (undefined) keeps today's behaviour. */
+  hasInputStations?: boolean | null;
+}): boolean {
+  if (o.hasInputStations === true) return false;
   return o.acceptsMaterial === true || o.hasReactionDoors === true;
 }
 

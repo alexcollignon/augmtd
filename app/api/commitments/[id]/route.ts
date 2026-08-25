@@ -3,6 +3,94 @@ import { createClient } from '@/lib/supabase/server';
 import { logActivity } from '@/lib/activity/log';
 import { after } from 'next/server';
 import { noteItemAction } from '@/lib/entities/on-action';
+import { clipForPrompt } from '@/lib/utils/clip-for-prompt';
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE ASK CARRIES ITS CONTEXT (relay canvas, THE WAVE — owner walk, Aug 25).
+//
+// THE GATE CARRIES ITS OBJECT gave the approval card the work it decides. An INPUT STATION has no
+// object yet — it is asking for the missing half — so the equivalent truth is the SITUATION: which
+// workflow stopped, what the supply feeds next, and WHAT HAS ALREADY ARRIVED this run. Without it
+// the card is a paste box floating in space ("paste what, for what?").
+//
+// LAWS HELD HERE (the same ones handoff-context.ts states, restated because this is a second
+// derivation living at the serving edge, not inside the engine):
+//   • ADDITIVE AND NEVER FATAL — any failure yields null and the card renders exactly as it did.
+//   • NO SECOND ENDPOINT — it rides the SAME payload the card already learns its run from.
+//   • NOTHING IS FABRICATED — every line is the run's own bytes or the workflow's own step labels.
+//     No trigger text is invented: the run row records HOW it started (`triggered_by`), not what it
+//     was handed, so the card speaks the word the row holds and nothing more.
+//   • THE EXCERPT-HONESTY LAW — every arrived clip is cut at a whitespace boundary and DECLARES
+//     the cut with EXCERPT_MARK (clipForPrompt owns it). A silent chop reads as source truncation.
+// AUTHORIZATION: identical to the handoff block above — the caller's own source='handoff'
+// commitment row IS the entitlement, and only the run it points at is reachable from here.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** How much of each already-arrived step output the card is served. The card scrolls it. */
+const ARRIVED_CLIP = 480;
+/** How many arrived steps ride; anything older is COUNTED, never silently dropped. */
+const ARRIVED_MAX = 5;
+
+export interface InputStationContext {
+  /** The step this supply feeds — the station's next consumer. null = the station is last. */
+  feeds: { label: string; type: string } | null;
+  /** How this run began, in the run row's own word. null when unreadable. */
+  startedBy: string | null;
+  /** What has already arrived this run, oldest→newest, each excerpt-marked when clipped. */
+  arrived: Array<{ label: string; type: string; text: string }>;
+  /** Arrived steps older than the ones served — named as a count, never dropped in silence. */
+  earlier: number;
+}
+
+/** One step output as text — the run's own bytes, clipped honestly. */
+function arrivedText(output: unknown): string {
+  if (output === null || output === undefined) return '';
+  let raw: string;
+  if (typeof output === 'string') raw = output;
+  else { try { raw = JSON.stringify(output); } catch { return ''; } }
+  return clipForPrompt(raw.trim(), ARRIVED_CLIP);
+}
+
+async function inputStationContextFor(
+  admin: SupabaseClient, runId: string,
+): Promise<InputStationContext | null> {
+  try {
+    const { data: run } = await admin.from('workflow_runs')
+      .select('workflow_id, step_outputs, triggered_by').eq('id', runId).maybeSingle();
+    if (!run) return null;
+    const { data: wf } = await admin.from('workflows')
+      .select('steps').eq('id', String(run.workflow_id)).maybeSingle();
+
+    const steps = (Array.isArray(wf?.steps) ? wf!.steps : []) as Array<{ type?: string; label?: string }>;
+    const outs = (Array.isArray(run.step_outputs) ? run.step_outputs : []) as Array<{
+      label?: string; step_type?: string; output?: unknown;
+    }>;
+
+    // THE CONSUMER: the station stands at steps[outs.length]; what the supply feeds is the step
+    // after it. A station at the end of the pipeline feeds nothing, and the card says so.
+    const next = steps[outs.length + 1] ?? null;
+
+    const all = outs
+      .map((o) => ({
+        label: String(o.label ?? '').trim() || 'Step',
+        type: String(o.step_type ?? '').trim() || 'step',
+        text: arrivedText(o.output),
+      }))
+      .filter((a) => a.text.length > 0);
+    const arrived = all.slice(-ARRIVED_MAX);
+
+    return {
+      feeds: next ? { label: String(next.label ?? '').trim() || 'the next step', type: String(next.type ?? 'step') } : null,
+      startedBy: String(run.triggered_by ?? '').trim() || null,
+      arrived,
+      earlier: Math.max(0, all.length - arrived.length),
+    };
+  } catch {
+    // A situation we cannot describe is never an error — the card renders as it did before.
+    return null;
+  }
+}
 
 // GET /api/commitments/[id] — one commitment + its SOURCE CONTEXT, RLS-safe (cookie client). Powers
 // the Home commitment deep-dive: the description / counterparty / due date, plus enough of what it
@@ -85,6 +173,12 @@ export async function GET(
           description: c.description ?? null,
           status: c.status ?? null,
         });
+        // THE ASK CARRIES ITS CONTEXT: only an INPUT STATION's card needs the situation (the other
+        // gates already carry their object), so the extra pair of reads is spent only there.
+        if (handoff && handoff.gateKind === 'input') {
+          const station = await inputStationContextFor(admin, handoff.runId);
+          if (station) handoff = { ...handoff, station } as typeof handoff & { station: InputStationContext };
+        }
       } catch { /* additive — a gate we can't describe never breaks the room */ }
     }
 

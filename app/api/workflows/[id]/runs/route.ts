@@ -54,32 +54,33 @@ export async function GET(
   try { await requireFeature('studio', supabase, user.id); } catch (err) { return handleWorkspaceError(err); }
 
   const limit = parseInt(request.nextUrl.searchParams.get('limit') ?? '30', 10);
+  // ── THE ONE-RUN DOOR (latency, Aug 25): the process drawer needs exactly ONE run and the
+  // workflow's steps. It used to read this route unbounded — 30 runs plus the full record
+  // enrichment — and then a SECOND route only for `steps`, to render one card. `?run=<id>` narrows
+  // the query to that row and makes the response carry `steps`; every other field, and every other
+  // caller, is untouched. ──
+  const onlyRun = request.nextUrl.searchParams.get('run');
 
-  const { data, error } = await supabase
-    .from('workflow_runs')
-    .select('id, workflow_id, status, triggered_by, thread_id, step_outputs, error, started_at, completed_at, created_at')
-    .eq('workflow_id', workflowId)
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false })
-    .limit(Math.min(limit, 100));
+  // ONE FLIGHT: the run rows and the workflow row are independent reads.
+  const [runsRes, wfRes] = await Promise.all([
+    (() => {
+      const q = supabase
+        .from('workflow_runs')
+        .select('id, workflow_id, status, triggered_by, thread_id, step_outputs, error, started_at, completed_at, created_at')
+        .eq('workflow_id', workflowId)
+        .eq('user_id', user.id);
+      return (onlyRun ? q.eq('id', onlyRun) : q)
+        .order('created_at', { ascending: false })
+        .limit(onlyRun ? 1 : Math.min(limit, 100));
+    })(),
+    supabase.from('workflows').select('id, user_id, steps').eq('id', workflowId).maybeSingle(),
+  ]);
+  const { data, error } = runsRes;
 
   if (error) return NextResponse.json({ error: sanitizeError(error) }, { status: 500 });
 
   const runs = (data ?? []) as Array<RunLike & { thread_id: string | null }>;
   const threadIds = runs.map((r) => r.thread_id).filter(Boolean) as string[];
-
-  // Artifacts (unchanged contract — the drawer's Log and the ledger read these).
-  const artifactsByRun = new Map<string, unknown[]>();
-  if (threadIds.length > 0) {
-    const { data: threads } = await supabase
-      .from('work_threads')
-      .select('id, artifacts')
-      .in('id', threadIds);
-    const threadMap = new Map(
-      ((threads ?? []) as Array<{ id: string; artifacts: unknown[] | null }>).map((t) => [t.id, t.artifacts ?? []]),
-    );
-    for (const r of runs) if (r.thread_id) artifactsByRun.set(r.id, threadMap.get(r.thread_id) ?? []);
-  }
 
   // ── THE RECORD BLOCK ──────────────────────────────────────────────────────────────────────
   // The caller already proved ownership of these runs (the query is `.eq('user_id', user.id)`), so
@@ -90,31 +91,37 @@ export async function GET(
   }>();
   let standing: { commitmentId: string; roomKey: string } | null = null;
 
-  try {
-    const { data: wf } = await supabase
-      .from('workflows').select('id, user_id, steps').eq('id', workflowId).maybeSingle();
-    const workflow = wf as { id: string; user_id: string; steps?: unknown } | null;
+  async function buildRecords(): Promise<void> {
+    try {
+      const workflow = wfRes.data as { id: string; user_id: string; steps?: unknown } | null;
+      if (!workflow || !runs.length) return;
 
-    if (workflow && runs.length) {
       const { createClient: createAdmin } = await import('@supabase/supabase-js');
       const admin = createAdmin(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-      const { summarizeRun, driftChipsOf } = await import('@/lib/workflows/run-record');
+      const { summarizeRun, driftChipsOf, prefetchDecisionInputs } = await import('@/lib/workflows/run-record');
 
       const scope = runs.slice(0, RECORD_CAP);
       const wfArg = { steps: (workflow.steps ?? null) as never };
-      const summaries = await Promise.all(scope.map((r) => summarizeRun(admin, r, wfArg)));
 
-      // ONE ledger read for the whole page — "Owner changed" is a real event or it is not a chip.
-      let ownerEvents: number[] = [];
-      try {
-        const { data: ev } = await admin.from('activity_events').select('created_at')
-          .eq('user_id', workflow.user_id)
-          .eq('type', 'workflow_owner_changed')
-          .eq('entity_id', workflowId)
-          .order('created_at', { ascending: false }).limit(50);
-        ownerEvents = ((ev ?? []) as Array<{ created_at: string }>)
-          .map((e) => Date.parse(e.created_at)).filter((n) => Number.isFinite(n));
-      } catch { /* an unknown is never a chip */ }
+      // ── THE PAGE'S DECISIONS IN ONE READ (latency): `summarizeRun` used to fetch each run's
+      // handoff commitments and each decider's name INSIDE itself — 30 runs × 3 queries ≈ 90
+      // round-trips for one paint. The rows are keyed by run id, so the page is one `.in()`. ──
+      const [prefetch, ownerEvents] = await Promise.all([
+        prefetchDecisionInputs(admin, scope.map((r) => String(r.id))),
+        // ONE ledger read for the whole page — "Owner changed" is a real event or it is not a chip.
+        (async (): Promise<number[]> => {
+          try {
+            const { data: ev } = await admin.from('activity_events').select('created_at')
+              .eq('user_id', workflow.user_id)
+              .eq('type', 'workflow_owner_changed')
+              .eq('entity_id', workflowId)
+              .order('created_at', { ascending: false }).limit(50);
+            return ((ev ?? []) as Array<{ created_at: string }>)
+              .map((e) => Date.parse(e.created_at)).filter((n) => Number.isFinite(n));
+          } catch { return []; /* an unknown is never a chip */ }
+        })(),
+      ]);
+      const summaries = await Promise.all(scope.map((r) => summarizeRun(admin, r, wfArg, prefetch)));
 
       // The PREVIOUS completed run of the same workflow is the NEXT completed row in this
       // newest-first list — the comparison needs no extra query.
@@ -145,20 +152,41 @@ export async function GET(
           peopleNames: [...new Set(s.decisions.map((d) => d.deciderName).filter((n): n is string => !!n))],
         });
       });
-    }
-  } catch { /* the record block is additive — a failure serves plain runs, never a wrong claim */ }
+    } catch { /* the record block is additive — a failure serves plain runs, never a wrong claim */ }
+  }
 
-  // ── THE STANDING BINDING (the composer's only reason to exist) ───────────────────────────
-  try {
-    const { data: c } = await supabase.from('commitments')
-      .select('id').eq('source', 'workflow').eq('source_id', workflowId).eq('status', 'open')
-      .order('created_at', { ascending: false }).limit(1).maybeSingle();
-    const commitmentId = (c as { id?: string } | null)?.id;
-    if (commitmentId) {
-      const { roomKeyForItem } = await import('@/lib/room/turns');
-      standing = { commitmentId, roomKey: await roomKeyForItem(supabase, user.id, 'commitment', commitmentId) };
-    }
-  } catch { /* no binding readable → no composer, which is the honest state */ }
+  // ── WAVE TWO, ONE FLIGHT: artifacts, the record block and the standing binding are three
+  // independent reads over the run rows now in hand. They used to be awaited in a chain. ──
+  const artifactsByRun = new Map<string, unknown[]>();
+
+  const [, , standingOut] = await Promise.all([
+    // Artifacts (unchanged contract — the drawer's Log and the ledger read these).
+    (async () => {
+      if (!threadIds.length) return;
+      const { data: threads } = await supabase
+        .from('work_threads')
+        .select('id, artifacts')
+        .in('id', threadIds);
+      const threadMap = new Map(
+        ((threads ?? []) as Array<{ id: string; artifacts: unknown[] | null }>).map((t) => [t.id, t.artifacts ?? []]),
+      );
+      for (const r of runs) if (r.thread_id) artifactsByRun.set(r.id, threadMap.get(r.thread_id) ?? []);
+    })(),
+    buildRecords(),
+    // ── THE STANDING BINDING (the composer's only reason to exist) ─────────────────────────
+    (async (): Promise<{ commitmentId: string; roomKey: string } | null> => {
+      try {
+        const { data: c } = await supabase.from('commitments')
+          .select('id').eq('source', 'workflow').eq('source_id', workflowId).eq('status', 'open')
+          .order('created_at', { ascending: false }).limit(1).maybeSingle();
+        const commitmentId = (c as { id?: string } | null)?.id;
+        if (!commitmentId) return null;
+        const { roomKeyForItem } = await import('@/lib/room/turns');
+        return { commitmentId, roomKey: await roomKeyForItem(supabase, user.id, 'commitment', commitmentId) };
+      } catch { return null; /* no binding readable → no composer, which is the honest state */ }
+    })(),
+  ]);
+  standing = standingOut;
 
   // ── THE SHARED FRAMES (frames plan law 6) — SERVED TRUTH, never a client guess. The Frames tab
   // says "Anyone with link" only where a LIVE share row exists; a revoked share deletes its row, so
@@ -191,5 +219,9 @@ export async function GET(
     })),
     standing,
     sharedFrameIds,
+    // THE ONE-RUN DOOR carries the method with the row, so the process drawer renders its gate
+    // list from ONE request instead of two. Absent for every other caller — additive, never a
+    // payload the history list has to carry.
+    ...(onlyRun ? { steps: ((wfRes.data as { steps?: unknown } | null)?.steps ?? null) } : {}),
   });
 }

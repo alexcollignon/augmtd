@@ -50,7 +50,29 @@ export interface ProcessRow {
   triggeredBy: string;
   /** Phase B: who the process waits on when not the owner. Absent in Phase A. */
   waitingOn?: { name: string; role?: string } | null;
+  /** WHAT KIND OF GATE this parked run stands at — present only while parked. Every surface reads
+   *  its word from GATE_WORDS below; nothing derives a gate word from a status again. */
+  gateKind?: GateKind | null;
+  /** The input station's own question, served so a surface can say what is being asked without
+   *  re-reading the workflow's steps. Present only on an `input` park. */
+  gateAsk?: string | null;
+  /** Input gates only — the open supply ask's commitment id, served by the ledger route so the
+   *  drawer's gate card can be a DOOR to the one answerable surface (never a prose pointer). */
+  askId?: string;
 }
+
+export type GateKind = 'guardrail' | 'approval' | 'handoff' | 'subprocess' | 'input';
+
+/** THE ONE GATE WORD TABLE. `station` = the gate's own title on a card; `waiting` = the same fact
+ *  in a running sentence ("… · waiting for your approval"). Adding a gate kind = one row here; a
+ *  surface that invents its own word is the drift class this table exists to kill. */
+export const GATE_WORDS: Record<GateKind, { station: string; waiting: string }> = {
+  approval:   { station: 'Your approval',        waiting: 'waiting for your approval' },
+  guardrail:  { station: 'Your approval',        waiting: 'waiting for your approval' },
+  input:      { station: 'Needs input from you', waiting: 'waiting for something from you' },
+  handoff:    { station: 'Wait on a person',     waiting: 'waiting on a teammate' },
+  subprocess: { station: 'Another process',      waiting: 'waiting on another process' },
+};
 
 export interface RunLike {
   id: string;
@@ -75,10 +97,11 @@ export function parkedGateOf(
    *  static assignee — a per-run decision never mutates the authored workflow. */
   override?: { assigneeUserId: string; assigneeName?: string } | null,
 ): {
-  kind: 'guardrail' | 'approval' | 'handoff' | 'subprocess';
+  kind: 'guardrail' | 'approval' | 'handoff' | 'subprocess' | 'input';
   assigneeUserId?: string; assigneeName?: string;
-  /** Subprocess parks only — the station's authored label + the child it handed the baton to. */
-  stepId?: string; label?: string; childWorkflowId?: string;
+  /** Subprocess + input parks — the station's authored label (and, for ⧉, the child it handed the
+   *  baton to). `ask` is the input station's own question. */
+  stepId?: string; label?: string; childWorkflowId?: string; ask?: string;
 } {
   const outs = run.step_outputs ?? [];
   const last = outs[outs.length - 1];
@@ -92,6 +115,16 @@ export function parkedGateOf(
     return {
       kind: 'subprocess', stepId: current.id,
       label: current.label || 'Process', childWorkflowId: current.workflow_id,
+    };
+  }
+  // THE INPUT STATION (relay canvas, THE WAVE): the wait is the OWNER'S, like an approval — but it
+  // asks for MATERIAL, not a yes/no, so the kind is its own and every surface says a different word
+  // (GATE_WORDS) and offers a different door (the resume route refuses a bare approve here).
+  if (current?.type === 'input') {
+    return {
+      kind: 'input', stepId: current.id,
+      label: current.label || 'Ask me for something',
+      ask: String(current.ask ?? '').trim() || undefined,
     };
   }
   if (current?.type === 'handoff') {
@@ -199,8 +232,12 @@ export async function deriveProcessRows(
     // `role` is the SURFACE DISCRIMINATOR: a machine wait must never be drawn in the people
     // grammar (a facepile of a process name is a lie). Only the ⧉ station sets it.
     let waitingOn: { name: string; role?: string } | null = null;
+    let gateKind: GateKind | null = null;
+    let gateAsk: string | null = null;
     if (r.status === 'awaiting_approval') {
       const gate = parkedGateOf(r, wf?.steps);
+      gateKind = gate.kind;
+      gateAsk = gate.kind === 'input' ? (gate.ask ?? null) : null;
       // A ⧉ STATION WAITS ON A MACHINE (relay canvas W3): no human holds this gate, so it reads
       // waiting_on_others for EVERY viewer — the owner included. Never needs_you.
       if (gate.kind === 'subprocess') {
@@ -234,6 +271,8 @@ export async function deriveProcessRows(
       gate: gateDeltaOf(outs),
       triggeredBy: r.triggered_by ?? 'manual',
       ...(waitingOn ? { waitingOn } : {}),
+      ...(gateKind ? { gateKind } : {}),
+      ...(gateAsk ? { gateAsk } : {}),
     };
   });
 }

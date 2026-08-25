@@ -14,16 +14,22 @@ import type { WorkflowStep, WorkflowTrigger } from '@/lib/workflows/types';
 export const metadata = { title: 'Workflow — AUGMTD' };
 
 export default async function WorkflowDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  await guardFeaturePage('studio');
   const { id } = await params;
 
   // The user's own client — RLS decides what this account may read.
   const supabase = await createClient();
-  const { data: wf } = await supabase
-    .from('workflows')
-    .select('id, name, description, status, trigger, steps, output_config, agent_id, next_run_at, auto_paused_at')
-    .eq('id', id)
-    .maybeSingle();
+  // ONE FLIGHT (latency): the feature guard and the row are independent reads, and this HTML does
+  // not paint until BOTH land. The guard still decides first — it is only no longer waited for
+  // alone. `guardFeaturePage` redirects internally, so its rejection still wins.
+  const [, wfRes] = await Promise.all([
+    guardFeaturePage('studio'),
+    supabase
+      .from('workflows')
+      .select('id, name, description, status, trigger, steps, output_config, agent_id, next_run_at, auto_paused_at')
+      .eq('id', id)
+      .maybeSingle(),
+  ]);
+  const wf = wfRes.data;
 
   if (!wf) redirect('/home?view=workflows');
 

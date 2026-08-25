@@ -2,10 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { generateWorkflowConfig } from '@/lib/workflows/generate-config';
 
-// 60s: since the entity edge, generation assembles room grounding + the existing-tasks read
+// 300s: since the entity edge, generation assembles room grounding + the existing-tasks read
 // before the model call — 30s starved real accounts (found live: a silent 504 read as
-// "Draft it does nothing").
-export const maxDuration = 60;
+// "Draft it does nothing"), and 60s starved them again when a pilot pasted a ~450-word
+// OPERATING RUBRIC into the door (the authoring call reads it, derives the machine around it and
+// may take a judged shape read first). The house budget class for long-running authored work is
+// 300 (the Hetzner callbacks; execute/route.ts runs 800 on Pro + Fluid) — a draft the user is
+// watching a spinner for must be allowed to finish rather than die silently at a minute.
+export const maxDuration = 300;
 
 // POST /api/workflows/generate-from-description
 // Accepts a plain-language description, returns a full Workflow config (no id/timestamps).

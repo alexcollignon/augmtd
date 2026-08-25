@@ -16,7 +16,7 @@
 // Zero AI by design (pure table-tests + source floors + one served-derivation probe).
 // Run: npx tsx --env-file=.env.local scripts/smoke-processes.ts
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, readdirSync } from 'fs';
 import { createClient } from '@supabase/supabase-js';
 import { resolveProbeUser } from './probe-user';
 import {
@@ -657,15 +657,21 @@ async function main() {
   ok('the drawer reads previewFromOutput from handoff-context (never a forked preview rule)',
     /import \{ previewFromOutput \} from '@\/lib\/workflows\/handoff-context'/.test(drawerCode));
   {
-    const runsFetches = [...drawerCode.matchAll(/fetch\(\s*`[^`]*\/runs`/g)].length;
+    // RE-POINTED (latency wave, Aug 25): the URL gained the ONE-RUN door's `?run=` query, so the
+    // pattern matches `/runs` with or without a query string. The LAW is unchanged and unweakened —
+    // still exactly one runs-route fetch in this drawer, so Log and gate cannot disagree.
+    const runsFetches = [...drawerCode.matchAll(/fetch\(\s*`[^`]*\/runs(\?[^`]*)?`/g)].length;
     ok('exactly ONE runs-route fetch in the drawer (one run, one truth — Log and gate agree)',
       runsFetches === 1, String(runsFetches));
   }
   {
     const lines = drawerCode.split('\n');
     const mounts = lines.map((l, i) => [l, i] as const).filter(([l]) => l.includes('<GateObject'));
+    // RE-POINTED (the flash fix, Aug 25): the fallback card gained an input branch above its
+    // GateObject, pushing the mount past a 20-line lookback. The LAW is unchanged — the mount
+    // still sits inside the same guarded render; the window just reaches it.
     const guarded = mounts.every(([, i]) =>
-      lines.slice(Math.max(0, i - 20), i).some((l) => /waiting && !decided|awaitingApproval && !listCoversTheWait/.test(l)));
+      lines.slice(Math.max(0, i - 40), i).some((l) => /waiting && !decided|awaitingApproval && !listCoversTheWait/.test(l)));
     ok('GateObject mounts ONLY inside a waiting / awaiting-approval render',
       mounts.length === 2 && guarded, `${mounts.length} mounts`);
   }
@@ -728,6 +734,287 @@ async function main() {
       ['approval', 'handoff', 'case', 'verify', 'workflow', 'slack_send', 'agent']
         .every((t) => comment.includes(t)),
       'a step type is undecided at the picker');
+  }
+
+  // ── P7m — THE STATIONS ASK BY NAME + THE ASK CARRIES ITS CONTEXT (owner walk, Aug 25).
+  // Two halves of one find. (a) A workflow whose own steps stop and ask by name was still meeting
+  // the GENERIC material sheet on Run now — a box asking "what is this?" about a run that is about
+  // to ask precisely. (b) The station's panel card asked for a paste with no situation around it,
+  // while the approval card beside it carries the very work it gates (THE GATE CARRIES ITS OBJECT).
+  console.log('\nP7m — THE STATIONS ASK BY NAME (the generic sheet steps aside):');
+  {
+    const sheet = readFileSync('components/workflows/run-material-sheet.tsx', 'utf8');
+    const sheetCode = stripComments(sheet);
+    ok('THE ONE PREDICATE takes the station fact',
+      /export function asksForMaterial\([\s\S]{0,400}hasInputStations\?: boolean \| null;/.test(sheetCode));
+    ok('…and a station-bearing workflow answers FALSE before any other clause is read',
+      /if \(o\.hasInputStations === true\) return false;[\s\S]{0,120}return o\.acceptsMaterial === true \|\| o\.hasReactionDoors === true;/.test(sheetCode),
+      'the station short-circuit is gone or no longer first — the sheet can stand in front of a station again');
+    ok('an UNSERVED station fact keeps today\'s behaviour (undefined is never a claim)',
+      !/hasInputStations !== true/.test(sheetCode) && /hasInputStations === true/.test(sheetCode));
+    // ONE RULE, ONE PLACE: both Run-now mounts must read the predicate WITH the station fact —
+    // a mount that forgets it re-opens the sheet on exactly the workflows this law is about.
+    for (const [name, src] of [['workflows-ledger.tsx', stripCode], ['workflow-detail.tsx', detailCode]] as Array<[string, string]>) {
+      const calls = [...src.matchAll(/asksForMaterial\(\{[\s\S]{0,260}?\}\)/g)].map((m) => m[0]);
+      ok(`${name}: every asksForMaterial call passes hasInputStations`,
+        calls.length > 0 && calls.every((c) => c.includes('hasInputStations')),
+        `${calls.length} call(s): ${calls.filter((c) => !c.includes('hasInputStations')).join(' | ') || 'all pass it'}`);
+    }
+    ok('the ledger SERVES the station count off the steps it already holds (no extra query)',
+      /stations: \(w\.steps \?\? \[\]\)\.filter\(s => \(s as \{ type\?: string \}\)\.type === 'input'\)\.length/
+        .test(readFileSync('app/api/workflows/ledger/route.ts', 'utf8')));
+    ok('the deep-dive derives it from the workflow\'s OWN steps on the payload it already reads',
+      /const stations = \(w\?\.steps \?\? \[\]\)\.filter\(\(s\) => s\?\.type === 'input'\)\.length;/.test(detailCode));
+    ok('…and the warm cache carries it (a rehydrated header must not re-open the sheet)',
+      /stations\?: number;/.test(detail) && /acceptsMaterial: accepts, stations, owner: nextOwner,/.test(detailCode));
+  }
+
+  console.log('\nP7m — THE ASK CARRIES ITS CONTEXT (the station card\'s situation):');
+  {
+    const commitRoute = readFileSync('app/api/commitments/[id]/route.ts', 'utf8');
+    const commitCode = stripComments(commitRoute);
+    const itemDetailSrc = readFileSync('components/home/item-detail.tsx', 'utf8');
+    const itemCode = stripComments(itemDetailSrc);
+
+    ok('the context is served on the SAME payload the card already learns its run from',
+      /async function inputStationContextFor\(/.test(commitCode)
+      && /const station = await inputStationContextFor\(admin, handoff\.runId\);/.test(commitCode));
+    ok('…and is spent ONLY on an input gate (the other gates already carry their object)',
+      /handoff\.gateKind === 'input'/.test(commitCode));
+    ok('it names WHAT THE SUPPLY FEEDS — the station\'s next consumer, from the workflow\'s steps',
+      /const next = steps\[outs\.length \+ 1\] \?\? null;/.test(commitCode));
+    ok('THE EXCERPT-HONESTY LAW: every arrived clip goes through clipForPrompt (never a raw slice)',
+      /import \{ clipForPrompt \} from '@\/lib\/utils\/clip-for-prompt';/.test(commitCode)
+      && /return clipForPrompt\(raw\.trim\(\), ARRIVED_CLIP\);/.test(commitCode)
+      && !/\.slice\(0, ARRIVED_CLIP\)/.test(commitCode));
+    ok('NOTHING IS FABRICATED: the run\'s own triggered_by word, never an invented trigger text',
+      /startedBy: String\(run\.triggered_by \?\? ''\)\.trim\(\) \|\| null,/.test(commitCode));
+    ok('older arrived steps are COUNTED, never silently dropped',
+      /earlier: Math\.max\(0, all\.length - arrived\.length\),/.test(commitCode));
+    ok('ADDITIVE AND NEVER FATAL: the derivation returns null on any failure',
+      /\} catch \{[\s\S]{0,220}return null;[\s\S]{0,20}\}[\s\S]{0,10}\}/.test(
+        commitCode.slice(commitCode.indexOf('async function inputStationContextFor'))));
+
+    // THE CARD renders the served facts — and claims NOTHING it wasn't served.
+    ok('the card reads the served block (never infers a situation)',
+      /const station = handoff\.station \?\? null;/.test(itemCode)
+      && /const arrived = station\?\.arrived \?\? \[\];/.test(itemCode));
+    ok('the provenance line names the workflow AND what the supply feeds',
+      /\{handoff\.workflowName\} stopped here and needs this from you/.test(itemDetailSrc)
+      && /station\?\.feeds \? ` · feeds \$\{station\.feeds\.label\}`/.test(itemDetailSrc));
+    ok('the arrived trail renders ONLY when something arrived (an empty box claims a situation)',
+      /\{arrived\.length > 0 && \(/.test(itemDetailSrc));
+    ok('…folded by default — the ask is the headline and the paste box is the deed',
+      /const \[showArrived, setShowArrived\] = useState\(false\);/.test(itemCode));
+    ok('…and its disclosure honours reduced motion',
+      /rotate-180[\s\S]{0,4}'/.test(itemDetailSrc) && /motion-reduce:transition-none \$\{showArrived \? 'rotate-180'/.test(itemDetailSrc));
+    ok('the omitted-tail count is spoken on the card too',
+      /earlier step\{station!\.earlier === 1 \? '' : 's'\} not shown/.test(itemDetailSrc));
+    // RE-POINTED (owner walk, Aug 25 — "why are we sending him to another screen"): the paste box
+    // and the pin door MOVED OUT of this file into the ONE shared form, so asserting their literals
+    // here would now pin the fork instead of the law. The replacement is stronger: the card must
+    // MOUNT the shared deed, and the literals are asserted once, at the form (P7n below).
+    ok('the card mounts the ONE shared supply form (the deed is never re-implemented here)',
+      /<InputSupplyForm$/m.test(itemCode) || /<InputSupplyForm\b/.test(itemCode));
+    ok('…passing the run and the station\'s own accepts, and settling on its callback',
+      /runId=\{runId\}/.test(itemCode) && /accepts=\{handoff\.accepts \?\? 'both'\}/.test(itemCode)
+      && /onSettled=\{\(outcome\) => \{ setSent\(outcome\); onDecided\(\); \}\}/.test(itemCode));
+  }
+
+  console.log('\nP7n — THE GATE CARRIES ITS DEED (one supply form, mounted at both doors):');
+  {
+    const formPath = 'components/workflows/input-supply-form.tsx';
+    ok('the ONE shared supply form exists', existsSync(formPath));
+    const form = readFileSync(formPath, 'utf8');
+    const formCode = stripComments(form);
+    const itemCode2 = stripComments(readFileSync('components/home/item-detail.tsx', 'utf8'));
+    const drawerSrc = readFileSync('components/workflows/process-drawer.tsx', 'utf8');
+    const drawerCode2 = stripComments(drawerSrc);
+
+    ok('it owns the paste box, the pin-a-document door AND the pin-writes-the-tray checkbox',
+      /placeholder="Paste it here…"/.test(formCode)
+      && /'…or pin a document'/.test(formCode)
+      && /checked=\{pin\}/.test(formCode));
+    // RE-POINTED (THE WAVE, Aug 25 — the attach door): Send is additionally dead while a file is
+    // still being read, or a person with pasted text could post the run forward WITHOUT the file
+    // they just picked (a supply that silently drops half of itself).
+    ok('Send it is disabled until there is text OR a doc, and never mid-upload (no hollow post)',
+      /disabled=\{busy \|\| !!uploading \|\| \(!text\.trim\(\) && !doc\)\}/.test(formCode)
+      && /if \(!runId \|\| busy \|\| uploading\) return;/.test(formCode));
+    ok('Hold it back is always there (a park nobody can answer must not be a dead end)',
+      /Hold it back/.test(formCode));
+    ok('BOTH deeds go through the ONE resume door',
+      (formCode.match(/fetch\(`\/api\/workflows\/runs\/\$\{runId\}\/resume`/g) ?? []).length === 2
+      && /body: JSON\.stringify\(\{ input: \{/.test(formCode)
+      && /body: JSON\.stringify\(\{ approve: false \}\)/.test(formCode));
+    ok('THE OVERLAY LAW is not touched: the picker paints in the consumer\'s own flow, no popover',
+      !/AnchoredPopover|createPortal/.test(formCode));
+    ok('a caller without a run renders NOTHING (never a form that cannot post)',
+      /if \(!runId\) return null;/.test(formCode));
+
+    // BOTH MOUNTS — the whole point of the extraction.
+    ok('the process drawer mounts it', /import InputSupplyForm/.test(drawerCode2) && /<InputSupplyForm\b/.test(drawerCode2));
+    ok('the commitment deep-dive mounts it', /import InputSupplyForm/.test(itemCode2) && /<InputSupplyForm\b/.test(itemCode2));
+
+    // NO SECOND IMPLEMENTATION — a repo-wide grep, because a fork is the failure this law names.
+    {
+      const roots = ['components', 'app'];
+      const files: string[] = [];
+      const walk = (dir: string) => {
+        for (const e of readdirSync(dir, { withFileTypes: true })) {
+          const full = `${dir}/${e.name}`;
+          if (e.isDirectory()) walk(full);
+          else if (/\.tsx?$/.test(e.name)) files.push(full);
+        }
+      };
+      for (const r of roots) walk(r);
+      const pasteBoxes = files.filter((f) => f !== formPath && /placeholder="Paste it here…"/.test(readFileSync(f, 'utf8')));
+      ok('NO second paste-form implementation anywhere in components/ or app/', pasteBoxes.length === 0,
+        pasteBoxes.join(', '));
+      const supplyPosts = files.filter((f) => f !== formPath && /JSON\.stringify\(\{ input: \{/.test(readFileSync(f, 'utf8')));
+      ok('…and no second caller posts the supply shape to the resume door', supplyPosts.length === 0,
+        supplyPosts.join(', '));
+    }
+
+    // THE STOPGAP IS GONE: the drawer no longer sends anyone to another screen to answer.
+    ok('the drawer\'s "open the ask" LINK stopgap is deleted',
+      !/Send it — open the ask/.test(drawerSrc)
+      && !/href=\{`\/item\/\$\{process\.askId\}\?kind=commitment`\}/.test(drawerSrc));
+    ok('…and so is the prose dead-end ("it\'s on your deck — open it there")',
+      !/open it there to send it/.test(drawerSrc));
+    ok('the drawer\'s input station carries NO approve/reject verbs (it is not that kind of gate)',
+      /\{iHoldIt && !isInput && \(/.test(drawerCode2));
+
+    // THE SEND REFRESHES IN PLACE — the same seam decide() uses, so the card advances and the
+    // ledger behind the drawer re-reads. The user never leaves the panel.
+    ok('the drawer settles a supply through the SAME seam a decision uses',
+      /const onSupplied = useCallback\(\(outcome: SupplyOutcome\) => \{/.test(drawerCode2)
+      && /setDecided\(outcome === 'supplied' \? 'supplied' : 'rejected'\);/.test(drawerCode2)
+      && /onDecided\?\.\(\);/.test(drawerCode2.slice(drawerCode2.indexOf('const onSupplied'))));
+    ok('…and the form is wired to it (a callback nobody passes is not a refresh)',
+      /onSettled=\{onSupplied\}/.test(drawerCode2));
+    ok('a SUPPLY is never called an approval on the settled banner',
+      /decided === 'supplied'/.test(drawerCode2) && /Sent — the run picked up from there\./.test(drawerSrc));
+
+    // ── P7o — THE ATTACH DOOR (THE WAVE, Aug 25). The third way to answer: a file off this
+    // person's machine. It must be ONE input, ONE upload route, and then the SAME resume door
+    // everything else answers through — an attach that grew its own send path would be the fork
+    // this whole law exists to forbid. ──
+    console.log('\nP7o — THE ATTACH DOOR (upload → Knowledge → the SAME resume door):');
+    ok('the form carries the attach affordance beside the pin door (same quiet grammar)',
+      /'…or attach a file'|…or attach a file/.test(formCode) && /'…or pin a document'/.test(formCode));
+    ok('EXACTLY ONE file input in the form (a second picker is a second door)',
+      (formCode.match(/type="file"/g) ?? []).length === 1
+      && /className="hidden"/.test(formCode) && /fileRef\.current\?\.click\(\)/.test(formCode));
+    ok('…and it takes ONE file (a station asks for a thing, not a pile)',
+      !/type="file"[^>]*\bmultiple\b/.test(formCode) && /e\.target\.files\?\.\[0\]/.test(formCode));
+    ok('the upload posts multipart to the supply-upload door, once',
+      (formCode.match(/\/api\/workflows\/runs\/\$\{runId\}\/supply-upload/g) ?? []).length === 1
+      && /new FormData\(\)/.test(formCode) && /fd\.append\('file', f\)/.test(formCode));
+    ok('THE UPLOAD IS NOT THE SEND: it only seats a kbFileId — the run still moves on the resume door',
+      /setDoc\(\{ id: j\.kbFileId, name: j\.name \|\| f\.name \}\)/.test(formCode)
+      && (formCode.match(/fetch\(`\/api\/workflows\/runs\/\$\{runId\}\/resume`/g) ?? []).length === 2);
+    ok('an attached file rides the SAME `{ kbFileId, pin }` shape a pinned one does (no second payload)',
+      (formCode.match(/kbFileId: doc\.id, pin/g) ?? []).length === 1);
+    ok('the upload speaks an honest waiting state, reduced-motion respected',
+      /Reading it…/.test(formCode) && /animate-pulse motion-reduce:animate-none/.test(formCode));
+    ok('a refusal (too big · nothing readable) shows the SERVER\'S OWN sentence, inline',
+      /setError\(j\?\.error \|\| 'That file did not go through/.test(formCode)
+      && /\{error && <p className="mt-2 text-\[12px\] text-rose-600">\{error\}<\/p>\}/.test(formCode));
+    ok('THE INDEXING IS DISCLOSED — before the pick, not after it',
+      /saved to your Knowledge too, so the team can find it later/.test(formCode)
+      && /\{!picking && \(!doc \|\| docFrom === 'attached'\) && \(/.test(formCode));
+    ok('the pin presumption differs by door, the deed does not (attach unchecked, pick checked)',
+      /setDocFrom\('attached'\);\s*\n?\s*setPin\(false\);/.test(formCode)
+      && /setDocFrom\('picked'\); setPin\(true\);/.test(formCode));
+    ok('THE OVERLAY LAW still untouched by the new door (no popover, no portal)',
+      !/AnchoredPopover|createPortal/.test(formCode));
+
+    // BOTH MOUNTS GET IT FOR FREE — because nobody else may implement it.
+    {
+      const roots = ['components', 'app'];
+      const files: string[] = [];
+      const walk = (dir: string) => {
+        for (const e of readdirSync(dir, { withFileTypes: true })) {
+          const full = `${dir}/${e.name}`;
+          if (e.isDirectory()) walk(full);
+          else if (/\.tsx?$/.test(e.name)) files.push(full);
+        }
+      };
+      for (const r of roots) walk(r);
+      const uploaders = files.filter((f) => f !== formPath && /runs\/\$\{[^}]+\}\/supply-upload|supply-upload/.test(readFileSync(f, 'utf8')));
+      ok('NO second caller of the supply-upload door in components/ or app/ (routes aside)',
+        uploaders.filter((f) => !f.startsWith('app/api/')).length === 0,
+        uploaders.join(', '));
+    }
+  }
+
+  // ── PL — THE LATENCY FLOORS (Aug 25, owner: "everything about it takes too long to load — even
+  // after clicking on back"). A latency law decays the moment a later wave re-serializes a route or
+  // ships a surface with no warm paint, so each one is a SOURCE FLOOR here. Nothing below asserts a
+  // number — they assert the SHAPE that made the number possible. ──
+  {
+    const noComments = (s: string) => s.split('\n')
+      .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*') && !l.trim().startsWith('/*'))
+      .join('\n');
+    const runsRoute = readFileSync('app/api/workflows/[id]/runs/route.ts', 'utf8');
+    const wfRoute = readFileSync('app/api/workflows/[id]/route.ts', 'utf8');
+    const metricsRoute = readFileSync('app/api/workflows/[id]/metrics/route.ts', 'utf8');
+    const recordLib = readFileSync('lib/workflows/run-record.ts', 'utf8');
+
+    console.log('\nPL1 — THE SERVING ROUTES FLY, THEY DO NOT QUEUE:');
+    ok('the ledger route still batches its reads (never a sequential await chain)',
+      (noComments(ledgerRoute).match(/Promise\.all\(\[/g) ?? []).length >= 2,
+      'the ledger re-serialized — the processes arc flattened it to one flight');
+    ok('…and serves a SCOPED door so the deep-dive never reads every workflow to render one',
+      /searchParams\.get\('scope'\)/.test(ledgerRoute) && /scopeId \?/.test(ledgerRoute));
+    ok('the runs route batches its run + workflow reads',
+      /Promise\.all\(\[/.test(noComments(runsRoute)));
+    ok('…and serves the ONE-RUN door the drawer opens on',
+      /searchParams\.get\('run'\)/.test(runsRoute) && /onlyRun \?/.test(runsRoute));
+    ok('the workflow GET batches gate + row + features',
+      /const \[gate, wfRes, features\] = await Promise\.all\(\[/.test(wfRoute));
+    ok('…and batches the two store reads that share one input',
+      /const \[inputs, fireLimit\] = await Promise\.all\(\[/.test(wfRoute));
+    ok('the metrics route flies its three independent reads together',
+      /const \[wfRes, runsRes, usageRes\] = await Promise\.all\(\[/.test(metricsRoute));
+    ok('the deep-dive page does not queue its feature guard behind its row read',
+      /Promise\.all\(\[\s*\n?\s*guardFeaturePage/.test(readFileSync('app/(main)/workflows/[id]/page.tsx', 'utf8')));
+
+    console.log('\nPL2 — NO N+1 BEHIND A PAGE OF RUNS:');
+    ok('the record module exposes a BATCHED decision read',
+      /export async function prefetchDecisionInputs/.test(recordLib));
+    ok('…keyed by run id in ONE `.in()` (never one query per run)',
+      /\.eq\('source', 'handoff'\)\.in\('source_id', ids\)/.test(recordLib));
+    ok('…and the per-run path reads the prefetch when it is given',
+      /args\.prefetch\.commitmentsByRun\.get/.test(recordLib) && /args\.prefetch\?\.people/.test(recordLib));
+    ok('the runs route USES it (a batch nobody calls is not a fix)',
+      /prefetchDecisionInputs\(admin, scope\.map/.test(runsRoute)
+      && /summarizeRun\(admin, r, wfArg, prefetch\)/.test(runsRoute));
+
+    console.log('\nPL3 — EVERY WORKFLOWS SURFACE PAINTS WARM (instant-load doctrine):');
+    ok('the ledger hydrates from a STAMPED cache before it fetches',
+      /loadLS<LedgerPayload>\(LS_KEY, \{ maxAgeMs/.test(strip) && /saveLS\(LS_KEY/.test(strip));
+    ok('…on a VERSIONED key (a stale shape must never rehydrate)', /const LS_KEY = 'aug-wf-ledger-v\d+'/.test(strip));
+    ok('the deep-dive hydrates its processes / runs / header from cache',
+      /loadLS<ProcCache>/.test(detail) && /loadLS<RunsCache>/.test(detail) && /loadLS<MetaCache>/.test(detail));
+    ok('…writes every one of them back on a successful read',
+      /saveLS\(LS_PROC\(/.test(detail) && /saveLS\(LS_RUNS\(/.test(detail) && /saveLS\(LS_META\(/.test(detail));
+    ok('…on VERSIONED, per-workflow keys', /aug-wfdetail-\w+-v\d+:\$\{id\}/.test(detail));
+    ok('THE FRESHNESS LAW: the ACTION half (processes) demands a fresh cache, the ambient half does not',
+      /loadLS<ProcCache>\(LS_PROC\(workflowId\), \{ maxAgeMs: PROC_MAX_AGE_MS \}\)/.test(detail)
+      && /loadLS<RunsCache>\(LS_RUNS\(workflowId\)\)/.test(detail),
+      'a needs-you row hydrating from a stale cache is show-then-retract, not instant-load');
+    ok('the cache reads live in an EFFECT, never a useState initializer (this page is SSR\'d)',
+      !/useState\([^)]*loadLS/.test(detail));
+    ok('the Metrics tab hydrates too (its body unmounts on every tab switch)',
+      /loadLS<Metrics>\(LS_METRICS\(workflowId\)\)/.test(detail) && /saveLS\(LS_METRICS\(/.test(detail));
+    ok('the deep-dive asks the ledger for its OWN scope, never the whole payload',
+      /\/api\/workflows\/ledger\?scope=/.test(detail) && !/fetch\('\/api\/workflows\/ledger'\)/.test(detail));
+    ok('the process drawer opens on ONE request (the run + the method together)',
+      /\/runs\?run=\$\{encodeURIComponent\(process\.runId\)\}/.test(drawer)
+      && !/fetch\(`\/api\/workflows\/\$\{process\.workflowId\}`\)/.test(drawer),
+      'the drawer still reads a second route for steps, or reads the whole run history for one row');
   }
 
   console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed`);

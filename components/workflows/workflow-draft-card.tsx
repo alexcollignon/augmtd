@@ -64,6 +64,13 @@ const stepWord = (s: WorkflowDraft['steps'][number]): string => {
   // THE SUBPROCESS STATION (relay canvas W3, law 5): the child's own name, said as what it is —
   // a whole process of the user's own running inside this one, not just another step.
   if (s.type === 'workflow') return `⧉ ${s.label || 'a process'} (a process of its own)`;
+  // THE INPUT STATION (relay canvas, THE WAVE): the card must promise the PAUSE — a workflow that
+  // will stop and ask says so before it is confirmed, in the words it will ask with.
+  if (s.type === 'input') {
+    const ask = typeof s.ask === 'string' ? s.ask.trim() : '';
+    const head = ask.length > 40 ? `${ask.slice(0, 40).trimEnd()}…` : ask;
+    return head ? `It asks you for — ${head}` : 'It asks you for something';
+  }
   // THE CASE STATION (relay canvas W4): the deed said in the same grammar as the other stations —
   // what it does, then what it recognizes a case BY (the user's own words, head-clipped).
   if (s.type === 'case') {

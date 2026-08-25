@@ -35,7 +35,7 @@ export type WorkflowTrigger = ManualTrigger | ScheduleTrigger | ReactionTrigger;
 
 // ── Steps ──────────────────────────────────────────────────────────────────────
 
-export type StepType = 'tool' | 'ai' | 'agent' | 'approval' | 'verify' | 'handoff' | 'workflow' | 'case';
+export type StepType = 'tool' | 'ai' | 'agent' | 'approval' | 'verify' | 'handoff' | 'workflow' | 'case' | 'input';
 
 // Tool step — deterministic data fetch via the MCP registry or a built-in tool id.
 export interface ToolStep {
@@ -168,9 +168,33 @@ export interface CaseStep {
   case_name?: string;
 }
 
+// Input step — THE INPUT STATION (relay canvas, THE WAVE): the run PARKS and asks the USER for
+// something only they have at run time — pasted text, or a document they pin. The supplied material
+// becomes THIS STEP'S OWN OUTPUT, so every later step reads it as the run's own material and it is
+// durable in `step_outputs` (the receipts show exactly what was handed over).
+//
+// THE BOUNDARY LAW (owner, Aug 25): an input station is for what ONLY THE HUMAN HAS AT RUN TIME.
+// Things that arrive on their own are DOORS (triggers); standing references (a policy, a rubric)
+// are PINNED DOCS in the inputs tray. A station that asks for something the machine could have
+// fetched is a chore, not a gate.
+//
+// The park is the EXISTING awaiting machinery (`awaiting_approval` — a new status value is a silent
+// park failure, the house lesson); the gate KIND distinguishes it in served state, exactly as the
+// handoff and ⧉ stations do. Test mode NEVER parks — it substitutes a marked sample and continues.
+export interface InputStep {
+  type: 'input';
+  id: string;
+  label: string;
+  /** What the run is asking for, in the author's own words ("paste this week's numbers").
+   *  Blank = readiness rule 10 refuses: a station that asks nothing can never be answered. */
+  ask: string;
+  /** What the person may hand over. Default 'both' — a paste box AND the pin-a-document door. */
+  accepts?: 'text' | 'doc' | 'both';
+}
+
 export type WorkflowStep =
   | ToolStep | AIStep | AgentStep | ApprovalStep | VerifyStep | HandoffStep | SubprocessStep
-  | CaseStep;
+  | CaseStep | InputStep;
 
 // ── Output ─────────────────────────────────────────────────────────────────────
 

@@ -73,6 +73,9 @@ export async function executeStep(step: WorkflowStep, ctx: StepContext): Promise
       // The CASE station is engine-side too (relay canvas W4) — it needs the stores (the case
       // index, the registry, the fire record). Same pass-through law as the parks.
       case 'case': output = '[Case station — handled by the run loop]'; break;
+      // The INPUT station is a park too (relay canvas, THE WAVE) — the run loop asks the person and
+      // the resume door writes what they supplied as this step's output. Same pass-through law.
+      case 'input': output = '[Input station — handled by the run loop]'; break;
       // The verify gate speaks TWICE: the corrected draft (a plain string, so every downstream
       // consumer is untouched) and its structured verdict, attached beside the output here.
       case 'verify': {
