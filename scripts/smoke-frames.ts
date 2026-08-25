@@ -546,6 +546,44 @@ async function main() {
         /isThinFrameSource/.test(await readSrc('lib/documents/materialize.ts')));
     }
 
+    // ══ FC — THE CLOCK REACHES FRAME CHROME (Aug 25, found live) ══════════════════════════════
+    // A generated frame's footer read "Updated 2024" — an invented year on a share-linkable
+    // surface. The content floor held for candidate facts and leaked in DECORATIVE CHROME. The
+    // house rule (THE DATED-SOURCE LAW / executeAIStep's clock): a model never derives a date —
+    // it is code-supplied or absent. Structural, zero AI.
+    console.log('\nFC — the clock reaches frame chrome (a date is code-supplied or absent):');
+    {
+      const laneCode = codeOf(await readSrc('lib/frames/generate-frame.ts'));
+      ok('FC the lane computes TODAY IN CODE (the executeAIStep idiom: weekday + ISO day, UTC)',
+        /function frameDateLine\(/.test(laneCode)
+        && /toLocaleDateString\('en-GB', \{ weekday: 'long', timeZone: 'UTC' \}\)/.test(laneCode)
+        && /toISOString\(\)\.slice\(0, 10\)/.test(laneCode));
+      ok('FC …and the PROMPT ASSEMBLY carries it — the contract and the clock travel together',
+        /\$\{FRAME_CONTRACT\}\\n\\n\$\{frameDateLine\(\)\}/.test(laneCode));
+      // The lane's strings are concatenated template literals — join them before reading the rule.
+      const laneText = laneCode.replace(/`\s*\+\s*`/g, '');
+      ok('FC …the provided today is the ONLY date the model may write that the material does not state',
+        /This is the ONLY date you may write that is not already stated in the material\./.test(laneText));
+      ok('FC THE CHROME RULE is in the contract — header/footer/tile/caption/axis, all of it',
+        /THE CHROME CARRIES NO INVENTED DATE/.test(laneCode)
+        && /must either appear in the material or be THE PROVIDED TODAY/.test(laneCode)
+        && /in the header, the footer, a tile, a caption or an axis/.test(laneCode));
+      ok('FC …and it never derives, never infers, never writes a plausible year',
+        /Never derive a date, never infer one from context, never write a plausible year\./.test(laneCode));
+      ok('FC …WHEN UNSURE, OMIT — an undated footer is complete (the honest-absence posture)',
+        /omit the date entirely/.test(laneCode)
+        && /complete without one/.test(laneCode));
+      ok('FC the rule rides the ONE contract, so the repair pass carries it too (never a second string)',
+        (() => {
+          const i = laneCode.indexOf('const FRAME_CONTRACT = [');
+          const j = laneCode.indexOf("].join('\\n');", i);
+          const contract = i >= 0 && j > i ? laneCode.slice(i, j) : '';
+          return contract.includes('THE CHROME CARRIES NO INVENTED DATE')
+            && (laneCode.match(/THE CHROME CARRIES NO INVENTED DATE/g) ?? []).length === 1
+            && (laneCode.match(/\$\{FRAME_CONTRACT\}/g) ?? []).length === 1;
+        })());
+    }
+
     // ══ S — THE SOURCE FLOORS ════════════════════════════════════════════════════════════════
     console.log('\nS — the source floors:');
 

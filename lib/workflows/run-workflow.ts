@@ -1150,6 +1150,29 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       await narrateStandingRun(admin, wfRow, { ok: true, runId, threadId, workerName: worker?.name ?? 'Your coworker' });
     } catch { /* bookkeeping — never breaks a run */ }
 
+    // ── A SETTLED SCORE STAYS SETTLED (Aug 25, found live on the frozen-prompt retest) ─────────
+    // Run 2's accumulated ranking restated run 1's settled "Experience 10/10 · Overall 9.5" as
+    // "9/10 · 9.0" — the later run re-derived the earlier candidate's numbers from the grounding
+    // because the case's ledger remembered only THAT the item arrived. The case atom now carries
+    // its run's verdict: the digest is this run's own last CONTENT step (the same deliverable the
+    // user just read), stamped on the atom THIS run filed, and served to every later run by
+    // caseAtomsBlock as a recorded conclusion. It sits here, in the success tail, because only a
+    // delivered run has concluded anything — a failure and a park both return before this line,
+    // and a parked run stamps when it LATER succeeds through /resume (which re-enters runWorkflow
+    // with the same runId and therefore reaches this same tail).
+    // The digest is the LAST CONTENT step's own output — the same structural picker the door
+    // materialises from — so a pipeline that produced no content (a case station alone) records
+    // no verdict rather than passing its own filing card off as one.
+    const lastContent = contentOutputs[contentOutputs.length - 1];
+    if (lastContent && (workflow.steps ?? []).some((s) => (s as { type?: string }).type === 'case')) {
+      try {
+        const { stampAtomOutcome } = await import('./case-step');
+        const concluded = typeof lastContent.output === 'string'
+          ? lastContent.output : String(finalText ?? '');
+        await stampAtomOutcome(admin, workflow.user_id, workflow.id, runId, concluded);
+      } catch (e) { console.error('[run-workflow] Non-fatal: case outcome stamp failed:', e); }
+    }
+
     // ── THE `workflow` FIRE DOOR (THE RELAY CANVAS W1 — docs/relay-canvas-plan.md) ──────────────
     // "Another workflow delivers" — the STRUCTURAL source (no judge; the engine routes it by
     // workflow id). It fires ONLY from this success tail: a refusal, a failure and an
