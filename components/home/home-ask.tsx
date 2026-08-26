@@ -856,10 +856,15 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       };
     });
     persistTurn('user', shown);
+    // THE ANSWER SURVIVES THE TAB (Aug 26, found live): passing the room key makes the SERVER
+    // persist the system turn the moment the answer is composed — a mid-stream reload used to
+    // leave an orphan room (the ask with no reply). When the key was sent, the client's own
+    // answer-persist below is SKIPPED (exactly one writer per turn).
+    const sentRoomKey = temp || workerRoomRef.current ? null : chatRoomKey();
     try {
       // STREAMING ASK (Aug 6): SSE — `progress` events narrate the core's live stage (the busy
       // line speaks them), `done` carries the answer. A non-SSE response (error JSON) falls back.
-      const res = await fetch('/api/home/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(attachments.length ? { attachments } : {}), ...(scope ? { entityId: scope.id } : {}) }) });
+      const res = await fetch('/api/home/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(sentRoomKey ? { roomKey: sentRoomKey } : {}), ...(attachments.length ? { attachments } : {}), ...(scope ? { entityId: scope.id } : {}) }) });
       let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string }>; workflowDraft?: WorkflowDraft } = {};
       if (res.body && res.headers.get('content-type')?.includes('text/event-stream')) {
         const reader = res.body.getReader();
@@ -894,7 +899,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // A token-streamed answer already revealed itself — the typewriter must not re-type it.
       setTurns((prev) => { pendingAnimate.current = liveTextRef.current ? -1 : prev.length; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...artCard }]; });
       if (d.artifact) void openArtifact(d.artifact.threadId, d.artifact.id);
-      if (d.answer) persistTurn('system', d.answer, d.refs ?? []);
+      if (d.answer && !sentRoomKey) persistTurn('system', d.answer, d.refs ?? []);
       if (d.focus && !scope && !temp) setScopeHint(d.focus);
     } catch {
       setTurns((prev) => [...prev, { role: 'assistant', text: "Something went wrong reaching your brain — try again." }]);

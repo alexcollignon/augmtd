@@ -20,12 +20,30 @@ export async function POST(request: NextRequest) {
     const supabase = await createClient();
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    const body = (await request.json()) as { question?: string; history?: ConverseHistoryTurn[]; stream?: boolean; entityId?: string; attachments?: ConverseAttachment[] };
+    const body = (await request.json()) as { question?: string; history?: ConverseHistoryTurn[]; stream?: boolean; entityId?: string; attachments?: ConverseAttachment[]; roomKey?: string };
     // THE PASTE CEILING DIED (Aug 10, found live): a pilot pasted a full questionnaire and the
     // old slice(0, 500) silently discarded everything past character 500 — the brain answered a
     // request it never saw. Long input is the NORM for production asks; 20k chars ≈ a long doc.
     const q = String(body.question ?? '').trim().slice(0, 20000);
     if (!q) return NextResponse.json({ error: 'question required' }, { status: 400 });
+    // THE ANSWER SURVIVES THE TAB (Aug 26, found live): the client used to persist the system
+    // turn AFTER consuming the whole SSE stream — a mid-stream reload/navigation left an orphan
+    // room (the ask with no reply). When the panel passes its chat room key, the SERVER persists
+    // the answer the moment it's composed; the client skips its own write. Strictly `chat:<uuid>`
+    // — this door must not be able to write into entity/run rooms.
+    const roomKey = typeof body.roomKey === 'string'
+      && /^chat:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.roomKey)
+      ? body.roomKey : null;
+    const persistAnswer = async (turn: Awaited<ReturnType<typeof converse>>): Promise<void> => {
+      if (!roomKey || !turn.say?.trim()) return;
+      try {
+        const { writeRoomTurn } = await import('@/lib/room/turns');
+        await writeRoomTurn(supabase, user.id, roomKey, {
+          role: 'system', text: turn.say,
+          refs: turn.refs?.length ? turn.refs.map((r) => ({ label: r.label, href: r.href ?? null })) : undefined,
+        });
+      } catch { /* durability is best-effort — the answer itself still returns */ }
+    };
     // REVISION-IN-PLACE (DH7): assistant turns may carry their document card's ref — sanitized
     // to bare ids/titles (ownership is verified server-side at the revise door, never trusted).
     const history = (Array.isArray(body.history) ? body.history : []).map((h) => ({
@@ -119,7 +137,12 @@ export async function POST(request: NextRequest) {
               onToken: (t) => send(t === '\u0000' ? { type: 'token_reset' } : { type: 'token', t }),
             }),
             focusOf(),
-          ]).then(([turn, focus]) => { send({ type: 'done', ...payloadOf(turn, focus) }); })
+          ]).then(async ([turn, focus]) => {
+            // Persist BEFORE the done frame: the write must not depend on the client still
+            // listening (the whole point of the server owning it).
+            await persistAnswer(turn);
+            send({ type: 'done', ...payloadOf(turn, focus) });
+          })
             .catch((e) => { console.error('[home/ask] stream error:', e); send({ type: 'error' }); })
             .finally(() => { clearInterval(ping); try { controller.close(); } catch { /* already closed */ } });
         },
@@ -129,6 +152,7 @@ export async function POST(request: NextRequest) {
       });
     }
     const [turn, focus] = await Promise.all([converse(supabase, user.id, scope, q, { history, attachments }), focusOf()]);
+    await persistAnswer(turn);
     return NextResponse.json(payloadOf(turn, focus));
   } catch (e) {
     console.error('[home/ask] error:', e);

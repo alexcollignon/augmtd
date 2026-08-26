@@ -21,8 +21,11 @@ export async function GET(request: NextRequest) {
     const [entsRes, turnsRes] = await Promise.all([
       supabase.from('work_entities').select('id, name, priority')
         .eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active').eq('tracked', true).limit(20),
+      // Live turns only — a deleted conversation is ARCHIVED (archived_at stamped), and serving it
+      // here resurrected it in the sidebar as a dead row (opening it loads zero live turns).
       supabase.from('room_turns').select('room_key, role, created_at')
-        .eq('user_id', user.id).order('created_at', { ascending: false }).limit(all ? 600 : 150),
+        .eq('user_id', user.id).is('archived_at', null)
+        .order('created_at', { ascending: false }).limit(all ? 600 : 150),
     ]);
 
     const pinned = ((entsRes.data ?? []) as Array<{ id: string; name: string; priority: { weight?: number } | null }>)
@@ -118,7 +121,7 @@ export async function GET(request: NextRequest) {
       const [{ data: chatTurns }, { data: titleRows }, { data: scopeRows }] = await Promise.all([
         supabase.from('room_turns')
           .select('room_key, role, text, created_at')
-          .eq('user_id', user.id).in('room_key', chatKeys)
+          .eq('user_id', user.id).is('archived_at', null).in('room_key', chatKeys)
           .order('created_at', { ascending: true }).limit(200),
         supabase.from('item_plans').select('entity_id, tasks')
           .eq('user_id', user.id).eq('kind', 'room_title').in('entity_id', chatKeys),

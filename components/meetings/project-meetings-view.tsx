@@ -191,7 +191,7 @@ export default function ProjectMeetingsView({ project, suggestion, transcripts, 
           <div key={group.label} className="mb-4">
             <p className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wide mb-2">{group.label}</p>
             {group.items.map((t) => {
-              const href = t.calendarEventId ? `/meetings/${t.calendarEventId}` : `/meetings/recording/${t.id}`;
+              const href = `/meetings/${t.calendarEventId ?? t.id}`;
               return (
                 <Link key={t.id} href={href}>
                   <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-neutral-50 transition-colors cursor-pointer mb-0.5">
