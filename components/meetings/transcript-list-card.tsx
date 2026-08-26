@@ -74,7 +74,7 @@ export default function TranscriptListCard({
   isNew,
   attendees = [],
 }: TranscriptListCardProps) {
-  const href = calendarEventId ? `/meetings/${calendarEventId}` : `/meetings/recording/${id}`;
+  const href = `/meetings/${calendarEventId ?? id}`;
 
   const date = new Date(startTime);
   const dateLabel = date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });

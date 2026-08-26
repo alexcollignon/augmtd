@@ -408,7 +408,7 @@ export default function MeetingsShell({
             <div className="flex-shrink-0 h-10 flex items-center justify-between px-4 border-b border-neutral-100">
               <div className="flex items-center gap-2">
                 <h2 className="text-[13px] font-semibold text-neutral-700">
-                  {selectedProject ? selectedProject.name : selectedSuggestion ? selectedSuggestion.name : 'Meetings'}
+                  {selectedProject && !urlMeetingId ? selectedProject.name : selectedSuggestion && !urlMeetingId ? selectedSuggestion.name : 'Meetings'}
                 </h2>
               </div>
               <button
@@ -420,15 +420,18 @@ export default function MeetingsShell({
               </button>
             </div>
 
-            {/* Body — a selected project OR suggested initiative's meetings take priority over URL children */}
+            {/* Body — a selected project OR suggested initiative's meetings own the BARE /meetings path
+                only. A routed child (/meetings/<id>, /meetings/new) always wins: the project rows are
+                plain links, so the URL — not shell state — must decide what renders (the same-path
+                state-vs-URL divergence class; the note view was unreachable from a project folder). */}
             <div className="flex-1 overflow-y-auto">
-              {selectedProject ? (
+              {selectedProject && !urlMeetingId ? (
                 <ProjectMeetingsView
                   project={selectedProject}
                   transcripts={transcripts}
                   isNew={isNew}
                 />
-              ) : selectedSuggestion ? (
+              ) : selectedSuggestion && !urlMeetingId ? (
                 <ProjectMeetingsView
                   suggestion={{
                     key: selectedSuggestion.key,
