@@ -71,6 +71,7 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
   const [kitErr, setKitErr] = useState('');
   const [confirmKit, setConfirmKit] = useState<string | null>(null);
   const [applyResult, setApplyResult] = useState<string | null>(null);
+  const [kitDragOver, setKitDragOver] = useState(false);
   const kitFileRef = useRef<HTMLInputElement>(null);
   const kitDirRef = useRef<HTMLInputElement>(null);
   const kitTargetFolder = useRef<string>('');
@@ -203,6 +204,60 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
       arr.push(f); byFolder.set(folder, arr);
     }
     for (const [folder, fs] of byFolder) await uploadKitFiles(folder, fs);
+  };
+
+  // MULTI-FOLDER DROP (owner, Aug 31 — "add multiple folders at once"): the native directory
+  // picker is ONE directory per gesture by browser design, so multiple-at-once lives on
+  // drag-and-drop — drop any mix of folders (and loose files) onto the card. Each dropped
+  // DIRECTORY becomes a kit folder under its own name; its nested files are read recursively
+  // (readEntries returns ≤100 per call — loop until drained); loose files land in 'Documents'.
+  const readKitDrop = async (dt: DataTransfer): Promise<Map<string, File[]>> => {
+    const byFolder = new Map<string, File[]>();
+    const add = (folder: string, f: File) => {
+      if (f.name.startsWith('.') || f.size === 0) return;
+      const arr = byFolder.get(folder) ?? [];
+      arr.push(f); byFolder.set(folder, arr);
+    };
+    const fileOf = (entry: FileSystemFileEntry) => new Promise<File | null>((res) => entry.file(res, () => res(null)));
+    const drain = (dir: FileSystemDirectoryEntry) => {
+      const reader = dir.createReader();
+      return new Promise<FileSystemEntry[]>((res) => {
+        const all: FileSystemEntry[] = [];
+        const next = () => reader.readEntries((batch) => {
+          if (!batch.length) return res(all);
+          all.push(...batch); next();
+        }, () => res(all));
+        next();
+      });
+    };
+    const walk = async (entry: FileSystemEntry, folder: string): Promise<void> => {
+      if (entry.isFile) {
+        const f = await fileOf(entry as FileSystemFileEntry);
+        if (f) add(folder, f);
+      } else if (entry.isDirectory) {
+        // A nested directory keeps ITS name — same rule as the picker (immediate parent wins).
+        const children = await drain(entry as FileSystemDirectoryEntry);
+        for (const c of children) await walk(c, entry.name);
+      }
+    };
+    const entries = Array.from(dt.items)
+      .map((i) => (typeof i.webkitGetAsEntry === 'function' ? i.webkitGetAsEntry() : null))
+      .filter((e): e is FileSystemEntry => !!e);
+    for (const e of entries) {
+      if (e.isDirectory) await walk(e, e.name);
+      else await walk(e, 'Documents');
+    }
+    return byFolder;
+  };
+
+  const onKitDrop = async (ev: React.DragEvent) => {
+    ev.preventDefault();
+    setKitDragOver(false);
+    if (busy !== null) return;
+    try {
+      const byFolder = await readKitDrop(ev.dataTransfer);
+      for (const [folder, fs] of byFolder) await uploadKitFiles(folder, fs);
+    } catch { setKitErr('Could not read the dropped folders — try the "Upload folders…" button.'); }
   };
 
   const removeKit = async (folder: string, file?: string) => {
@@ -441,12 +496,17 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
           </div>
         </div>
 
-        {/* Seed kit — what every member's knowledge base arrives with */}
-        <div className={card}>
+        {/* Seed kit — what every member's knowledge base arrives with. The card is a DROP ZONE:
+            drop several folders at once (the picker is one-directory-per-gesture by browser design). */}
+        <div className={`${card} ${kitDragOver ? 'ring-2 ring-indigo-300 bg-indigo-50/30' : ''} transition-all`}
+          onDragOver={(e) => { e.preventDefault(); if (busy === null) setKitDragOver(true); }}
+          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setKitDragOver(false); }}
+          onDrop={(e) => void onKitDrop(e)}>
           <p className={label}>Seed kit — documents every member arrives with</p>
           <p className="text-[12px] text-neutral-400 mt-1 max-w-lg">
             Folders of documents planted in each member&apos;s own knowledge base, indexed and searchable.
-            New members receive the kit automatically when they join.
+            New members receive the kit automatically when they join. Drop folders anywhere on this card
+            — several at once works — or use &ldquo;Upload folders…&rdquo;.
           </p>
 
           <input ref={kitFileRef} type="file" multiple className="hidden"
