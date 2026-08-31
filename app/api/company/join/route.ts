@@ -3,6 +3,13 @@ import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logAudit, AUDIT_ACTIONS } from '@/lib/audit/log';
 
+// 300 IS LOAD-BEARING (found live: a new member's seed kit stopped at TWO files): the after()
+// work here — worker seeding + planting the company's seed kit (a 79-file pack ≈ ~2 min at
+// concurrency 3) — runs INSIDE this function's budget; the platform default (~15s) killed the
+// kit mid-file and left a permanently half-seeded knowledge base. Same lesson as the OAuth
+// callbacks' first sync (maxDuration = 300 there is load-bearing for the same reason).
+export const maxDuration = 300;
+
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
   const { data: { user }, error } = await supabase.auth.getUser();

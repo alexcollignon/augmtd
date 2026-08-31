@@ -109,20 +109,24 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const folderName = (folderRaw as string).trim();
     if (!file) return NextResponse.json({ error: 'file required' }, { status: 400 });
     if (file.size > MAX_SIZE) return NextResponse.json({ error: 'File too large (max 15 MB)' }, { status: 400 });
-    const mime = resolveMime(file.name, file.type);
+    // Directory-picked files arrive with their RELATIVE PATH as the multipart filename (found
+    // live: "Pack/02_Finance/AP07.pdf" as a display name) — the display name is the BASENAME,
+    // always; the folder is already decided by the `folder` field.
+    const baseName = (file.name.split(/[\\/]/).pop() ?? file.name).trim() || file.name;
+    const mime = resolveMime(baseName, file.type);
     if (!mime) {
-      const legacyDoc = /\.doc$/i.test(file.name);
+      const legacyDoc = /\.doc$/i.test(baseName);
       return NextResponse.json({
         error: legacyDoc
-          ? `${file.name}: legacy .doc can't be text-extracted — save it as .docx (or PDF) and upload that.`
-          : `Unsupported file type: ${file.name}`,
+          ? `${baseName}: legacy .doc can't be text-extracted — save it as .docx (or PDF) and upload that.`
+          : `Unsupported file type: ${baseName}`,
       }, { status: 400 });
     }
 
     // Private bucket — idempotent create ("already exists" is fine).
     await admin!.storage.createBucket(SEED_KIT_BUCKET, { public: false, fileSizeLimit: MAX_SIZE }).catch(() => {});
 
-    const path = `${id}/${safeSegment(folderName)}/${safeSegment(file.name)}`;
+    const path = `${id}/${safeSegment(folderName)}/${safeSegment(baseName)}`;
     const { error: upErr } = await admin!.storage.from(SEED_KIT_BUCKET)
       .upload(path, Buffer.from(await file.arrayBuffer()), { contentType: mime, upsert: true });
     if (upErr) return NextResponse.json({ error: `Upload failed: ${upErr.message}` }, { status: 500 });
@@ -133,7 +137,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!folder) { folder = { name: folderName, files: [] }; folders.push(folder); }
     // Same path = a replacement, not a duplicate row.
     folder.files = folder.files.filter(f => f.path !== path);
-    folder.files.push({ name: file.name, path, mime, size: file.size });
+    folder.files.push({ name: baseName, path, mime, size: file.size });
 
     const seedKit = await writeManifest(admin!, id, folders);
 
@@ -145,7 +149,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       targetType: 'workspace',
       targetId: id,
       workspaceId: id,
-      metadata: { op: 'add', folder: folderName, file: file.name, size: file.size },
+      metadata: { op: 'add', folder: folderName, file: baseName, size: file.size },
     });
 
     return NextResponse.json({ seedKit });
