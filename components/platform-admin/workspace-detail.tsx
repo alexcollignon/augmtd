@@ -10,7 +10,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   ArrowLeftIcon, ClipboardDocumentIcon, CheckIcon, ArrowPathIcon, ShieldCheckIcon,
-  ExclamationTriangleIcon, TrashIcon,
+  ExclamationTriangleIcon, TrashIcon, ChevronRightIcon,
 } from '@heroicons/react/24/outline';
 import type { WorkspaceFeatures, WorkspaceType, FeatureKey } from '@/lib/workspace/types';
 import type { TierType } from '@/lib/ai/types';
@@ -72,6 +72,11 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
   const [confirmKit, setConfirmKit] = useState<string | null>(null);
   const [applyResult, setApplyResult] = useState<string | null>(null);
   const [kitDragOver, setKitDragOver] = useState(false);
+  // Folders rest COLLAPSED (a 33-file folder must not own the page) — expanded per click.
+  const [openKitFolders, setOpenKitFolders] = useState<Set<string>>(new Set());
+  const toggleKitFolder = (name: string) => setOpenKitFolders(prev => {
+    const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n;
+  });
   const kitFileRef = useRef<HTMLInputElement>(null);
   const kitDirRef = useRef<HTMLInputElement>(null);
   const kitTargetFolder = useRef<string>('');
@@ -531,18 +536,25 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
               <p className="text-[12px] text-neutral-400">Loading…</p>
             ) : kit.folders.length === 0 ? (
               <p className="text-[12px] text-neutral-400">No kit yet — add a folder, then the documents that belong in it.</p>
-            ) : kit.folders.map(f => (
-              <div key={f.name} className="rounded-lg border border-neutral-200 p-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-[13px] font-medium text-neutral-800 flex-1 truncate">{f.name}</span>
-                  <span className="text-[11.5px] text-neutral-400">{f.files.length} file{f.files.length === 1 ? '' : 's'}</span>
+            ) : kit.folders.map(f => {
+              const open = openKitFolders.has(f.name);
+              return (
+              <div key={f.name} className="rounded-lg border border-neutral-200">
+                {/* The folder ROW is the whole story at rest: name · count · actions. Click expands. */}
+                <div className="flex items-center gap-2 px-3 py-2.5">
+                  <button onClick={() => toggleKitFolder(f.name)}
+                    className="flex items-center gap-1.5 flex-1 min-w-0 text-left group">
+                    <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-400 flex-shrink-0 transition-transform duration-150 ${open ? 'rotate-90' : ''}`} />
+                    <span className="text-[13px] font-medium text-neutral-800 truncate group-hover:text-indigo-700 transition-colors">{f.name}</span>
+                    <span className="text-[11.5px] text-neutral-400 flex-shrink-0">{f.files.length} file{f.files.length === 1 ? '' : 's'}</span>
+                  </button>
                   <button onClick={() => { kitTargetFolder.current = f.name; kitFileRef.current?.click(); }}
                     disabled={busy === `kit:${f.name}`}
-                    className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-50">
+                    className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-50 flex-shrink-0">
                     {busy === `kit:${f.name}` ? 'Working…' : 'Add files'}
                   </button>
                   {confirmKit === `folder:${f.name}` ? (
-                    <span className="flex items-center gap-1.5">
+                    <span className="flex items-center gap-1.5 flex-shrink-0">
                       <span className="text-[11px] text-red-500 font-medium">Remove the whole folder?</span>
                       <button onClick={() => void removeKit(f.name)}
                         className="text-[11px] font-semibold text-white bg-red-600 hover:bg-red-700 rounded px-2 py-0.5 transition-colors">Remove</button>
@@ -550,16 +562,17 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
                     </span>
                   ) : (
                     <button onClick={() => setConfirmKit(`folder:${f.name}`)} title="Remove this folder from the kit"
-                      className="p-1 rounded text-neutral-300 hover:text-red-500 hover:bg-red-50 transition-colors">
+                      className="p-1 rounded text-neutral-300 hover:text-red-500 hover:bg-red-50 transition-colors flex-shrink-0">
                       <TrashIcon className="w-3.5 h-3.5" />
                     </button>
                   )}
                 </div>
-                {f.files.length > 0 && (
-                  <div className="mt-2 space-y-1">
+                {open && f.files.length > 0 && (
+                  <div className="px-3 pb-2.5 pl-8 space-y-1 border-t border-neutral-100 pt-2">
                     {f.files.map(file => (
                       <div key={file.path} className="flex items-center gap-2 text-[12px]">
-                        <span className="flex-1 text-neutral-600 truncate">{file.name}</span>
+                        {/* Basename defensively — pre-fix manifests carried the dropped RELATIVE PATH as the name. */}
+                        <span className="flex-1 text-neutral-600 truncate">{file.name.split('/').pop() ?? file.name}</span>
                         <span className="text-[11px] text-neutral-400 flex-shrink-0">{Math.max(1, Math.round(file.size / 1024))} KB</span>
                         {confirmKit === `file:${f.name}/${file.name}` ? (
                           <span className="flex items-center gap-1.5 flex-shrink-0">
@@ -578,7 +591,7 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
                   </div>
                 )}
               </div>
-            ))}
+            );})}
 
             <div className="flex items-center gap-2">
               <input value={newFolder} onChange={e => setNewFolder(e.target.value)}

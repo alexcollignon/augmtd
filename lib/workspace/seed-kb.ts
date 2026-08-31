@@ -69,9 +69,13 @@ async function ensureFolder(admin: SupabaseClient, userId: string, name: string)
 
 /**
  * Plant the company's seed kit in one user's knowledge base.
- * Sequential over files (indexing does real AI work — no fan-out), each file individually
- * guarded so one bad document never costs the rest of the kit.
+ * Files run in a SMALL concurrency pool (3): indexing does real AI work per file (extract →
+ * summary → embeddings, ~4s each) — a 79-file pack was ~5½ minutes sequential, which outlives
+ * a route budget and reads as "stuck" on the Knowledge page; three lanes lands it in ~2.
+ * Each file individually guarded so one bad document never costs the rest of the kit.
  */
+const SEED_CONCURRENCY = 3;
+
 export async function seedKnowledgeForUser(
   admin: SupabaseClient,
   companyId: string,
@@ -95,56 +99,93 @@ export async function seedKnowledgeForUser(
     // first manual upload must not fail on its absence ("already exists" is fine).
     await admin.storage.createBucket(KB_BUCKET, { public: false }).catch(() => {});
 
+    const seedOne = async (file: SeedKitFile, folderId: string | null): Promise<void> => {
+      try {
+        const { data: blob, error: dlErr } = await admin.storage.from(SEED_KIT_BUCKET).download(file.path);
+        if (dlErr || !blob) {
+          console.error('[seed-kb] download failed:', file.path, dlErr?.message);
+          out.failed++;
+          return;
+        }
+        const buffer = Buffer.from(await blob.arrayBuffer());
+
+        // FAST-SKIP by content: the per-user (user_id, content_hash) index makes the whole
+        // kit idempotent — a re-apply costs one hash and one lookup per file, no AI at all.
+        // THE RENAME HEAL: the skip is CONTENT-based, so a kit whose display names were fixed
+        // (the relative-path-as-filename bug) would skip the bytes and strand the old names —
+        // when the existing row's name or folder differs from the manifest's, repair in place.
+        // THE STUCK-ROW HEAL (found live: a route-budget kill between the file-level write and
+        // chunking left a row with a content_hash and NO chunks — and BOTH dedupe doors, this
+        // fast-skip and indexUploadedFile's own, would skip it FOREVER): a row that extracted
+        // real text but holds zero chunks is incomplete — delete it and re-index fresh. A row
+        // whose extraction legitimately produced nothing is complete-as-is (never a re-index
+        // loop on every apply).
+        const contentHash = createHash('sha256').update(buffer).digest('hex');
+        const { data: already } = await admin
+          .from('knowledge_files')
+          .select('id, filename, folder_id, extracted_text')
+          .eq('user_id', userId)
+          .eq('content_hash', contentHash)
+          .maybeSingle();
+        if (already) {
+          const hasText = typeof already.extracted_text === 'string' && already.extracted_text.trim().length > 10;
+          let chunkCount = 0;
+          if (hasText) {
+            const { count } = await admin.from('knowledge_chunks')
+              .select('id', { count: 'exact', head: true }).eq('file_id', already.id);
+            chunkCount = count ?? 0;
+          }
+          if (hasText && chunkCount === 0) {
+            await admin.from('knowledge_files').delete().eq('id', already.id).then(() => {}, () => {});
+            // fall through — re-index fresh below
+          } else {
+            const patch: Record<string, unknown> = {};
+            if (already.filename !== file.name) patch.filename = file.name;
+            if (folderId && already.folder_id !== folderId) patch.folder_id = folderId;
+            if (Object.keys(patch).length) {
+              await admin.from('knowledge_files').update(patch).eq('id', already.id)
+                .then(() => {}, () => {});
+            }
+            out.skipped++;
+            return;
+          }
+        }
+
+        const ext = file.name.includes('.') ? file.name.slice(file.name.lastIndexOf('.')) : '';
+        const storagePath = `${userId}/${randomUUID()}${ext}`;
+        const { error: upErr } = await admin.storage
+          .from(KB_BUCKET)
+          .upload(storagePath, buffer, { contentType: file.mime, upsert: true });
+        if (upErr) {
+          console.error('[seed-kb] KB upload failed:', file.name, upErr.message);
+          out.failed++;
+          return;
+        }
+
+        await indexUploadedFile({
+          buffer,
+          filename: file.name,
+          mimeType: file.mime,
+          userId,
+          storagePathInBucket: storagePath,
+          ...(folderId ? { folderId } : {}),
+        }, admin);
+        out.files++;
+      } catch (e) {
+        console.error('[seed-kb] file failed:', file.name, e);
+        out.failed++;
+      }
+    };
+
     for (const folder of kit.folders) {
       if (!folder.files.length) continue;
       const folderId = await ensureFolder(admin, userId, folder.name);
-
-      for (const file of folder.files) {
-        try {
-          const { data: blob, error: dlErr } = await admin.storage.from(SEED_KIT_BUCKET).download(file.path);
-          if (dlErr || !blob) {
-            console.error('[seed-kb] download failed:', file.path, dlErr?.message);
-            out.failed++;
-            continue;
-          }
-          const buffer = Buffer.from(await blob.arrayBuffer());
-
-          // FAST-SKIP by content: the per-user (user_id, content_hash) index makes the whole
-          // kit idempotent — a re-apply costs one hash and one lookup per file, no AI at all.
-          const contentHash = createHash('sha256').update(buffer).digest('hex');
-          const { data: already } = await admin
-            .from('knowledge_files')
-            .select('id')
-            .eq('user_id', userId)
-            .eq('content_hash', contentHash)
-            .maybeSingle();
-          if (already) { out.skipped++; continue; }
-
-          const ext = file.name.includes('.') ? file.name.slice(file.name.lastIndexOf('.')) : '';
-          const storagePath = `${userId}/${randomUUID()}${ext}`;
-          const { error: upErr } = await admin.storage
-            .from(KB_BUCKET)
-            .upload(storagePath, buffer, { contentType: file.mime, upsert: true });
-          if (upErr) {
-            console.error('[seed-kb] KB upload failed:', file.name, upErr.message);
-            out.failed++;
-            continue;
-          }
-
-          await indexUploadedFile({
-            buffer,
-            filename: file.name,
-            mimeType: file.mime,
-            userId,
-            storagePathInBucket: storagePath,
-            ...(folderId ? { folderId } : {}),
-          }, admin);
-          out.files++;
-        } catch (e) {
-          console.error('[seed-kb] file failed:', file.name, e);
-          out.failed++;
-        }
-      }
+      // The pool: N lanes pulling from one queue — order within a folder is irrelevant,
+      // per-file guards make a lane's failure invisible to its siblings.
+      const queue = folder.files.slice();
+      await Promise.all(Array.from({ length: Math.min(SEED_CONCURRENCY, queue.length) }, async () => {
+        for (let f = queue.shift(); f; f = queue.shift()) await seedOne(f, folderId);
+      }));
     }
   } catch (e) {
     console.error('[seed-kb] seeding failed for user', userId, e);
