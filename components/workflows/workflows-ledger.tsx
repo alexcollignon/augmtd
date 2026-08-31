@@ -153,6 +153,32 @@ const CATEGORIES: Array<{ id: Template['category'] | 'all'; label: string }> = [
   { id: 'meetings', label: 'Meetings' },
 ];
 
+// Staged status lines under the describe-composer while a draft generates. Honest pacing — the
+// stages advance on a clock, never claim step-level progress (the route is one opaque AI call).
+function DraftingPulse() {
+  const LINES = [
+    'Reading your description…',
+    'Laying out the steps…',
+    'Placing your gates and checks…',
+    'Wiring the delivery…',
+    'Still working — a long description can take up to a minute…',
+  ];
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setI((x) => Math.min(x + 1, LINES.length - 1)), 9000);
+    return () => clearInterval(t);
+  }, [LINES.length]);
+  return (
+    <div className="mt-2 flex items-center gap-2 px-1">
+      <span className="relative flex h-2 w-2">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-60" />
+        <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500" />
+      </span>
+      <span className="text-[12px] text-neutral-500 animate-pulse">{LINES[i]}</span>
+    </div>
+  );
+}
+
 export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflows' | 'activity' } = {}) {
   const [data, setData] = useState<LedgerPayload | null>(() => null);
   const [loading, setLoading] = useState(true);
@@ -471,6 +497,10 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
             </Button>
           </form>
         ) : null}
+        {/* THE DRAFTING PULSE (owner, Aug 31 — a 45s wait behind a mute button label reads as
+            broken): staged status lines + the live dot while the draft is generated. The stages
+            are honest pacing, not progress claims — a long paste legitimately takes up to a minute. */}
+        {drafting && <DraftingPulse />}
         {!draft && (
           <div className="mt-1.5 px-1 text-[12px] text-neutral-400">
             or <button onClick={() => void startFromScratch()} className="text-neutral-500 underline decoration-neutral-300 underline-offset-2 hover:text-indigo-600">build one from scratch in Studio</button>

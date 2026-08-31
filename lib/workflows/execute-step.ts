@@ -302,12 +302,38 @@ async function toolReadKbFolder(
   // Exact case-insensitive name first, then the normalized fallback (trim + collapsed whitespace).
   const lowered = wanted.toLowerCase();
   const normalized = normalizeFolderName(wanted);
+  // THE TOKEN LADDER (owner, Aug 31: "HR | CV Screening" and "01_HR_CV_Screening" are the same
+  // folder to a human — the resolver must be that smart WITHOUT a model): significant tokens
+  // (separators split, pure-numeric ordering prefixes dropped) — a folder whose tokens contain
+  // every stated token (or vice versa) is a candidate; a UNIQUE candidate wins; a tie stays an
+  // honest error naming the contenders (never guess between two folders).
+  // Filler words never separate folders ("the finance folder" means the finance one).
+  const FOLDER_STOP = new Set(['the', 'a', 'an', 'my', 'our', 'folder', 'folders', 'kb', 'knowledge', 'base']);
+  const tokensOf = (s: string) => {
+    const out = new Set<string>();
+    for (const raw of s.toLowerCase().split(/[^a-z0-9]+/)) {
+      if (!raw || /^\d+$/.test(raw) || FOLDER_STOP.has(raw)) continue;
+      out.add(raw);
+      const stripped = raw.replace(/\d+/g, ''); // "3way" also answers to "way"
+      if (stripped && stripped !== raw && !FOLDER_STOP.has(stripped)) out.add(stripped);
+    }
+    return out;
+  };
+  const isSubset = (a: Set<string>, b: Set<string>) => a.size > 0 && [...a].every(t => b.has(t));
+  const wantedTokens = tokensOf(wanted);
+  const tokenCandidates = all.filter(f => {
+    const ft = tokensOf(f.name ?? '');
+    return isSubset(wantedTokens, ft) || isSubset(ft, wantedTokens);
+  });
   const folder =
     all.find(f => (f.name ?? '').toLowerCase() === lowered) ??
     all.find(f => normalizeFolderName(f.name ?? '') === normalized) ??
-    null;
+    (tokenCandidates.length === 1 ? tokenCandidates[0] : null);
 
   if (!folder) {
+    if (tokenCandidates.length > 1) {
+      return `Folder "${wanted}" is ambiguous — it could be ${tokenCandidates.slice(0, 5).map(f => `"${f.name}"`).join(' or ')}. Use the exact folder name.`;
+    }
     const names = all.slice(0, 30).map(f => `"${f.name}"`).join(', ');
     const more = all.length > 30 ? `, … (${all.length - 30} more)` : '';
     return `Folder "${wanted}" not found. Folders available: ${names}${more}.`;
