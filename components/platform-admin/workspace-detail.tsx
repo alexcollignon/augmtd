@@ -72,6 +72,7 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
   const [confirmKit, setConfirmKit] = useState<string | null>(null);
   const [applyResult, setApplyResult] = useState<string | null>(null);
   const kitFileRef = useRef<HTMLInputElement>(null);
+  const kitDirRef = useRef<HTMLInputElement>(null);
   const kitTargetFolder = useRef<string>('');
   // ONE generic corporate door — the workspace code identifies the company (old /<slug> links redirect).
   const entryUrl = `${typeof window !== 'undefined' ? window.location.origin : 'https://app.augmtd.ai'}/enterprise`;
@@ -184,6 +185,24 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
       } catch { setKitErr(`Could not add ${f.name}`); }
     }
     setBusy(null);
+  };
+
+  // WHOLE-FOLDER UPLOAD (owner, Aug 31): the superadmin picks a directory (or the whole pack)
+  // and the folder names DERIVE from the files' own relative paths — each file's immediate
+  // parent directory becomes its kit folder, so selecting the pack ROOT lands its subfolders as
+  // separate kit folders in one gesture. Junk (dotfiles, empties) is skipped silently; every
+  // file still goes through the same one-at-a-time POST (same validation, same honest errors).
+  const uploadKitTree = async (files: File[]) => {
+    const byFolder = new Map<string, File[]>();
+    for (const f of files) {
+      if (f.name.startsWith('.') || f.size === 0) continue;
+      const rel = ((f as File & { webkitRelativePath?: string }).webkitRelativePath ?? '').split('/').filter(Boolean);
+      // [pack, folder, file] → folder; [folder, file] → folder; a bare file → 'Documents'.
+      const folder = rel.length >= 2 ? rel[rel.length - 2] : 'Documents';
+      const arr = byFolder.get(folder) ?? [];
+      arr.push(f); byFolder.set(folder, arr);
+    }
+    for (const [folder, fs] of byFolder) await uploadKitFiles(folder, fs);
   };
 
   const removeKit = async (folder: string, file?: string) => {
@@ -437,6 +456,15 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
               e.target.value = '';
               if (files.length) void uploadKitFiles(kitTargetFolder.current, files);
             }} />
+          {/* Directory picker — webkitdirectory is non-standard but universal; React's types
+              don't know it, so it rides a spread. */}
+          <input ref={kitDirRef} type="file" multiple className="hidden"
+            {...({ webkitdirectory: '' } as Record<string, string>)}
+            onChange={e => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = '';
+              if (files.length) void uploadKitTree(files);
+            }} />
 
           <div className="mt-3 space-y-3">
             {kit === null ? (
@@ -499,6 +527,11 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
               <button onClick={addFolder} disabled={!newFolder.trim()}
                 className="text-[12px] font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 disabled:opacity-40 rounded-md px-2.5 py-1.5 transition-colors">
                 Add folder
+              </button>
+              <button onClick={() => kitDirRef.current?.click()} disabled={busy !== null}
+                title="Pick a folder (or the whole pack) — subfolders become kit folders, names derived from the paths"
+                className="text-[12px] font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 disabled:opacity-40 rounded-md px-2.5 py-1.5 transition-colors whitespace-nowrap">
+                Upload folders…
               </button>
             </div>
 
