@@ -11,6 +11,8 @@ export const TOOL_LABELS: Record<string, string> = {
   get_meeting_context: 'Check calendar',
   search_knowledge_base: 'Search knowledge base',
   read_document: 'Read document',
+  read_kb_file: 'Read knowledge file',
+  read_kb_folder: 'Read knowledge folder',
   list_tasks: 'List tasks',
   create_task: 'Create task',
   get_task: 'Read task',

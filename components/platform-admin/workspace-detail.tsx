@@ -22,6 +22,9 @@ type Company = {
   settings?: { branding?: { logo_url?: string; tagline?: string; accent_color?: string; footer_line?: string } } | null;
 };
 type Member = { id: string; user_id: string; email: string; full_name: string | null; role: string };
+// THE COMPANY SEED KIT — folders of documents every member's knowledge base arrives with.
+type SeedKitFile = { name: string; path: string; mime: string; size: number };
+type SeedKit = { folders: Array<{ name: string; files: SeedKitFile[] }>; updated_at: string };
 
 const TYPE_OPTIONS = ['company', 'pilot', 'beta', 'internal', 'personal'];
 const PLAN_OPTIONS = ['starter', 'pro', 'enterprise'];
@@ -62,6 +65,14 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
   const [codeErr, setCodeErr] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Seed kit — the manifest, the folder being added to, and the two-step confirms.
+  const [kit, setKit] = useState<SeedKit | null>(null);
+  const [newFolder, setNewFolder] = useState('');
+  const [kitErr, setKitErr] = useState('');
+  const [confirmKit, setConfirmKit] = useState<string | null>(null);
+  const [applyResult, setApplyResult] = useState<string | null>(null);
+  const kitFileRef = useRef<HTMLInputElement>(null);
+  const kitTargetFolder = useRef<string>('');
   // ONE generic corporate door — the workspace code identifies the company (old /<slug> links redirect).
   const entryUrl = `${typeof window !== 'undefined' ? window.location.origin : 'https://app.augmtd.ai'}/enterprise`;
   const sovereign = c.features.email === false;
@@ -74,6 +85,16 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
         setMembers((d.members ?? []) as Member[]);
         setPending((d.pendingInvites ?? []) as Array<{ email: string }>);
       } catch { setMembers([]); }
+    })();
+  }, [c.id]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch(`/api/platform-admin/companies/${c.id}/seed-kit`);
+        const d = await res.json();
+        setKit((d.seedKit ?? { folders: [], updated_at: '' }) as SeedKit);
+      } catch { setKit({ folders: [], updated_at: '' }); }
     })();
   }, [c.id]);
 
@@ -145,6 +166,65 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
       ...(footerLine.trim() ? { footer_line: footerLine.trim() } : {}),
     } } }),
   );
+
+  // Seed kit — uploads go one file at a time (each POST returns the merged manifest, so the
+  // last response is the truth); a rejected file shows its own reason and the rest continue.
+  const uploadKitFiles = async (folder: string, files: File[]) => {
+    setKitErr('');
+    for (const f of files) {
+      setBusy(`kit:${folder}`);
+      try {
+        const fd = new FormData();
+        fd.append('folder', folder);
+        fd.append('file', f);
+        const res = await fetch(`/api/platform-admin/companies/${c.id}/seed-kit`, { method: 'POST', body: fd });
+        const d = await res.json().catch(() => null);
+        if (res.ok && d?.seedKit) setKit(d.seedKit as SeedKit);
+        else setKitErr(d?.error ?? `Could not add ${f.name}`);
+      } catch { setKitErr(`Could not add ${f.name}`); }
+    }
+    setBusy(null);
+  };
+
+  const removeKit = async (folder: string, file?: string) => {
+    setConfirmKit(null);
+    setBusy(`kit:${folder}`);
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${c.id}/seed-kit`, {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folder, file }),
+      });
+      const d = await res.json().catch(() => null);
+      if (res.ok && d?.seedKit) setKit(d.seedKit as SeedKit);
+      else setKitErr(d?.error ?? 'Could not remove');
+    } finally { setBusy(null); }
+  };
+
+  const addFolder = () => {
+    const name = newFolder.trim();
+    if (!name) return;
+    if (!(kit?.folders ?? []).some(f => f.name.toLowerCase() === name.toLowerCase())) {
+      // A folder exists in the manifest only once it holds a file — hold it locally until then.
+      setKit(prev => ({ folders: [...(prev?.folders ?? []), { name, files: [] }], updated_at: prev?.updated_at ?? '' }));
+    }
+    setNewFolder('');
+  };
+
+  const applyKit = async () => {
+    setConfirmKit(null);
+    setBusy('kit:apply');
+    setApplyResult(null);
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${c.id}/seed-kit/apply`, { method: 'POST' });
+      const d = await res.json().catch(() => null);
+      if (res.ok && d?.ok) {
+        setApplyResult(
+          `Seeded ${d.seeded} · skipped ${d.skipped} · failed ${d.failed}` +
+          (d.leftBehind?.length ? ` · ${d.leftBehind.length} left for a re-run` : '')
+        );
+      } else setApplyResult(d?.error ?? 'Seeding failed');
+    } catch { setApplyResult('Seeding failed'); }
+    finally { setBusy(null); }
+  };
 
   // FULL USER DELETE (owner, Aug 10 — "keep user management as we had"): the SAME
   // platform-admin route the old list expansion used; two-step confirm, row removed on success.
@@ -339,6 +419,107 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
                 </button>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* Seed kit — what every member's knowledge base arrives with */}
+        <div className={card}>
+          <p className={label}>Seed kit — documents every member arrives with</p>
+          <p className="text-[12px] text-neutral-400 mt-1 max-w-lg">
+            Folders of documents planted in each member&apos;s own knowledge base, indexed and searchable.
+            New members receive the kit automatically when they join.
+          </p>
+
+          <input ref={kitFileRef} type="file" multiple className="hidden"
+            accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.pptx"
+            onChange={e => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = '';
+              if (files.length) void uploadKitFiles(kitTargetFolder.current, files);
+            }} />
+
+          <div className="mt-3 space-y-3">
+            {kit === null ? (
+              <p className="text-[12px] text-neutral-400">Loading…</p>
+            ) : kit.folders.length === 0 ? (
+              <p className="text-[12px] text-neutral-400">No kit yet — add a folder, then the documents that belong in it.</p>
+            ) : kit.folders.map(f => (
+              <div key={f.name} className="rounded-lg border border-neutral-200 p-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-[13px] font-medium text-neutral-800 flex-1 truncate">{f.name}</span>
+                  <span className="text-[11.5px] text-neutral-400">{f.files.length} file{f.files.length === 1 ? '' : 's'}</span>
+                  <button onClick={() => { kitTargetFolder.current = f.name; kitFileRef.current?.click(); }}
+                    disabled={busy === `kit:${f.name}`}
+                    className="text-[11.5px] font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-50">
+                    {busy === `kit:${f.name}` ? 'Working…' : 'Add files'}
+                  </button>
+                  {confirmKit === `folder:${f.name}` ? (
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-red-500 font-medium">Remove the whole folder?</span>
+                      <button onClick={() => void removeKit(f.name)}
+                        className="text-[11px] font-semibold text-white bg-red-600 hover:bg-red-700 rounded px-2 py-0.5 transition-colors">Remove</button>
+                      <button onClick={() => setConfirmKit(null)} className="text-[11px] text-neutral-400 hover:text-neutral-600">Cancel</button>
+                    </span>
+                  ) : (
+                    <button onClick={() => setConfirmKit(`folder:${f.name}`)} title="Remove this folder from the kit"
+                      className="p-1 rounded text-neutral-300 hover:text-red-500 hover:bg-red-50 transition-colors">
+                      <TrashIcon className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                {f.files.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {f.files.map(file => (
+                      <div key={file.path} className="flex items-center gap-2 text-[12px]">
+                        <span className="flex-1 text-neutral-600 truncate">{file.name}</span>
+                        <span className="text-[11px] text-neutral-400 flex-shrink-0">{Math.max(1, Math.round(file.size / 1024))} KB</span>
+                        {confirmKit === `file:${f.name}/${file.name}` ? (
+                          <span className="flex items-center gap-1.5 flex-shrink-0">
+                            <button onClick={() => void removeKit(f.name, file.name)}
+                              className="text-[11px] font-semibold text-white bg-red-600 hover:bg-red-700 rounded px-2 py-0.5 transition-colors">Remove</button>
+                            <button onClick={() => setConfirmKit(null)} className="text-[11px] text-neutral-400 hover:text-neutral-600">Cancel</button>
+                          </span>
+                        ) : (
+                          <button onClick={() => setConfirmKit(`file:${f.name}/${file.name}`)} title="Remove this document"
+                            className="p-1 rounded text-neutral-300 hover:text-red-500 hover:bg-red-50 transition-colors flex-shrink-0">
+                            <TrashIcon className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            <div className="flex items-center gap-2">
+              <input value={newFolder} onChange={e => setNewFolder(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') addFolder(); }}
+                placeholder="New folder (e.g. 01_HR_CV_Screening)" maxLength={60} className={`${input} flex-1`} />
+              <button onClick={addFolder} disabled={!newFolder.trim()}
+                className="text-[12px] font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 disabled:opacity-40 rounded-md px-2.5 py-1.5 transition-colors">
+                Add folder
+              </button>
+            </div>
+
+            {kitErr && <p className="text-[11.5px] text-red-600">{kitErr}</p>}
+
+            <div className="flex items-center gap-3 pt-1">
+              {confirmKit === 'apply' ? (
+                <span className="flex items-center gap-2">
+                  <span className="text-[12px] text-neutral-500">Plant the kit in every current member&apos;s knowledge base?</span>
+                  <button onClick={() => void applyKit()} disabled={busy === 'kit:apply'}
+                    className="text-[12px] font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-md px-3 py-1.5 transition-colors">Confirm</button>
+                  <button onClick={() => setConfirmKit(null)} className="text-[12px] text-neutral-400 hover:text-neutral-600">Cancel</button>
+                </span>
+              ) : (
+                <button onClick={() => setConfirmKit('apply')} disabled={busy === 'kit:apply' || !(kit?.folders ?? []).some(f => f.files.length)}
+                  className="text-[12px] font-medium text-neutral-700 border border-neutral-200 hover:bg-neutral-50 disabled:opacity-40 rounded-md px-3 py-1.5 transition-colors">
+                  {busy === 'kit:apply' ? 'Seeding…' : 'Seed existing members'}
+                </button>
+              )}
+              {applyResult && <span className="text-[12px] text-neutral-500">{applyResult}</span>}
+            </div>
           </div>
         </div>
 

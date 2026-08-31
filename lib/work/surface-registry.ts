@@ -238,6 +238,11 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     tool: 'read_kb_file', built: true, kind: 'atomic', irreversible: false, feature: 'drive', exposure: ['workflow'],
     blurb: 'READ one knowledge-base file in full (pipeline source)',
   },
+  read_kb_folder: {
+    intent: 'read EVERY file in a named knowledge-base folder in full — the folder is the source of truth for this work',
+    tool: 'read_kb_folder', built: true, kind: 'atomic', irreversible: false, feature: 'drive', exposure: ['workflow'],
+    blurb: 'READ every file in a knowledge-base FOLDER by name (deterministic, no omissions — never semantic search)',
+  },
   fetch_url: {
     intent: 'read the full current content of a specific web page every run',
     tool: 'fetch_url', built: true, kind: 'atomic', irreversible: false, feature: null, exposure: ['workflow'],

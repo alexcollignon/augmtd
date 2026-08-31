@@ -33,6 +33,7 @@ import {
   EnvelopeIcon,
   CalendarDaysIcon,
   DocumentTextIcon,
+  FolderOpenIcon,
   MagnifyingGlassIcon,
   ChartBarIcon,
   ArrowPathIcon,
@@ -238,6 +239,7 @@ const AVAILABLE_TOOLS = [
   { id: 'get_meeting_context', label: 'Fetch meeting context',     description: 'Returns recent meeting summaries, attendees, notes and action items.' },
   { id: 'get_calendar',        label: 'Fetch upcoming calendar',   description: 'Returns your next meetings with attendees and times.' },
   { id: 'read_kb_file',        label: 'Read a knowledge base file',description: 'Returns the full content of one KB file by id.' },
+  { id: 'read_kb_folder',      label: 'Read a knowledge base folder', description: 'Reads EVERY file in one folder, in full — the folder as the source of truth. Deterministic: nothing is omitted.' },
   { id: 'web_search',          label: 'Search the web',            description: 'Give it a topic and it finds relevant pages — like asking Google.' },
   { id: 'fetch_url',           label: 'Read a web page',           description: 'Reads the full current content of a URL every run.' },
   { id: 'rss_feed',            label: 'Follow a news feed or blog',description: 'Returns only new articles since your last run — no duplicates.' },
@@ -251,7 +253,7 @@ const AVAILABLE_TOOLS = [
 ];
 
 const TOOL_GROUPS = [
-  { label: 'Gather',      ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file', 'web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research', 'slack_read_channel'] },
+  { label: 'Gather',      ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file', 'read_kb_folder', 'web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research', 'slack_read_channel'] },
   { label: 'Compute',     ids: ['run_compute'] },
   { label: 'Collaborate', ids: ['get_workflow_output'] },
   { label: 'Act',         ids: ['slack_send'] },
@@ -264,6 +266,7 @@ const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
   get_meeting_context:  CalendarDaysIcon,
   get_calendar:         CalendarDaysIcon,
   read_kb_file:         DocumentTextIcon,
+  read_kb_folder:       FolderOpenIcon,
   web_search:           MagnifyingGlassIcon,
   fetch_url:            GlobeAltIcon,
   browser_fetch:        GlobeAltIcon,
@@ -283,6 +286,7 @@ const TOOL_STYLES: Record<string, { bg: string; logo?: string }> = {
   get_meeting_context:  { bg: 'bg-teal-500' },
   get_calendar:         { bg: 'bg-blue-500' },
   read_kb_file:         { bg: 'bg-violet-500' },
+  read_kb_folder:       { bg: 'bg-violet-600' },
   web_search:        { bg: 'bg-amber-500' },
   fetch_url:         { bg: 'bg-sky-500' },
   browser_fetch:     { bg: 'bg-sky-500' },
@@ -3709,11 +3713,44 @@ function KbFilePickerField({ value, onChange }: { value: string; onChange: (id: 
   );
 }
 
+// THE FOLDER IS NAMED, NOT KEYED: the step stores the folder's NAME, never its id — the runtime
+// resolver matches by name, so a config survives a folder that was deleted and re-made. The
+// free-text row below the select is the same law from the other side: a folder that doesn't
+// exist yet (or one built after this step) can still be named here, and the run says so honestly.
+function KbFolderPickerField({ value, onChange }: { value: string; onChange: (name: string) => void }) {
+  const [folders, setFolders] = useState<Array<{ id: string; name: string }>>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    fetch('/api/drive/folders')
+      .then(r => (r.ok ? r.json() : []))
+      .then(d => setFolders(Array.isArray(d) ? d : []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+  const known = folders.some(f => f.name === value);
+  return (
+    <>
+      <Field label="Folder" hint="Every file in it is read in full — nothing is left out">
+        <select value={known ? value : ''} onChange={e => onChange(e.target.value)}
+          className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white focus:outline-none focus:border-indigo-300">
+          <option value="">{loading ? 'Loading…' : folders.length === 0 ? 'No folders found' : 'Select a folder…'}</option>
+          {folders.map(f => <option key={f.id} value={f.name}>{f.name}</option>)}
+        </select>
+      </Field>
+      <Field label="Or type the folder name" hint="Matched by name when the task runs">
+        <input type="text" value={value} onChange={e => onChange(e.target.value)}
+          placeholder="e.g. Applications"
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
+      </Field>
+    </>
+  );
+}
+
 function InlineToolGrid({ value, onChange }: { value: string; onChange: (toolId: string) => void }) {
   const features = useWorkspaceFeatures();
   const displayId = value === 'browser_fetch' ? 'fetch_url' : (value === 'get_urgent_emails' ? 'get_emails' : value);
   const groups = [
-    { label: 'Gather',      ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file', 'web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research', 'slack_read_channel'] },
+    { label: 'Gather',      ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file', 'read_kb_folder', 'web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research', 'slack_read_channel'] },
     { label: 'Compute',     ids: ['run_compute'] },
     { label: 'Collaborate', ids: ['get_workflow_output'] },
     { label: 'Act',         ids: ['slack_send'] },
@@ -3874,6 +3911,12 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, cur
         <KbFilePickerField
           value={(step.config.file_id as string) ?? ''}
           onChange={id => onUpdate({ config: { ...step.config, file_id: id } })}
+        />
+      )}
+      {step.tool === 'read_kb_folder' && (
+        <KbFolderPickerField
+          value={(step.config.folder as string) ?? ''}
+          onChange={name => onUpdate({ config: { ...step.config, folder: name } })}
         />
       )}
       {step.tool === 'slack_read_channel' && (

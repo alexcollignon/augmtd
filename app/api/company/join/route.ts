@@ -99,6 +99,13 @@ export async function POST(request: NextRequest) {
       const { ensureWorkers } = await import('@/lib/workers/seed');
       await ensureWorkers(adminClient, user.id);
     } catch (e) { console.error('[company/join] worker seeding failed:', e); }
+
+    // THE COMPANY SEED KIT: the workspace's curated documents land in the new member's own
+    // knowledge base, folders and all. A no-op (one settings read) when no kit is configured.
+    try {
+      const { seedKnowledgeForUser } = await import('@/lib/workspace/seed-kb');
+      await seedKnowledgeForUser(adminClient, company.id, user.id);
+    } catch (e) { console.error('[company/join] seed kit failed:', e); }
   });
 
   return NextResponse.json({ company });

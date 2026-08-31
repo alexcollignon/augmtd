@@ -41,6 +41,10 @@ const TOOL_CHECKS: Record<string, string[]> = {
   get_emails: ['Reads only your own connected mailbox'],
   get_meeting_context: ['Reads only your own calendar and meetings'],
   read_kb_file: ['Reads only files in your own knowledge base'],
+  read_kb_folder: [
+    'Reads only folders in your own knowledge base',
+    'Every file in the folder is read — nothing is dropped in silence',
+  ],
   search_knowledge_base: ['Searches only your own knowledge base'],
   slack_read_channel: ['Reads only channels your coworker’s app was invited to'],
   slack_send: ['Channel posts carry an attribution label naming whose coworker posted'],
