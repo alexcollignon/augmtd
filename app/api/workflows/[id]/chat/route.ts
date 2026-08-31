@@ -35,7 +35,7 @@ Patch rules:
 - When patching a tool step's config, merge with existing config — only change the specific fields the user asked about
 - Keep reply concise (1-2 sentences)
 
-Available tool names: web_search, fetch_url, browser_fetch, rss_feed, get_urgent_emails, get_calendar, read_kb_file, linkedin_post, get_pt_tenders, deep_research, get_workflow_output
+Available tool names: web_search, fetch_url, browser_fetch, rss_feed, get_urgent_emails, get_calendar, read_kb_file, read_kb_folder, linkedin_post, get_pt_tenders, deep_research, get_workflow_output
 
 LINKEDIN POST step config fields (all optional — only include keys you're changing):
 - instructions: string — freeform voice, audience, and writing rules directive

@@ -153,6 +153,13 @@ A pinned document is the STANDING rulebook (policy, template, rubric); run-time 
 NEW thing each run works on. Don't confuse them, and never emit a read_kb_file step for a document
 you already named in "input_doc_names".
 
+A named FOLDER is neither: it is a body of material to be worked through IN FULL. When the request
+names a knowledge-base folder as where the material lives ("use the folder X as the source of
+truth", "everything in the Applications folder", "the documents in Y"), emit ONE read_kb_folder
+step EARLY in the pipeline with the folder name in the user's own words — not a series of
+read_kb_file steps, not a search step, and never nothing at all. A search would omit files
+silently; the work depends on every one of them being read.
+
 ━━━ STEP TYPES ━━━
 
 Tool step — fetches data, always before AI steps:
@@ -216,6 +223,14 @@ approval first", "let me check before it goes out"), place ONE approval step dir
 the delivery. When the user says it should run fully automatically, use none. When neither is
 said and the output goes to EXTERNAL recipients (not the user themselves), prefer including it
 — a held send is recoverable, an unwanted one is not.
+RULE — THE USER'S OWN GATES ARE FIXED POINTS: when the request itself PLACES approval at
+multiple distinct points (e.g. a numbered process with "3. Human Approval: confirm the
+criteria" AND "8. Human Approval: validate the shortlist"), the pipeline MUST contain one
+approval step at EACH placed point, in the user's order. Count them: two named human-approval
+points → exactly two approval steps. Merging or compressing the user's other stages is fine;
+deleting or merging a gate the user placed themselves is NEVER fine — a reviewer who asked to
+check the criteria BEFORE the scoring cannot be handed a finished shortlist instead. The
+single-approval preference above applies only when the user did NOT place gates themselves.
 
 Handoff step — a HUMAN GATE HELD BY ANOTHER PERSON: the run parks here until that teammate
 decides. Their ask lands on THEIR deck; the run resumes when they approve:
@@ -276,6 +291,7 @@ rss_feed            — follows a news or blog feed, new items only, each with i
 deep_research       — multi-source research synthesis. config: { "queries": ["question"], "max_sources": 8 }
 get_pt_tenders      — Portuguese public procurement from Base.gov.pt. config: { "days": 7, "endpoint": "both" }
 read_kb_file        — reads a file from the knowledge base. config: { "file_id": "uuid" } — only if user explicitly mentions a document
+read_kb_folder      — reads EVERY file in a named knowledge-base FOLDER, in full, deterministically (no omissions). config: { "folder": "folder name exactly as the user said it" }. THE step for "use folder X as the source of truth", "everything in folder X", "the documents in folder Y" — a folder of material to be worked through file by file (a job description + a rubric + every CV). Never search for such material; searching omits silently.
 slack_read_channel  — reads recent messages from a Slack channel (to summarize/digest/act on). config: { "channel": "#name or id", "limit": 30, "days": 7 } — days is an optional time window (omit for no limit). ONLY if Slack is connected.
 slack_send          — posts a message to a Slack channel, written from an instruction + the pipeline's output (to notify a team after producing something, tag people). config: { "channel": "#name or id", "instruction": "what to say / who to tag" }. Place AFTER the content steps. ONLY if Slack is connected.
 
@@ -742,7 +758,7 @@ export async function generateWorkflowConfig(
     const off: string[] = [];
     if (!features.email) off.push('get_emails');
     if (!features.meetings) off.push('get_meeting_context');
-    if (!features.drive) off.push('read_kb_file');
+    if (!features.drive) { off.push('read_kb_file'); off.push('read_kb_folder'); }
     if (off.length) parts.push(`These tools are OFF for this workspace — do NOT use them in any step: ${off.join(', ')}.`);
   } catch { /* non-fatal */ }
 
@@ -808,11 +824,57 @@ export async function generateWorkflowConfig(
   // ONE GATE, CODE-ENFORCED (found live: a generated pipeline carried TWO approval steps —
   // ai,approval,ai,approval,ai — despite the prompt's one-gate rule; a run that pauses twice
   // is permission theater). Keep only the LAST approval step; same for verify.
+  //
+  // THE USER'S OWN GATES ARE FIXED POINTS (the workshop class, Aug 31): the permission-theater
+  // law applies to gates the MODEL invented, never to gates the USER placed in their own text
+  // ("3. Human Approval: confirm criteria … 8. Human Approval: validate shortlist" — a reviewer
+  // who asked to check criteria BEFORE scoring cannot be handed a finished shortlist instead).
+  // Detection is deliberately NARROW — one line per literal "human approval" phrase in the
+  // request — so an ordinary "send it for approval first" still resolves to ONE gate. The cap
+  // relaxes to the placed count; and because the model under-emits even when told, the missing
+  // placed gates are SEATED BY CODE (the placeRubric doctrine: code, never the model) after the
+  // step whose words best match the gate's own line.
+  const placedGateLines = [...description.matchAll(/^[^\n]*\bhuman\s+approval\b[^\n]*$/gim)]
+    .map((m) => m[0].replace(/^\s*\d+[.)]\s*/, '').trim().slice(0, 200));
+  const approvalCap = Math.max(1, placedGateLines.length);
   for (const gateType of ['approval', 'verify'] as const) {
+    const cap = gateType === 'approval' ? approvalCap : 1;
     const gates = steps.filter((s) => s.type === gateType);
-    if (gates.length > 1) {
-      const keep = gates[gates.length - 1];
-      steps = steps.filter((s) => s.type !== gateType || s === keep);
+    if (gates.length > cap) {
+      const keep = new Set(gates.slice(-cap));
+      steps = steps.filter((s) => s.type !== gateType || keep.has(s));
+    }
+  }
+  if (placedGateLines.length >= 2) {
+    const STOP = new Set(['human', 'approval', 'approve', 'the', 'and', 'with', 'that', 'this', 'only', 'after', 'before', 'present', 'step', 'workflow', 'reviewer', 'require', 'explicit']);
+    const toks = (t: unknown) => new Set(String(t ?? '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length > 3 && !STOP.has(w)));
+    const overlap = (a: Set<string>, b: Set<string>) => [...a].filter((w) => b.has(w)).length;
+    // Which placed lines already have a gate? Greedy-match existing approvals by word overlap.
+    const unmatched = [...placedGateLines];
+    for (const g of steps.filter((s) => s.type === 'approval')) {
+      const gt = toks(`${g.label ?? ''} ${g.instruction ?? ''}`);
+      let bi = -1; let bs = 0;
+      unmatched.forEach((line, i) => { const s = overlap(toks(line), gt); if (s > bs) { bs = s; bi = i; } });
+      if (bi >= 0) unmatched.splice(bi, 1);
+    }
+    // Seat each still-missing gate after its best-matching non-gate step (order-monotonic:
+    // a later placed gate never lands before an earlier one); no match → before the tail.
+    let floorIdx = 0;
+    for (const line of unmatched) {
+      const lt = toks(line);
+      let at = -1; let bs = 0;
+      steps.forEach((s, i) => {
+        if (s.type === 'approval' || s.type === 'verify' || i < floorIdx) return;
+        const sc = overlap(lt, toks(`${s.label ?? ''} ${s.prompt ?? ''}`));
+        if (sc > bs) { bs = sc; at = i; }
+      });
+      const insertAt = at >= 0 ? at + 1 : Math.max(steps.length - 1, floorIdx);
+      steps.splice(insertAt, 0, {
+        type: 'approval', id: makeStepId(),
+        label: line.length > 60 ? `${line.slice(0, 57)}…` : line,
+        instruction: line,
+      });
+      floorIdx = insertAt + 1;
     }
   }
 

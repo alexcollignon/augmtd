@@ -156,6 +156,7 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
     case 'get_meeting_context': return await executeGetMeetingContext(step.config, ctx.userId, ctx.supabase);
     case 'get_calendar':      return await toolGetCalendar(ctx);
     case 'read_kb_file':      return await toolReadKbFile(step.config, ctx);
+    case 'read_kb_folder':    return await toolReadKbFolder(step.config, ctx);
     case 'search_knowledge_base': return await toolSearchKnowledgeBase(step.config, ctx);
     case 'find_team_work':    return await executeFindTeamWork(step.config, ctx.userId, ctx.supabase);
     case 'web_search':        return await executeWebSearch(step.config);
@@ -259,6 +260,131 @@ async function toolReadKbFile(
     .map(c => (c.heading ? `§ ${c.heading}\n${c.content}` : c.content))
     .join('\n\n')
     .slice(0, 12000);
+}
+
+// THE FOLDER IS A SOURCE OF TRUTH — read EVERY file in a named KB folder, in full, by NAME.
+// Semantic search is exactly the wrong instrument when the work is "all of these documents"
+// (a job description + a rubric + every CV): a similarity threshold silently omits, and an
+// omission is invisible — the pipeline reads as if the missing file never existed. read_kb_file
+// is honest but needs a uuid a person can't say. So: the folder NAME as the user says it,
+// resolved at RUN time (a config survives a re-seeded folder), and a DETERMINISTIC full read.
+// Two honesty laws hold here: (1) a folder we can't find lists the folders that DO exist, so a
+// participant self-corrects instead of staring at "not found"; (2) nothing is ever dropped in
+// silence — an unindexed file renders as a visible empty section, a truncated file says so
+// inside its own section, and a file the total cap excludes is NAMED at the end.
+const KB_FOLDER_PER_FILE_CAP = 12000;
+const KB_FOLDER_TOTAL_CAP = 120000;
+
+/** Fold case + surrounding/collapsed whitespace — the fallback match for a folder said aloud. */
+function normalizeFolderName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+async function toolReadKbFolder(
+  config: Record<string, unknown>,
+  ctx: StepContext,
+): Promise<string> {
+  const wanted = typeof config.folder === 'string' ? config.folder.trim() : '';
+  if (!wanted) return 'No folder name provided.';
+
+  // Names only, and never another user's — every read here is scoped by ctx.userId.
+  const { data: folders, error: foldersError } = await ctx.supabase
+    .from('drive_folders')
+    .select('id, name')
+    .eq('user_id', ctx.userId)
+    .order('name', { ascending: true })
+    .limit(200);
+
+  if (foldersError) return `Could not read your folders: ${foldersError.message}`;
+  const all = (folders ?? []) as Array<{ id: string; name: string }>;
+  if (all.length === 0) return `Folder "${wanted}" not found — this knowledge base has no folders yet.`;
+
+  // Exact case-insensitive name first, then the normalized fallback (trim + collapsed whitespace).
+  const lowered = wanted.toLowerCase();
+  const normalized = normalizeFolderName(wanted);
+  const folder =
+    all.find(f => (f.name ?? '').toLowerCase() === lowered) ??
+    all.find(f => normalizeFolderName(f.name ?? '') === normalized) ??
+    null;
+
+  if (!folder) {
+    const names = all.slice(0, 30).map(f => `"${f.name}"`).join(', ');
+    const more = all.length > 30 ? `, … (${all.length - 30} more)` : '';
+    return `Folder "${wanted}" not found. Folders available: ${names}${more}.`;
+  }
+
+  const { data: files, error: filesError } = await ctx.supabase
+    .from('knowledge_files')
+    .select('id, filename')
+    .eq('user_id', ctx.userId)
+    .eq('folder_id', folder.id)
+    .order('filename', { ascending: true });
+
+  if (filesError) return `Could not read folder "${folder.name}": ${filesError.message}`;
+  const rows = (files ?? []) as Array<{ id: string; filename: string | null }>;
+  if (rows.length === 0) return `Folder "${folder.name}" is empty — it holds no files.`;
+
+  let unindexed = 0;
+  let truncated = 0;
+  const sections: Array<{ filename: string; body: string }> = [];
+
+  for (const file of rows) {
+    const filename = file.filename || `(untitled file ${file.id})`;
+    const { data: chunks, error: chunksError } = await ctx.supabase
+      .from('knowledge_chunks')
+      .select('content, heading, chunk_index')
+      .eq('file_id', file.id)
+      .order('chunk_index', { ascending: true });
+
+    if (chunksError) {
+      // A read failure is stated in the file's own section — never a missing file.
+      sections.push({ filename, body: `(could not be read: ${chunksError.message})` });
+      continue;
+    }
+
+    const parts = (chunks ?? []) as Array<{ content: string; heading?: string | null; chunk_index: number }>;
+    if (parts.length === 0) {
+      unindexed++;
+      sections.push({ filename, body: '(not yet indexed)' });
+      continue;
+    }
+
+    const full = parts
+      .map(c => (c.heading ? `§ ${c.heading}\n${c.content}` : c.content))
+      .join('\n\n');
+    if (full.length > KB_FOLDER_PER_FILE_CAP) {
+      truncated++;
+      sections.push({ filename, body: `${full.slice(0, KB_FOLDER_PER_FILE_CAP)}\n[… truncated]` });
+    } else {
+      sections.push({ filename, body: full });
+    }
+  }
+
+  // The total cap bites last and LOUDLY: the files it excludes are named, never silently gone.
+  const rendered: string[] = [];
+  const dropped: string[] = [];
+  let used = 0;
+  for (const s of sections) {
+    const block = `\n=== FILE: ${s.filename} ===\n${s.body}`;
+    if (dropped.length === 0 && used + block.length <= KB_FOLDER_TOTAL_CAP) {
+      rendered.push(block);
+      used += block.length;
+    } else {
+      dropped.push(s.filename);
+    }
+  }
+
+  const notes: string[] = [];
+  if (unindexed > 0) notes.push(`${unindexed} not yet indexed`);
+  if (truncated > 0) notes.push(`${truncated} truncated`);
+  if (dropped.length > 0) notes.push(`${dropped.length} not included — total size cap`);
+  const header = `Folder "${folder.name}" — ${rows.length} files${notes.length ? ` (${notes.join(', ')})` : ''}`;
+
+  const tail = dropped.length > 0
+    ? `\n\n=== NOT INCLUDED (total size cap reached) ===\n${dropped.join('\n')}`
+    : '';
+
+  return `${header}\n${rendered.join('\n')}${tail}`;
 }
 
 

@@ -15,6 +15,9 @@ export const AUDIT_ACTIONS = {
 
   FEATURE_TOGGLE:         'feature.toggle',
 
+  SEED_KIT_UPDATE:        'seed_kit.update',
+  SEED_KIT_APPLY:         'seed_kit.apply',
+
   MEMBER_INVITE:          'member.invite',
   MEMBER_JOIN_VIA_CODE:   'member.join_via_code',
   MEMBER_JOIN_VIA_INVITE: 'member.join_via_invitation',

@@ -25,6 +25,7 @@ export const TOOL_FEATURE: Record<string, FeatureKey | null> = {
   // ── Drive / knowledge base ──
   search_knowledge_base: 'drive',
   read_kb_file: 'drive',
+  read_kb_folder: 'drive',
   read_document: 'drive',
 
   // ── Always available (web/research, producing deliverables, composition) ──
