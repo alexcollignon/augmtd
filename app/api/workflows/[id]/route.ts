@@ -247,6 +247,32 @@ export async function DELETE(
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try { await requireFeature('studio', supabase, user.id); } catch (err) { return handleWorkspaceError(err); }
 
+  // ASKS LIVE AND DIE WITH THEIR WORK (found live: a deleted workflow's "Approve before it
+  // delivers" gate ask survived on the deck — a zombie row pointing at work that no longer
+  // exists). Before the workflow row dies, settle everything that lives ON it:
+  //   · live runs (queued/running/awaiting_approval) → cancelled
+  //   · gate asks (source='handoff', keyed to this workflow's RUNS) → dismissed
+  //   · the standing binding (source='workflow', keyed to the workflow) → dismissed
+  // Best-effort, each guarded — a settling failure must never block the delete itself.
+  try {
+    const { data: runs } = await supabase.from('workflow_runs')
+      .select('id').eq('workflow_id', id).eq('user_id', user.id).limit(500);
+    const runIds = (runs ?? []).map(r => String(r.id));
+    if (runIds.length) {
+      await supabase.from('workflow_runs')
+        .update({ status: 'cancelled' })
+        .eq('workflow_id', id).eq('user_id', user.id)
+        .in('status', ['queued', 'running', 'awaiting_approval']);
+      await supabase.from('commitments')
+        .update({ status: 'dismissed', resolved_at: new Date().toISOString(), resolved_reason: 'workflow_deleted' })
+        .eq('user_id', user.id).eq('source', 'handoff').eq('status', 'open')
+        .in('source_id', runIds);
+    }
+    await supabase.from('commitments')
+      .update({ status: 'dismissed', resolved_at: new Date().toISOString(), resolved_reason: 'workflow_deleted' })
+      .eq('user_id', user.id).eq('source', 'workflow').eq('source_id', id).eq('status', 'open');
+  } catch (e) { console.error('[workflows/delete] settling failed (non-fatal):', e); }
+
   const { error } = await supabase
     .from('workflows')
     .delete()
