@@ -801,7 +801,10 @@ export async function generateWorkflowConfig(
       { role: 'system', content: SYSTEM },
       { role: 'user', content: userMessage },
     ],
-    max_tokens: 4000,
+    // 8000, not 4000 (found live: a 9-step workshop pipeline TRUNCATED at 4000 on a
+    // longer-writing model — the cut-off JSON parsed to null and the user was told to
+    // "try rephrasing" for a failure that was ours).
+    max_tokens: 8000,
     temperature: 0.2,
   });
   logAIUsage(supabase, {
@@ -812,13 +815,25 @@ export async function generateWorkflowConfig(
   const generated = parseModelJSON<Record<string, unknown> | null>(raw, null);
 
   if (!generated || typeof generated !== 'object' || !generated.name || !Array.isArray(generated.steps)) {
+    // A parse/shape failure must never be invisible — it reads as "rephrase it" to the user.
+    console.error('[generate-config] parse/shape failure', {
+      model, finish: completion.choices[0]?.finish_reason,
+      rawLen: raw.length, head: raw.slice(0, 200).replace(/\n/g, ' '), tail: raw.slice(-120).replace(/\n/g, ' '),
+    });
     return null;
   }
 
+  // THE TYPE-IS-THE-TOOL DRIFT (found by the workshop smoke: {"type":"read_kb_folder"} instead
+  // of {"type":"tool","tool":"read_kb_folder"} — the executor rightly refused, and the honesty
+  // floors turned the whole pipeline into a "cannot be produced" report): a step carrying a
+  // `tool` field whose `type` is not a real step type IS a tool step — coerce, for every
+  // current and future tool, never per-tool.
+  const KNOWN_STEP_TYPES = new Set(['tool', 'ai', 'agent', 'approval', 'verify', 'handoff', 'workflow', 'case', 'input']);
   let steps: Array<Record<string, unknown>> = (generated.steps as Array<Record<string, unknown>>).map((s, i) => ({
     ...s,
     id: typeof s.id === 'string' && s.id ? s.id : makeStepId(),
     label: typeof s.label === 'string' ? s.label : `Step ${i + 1}`,
+    ...(typeof s.tool === 'string' && s.tool && !KNOWN_STEP_TYPES.has(String(s.type)) ? { type: 'tool' } : {}),
   }));
 
   // ONE GATE, CODE-ENFORCED (found live: a generated pipeline carried TWO approval steps —
