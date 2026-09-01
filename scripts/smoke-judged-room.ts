@@ -147,8 +147,13 @@ const src = (p: string) => readFileSync(p, 'utf8');
 
   // ── J2/J4 STRUCTURAL — the verdict drives the surface AND the pass (one judgment, no drift) ──
   const detail = src('components/home/item-detail.tsx');
-  check('J2: the deep-dive fetches THE verdict and mounts from it (composer open only on reply; decide mounts the DecisionCard)',
-    detail.includes('/api/items/judge?kind=inbox') && detail.includes("d.verdict.work === 'reply'") && detail.includes('<DecisionCard'));
+  // Repointed Sep 1: the DecisionCard mount moved from item-detail into the RAIL with the
+  // one-room convergence (commit 8967443) — the LAW is unchanged (one judged verdict drives
+  // the surface; decide renders the ONE DecisionCard), the seam moved. The deep-dive still
+  // fetches THE verdict and derives relevance; the rail mounts the card.
+  check('J2: the deep-dive fetches THE verdict and mounts from it (composer open only on reply; decide mounts the DecisionCard in the rail)',
+    detail.includes('/api/items/judge?kind=inbox') && detail.includes("d.verdict.work === 'reply'")
+    && src('components/home/item-rail.tsx').includes('<DecisionCard'));
   check('J2: the DecisionCard is the ONE shared component (decline always last; choosing speaks via steer)',
     src('components/work/decision-card.tsx').includes('Leave it with me') && detail.includes("kind: 'email', id, text: label"));
   check('J4: the pass prepares FROM the judged verdict (same cached judgment as the surface)',
