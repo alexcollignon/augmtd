@@ -273,8 +273,8 @@ export async function executeSlackListMembers(
 const ROLE_LABELS: Record<string, string> = {
   personal_assistant: 'Personal Assistant',
   content_manager: 'Content Strategist', // retired Aug 14 — legacy rows only
-  branding_expert: 'Branding Expert',
-  linkedin_drafter: 'Branding Expert', // legacy role key — persisted rows only
+  branding_expert: 'LinkedIn Expert',
+  linkedin_drafter: 'LinkedIn Expert', // legacy role key — persisted rows only
   research_analyst: 'Research Analyst',
 };
 

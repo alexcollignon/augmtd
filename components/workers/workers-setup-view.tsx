@@ -46,8 +46,8 @@ const ROLE_COPY: Record<string, { description: string; bullets: [string, string]
     bullets: ['Flags emails that need a reply', 'Preps you for upcoming meetings'],
   },
   branding_expert: {
-    description: 'Keeps everything you ship on-brand — look, voice, and presence.',
-    bullets: ['Document themes, brand kits, tone', 'LinkedIn content sourced from your real work'],
+    description: 'Keeps your LinkedIn active and credible — posts, series, presence.',
+    bullets: ['Posts and series sourced from your real work', 'A cadence and voice that stay yours'],
   },
   research_analyst: {
     description: 'Turns information into structured, actionable briefings.',

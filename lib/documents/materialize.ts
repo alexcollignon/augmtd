@@ -23,6 +23,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { DocTheme } from '@/lib/documents/theme';
 import type { DeliverableType, ArtifactContent } from '@/lib/types/inbox';
+import type { FrameDiagnostics } from '@/lib/frames/generate-frame';
 
 export type MaterializeArgs = {
   /** Display title (artifact card / filename). */
@@ -46,6 +47,11 @@ export type MaterializeArgs = {
   theme?: DocTheme | null;
   /** Force the deliverable kind (the DM's generate_document knows word/excel/pptx). */
   forceType?: DeliverableType | null;
+  /** THE HONEST CAUSE (frame lane only, Sep 1): an out-param a caller may hand in to learn WHY
+   *  the frame tier declined — the fall-through itself stays silent and soft, exactly as before.
+   *  A caller that ASKED for a frame (`forceType: 'frame'`) needs the reason to tell the truth
+   *  about it; every other caller passes nothing and never sees this. */
+  frameDiagnostics?: FrameDiagnostics;
 };
 
 export type Materialized = {
@@ -120,7 +126,7 @@ export async function materializeDocument(
       const frame = await generateFrameHtml(client, userId, {
         title, content: args.content, request, csvText: args.csvText ?? null,
         computedFacts: args.computedFacts ?? null, theme,
-      });
+      }, args.frameDiagnostics);
       if (frame) {
         return {
           bytes: Buffer.from(frame.html, 'utf8'), ext: 'html', mime: 'text/html', type: 'frame',
@@ -131,7 +137,16 @@ export async function materializeDocument(
           content: { ...doc, provenance: frame.provenance }, tier: 'frame', provenance: frame.provenance,
         };
       }
-    } catch { /* the tiers below are the floor */ }
+    } catch (e) {
+      // The tiers below are still the floor — but a swallowed throw used to erase the ONLY
+      // record of why a frame never existed, and the caller then guessed at a cause in the
+      // user's face. Failing soft and failing silently are different things.
+      console.error('[materialize] the frame lane threw (falling through to the document tiers):', e);
+      if (args.frameDiagnostics && !args.frameDiagnostics.reason) {
+        args.frameDiagnostics.reason = 'error';
+        args.frameDiagnostics.detail = `the frame lane threw: ${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
   }
 
   // ── TIER 1 — THE COMPILER: charts / revision / template-following, code in the locked room. ──

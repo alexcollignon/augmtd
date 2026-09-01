@@ -309,11 +309,11 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         ],
       },
       luca: {
-        helps: 'I keep everything you ship on-brand — how your documents look, how your company sounds, and a LinkedIn presence that feels like you.',
+        helps: 'I keep your LinkedIn active and credible — posts drafted from your real work, a sustainable cadence, and a voice that stays yours.',
         examples: [
-          { label: 'Theme my documents', say: 'I will attach our logo — build a brand kit and apply it to the documents the team produces.' },
-          { label: 'Review for brand fit', say: 'I will attach a draft — review it for brand consistency in tone and look, and fix what reads off.' },
           { label: 'Draft a LinkedIn post', say: 'Draft a LinkedIn post about a recent team milestone — professional but human.' },
+          { label: 'Plan a month of posts', say: 'Suggest five LinkedIn post ideas for this month based on what my company does.' },
+          { label: 'Rework my draft', say: 'I will paste a rough draft — rework it into a stronger LinkedIn post that keeps my voice.' },
         ],
       },
     };
@@ -388,7 +388,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           // specialty line from the seeded-name map, silently omitted for custom workers.
           const specialty: Record<string, string> = {
             max: 'does the research and analysis',
-            luca: 'keeps everything you ship on-brand',
+            luca: 'keeps your LinkedIn active',
           };
           const mates = roster
             .map((x) => x.name.split(' ')[0])

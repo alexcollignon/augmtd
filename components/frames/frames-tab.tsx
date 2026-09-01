@@ -96,7 +96,7 @@ function runLabel(r: FramesRunLike): string {
 }
 
 /** Whether the run already carries a frame — the picker says so rather than letting the user
- *  discover a duplicate after a 15-second wait. Picking it again is still allowed (a re-layout
+ *  discover a duplicate after a minutes-long wait. Picking it again is still allowed (a re-layout
  *  is legitimate); the chip is information, not a lock. */
 const runHasFrame = (r: FramesRunLike): boolean =>
   ((r.artifacts ?? []) as Array<{ type?: unknown }>).some((a) => a.type === 'frame');
@@ -395,8 +395,11 @@ function NewFrameCard({
           </div>
 
           {busy && (
-            // THE HONEST WAIT — a real generation is running; the number is a range, not a promise.
-            <p className="mt-2 text-[11.5px] text-neutral-500">Laying it out — ~15s</p>
+            // THE HONEST WAIT — a real generation is running, and it is TWO passes on a large
+            // report (compaction or repair), which measured 60–150s live. The old "~15s" was a
+            // promise the lane could not keep, so the wait read as a hang. No number at all
+            // beats a wrong one.
+            <p className="mt-2 text-[11.5px] text-neutral-500">Laying it out — this can take up to a couple of minutes.</p>
           )}
           {problem && <p className="mt-2 text-[11.5px] text-red-600">{problem}</p>}
         </div>

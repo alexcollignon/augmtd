@@ -12,7 +12,7 @@ export const ROLE_AVATARS: Record<string, string> = {
 export const ROLE_LABELS: Record<string, string> = {
   personal_assistant: 'Personal Assistant',
   content_manager:    'Content Strategist',
-  branding_expert:    'Branding Expert',
-  linkedin_drafter:   'Branding Expert', // legacy role key
+  branding_expert:    'LinkedIn Expert',
+  linkedin_drafter:   'LinkedIn Expert', // legacy role key
   research_analyst:   'Research Analyst',
 };

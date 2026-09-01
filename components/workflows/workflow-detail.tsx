@@ -35,6 +35,9 @@ import ProcessDrawer from '@/components/workflows/process-drawer';
 import RunRecordDrawer, { type RecordRunOutputs } from '@/components/workflows/run-record-drawer';
 import RunMaterialSheet, { asksForMaterial, type RunMaterial } from '@/components/workflows/run-material-sheet';
 import { FramesTab } from '@/components/frames/frames-tab';
+// THE OUTCOME DOOR + THE LIVE BEAT — both shared with the ledger and the process drawer.
+import { runDeliverable, useDeliverableDoor } from '@/components/workflows/deliverable-door';
+import { useLiveRefresh } from '@/components/workflows/use-live-refresh';
 import { PROCESS_BUCKETS, GATE_WORDS, gateDeltaOf, processStateOf } from '@/lib/workflows/process-state';
 import type { ProcessRow, ProcessState, StepOutputLike } from '@/lib/workflows/process-state';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
@@ -56,6 +59,11 @@ const LS_RUNS = (id: string) => `aug-wfdetail-runs-v1:${id}`;
 const LS_META = (id: string) => `aug-wfdetail-meta-v1:${id}`;
 const LS_METRICS = (id: string) => `aug-wfdetail-metrics-v1:${id}`;
 const PROC_MAX_AGE_MS = 15 * 60_000;
+// THE STAMPED LAW, SHARPENED (slice 1): the identity half of the processes cache (the mark, the
+// customer chip) is ambient, but the PROCESS ROWS themselves claim what is happening RIGHT NOW —
+// and a claim that old is a claim we can't back. Older than this, the table stays in its honest
+// loading state until the fetch lands, rather than painting a stale "needs you".
+const ACTIVE_MAX_AGE_MS = 60_000;
 
 type ProcCache = { processes: ProcessRow[]; mark: LedgerMark | null; scope: Scope | null };
 type RunsCache = { runs: RunRow[]; standing: StandingBinding | null; sharedFrameIds: string[] };
@@ -306,7 +314,13 @@ export function WorkflowDetail({
   // useState initializer — this page is SSR'd and an initializer read would diverge on hydration.
   useEffect(() => {
     const p = loadLS<ProcCache>(LS_PROC(workflowId), { maxAgeMs: PROC_MAX_AGE_MS });
-    if (p) { setProcesses(p.processes); setMark(p.mark); setScope(p.scope); }
+    if (p) {
+      // The rows paint only from a cache fresh enough to claim the present; the mark and the
+      // customer chip are identity and hydrate from the older blob as before.
+      const fresh = loadLS<ProcCache>(LS_PROC(workflowId), { maxAgeMs: ACTIVE_MAX_AGE_MS });
+      if (fresh) setProcesses(fresh.processes);
+      setMark(p.mark); setScope(p.scope);
+    }
     const r = loadLS<RunsCache>(LS_RUNS(workflowId));
     if (r) { setRuns(r.runs); setStanding(r.standing); setSharedFrameIds(r.sharedFrameIds); }
     const m = loadLS<MetaCache>(LS_META(workflowId));
@@ -439,6 +453,32 @@ export function WorkflowDetail({
     [runs],
   );
 
+  // ── THE LIVE BEAT (slice 1) — this page loaded once and then went blind: a run started from its
+  // own "Run now" walked its steps invisibly, and an approval taken in the drawer left the table
+  // frozen on the pre-decision snapshot. While something is in flight (or parked), both reads
+  // repeat on a slow beat; nothing live → no timer at all. ──
+  const anyLive = useMemo(() => {
+    if ((processes ?? []).some((p) => p.state === 'needs_you' || p.state === 'running' || p.state === 'waiting_on_others')) return true;
+    return (runs ?? []).some((r) => !HISTORY_STATUSES.has(r.status));
+  }, [processes, runs]);
+  useLiveRefresh(anyLive, () => { void loadProcesses(); void loadRuns(); });
+
+  // ── THE OUTCOME DOOR (slice 3) — the pilot's find: this page announced deliveries and offered no
+  // way to READ one. The same viewer the ledger mounts, opened from the latest-delivery card and
+  // from any delivered History row. ──
+  const { open: openDeliverable, door: deliverableDoor } = useDeliverableDoor();
+
+  /** THE LATEST DELIVERY — the newest DELIVERED run that actually left a document behind. A run
+   *  whose home is a message/Slack/an inbox leaves none, so no card is claimed for it. */
+  const latestDelivery = useMemo(() => {
+    for (const r of runs ?? []) {
+      if (r.status !== 'succeeded' || !r.thread_id) continue;
+      const art = runDeliverable(r.artifacts, r.completed_at);
+      if (art?.id) return { run: r, artifact: art };
+    }
+    return null;
+  }, [runs]);
+
   // THE LIVE LINE — the same served words, in the header. Your own debt outranks a teammate's wait.
   const parkedNow = useMemo(() => {
     const rows = processes ?? [];
@@ -470,7 +510,9 @@ export function WorkflowDetail({
             <div className="mt-1 text-[12.5px] text-neutral-500 flex items-center gap-2 flex-wrap">
               <span>{scheduleLabel ?? 'On demand'}</span>
               {nextRunAt && hydrated && <span className="text-neutral-400">· next {fmtDateTime(nextRunAt)}</span>}
-              {workerName && <span className="text-neutral-400">· delivered by {workerName}</span>}
+              {/* "delivered by X" dropped from the HEADER (owner, Sep 1 — config chrome, not
+                  header material); the drawer + ledger rows keep it, and workerName still
+                  plumbs to the drawer below. */}
               {stepCount > 0 && <span className="text-neutral-400">· {stepCount} steps</span>}
             </div>
             {/* THE READINESS LINE — what stands in the way of the next run, in the served reason's
@@ -521,6 +563,15 @@ export function WorkflowDetail({
             ownerIsMe={!!owner && !!selfUserId && owner.userId === selfUserId}
             recordByRun={runIdToRecord}
             onOpen={(p, tab) => setOpenProcess({ p, tab })}
+            latestDelivery={latestDelivery}
+            latestSubject={
+              latestDelivery
+                ? ((processes ?? []).find((p) => p.runId === latestDelivery.run.id)?.subject
+                  ?? latestDelivery.artifact.title
+                  ?? name)
+                : null
+            }
+            onOpenDeliverable={openDeliverable}
           />
         )}
         {tab === 'timeline' && <TimelineTab runs={runs} stepCount={stepCount} runIdToProcessRow={runIdToProcessRow} />}
@@ -533,6 +584,7 @@ export function WorkflowDetail({
             stepCount={stepCount}
             recordByRun={runIdToRecord}
             onOpenRecord={setOpenRecord}
+            onOpenDeliverable={openDeliverable}
           />
         )}
         {tab === 'frames' && (
@@ -569,6 +621,9 @@ export function WorkflowDetail({
           onClose={() => setOpenRecord(null)}
         />
       )}
+
+      {/* THE OUTCOME DOOR — the delivered document, read here (its own portal). */}
+      {deliverableDoor}
 
       {/* THE MATERIAL DOOR — the same sheet the ledger row's play button mounts. */}
       <RunMaterialSheet
@@ -639,8 +694,33 @@ function peopleFor(
   return names;
 }
 
+/** THE LATEST DELIVERY CARD (slice 3) — the outcome, first, with the one door into it. It renders
+ *  only when a delivered run actually left a document: a card promising a document that does not
+ *  exist is the lying-door class. */
+function LatestDeliveryCard({
+  subject, at, onOpen,
+}: { subject: string; at: string | null; onOpen: () => void }) {
+  return (
+    <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50/50 px-4 py-3">
+      <div className="text-[10.5px] font-semibold uppercase tracking-wide text-emerald-700">Latest delivery</div>
+      <div className="mt-1 flex items-center gap-3 flex-wrap">
+        <span className="text-[13px] text-neutral-800">{subject}</span>
+        {at && <span className="text-[11.5px] text-neutral-400 tabular-nums">{fmtDateTime(at)}</span>}
+        <span className="flex-1" />
+        <button
+          onClick={onOpen}
+          className="text-[12.5px] font-medium text-indigo-600 transition-colors hover:text-indigo-800"
+        >
+          Open deliverable →
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function WorkTab({
   processes, scope, ownerName, ownerIsMe, recordByRun, onOpen,
+  latestDelivery, latestSubject, onOpenDeliverable,
 }: {
   processes: ProcessRow[] | null;
   scope: Scope | null;
@@ -648,20 +728,36 @@ function WorkTab({
   ownerIsMe: boolean;
   recordByRun: Map<string, RunRecordBlock>;
   onOpen: (p: ProcessRow, tab: 'handoffs' | 'log') => void;
+  latestDelivery: { run: RunRow; artifact: ArtifactLike } | null;
+  latestSubject: string | null;
+  onOpenDeliverable: (threadId: string, artifactId: string) => void | Promise<void>;
 }) {
   // Completed rows SHOW by default (owner, Aug 20) — the fold survives as "Hide completed" for
   // a busy table; a quiet workflow's history must not hide behind a click.
   const [showDone, setShowDone] = useState(true);
-  if (processes === null) return <Skeleton rows={3} />;
+  // The outcome leads, and it survives every state below — a workflow with an empty table has
+  // usually just delivered, which is exactly when the door matters most.
+  const card = latestDelivery?.run.thread_id && latestDelivery.artifact.id ? (
+    <LatestDeliveryCard
+      subject={latestSubject ?? latestDelivery.artifact.title ?? 'The latest run'}
+      at={latestDelivery.run.completed_at}
+      onOpen={() => void onOpenDeliverable(latestDelivery.run.thread_id!, latestDelivery.artifact.id!)}
+    />
+  ) : null;
+
+  if (processes === null) return <div className="max-w-4xl">{card}<Skeleton rows={3} /></div>;
 
   const active = processes.filter((p) => p.state === 'needs_you' || p.state === 'running' || p.state === 'waiting_on_others');
   const completed = processes.filter((p) => p.state === 'delivered' || p.state === 'held_back');
-  if (!active.length && !completed.length) return <Empty>Nothing is in flight right now.</Empty>;
+  if (!active.length && !completed.length) {
+    return <div className="max-w-4xl">{card}<Empty>Nothing is in flight right now.</Empty></div>;
+  }
 
   const rows = showDone ? [...active, ...completed] : active;
 
   return (
     <div className="max-w-4xl">
+      {card}
       <div className="rounded-xl border border-neutral-200 bg-white overflow-hidden">
         <div className="flex items-center gap-3 px-4 py-2 border-b border-neutral-100 bg-neutral-50/60 text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400">
           <span className="flex-1 min-w-0">Subject</span>
@@ -1176,7 +1272,7 @@ function DriftChipView({ label }: { label: string }) {
 }
 
 function HistoryTab({
-  runs, processes, workflowName, stepCount, recordByRun, onOpenRecord,
+  runs, processes, workflowName, stepCount, recordByRun, onOpenRecord, onOpenDeliverable,
 }: {
   runs: RunRow[] | null;
   processes: ProcessRow[] | null;
@@ -1184,6 +1280,7 @@ function HistoryTab({
   stepCount: number;
   recordByRun: Map<string, RunRecordBlock>;
   onOpenRecord: (runId: string) => void;
+  onOpenDeliverable: (threadId: string, artifactId: string) => void | Promise<void>;
 }) {
   // A PLAIN FILTER, NO FETCH: the rows are already here, so search is a client-side narrowing over
   // what is on screen — subject and the people who decided. It never claims to search the archive.
@@ -1224,11 +1321,19 @@ function HistoryTab({
           const took = durationOf(r.started_at, r.completed_at);
           const steps = (r.step_outputs ?? []).length;
           const rec = recordByRun.get(r.id);
+          // THE OUTCOME DOOR, PER ROW (slice 3): the artifacts are already on this payload, and the
+          // pick is the ONE shared rule — the document THIS run delivered, never a later run's.
+          const art = r.status === 'succeeded' && r.thread_id ? runDeliverable(r.artifacts, r.completed_at) : null;
           return (
-            <button
+            // A div, not a button: the row opens the record and carries its OWN nested door — a
+            // button inside a button is invalid, and the deliverable is a different object.
+            <div
               key={r.id}
+              role="button"
+              tabIndex={0}
               onClick={() => onOpenRecord(r.id)}
-              className="block w-full px-4 py-2.5 text-left transition-colors hover:bg-neutral-50"
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenRecord(r.id); } }}
+              className="block w-full cursor-pointer px-4 py-2.5 text-left transition-colors hover:bg-neutral-50"
             >
               <div className="flex items-center gap-3 flex-wrap">
                 <span className="text-[11.5px] text-neutral-400 tabular-nums">
@@ -1241,6 +1346,14 @@ function HistoryTab({
                 {gate && <GateChip gate={gate} />}
                 {rec?.driftChips.map((c) => <DriftChipView key={c} label={c} />)}
                 <span className="flex-shrink-0"><Facepile names={rec?.peopleNames ?? []} /></span>
+                {art?.id && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); void onOpenDeliverable(r.thread_id!, art.id!); }}
+                    className="flex-shrink-0 text-[12px] font-medium text-indigo-600 transition-colors hover:text-indigo-800"
+                  >
+                    Open deliverable
+                  </button>
+                )}
               </div>
               <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11.5px] text-neutral-400">
                 {rec && rec.decisionsCount > 0 && (
@@ -1253,7 +1366,7 @@ function HistoryTab({
               {r.status === 'failed' && r.error && (
                 <div className="mt-0.5 text-[11.5px] text-red-500">{r.error.slice(0, 160)}</div>
               )}
-            </button>
+            </div>
           );
         })}
       </div>
