@@ -19,6 +19,20 @@ export const maxDuration = 300;
 
 const NOT_FOUND = () => NextResponse.json({ error: 'Not found' }, { status: 404 });
 
+// ── THE DECLINE SPEAKS THE OBSERVED CAUSE (Sep 1) ────────────────────────────────────────────
+// One sentence used to cover four different failures, and it named a fifth thing nobody had
+// measured ("try a run with more tabular/structured output" — said to a run that was ALL
+// tables). Each line here corresponds to a cause the lane actually RECORDED, and says what the
+// reader can do about it. `unknown` is the honest word for a lane that failed without naming
+// itself — never a guess dressed as a diagnosis.
+const DECLINE_COPY: Record<string, string> = {
+  too_large: 'That report is too large to lay out as one frame — we tried a compact pass and it still overflowed. Try again, or pick a smaller run.',
+  validator: 'The layout was rejected by the safety validator — a frame has to be fully self-contained, and this one kept reaching outside itself.',
+  thin: 'That run has too little in it to lay out — a frame is a view of work, and there was almost nothing to show.',
+  error: 'Generating the layout failed — try again in a moment.',
+  unknown: 'Could not lay that run out as a frame — try again in a moment.',
+};
+
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -37,9 +51,7 @@ export async function POST(request: NextRequest) {
 
     if (result.ok) return NextResponse.json({ artifactId: result.artifactId });
     if (result.reason === 'declined') {
-      return NextResponse.json({
-        error: 'Could not lay that out as a frame — try a run with more tabular/structured output.',
-      }, { status: 502 });
+      return NextResponse.json({ error: DECLINE_COPY[result.cause ?? 'unknown'] ?? DECLINE_COPY.unknown }, { status: 502 });
     }
     return NOT_FOUND();
   } catch (err) {

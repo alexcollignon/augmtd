@@ -1590,7 +1590,10 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     !src('infra/agentos/workers.py').includes('Sofia') &&
     src('infra/agentos/workers.py').includes("care a lot about how things look and sound") &&
     src('scripts/sweep-retire-sofia.ts').includes('RUN ONLY AFTER') &&
-    src('lib/workers/roles.ts').includes("'Branding Expert'"));
+    // Sep 1 (owner, pilot feedback): Luca REPOSITIONED again — Branding Expert → LINKEDIN
+    // EXPERT (label + instructions + starters on both runtimes; key unchanged; existing rows
+    // via the insert-only-seed sweep). The gate follows the CURRENT label.
+    src('lib/workers/roles.ts').includes("'LinkedIn Expert'"));
 
   // ── Report ──
   let pass = 0;

@@ -849,8 +849,12 @@ export async function generateWorkflowConfig(
   // relaxes to the placed count; and because the model under-emits even when told, the missing
   // placed gates are SEATED BY CODE (the placeRubric doctrine: code, never the model) after the
   // step whose words best match the gate's own line.
-  const placedGateLines = [...description.matchAll(/^[^\n]*\bhuman\s+approval\b[^\n]*$/gim)]
-    .map((m) => m[0].replace(/^\s*\d+[.)]\s*/, '').trim().slice(0, 200));
+  // OCCURRENCES, never lines (found live by the browser walk: a pasted prompt arrives as ONE
+  // LINE — the frozen-paste lesson — and a line-anchored count saw two "Human Approval" points
+  // as one). Each match captures a bounded window ("Human Approval: Confirm the criteria …")
+  // for counting AND for the word-overlap seating below.
+  const placedGateLines = [...description.matchAll(/\bhuman\s+approval\b(?:\s*[:\-—]\s*[^\n.;—]{0,100})?/gi)]
+    .map((m) => m[0].trim().slice(0, 200));
   const approvalCap = Math.max(1, placedGateLines.length);
   for (const gateType of ['approval', 'verify'] as const) {
     const cap = gateType === 'approval' ? approvalCap : 1;

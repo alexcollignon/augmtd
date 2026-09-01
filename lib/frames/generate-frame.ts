@@ -12,6 +12,19 @@
 //   • THE LOCKED FRAME — validateFrameHtml decides whether the output may exist. One repair
 //     pass carrying the reasons verbatim, then an HONEST NULL: the door falls through to its
 //     lower tiers and the user still gets a deliverable (fail soft down the ladder).
+//   • THE SIZE FLOOR (Sep 1, found live on a ~25k-char table-heavy report): the contract makes
+//     the model inline the material as a JSON literal AND render it as markup — table-heavy
+//     source roughly DOUBLES on the way out, so the output hit the token cap, arrived without
+//     its </html>, and the validator rejected it as "not one complete HTML document". The old
+//     repair pass then re-sent the SAME material at the SAME cap and truncated identically.
+//     Now the cap is READ (finish_reason 'length', or a body with no closing tag) and answered
+//     with a COMPACTION retry: same contract, an explicit size instruction, and a structurally
+//     reduced material (tables and headings kept verbatim, prose compressed) — never the same
+//     ask twice. A retry that truncates again is an honest `too_large`.
+//   • THE HONEST CAUSE — every exit says WHY, in the log and to the caller (FrameDiagnostics).
+//     Four different failures used to collapse into one client sentence that named none of
+//     them ("try a run with more tabular/structured output" — said to a run that was ALL
+//     tables). Content shape is never guessed at; the recorded reason is the observed one.
 //   • THE FRAME KIT — beauty is not an adjective in a prompt. Every generation is dressed BY
 //     CODE with the house design system (lib/frames/kit.ts) at the ONE place a generation is
 //     produced (`ask`), so the first pass and the repair pass are covered by construction and
@@ -39,8 +52,36 @@ export type GenerateFrameArgs = {
 
 export type GeneratedFrame = { html: string; provenance: { computed: boolean } };
 
+/** WHY a frame did not exist — the caller's honest error copy is derived from this, never from
+ *  a guess about the material's shape. `null` return + no diagnostics = an unexpected path. */
+export type FrameDeclineReason =
+  /** No work to view (the thin-input floor) — refused before any AI spend. */
+  | 'thin'
+  /** The layout exceeded the output budget twice, compaction included. */
+  | 'too_large'
+  /** A complete document that the no-egress validator refused, repair included. */
+  | 'validator'
+  /** An outage, an empty completion, a thrown error — transient by nature. */
+  | 'error';
+
+export type FrameDiagnostics = { reason?: FrameDeclineReason; detail?: string };
+
 const MAX_CONTENT = 24_000;
 const MAX_CSV = 40_000;
+
+/** THE OUTPUT BUDGET. Deliberately unchanged at the family's existing ceiling: the generation
+ *  tier is Haiku 4.5 (lib/ai/defaults.ts — anthropic direct + eu.anthropic on Bedrock), whose
+ *  model ceiling is far higher, but this is a NON-STREAMED call and every other in-repo site on
+ *  this family sits well below it (execute-step's reasoning step 12k, meeting insights 8k, the
+ *  Bedrock adapter's own default 4096) — 16k is already the highest cap we run non-streamed.
+ *  Buying headroom by raising it trades a truncation risk for a request-timeout risk on a lane
+ *  that already spends 60–150s across two passes. The size problem is answered by asking for
+ *  LESS (the compaction retry), not by asking for more. */
+const MAX_OUTPUT_TOKENS = 16_000;
+
+/** Above this, a compaction retry also SHRINKS the material — a body that big is what pushed
+ *  the first pass over the cap, so re-sending it whole would truncate identically. */
+const COMPACT_SOURCE_OVER = 14_000;
 
 /** THE THIN-INPUT FLOOR (severity-1 repair, Aug 25). A frame is a VIEW OF WORK; with no work to
  *  view, a generative lane fills the emptiness with invention — found live: an approval step's
@@ -103,17 +144,48 @@ function frameDateLine(now: Date = new Date()): string {
   );
 }
 
+/** THE COMPACTION ASK — said only on the retry that follows a truncated pass. It keeps THE
+ *  CONTENT FLOOR intact (nothing may be invented to fill the space it frees): figures and tables
+ *  survive verbatim, only prose is compressed. */
+const COMPACTION_RULE = [
+  'YOUR PREVIOUS OUTPUT EXCEEDED THE SIZE BUDGET and was cut off mid-document, so it could not be used.',
+  'Produce the SAME view, smaller:',
+  '· Keep every table row and every figure VERBATIM — they are the substance, and the content floor still forbids inventing or altering any of them.',
+  '· Compress prose: turn long written sections into short summaries or a few bullet lines; drop repetition and restatement.',
+  '· Prefer ONE data block inlined once over values repeated in both a script literal and the markup.',
+  '· Keep the markup lean: fewer wrapper elements, no decorative sections, no long inline comments.',
+  'Target well under the budget — a complete, smaller document is the only acceptable output; a richer one that stops mid-tag is worthless.',
+].join('\n');
+
+/** THE EGRESS REPAIR — the no-egress law outranks link preservation, said explicitly because the
+ *  bare validator reasons ("inline every asset as a data: URI") left a model with real source
+ *  URLs no legal move, and it kept re-emitting them (found live: a report carrying live links). */
+const EGRESS_REPAIR_RULE = [
+  'ABOUT THE LINKS: external URLs do not belong in a frame at all. Do NOT try to inline or replace them —',
+  'render each link as PLAIN TEXT: keep the visible text exactly as it reads and drop the href entirely',
+  '(<a href="https://…">Q3 report</a> becomes simply Q3 report). If a URL is itself the visible text, keep',
+  'the text and make it non-linking. Losing a link is correct; a frame that can reach the network is not.',
+].join(' ');
+
+const LINKY = /(url|link|external|href|@import|egress|iframe|src\/href)/i;
+
 export async function generateFrameHtml(
   client: SupabaseClient,
   userId: string,
   args: GenerateFrameArgs,
+  /** THE HONEST CAUSE — the caller's out-param. Stamped on every declining exit. */
+  diag?: FrameDiagnostics,
 ): Promise<GeneratedFrame | null> {
+  const decline = (reason: FrameDeclineReason, detail: string): null => {
+    if (diag) { diag.reason = reason; diag.detail = detail; }
+    console.warn(`[frames] declined (${reason}): ${detail}`);
+    return null;
+  };
   try {
     // ── THE THIN-INPUT FLOOR — refuse BEFORE any AI spend. An honest null: the door falls
     // through to its document tiers and the user gets a plain, truthful deliverable. ──
     if (isThinFrameSource(args)) {
-      console.warn('[frames] refusing to generate: the source has no work to view (thin input).');
-      return null;
+      return decline('thin', 'the source has no work to view (thin input)');
     }
     const title = (args.title || 'Frame').slice(0, 120);
     const request = (args.request ?? '').slice(0, 800);
@@ -136,61 +208,152 @@ export async function generateFrameHtml(
       args.theme?.footer ? `FOOTER LINE (text only): ${args.theme.footer}` : null,
     ].filter(Boolean).join('\n');
 
-    const material = [
+    const content = (args.content ?? '').slice(0, MAX_CONTENT);
+    const buildMaterial = (deliverable: string, rows: string | null) => [
       `THE VIEW: ${title}`,
       request ? `WHAT THE USER ASKED FOR: ${request}` : null,
       '',
       brandLine,
       '',
       facts ? `COMPUTED FACTS (computed in code from the data — AUTHORITATIVE, use verbatim):\n${facts.slice(0, 6000)}` : null,
-      csv ? `THE DATA (raw rows — inline these as the frame's JSON data block):\n${csv}` : null,
-      `THE AUTHOR'S DELIVERABLE (the written work this view presents — its findings and wording are the source of truth):\n${(args.content ?? '').slice(0, MAX_CONTENT)}`,
+      rows ? `THE DATA (raw rows — inline these as the frame's JSON data block):\n${rows}` : null,
+      `THE AUTHOR'S DELIVERABLE (the written work this view presents — its findings and wording are the source of truth):\n${deliverable}`,
     ].filter(Boolean).join('\n\n');
+
+    // The material actually in play: a compaction retry REPLACES it, so a repair that follows
+    // asks over the same reduced body — re-sending the full one would truncate all over again.
+    let material = buildMaterial(content, csv);
 
     const { getAIClient, aiCreate } = await import('@/lib/ai/factory');
     const { client: ai, model } = await getAIClient(userId, 'generation', client);
 
-    const ask = async (repairReasons?: string[]): Promise<string | null> => {
+    type Attempt = { html: string | null; truncated: boolean; finish: string; chars: number };
+
+    const ask = async (opts: { instructions?: string; material: string }): Promise<Attempt> => {
       const res = await aiCreate(ai, {
-        model, max_tokens: 16000, temperature: 0.2,
+        model, max_tokens: MAX_OUTPUT_TOKENS, temperature: 0.2,
         messages: [{
           role: 'user',
           content:
             `Build an interactive FRAME — a self-contained HTML view of the material below.\n\n` +
             `${FRAME_CONTRACT}\n\n${frameDateLine()}\n\n` +
-            (repairReasons?.length
-              ? `YOUR PREVIOUS OUTPUT WAS REJECTED BY THE NO-EGRESS VALIDATOR. Fix every one of these and return the corrected complete document:\n` +
-                repairReasons.map((r) => `· ${r}`).join('\n') + '\n\n'
-              : '') +
-            `=== MATERIAL ===\n${material}`,
+            (opts.instructions ? `${opts.instructions}\n\n` : '') +
+            `=== MATERIAL ===\n${opts.material}`,
         }],
       });
-      const raw = stripFence((res.choices?.[0]?.message?.content ?? '').trim());
-      if (!raw) return null;
-      // THE KIT LANDS HERE — the ONE place a generation exists, so the first pass and the repair
-      // pass are both dressed by construction, and it happens BEFORE validation (the kit is bound
-      // by law 2 like everything else and is swept by the very next line of the caller).
-      return injectFrameKit(raw, accent);
+      const choice = res.choices?.[0];
+      const finish = String(choice?.finish_reason ?? 'unknown');
+      const body = (choice?.message?.content ?? '').trim();
+      const raw = stripFence(body);
+      // THE CAP IS READ, not inferred from the wreckage: 'length' is the OpenAI-compat name for
+      // it on every provider we route through (the Bedrock adapter maps 'max_tokens' → 'length').
+      // A body with no closing tag is the same event seen from the other side — some endpoints
+      // report 'stop' on a cut stream, so the structural check stands beside the reported one.
+      const truncated = !!body && (finish === 'length' || !/<\/html\s*>/i.test(raw));
+      if (!raw) return { html: null, truncated: false, finish, chars: body.length };
+      // THE KIT LANDS HERE — the ONE place a generation exists, so every pass is dressed by
+      // construction, and it happens BEFORE validation (the kit is bound by law 2 like everything
+      // else and is swept by the very next line of the caller).
+      return { html: injectFrameKit(raw, accent), truncated, finish, chars: raw.length };
     };
 
-    let html = await ask();
-    if (!html) return null;
-    let verdict = validateFrameHtml(html);
+    let compacted = false;
+    let attempt = await ask({ material });
+    if (!attempt.html) {
+      return decline('error', `the model returned nothing (finish_reason=${attempt.finish})`);
+    }
+
+    // ── THE COMPACTION RETRY — the answer to a cap, in place of a repair pass that would ask
+    // for exactly what did not fit. Reduce the material too when the body is what overflowed. ──
+    if (attempt.truncated) {
+      console.warn(
+        `[frames] first pass hit the size budget (finish_reason=${attempt.finish}, ${attempt.chars} chars, no </html>) — compacting.`,
+      );
+      if (content.length > COMPACT_SOURCE_OVER) {
+        material = buildMaterial(compactSource(content, COMPACT_SOURCE_OVER), csv);
+      }
+      compacted = true;
+      attempt = await ask({ instructions: COMPACTION_RULE, material });
+      if (!attempt.html) {
+        return decline('error', `the compaction pass returned nothing (finish_reason=${attempt.finish})`);
+      }
+      if (attempt.truncated) {
+        return decline(
+          'too_large',
+          `still over the size budget after compaction (finish_reason=${attempt.finish}, ${attempt.chars} chars)`,
+        );
+      }
+    }
+
+    let verdict = validateFrameHtml(attempt.html);
     if (!verdict.ok) {
-      const repaired = await ask(verdict.reasons);
-      if (!repaired) return null;
-      verdict = validateFrameHtml(repaired);
+      const first = verdict.reasons;
+      console.warn('[frames] first pass rejected by the validator:', first.slice(0, 3));
+      // THE EGRESS REPAIR: when the rejection is about links, the flattening rule rides along —
+      // the reasons alone leave a model holding real URLs with no legal move.
+      const repairAsk = [
+        'YOUR PREVIOUS OUTPUT WAS REJECTED BY THE NO-EGRESS VALIDATOR. Fix every one of these and return the corrected complete document:',
+        ...first.map((r) => `· ${r}`),
+        ...(first.some((r) => LINKY.test(r)) ? ['', EGRESS_REPAIR_RULE] : []),
+        // Once compacted, stay compacted — a repair is not permission to grow back.
+        ...(compacted ? ['', COMPACTION_RULE] : []),
+      ].join('\n');
+      const repaired = await ask({ instructions: repairAsk, material });
+      if (!repaired.html) {
+        return decline('error', `the repair pass returned nothing (finish_reason=${repaired.finish})`);
+      }
+      // A repair that ran out of room is a SIZE failure, not a leak — say the true one.
+      if (repaired.truncated) {
+        return decline(
+          'too_large',
+          `the repair pass hit the size budget (finish_reason=${repaired.finish}, ${repaired.chars} chars)`,
+        );
+      }
+      verdict = validateFrameHtml(repaired.html);
       // Still leaking → HONEST NULL. A leaky frame is worse than a plainer deliverable.
       if (!verdict.ok) {
-        console.warn('[frames] generation rejected after repair:', verdict.reasons.slice(0, 3));
-        return null;
+        return decline(
+          'validator',
+          `rejected after repair — first: ${first.slice(0, 2).join(' | ')} — second: ${verdict.reasons.slice(0, 2).join(' | ')}`,
+        );
       }
     }
     return { html: verdict.html, provenance: { computed } };
   } catch (e) {
-    console.warn('[frames] generation failed (falling through to the document tiers):', e);
-    return null;
+    return decline('error', `generation threw: ${e instanceof Error ? e.message : String(e)}`);
   }
+}
+
+/** THE STRUCTURAL REDUCTION — what a compaction retry sends instead of the body that overflowed.
+ *  Tables and headings are the frame's substance and survive VERBATIM (the content floor forbids
+ *  the model recreating a dropped row); prose is what gets dropped, from the middle outward, so
+ *  the opening framing and the closing findings both survive. If the structural lines alone still
+ *  exceed the budget, fall back to the head+tail middle-cut idiom (formatPreviousOutputs' lesson:
+ *  never head-truncate — the tail is the most load-bearing part). */
+export function compactSource(text: string, budget: number): string {
+  if (text.length <= budget) return text;
+  const ELIDED = '\n…[prose sections omitted for length — every table and figure above and below is intact]…\n';
+  const lines = text.split('\n');
+  // Structural = a markdown table row, a heading, or a short label line ending in a colon.
+  const structural = lines.map((l) => /^\s*\|/.test(l) || /^\s*#{1,6}\s/.test(l) || /^\s*[^\s].{0,60}:\s*$/.test(l));
+  const kept: Array<string | null> = lines.slice();
+  let size = text.length;
+  // Walk outward from the middle, dropping prose first — the two ends carry the framing.
+  const mid = Math.floor(lines.length / 2);
+  for (let step = 0; step < lines.length && size > budget; step += 1) {
+    const i = step % 2 === 0 ? mid + Math.floor(step / 2) : mid - Math.ceil(step / 2);
+    if (i < 0 || i >= lines.length) continue;
+    if (structural[i] || kept[i] === null) continue;
+    size -= (kept[i]?.length ?? 0) + 1;
+    kept[i] = null;
+  }
+  const dropped = kept.some((l) => l === null);
+  const out = kept.filter((l): l is string => l !== null).join('\n');
+  if (out.length <= budget) return dropped ? `${out}\n${ELIDED}` : out;
+  // Tables alone are over budget — middle-cut, never head-cut.
+  return out.slice(0, Math.floor(budget * 0.55))
+    + '\n…[middle of the material truncated for length — the start and the end are intact]…\n'
+    + out.slice(-Math.floor(budget * 0.45));
 }
 
 /** The model occasionally wraps the document in a fence despite the contract. */

@@ -33,7 +33,7 @@
 // import (ledger → drawer), so the shared grammar can never fork and no cycle forms.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -43,7 +43,14 @@ import { GATE_WORDS, type ProcessRow } from '@/lib/workflows/process-state';
 // THE ONE SUPPLY DEED — shared with the commitment deep-dive's InputStationCard. A station's ask
 // is answered where it is shown; neither door owns a paste box of its own.
 import InputSupplyForm, { type SupplyOutcome } from '@/components/workflows/input-supply-form';
+// THE OUTCOME DOOR — the one shared way into a delivered document (see deliverable-door.tsx).
+import { runDeliverable, useDeliverableDoor, type RunArtifactLike } from '@/components/workflows/deliverable-door';
+import { useLiveRefresh } from '@/components/workflows/use-live-refresh';
 import { previewFromOutput } from '@/lib/workflows/handoff-context';
+// THE ONE MARKDOWN RENDERER — the same component the chat surfaces and the artifact panel mount
+// (headings, lists, TABLES, inline emphasis). The gate reuses it rather than growing a second
+// reading of the same syntax.
+import { MarkdownText } from '@/components/work/chat-message';
 import type { GateVerdict, WorkflowStep, HandoffStep } from '@/lib/workflows/types';
 
 // ── THE GATE'S RECEIPTS (guardrails arc): what the delivery check did — checked clean, fixed with
@@ -95,7 +102,24 @@ type DrawerRun = {
   id: string; status: string; triggered_by: string; thread_id: string | null;
   step_outputs: Array<{ label?: string; step_type?: string; output?: unknown; error?: string; duration_ms?: number; verdict?: GateVerdict }> | null;
   error: string | null; started_at: string | null; completed_at: string | null; created_at: string;
+  /** The run thread's artifacts — served additively by the same route (see the outcome door). */
+  artifacts?: RunArtifactLike[];
 };
+
+// ── THE LIVE RUN (pilot, Sep 1: "I approved and nothing happened") ──────────────────────────────
+// A run that is not FINISHED is still moving, and this drawer used to read it exactly once — so an
+// approval handed the work to the server and the drawer sat on a snapshot forever: the Log said
+// "still running" after the run had delivered, and the approval line was a static grey sentence.
+// While a non-terminal run is on screen the drawer re-reads it on a slow beat. Terminal statuses
+// stop the poll — a finished run has nothing left to say.
+const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled', 'rejected']);
+const POLL_MS = 5_000;
+// A decision resumes the run SERVER-SIDE (the resume route returns immediately and works in
+// after()), so for a short window the status we hold is still the pre-decision one. We keep polling
+// through that window rather than trusting a snapshot taken before the deed landed.
+const POST_DECISION_POLL_MS = 30_000;
+// A defensive ceiling: a drawer left open on a gate nobody decides must not poll for a whole day.
+const MAX_POLLS = 240; // ~20 minutes at POLL_MS
 
 const STATUS_CHIP: Record<string, { tone: 'emerald' | 'red' | 'amber' | 'neutral' | 'indigo'; word: string }> = {
   succeeded: { tone: 'emerald', word: 'Delivered' }, failed: { tone: 'red', word: 'Failed' },
@@ -140,6 +164,14 @@ export default function ProcessDrawer({
   // 'supplied' = an INPUT STATION was answered in place (the wave's third settle word — a supply
   // is neither an approval nor a rejection, and the settled banner must not call it one).
   const [decided, setDecided] = useState<'approved' | 'rejected' | 'supplied' | null>(null);
+  // When the deed landed — the run resumes server-side, so the drawer keeps watching for a window
+  // after a decision even if the status it holds hasn't caught up yet.
+  const [decidedAt, setDecidedAt] = useState<number | null>(null);
+  // The step count at the moment of the last decision — the NEXT-GATE-ARMS effect below compares
+  // against it to know a fresh park belongs to a LATER station.
+  const decidedStepsRef = useRef<number>(-1);
+  // Guards every async write into this drawer's state (the poll outlives a single fetch).
+  const aliveRef = useRef(true);
   const [rerunning, setRerunning] = useState(false);
   const [nudging, setNudging] = useState(false);
   // REASSIGN (B2): the roster is fetched only when the picker is opened — never on drawer mount.
@@ -205,19 +237,55 @@ export default function ProcessDrawer({
   // workflow (30 rows, every one of them record-enriched: ~90 queries) only to `.find()` one row,
   // plus GET /api/workflows/[id] purely for `steps`. `?run=<id>` narrows the server query to this
   // one row and carries `steps` back with it: one request, one row, same two facts. ──
-  useEffect(() => {
-    let dead = false;
-    void fetch(`/api/workflows/${process.workflowId}/runs?run=${encodeURIComponent(process.runId)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
-        if (dead) return;
-        if (!j) { setRun(null); setSteps(null); return; }
-        setRun(((j.runs ?? []) as DrawerRun[]).find((r) => r.id === process.runId) ?? null);
-        setSteps((j.steps ?? null) as WorkflowStep[] | null);
-      })
-      .catch(() => { if (!dead) { setRun(null); setSteps(null); } });
-    return () => { dead = true; };
+  const loadRun = useCallback(async (): Promise<void> => {
+    try {
+      const r = await fetch(`/api/workflows/${process.workflowId}/runs?run=${encodeURIComponent(process.runId)}`);
+      const j = r.ok ? await r.json() : null;
+      if (!aliveRef.current) return;
+      if (!j) {
+        // A failed re-read must never erase a run we already hold — a poll that blinks the drawer
+        // empty on one bad response is worse than the snapshot it replaced.
+        setRun((prev) => (prev === undefined ? null : prev));
+        setSteps((prev) => (prev === undefined ? null : prev));
+        return;
+      }
+      setRun(((j.runs ?? []) as DrawerRun[]).find((x) => x.id === process.runId) ?? null);
+      setSteps((j.steps ?? null) as WorkflowStep[] | null);
+    } catch {
+      if (!aliveRef.current) return;
+      setRun((prev) => (prev === undefined ? null : prev));
+      setSteps((prev) => (prev === undefined ? null : prev));
+    }
   }, [process.runId, process.workflowId]);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    void loadRun();
+    return () => { aliveRef.current = false; };
+  }, [loadRun]);
+
+  // ── THE BEAT — only while there is something left to watch. It stops on a terminal status, on
+  // unmount (the drawer closing IS unmount: it is rendered conditionally by both openers), and at
+  // the defensive ceiling. Never a permanent timer. ──
+  const status = run?.status ?? null;
+  const settled = !!status && TERMINAL_STATUSES.has(status);
+  const justDecided = decidedAt !== null && Date.now() - decidedAt < POST_DECISION_POLL_MS;
+  const shouldPoll = run !== undefined && (!settled || justDecided);
+  // The SAME primitive the ledger and the deep-dive use — one polling law, three surfaces.
+  useLiveRefresh(shouldPoll, () => { void loadRun(); }, { everyMs: POLL_MS, maxTicks: MAX_POLLS });
+
+  // ── THE NEXT GATE ARMS (found by the browser walk, Sep 1: after approving gate 1 the ledger's
+  // poll brought the fresh process prop — parked at gate 2 — but the sticky `decided` kept every
+  // later gate 'upcoming' until a close-and-reopen). A fresh park at a LATER station than the one
+  // decided clears the decision state, so the new gate's card arms in place, preview and all. ──
+  useEffect(() => {
+    if (!decided) return;
+    if ((process.state === 'needs_you' || process.state === 'waiting_on_others')
+      && process.stepsDone > decidedStepsRef.current) {
+      setDecided(null);
+      setDecidedAt(null);
+    }
+  }, [decided, process.state, process.stepsDone]);
 
   // THE OBJECT: the parked run's last step output that actually carries content — the run's own
   // bytes through the SAME derivation the commitment room's gate card uses (previewFromOutput).
@@ -245,22 +313,30 @@ export default function ProcessDrawer({
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approve }),
       });
       if (!r.ok) { toast.error('That decision did not land — try again.'); return; }
+      decidedStepsRef.current = process.stepsDone;
       setDecided(approve ? 'approved' : 'rejected');
+      setDecidedAt(Date.now());
+      // The deed is done server-side in after() — start watching immediately rather than waiting a
+      // whole beat to learn the run moved.
+      void loadRun();
       toast.success(approve ? `Approved — "${process.workflowName}" is delivering.` : 'Held back — nothing was delivered.');
       onDecided?.();
     } catch { toast.error('That decision did not land — try again.'); } finally { setBusy(false); }
-  }, [busy, process.runId, process.workflowName, onDecided]);
+  }, [busy, process.runId, process.workflowName, onDecided, loadRun]);
 
   // ── THE SUPPLY SETTLES THE SAME WAY A DECISION DOES. InputSupplyForm owns the POST (the one
   // resume door); this is only the drawer's reaction — the SAME seam decide() uses, so the station
   // card advances in place and the ledger behind the drawer re-reads. The user never leaves. ──
   const onSupplied = useCallback((outcome: SupplyOutcome) => {
+    decidedStepsRef.current = process.stepsDone;
     setDecided(outcome === 'supplied' ? 'supplied' : 'rejected');
+    setDecidedAt(Date.now());
+    void loadRun();
     toast.success(outcome === 'supplied'
       ? `Sent — "${process.workflowName}" picked up from there.`
       : 'Held back — the run stopped here.');
     onDecided?.();
-  }, [process.workflowName, onDecided]);
+  }, [process.workflowName, onDecided, loadRun]);
 
   // ── A DIFFERENT DEED, ITS OWN DOOR: nudge chases the person holding the gate. Owner-only and
   // capped server-side; the cap is spoken plainly, never dressed as a failure. ──
@@ -315,6 +391,15 @@ export default function ProcessDrawer({
     setRerunning(true);
     try { await onRunAgain(); } finally { setRerunning(false); }
   }, [onRunAgain, rerunning]);
+
+  // ── THE OUTCOME DOOR, IN PLACE (slice 3): a run that delivers while the drawer is open is read
+  // HERE — no page hop, and the SAME viewer every other workflow surface mounts. ──
+  const { open: openDoor, door } = useDeliverableDoor();
+  const openDeliverable = useCallback(() => {
+    const art = runDeliverable(run?.artifacts, run?.completed_at);
+    if (!run?.thread_id || !art?.id) return;
+    void openDoor(run.thread_id, art.id);
+  }, [run, openDoor]);
 
   const initial = (process.workflowName || process.subject || '?').trim().charAt(0).toUpperCase();
   const failed = process.state === 'needs_you' && !!process.reason;
@@ -435,20 +520,25 @@ export default function ProcessDrawer({
                             {status === 'waiting' ? sinceWord(process.startedAt) : status === 'upcoming' ? 'Upcoming' : 'Done'}
                           </span>
                         </div>
+                        {/* THE STANDING LINE sits under the title, where a status belongs — it is
+                            context, not an instruction, and as a full paragraph between the ask
+                            and the object it separated the two things the reader is comparing. */}
+                        {waiting && !decided && (
+                          <GateStandingLine
+                            done={process.stepsDone}
+                            total={process.stepsTotal || process.stepsDone}
+                            mode={isInput ? 'input' : iHoldIt ? 'mine' : 'other'}
+                            holder={holder}
+                          />
+                        )}
                         {ask && (
-                          <div className={`mt-1 text-[12.5px] ${status === 'upcoming' || status === 'done' ? 'text-neutral-400' : 'text-neutral-600'}`}>
-                            {ask}
-                          </div>
+                          <GateAsk
+                            text={ask}
+                            muted={status === 'upcoming' || status === 'done'}
+                          />
                         )}
                         {waiting && !decided && (
                           <>
-                            <div className="mt-1.5 text-[12.5px] text-neutral-600">
-                              {isInput
-                                ? `It ran ${process.stepsDone} of ${process.stepsTotal || process.stepsDone} steps and stopped here — it needs this from you before it can go on.`
-                                : iHoldIt
-                                  ? `It ran ${process.stepsDone} of ${process.stepsTotal || process.stepsDone} steps and stopped here — nothing is delivered until you say so.`
-                                  : `It ran ${process.stepsDone} of ${process.stepsTotal || process.stepsDone} steps and is waiting on ${holder}.`}
-                            </div>
                             {!isInput && <GateObject preview={gateObject} />}
                             {/* THE GATE CARRIES ITS DEED (owner walk, Aug 25: "why are we sending
                                 him to another screen"). The input station used to SAY "it's on your
@@ -576,19 +666,21 @@ export default function ProcessDrawer({
                     <span className="flex-1" />
                     <span className="text-[12px] text-neutral-500">{sinceWord(process.startedAt)}</span>
                   </div>
+                  {/* THE SAME GRAMMAR AS THE STATION CARD — standing line under the title, then
+                      the ask, then the object. The two cards are edited in lockstep and share
+                      GateStandingLine / GateAsk / GateObject, so the copy cannot fork. */}
+                  <GateStandingLine
+                    done={process.stepsDone}
+                    total={process.stepsTotal || process.stepsDone}
+                    mode={process.gateKind === 'input' ? 'input' : 'mine'}
+                  />
                   {process.gateKind === 'input' ? (
                     <>
-                      {process.gateAsk && <div className="mt-1 text-[12.5px] text-neutral-600">{process.gateAsk}</div>}
-                      <div className="mt-1.5 text-[12.5px] text-neutral-600">
-                        It ran {process.stepsDone} of {process.stepsTotal || process.stepsDone} steps and stopped here — it needs this from you before it can go on.
-                      </div>
+                      {process.gateAsk && <GateAsk text={process.gateAsk} />}
                       <InputSupplyForm runId={process.runId} onSettled={onSupplied} />
                     </>
                   ) : (
                     <>
-                      <div className="mt-1.5 text-[12.5px] text-neutral-600">
-                        It ran {process.stepsDone} of {process.stepsTotal || process.stepsDone} steps and stopped here — nothing is delivered until you say so.
-                      </div>
                       <GateObject preview={gateObject} />
                       <div className="mt-3 flex items-center gap-2">
                         <Button size="sm" onClick={() => void decide(true)} disabled={busy}>Approve — deliver it</Button>
@@ -602,13 +694,12 @@ export default function ProcessDrawer({
               )}
 
               {decided && (
-                <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-[13px] text-neutral-700">
-                  {decided === 'approved'
-                    ? 'Approved — it is delivering now.'
-                    : decided === 'supplied'
-                      ? 'Sent — the run picked up from there.'
-                      : 'Held back — nothing was delivered.'}
-                </div>
+                <DecisionOutcome
+                  decided={decided}
+                  run={run}
+                  stepsTotal={process.stepsTotal}
+                  onOpenDeliverable={openDeliverable}
+                />
               )}
 
               {failed && !decided && (
@@ -644,8 +735,93 @@ export default function ProcessDrawer({
           </Link>
         </div>
       </aside>
+      {/* The deliverable viewer rides ABOVE this drawer (its own portal, z-60) — the document the
+          run just delivered is read without leaving the gate you were standing at. */}
+      {door}
     </>,
     document.body,
+  );
+}
+
+// ── THE LIVE OUTCOME (slice 1, pilot Sep 1) — what happened AFTER the deed, in the run's own
+// current state. The old line was a single static grey sentence ("Approved — it is delivering
+// now.") that stayed true-shaped forever, whatever the run went on to do. Now it moves with the
+// polled run: delivering (with the beat the house already speaks — the ping dot + pulsing text),
+// delivered (with the door to what landed), or an honest failure. A run we cannot read claims
+// nothing beyond the deed itself.
+function DecisionOutcome({
+  decided, run, stepsTotal, onOpenDeliverable,
+}: {
+  decided: 'approved' | 'rejected' | 'supplied';
+  run: DrawerRun | null | undefined;
+  stepsTotal: number;
+  onOpenDeliverable: () => void;
+}) {
+  if (decided === 'rejected') {
+    return (
+      <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-[13px] text-neutral-700">
+        Held back — nothing was delivered.
+      </div>
+    );
+  }
+
+  const status = run?.status ?? null;
+  const done = (run?.step_outputs ?? []).length;
+  const hasDoor = !!run?.thread_id && !!runDeliverable(run?.artifacts, run?.completed_at)?.id;
+
+  if (status === 'succeeded') {
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3">
+        <div className="text-[13px] font-medium text-neutral-800">Delivered.</div>
+        {hasDoor ? (
+          <button
+            onClick={onOpenDeliverable}
+            className="mt-2 text-[12.5px] font-medium text-indigo-600 transition-colors hover:text-indigo-800"
+          >
+            Open deliverable →
+          </button>
+        ) : (
+          // No artifact on this run's thread — the deliverable went to its home (a message, Slack,
+          // an inbox). We say what we know and never hand out a door that opens nothing.
+          <div className="mt-1 text-[12.5px] text-neutral-500">It went to its delivery home — the Log has the run&apos;s output.</div>
+        )}
+      </div>
+    );
+  }
+
+  if (status === 'failed') {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50/60 px-4 py-3">
+        <div className="text-[13px] font-medium text-neutral-800">It stopped short after you approved it.</div>
+        {run?.error && <div className="mt-1 text-[12.5px] text-red-600">{run.error.slice(0, 200)}</div>}
+      </div>
+    );
+  }
+
+  if (status === 'cancelled' || status === 'rejected') {
+    return (
+      <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-[13px] text-neutral-700">
+        It stopped before delivering — nothing was sent.
+      </div>
+    );
+  }
+
+  // Still moving (or a status we could not read): the house's live grammar, never a spinner.
+  return (
+    <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 px-4 py-3">
+      <div className="flex items-center gap-2">
+        <span className="relative flex h-2 w-2">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-60" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-500" />
+        </span>
+        <span className="text-[13px] text-neutral-700 animate-pulse">
+          {stepsTotal > 0 ? `Delivering — step ${Math.min(done + 1, stepsTotal)}/${stepsTotal}` : 'Delivering…'}
+        </span>
+      </div>
+      <div className="mt-1 text-[12px] text-neutral-500">
+        {decided === 'supplied' ? 'It picked up from where it stopped.' : 'It picked up from your approval.'}
+      </div>
+    </div>
   );
 }
 
@@ -701,14 +877,94 @@ function SubprocessStation({ n, step, status, waitingSince }: {
 // decides is the whole find. The parked run's last step output, in its own bytes, in the SAME
 // grammar the commitment room's gate card uses. A run we couldn't read renders nothing at all:
 // the object is additive, and Approve never waits on it. ──
+// THE OBJECT READS LIKE THE WORK IT IS (pilot walk, Sep 1). The parked output was rendered as
+// raw text in a mono block — a reviewer facing a markdown report with ranked tables could not
+// judge it, and an approval you cannot read is an approval you cannot give. Prose renders as
+// prose through the SAME `MarkdownText` the chat surfaces use (one renderer, never a second
+// opinion about what markdown means); JSON keeps the mono block, where the punctuation IS the
+// meaning. The switch is STRUCTURAL, not a guess: previewFromOutput JSON-stringifies anything
+// that is not a string, so a leading { or [ is the machine-shaped case by construction.
+const looksLikeJson = (s: string) => /^[[{]/.test(s.trimStart());
+
+// ── THE STANDING LINE — where the run stands, said ONCE, quietly, under the station title.
+// It was a full-weight paragraph wedged between the ask and the object: the same visual weight
+// as the instruction, and physically separating the two things a reviewer compares. It is
+// context, not an instruction, so it wears context's type. Shared by both gate cards. ──
+function GateStandingLine({ done, total, mode, holder }: {
+  done: number;
+  total: number;
+  mode: 'input' | 'mine' | 'other';
+  holder?: string;
+}) {
+  return (
+    <div className="mt-0.5 text-[11.5px] text-neutral-500">
+      {`Ran ${done} of ${total} steps · `}
+      {mode === 'input'
+        ? 'stopped here — it needs this from you'
+        : mode === 'mine'
+          ? 'nothing is delivered until you say so'
+          : `waiting on ${holder ?? 'a teammate'}`}
+    </div>
+  );
+}
+
+// ── THE ASK, CLAMPED — a long authored instruction pushed the object (the thing being decided)
+// below the fold. Two lines, then the reader opens it by choice. `line-clamp-2` is CSS-only:
+// no measurement, no layout pass, and the full text is always one click away — never truncated
+// away. Shared by both gate cards. ──
+function GateAsk({ text, muted }: { text: string; muted?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > 160;
+  return (
+    <div className={`mt-1 text-[12.5px] ${muted ? 'text-neutral-400' : 'text-neutral-600'}`}>
+      <span className={open || !long ? '' : 'line-clamp-2'}>{text}</span>
+      {long && (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="ml-1 text-[11.5px] text-neutral-400 transition-colors hover:text-neutral-700"
+        >
+          {open ? 'less' : 'more'}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function GateObject({ preview }: { preview: { text: string; truncated: boolean } | null }) {
+  const [expanded, setExpanded] = useState(false);
   if (!preview) return null;
+  const json = looksLikeJson(preview.text);
+  // The collapsed height is a READING height, not a peek. "Show all" appears only when there is
+  // plausibly more than fits — measuring the real overflow would cost a layout pass on every
+  // render for an affordance that is harmless when it is unnecessary.
+  const mayOverflow = preview.text.length > 1200;
   return (
     <div className="mt-3">
       <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">What&apos;s being approved</div>
-      <div className="max-h-[280px] overflow-y-auto rounded-lg border border-neutral-200 bg-white px-3 py-2.5">
-        <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-neutral-700">{preview.text}</pre>
+      <div
+        className={`overflow-y-auto rounded-lg border border-neutral-200 bg-white px-3 py-2.5 ${expanded ? 'max-h-[70vh]' : 'max-h-[380px]'}`}
+      >
+        {json ? (
+          <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-neutral-700">{preview.text}</pre>
+        ) : (
+          // Tables are the reason this exists — they scroll INSIDE their own container (the
+          // shared renderer already wraps each one in overflow-x-auto), so a wide table never
+          // pushes the drawer sideways.
+          <div className="text-[13px] [&_table]:text-[12px]">
+            <MarkdownText content={preview.text} />
+          </div>
+        )}
       </div>
+      {mayOverflow && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-1 text-[11.5px] text-neutral-500 transition-colors hover:text-neutral-800"
+        >
+          {expanded ? 'Collapse ↑' : 'Show all ↓'}
+        </button>
+      )}
       {preview.truncated && (
         <div className="mt-1 text-[11px] text-neutral-400">— first 20,000 characters shown; the full output is in the Log.</div>
       )}

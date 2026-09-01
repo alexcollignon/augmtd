@@ -21,16 +21,18 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { FrameDeclineReason, FrameDiagnostics } from '@/lib/frames/generate-frame';
 
 export type FrameFromRunResult =
   | { ok: true; artifactId: string }
   /** Unknown / foreign / unusable — one shape for all of them. */
   | { ok: false; reason: 'not_found' }
-  /** The frame lane declined. The caller says so; it never ships another kind in a frame's name. */
-  | { ok: false; reason: 'declined' };
+  /** The frame lane declined. The caller says so; it never ships another kind in a frame's name.
+   *  `cause` is the OBSERVED reason (FrameDeclineReason), never a guess about the material —
+   *  the door's copy is chosen from it. Absent when the lane failed without naming itself. */
+  | { ok: false; reason: 'declined'; cause?: FrameDeclineReason };
 
 const NOT_FOUND = { ok: false, reason: 'not_found' } as const;
-const DECLINED = { ok: false, reason: 'declined' } as const;
 
 /** The run's deliverable text — the LAST step's output, exactly as the run loop reads it. */
 function finalTextOf(stepOutputs: unknown): string {
@@ -85,14 +87,24 @@ export async function createFrameFromRun(
   const title = (workflow.name || 'Frame').slice(0, 120);
 
   // ── THE ONE PRODUCTION DOOR, forced onto the frame lane. ──
+  // THE HONEST CAUSE rides out with the refusal: this door ASKED for a frame, so when the lane
+  // declines the user is owed the observed reason (too large / rejected / transient), not a
+  // sentence about the run's shape that nothing measured.
+  const frameDiagnostics: FrameDiagnostics = {};
   const { materializeDocument } = await import('@/lib/documents/materialize');
   const m = await materializeDocument(admin, userId, {
     title,
     content,
     request: title,
     forceType: 'frame',
+    frameDiagnostics,
   });
-  if (m.type !== 'frame') return DECLINED;
+  if (m.type !== 'frame') {
+    console.warn(
+      `[frames/from-run] declined for run ${runId}: ${frameDiagnostics.reason ?? 'unknown'} — ${frameDiagnostics.detail ?? 'no detail recorded'}`,
+    );
+    return { ok: false, reason: 'declined', cause: frameDiagnostics.reason };
+  }
 
   const outTitle = (typeof m.content === 'object' && m.content && 'title' in m.content && m.content.title)
     ? String(m.content.title)

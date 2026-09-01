@@ -13,7 +13,6 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import {
@@ -23,7 +22,11 @@ import {
 } from '@heroicons/react/24/outline';
 import { Button, Badge } from '@/components/ui';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
-import { ThreadArtifactsPanel } from '@/components/work/chat-artifact-panel';
+// THE OUTCOME DOOR — this page used to own the ONLY way into a delivered document; it now mounts
+// the shared one (components/workflows/deliverable-door.tsx), which the deep-dive and the process
+// drawer mount too.
+import { runDeliverable, useDeliverableDoor } from '@/components/workflows/deliverable-door';
+import { useLiveRefresh } from '@/components/workflows/use-live-refresh';
 import { ExpandableRows } from '@/components/home/expandable-rows';
 import ProcessDrawer, { GateChip, GateFindings } from '@/components/workflows/process-drawer';
 import RunMaterialSheet, { asksForMaterial, type RunMaterial } from '@/components/workflows/run-material-sheet';
@@ -33,7 +36,6 @@ import { FIRE_LIMIT_DEFAULT } from '@/lib/workflows/fire-limit';
 import { doorLabel } from '@/lib/workflows/trigger-sources';
 import type { ReactionDoor } from '@/lib/workflows/trigger-sources';
 import type { ProcessRow } from '@/lib/workflows/process-state';
-import type { DocumentArtifact } from '@/lib/types/inbox';
 import type { GateVerdict } from '@/lib/workflows/types';
 
 type LedgerRow = {
@@ -119,6 +121,8 @@ const triggerWord = (t: Draft['trigger']): string =>
   'Runs on demand';
 
 const LS_KEY = 'aug-wf-ledger-v1';
+/** How fresh a cache has to be before it may claim something is live right now (the stamped law). */
+const ACTIVE_MAX_AGE_MS = 60_000;
 const HOME_WORD: Record<string, string> = { message: 'a message', document: 'a document', slack: 'Slack', email: 'your inbox' };
 
 const stepWord = (s: DraftStep): string => {
@@ -142,7 +146,10 @@ const TEMPLATES: Template[] = [
   { label: 'Flag emails that need an action from me', prompt: 'Whenever an email arrives that asks me for a decision, payment, or signature, summarize it and flag what to do', category: 'email', icon: EyeIcon },
   { label: 'A weekly industry briefing', prompt: 'Every Monday at 9am, a briefing on the week\'s most relevant industry and market news, delivered as a document', category: 'briefings', icon: NewspaperIcon },
   { label: 'A weekly competitor digest to my inbox', prompt: 'Every Monday at 9, a competitor digest to my inbox', category: 'briefings', icon: DocumentTextIcon },
-  { label: 'Watch Portuguese public tenders', prompt: 'Every Monday morning, check new Portuguese public tenders relevant to my business and send me the shortlist', category: 'watch', icon: EyeIcon },
+  // Market-neutral (pilot feedback: "Portuguese tenders" read as noise to an international
+  // client; no country signal exists to gate by — the generator resolves the right sources
+  // per user, and PT accounts still get Base.gov via get_pt_tenders when the market fits).
+  { label: 'Watch public tenders & RFPs in my market', prompt: 'Every Monday morning, check new public tenders and RFPs relevant to my business and market, and send me the shortlist', category: 'watch', icon: EyeIcon },
   { label: 'Prep me for the week\'s meetings', prompt: 'Every Monday at 8am, a look-ahead on this week\'s meetings — who I\'m meeting, what\'s open with them, what to prepare', category: 'meetings', icon: CalendarDaysIcon },
 ];
 const CATEGORIES: Array<{ id: Template['category'] | 'all'; label: string }> = [
@@ -161,7 +168,7 @@ function DraftingPulse() {
     'Laying out the steps…',
     'Placing your gates and checks…',
     'Wiring the delivery…',
-    'Still working — a long description can take up to a minute…',
+    'Still working — a long description can take up to a minute. Keep this tab open…',
   ];
   const [i, setI] = useState(0);
   useEffect(() => {
@@ -200,9 +207,6 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
   const [openProcess, setOpenProcess] = useState<ProcessRow | null>(null); // THE PROCESS DRAWER's subject
   const mounted = useRef(true);
 
-  // THE DELIVERABLE VIEWER — "open" on a run opens the document HERE (the same docked panel the
-  // Home chat uses), never a chat page.
-  const [artifactPanel, setArtifactPanel] = useState<{ thread: { id: string; title: string; artifacts?: DocumentArtifact[] }; initialId: string | null } | null>(null);
   // THE SEEN SIGNAL (coherence slice #1): opening runs/deliverables here IS reviewing — the
   // stamp feeds auto-pause honestly and clears the sidebar badge (one mechanic).
   const markReviewed = useCallback((workflowId?: string) => {
@@ -218,15 +222,11 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
       body: JSON.stringify(workflowId ? { workflowId } : {}),
     }).then(() => { try { window.dispatchEvent(new CustomEvent('aug:conversation-changed')); } catch { /* SSR */ } }).catch(() => {});
   }, []);
-  const openDeliverable = async (threadId: string, artifactId: string, workflowId?: string) => {
-    if (workflowId) markReviewed(workflowId);
-    try {
-      const d = await fetch(`/api/work/threads/${threadId}/messages`).then((r) => (r.ok ? r.json() : null));
-      const th = d?.thread as { id: string; title?: string; artifacts?: DocumentArtifact[] } | null;
-      if (!th) throw new Error();
-      setArtifactPanel({ thread: { id: th.id, title: th.title ?? 'Work', artifacts: th.artifacts ?? [] }, initialId: artifactId });
-    } catch { toast.error("Couldn't open that document just now — try again."); }
-  };
+  // THE DELIVERABLE VIEWER — "open" on a run opens the document HERE (the same docked panel the
+  // Home chat uses), never a chat page. Opening it IS reviewing, so the seen stamp rides the door.
+  const { open: openDeliverable, door: deliverableDoor } = useDeliverableDoor({
+    onOpen: (workflowId) => { if (workflowId) markReviewed(workflowId); },
+  });
 
   const refresh = useCallback(async (background = false) => {
     if (!background) setLoading(true);
@@ -247,8 +247,23 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
 
   useEffect(() => {
     mounted.current = true;
+    // ── THE STAMPED-CACHE LAW, APPLIED TO THE LIVE HALF (slice 1) ────────────────────────────
+    // The warm paint of the workflow LIST (what stands: names, schedules, projects) is ambient and
+    // hydrates from a 15-minute cache as before. The ACTIVE half — the processes strip and a row's
+    // "running — step N/M" — is an ACTION claim about right now, and a 14-minute-old claim that
+    // something is running is exactly the show-then-retract the law forbids. So a cache too old to
+    // trust still paints the list and paints the live half EMPTY; the refresh below fills it in.
     const cached = loadLS<LedgerPayload>(LS_KEY, { maxAgeMs: 15 * 60_000 });
-    if (cached) { setData(cached); setLoading(false); void refresh(true); }
+    if (cached) {
+      const fresh = loadLS<LedgerPayload>(LS_KEY, { maxAgeMs: ACTIVE_MAX_AGE_MS });
+      setData(fresh ?? {
+        ...cached,
+        processes: [],
+        ledger: (cached.ledger ?? []).map((w) => ({ ...w, runningProgress: null })),
+      });
+      setLoading(false);
+      void refresh(true);
+    }
     else void refresh();
     return () => { mounted.current = false; };
   }, [refresh]);
@@ -426,6 +441,12 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
     (p) => p.state === 'delivered' && Date.now() - new Date(p.endedAt ?? p.startedAt).getTime() < DELIVERED_WINDOW_MS,
   );
   const liveProcesses = processes.filter((p) => p.state === 'needs_you' || p.state === 'running' || p.state === 'waiting_on_others');
+  // ── THE LIVE BEAT (slice 1): while at least one process is in flight or parked, the ledger
+  // re-reads itself on a slow beat — an approval taken in the drawer, a run that finishes, a gate a
+  // teammate clears all land here without a manual reload. Nothing live → no timer at all, and the
+  // beat stops itself after the cap in use-live-refresh (never a permanent poll). ──
+  const anyLive = liveProcesses.length > 0 || rows.some((w) => !!w.runningProgress);
+  useLiveRefresh(anyLive, () => { void refresh(true); });
   const bucketCounts: Record<string, number> = {
     needs_you: processes.filter((p) => p.state === 'needs_you').length,
     running: processes.filter((p) => p.state === 'running').length,
@@ -953,17 +974,7 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
       {/* ── THE DELIVERABLE VIEWER — PORTALED to body (THE OVERLAY LAW: the lens's RiseIn
           transform makes any in-tree `fixed` position against the animated box, not the
           viewport — the sheet floated mid-page). Docked flush, same panel as the Home chat. ── */}
-      {artifactPanel && typeof document !== 'undefined' && createPortal(
-        <div className="fixed right-0 top-0 z-40 h-screen w-[min(720px,94vw)] border-l border-neutral-200 shadow-[-12px_0_40px_-24px_rgba(23,23,23,0.25)] bg-neutral-50">
-          <ThreadArtifactsPanel
-            thread={artifactPanel.thread}
-            onClose={() => setArtifactPanel(null)}
-            initialDetailId={artifactPanel.initialId}
-            onArtifactsUpdate={(arts) => setArtifactPanel((p) => (p ? { ...p, thread: { ...p.thread, artifacts: arts } } : p))}
-          />
-        </div>,
-        document.body,
-      )}
+      {deliverableDoor}
 
       {/* THE MATERIAL DOOR — the SAME sheet the workflow deep-dive mounts, opened from the row's
           play button when this workflow asks what a hand-run should work on. */}
@@ -1024,14 +1035,9 @@ function RunAudit({ workflowId, onOpenDeliverable }: { workflowId: string; onOpe
     const m = (new Date(r.completed_at).getTime() - new Date(r.started_at).getTime()) / 60000;
     return m >= 1 ? `${Math.round(m)} min` : `${Math.round(m * 60)}s`;
   };
-  const runArtifact = (r: AuditRun) => {
-    const arts = r.artifacts ?? [];
-    if (!arts.length || !r.completed_at) return arts[0] ?? null;
-    // The document from THIS run: the newest artifact generated at or before the run finished.
-    const done = new Date(r.completed_at).getTime() + 60_000;
-    return [...arts].filter((a) => a.generated_at && new Date(a.generated_at).getTime() <= done)
-      .sort((a, b) => String(b.generated_at).localeCompare(String(a.generated_at)))[0] ?? null;
-  };
+  // The document from THIS run — the ONE shared pick (deliverable-door.ts), so the ledger, the
+  // deep-dive and the drawer can never disagree about which artifact a run delivered.
+  const runArtifact = (r: AuditRun) => runDeliverable(r.artifacts, r.completed_at);
   const CHIP: Record<string, { tone: 'emerald' | 'red' | 'amber' | 'neutral' | 'indigo'; word: string }> = {
     succeeded: { tone: 'emerald', word: 'Delivered' }, failed: { tone: 'red', word: 'Failed' },
     rejected: { tone: 'neutral', word: 'Held back' }, awaiting_approval: { tone: 'amber', word: 'Waiting for you' },
