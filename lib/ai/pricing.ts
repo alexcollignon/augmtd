@@ -13,11 +13,13 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   // OpenAI
   'gpt-4o-mini':              { inputPer1M: 0.14, outputPer1M: 0.55 },
   'gpt-4o':                   { inputPer1M: 2.30, outputPer1M: 9.20 },
+  'gpt-5-mini':               { inputPer1M: 0.23, outputPer1M: 1.85 },
   'text-embedding-3-small':   { inputPer1M: 0.02, outputPer1M: 0 },
 
   // Anthropic (direct)
   'claude-haiku-4-5-20251001': { inputPer1M: 0.90, outputPer1M: 4.50 },
   'claude-sonnet-4-6':         { inputPer1M: 2.80, outputPer1M: 14.00 },
+  'claude-sonnet-5':           { inputPer1M: 1.85, outputPer1M: 9.20 },
 
   // AWS Bedrock EU (same underlying Claude models, Bedrock pricing)
   'eu.anthropic.claude-haiku-4-5-20251001-v1:0':  { inputPer1M: 0.90, outputPer1M: 4.50 },
