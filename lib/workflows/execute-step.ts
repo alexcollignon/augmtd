@@ -174,6 +174,15 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
     });
     case 'browser_fetch':     return await executeBrowserFetch(step.config);
     case 'get_pt_tenders':    return await executePtTenders(step.config);
+    case 'match_to_profiles': {
+      const { executeMatchToProfiles } = await import('@/lib/tools/match-to-profiles');
+      return await executeMatchToProfiles(step.config, {
+        userId: ctx.userId, supabase: ctx.supabase,
+        previousOutputs: ctx.previousOutputs, workflowId: ctx.workflowId,
+        // The report follows the workflow's own output language unless the step names one.
+        outputLanguage: ctx.outputLanguage,
+      });
+    }
     case 'deep_research': {
       const drConfig = { ...(step.config as unknown as Parameters<typeof executeDeepResearch>[0]) };
       // Inherit output language if not explicitly set on the step
@@ -519,8 +528,12 @@ function clip(s: unknown, n: number): string {
 
 /** THE GATE DESCRIBES, NEVER INVENTS — a finding with no quote from the draft is dropped, an
  *  unknown source/action is coerced rather than trusted. Sanitizing here keeps every downstream
- *  surface (verdict chips, findings lists) reading structurally valid data. */
-function sanitizeFindings(raw: unknown): GateFinding[] {
+ *  surface (verdict chips, findings lists) reading structurally valid data.
+ *  `allowedStepLabels`: a stepLabel points home ONLY at a registered step check — a model that
+ *  helpfully invents one on a plain gate-rule finding (Sonnet 5 does, Sonnet 4.6 didn't) would
+ *  point the audit at the wrong owner; the attribution promise is code's, not the model's, so an
+ *  unregistered label is dropped (the structural fallback below re-attributes legitimate ones). */
+function sanitizeFindings(raw: unknown, allowedStepLabels?: ReadonlySet<string>): GateFinding[] {
   if (!Array.isArray(raw)) return [];
   const out: GateFinding[] = [];
   for (const r of raw.slice(0, 30)) {
@@ -538,7 +551,7 @@ function sanitizeFindings(raw: unknown): GateFinding[] {
     out.push({
       source, action, quote,
       ...(source === 'rule' && rule ? { rule } : {}),
-      ...(source === 'rule' && stepLabel ? { stepLabel } : {}),
+      ...(source === 'rule' && stepLabel && allowedStepLabels?.has(stepLabel) ? { stepLabel } : {}),
       ...(note ? { note } : {}),
     });
   }
@@ -626,7 +639,10 @@ async function executeVerifyStep(
   // the whole output is the safest text, and the verdict is not trustworthy as a report.
   if (!body) return { text: raw, verdict: degraded };
 
-  const findings = mergeFindings(floorFindings, sanitizeFindings(parsed.findings));
+  const allowedStepLabels = new Set(
+    (ctx.stepChecks ?? []).map(c => clip(c?.stepLabel, 80)).filter(Boolean),
+  );
+  const findings = mergeFindings(floorFindings, sanitizeFindings(parsed.findings, allowedStepLabels));
   // STRUCTURAL ATTRIBUTION FALLBACK: a rule finding whose text matches a step check points home
   // even when the model forgot stepLabel — the attribution promise is code's, not the model's.
   const checks = ctx.stepChecks ?? [];
@@ -812,30 +828,50 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
     guardrailFeedbackBlock(ctx),
   ].filter(Boolean).join('\n\n');
 
-  const res = await aiCreate(resolved.client, {
-    model: resolved.model,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user',   content: userPrompt },
-    ],
-    temperature: 0.3,
-    max_tokens: step.model_tier === 'reasoning' ? 12000 : 4000,
-    ...(step.output_format === 'json' ? { response_format: { type: 'json_object' } } : {}),
-  });
+  // THE EMPTY-COMPLETION FLOOR (Aug 31, caught by the guardrails G5 replay): a transient empty
+  // completion used to flow downstream as a silent '' — the run "succeeded" with an empty
+  // deliverable and the verify gate could only say "nothing to verify". One retry, then an
+  // honest failure: a marked failed run is retryable; a blank success is a standing lie.
+  let text = '';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await aiCreate(resolved.client, {
+      model: resolved.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user',   content: userPrompt },
+      ],
+      temperature: 0.3,
+      // THE PER-PROVIDER REASONING BUDGET (Sep 1, both ceilings observed live):
+      //  • bedrock: the Anthropic Bedrock SDK REFUSES non-streaming calls much above 12k
+      //    ("Streaming is required for operations that may take longer than 10 minutes" —
+      //    a 32000 experiment broke every bedrock-tier gate). 12k is its historical value.
+      //  • everywhere else: thinking-capable models (claude-sonnet-5) spend part of this
+      //    budget in the reasoning channel — at 12k a big synthesis step burned it all and
+      //    returned EMPTY with finish=length (reasoning_effort hints did NOT prevent it);
+      //    32k leaves the answer room. A cap is not a bill — only emitted tokens cost.
+      max_tokens: step.model_tier === 'reasoning'
+        ? (resolved.endpoint.provider === 'bedrock' ? 12000 : 32000)
+        : 4000,
+      ...(step.output_format === 'json' ? { response_format: { type: 'json_object' } } : {}),
+    });
 
-  logAIUsage(ctx.supabase, {
-    userId: ctx.userId,
-    agentId: ctx.workerAgentId ?? null,
-    workflowId: ctx.workflowId ?? null,
-    source: 'workflow_step',
-    provider: resolved.endpoint.provider,
-    model: resolved.model,
-    tier: resolved.tier,
-    taskType: task,
-    usage: res.usage,
-  }).catch(() => {});
+    logAIUsage(ctx.supabase, {
+      userId: ctx.userId,
+      agentId: ctx.workerAgentId ?? null,
+      workflowId: ctx.workflowId ?? null,
+      source: 'workflow_step',
+      provider: resolved.endpoint.provider,
+      model: resolved.model,
+      tier: resolved.tier,
+      taskType: task,
+      usage: res.usage,
+    }).catch(() => {});
 
-  return res.choices[0]?.message?.content?.trim() ?? '';
+    text = res.choices[0]?.message?.content?.trim() ?? '';
+    if (text) return text;
+    console.warn(`[executeAIStep] empty completion from ${resolved.model} (attempt ${attempt + 1}/2, finish=${res.choices[0]?.finish_reason ?? '?'}) — ${attempt === 0 ? 'retrying once' : 'failing honestly'}`);
+  }
+  throw new Error(`AI step "${step.label ?? step.id}" returned an empty completion twice (${resolved.model})`);
 }
 
 // ── Language helper ───────────────────────────────────────────────────────────

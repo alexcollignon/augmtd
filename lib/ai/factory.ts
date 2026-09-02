@@ -61,6 +61,57 @@ async function getTenantConfig(userId: string, supabase: SupabaseClient): Promis
 
 const clientCache = new Map<string, OpenAI>()
 
+// ─── THE MODEL PARAM FLOOR (Aug 31) ─────────────────────────────────────────────
+// Current-generation models reject the classic completion params, and 23 call sites
+// invoke chat.completions.create directly (streaming included) — so the rewrite lives
+// on the client itself, not in aiCreate: one transport-layer fix for every site, the
+// same pattern as the response_format strip. Two families, proven live:
+//  • gpt-5 family: `max_tokens` must be `max_completion_tokens`; `temperature`/`top_p`
+//    are fixed (400 on any non-default); reasons by default — on JSON-shaped prompts
+//    with small budgets the reasoning channel eats the tokens and content comes back
+//    empty (the Kimi lesson, lib/ai/call.ts), so `reasoning_effort` defaults to
+//    'minimal' (our prompts were written for non-reasoning models); a caller that
+//    wants depth passes its own value.
+//  • Claude 4.7+/5 family (sonnet-5, opus-5/4-8/4-7, fable-5): sampling params were
+//    removed — `temperature` returns 400 "deprecated for this model" (observed live
+//    on claude-sonnet-5, Aug 31). Haiku 4.5 / Sonnet 4.6 still accept them.
+const CLAUDE_NO_SAMPLING_RE = /^claude-(sonnet-5|opus-5|opus-4-[78]|fable-5)/
+function withModelParamFloor(client: OpenAI): OpenAI {
+  const completions = client.chat.completions
+  const orig = completions.create.bind(completions)
+  ;(completions as { create: unknown }).create = (params: { model?: unknown; [k: string]: unknown }, opts?: unknown) => {
+    const model = typeof params?.model === 'string' ? params.model : ''
+    if (model.startsWith('gpt-5')) {
+      const p = { ...params }
+      if (p.max_tokens != null && p.max_completion_tokens == null) {
+        p.max_completion_tokens = p.max_tokens
+        delete p.max_tokens
+      }
+      delete p.temperature
+      delete p.top_p
+      if (p.reasoning_effort == null) p.reasoning_effort = 'minimal'
+      return (orig as (p: unknown, o?: unknown) => unknown)(p, opts)
+    }
+    if (CLAUDE_NO_SAMPLING_RE.test(model)) {
+      const p = { ...params }
+      delete p.temperature
+      delete p.top_p
+      // These models think ADAPTIVELY by default and thinking tokens count against
+      // max_tokens: a big synthesis step burned all 12k thinking and returned EMPTY with
+      // finish=length (guardrails G5, live Aug 31–Sep 1). 'none' asks for no thinking,
+      // but the compat endpoint treats it as a HINT — the burn was still observed with
+      // it set, so the real protection is the caller's budget (see THE PER-PROVIDER
+      // REASONING BUDGET in execute-step.ts). The hint stays because it is accepted,
+      // harmless, and matches what every prompt here was written for (Sonnet 4.6 on the
+      // old standard tier never thought). A caller wanting depth passes its own value.
+      if (p.reasoning_effort == null) p.reasoning_effort = 'none'
+      return (orig as (p: unknown, o?: unknown) => unknown)(p, opts)
+    }
+    return (orig as (p: unknown, o?: unknown) => unknown)(params, opts)
+  }
+  return client
+}
+
 function buildClient(endpoint: ModelEndpoint, config: TenantConfig): OpenAI {
   const cacheKey = endpoint.baseURL ?? endpoint.provider
 
@@ -89,14 +140,14 @@ function buildClient(endpoint: ModelEndpoint, config: TenantConfig): OpenAI {
       defaultHeaders['api-key'] = apiKey
     }
 
-    clientCache.set(cacheKey, new OpenAI({
+    clientCache.set(cacheKey, withModelParamFloor(new OpenAI({
       apiKey,
       baseURL: endpoint.baseURL,
       defaultHeaders: Object.keys(defaultHeaders).length > 0 ? defaultHeaders : undefined,
       defaultQuery: endpoint.provider === 'azure_openai' && endpoint.apiVersion
         ? { 'api-version': endpoint.apiVersion }
         : undefined,
-    }))
+    })))
   }
 
   return clientCache.get(cacheKey)!
@@ -194,6 +245,19 @@ export function getSystemClient(task: TaskType): ResolvedClient {
  */
 export function invalidateTenantConfig(userId: string): void {
   configCache.delete(userId)
+}
+
+/**
+ * Client for an explicit endpoint, platform credentials — the superadmin status page's
+ * probe door. Rides the SAME buildClient as production traffic (param floor included),
+ * so a probe result is evidence about the real transport, not a lookalike.
+ */
+export function getEndpointClient(endpoint: ModelEndpoint): OpenAI {
+  const systemConfig: TenantConfig = {
+    userId: 'system', tier: 'standard', modelOverrides: {}, endpoints: {},
+    encryptedApiKeys: {}, auditLogging: false, modelVersionPinning: false,
+  }
+  return buildClient(endpoint, systemConfig)
 }
 
 // ─── AI completion helper ───────────────────────────────────────────────────────

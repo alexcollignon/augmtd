@@ -258,6 +258,11 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     tool: 'browser_fetch', built: true, kind: 'atomic', irreversible: false, feature: null, exposure: ['workflow'],
     blurb: 'FETCH a JS-rendered page with a headless browser (fallback for dynamic sites)',
   },
+  match_to_profiles: {
+    intent: 'match the previous step\'s items against a folder of files and report who fits',
+    tool: 'match_to_profiles', built: true, kind: 'judgment', irreversible: false, feature: 'drive', exposure: ['workflow'],
+    blurb: 'MATCH TO FILES — the previous step\'s items against a knowledge-base folder holding one file per candidate (evidence-checked rationale, each item reported once)',
+  },
   get_pt_tenders: {
     intent: 'fetch Portuguese public tenders/contracts from Portal Base (Base.gov.pt)',
     tool: 'get_pt_tenders', built: true, kind: 'atomic', irreversible: false, feature: null, exposure: ['workflow'],

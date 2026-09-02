@@ -3,7 +3,8 @@ import { redirect } from 'next/navigation';
 import PlatformAdminClient from '@/app/platform-admin/platform-admin-client';
 import { isSuperAdmin } from '@/lib/company/is-super-admin';
 
-export default async function PlatformAdminPage() {
+export default async function PlatformAdminPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+  const { tab } = await searchParams;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
@@ -38,5 +39,5 @@ export default async function PlatformAdminPage() {
     meeting_assistant: c.settings?.meeting_assistant ?? true,
   }));
 
-  return <PlatformAdminClient initialCompanies={companiesWithCount} />;
+  return <PlatformAdminClient initialCompanies={companiesWithCount} initialTab={tab} />;
 }

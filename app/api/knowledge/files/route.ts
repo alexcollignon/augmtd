@@ -1,43 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient as createServerSupabase } from '@/lib/supabase/server';
-import { createClient } from '@supabase/supabase-js';
-import { searchKnowledge } from '@/lib/knowledge/indexer';
-import { sanitizeError } from '@/lib/utils/api-error';
+import { createClient } from '@/lib/supabase/server';
+import { listKbFiles, KB_PAGE, type KindFilter } from '@/lib/knowledge/overview';
 
+export const maxDuration = 15;
+
+const KINDS = new Set(['all', 'meeting', 'attachment', 'upload', 'generated']);
+
+// GET /api/knowledge/files — one PAGE of the knowledge base. The overview never ships more than a
+// bounded slice (the honest-numbers law: counts come from counts, rows come a page at a time), so
+// this is the door every "expand a folder", "Show all N", and search hit comes back through.
+//
+//   ?folderId=<uuid>   files in that folder      ?folderId=none  files with no folder
+//   ?kind=             the active source tab     ?q=             filename search (server-side —
+//   ?ids=a,b,c         an explicit set (how the panel folds the SEMANTIC search hits in beside
+//                      the name matches, since /api/drive/search returns ids only)
+//   ?offset= &limit=
 export async function GET(request: NextRequest) {
-  const supabase = await createServerSupabase();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  try {
+    const supabase = await createClient();
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { searchParams } = new URL(request.url);
-  const sourceId = searchParams.get('source_id');
-  const search = searchParams.get('search');
-  const limit = Math.min(parseInt(searchParams.get('limit') ?? '20', 10), 100);
-  const offset = parseInt(searchParams.get('offset') ?? '0', 10);
+    const sp = new URL(request.url).searchParams;
+    const rawFolder = sp.get('folderId');
+    const rawKind = sp.get('kind') ?? 'all';
+    const ids = (sp.get('ids') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
-  // Semantic search path
-  if (search && search.trim().length > 0) {
-    const adminClient = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { autoRefreshToken: false, persistSession: false } }
-    );
-    const results = await searchKnowledge(user.id, search, limit, adminClient);
-    return NextResponse.json({ data: results, total: results.length });
+    const out = await listKbFiles(supabase, user.id, {
+      ...(rawFolder === null ? {} : { folderId: rawFolder === 'none' ? null : rawFolder }),
+      kind: (KINDS.has(rawKind) ? rawKind : 'all') as KindFilter,
+      q: sp.get('q') ?? undefined,
+      ...(ids.length ? { ids } : {}),
+      offset: Number(sp.get('offset') ?? 0) || 0,
+      limit: Number(sp.get('limit') ?? KB_PAGE) || KB_PAGE,
+    });
+
+    return NextResponse.json(out);
+  } catch (e) {
+    console.error('[knowledge/files]', e);
+    return NextResponse.json({ error: 'failed' }, { status: 500 });
   }
-
-  // Paginated browse path
-  let query = supabase
-    .from('knowledge_files')
-    .select('id, user_id, source_id, provider_file_id, filename, mime_type, size_bytes, indexed_at, folder_id, knowledge_sources(provider, folder_name)', { count: 'exact' })
-    .eq('user_id', user.id)
-    .order('indexed_at', { ascending: false })
-    .range(offset, offset + limit - 1);
-
-  if (sourceId) query = query.eq('source_id', sourceId);
-
-  const { data, error, count } = await query;
-  if (error) return NextResponse.json({ error: sanitizeError(error) }, { status: 500 });
-
-  return NextResponse.json({ data: data ?? [], total: count ?? 0 });
 }

@@ -11,17 +11,24 @@ import type { TaskType, TierType, ModelEndpoint } from './types'
 // - on_prem:         Same as private_client, different auth
 
 export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = {
-  // ── Standard — current production setup ──────────────────────────────────────
+  // ── Standard — current production setup (volume slots refreshed Aug 31) ───────
+  // gpt-4o-mini carried every judgment/volume slot (incl. the ONE work judgment via
+  // aiCall's jsonFast route) — a 2024 budget model under 2026 prompts. Replaced with
+  // gpt-5-mini (~same price band, far stronger). gpt-5 and Claude-5 family API
+  // differences (max_completion_tokens, removed sampling params, reasoning channel) are
+  // absorbed at the transport layer — THE MODEL PARAM FLOOR in factory.ts's buildClient —
+  // so the 100+ call sites stay untouched. conversation: Sonnet 4.6 → Sonnet 5 (better AND cheaper).
+  // ocr: gpt-4o → gpt-5-mini (vision-capable at a tenth of the input rate).
   standard: {
-    planning:      { provider: 'openai',     model: 'gpt-4o-mini' },
+    planning:      { provider: 'openai',     model: 'gpt-5-mini' },
     generation:    { provider: 'anthropic',  model: 'claude-haiku-4-5-20251001',
                      baseURL: 'https://api.anthropic.com/v1' },
-    summarization: { provider: 'openai',     model: 'gpt-4o-mini' },
-    classification:{ provider: 'openai',     model: 'gpt-4o-mini' },
+    summarization: { provider: 'openai',     model: 'gpt-5-mini' },
+    classification:{ provider: 'openai',     model: 'gpt-5-mini' },
     embeddings:    { provider: 'bedrock',    model: 'cohere.embed-multilingual-v3', dimensions: 1024 },
-    ocr:           { provider: 'openai',     model: 'gpt-4o' },
-    assignment:    { provider: 'openai',     model: 'gpt-4o-mini' },
-    conversation:  { provider: 'anthropic',  model: 'claude-sonnet-4-6',
+    ocr:           { provider: 'openai',     model: 'gpt-5-mini' },
+    assignment:    { provider: 'openai',     model: 'gpt-5-mini' },
+    conversation:  { provider: 'anthropic',  model: 'claude-sonnet-5',
                      baseURL: 'https://api.anthropic.com/v1' },
   },
 

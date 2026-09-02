@@ -31,6 +31,15 @@ export async function POST(request: NextRequest) {
     const { name, parentId } = await request.json() as { name: string; parentId?: string };
     if (!name?.trim()) return NextResponse.json({ error: 'name is required' }, { status: 400 });
 
+    // ONE NAME, ONE FOLDER. A workflow step points at a folder BY NAME (`read_kb_folder`,
+    // `match_to_profiles` — the token ladder resolves spellings WITHIN one folder, never BETWEEN
+    // two), so a second folder wearing the same name is an ambiguity that silently kills a task.
+    const { data: clash } = await supabase
+      .from('drive_folders').select('id, name').eq('user_id', user.id).ilike('name', name.trim()).limit(1);
+    if ((clash ?? []).length) {
+      return NextResponse.json({ error: `You already have a folder called "${name.trim()}".` }, { status: 409 });
+    }
+
     const { data, error } = await supabase
       .from('drive_folders')
       .insert({ user_id: user.id, name: name.trim(), parent_id: parentId ?? null })

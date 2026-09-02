@@ -1,7 +1,11 @@
 // CONVERSATION CORE SMOKE (P6b) — the one mouth-and-hand, cross-user. Gates:
-//   STRUCTURAL — the chief-of-staff capability slice contains ZERO irreversible tools (no code path
-//     from chat to a commit — approve-before-commit is structural); exposure filtering holds (a
-//     coworker-only tool never reaches the chief slice and vice versa).
+//   STRUCTURAL — the chief slice's irreversible tools are EXACTLY the commit-door-mediated sends
+//     (THE PARITY LAW, Aug 4: send_prepared_reply lives in chat but NEVER sends from the loop —
+//     a deterministic EXPLICIT_SEND floor on the user's own words + a returned `commit` the
+//     CLIENT fires through the one send route; both asserted in source). Any OTHER irreversible
+//     tool reaching the slice fails loudly. Exposure filtering holds (a coworker-only tool never
+//     reaches the chief slice and vice versa). (The pre-Aug-4 blanket "zero irreversible in chief"
+//     went stale the day the parity law shipped — updated Sep 1 to the law as it actually stands.)
 //   LIVE (both users, snapshot-restored — no trace):
 //     • "dismiss this" on a real pending item → the registry executor fires, the item resolves,
 //       activity is logged; then restored.
@@ -9,6 +13,7 @@
 //     • "where does this stand?" → a grounded, ref-carrying answer (the question path).
 //     • a correction with a durable fact → the fact lands on the deal's rules (restored).
 import { config } from 'dotenv'; config({ path: '.env.local' });
+import { readFileSync } from 'fs';
 import { createClient } from '@supabase/supabase-js';
 import { converse } from '../lib/converse';
 import { capabilitiesFor, CAPABILITY_MAP } from '../lib/home/capability-map';
@@ -24,10 +29,21 @@ const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
 (async () => {
   // ── STRUCTURAL — safety + exposure by construction ──
   const chief = capabilitiesFor('chief_of_staff');
-  check('structural: chief-of-staff slice holds ZERO irreversible tools', chief.every((c) => !c.irreversible),
-    chief.map((c) => c.tool).join(', '));
-  check('structural: sends exist in the registry but NOT in the chief slice',
-    Object.values(CAPABILITY_MAP).some((c) => c.irreversible) && !chief.some((c) => c.irreversible));
+  // The ONLY irreversible tools allowed in chat are the commit-door-mediated sends: the
+  // executor returns a `commit` the client fires; the model's hand never mails.
+  const COMMIT_DOOR_SENDS = new Set(['send_prepared_reply']);
+  const rogue = chief.filter((c) => c.irreversible && !COMMIT_DOOR_SENDS.has(c.tool));
+  check('structural: every irreversible tool in the chief slice is a known commit-door send',
+    rogue.length === 0, rogue.map((c) => c.tool).join(', ') || chief.filter(c => c.irreversible).map(c => c.tool).join(', '));
+  {
+    const src = readFileSync('lib/converse/index.ts', 'utf8');
+    check('structural: the chat send has the deterministic EXPLICIT_SEND floor (user\'s own words, never a model mis-map)',
+      /EXPLICIT_SEND\s*=/.test(src) && src.includes('EXPLICIT_SEND.test(userText)'));
+    check('structural: the chat send RETURNS a commit the CLIENT fires — the loop never mails',
+      src.includes("commit: { kind: 'send_reply'"));
+  }
+  check('structural: irreversible sends exist in the registry (the gate is testing something real)',
+    Object.values(CAPABILITY_MAP).some((c) => c.irreversible));
   check('structural: personal doables are chief-only (a coworker never resolves your inbox)',
     !capabilitiesFor('coworker').some((c) => c.tool === 'resolve_inbox_item' || c.tool === 'remember_fact'));
 

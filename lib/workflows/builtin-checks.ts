@@ -30,6 +30,12 @@ const TOOL_CHECKS: Record<string, string[]> = {
     'Sources carry their published dates when known',
     'Undated sources are marked "do not assume current"',
   ],
+  match_to_profiles: [
+    'Only candidates with a file in the chosen knowledge-base folder can be matched',
+    'Every match carries a rationale checked against that file\u2019s own text',
+    'Items past their deadline, or already reported in an earlier run, are never included',
+    'Items read out of a previous step\u2019s plain text are checked against it, and the report says so',
+  ],
   get_pt_tenders: [
     'The day window is enforced in code, not trusted to the API',
     'Signing and publication dates print with every tender',

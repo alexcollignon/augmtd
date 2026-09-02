@@ -289,7 +289,8 @@ web_search          — searches the live web. config: { "query": "targeted quer
 fetch_url           — reads full content of a SPECIFIC page the user names. config: { "urls": ["https://..."] }. Supports auth: { "urls": [...], "auth": { "username": "...", "password": "..." } }. NEVER point it at a news site's section/landing page for "latest news" — such pages are date-blind (old articles get presented as current); use rss_feed for news monitoring instead.
 rss_feed            — follows a news or blog feed, new items only, each with its publication date. config: { "feeds": ["https://.../feed.xml"], "max_items": 15, "since": "last_run" }. Optional "category_filter": ["Topic", ...] scopes a general site-wide feed to a topic when the outlet has no topic-specific feed.
 deep_research       — multi-source research synthesis. config: { "queries": ["question"], "max_sources": 8 }
-get_pt_tenders      — Portuguese public procurement from Base.gov.pt. config: { "days": 7, "endpoint": "both" }
+get_pt_tenders      — Portuguese public procurement from Base.gov.pt. config: { "days": 7, "endpoint": "both", "min_value": 500000, "structured_output": false }. Set "structured_output": true ONLY when a match_to_profiles step follows — it appends the machine-readable item list that step consumes.
+match_to_profiles   — FIND MATCHES: matches the PREVIOUS step's items against a knowledge-base folder holding one file per candidate (companies, members, applicants), and returns a ready report with an evidence-checked rationale per match. THE step for "match X to our members/companies/candidates". config: { "profiles_folder": "<folder of files, one per candidate>", "max_matches_per_item": 5, "dedupe": true, "accept_unstructured": true, "criteria": "<the user's own words for what makes a good match, verbatim — omit when they said nothing about it>" }. When the source step CAN hand items over exactly (e.g. get_pt_tenders), set that step's "structured_output": true and emit the pair together; behind any other step it reads the items out of that step's text and says so in the report.
 read_kb_file        — reads a file from the knowledge base. config: { "file_id": "uuid" } — only if user explicitly mentions a document
 read_kb_folder      — reads EVERY file in a named knowledge-base FOLDER, in full, deterministically (no omissions). config: { "folder": "folder name exactly as the user said it" }. THE step for "use folder X as the source of truth", "everything in folder X", "the documents in folder Y" — a folder of material to be worked through file by file (a job description + a rubric + every CV). Never search for such material; searching omits silently.
 slack_read_channel  — reads recent messages from a Slack channel (to summarize/digest/act on). config: { "channel": "#name or id", "limit": 30, "days": 7 } — days is an optional time window (omit for no limit). ONLY if Slack is connected.
@@ -758,7 +759,7 @@ export async function generateWorkflowConfig(
     const off: string[] = [];
     if (!features.email) off.push('get_emails');
     if (!features.meetings) off.push('get_meeting_context');
-    if (!features.drive) { off.push('read_kb_file'); off.push('read_kb_folder'); }
+    if (!features.drive) { off.push('read_kb_file'); off.push('read_kb_folder'); off.push('match_to_profiles'); }
     if (off.length) parts.push(`These tools are OFF for this workspace — do NOT use them in any step: ${off.join(', ')}.`);
   } catch { /* non-fatal */ }
 

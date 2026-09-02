@@ -17,8 +17,10 @@ import {
   PlayIcon,
   ClipboardDocumentListIcon,
   ShieldCheckIcon,
+  SignalIcon,
 } from '@heroicons/react/24/outline';
 import type { WorkspaceFeatures, WorkspaceType, FeatureKey } from '@/lib/workspace/types';
+import { StatusView } from '@/components/platform-admin/status-view';
 import { FEATURE_KEYS } from '@/lib/workspace/types';
 import type { TierType } from '@/lib/ai/types';
 
@@ -223,8 +225,9 @@ function BrandingEditor({ company, onSaved }: {
   );
 }
 
-export default function PlatformAdminClient({ initialCompanies }: { initialCompanies: CompanyRow[] }) {
-  const [tab, setTab] = useState<'companies' | 'users' | 'audit'>('companies');
+export default function PlatformAdminClient({ initialCompanies, initialTab }: { initialCompanies: CompanyRow[]; initialTab?: string }) {
+  const [tab, setTab] = useState<'companies' | 'users' | 'audit' | 'status'>(
+    initialTab === 'status' ? 'status' : 'companies');
 
   // ── Companies filters ──────────────────────────────────────────────────────
   const [companyTypeFilter, setCompanyTypeFilter] = useState<'all' | WorkspaceType>('all');
@@ -592,6 +595,7 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
     { id: 'companies' as const, label: 'Workspaces', Icon: BuildingOfficeIcon },
     { id: 'users'     as const, label: 'All Users',  Icon: UsersIcon },
     { id: 'audit'     as const, label: 'Audit Log',  Icon: ClipboardDocumentListIcon },
+    { id: 'status'    as const, label: 'Status',     Icon: SignalIcon },
   ];
 
   return (
@@ -1031,6 +1035,9 @@ export default function PlatformAdminClient({ initialCompanies }: { initialCompa
                 )}
               </section>
             )}
+
+            {/* ══ Status tab ═════════════════════════════════════════════════ */}
+            {tab === 'status' && <StatusView embedded />}
 
           </div>
         </div>
