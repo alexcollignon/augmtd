@@ -174,6 +174,15 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
     });
     case 'browser_fetch':     return await executeBrowserFetch(step.config);
     case 'get_pt_tenders':    return await executePtTenders(step.config);
+    case 'match_to_profiles': {
+      const { executeMatchToProfiles } = await import('@/lib/tools/match-to-profiles');
+      return await executeMatchToProfiles(step.config, {
+        userId: ctx.userId, supabase: ctx.supabase,
+        previousOutputs: ctx.previousOutputs, workflowId: ctx.workflowId,
+        // The report follows the workflow's own output language unless the step names one.
+        outputLanguage: ctx.outputLanguage,
+      });
+    }
     case 'deep_research': {
       const drConfig = { ...(step.config as unknown as Parameters<typeof executeDeepResearch>[0]) };
       // Inherit output language if not explicitly set on the step

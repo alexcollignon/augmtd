@@ -35,6 +35,7 @@ export const TOOL_FEATURE: Record<string, FeatureKey | null> = {
   deep_research: null,
   rss_feed: null,
   get_pt_tenders: null,
+  match_to_profiles: 'drive',           // reads a folder of profile documents in the knowledge base
   linkedin_post: null,
   present_linkedin_post: null,
   get_workflow_output: null,

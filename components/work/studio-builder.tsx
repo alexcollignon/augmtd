@@ -5,6 +5,14 @@ import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { isToolAllowed } from '@/lib/workspace/tool-capabilities';
+// THE CLIENT-SAFE MODULE LAW: both of these are pure string/table modules — no supabase, no AI
+// client, no server graph — so the panel and the report renderer share one source of words.
+import { itemNounFor } from '@/lib/matching/vocabularies';
+import {
+  SENTENCE, DEFAULT_FOLDER_NOUN, FOLDER_NAME_PLACEHOLDER, FOLDER_NOUN_MAX,
+  coerceFolderNoun, matchesHeadingPreview, type NounLanguage,
+} from '@/lib/matching/nouns';
+import type { PreviewResult } from '@/lib/matching/preview';
 import { DEFAULT_FEATURES, type WorkspaceFeatures } from '@/lib/workspace/types';
 
 // Workspace feature flags (cached across the builder) — disable steps whose feature is off.
@@ -244,6 +252,7 @@ const AVAILABLE_TOOLS = [
   { id: 'fetch_url',           label: 'Read a web page',           description: 'Reads the full current content of a URL every run.' },
   { id: 'rss_feed',            label: 'Follow a news feed or blog',description: 'Returns only new articles since your last run — no duplicates.' },
   { id: 'get_pt_tenders',      label: 'Portuguese public tenders', description: 'Fetches contracts and announcements from Portal Base (Base.gov.pt).' },
+  { id: 'match_to_profiles', label: 'Find matches', description: "Matches the previous step's items against a folder of files — one file per candidate: a company, a role, a client — with a quote from the file as evidence for every match." },
   { id: 'linkedin_post',       label: 'Generate LinkedIn posts',   description: 'Drafts 1–3 LinkedIn post variants from previous step content.' },
   { id: 'deep_research',       label: 'Deep research',             description: 'Takes topics from the previous step and researches each one in depth using AI + web search. Returns cited findings.' },
   { id: 'get_workflow_output', label: "Use a coworker's task",      description: "Pulls the latest output of another coworker's task and passes it as context. Build on what a teammate already produced." },
@@ -253,7 +262,7 @@ const AVAILABLE_TOOLS = [
 ];
 
 const TOOL_GROUPS = [
-  { label: 'Gather',      ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file', 'read_kb_folder', 'web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research', 'slack_read_channel'] },
+  { label: 'Gather',      ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file', 'read_kb_folder', 'web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'match_to_profiles', 'deep_research', 'slack_read_channel'] },
   { label: 'Compute',     ids: ['run_compute'] },
   { label: 'Collaborate', ids: ['get_workflow_output'] },
   { label: 'Act',         ids: ['slack_send'] },
@@ -273,6 +282,7 @@ const TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
   rss_feed:             NewspaperIcon,
   linkedin_post:        MegaphoneIcon,
   get_pt_tenders:       BuildingOfficeIcon,
+  match_to_profiles: BuildingOfficeIcon,
   deep_research:        MagnifyingGlassIcon,
   get_workflow_output:  ArrowPathIcon,
   slack_read_channel:   ChatBubbleLeftRightIcon,
@@ -293,6 +303,7 @@ const TOOL_STYLES: Record<string, { bg: string; logo?: string }> = {
   rss_feed:          { bg: 'bg-orange-500' },
   linkedin_post:     { bg: 'bg-[#0A66C2]' },
   get_pt_tenders:    { bg: 'bg-emerald-600' },
+  match_to_profiles: { bg: 'bg-emerald-700' },
   deep_research:        { bg: 'bg-indigo-600' },
   get_workflow_output:  { bg: 'bg-teal-500' },
   slack_read_channel:   { bg: 'bg-[#4A154B]' },
@@ -795,6 +806,9 @@ export function StudioBuilder({ workflow: initialWorkflow, agents, onClose, onBa
                 <StepConfigSection
                   step={step}
                   index={activeStepIndex}
+                  // THE LIVE ARRAY, handed down: a panel that describes the step above it must read
+                  // the pipeline as it stands right now, never a snapshot.
+                  steps={workflow.steps}
                   total={workflow.steps.length}
                   agents={agents}
                   isEnhancing={enhancingStepId === step.id}
@@ -2272,10 +2286,10 @@ function IdentitySection({ workflow, patch, agents }: {
 }
 
 function StepConfigSection({
-  step, index, total, agents, isEnhancing, isPending, onUpdate, onEnhance, onRemove, onMove,
+  step, index, total, steps = [], agents, isEnhancing, isPending, onUpdate, onEnhance, onRemove, onMove,
   stepCheckCount = 0, currentWorkflowId,
 }: {
-  step: WorkflowStep; index: number; total: number; agents: AgentOption[];
+  step: WorkflowStep; index: number; total: number; steps?: WorkflowStep[]; agents: AgentOption[];
   isEnhancing?: boolean; isPending?: boolean;
   onUpdate: (p: Partial<WorkflowStep>) => void;
   onEnhance?: EnhanceFn;
@@ -2357,7 +2371,8 @@ function StepConfigSection({
       <div className="border-t border-neutral-100" />
       {step.type === 'tool' && (
         <ToolStepFields step={step as ToolStep} onUpdate={onUpdate as (p: Partial<ToolStep>) => void}
-          isEnhancing={isEnhancing} isPending={isPending} onEnhance={onEnhance} currentWorkflowId={currentWorkflowId} />
+          isEnhancing={isEnhancing} isPending={isPending} onEnhance={onEnhance} currentWorkflowId={currentWorkflowId}
+          steps={steps} index={index} />
       )}
       {step.type === 'ai' && (
         <AIStepFields step={step as AIStep} onUpdate={onUpdate as (p: Partial<AIStep>) => void}
@@ -3717,9 +3732,23 @@ function KbFilePickerField({ value, onChange }: { value: string; onChange: (id: 
 // resolver matches by name, so a config survives a folder that was deleted and re-made. The
 // free-text row below the select is the same law from the other side: a folder that doesn't
 // exist yet (or one built after this step) can still be named here, and the run says so honestly.
-function KbFolderPickerField({ value, onChange }: { value: string; onChange: (name: string) => void }) {
+/**
+ * ONE FIELD, ONE VALUE. The folder used to be authored twice — a select AND a separate "Or type the
+ * folder name" input, each showing the same stored string under its own label. Same value, two
+ * homes, two labels: the owner read it as two settings. It is now ONE combobox: type freely (a
+ * folder that does not exist yet is a legitimate answer — the step binds BY NAME at run time) with
+ * the existing folders offered underneath, filtered as you type.
+ *
+ * The stored value is unchanged: the folder's name string, exactly as before.
+ */
+function KbFolderPickerField({ value, onChange, label = 'Folder', hint }: {
+  value: string; onChange: (name: string) => void; label?: string; hint?: string;
+}) {
   const [folders, setFolders] = useState<Array<{ id: string; name: string }>>([]);
   const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState(false);
+  const [width, setWidth] = useState(280);
+  const anchorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     fetch('/api/drive/folders')
       .then(r => (r.ok ? r.json() : []))
@@ -3727,22 +3756,55 @@ function KbFolderPickerField({ value, onChange }: { value: string; onChange: (na
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
-  const known = folders.some(f => f.name === value);
+
+  const q = value.trim().toLowerCase();
+  // Typing filters; an exact hit shows the whole list again, so the dropdown never collapses to the
+  // one row you already chose.
+  const shown = !q || folders.some(f => f.name.toLowerCase() === q)
+    ? folders
+    : folders.filter(f => f.name.toLowerCase().includes(q));
+  const known = !!q && folders.some(f => f.name.toLowerCase() === q);
+
+  const raise = () => { setWidth(anchorRef.current?.getBoundingClientRect().width ?? 280); setOpen(true); };
+
   return (
-    <>
-      <Field label="Folder" hint="Every file in it is read in full — nothing is left out">
-        <select value={known ? value : ''} onChange={e => onChange(e.target.value)}
-          className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-[13px] bg-white focus:outline-none focus:border-indigo-300">
-          <option value="">{loading ? 'Loading…' : folders.length === 0 ? 'No folders found' : 'Select a folder…'}</option>
-          {folders.map(f => <option key={f.id} value={f.name}>{f.name}</option>)}
-        </select>
-      </Field>
-      <Field label="Or type the folder name" hint="Matched by name when the task runs">
-        <input type="text" value={value} onChange={e => onChange(e.target.value)}
-          placeholder="e.g. Applications"
-          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
-      </Field>
-    </>
+    <Field label={label} hint={hint ?? 'Pick one of your folders, or type a name — it is matched by name when the task runs'}>
+      <div ref={anchorRef} className="relative">
+        <input
+          type="text" value={value} onChange={e => { onChange(e.target.value); raise(); }}
+          onFocus={raise} onClick={raise}
+          placeholder={loading ? 'Loading your folders…' : 'Start typing, or pick from your folders'}
+          className="w-full pl-3 pr-8 py-2 border border-neutral-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
+        <button type="button" tabIndex={-1} onClick={() => (open ? setOpen(false) : raise())}
+          aria-label="Show folders"
+          className="absolute inset-y-0 right-0 px-2 flex items-center text-neutral-400 hover:text-neutral-600">
+          <ChevronDownIcon className="w-4 h-4" />
+        </button>
+      </div>
+      <AnchoredPopover anchorRef={anchorRef} open={open} onClose={() => setOpen(false)} align="left" width={width}>
+        {/* THE POPOVER IS A BARE POSITIONED DIV — the surface belongs to the caller. Without this
+            the list rendered transparent over the fields beneath it (found on the owner's walk). */}
+        <div className="max-h-56 overflow-y-auto py-1 bg-white border border-neutral-200 rounded-lg shadow-lg">
+          {shown.length === 0 ? (
+            <div className="px-3 py-2 text-[12px] text-neutral-500">
+              {loading ? 'Loading…' : value.trim()
+                ? 'No folder by that name yet — it will be matched when the task runs.'
+                : 'No folders found.'}
+            </div>
+          ) : shown.map(f => (
+            <button key={f.id} type="button"
+              onClick={() => { onChange(f.name); setOpen(false); }}
+              className={`w-full text-left px-3 py-1.5 text-[13px] hover:bg-neutral-50 ${
+                f.name.toLowerCase() === q ? 'text-indigo-700 font-medium' : 'text-neutral-700'}`}>
+              {f.name}
+            </button>
+          ))}
+        </div>
+      </AnchoredPopover>
+      {!!value.trim() && !known && !loading && (
+        <p className="mt-1 text-[11px] text-neutral-400">Not one of your folders yet — matched by name when the task runs.</p>
+      )}
+    </Field>
   );
 }
 
@@ -3750,7 +3812,7 @@ function InlineToolGrid({ value, onChange }: { value: string; onChange: (toolId:
   const features = useWorkspaceFeatures();
   const displayId = value === 'browser_fetch' ? 'fetch_url' : (value === 'get_urgent_emails' ? 'get_emails' : value);
   const groups = [
-    { label: 'Gather',      ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file', 'read_kb_folder', 'web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'deep_research', 'slack_read_channel'] },
+    { label: 'Gather',      ids: ['get_emails', 'get_meeting_context', 'get_calendar', 'read_kb_file', 'read_kb_folder', 'web_search', 'fetch_url', 'rss_feed', 'get_pt_tenders', 'match_to_profiles', 'deep_research', 'slack_read_channel'] },
     { label: 'Compute',     ids: ['run_compute'] },
     { label: 'Collaborate', ids: ['get_workflow_output'] },
     { label: 'Act',         ids: ['slack_send'] },
@@ -3793,10 +3855,12 @@ function InlineToolGrid({ value, onChange }: { value: string; onChange: (toolId:
   );
 }
 
-function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, currentWorkflowId }: {
+function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, currentWorkflowId, steps = [], index = 0 }: {
   step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void;
   isEnhancing?: boolean; isPending?: boolean; onEnhance?: EnhanceFn;
   currentWorkflowId?: string;
+  /** The live pipeline and this step's place in it — a panel may describe the step above it. */
+  steps?: WorkflowStep[]; index?: number;
 }) {
   const query = (step.config.query as string) ?? '';
   const isFetchBased = step.tool === 'fetch_url' || step.tool === 'browser_fetch';
@@ -3915,6 +3979,8 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, cur
       )}
       {step.tool === 'read_kb_folder' && (
         <KbFolderPickerField
+          label="Folder"
+          hint="Every file in it is read in full — nothing is left out"
           value={(step.config.folder as string) ?? ''}
           onChange={name => onUpdate({ config: { ...step.config, folder: name } })}
         />
@@ -3958,6 +4024,10 @@ function ToolStepFields({ step, onUpdate, isEnhancing, isPending, onEnhance, cur
       {step.tool === 'get_meeting_context' && <GetMeetingContextFields step={step} onUpdate={onUpdate} />}
       {step.tool === 'linkedin_post' && <LinkedInPostFields step={step} onUpdate={onUpdate} />}
       {step.tool === 'get_pt_tenders' && <PtTendersFields step={step} onUpdate={onUpdate} />}
+      {step.tool === 'match_to_profiles' && (
+        <MatchToProfilesFields step={step} onUpdate={onUpdate}
+          steps={steps} index={index} currentWorkflowId={currentWorkflowId} />
+      )}
       {step.tool === 'deep_research' && <DeepResearchFields step={step} onUpdate={onUpdate} />}
       {step.tool === 'get_workflow_output' && (
         <WorkflowOutputFields step={step} onUpdate={onUpdate} currentWorkflowId={currentWorkflowId ?? ''} />
@@ -4079,6 +4149,188 @@ function GetMeetingContextFields({ step, onUpdate }: { step: ToolStep; onUpdate:
   );
 }
 
+// ─── THE SENTENCE PANEL ──────────────────────────────────────────────────────────────────────────
+// The matching step reads as ONE sentence whose blanks are its controls. Two of those blanks are
+// WORDS, and neither of them may lie:
+//
+//   · the ITEM noun is DERIVED at render time from the step immediately above, through the
+//     whitelist in lib/matching/vocabularies.ts. It is never stored, never sent, and never reaches
+//     the run — the run reads what the source step itself declared. Anything unmapped reads "item".
+//     It is computed HERE, in render, from the live steps array, so moving a step re-words the
+//     sentence immediately (a cached noun would describe a pipeline that no longer exists).
+//   · the FOLDER noun IS config, and it DOES reach the report — so the panel shows the exact
+//     heading it will produce, rendered through the very function the report uses.
+function MatchToProfilesFields({ step, onUpdate, steps, index, currentWorkflowId }: {
+  step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void;
+  steps: WorkflowStep[]; index: number; currentWorkflowId?: string;
+}) {
+  const cfg = step.config;
+  const set = (k: string, v: unknown) => onUpdate({ config: { ...cfg, [k]: v } });
+
+  // DERIVED IN RENDER, from the live array — never state, never memoised on mount.
+  const prev = index > 0 ? steps[index - 1] : undefined;
+  const itemNoun = itemNounFor(prev && prev.type === 'tool' ? (prev as ToolStep).tool : undefined);
+
+  const folderName = (cfg.profiles_folder as string) ?? '';
+  const folderNounRaw = (cfg.folder_noun as string) ?? '';
+  const folderNoun = coerceFolderNoun(folderNounRaw);
+  const maxMatches = (cfg.max_matches_per_item as number) ?? 5;
+  // The panel knows the step's own language; the workflow's is the engine's business.
+  const previewLang: NounLanguage = cfg.language === 'en' ? 'en' : 'de';
+
+  const [preview, setPreview] = useState<PreviewResult | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  const tryIt = async () => {
+    if (!currentWorkflowId) return;
+    setPreviewing(true); setPreview(null); setPreviewError(null);
+    try {
+      const res = await fetch(`/api/workflows/${currentWorkflowId}/match-preview`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workflowId: currentWorkflowId, stepId: step.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) setPreviewError(typeof data?.error === 'string' ? data.error : 'The preview could not run.');
+      else setPreview(data as PreviewResult);
+    } catch {
+      setPreviewError('The preview could not run.');
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const blank = 'inline-block align-baseline px-1.5 py-0.5 border border-neutral-200 rounded-md text-[13px] ' +
+    'bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400';
+
+  return (
+    <>
+      {/* THE SENTENCE — every blank a control. */}
+      <div className="rounded-lg bg-white border border-neutral-200 px-3 py-3 text-[13px] leading-[2.1] text-neutral-700">
+        {SENTENCE.a}
+        <span className="font-semibold text-neutral-900">{itemNoun}</span>
+        {SENTENCE.b}
+        <input type="number" min={1} max={10} value={maxMatches}
+          onChange={e => set('max_matches_per_item', e.target.value ? Number(e.target.value) : undefined)}
+          className={`${blank} w-14 text-center`} />
+        {SENTENCE.c}
+        <input type="text" value={folderNounRaw}
+          onChange={e => set('folder_noun', e.target.value || undefined)}
+          maxLength={FOLDER_NOUN_MAX}
+          placeholder={folderName.trim().toLowerCase() || DEFAULT_FOLDER_NOUN}
+          className={`${blank} w-44`} />
+        {SENTENCE.d}
+        <span className="font-semibold text-neutral-900">{folderName.trim() || FOLDER_NAME_PLACEHOLDER}</span>
+        {SENTENCE.e}
+      </div>
+      {!!folderNoun && (
+        <p className="-mt-2 text-[11.5px] text-neutral-500">
+          Report heading will read: &ldquo;{matchesHeadingPreview(folderNoun, previewLang)}&rdquo;
+        </p>
+      )}
+      <KbFolderPickerField
+        label="Folder of files"
+        hint="One file per candidate: a company, a role, a client&hellip;"
+        value={folderName} onChange={name => set('profiles_folder', name)} />
+      <Field label="What makes a good match (your words)" hint="Your words for what makes a good match. Optional &mdash; leave empty for a neutral read of capability and scale.">
+        <textarea rows={4} value={(cfg.criteria as string) ?? ''}
+          onChange={e => set('criteria', e.target.value || undefined)}
+          placeholder="e.g. Prefer members with German ties; only companies that could realistically bid."
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] leading-relaxed focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400" />
+      </Field>
+
+      {/* THE TRY DOOR — the first three items of the last run, judged with these settings. It
+          writes nothing: no report, no memory of what it showed you. */}
+      <div className="space-y-2">
+        <button type="button" onClick={tryIt} disabled={previewing || !currentWorkflowId}
+          className="px-3 py-1.5 rounded-lg border border-neutral-200 text-[12.5px] text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 transition-colors">
+          {previewing ? 'Trying it…' : "Try it on the last run's items"}
+        </button>
+        {previewing && (
+          <p className="text-[11.5px] text-neutral-500">Reading the last run and judging up to 3 items — this takes a moment.</p>
+        )}
+        {previewError && <p className="text-[12px] text-red-600">{previewError}</p>}
+        {preview && !preview.ok && (
+          <p className="text-[12px] text-neutral-600 leading-relaxed">{preview.message}</p>
+        )}
+        {preview?.ok && (
+          <div className="space-y-2">
+            <p className="text-[11.5px] text-neutral-500">
+              Tried the first {preview.items.length} of {preview.totalItems} — nothing was saved or reported.
+            </p>
+            {preview.items.map(it => (
+              <div key={it.id} className="rounded-lg border border-neutral-200 px-3 py-2">
+                <div className="text-[12.5px] font-medium text-neutral-800">{it.title}</div>
+                {it.matches.length === 0 ? (
+                  <div className="text-[12px] text-neutral-500 mt-1">
+                    No match it could prove ({it.shortlisted} files checked).
+                  </div>
+                ) : it.matches.map((m, i) => (
+                  <div key={i} className="mt-1.5">
+                    <div className="text-[12.5px] text-neutral-800">
+                      {m.name} <span className="text-neutral-400">· {m.grade === 'strong' ? 'strong fit' : 'possible fit'}</span>
+                    </div>
+                    <div className="text-[12px] text-neutral-600 leading-relaxed">{m.rationale}</div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* THE ADVANCED FOLD — the knobs that are true defaults for almost everyone. */}
+      <details className="rounded-lg border border-neutral-200 px-3 py-2">
+        <summary className="text-[12.5px] text-neutral-600 cursor-pointer select-none">Advanced</summary>
+        <div className="space-y-3 pt-3">
+          <Field label="Only strong matches" hint="Off keeps possible matches too">
+            <select value={cfg.min_grade === 'strong' ? 'strong' : 'possible'}
+              onChange={e => set('min_grade', e.target.value)}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+              <option value="possible">Strong and possible</option>
+              <option value="strong">Strong only</option>
+            </select>
+          </Field>
+          <Field label="Report language" hint="The report and its rationales; item labels stay in the source's language">
+            <select value={(cfg.language as string) ?? ''}
+              onChange={e => set('language', e.target.value || undefined)}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+              <option value="">Follow workflow output language</option>
+              <option value="de">German</option>
+              <option value="en">English</option>
+            </select>
+          </Field>
+          <Field label="If the previous step sends plain text" hint="Reading items out of text is approximate &mdash; the report says when it happened">
+            <select value={cfg.accept_unstructured === false ? 'off' : 'on'}
+              onChange={e => set('accept_unstructured', e.target.value === 'on')}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+              <option value="on">Read the items out of it</option>
+              <option value="off">Stop and say nothing was matched</option>
+            </select>
+          </Field>
+          <Field label="Report each item once" hint="Off = repeats every run (testing only)">
+            <select value={cfg.dedupe === false ? 'off' : 'on'} onChange={e => set('dedupe', e.target.value === 'on')}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+              <option value="on">On &mdash; never repeat an item</option>
+              <option value="off">Off &mdash; repeat every run</option>
+            </select>
+          </Field>
+        </div>
+      </details>
+
+      <details className="px-1">
+        <summary className="text-[11px] font-semibold text-neutral-400 uppercase tracking-widest cursor-pointer select-none">What this step does</summary>
+        <p className="text-[12px] text-neutral-600 leading-relaxed pt-2">
+          1. Filters what the previous step handed over &mdash; too small, past its deadline, or already reported.<br />
+          2. Finds the candidate files in your folder.<br />
+          3. Picks the matches &mdash; following your matching criteria when you set them &mdash; and only keeps one when it can quote the file as evidence.<br />
+          4. Remembers what it has already reported, so nothing comes round twice.
+        </p>
+      </details>
+    </>
+  );
+}
+
 function PtTendersFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: Partial<ToolStep>) => void }) {
   return (
     <>
@@ -4110,6 +4362,14 @@ function PtTendersFields({ step, onUpdate }: { step: ToolStep; onUpdate: (p: Par
           onChange={e => onUpdate({ config: { ...step.config, min_value: e.target.value ? Number(e.target.value) : undefined } })}
           placeholder="e.g. 50000" min={0}
           className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px]" />
+      </Field>
+      <Field label="Structured output" hint="Needed only when a matching step follows this one">
+        <select value={step.config.structured_output === true ? 'on' : 'off'}
+          onChange={e => onUpdate({ config: { ...step.config, structured_output: e.target.value === 'on' } })}
+          className="w-full px-3 py-2 border border-neutral-200 rounded-md text-[13px] bg-white">
+          <option value="off">Off &mdash; readable list only</option>
+          <option value="on">On &mdash; also hand the items to the next step</option>
+        </select>
       </Field>
     </>
   );

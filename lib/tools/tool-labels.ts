@@ -13,6 +13,9 @@ export const TOOL_LABELS: Record<string, string> = {
   read_document: 'Read document',
   read_kb_file: 'Read knowledge file',
   read_kb_folder: 'Read knowledge folder',
+  // The tool id stays `match_to_profiles` (every stored config depends on it); the LABEL a reader
+  // sees is "Find matches" — what the step DOES, in the words the panel's sentence uses.
+  match_to_profiles: 'Find matches',
   list_tasks: 'List tasks',
   create_task: 'Create task',
   get_task: 'Read task',
