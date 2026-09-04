@@ -15,7 +15,13 @@ export interface WorkspaceFeatures {
 
 export type FeatureKey = keyof WorkspaceFeatures;
 
-export const FEATURE_KEYS: FeatureKey[] = ['email', 'meetings', 'drive', 'agents', 'studio', 'home'];
+// HOME IS NOT A TOGGLEABLE FEATURE. It is the app's front door (the chat is always present
+// there; /work and /workers redirect into it) — a workspace with Home off has no way in. It is
+// deliberately ABSENT from FEATURE_KEYS so the platform-admin features API (which only writes
+// keys in this list) can never set it, and the admin UI never shows a Home switch. `home` stays
+// in the schema/type for back-compat (a June-2026 stale `home:false` on one workspace looped
+// /home→/home forever); normalizeFeatures pins it true and the page guard ignores it.
+export const FEATURE_KEYS: FeatureKey[] = ['email', 'meetings', 'drive', 'agents', 'studio'];
 
 // meetings is off by default — bot infrastructure is being replaced (Vexa migration pending).
 // Admin opts IN via platform admin UI.
@@ -62,6 +68,8 @@ export function normalizeFeatures(raw: unknown): WorkspaceFeatures {
     drive:    typeof input.drive    === 'boolean' ? input.drive    : DEFAULT_FEATURES.drive,
     agents:   typeof input.agents   === 'boolean' ? input.agents   : DEFAULT_FEATURES.agents,
     studio:   typeof input.studio   === 'boolean' ? input.studio   : DEFAULT_FEATURES.studio,
-    home:     typeof input.home     === 'boolean' ? input.home     : DEFAULT_FEATURES.home,
+    // Home is the front door, never a feature — pinned true regardless of any stored value, so a
+    // stale `home:false` (like the one that bricked a workshop workspace) can never gate it again.
+    home:     true,
   };
 }

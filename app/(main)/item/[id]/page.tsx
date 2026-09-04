@@ -13,7 +13,7 @@ export default async function ItemPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ angle?: string; kind?: string }>;
 }) {
-  await guardFeaturePage('home');
+  await guardFeaturePage(null);
   const { id } = await params;
   const { angle, kind } = await searchParams;
 

@@ -9,9 +9,16 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url));
   }
 
+  // Auth routes - redirect if already logged in
+  const authRoutes = ['/login', '/signup'];
+  const isAuthRoute = authRoutes.includes(pathname);
+
   // Refresh session cookies AND get the user in ONE auth round-trip — updateSession
   // already validated the token, so we don't re-fetch it on a second client.
-  const { supabaseResponse, user } = await updateSession(request);
+  // THE HALF-DEAD SESSION: on the auth routes only — the single leg that can close a redirect
+  // loop — the verdict comes from a real refresh, so a valid JWT with a dead refresh token is
+  // never bounced back to /home. Still one auth call; the protected-route path is untouched.
+  const { supabaseResponse, user } = await updateSession(request, { verifyRefreshable: isAuthRoute });
 
   // Protected routes - require authentication. /work, /join and /suspended
   // need auth but have their own server-side logic for orphan / workspace-state
@@ -20,10 +27,6 @@ export async function middleware(request: NextRequest) {
   const isProtectedRoute = protectedRoutes.some(route =>
     pathname.startsWith(route)
   );
-
-  // Auth routes - redirect if already logged in
-  const authRoutes = ['/login', '/signup'];
-  const isAuthRoute = authRoutes.includes(pathname);
 
   // Check if we have auth cookies but no valid user (stale/invalid session)
   const hasAuthCookies = request.cookies.getAll().some(cookie =>
@@ -47,9 +50,15 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  // Redirect authenticated users away from auth routes
+  // Redirect authenticated users away from auth routes. The auth-route verdict came from a real
+  // refresh, so the rotated tokens MUST ride along — dropping them would leave the browser holding
+  // a stale refresh token, i.e. manufacture the very half-dead session this fix exists to kill.
   if (isAuthRoute && user) {
-    return NextResponse.redirect(new URL('/home', request.url));
+    const response = NextResponse.redirect(new URL('/home', request.url));
+    supabaseResponse.cookies.getAll().forEach(cookie => {
+      response.cookies.set(cookie.name, cookie.value, cookie);
+    });
+    return response;
   }
 
   // Clear stale cookies on auth pages if no valid user
@@ -64,8 +73,10 @@ export async function middleware(request: NextRequest) {
       }
     });
 
-    // Copy over any valid cookies from supabaseResponse
+    // Copy over any valid cookies from supabaseResponse. An empty value is a REMOVAL — copying it
+    // back would undo the delete above and leave a dead cookie standing.
     supabaseResponse.cookies.getAll().forEach(cookie => {
+      if (!cookie.value) return;
       response.cookies.set(cookie.name, cookie.value, {
         ...cookie,
         httpOnly: true,
