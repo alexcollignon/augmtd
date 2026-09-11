@@ -33,8 +33,12 @@ import {
 } from '../lib/tenders/enrich-members';
 import { writeProfileDoc } from '../lib/tenders/write-profile-doc';
 
-// The CLIENT accounts. This script never runs against them, at all, under any flag.
-const FORBIDDEN = new Set(['9d3921b2', 'de4e8824']);
+// The CLIENT accounts. This script never runs against them — EXCEPT the one narrow, deliberate
+// escape below. The default set is both clients; a provisioning run releases AT MOST one of them.
+const DEFAULT_FORBIDDEN = new Set(['9d3921b2', 'de4e8824']);
+// de4e8824 can NEVER be released, by any flag, under any circumstances. Only 9d3921b2 (AHK Portugal,
+// Thorsten) may be deliberately provisioned — and only when --client names it explicitly.
+const NEVER_RELEASABLE = new Set(['de4e8824']);
 const OWNER_PREFIX = '08fe4449';
 
 const APPLY = process.argv.includes('--apply');
@@ -42,6 +46,17 @@ const argOf = (flag: string): string | null => {
   const i = process.argv.indexOf(flag);
   return i >= 0 ? process.argv[i + 1] ?? null : null;
 };
+// THE NARROW CLIENT ESCAPE (owner-authorized, Sep 2026 — provisioning Thorsten's tender radar).
+// `--client <prefix>` removes ONLY that prefix from the forbidden set for THIS run. de4e8824 is in
+// NEVER_RELEASABLE and the flag refuses it outright, so the other client account stays hard-forbidden
+// no matter what is typed.
+const CLIENT_ARG = argOf('--client');
+const FORBIDDEN = new Set(DEFAULT_FORBIDDEN);
+if (CLIENT_ARG) {
+  const p = CLIENT_ARG.slice(0, 8);
+  if (NEVER_RELEASABLE.has(p)) throw new Error(`--client ${p} refused: that client account can never be released`);
+  FORBIDDEN.delete(p);
+}
 const USER_ARG = argOf('--user');
 const LIMIT = Number(argOf('--limit') ?? '0') || 0;
 // Network-bound, not rate-limited: the lane width is the throughput knob. 8 is polite against ~700

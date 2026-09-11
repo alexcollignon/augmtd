@@ -29,6 +29,7 @@ import { runDeliverable, useDeliverableDoor } from '@/components/workflows/deliv
 import { useLiveRefresh } from '@/components/workflows/use-live-refresh';
 import { ExpandableRows } from '@/components/home/expandable-rows';
 import ProcessDrawer, { GateChip, GateFindings } from '@/components/workflows/process-drawer';
+import { describeCron } from '@/lib/workflows/schedule';
 import RunMaterialSheet, { asksForMaterial, type RunMaterial } from '@/components/workflows/run-material-sheet';
 import { WorkflowMark } from '@/components/workflows/workflow-detail';
 import { PROCESS_BUCKETS, GATE_WORDS } from '@/lib/workflows/process-state';
@@ -116,7 +117,7 @@ type Draft = {
 };
 
 const triggerWord = (t: Draft['trigger']): string =>
-  t.type === 'schedule' ? (t.label ?? `cron ${t.cron}`) :
+  t.type === 'schedule' ? (t.label ?? (t.cron ? describeCron(t.cron, t.timezone) : 'On a schedule')) :
   t.type === 'reaction' ? (t.label ?? (t.when ? `When ${t.when}` : 'On event')) :
   'Runs on demand';
 
