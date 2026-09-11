@@ -430,7 +430,7 @@ function m11(): void {
   const deExplicit = renderMatchReport(fixtureReport('de'), 'de');
   ok('German is the default and explicit German is identical to it', deImplicit === deExplicit);
   ok('the German report still speaks its own table verbatim',
-    deImplicit.includes('Stand ') && deImplicit.includes('Ausgefiltert:') &&
+    deImplicit.includes('Stand ') && !deImplicit.includes('Ausgefiltert:') &&
     deImplicit.includes('**Passende Profile:**') && deImplicit.includes('Beleg aus dem Profil') &&
     deImplicit.includes('Geprüft, keine eindeutige Zuordnung') && deImplicit.includes('Wert nicht veröffentlicht'));
 
@@ -438,8 +438,10 @@ function m11(): void {
   ok('the English report carries the English header counts',
     en.includes(`**47 ${TENDERS_KIND_LABEL}** checked from the previous step`) && en.includes('**1 matched**'),
     en.split('\n')[2]);
+  ok('the reader-facing report no longer prints the audit lines (filtering breakdown / spread)',
+    !en.includes('Filtered out:') && !en.includes('Spread:'));
   ok('the English report carries the English tail, labels and footer',
-    en.includes('Filtered out:') && en.includes('**Matching profiles:**') &&
+    en.includes('**Matching profiles:**') &&
     en.includes('Evidence from the profile:') && en.includes('Checked, no clear match') &&
     en.includes('value not published') && en.includes('**Deadline:**') && en.includes('**Value:**') &&
     en.includes('Generated automatically'));
@@ -1140,24 +1142,19 @@ async function m18(): Promise<void> {
   ok('one profile on one match is 1/1/100 — the honest degenerate case',
     JSON.stringify(concentrationOf([mk(['A'])])) === JSON.stringify({ matches: 1, distinct: 1, topShare: 100 }));
 
-  // The line reaches the report, in both languages, ALWAYS when there is a match.
+  // concentrationOf stays available for monitoring (the audit script), but the spread line is NO
+  // LONGER printed in the reader-facing report (owner call, Sep 11 — audit signal, confused the
+  // recipient). Assert it is absent in both languages, and that the filtering breakdown is gone too.
   const rep: MatchReport = { ...fixtureReport(), judged };
   const de = renderMatchReport(rep, 'de');
   const en = renderMatchReport(rep, 'en');
-  ok('the English report states the spread with the right numbers',
-    en.includes('Spread: 5 distinct profiles across 10 matches; the top 3 account for 80%.'),
-    en.split('\n').find((l) => l.startsWith('Spread:')) ?? '(absent)');
-  ok('the German report states the same spread in German',
-    de.includes('Verteilung: 5 verschiedene Profile auf 10 Zuordnungen; auf die drei häufigsten entfallen 80 %.'),
-    de.split('\n').find((l) => l.startsWith('Verteilung:')) ?? '(absent)');
-  ok('the line sits in the HEADER, above the first match',
-    en.indexOf('Spread:') > en.indexOf('Filtered out:') && en.indexOf('Spread:') < en.indexOf('Matching profiles'));
-  ok('a single-match run STILL shows the line — the Chamber always sees concentration',
-    renderMatchReport(fixtureReport(), 'en').includes('Spread: 1 distinct profiles across 1 matches'));
-  ok('a run with no matches at all prints no spread line, never "0 across 0"',
-    !renderMatchReport({ ...fixtureReport(), judged: [{ item: fixtureItem(), matches: [], rejected: [], shortlisted: 3 }] }, 'en')
-      .includes('Spread:'));
-  ok('the English report still contains ZERO German strings with the line present',
+  ok('the English report prints NO spread/concentration line',
+    !en.includes('Spread:') && !/the top 3 account for/.test(en));
+  ok('the German report prints NO spread/concentration line',
+    !de.includes('Verteilung:') && !/häufigsten entfallen/.test(de));
+  ok('neither report prints the filtering breakdown line',
+    !en.includes('Filtered out:') && !de.includes('Herausgefiltert') && !/Gefiltert/.test(de));
+  ok('the English report still contains ZERO German strings',
     !/Verteilung|verschiedene|Zuordnungen|häufigsten/.test(en));
 
   // ── THE LIVE MANIFEST: the owner's refreshed folder must carry no standing boost either.

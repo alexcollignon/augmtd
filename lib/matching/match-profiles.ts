@@ -979,14 +979,10 @@ export function renderMatchReport(report: MatchReport, language?: MatchLanguage 
   out.push('');
   out.push(S.headerCounts(kind, q.scanned, report.judged.length, matched.length));
   out.push('');
-  out.push(S.headerFiltered(q.alreadySeen, q.deadlinePassed, q.uncovered.length));
-  out.push('');
-  // THE SPREAD OF THIS RUN, stated in the header — see concentrationOf.
-  const spread = concentrationOf(report.judged);
-  if (spread.matches > 0) {
-    out.push(S.concentration(spread.distinct, spread.matches, spread.topShare));
-    out.push('');
-  }
+  // The per-run filtering breakdown ("Filtered out: …") and the spread/concentration line were
+  // removed from the reader-facing report (owner call, Sep 11 — audit signal, confusing to the
+  // recipient). Concentration stays available for monitoring via concentrationOf + the audit
+  // script; it is simply no longer printed in the deliverable.
   // PROVENANCE BEFORE PRESENTATION: if these items were read out of prose rather than handed over,
   // the reader is told so at the top, before a single match.
   if (report.provenance) { out.push(report.provenance); out.push(''); }

@@ -37,8 +37,12 @@ import {
 import { readEnrichmentStore, websiteNotesOf } from '../lib/tenders/enrich-members';
 import { writeProfileDoc, KB_BUCKET } from '../lib/tenders/write-profile-doc';
 import { writeProfileManifest } from '../lib/matching/manifest';
-// The CLIENT accounts. This script never runs against them, at all, under any flag.
-const FORBIDDEN = new Set(['9d3921b2', 'de4e8824']);
+// The CLIENT accounts. This script never runs against them — EXCEPT the one narrow, deliberate
+// escape below. The default set is both clients; a provisioning run releases AT MOST one of them.
+const DEFAULT_FORBIDDEN = new Set(['9d3921b2', 'de4e8824']);
+// de4e8824 can NEVER be released, by any flag, under any circumstances. Only 9d3921b2 (AHK Portugal,
+// Thorsten) may be deliberately provisioned — and only when --client names it explicitly.
+const NEVER_RELEASABLE = new Set(['de4e8824']);
 // The platform owner's own account: reachable, but only when the invocation SAYS SO. A real
 // account is never something a stray --user typo can seed.
 const OWNER_PREFIX = '08fe4449';
@@ -48,6 +52,17 @@ const argOf = (flag: string): string | null => {
   const i = process.argv.indexOf(flag);
   return i >= 0 ? process.argv[i + 1] ?? null : null;
 };
+// THE NARROW CLIENT ESCAPE (owner-authorized, Sep 2026 — provisioning Thorsten's tender radar).
+// `--client <prefix>` removes ONLY that prefix from the forbidden set for THIS run. de4e8824 is in
+// NEVER_RELEASABLE and the flag refuses it outright, so the other client account stays hard-forbidden
+// no matter what is typed.
+const CLIENT_ARG = argOf('--client');
+const FORBIDDEN = new Set(DEFAULT_FORBIDDEN);
+if (CLIENT_ARG) {
+  const p = CLIENT_ARG.slice(0, 8);
+  if (NEVER_RELEASABLE.has(p)) throw new Error(`--client ${p} refused: that client account can never be released`);
+  FORBIDDEN.delete(p);
+}
 const USER_ARG = argOf('--user');
 const LIMIT = Number(argOf('--limit') ?? '0') || 0;
 // Indexing is latency-bound (a summarize + an embed per chunk), not rate-limited — the pool width

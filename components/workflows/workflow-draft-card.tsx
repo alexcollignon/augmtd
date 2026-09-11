@@ -13,6 +13,7 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { CheckIcon, ShieldCheckIcon, BoltIcon } from '@heroicons/react/24/outline';
 import { Button } from '@/components/ui';
+import { describeCron } from '@/lib/workflows/schedule';
 import { FIRE_LIMIT_DEFAULT } from '@/lib/workflows/fire-limit';
 import { describeFilters, type DoorFilter } from '@/lib/workflows/trigger-sources';
 
@@ -55,7 +56,7 @@ export type WorkflowDraft = {
 
 const HOME_WORD: Record<string, string> = { message: 'a message', document: 'a document', slack: 'Slack', email: 'your inbox' };
 const triggerWord = (t: WorkflowDraft['trigger']): string =>
-  t.type === 'schedule' ? (t.label ?? `cron ${t.cron}`) :
+  t.type === 'schedule' ? (t.label ?? (t.cron ? describeCron(t.cron, t.timezone) : 'On a schedule')) :
   t.type === 'reaction' ? (t.label ?? (t.when ? `When ${t.when}` : 'On event')) :
   'Runs on demand';
 const stepWord = (s: WorkflowDraft['steps'][number]): string => {
