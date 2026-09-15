@@ -185,7 +185,7 @@ export async function POST(request: NextRequest) {
         break;
 
       case 'deep_research':
-        result = await executeDeepResearch(config as never, '');
+        result = await executeDeepResearch(config as never, '', { userId: user_id, supabase: ac });
         break;
 
       // ── Sandboxed compute (the production floor reaching prod workers, Aug 8) ──

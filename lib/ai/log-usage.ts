@@ -22,7 +22,8 @@ export type AIUsageSource =
   | 'member_directory'       // member-directory sector derivation (lib/tenders/member-directory.ts)
   | 'member_enrichment'      // member website → profile paragraph (lib/tenders/enrich-members.ts)
   | 'tender_matching'        // legacy label, kept so historical rows keep their meaning
-  | 'profile_matching';      // the items→profiles match judge (lib/matching/match-profiles.ts)
+  | 'profile_matching'       // the items→profiles match judge (lib/matching/match-profiles.ts)
+  | 'deep_research';         // the agentic research loop (lib/tools/deep-research.ts — always Bedrock EU)
 
 export interface LogAIUsageParams {
   userId: string;

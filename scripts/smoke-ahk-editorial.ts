@@ -19,6 +19,10 @@
 //   J2  every "Einordnung:" is supportable from facts stated in the text
 //   J3  no absolute market/actor characterizations beyond the stated facts
 //   J4  no third-country macro item without a direct Portugal decision link
+//   J5  no unsupported novelty/precedence claims (the IKEA-first-store class, Sep 15: the
+//       source said "at least one store", the briefing said "erste Filiale" — a novelty word
+//       may appear only when the run's own tool sources state it; judge proposes against the
+//       source excerpts, the novelty-marker regex disposes)
 //
 // AHK_FIXTURE_TARGET=mercado runs the PT sibling ("AHK Mercado Alemão", the same editorial law
 // adapted: the briefing reports Germany/EU for a Portuguese audience, so the third-country test
@@ -30,7 +34,7 @@
 //   P-D3b the source ledger carries "Fontes oficiais e primárias" + an imprensa group
 //   P-D4  no numeric source-count claim anywhere (the count is never asserted, R7)
 //   P-D5  every listed concurso carries a URL and the framing count equals the listed count
-//   P-J1..P-J4  the judged mirrors, PT definitions
+//   P-J1..P-J5  the judged mirrors, PT definitions
 //
 // The default (env unset) is the German briefing and its behavior is unchanged.
 //
@@ -133,8 +137,11 @@ async function main() {
     if (IS_PT) mercadoDeterministic(text, ok, pending);
     else {
 
-    // ── D2 — no em dashes in prose (headings carry one by the prompt's own format spec) ────
-    const proseLines = text.split('\n').filter(l => !/^\s*#/.test(l) && !/^AHK PORTUGAL EXECUTIVE BRIEFING/i.test(l.trim()));
+    // ── D2 — no em dashes in prose (headings carry one by the prompt's own format spec;
+    // table rows are DATA, not prose — a "—" empty-cell placeholder or a tool-verbatim tender
+    // title is table notation, found live as a false fail on a deadline-less tender row) ────
+    const proseLines = text.split('\n').filter(l =>
+      !/^\s*#/.test(l) && !/^\s*\|/.test(l) && !/^AHK PORTUGAL EXECUTIVE BRIEFING/i.test(l.trim()));
     const emLines = proseLines.filter(l => l.includes('—'));
     ok('D2 no em dashes in the briefing prose', emLines.length === 0, emLines.slice(0, 3).map(l => l.trim().slice(0, 90)).join(' | '));
 
@@ -187,7 +194,28 @@ async function main() {
     }
 
     // ── The judged pass — one cheap classification-tier call, strict JSON ──────────────────
-    const judged = await judge(admin, live.user_id, text);
+    // J5 verifies the briefing against the run's OWN tool outputs (the fetched sources), so the
+    // judge can tell an upgraded claim ("first store") from what the sources said ("at least one").
+    const sourceExcerpts = outs
+      .filter(o => o.step_type === 'tool' && typeof o.output === 'string')
+      .map(o => `[${String(o.label ?? 'tool step')}]\n${String(o.output).slice(0, 6000)}`)
+      .join('\n\n')
+      .slice(0, 30000);
+    const judged = await judge(admin, live.user_id, text, sourceExcerpts);
+    // THE QUOTE FLOOR (the sanitizeFindings idiom): the judge's contract is verbatim quotes from
+    // the briefing — a flag whose text is not findable in it is dropped, never gated on. Found
+    // live the round the judge grew source excerpts: it flagged a headline that existed only in
+    // the excerpts, and a J-gate failed on a sentence the briefing never contained.
+    if (judged.parsed) {
+      const norm = (s: string) => s.toLowerCase().replace(/[*_`]/g, '').replace(/\s+/g, ' ').trim();
+      const inBriefing = norm(text);
+      for (const key of Object.keys(judged.flags) as Array<keyof Flags>) {
+        const kept = judged.flags[key].filter(s => inBriefing.includes(norm(s)));
+        const dropped = judged.flags[key].filter(s => !inBriefing.includes(norm(s)));
+        judged.flags[key] = kept;
+        for (const s of dropped) console.log(`  quote-floor drop (${key}, not in the briefing): "${s.slice(0, 100)}"`);
+      }
+    }
     const jgate = (key: keyof typeof judged.flags, name: string) => {
       const flagged = judged.flags[key] ?? [];
       ok(name, flagged.length === 0, flagged.slice(0, 3).map(s => `"${s}"`).join(' | '));
@@ -219,6 +247,22 @@ async function main() {
       jgate('third_country', IS_PT
         ? 'P-J4 no third-country macro item without a Portuguese-company consequence'
         : 'J4 no third-country macro item without a Portugal decision link');
+
+      // J5 is TWO-KEY like J1: the judge proposes novelty claims the source excerpts do not
+      // support, but only a flag carrying a novelty/precedence marker fails the gate —
+      // markerless flags print as non-failing editorial notes.
+      const NOVELTY = IS_PT
+        ? /\b(primeir[ao]s?|pela primeira vez|maior(?:es)?|recordes?|entrada no mercado|estreia)\b/i
+        : /\b(erste[rnms]?|erstmal(?:s|ig\w*)|größte[rnms]?|grösste[rnms]?|Rekord\w*|Markteintritt|Debüt)\b/i;
+      const noveltyAll = judged.flags.novelty_unsupported ?? [];
+      const noveltyHard = noveltyAll.filter(s => NOVELTY.test(s));
+      const noveltyNotes = noveltyAll.filter(s => !NOVELTY.test(s));
+      ok(`${P}J5 no novelty/precedence claim the sources do not state (judge + marker)`,
+        noveltyHard.length === 0, noveltyHard.slice(0, 3).map(s => `"${s}"`).join(' | '));
+      if (noveltyNotes.length) {
+        console.log('  novelty notes (judge-flagged, no novelty marker — non-failing):');
+        for (const s of noveltyNotes) console.log(`    · ${s}`);
+      }
     }
 
     console.log(`\nbriefing length: ${text.length} chars · run ${Math.round((Date.now() - t0) / 1000)}s`);
@@ -260,9 +304,10 @@ const PT_NUMERALS: Record<string, number> = {
 
 function mercadoDeterministic(text: string, ok: Ok, pending: Pending) {
   // ── P-D2 — no travessões in prose. The header line ("AHK PORTUGAL — MERCADO ALEMÃO — …")
-  // carries them by the prompt's own format spec, as do markdown section headers.
+  // carries them by the prompt's own format spec, as do markdown section headers; table rows
+  // are data, not prose (the D2 table-cell lesson mirrored).
   const proseLines = text.split('\n').filter(l =>
-    !/^\s*#/.test(l) && !/^\**\s*AHK PORTUGAL\b/i.test(l.trim()));
+    !/^\s*#/.test(l) && !/^\s*\|/.test(l) && !/^\**\s*AHK PORTUGAL\b/i.test(l.trim()));
   const emLines = proseLines.filter(l => l.includes('—'));
   ok('P-D2 no travessões in the briefing prose', emLines.length === 0,
     emLines.slice(0, 3).map(l => l.trim().slice(0, 90)).join(' | '));
@@ -307,7 +352,11 @@ function mercadoDeterministic(text: string, ok: Ok, pending: Pending) {
   // framing may say "N identificados … nenhum qualifica" and list only a pointer to the portal
   // itself. A stated count of SCANNED tenders beside an explicit none-qualifies negation is not a
   // count claim about the list, and a bare portal pointer is not a concurso entry.
-  const noneQualify = /\bnenhum\b/i.test(concursos);
+  // "Sem concursos qualificados esta semana." (a bold honest-none line, counted as an entry by
+  // the bold-title marker) joined the vocabulary in round 4 — a none-statement is never an entry.
+  const NONE_RE = /\b(nenhum|nenhuma|sem concursos|sem eventos|não foram identificad)/i;
+  const noneQualify = NONE_RE.test(concursos);
+  entries = entries.filter(e => !NONE_RE.test(e));
   if (noneQualify) entries = entries.filter(e => !/service\.bund\.de|\bportal\b/i.test(e));
   const stated = noneQualify ? null : statedCount(concursos);
   if (entries.length === 0) {
@@ -418,36 +467,85 @@ function countGroupEntries(text: string, group: string): number {
 }
 
 // ── The judged pass ──────────────────────────────────────────────────────────────────────────
-type Flags = { advisory: string[]; unsupported_einordnung: string[]; absolutes: string[]; third_country: string[] };
+type Flags = { advisory: string[]; unsupported_einordnung: string[]; absolutes: string[];
+  third_country: string[]; novelty_unsupported: string[] };
 
-async function judge(admin: SupabaseClient, userId: string, text: string):
+async function judge(admin: SupabaseClient, userId: string, text: string, sources: string):
   Promise<{ parsed: boolean; flags: Flags; raw: string }> {
-  const empty: Flags = { advisory: [], unsupported_einordnung: [], absolutes: [], third_country: [] };
+  const empty: Flags = { advisory: [], unsupported_einordnung: [], absolutes: [],
+    third_country: [], novelty_unsupported: [] };
   try {
     // The judged gates run on the conversation tier deliberately: three fixture rounds proved
     // the cheap tier mis-fires on the observation-vs-advisory and protagonist-nationality
     // distinctions no matter how explicit the definitions get. A permanent QA gate earns the
     // stronger judge (~+€0.05/run).
     const { client, model } = await getAIClient(userId, 'conversation', admin as never);
-    const prompt = IS_PT ? mercadoJudgePrompt(text) : germanJudgePrompt(text);
+    const prompt = IS_PT ? mercadoJudgePrompt(text, sources) : germanJudgePrompt(text, sources);
     const res = await aiCreate(client, {
-      model, max_tokens: 1200, temperature: 0,
+      model, max_tokens: 1500, temperature: 0,
       messages: [{ role: 'user', content: prompt }],
     });
     const raw = res.choices?.[0]?.message?.content ?? '';
-    const json = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
+    const json = extractFirstJSONObject(raw);
+    if (!json) throw new Error(`no JSON object in the judge reply: ${raw.slice(0, 200)}`);
     const p = JSON.parse(json) as Partial<Flags>;
     const arr = (v: unknown) => (Array.isArray(v) ? v.map(String).filter(Boolean) : []);
     return { parsed: true, raw, flags: {
       advisory: arr(p.advisory), unsupported_einordnung: arr(p.unsupported_einordnung),
       absolutes: arr(p.absolutes), third_country: arr(p.third_country),
+      novelty_unsupported: arr(p.novelty_unsupported),
     } };
   } catch (e) {
     return { parsed: false, flags: empty, raw: String(e) };
   }
 }
 
-function germanJudgePrompt(text: string): string {
+/** The J5 flag definition + the source-excerpt block, shared by both judge prompts. The judge
+ *  only proposes; the marker regex at the call site disposes (the J1 two-key idiom). */
+function noveltyFlagDef(langExamples: string): string {
+  return (
+    `"novelty_unsupported":["<sentences claiming a FIRST, LARGEST, RECORD, DEBUT or MARKET ENTRY ` +
+    `(${langExamples}) where the SOURCE EXCERPTS below do not state that novelty about the same ` +
+    `subject — e.g. a source saying a company 'will open at least one store' reported as its ` +
+    `'first store' or as a 'market entry'. A novelty word the sources themselves use is fine — ` +
+    `and the excerpts may be in a DIFFERENT LANGUAGE from the briefing: a novelty stated in the ` +
+    `source's own language counts (German 'ersten Kunden'/'ersten Vertrag' supports 'primeiro ` +
+    `contrato'/'first contract'; Portuguese 'pela primeira vez' supports 'erstmals'). ` +
+    `Only flag a claim whose story IS covered by the excerpts; if the story is absent from the ` +
+    `excerpts, do not flag it>"]`
+  );
+}
+
+function sourceExcerptsBlock(sources: string): string {
+  return sources.trim()
+    ? `\n\nSOURCE EXCERPTS (the tool outputs this briefing was built from; clipped — a story may be missing). ` +
+      `They exist ONLY as the reference for the novelty_unsupported check: every flag in EVERY array must ` +
+      `quote THE BRIEFING itself — never flag or quote a sentence that appears only in these excerpts:\n${sources}` +
+      `\n\nReturn ONLY the JSON object — no commentary before or after it.`
+    : '';
+}
+
+/** The first BALANCED JSON object in the model's reply. The naive first-"{"-to-last-"}" slice
+ *  breaks the moment the model appends commentary containing a brace after its JSON (observed
+ *  live the first time the prompt grew a source-excerpts tail). */
+function extractFirstJSONObject(raw: string): string | null {
+  const start = raw.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < raw.length; i++) {
+    const c = raw[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+    } else if (c === '"') inStr = true;
+    else if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) return raw.slice(start, i + 1); }
+  }
+  return null;
+}
+
+function germanJudgePrompt(text: string, sources: string): string {
   return (
         `You are auditing a German-language business briefing published by a bilateral chamber of commerce. ` +
         `The chamber is an OBSERVER and FACILITATOR, never an adviser. Quote offending sentences VERBATIM from the text; ` +
@@ -456,14 +554,16 @@ function germanJudgePrompt(text: string): string {
         `{"advisory":["<sentences ADDRESSED TO THE READER that tell them or their company what to DO — prescriptions ('sollten ... kalkulieren') and homework constructions ('müssen ... neu bewerten/einkalkulieren/sich einstellen') directed at reader companies. NOT advisory — never flag these: the publication's approved monitoring register ('Für Marktteilnehmer sind ... die zentralen Beobachtungspunkte', '... ist/sind zu erwarten'), observation verbs describing a situation ('sehen steigende Kosten', 'stehen vor', 'für X steigen die Kosten'), and factual REPORTING that some actor in the story (a regulator, a ministry) advised or warned someone — reported advice is a fact about the story, not advice to the reader. Also NOT advisory: statements of LEGAL obligation or factual necessity arising from a reported event ('müssen die neuen Vorgaben in ihre Compliance-Prozesse integrieren' when a law mandates it; 'benötigen alternative Bezugsquellen' when a supply was suspended) — flag only business-judgment prescriptions, where the publication recommends a discretionary action>"],` +
         `"unsupported_einordnung":["<sentences after an 'Einordnung:' label that are NOT supportable from facts stated elsewhere in the text, or that contradict or overstate a figure the text itself states>"],` +
         `"absolutes":["<absolute characterizations of a market or actor that exceed the sourced facts, e.g. claiming an actor 'takes back control' or a business 'no longer works'>"],` +
-        `"third_country":["<items whose SUBJECT is a third country's own economy or policy (not Portugal, Germany, or an EU act) with no concrete stated consequence for companies in Portugal. Ask first: WHO is the item's protagonist? If the protagonist is a Portuguese or German company — even one winning contracts in Chile or expanding to Brazil ('Das portugiesische Unternehmen X hat einen Vertrag in Chile gewonnen') — it is a Portugal story: NEVER flag it. Flag only items whose protagonist is the third country itself (its GDP, its rates, its policy) with no stated Portugal consequence; an EU-level act only counts if the item states no Portugal effect at all>"]}\n` +
-        `Empty arrays when there is nothing to flag.\n\nTHE BRIEFING:\n${text.slice(0, 45000)}`
+        `"third_country":["<items whose SUBJECT is a third country's own economy or policy (not Portugal, Germany, or an EU act) with no concrete stated consequence for companies in Portugal. Ask first: WHO is the item's protagonist? If the protagonist is a Portuguese or German company — even one winning contracts in Chile or expanding to Brazil ('Das portugiesische Unternehmen X hat einen Vertrag in Chile gewonnen') — it is a Portugal story: NEVER flag it. A third-country EVENT reported as the cause of a market effect on companies in Portugal — a canal restriction raising freight costs, a conflict moving oil prices — is a CAUSE story: never flag it when the item states the concrete consequence. Flag ITEMS, never individual sentences: a summary bullet or a comparison clause ('similar movement in US bonds') inside an in-scope item is not a separate item. Flag only items whose protagonist is the third country itself (its GDP, its rates, its policy) with no stated Portugal consequence; an EU-level act only counts if the item states no Portugal effect at all>"],` +
+        noveltyFlagDef(`'erste', 'erstmals', 'größte', 'Rekord', 'Markteintritt', 'Debüt'`) + `}\n` +
+        `Empty arrays when there is nothing to flag.\n\nTHE BRIEFING:\n${text.slice(0, 45000)}` +
+        sourceExcerptsBlock(sources)
   );
 }
 
 /** The PT mirror. Same law, inverted geography: this briefing reports GERMANY and the EU for a
  *  PORTUGUESE audience, so the third-country test means outside Germany, the EU and Portugal. */
-function mercadoJudgePrompt(text: string): string {
+function mercadoJudgePrompt(text: string, sources: string): string {
   return (
     `You are auditing a Portuguese-language business briefing about Germany and the EU, published by a ` +
     `bilateral chamber of commerce for Portuguese executives. The chamber is an OBSERVER and FACILITATOR, ` +
@@ -473,8 +573,10 @@ function mercadoJudgePrompt(text: string): string {
     `{"advisory":["<sentences ADDRESSED TO THE READER that tell them or their company what to DO — prescriptions ('devem recalcular as margens', 'deveriam iniciar conversações') and homework constructions ('têm de reavaliar / incorporar / preparar-se para') directed at reader companies. NOT advisory — never flag these: the publication's approved monitoring register ('Para os participantes no mercado, os pontos de observação centrais são ...', 'é de esperar que ...'), observation verbs describing a situation ('enfrentam custos mais altos', 'para os exportadores, os custos sobem'), and factual REPORTING that some actor in the story (a regulator, a ministry, a company) advised or warned someone — reported advice is a fact about the story, not advice to the reader. Also NOT advisory: statements of LEGAL obligation or factual necessity arising from a reported event ('as novas regras aplicam-se a partir de 01.01.2027 também a empresas portuguesas'; 'necessitam de fontes de abastecimento alternativas' when a supply was suspended) — flag only business-judgment prescriptions, where the publication recommends a discretionary action>"],` +
     `"unsupported_einordnung":["<sentences after an 'Enquadramento:' label that are NOT supportable from facts stated elsewhere in the text, or that contradict or overstate a figure the text itself states>"],` +
     `"absolutes":["<absolute characterizations of a market or actor that exceed the sourced facts, e.g. claiming an actor 'perde o controlo', 'torna-se um apêndice', or that a business 'deixou de ser viável'>"],` +
-    `"third_country":["<items whose SUBJECT is a third country's own economy or policy — a country outside Germany, the EU and Portugal (its GDP, its interest rates, its domestic policy, its energy milestones). The client's standard is UNCONDITIONAL for such items: flagged regardless of any relevance paragraph they carry, however well-written. But the test is about the item's SUBJECT, never its causes or comparisons: an item whose subject is Germany, the EU, or a global market effect hitting them stays even when a third country is the CAUSE ('conflito EUA-Irão eleva o preço do petróleo' — an energy-cost story for German industry) or a COMPARISON ('rendimentos alemães ... com movimento semelhante no Japão' — a German-yields story). Ask first: WHO is the item's protagonist? If the protagonist is a Portuguese or German company or institution — even one winning contracts in Chile or expanding to Brazil ('A empresa portuguesa X ganhou um contrato no Chile', 'A alemã Y abre fábrica no México') — it is a Portugal-Germany story: NEVER flag it. A German or EU-level development is never a third-country item. Flag every item whose protagonist is the third country itself>"]}\n` +
-    `Empty arrays when there is nothing to flag.\n\nTHE BRIEFING:\n${text.slice(0, 45000)}`
+    `"third_country":["<items whose SUBJECT is a third country's own economy or policy — a country outside Germany, the EU and Portugal (its GDP, its interest rates, its domestic policy, its energy milestones). The client's standard is UNCONDITIONAL for such items: flagged regardless of any relevance paragraph they carry, however well-written. But the test is about the item's SUBJECT, never its causes or comparisons: an item whose subject is Germany, the EU, or a global market effect hitting them stays even when a third country is the CAUSE ('conflito EUA-Irão eleva o preço do petróleo' — an energy-cost story for German industry) or a COMPARISON ('rendimentos alemães ... com movimento semelhante no Japão', 'com movimento semelhante em obrigações de EUA' — a German-yields story either way). A third-country EVENT reported as the cause of a market effect on companies in scope — a canal restriction raising freight costs and lead times for Portuguese exporters, a drought moving commodity prices — is a CAUSE story: never flag it when the item states the concrete in-scope consequence. The header may even LEAD with the cause: an item titled 'Rendimentos de obrigações dos EUA em máximos pressionam custos de financiamento na Europa', whose body turns to German/European rates, banks and Euribor within its first sentences, is a European financing-cost story — never flag it. Flag ITEMS, never individual sentences: a summary bullet or a comparison clause inside an in-scope item is not a separate item. Ask first: WHO is the item's protagonist? If the protagonist is a Portuguese or German company or institution — even one winning contracts in Chile or expanding to Brazil ('A empresa portuguesa X ganhou um contrato no Chile', 'A alemã Y abre fábrica no México') — it is a Portugal-Germany story: NEVER flag it. A German or EU-level development is never a third-country item. Flag every item whose protagonist is the third country itself>"],` +
+    noveltyFlagDef(`'primeira', 'pela primeira vez', 'maior', 'recorde', 'entrada no mercado', 'estreia'`) + `}\n` +
+    `Empty arrays when there is nothing to flag.\n\nTHE BRIEFING:\n${text.slice(0, 45000)}` +
+    sourceExcerptsBlock(sources)
   );
 }
 

@@ -7,6 +7,8 @@
 // user's tier — data isolation is the point.
 
 import { createBedrockAdapter } from '@/lib/ai/bedrock-adapter';
+import { aiCreate } from '@/lib/ai/factory';
+import { logAIUsage } from '@/lib/ai/log-usage';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -32,6 +34,10 @@ export interface DeepResearchConfig {
 
   // Bedrock model. 'fast' = Haiku 4.5 (default), 'thorough' = Sonnet 4.6.
   model?: 'fast' | 'thorough';
+
+  // Tavily search depth. 'basic' (default, 1 credit) is enough for news/topic lookups;
+  // 'advanced' (2 credits) only where a topic genuinely needs deeper page extraction.
+  search_depth?: 'basic' | 'advanced';
 }
 
 export const deepResearchDefinition = {
@@ -51,6 +57,11 @@ interface ResearchResult {
   topic: string;
   summary: string;
   sources: Array<{ title: string; url: string; outlet?: string }>;
+  // Failure honesty accounting — a degraded run must be visible downstream, never dressed
+  // up as research (Tavily 432 quota exhaustion, Aug 31 / Sep 15).
+  searchesAttempted?: number;
+  searchesFailed?: number;
+  firstError?: string | null;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -68,6 +79,7 @@ const TOPIC_CONCURRENCY = 3;
 export async function executeDeepResearch(
   config: DeepResearchConfig,
   previousStepOutput: string,
+  ctx?: { userId?: string; supabase?: any },
 ): Promise<string> {
   const focus      = config.focus?.trim();
   const maxTopics  = Math.max(1, config.max_topics ?? 6);
@@ -75,6 +87,7 @@ export async function executeDeepResearch(
   const language   = config.language ?? 'en';
   const modelKey   = config.model === 'thorough' ? 'thorough' : 'fast';
   const modelId    = BEDROCK_MODELS[modelKey];
+  const searchDepth = config.search_depth === 'advanced' ? 'advanced' : 'basic';
 
   if (!focus) return '[deep_research] No focus configured — add a research focus in the step settings.';
 
@@ -94,10 +107,31 @@ export async function executeDeepResearch(
     awsSecretKey: process.env.AWS_BEDROCK_SECRET_KEY,
   });
 
-  // Research all topics with bounded concurrency
+  // Telemetry — non-fatal, fire-and-forget. This tool always runs Bedrock EU regardless of the
+  // user's billing tier, so `tier` is deliberately omitted rather than claimed.
+  const onUsage = (usage: { prompt_tokens?: number; completion_tokens?: number } | null | undefined) => {
+    if (!ctx?.userId || !ctx?.supabase) return;
+    void logAIUsage(ctx.supabase, {
+      userId: ctx.userId,
+      source: 'deep_research',
+      provider: 'bedrock',
+      model: modelId,
+      usage,
+    }).catch(() => { /* telemetry never affects the run */ });
+  };
+
+  // Research all topics with bounded concurrency. A topic that throws degrades to an honest
+  // line — one bad topic must never take the whole step down.
   const results = await runWithConcurrency(
     topics,
-    topic => researchOneTopic(topic, focus, language, modelId, maxSearches, client),
+    async (topic): Promise<ResearchResult> => {
+      try {
+        return await researchOneTopic(topic, focus, language, modelId, maxSearches, client, searchDepth, onUsage);
+      } catch (e) {
+        const reason = clip(e instanceof Error ? e.message : String(e), 160);
+        return { topic, summary: `[research unavailable for this topic: ${reason}]`, sources: [] };
+      }
+    },
     TOPIC_CONCURRENCY,
   );
 
@@ -154,6 +188,8 @@ async function researchOneTopic(
   modelId: string,
   maxSearches: number,
   client: ReturnType<typeof createBedrockAdapter>,
+  searchDepth: 'basic' | 'advanced' = 'basic',
+  onUsage?: (usage: { prompt_tokens?: number; completion_tokens?: number } | null | undefined) => void,
 ): Promise<ResearchResult> {
   const langInstruction = language !== 'en'
     ? `Write your final synthesis in ${getLanguageName(language)}.`
@@ -184,78 +220,144 @@ async function researchOneTopic(
     },
   }];
 
-  type Message = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; tool_call_id?: string; name?: string };
+  type ToolCall = { id: string; type?: string; function?: { name?: string; arguments?: string } };
+  type Message = {
+    role: 'system' | 'user' | 'assistant' | 'tool';
+    content: string;
+    tool_call_id?: string;
+    name?: string;
+    // THE PROTOCOL: an assistant turn that requested tools must carry those tool_calls when it
+    // is pushed back, or the role:'tool' messages below reference ids nothing declared. The
+    // bedrock adapter already translates this shape (tool_calls → tool_use blocks).
+    tool_calls?: ToolCall[];
+  };
   const messages: Message[] = [
     { role: 'system', content: systemPrompt },
     { role: 'user',   content: `Research this topic: ${topic}` },
   ];
 
   const collectedSources: Array<{ title: string; url: string; outlet?: string }> = [];
+  const queriesRun = new Set<string>();
   let searchCount = 0;
+  let searchesFailed = 0;
+  let firstError: string | null = null;
+  let sawToolResult = false;
+  // THE SYNTHESIS LAW: content produced AFTER the last tool result is the synthesis. A
+  // round-1 preamble ("I'll search for…") is never it.
+  let synthesisAfterResults = false;
 
-  // Agentic loop — run until model stops calling tools or cap reached
-  while (searchCount < maxSearches) {
-    const response = await (client as any).chat.completions.create({
+  // Agentic loop — bounded by ROUNDS, not by the search counter. Parallel tool calls used to
+  // push searchCount past the cap and exit before the model ever read a result.
+  const MAX_ROUNDS = 4;
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const remaining = Math.max(0, maxSearches - searchCount);
+
+    const response = await aiCreate(client as any, {
       model: modelId,
-      messages,
+      messages: messages as any,
       tools,
-      tool_choice: searchCount < maxSearches ? 'auto' : 'none',
+      // Budget exhausted → the model MUST synthesise from what it has.
+      tool_choice: remaining > 0 ? 'auto' : 'none',
       temperature: 0.2,
       max_tokens: 2000,
-    });
+    } as any);
 
-    const choice = response.choices?.[0];
+    onUsage?.((response as any)?.usage);
+
+    const choice = (response as any).choices?.[0];
     if (!choice) break;
 
-    const msg = choice.message;
-    messages.push({ role: 'assistant', content: msg.content ?? '' });
+    const msg = choice.message as { content?: string | null; tool_calls?: ToolCall[] };
+    const content = (msg.content ?? '').trim();
+    messages.push({
+      role: 'assistant',
+      content: msg.content ?? '',
+      ...(msg.tool_calls?.length ? { tool_calls: msg.tool_calls } : {}),
+    });
 
-    // No more tool calls → done
+    if (content && sawToolResult) synthesisAfterResults = true;
+
+    // No tool calls → this content IS the synthesis.
     if (!msg.tool_calls?.length) break;
 
-    // Execute each tool call
+    // EVERY declared tool_call_id must receive a tool message — executed, deduped, or refused.
+    let executedThisRound = 0;
     for (const tc of msg.tool_calls) {
-      if (tc.function?.name !== 'web_search') continue;
+      let toolContent: string;
 
-      let args: { query?: string } = {};
-      try { args = JSON.parse(tc.function.arguments ?? '{}'); } catch { /* ignore */ }
+      if (tc.function?.name !== 'web_search') {
+        toolContent = `Unsupported tool "${tc.function?.name ?? 'unknown'}" — only web_search is available.`;
+      } else {
+        let args: { query?: string } = {};
+        try { args = JSON.parse(tc.function.arguments ?? '{}'); } catch { /* ignore */ }
+        const query = args.query?.trim();
 
-      const query = args.query?.trim();
-      if (!query) continue;
+        if (!query) {
+          toolContent = 'No query supplied — restate the query or synthesise from the results you already have.';
+        } else if (queriesRun.has(query.toLowerCase())) {
+          toolContent = 'Duplicate query skipped — reuse the earlier result.';
+        } else if (executedThisRound >= remaining) {
+          toolContent = 'Search budget exhausted — synthesise from the results you already have.';
+        } else {
+          executedThisRound++;
+          searchCount++;
+          queriesRun.add(query.toLowerCase());
+          toolContent = await tavilySearch(query, searchDepth);
 
-      searchCount++;
-      const searchResult = await tavilySearch(query);
-
-      // Extract source URLs from the result text
-      const urlMatches = searchResult.matchAll(/https?:\/\/[^\s)\]]+/g);
-      for (const [url] of urlMatches) {
-        if (!collectedSources.find(s => s.url === url)) {
-          const titleMatch = searchResult.match(new RegExp(`\\*\\*([^*]+)\\*\\*[\\s\\S]{0,20}${escapeRegex(url.slice(0, 40))}`));
-          collectedSources.push({ title: titleMatch?.[1]?.trim() ?? query, url });
+          if (toolContent.startsWith('[web_search error]') || toolContent.startsWith('[web_search]')) {
+            searchesFailed++;
+            if (!firstError) firstError = toolContent;
+          } else {
+            // Extract source URLs from the result text
+            const urlMatches = toolContent.matchAll(/https?:\/\/[^\s)\]]+/g);
+            for (const [url] of urlMatches) {
+              if (!collectedSources.find(s => s.url === url)) {
+                const titleMatch = toolContent.match(new RegExp(`\\*\\*([^*]+)\\*\\*[\\s\\S]{0,20}${escapeRegex(url.slice(0, 40))}`));
+                collectedSources.push({ title: titleMatch?.[1]?.trim() ?? query, url });
+              }
+            }
+          }
         }
       }
 
-      messages.push({
-        role: 'tool',
-        content: searchResult,
-        tool_call_id: tc.id,
-        name: 'web_search',
-      });
+      messages.push({ role: 'tool', content: toolContent, tool_call_id: tc.id, name: 'web_search' });
+      sawToolResult = true;
     }
   }
 
-  // Extract the final synthesis from the last assistant message
+  const accounting = { searchesAttempted: searchCount, searchesFailed, firstError };
+
+  // FAILURE HONESTY — every search failed: say so, never let model prose stand in for research.
+  if (searchCount > 0 && searchesFailed === searchCount) {
+    return {
+      topic,
+      summary: `[research degraded: ${searchesFailed}/${searchCount} searches failed — ${clip(firstError ?? 'unknown error', 120)}]`,
+      sources: collectedSources,
+      ...accounting,
+    };
+  }
+
+  // A pre-search preamble is NOT a synthesis.
+  if (searchCount > 0 && !synthesisAfterResults) {
+    return {
+      topic,
+      summary: '[research degraded: searches ran but the model produced no synthesis of the results]',
+      sources: collectedSources,
+      ...accounting,
+    };
+  }
+
   const finalContent = [...messages]
     .reverse()
     .find(m => m.role === 'assistant' && m.content?.trim())
     ?.content ?? `No research results found for: ${topic}`;
 
-  return { topic, summary: finalContent.trim(), sources: collectedSources };
+  return { topic, summary: finalContent.trim(), sources: collectedSources, ...accounting };
 }
 
 // ─── Tavily search ────────────────────────────────────────────────────────────
 
-async function tavilySearch(query: string): Promise<string> {
+async function tavilySearch(query: string, searchDepth: 'basic' | 'advanced' = 'basic'): Promise<string> {
   const key = process.env.TAVILY_API_KEY;
   if (!key) return `[web_search] TAVILY_API_KEY not configured.`;
 
@@ -263,7 +365,7 @@ async function tavilySearch(query: string): Promise<string> {
     const res = await fetch('https://api.tavily.com/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-      body: JSON.stringify({ query, max_results: 5, search_depth: 'advanced' }),
+      body: JSON.stringify({ query, max_results: 5, search_depth: searchDepth }),
     });
 
     if (!res.ok) return `[web_search error] ${res.status} ${res.statusText}`;
@@ -300,7 +402,16 @@ function formatOutput(results: ResearchResult[], language: string): string {
       uniqueSources.map((s, i) => `${i + 1}. ${s.title} — ${s.url}`).join('\n')
     : '';
 
-  return [...sections, separator, sourceList].filter(Boolean).join('\n\n');
+  // FAILURE HONESTY — one trailing note when any search failed, so downstream prompts (and the
+  // reader) can see that this run was degraded rather than thin.
+  const attempted = results.reduce((n, r) => n + (r.searchesAttempted ?? 0), 0);
+  const failed    = results.reduce((n, r) => n + (r.searchesFailed ?? 0), 0);
+  const firstErr  = results.find(r => r.firstError)?.firstError ?? '';
+  const note = failed > 0
+    ? `_Note: research was degraded this run — ${failed} of ${attempted} searches failed (${clip(firstErr, 120)})._`
+    : '';
+
+  return [...sections, separator, sourceList, note].filter(Boolean).join('\n\n');
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -329,6 +440,11 @@ function getLanguageName(code: string): string {
     nl: 'Dutch (Nederlands)',
   };
   return map[code] ?? code;
+}
+
+function clip(s: string, max: number): string {
+  const t = (s ?? '').trim().replace(/\s+/g, ' ');
+  return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 
 function escapeRegex(s: string): string {

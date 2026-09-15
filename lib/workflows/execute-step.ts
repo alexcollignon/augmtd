@@ -50,6 +50,11 @@ export interface StepContext {
    *  for the gate; enforced HERE so there is exactly one verifier, findings attributed via
    *  stepLabel. Authoring is contextual (on the step), enforcement stays single (the gate). */
   stepChecks?: Array<{ stepLabel: string; check: string }> | null;
+  /** THE PROVENANCE FLOOR (gate v6) — set ONLY by executeVerifyStep, and only when the pipeline
+   *  carries at least one tool/input step before the draft: previous-step blocks are labeled
+   *  TOOL OUTPUT vs DERIVED so an intermediate AI step's paraphrase can never ground the draft's
+   *  claims against itself. Absent everywhere else — plain AI steps keep the unlabeled format. */
+  sourceProvenance?: boolean;
 }
 
 // ── Public entrypoint ─────────────────────────────────────────────────────────
@@ -116,13 +121,20 @@ export async function executeStep(step: WorkflowStep, ctx: StepContext): Promise
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatPreviousOutputs(outputs: StepOutput[], maxChars?: number): string {
+function formatPreviousOutputs(outputs: StepOutput[], maxChars?: number, provenance?: boolean): string {
   if (outputs.length === 0) return '';
   const parts = outputs.map((o, i) => {
     const body = typeof o.output === 'string'
       ? o.output
       : JSON.stringify(o.output, null, 2);
-    return `[Step ${i + 1} — ${o.label}]\n${body}`;
+    // THE PROVENANCE FLOOR (gate v6, verify path only): label each block by where its content
+    // came from, so the gate can tell fetched material from this pipeline's own earlier drafting.
+    const tag = !provenance ? '' :
+      i === outputs.length - 1 ? ' — THE DRAFT' :
+      o.step_type === 'tool' || o.step_type === 'input' ? ' — TOOL OUTPUT: SOURCE MATERIAL' :
+      o.step_type === 'ai' || o.step_type === 'agent' ? ' — DERIVED by an earlier AI step of this pipeline: NOT a source' :
+      '';
+    return `[Step ${i + 1} — ${o.label}${tag}]\n${body}`;
   });
   const joined = parts.join('\n\n');
   // Over-budget: cut the MIDDLE, never the tail — the latest steps are the most
@@ -187,7 +199,7 @@ async function executeToolStep(step: ToolStep, ctx: StepContext): Promise<string
       const drConfig = { ...(step.config as unknown as Parameters<typeof executeDeepResearch>[0]) };
       // Inherit output language if not explicitly set on the step
       if (!drConfig.language && ctx.outputLanguage) drConfig.language = ctx.outputLanguage;
-      return await executeDeepResearch(drConfig, formatPreviousOutputs(ctx.previousOutputs));
+      return await executeDeepResearch(drConfig, formatPreviousOutputs(ctx.previousOutputs), { userId: ctx.userId, supabase: ctx.supabase });
     }
     case 'get_workflow_output':
       return await executeWorkflowOutput(step.config, ctx);
@@ -444,7 +456,16 @@ async function toolReadKbFolder(
 // v5: v4 moved from prompt language into CODE — a block/hold/stop-demanding rule backed by a
 // rule finding forces `blocked` deterministically (prompt-only enforcement flip-flopped across
 // model runs; a user's stated escalation is not model discretion).
-export const VERIFY_GATE_VERSION = 5;
+// v6: THE PROVENANCE FLOOR (the IKEA-first-store incident, Sep 15) — in tool-carrying pipelines
+// the gate's context labels every prior block TOOL OUTPUT vs DERIVED, and the prompt demotes
+// DERIVED blocks from grounding: an intermediate AI step upgraded a source's "at least one
+// store" into "first store" and the gate accepted it because "everything before the draft is
+// source material" let the upgrade ground itself. Pure-AI pipelines (no tool/input step before
+// the draft) keep the v5 prompt byte-identical — their only material IS derived, and demoting
+// it would strand SAY-fixture and prose pipelines with no sources at all. v6 also widens the
+// per-rule render clip 200→480: authored rules run 300–450 chars and the old clip cut every
+// rule mid-sentence, so their named examples and carve-outs never reached the gate.
+export const VERIFY_GATE_VERSION = 6;
 
 const GATE_SENTINEL = '===GATE_VERDICT===';
 
@@ -458,6 +479,9 @@ function verifyGatePrompt(opts: {
   rules?: string[];
   brief?: string | null;
   stepChecks?: Array<{ stepLabel: string; check: string }> | null;
+  /** THE PROVENANCE FLOOR (v6): true when the pipeline carries tool/input sources and the
+   *  previous-step blocks are provenance-labeled; the prompt then names the label semantics. */
+  provenance?: boolean;
 }): string {
   const briefBlock = opts.brief?.trim()
     ? `\n\nTHE BRIEF — the draft was produced from this instruction:\n"""\n${opts.brief.trim().slice(0, 1500)}\n"""\n` +
@@ -468,9 +492,13 @@ function verifyGatePrompt(opts: {
     : '';
 
   const rules = (opts.rules ?? []).map(r => r.trim()).filter(Boolean).slice(0, 10);
+  // 480, not 200 (v6): authored rules run 300–450 chars and the old clip silently cut every
+  // rule mid-sentence — the named examples and carve-outs never reached the gate (verdict
+  // quotes carried the truncation for weeks: "('müssen ... neu bewerte"). A rule the user
+  // wrote is enforced as written or not at all.
   const rulesBlock = rules.length
     ? `\n\nYOUR RULES — the user's own policy, enforce each one:\n` +
-      rules.map((r, i) => `R${i + 1}. ${r.slice(0, 200)}`).join('\n') +
+      rules.map((r, i) => `R${i + 1}. ${r.slice(0, 480)}`).join('\n') +
       `\nFor each rule: prefer to FIX (mask/correct/remove) the violation and record it. Declare a rule ` +
       `BLOCKED only when the violation cannot be removed without destroying the deliverable's purpose — ` +
       `OR when the rule itself explicitly says to block/hold/stop delivery: a rule that demands blocking ` +
@@ -492,13 +520,34 @@ function verifyGatePrompt(opts: {
       `plus "stepLabel" set to that step's label.`
     : '';
 
+  // THE PROVENANCE FLOOR (v6): with labeled blocks, only TOOL OUTPUT grounds — an earlier AI
+  // step's paraphrase is a drafting stage, and where it overstates the tools, the tools win.
+  // Without labels (a pure-AI pipeline) the v5 contract stands byte-identical.
+  const headerLine = opts.provenance
+    ? `THE VERIFICATION GATE (v${VERIFY_GATE_VERSION}). The LAST previous-step output below is THE DRAFT ` +
+      `(its block is marked "THE DRAFT"). Blocks marked "TOOL OUTPUT: SOURCE MATERIAL" are the sources. ` +
+      `Blocks marked "DERIVED" are earlier drafting stages of this same pipeline, NOT sources: a claim ` +
+      `that appears only in a DERIVED block is ungrounded, and where a DERIVED block states a fact more ` +
+      `strongly or broadly than the tool material behind it, the tools' own wording wins. Your ONLY job ` +
+      `is to verify the draft against the sources and return the CORRECTED DRAFT, then your verdict — ` +
+      `nothing else.\n`
+    : `THE VERIFICATION GATE (v${VERIFY_GATE_VERSION}). The LAST previous-step output below is THE DRAFT. ` +
+      `Everything before it is SOURCE MATERIAL. Your ONLY job is to verify the draft against the sources ` +
+      `and return the CORRECTED DRAFT, then your verdict — nothing else.\n`;
+  const rule1 = opts.provenance
+    ? `1. Every factual claim must be grounded in the source material. DELETE or CORRECT any claim the ` +
+      `sources do not support — never keep an ungrounded claim because it sounds plausible. Watch for ` +
+      `silent upgrades along the pipeline: novelty and precedence claims ("first", "largest", "record", ` +
+      `"market entry", "debut" — in any language) must be stated by the TOOL OUTPUT itself; when the ` +
+      `sources say less ("at least one store" is not "the first store"), correct the draft to the ` +
+      `sources' own wording.\n`
+    : `1. Every factual claim must be grounded in the source material. DELETE or CORRECT any claim the ` +
+      `sources do not support — never keep an ungrounded claim because it sounds plausible.\n`;
+
   return (
-    `THE VERIFICATION GATE (v${VERIFY_GATE_VERSION}). The LAST previous-step output below is THE DRAFT. ` +
-    `Everything before it is SOURCE MATERIAL. Your ONLY job is to verify the draft against the sources ` +
-    `and return the CORRECTED DRAFT, then your verdict — nothing else.\n` +
+    headerLine +
     `Rules:\n` +
-    `1. Every factual claim must be grounded in the source material. DELETE or CORRECT any claim the ` +
-    `sources do not support — never keep an ungrounded claim because it sounds plausible.\n` +
+    rule1 +
     `2. Citations must point at REAL URLs from the source material — fix wrong ones; remove unfixable ones.\n` +
     `3. Keep the draft's structure EXACTLY: every section and heading stays; a section emptied by ` +
     `deletions keeps its header with an honest empty line; never renumber, reorder, or add sections.\n` +
@@ -605,6 +654,11 @@ async function executeVerifyStep(
   } catch { /* enhancement only */ }
   // 2 — the reasoned gate, persona-free, through the ONE AI-step executor (clock, language,
   // previous-outputs context, and the use_worker_identity:false contract all ride along).
+  // THE PROVENANCE FLOOR (v6) engages only when a real fetched source exists before the draft —
+  // a pure-AI pipeline's earlier steps are its only material and keep the v5 contract untouched.
+  const hasToolSource = prev.slice(0, -1).some(
+    o => o.step_type === 'tool' || o.step_type === 'input',
+  );
   const gate: AIStep = {
     type: 'ai', id: step.id, label: step.label || 'Verification gate',
     model_tier: 'reasoning', output_format: 'markdown', use_worker_identity: false,
@@ -613,9 +667,10 @@ async function executeVerifyStep(
       rules: step.rules,
       brief: ctx.producingPrompt,
       stepChecks: ctx.stepChecks,
+      provenance: hasToolSource,
     }) + mismatchBlock,
   };
-  const raw = await executeAIStep(gate, ctx);
+  const raw = await executeAIStep(gate, { ...ctx, sourceProvenance: hasToolSource });
 
   // 3 — THE SENTINEL, parsed deterministically. FAILURE HONESTY: a missing or unparseable verdict
   // degrades to the deterministic floor with reported:false — never a fabricated "passed".
@@ -703,6 +758,7 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
   const previousBlock = formatPreviousOutputs(
     ctx.previousOutputs,
     ctx.isLastStep && ctx.workerAgentId ? 150_000 : undefined,
+    ctx.sourceProvenance,
   );
 
   const formatNote =
