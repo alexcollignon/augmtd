@@ -59,7 +59,7 @@ export async function writeProfileDoc(
 
   try {
     await indexUploadedFile({
-      buffer, filename, mimeType: 'text/plain', userId, storagePathInBucket: storagePath, folderId,
+      buffer, filename, mimeType: 'text/plain', userId, storagePathInBucket: storagePath, folderId, bucket: KB_BUCKET,
     }, sb);
     return 'wrote';
   } catch (e) {

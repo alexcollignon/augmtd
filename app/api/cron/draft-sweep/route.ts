@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { runPreparationPass } from '@/lib/prepare/pass';
+import { activeUserIds, orderLeastRecentlyServed } from '@/lib/work/sweep-users';
 
 export const maxDuration = 300;
 
@@ -38,28 +39,10 @@ export async function GET(request: NextRequest) {
   // Active = a mail connection OR recent work signal (THE SOVEREIGN TIER has no mailbox — its
   // items arrive from meetings/uploads/workflows; a connections-only filter would silence those
   // accounts' passes AND their entity-state maintenance entirely).
-  const sixtyDaysAgo = new Date(Date.now() - 60 * 86_400_000).toISOString();
-  const [{ data: conns }, { data: recentItems }, { data: recentMeetings }] = await Promise.all([
-    sb.from('connections').select('user_id'),
-    sb.from('inbox_items').select('user_id').gte('created_at', sixtyDaysAgo).limit(5000),
-    sb.from('meeting_transcripts').select('user_id').gte('created_at', sixtyDaysAgo).limit(2000),
-  ]);
-  const active = [...new Set([
-    ...((conns ?? []) as Array<{ user_id: string }>).map((c) => c.user_id),
-    ...((recentItems ?? []) as Array<{ user_id: string }>).map((r) => r.user_id),
-    ...((recentMeetings ?? []) as Array<{ user_id: string }>).map((r) => r.user_id),
-  ])];
-  // Least-recently-served: the newest prep_outcome per user marks their last pass touch.
-  const lastServed = new Map<string, string>();
-  try {
-    const { data: outs } = await sb.from('item_plans').select('user_id, updated_at')
-      .eq('kind', 'prep_outcome').in('user_id', active.length ? active : ['-'])
-      .order('updated_at', { ascending: false }).limit(2000);
-    for (const o of (outs ?? []) as Array<{ user_id: string; updated_at: string }>) {
-      if (!lastServed.has(o.user_id)) lastServed.set(o.user_id, o.updated_at);
-    }
-  } catch { /* unordered walk is still guarded by the rotation below */ }
-  const users = active.sort((a, b) => (lastServed.get(a) ?? '').localeCompare(lastServed.get(b) ?? ''));
+  // ONE IMPLEMENTATION (proactive-reach LAW 1): the rotation now lives in lib/work/sweep-users and
+  // is shared with the judgment sweep — two crons walking accounts by two drifting rules is the
+  // fork this arc exists to stop. Least-recently-served reads the newest prep_outcome per user.
+  const users = await orderLeastRecentlyServed(sb, await activeUserIds(sb), 'prep_outcome');
   const budgetMs = Math.min(120_000, Math.max(30_000, Math.floor(240_000 / Math.max(1, users.length))));
   const routeDeadline = Date.now() + 265_000; // stop cleanly before the 300s kill
 

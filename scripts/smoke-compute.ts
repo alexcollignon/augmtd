@@ -10,6 +10,15 @@ const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
 const src = (p: string) => readFileSync(p, 'utf8');
 const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; } catch { return false; } };
 
+// RE-POINTED (Sep 13, THE THREADS ARC reconciliation): a prompt-version FLOOR must be read as a
+// NUMBER, never matched as a character class. `[5-9]` silently stopped matching the moment
+// ROOM_BRIEF_VERSION reached 10 — the exact "an exact VERSION pin breaks on every bump" lesson,
+// re-manifested one digit later in the very gate that recorded it. One reader, arithmetic.
+const versionAtLeast = (path: string, name: string, floor: number): boolean => {
+  const m = new RegExp(`export const ${name} = (\\d+)`).exec(src(path));
+  return !!m && Number(m[1]) >= floor;
+};
+
 (async () => {
   // ── C1 · REGISTRY TRUTH: one map row, parity lawful, the plan cache self-invalidates. ──
   const { CAPABILITY_MAP, registryParity, PLAN_VERSION } = await import('../lib/work/surface-registry');
@@ -355,10 +364,15 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
 
   // ── RN · THE RUN LANDS IN THE ROOM + THE MISSED PROMISE + THE METHOD (Arc 2 stages 3–5). ──
   const stg = src('lib/workflows/standing.ts');
-  check('RN1: runs narrate into the standing commitment\'s room — success (CoS voice, deduped per run, deliverable link) AND failure (honest turn + the debt stamps today)',
+  // ⟲ RE-POINTED (Sep 13, proactive-reach W4 — census fixes 6+7+8): the success turn is no longer a
+  // template but THE RUN'S OWN COMPOSED REPORT-BACK (the run tail hands its one composition over —
+  // see smoke-reach R11), and the failure word is no longer shouted ("run FAILED" → "run failed":
+  // urgency is a word, never casing). The LAW this gate holds is unchanged — both endings narrate
+  // into the standing room, deduped per run, with the link — so it is re-pointed, never weakened.
+  check('RN1: runs narrate into the standing commitment\'s room — success (the composed report-back, deduped per run, deliverable link) AND failure (honest turn + the debt stamps today)',
     stg.includes('narrateStandingRun') && stg.includes('`run:${run.runId}`') && stg.includes('`run-fail:${run.runId}`') &&
-    stg.includes('ONE-NARRATOR LAW') && stg.includes('run FAILED') &&
-    src('lib/workflows/run-workflow.ts').includes('narrateStandingRun(admin, wfRow, { ok: true') &&
+    stg.includes('ONE-NARRATOR LAW') && stg.includes('run failed') &&
+    src('lib/workflows/run-workflow.ts').includes('report: reportText,') &&
     src('lib/workflows/run-workflow.ts').includes('{ ok: false, runId, threadId'));
   check('RN2: THE MISSED-PROMISE FLOOR — a PAST due_date is only advanced by a SUCCESSFUL run (the dispatcher\'s pre-advance can never hide a failing task)',
     stg.includes('fromSuccessfulRun') && stg.includes('duePast && !opts?.fromSuccessfulRun') &&
@@ -439,21 +453,41 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     ha.includes('THE DURABLE HOME CHAT') && ha.includes("`chat:${crypto.randomUUID()}`") &&
     ha.includes("persistTurn('user', shown)") && ha.includes("persistTurn('system', d.answer") &&
     ha.includes('/api/room/turns?key=') &&
-    src('components/one/one-sidebar.tsx').includes("localStorage.removeItem('aug-home-chat-key')") &&
+    // RE-POINTED (Sep 13, THE THREADS ARC): the mint-fresh deed left the SIDEBAR — its "New chat"
+    // seat retired in the Aug 25 nav wave (Home IS the chat door) and the Sep 7 rework replaced the
+    // nav rows with labeled Projects/Chats sections. The LAW is unchanged and now sits at BOTH
+    // live doors: the project room's "New chat" (a fresh conversation, pre-filed) and the panel's
+    // own `aug:new-chat` handler — each drops the stored key so the next turn mints a NEW
+    // `chat:<uuid>` while the old room stays durable behind its explicit doors.
+    // ⚠️ RE-POINTED AGAIN (owner walk, Sep 14: "new chat should maybe just reset the current
+    // project chat, instead of redirecting to home?"). The project room's button no longer mints a
+    // HOME room at all — it starts a new session inside the project's own thread (gates T28.21-24,
+    // smoke-threads). The law this check holds is the DURABLE HOME CHAT and its own new-chat door,
+    // which is the panel's `aug:new-chat` handler; that is what it now reads.
+    ha.includes('const onNew = () => {') && ha.includes('THE NEW CHAT MINTS A NEW ROOM') &&
     ha.includes('Persistence ≠ object'));
   check('F2: THE FOLD\'s config door — Settings → Team (roster/skills/tools belong to Settings; coworkers are executors in the work, not a destination; grounded Aug 6 — no href ejection)',
     src('components/settings/settings-left-panel.tsx').includes("id: 'team', label: 'Team'") &&
     !src('components/settings/settings-left-panel.tsx').includes("href: '/workers'"));
   check('F3: THE CLAUDE-SHAPED CHAT — a live conversation is a PAGE (centered reading column, thread fills the viewport, the deck steps aside via aug:chat-active; NO hover gating — hover-out never collapses it, leaving is the explicit Close/New), THE HISTORY PICKER inside the panel, answers in THE VOICE, chat rooms titled by their own first ask',
-    src('components/home/home-ask.tsx').includes('const showThread = hasThread && open;') &&
+    // RE-POINTED (Sep 13, THE THREADS ARC): the panel gained the coworker DM pane, so the thread
+    // shows for a live DM too (`dmActor`) — the law ("a live conversation is a PAGE") is wider, not
+    // weaker. The reading column and the viewport fill now come from the ONE thread component
+    // (components/thread — ThreadShell); home-ask owns the seat, not the bubbles.
+    src('components/home/home-ask.tsx').includes('const showThread = open && (hasThread || !!dmActor);') &&
     !src('components/home/home-ask.tsx').includes('onMouseLeave={() => setHovered(false)}') &&
     src('components/home/home-ask.tsx').includes('max-w-3xl mx-auto') &&
-    src('components/home/home-ask.tsx').includes('max-h-[calc(100vh-250px)]') &&
+    src('components/home/home-ask.tsx').includes('max-h-[calc(100vh-200px)]') && // the column grew with the thread kit (Sep 13)
+    src('components/home/home-ask.tsx').includes('<ThreadShell') &&                // ONE thread component renders all three kinds
     // RE-POINTED (Aug 11, THE FRESH FLOOR): Home is still the close, AND it resets to the
     // empty chief chat (DM mode/turns/scope/stored key clear — the placeholder can't stay
     // "Message Clara…" on the deck; conversations stay durable behind explicit doors).
     src('components/home/home-ask.tsx').includes('const onHomeReset = () => {') &&
-    src('components/home/home-ask.tsx').includes('workerRoomRef.current = null;\n      try { localStorage.removeItem(CHAT_KEY_LS); }') &&
+    // RE-POINTED (Sep 13): the reset gained the DM pane's own teardown between these two lines —
+    // asserted as the two FACTS it always was, never as one adjacency (an order-coupled literal is
+    // a gate that breaks on a line insertion, not a law).
+    src('components/home/home-ask.tsx').includes('workerRoomRef.current = null; setDmActor(null); setDmLoading(false);') &&
+    src('components/home/home-ask.tsx').includes('try { localStorage.removeItem(CHAT_KEY_LS); }') &&
     !src('components/home/home-ask.tsx').includes('> Close') &&
     src('components/home/home-ask.tsx').includes("CustomEvent('aug:chat-active'") &&
     src('components/home/home-view.tsx').includes("view === 'dashboard' && !chatActive") &&
@@ -467,8 +501,18 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
 
   // ── SH · THE SHELL'S CENTER + ONE NAME EVERYWHERE (Arc 3 S2). ──
   check('SH1: ONE NAME EVERYWHERE — Projects is ONE nav item (owner refinement Aug 7: the portfolio lens is the destination; the sidebar never carries the project LIST), never "pinned"; conversation rows wear CONCRETE product words (project/email/task/meeting/chat)',
-    src('components/one/one-sidebar.tsx').includes('Projects is ONE menu item') &&
-    !src('components/one/one-sidebar.tsx').includes('rooms.pinned.map') &&
+    // RE-POINTED (Sep 13, THE THREADS ARC — owner walk Sep 7: "should be a clearer separation of
+    // projects and actual conversations no?"). The Aug-7 refinement ("the sidebar never carries the
+    // project LIST") is SUPERSEDED by the owner's own call: Projects is one of the five vocabulary
+    // words, so the nav seats its threads directly. What did NOT change is the law this gate
+    // exists for — ONE NAME, ONE DESTINATION: the word is "Projects" (never "pinned"), and the
+    // portfolio lens is still the one place the whole roster lives, reached from the section's own
+    // "All →". The list is CAPPED by construction (PROJECT_ROWS_MAX) so a nav row can never become
+    // an unbounded roster, and the coworkers stay ONE door (the footer facepile), never N rows.
+    src('components/one/one-sidebar.tsx').includes('>Projects</div>') &&
+    src('components/one/one-sidebar.tsx').includes('const PROJECT_ROWS_MAX = 6') &&
+    src('components/one/one-sidebar.tsx').includes('.slice(0, PROJECT_ROWS_MAX)') &&
+    src('components/one/one-sidebar.tsx').includes('THE TEAM IS ONE DOOR, NOT N ROWS') &&
     !src('components/one/one-sidebar.tsx').includes('>Pinned</div>') &&
     src('components/one/one-sidebar.tsx').includes('href="/home?view=projects"') &&
     // Aug 8: the KIND GLYPH + HOVER EXPAND — the row says what it is on sight and who/where on
@@ -502,11 +546,31 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('components/one/one-sidebar.tsx').includes('/home?view=conversations') &&
     !src('components/home/home-ask.tsx').includes('/home?view=conversations'));
 
-  check('SH6: THE DECK WEARS THE CARD GRAMMAR (Home only) — WorkRow variant="card": semantic state dot, the CTA speaks the JUDGED state ("Review & send" only when a draft truly exists — the July promise-lesson honored), one card stack',
-    src('components/work/work-row.tsx').includes("variant?: 'row' | 'card'") &&
+  check('SH6: THE CTA SPEAKS THE JUDGED STATE ("Review & send" only when a draft truly exists — the July promise-lesson honored), from ONE producer every row grammar shares',
+    // RE-POINTED AGAIN (Sep 13, cleanup): the `variant?: 'row' | 'card'` clause outlived its
+    // subject. The card skin had ZERO callers once the deck retired (Sep 8 walk) and was deleted —
+    // a second skin nothing mounts is a promise no surface keeps. The gate is STRICTER for it:
+    // what it actually guarded — the judged CTA and the prepared word — is now asserted on the ONE
+    // row anatomy and its ONE producer, which no dead branch can shadow.
+    src('components/work/work-row.tsx').includes('THE CARD VARIANT IS DEAD') &&
+    !src('components/work/work-row.tsx').includes("variant === 'card'") &&
     src('components/work/work-row.tsx').includes("item.source === 'reply' ? 'Review & send →' : 'Review →'") &&
     src('components/work/work-row.tsx').includes('never a promise') &&
-    src('components/one/one-home.tsx').includes('variant="card"') &&
+    // RE-POINTED (Sep 13, THE THREADS ARC — owner walk Sep 8: "this is awful, looks bad and not
+    // aligned with the new design at all"). THE DECK'S CARD GRAMMAR IS RETIRED: `OneDeck` (the
+    // "What needs you N" header, the Tasks/By-project toggle, the time-group headers, the boxed
+    // WorkRow cards) died with that walk. The Home now has ONE row grammar — the WHISPER — and the
+    // law this gate guards moved WITH it, intact and stricter:
+    //   · the July promise-lesson (a CTA speaks the JUDGED state, never a promise) is now
+    //     `receiptOf` in lib/home/calm.ts: MAPPED from the row's served preparation, never authored
+    //     per row, and a row with nothing prepared prints the machine's own word instead;
+    //   · the stack is CAPPED in one place (CALM_MAX_WHISPERS) so no surface can widen the fold.
+    // The WorkRow clauses above stand: the row grammar itself still serves every other door.
+    src('components/home/home-view.tsx').includes('function WhisperLine') &&
+    src('lib/home/calm.ts').includes('export const CALM_MAX_WHISPERS') &&
+    src('lib/home/calm.ts').includes('MAPPED, never authored') &&
+    src('lib/home/calm.ts').includes('export function receiptOf') &&
+    src('components/one/one-home.tsx').includes('THE DECK IS RETIRED') &&
     !src('components/home/home-view.tsx').includes('border-neutral-200/70 bg-white divide-y'));
 
   check('SH7: SOURCES HARMONIZATION — the meetings panel aligns to the one sub-panel system (204px), its section root is "All meetings" (never a second "Home"), and an empty inventory never narrates its own emptiness',
@@ -518,8 +582,17 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
   check('F4: TEMPORARY CHAT — the ladder\'s explicit ephemeral opt-out: persistence structurally skipped, no room minted, honest "not saved" label, armable only pre-conversation, reset by New',
     src('components/home/home-ask.tsx').includes('if (temp) return;') &&
     src('components/home/home-ask.tsx').includes('Temporary — not saved') &&
-    src('components/home/home-ask.tsx').includes('const onNew = () => { setTurns([]); setTemp(false); setScope(null);') &&
-    src('components/home/home-ask.tsx').includes('!hasThread && suggestions.length > 0'));
+    // RE-POINTED (Sep 13): "reset by New" is asserted as the two FACTS — the handler exists and it
+    // disarms temporary mode — never as one adjacency (the handler grew a line: it now also drops
+    // the stored chat key, so New mints a NEW room at the HANDLER, not at its caller).
+    src('components/home/home-ask.tsx').includes('const onNew = () => {') &&
+    src('components/home/home-ask.tsx').includes('setTurns([]); setTemp(false); setScope(null);') &&
+    /* RE-POINTED Sep 13 (OWNER CALL: "lets also remove the chips"): the toggle's row used to be
+       guarded on `suggestions.length > 0`, so retiring the warm Home's chips would have silently
+       taken the Temporary control with them. The gate's claim was never "there are chips" — it is
+       ARMABLE ONLY PRE-CONVERSATION, which is `!hasThread`, and that is what is asserted now. */
+    src('components/home/home-ask.tsx').includes('{!hasThread && (') &&
+    !src('components/home/home-ask.tsx').includes('!hasThread && suggestions.length > 0'));
 
   check('AB1: THE ABSORPTION brick 1 — an ADDRESSED message routes through the WORKER ENGINE (streamed SSE into the panel, author attribution, tool chips); the DM thread is get-or-created; the conversation lives in the worker\'s OWN store (never double-persisted); temporary mode skips addressing (the store would break the promise)',
     src('components/home/home-ask.tsx').includes('detectAddress') &&
@@ -527,7 +600,12 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('components/home/home-ask.tsx').includes("event.type === 'text'") &&
     src('components/home/home-ask.tsx').includes('never') &&
     src('components/home/home-ask.tsx').includes('if (!temp) {') &&
-    src('components/home/home-ask.tsx').includes('t.author && (') /* re-pointed Aug 12: the name label grew the coworker FACE (WorkerFace) */);
+    /* RE-POINTED Sep 13 (THE THREADS ARC): attribution is no longer a bespoke bubble in the panel —
+       the turn derives into the ONE thread component's `actor_bubble`, whose actorId/actorName pair
+       IS the attribution (and whose AvatarStatus wraps the one WorkerFace). Same law, one renderer:
+       a coworker speaks in their own name, and consecutive bubbles from one actor share a header. */
+    src('components/home/home-ask.tsx').includes("actorName: t.author ?? seatName") &&
+    src('components/home/home-ask.tsx').includes("type: 'actor_bubble'"));
 
   check('AB2: THE ONE COMPOSER (workstream 3) — the Home floor mounts the SAME WorkerMentionInput the worker surfaces use (@ Coworkers/Tasks/Documents picker, attach, suggestion prefill); a coworker MENTION is the address; files follow the route — chat-attach on the addressed thread, the KNOWLEDGE BASE on the chief path; temporary mode refuses uploads (they would persist)',
     src('components/home/home-ask.tsx').includes('<WorkerMentionInput') &&
@@ -544,7 +622,8 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('components/one/all-conversations.tsx').includes("'coworker'") &&
     src('components/home/home-ask.tsx').includes('loadWorkerRoom') &&
     src('components/home/home-ask.tsx').includes('if (workerRoomRef.current) return;') &&
-    src('components/home/home-ask.tsx').includes('localStorage.setItem(dmKey(agentId), tid)') &&
+    src('components/home/home-ask.tsx').includes('saveLS(dmKey(agentId), tid)') && // Sep 13: the DM pointer rides the STAMPED house cache (loadLS/saveLS), not a raw LS write
+
     src('components/home/home-ask.tsx').includes("startsWith('Chat with')"));
 
   check('ST8: THE STREAMING ASK — the chief path answers over SSE with live PROGRESS labels (the ONE progress channel in converse: tool labels speak consequence, fast-path + agent loop both emit); the panel\'s busy line speaks the stage; the JSON path survives for non-panel callers',
@@ -607,7 +686,13 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
 
   check('AB5: THE ABSORPTION brick 3 — the one surface OWNS its outputs: a coworker\'s DOCUMENT opens the SAME ThreadArtifactsPanel as a right-side overlay in the Home conversation (viewer/versions/download — never a page away; a loaded worker conversation surfaces its existing documents too); an EMAIL DRAFT mounts the SAME editable EmailDraftCard inline (the user-gated Send door); only registry renders still point at the worker page',
     src('components/home/home-ask.tsx').includes('<ThreadArtifactsPanel') &&
-    src('components/home/home-ask.tsx').includes('<EmailDraftCard') &&
+    // RE-POINTED (Sep 13, THE THREADS ARC): `components/workers/email-draft-card.tsx` is DELETED —
+    // the editable send card is now the ONE shared `components/home/email-card.tsx` (EmailCard),
+    // mounted by the Home panel, the deep-dive and the worker DM alike. Its Send is still the
+    // user's own click ("No producer path may mail anything"), which is the law this clause holds.
+    src('components/home/home-ask.tsx').includes('<EmailCard') &&
+    !existsSync('components/workers/email-draft-card.tsx') &&
+    src('components/home/email-card.tsx').includes('No producer path may mail anything.') &&
     src('components/home/home-ask.tsx').includes('openArtifact(c.art.tid, c.art.id)') &&
     // Aug 8 (the docked pane): EVERY arrival refreshes the pane to the newest version — the
     // edit loop ("make it shorter" updates the open document); no dim, no backdrop, non-modal.
@@ -655,8 +740,14 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('app/api/rooms/restore/route.ts').includes('archived_at: null') &&
     src('app/api/work/threads/[id]/route.ts').includes("status === 'archived' || status === 'active'"));
 
-  check('UX2: THE PRE-FILED NEW CHAT + THE SEAM DOOR + PROJECT TAGS — the project room\'s "New chat" starts a Home conversation already scoped (intent → binding up front); the room\'s seam line is a clickable door (?chat= ref, handled in the panel); filed chats wear their project as a quiet tag in All conversations',
-    src('components/entities/entity-room.tsx').includes("'aug-new-chat-scope'") &&
+  // ⚠️ RE-POINTED (owner walk, Sep 14): the PRE-FILED half is repealed at its door — a project
+  // room's "New chat" now resets THAT room's conversation instead of opening a scoped Home one
+  // (T28.22). The scoping CAPABILITY is untouched and still received by the panel (any future door
+  // that wants a pre-filed Home conversation hands over the same session key); what this check
+  // keeps is the half the owner did not repeal: the seam line is a real door, and a filed chat
+  // wears its project.
+  check('UX2: THE SEAM DOOR + PROJECT TAGS — an adopted conversation narrates a CLICKABLE door (?chat= ref, handled in the panel) and filed chats wear their project as a quiet tag in All conversations (the pre-filed new-chat door retired Sep 14 — see smoke-threads T28.22)',
+    !src('components/entities/entity-room.tsx').includes("'aug-new-chat-scope'") &&
     src('components/home/home-ask.tsx').includes("sessionStorage.getItem('aug-new-chat-scope')") &&
     src('components/home/home-ask.tsx').includes(".get('chat')") &&
     src('app/api/rooms/adopt/route.ts').includes('/home?chat=') &&
@@ -667,7 +758,20 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('components/home/item-rail.tsx').includes('ONE DEED, ONE OBJECT') &&
     src('components/home/item-rail.tsx').includes('mergedArtKey') &&
     src('components/home/item-rail.tsx').includes('streamArts.filter') &&
-    src('components/home/item-rail.tsx').includes('resp.offers.slice(0, 2)'));
+    // RE-POINTED (Sep 13, THE THREADS ARC — "ONE AGENDA PER ROOM", threads-plan Sep 7): the offer
+    // cap left the RENDERER for the SERVING seam, where the move and the offers both exist, and it
+    // gained the half the render could never do — AN OFFER NEVER RESTATES THE MOVE, token-checked
+    // IN CODE (law 7). Cap ≤3 at the composer, echoes of the move dropped before they are served.
+    // A render-side slice could only have hidden a duplicate; this one cannot author it.
+    src('lib/room/brief.ts').includes('AN OFFER NEVER RESTATES THE MOVE') &&
+    src('lib/room/brief.ts').includes('offerEchoesMove(move.label, o, GENERIC_WORK_WORDS)') &&
+    src('lib/room/brief.ts').includes('.slice(0, 3)') &&
+    // ⚠️ RE-POINTED AGAIN (owner walk, Sep 14 — "I think I had told you to remove the chips here
+    // too"): the room's chip ROW is retired, so the renderer half of this clause has no object any
+    // more. The law it guarded is untouched and lives entirely at the serving seam above; what the
+    // rail must now prove is that it renders NO second agenda beside the pinned CTA.
+    !src('components/home/item-rail.tsx').includes('offerChips')
+    && src('components/home/item-rail.tsx').includes('THE CHIPS ARE RETIRED FROM THE ROOM'));
 
   check('TF2: OPEN LANDS ON THE PREPARED THING — the merged card\'s click carries the STAGE INTENT: the room focuses the item WITH its stage raised (ItemDetail initialStage → composer/forward/invite up on arrival, the thread beneath); never the bare thread behind a "Prepared by Clara" promise',
     src('components/home/item-rail.tsx').includes('onStage?.(stageOfArtifactKey(mergedArt.key), respMoveTargetId)') &&
@@ -677,8 +781,22 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('components/entities/entity-room.tsx').includes('initialStage={focusStage ?? undefined}'));
 
   check('TF3: THE ROOM WARM — hovering a project row prefetches the room\'s two payloads into the SAME LS keys the room hydrates from (a first open paints from cache like every later one); session-deduped',
-    src('components/entities/entity-room.tsx').includes('export function warmEntityRoom') &&
-    src('components/entities/entity-room.tsx').includes('roomWarmed.has(entityId)') &&
+    src('lib/room/warm-room.ts').includes('export function warmEntityRoom') &&
+    // RE-POINTED (Sep 13): A WARM EXPIRES WITH WHAT IT WARMED (found by reading, Sep 8) — the
+    // permanent `roomWarmed` Set became a TIMESTAMPED Map behind `warmIsFresh`, because a room
+    // hovered once at 09:00 was never re-warmed and by 09:20 its envelope had aged past the
+    // freshness floor while the warm believed its job was done. Still one warm per room per window;
+    // the stamp lands only AFTER the payloads do (never advance a cursor past uncommitted work).
+    src('lib/room/warm-room.ts').includes('function warmIsFresh') &&
+    src('lib/room/warm-room.ts').includes('roomWarmed.set(entityId, Date.now())') &&
+    // THE WARM MUST FILL THE ENVELOPE THE MOUNT READS — the room hydrates these exact two keys.
+    src('lib/room/warm-room.ts').includes('saveLS(roomDetailKey(entityId), d)') &&
+    // STRENGTHENED Sep 13 (cleanup): the mount used to re-spell the warm's keys as byte-identical
+    // LITERALS — two authors for one key, agreeing by luck. It now IMPORTS the producers, so this
+    // clause asserts the one-producer law itself rather than today's coincidence.
+    src('components/entities/entity-room.tsx').includes("import { roomDetailKey, roomRailKey } from '@/lib/room/warm-room';") &&
+    src('components/entities/entity-room.tsx').includes('loadLS<Detail>(roomDetailKey(entityId)') &&
+    src('components/entities/entity-room.tsx').includes("export { warmEntityRoom, cancelWarmEntityRoom } from '@/lib/room/warm-room';") &&
     src('components/entities/portfolio-view.tsx').includes('onMouseEnter={() => warmEntityRoom(e.id)}'));
 
   check('PF1: THE RECONCILE THROTTLE (found live, Aug 7 — reconcile burned 36-43s inside every brief load and every concurrent surface paid it again, queueing the whole DB behind it) — module-level per-user TTL (10 min) + single-flight (concurrent callers share ONE run); the sync-time resolver still fires real-time; `force` bypasses',
@@ -738,14 +856,25 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     const { isWorkflowStepTool } = await import('../lib/work/surface-registry');
     const es = src('lib/workflows/execute-step.ts');
     const LEGACY = new Set(['linkedin_post', 'get_urgent_emails']);
+    // THE STEP-TYPE SPACE GREW (re-pointed Sep 13): the processes + relay arcs (Aug 18–25) seated
+    // four more STEP TYPES beside tool/ai/agent/approval/verify — handoff (a gate belonging to a
+    // person), workflow (the subprocess station), case (the filing station), input (the station
+    // that asks the person). They dispatch BY TYPE and are handled by the run loop; none is a tool
+    // id, so none can carry a capability row. The exclusion list is no longer a hand-kept guess:
+    // every name in it must EXIST as a step type in lib/workflows/types.ts, so a fabricated
+    // exclusion can never be used to hide an unregistered tool step.
+    const STEP_TYPES = ['tool', 'ai', 'agent', 'approval', 'verify', 'handoff', 'workflow', 'case', 'input'];
+    const wt = src('lib/workflows/types.ts');
+    const stepTypesReal = STEP_TYPES.every((t) => wt.includes(`type: '${t}';`));
     const caseIds = [...es.matchAll(/case '([a-z_]+)':/g)].map((m) => m[1])
-      .filter((id) => !['tool', 'ai', 'agent', 'approval', 'verify'].includes(id)); // step TYPES, not tool ids
+      .filter((id) => !STEP_TYPES.includes(id)); // step TYPES, not tool ids
     const unregistered = caseIds.filter((id) => !LEGACY.has(id) && !isWorkflowStepTool(id));
     const sb = src('components/work/studio-builder.tsx');
     const pickerIds = [...sb.matchAll(/\{ id: '([a-z_]+)', {1,10}label/g)].map((m) => m[1]);
     const pickerUnregistered = pickerIds.filter((id) => id !== 'linkedin_post' && !isWorkflowStepTool(id));
     check('PA1: THE WORKFLOW STEP SPACE ON THE ONE REGISTRY (production arc step 1) — every pipeline step id has a workflow-exposed capability row (executor cases + Studio picker cross-checked BY IMPORT, zero drift possible); the RUNTIME GATE refuses an unregistered tool step; workflow-only rows never leak into the item-plan classifier; slack_send is the irreversible send step (the coming approval gate\'s target)',
       caseIds.length >= 15 && pickerIds.length >= 12 &&
+      stepTypesReal &&
       unregistered.length === 0 && pickerUnregistered.length === 0 &&
       es.includes('THE REGISTRY GATE') &&
       es.includes('is not registered for workflows') &&
@@ -801,7 +930,11 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('components/workflows/workflows-ledger.tsx').includes('generate-from-description') &&
     src('components/workflows/workflows-ledger.tsx').includes('overlap_note') &&
     src('components/workflows/workflows-ledger.tsx').includes('Confirm — it goes live') &&
-    src('components/workflows/workflows-ledger.tsx').includes('Approve — deliver it') &&
+    // RE-POINTED (Sep 13): the decide surface is the PROCESS DRAWER (the processes arc, Aug 18–20)
+    // — the ledger raises it, and its Approve/Reject post to the SAME `/resume` route. ONE DEED,
+    // ONE DOOR is unchanged; only which file renders the button moved.
+    src('components/workflows/process-drawer.tsx').includes('Approve — deliver it') &&
+    src('components/workflows/workflows-ledger.tsx').includes('THE PROCESS DRAWER') &&
     src('components/workflows/workflows-ledger.tsx').includes('/studio?workflow=') &&
     src('app/api/workflows/ledger/route.ts').includes('awaiting') &&
     src('app/api/workflows/ledger/route.ts').includes('workflow_scope') &&
@@ -931,7 +1064,12 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
   }
 
   check('PA5b: THE LEDGER REWORK (owner review, Aug 9) — the recent trail is GROUPED per workflow (deltas speak: failures itemize, held-backs count, repeat successes collapse to "N runs · last <date>"); "open" opens THE DELIVERABLE in the docked viewer (the same ThreadArtifactsPanel as the Home chat — never a /workers chat page); row verbs are VISIBLE with a WORDED "Edit method" (a hidden door is no door); THE GALLERY seeds describe→draft (category chips + outcome-worded cards; project-suggestion cards removed by owner call); the review card offers Adjust in Studio (saved as DRAFT, nothing live) and the page carries a build-from-scratch Studio door; the presenter chips died (a workflow is system-owned — the voice is a detail, defaulted silently, changeable in Studio); delegations append to ONE standing "Handed to <Name>" thread per worker (never a thread per hand-off) and hand-off threads are excluded from the conversations list (a conversation requires the user\'s voice)',
-    src('components/workflows/workflows-ledger.tsx').includes('ThreadArtifactsPanel') &&
+    // RE-POINTED (Sep 13): the docked viewer was extracted into THE OUTCOME DOOR
+    // (components/workflows/deliverable-door.tsx — the Sep 1 pilot wave) so the ledger, the run
+    // history and the process drawer all open a delivered document the SAME way. It is still the
+    // ThreadArtifactsPanel the Home chat uses, never a /workers chat page — one seam, now shared.
+    src('components/workflows/deliverable-door.tsx').includes('ThreadArtifactsPanel') &&
+    src('components/workflows/workflows-ledger.tsx').includes('useDeliverableDoor') &&
     src('components/workflows/workflows-ledger.tsx').includes('see the latest') &&
     src('components/workflows/workflows-ledger.tsx').includes('Edit in Studio') &&
     src('components/workflows/workflows-ledger.tsx').includes('TEMPLATES') &&
@@ -1006,8 +1144,40 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/home/anticipation.ts').includes('because') &&
     src('lib/home/anticipation.ts').includes('prepareOneItem') &&
     src('app/api/home/brief/route.ts').includes('runAnticipationPass') &&
-    src('app/api/home/horizon/route.ts').includes('prepReadyEvents') &&
-    src('components/home/home-view.tsx').includes('Prep ready'));
+    // RE-POINTED AGAIN (Sep 13, cleanup): the `prepReadyEvents` clause outlived its subject. The
+    // calm-Home walk retired the rail (owner, Sep 8); the prep brief's surface is the room turn —
+    // gated at its seat by the three clauses below. /api/home/horizon and its chip-source helper
+    // were deleted the same day: a route with no client caller is a claim nothing collects.
+    // RE-POINTED (Sep 13, THE THREADS ARC's one deciding law — "everything the system does arrives
+    // as a message in a thread, from a face"). The Home's This-week rail (and with it the "Prep
+    // ready" chip) died in the Sep 8 calm-Home walk; the prep does not. It ARRIVES in the room it
+    // belongs to as a system turn, with its BECAUSE line leading, under a dedupe key that carries
+    // the event's own start time (THE RESCHEDULE RE-BRIEF) so a moved meeting re-briefs in place.
+    // That is a better surface than a chip: the prep waits where the work lives.
+    src('lib/home/anticipation.ts').includes('writeRoomTurn(client, userId, entityId') &&
+    src('lib/home/anticipation.ts').includes('dedupeKey: `anticipate:meeting:${ev.id}`') &&
+    // RE-POINTED (Sep 13, THE PROACTIVE REACH ARC wave 1). The because still LEADS — it simply
+    // stopped being a fixed preamble the machine printed about itself. The old header ("— because
+    // this meeting is on your calendar and this room holds the work:") stood on all 30 live
+    // anticipation turns and is PROCESS NARRATION: it explains the machinery, not the work. The
+    // composed prep leads with its own grounded because; the header now names the meeting and its
+    // ONE resolved time. Two laws got STRONGER in the same edit and are asserted here:
+    //   · SILENCE IS A VALID VERDICT is now literal — the composer may answer the NOTHING sentinel
+    //     and the pass writes NO TURN at all (a receipt for nothing is chore-manufacturing in a
+    //     quieter voice), while the fire record still stamps so a quiet meeting is not re-spent;
+    //   · THE ONE CLOCK — the time in the label is rendered in the USER'S OWN timezone (T-class),
+    //     the same day boundary the judge reasons in, never the server's.
+    // The text builder is a PURE exported function, so the shape is testable without a run.
+    src('lib/home/anticipation.ts').includes('export function prepTurnText') &&
+    src('lib/home/anticipation.ts').includes("export const PREP_NOTHING = 'NOTHING'") &&
+    src('lib/home/anticipation.ts').includes("tasks: { kind: 'meeting_brief', silent: true") &&
+    src('lib/home/anticipation.ts').includes('export function meetingWhenLabel') &&
+    src('lib/home/anticipation.ts').includes('const tz = await userTimezone(client, userId)') &&
+    // The PROOF that the preamble is gone is the builder's one return, not a negative on the prose
+    // (the doc-comment quotes the retired header to record WHY it died — a negative would be
+    // asserting against documentation, which is how a gate ends up forbidding its own history).
+    src('lib/home/anticipation.ts').includes('return `Prep for "${title}" (${when}):') &&
+    !/text: `Prep for[^`]*because this meeting/.test(src('lib/home/anticipation.ts')));
 
   check('CS6: THE WORKFLOWS TIDY (trailing items, Aug 10) — workflow_notifications writes DIED with the feed that read them (deliveries → Runs + badge; failures → deck debt; the opted-in Slack DM stays); "digest" retired from generated configs (back-compat reads stay); a REACTION said in a project room falls through to the one creation card instead of a cron-only "can\'t set that up" (steer passes workflowDraft; the rail renders the same card); teammates\' shared workflows list read-only in the ledger with owner attribution; the box\'s create_task docstring says DRAFT-for-confirm (never "created")',
     !src('lib/workflows/run-workflow.ts').includes("from('workflow_notifications').insert") &&
@@ -1015,7 +1185,11 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/converse/index.ts').includes('falls through to the one creation card') &&
     src('app/api/items/steer/route.ts').includes('turn.workflowDraft') &&
     src('components/home/item-rail.tsx').includes('WorkflowDraftCard') &&
-    src('app/api/workflows/ledger/route.ts').includes('TEAMMATES') &&
+    // RE-POINTED (Sep 13): the section's comment marker changed with the ledger route's two-phase
+    // rewrite; the LAW — teammates' shared workflows served READ-ONLY with owner attribution — is
+    // asserted on the code that does it, not on a shouted comment.
+    src('app/api/workflows/ledger/route.ts').includes("Teammates' shared workflows") &&
+    src('app/api/workflows/ledger/route.ts').includes('ownerName: nameOf.get(r.user_id)') &&
     src('components/workflows/workflows-ledger.tsx').includes('Team workflows') &&
     src('infra/agentos/tools_tasks.py').includes('NEVER say') &&
     src('infra/agentos/tools_tasks.py').includes('DRAFT a scheduled automation task'));
@@ -1078,7 +1252,13 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/converse/index.ts').includes('THE EXHAUSTION HAND-OFF') &&
     src('lib/converse/index.ts').includes('exhausted: !applied.length') &&
     src('lib/home/delegate.ts').includes('[CONFIRM: <what\'s needed>]') &&
-    src('components/home/home-ask.tsx').includes('function UserBubble') &&
+    // REGRESSION FOUND + FIXED (Sep 13, this reconciliation): clause (5) — long pastes collapse in
+    // the bubble — was LOST when the panel's bespoke bubbles ported onto the ONE thread component
+    // (a 20k-char paste rendered as one unbounded bubble). Restored INSIDE the kit, so all three
+    // thread kinds inherit it; presentation only, the turn's text is never clipped.
+    src('components/thread/thread-timeline.tsx').includes('THE LONG PASTE COLLAPSES') &&
+    src('components/thread/thread-timeline.tsx').includes('function UserBubbleText') &&
+    src('components/thread/thread-timeline.tsx').includes('<UserBubbleText text={item.text} />') &&
     src('app/api/home/ask/route.ts').includes('focus && turn.say?.trim()'));
 
   check('CH5: THE ATTACHED MATERIAL + TOKEN STREAMING + THE FORMAT-FLOOR FIX (Aug 10 night) — (1) attachment text extracts SYNCHRONOUSLY (/api/home/extract-attach) and rides the ask itself: the classifier sees the names, the loop carries the material as its own turn, a delegation carries it whole — never a race against KB background indexing (E2E T6: delegated with material); (2) the agent loop STREAMS its answer (content deltas → SSE token events → the live preview; done stays authoritative; NUL sentinel clears pre-tool preamble; 15s SSE ping keeps long hand-offs alive) — E2E T7 streams >40 chars through the loop\'s exact client+tools; (3) aiCreate strips response_format json_object for Anthropic endpoints (their compat API began rejecting it — 400 "Input should be json_schema" — which broke EVERY json-shaped call routed to Claude, incl. the Home question path); (4) attach doors accept everything the extractor reads (pptx/xlsx/csv/doc added server + composers + presign extension-fallback for unreliable browser mimes) and the WHOLE WINDOW is the drop zone (a missed drop never navigates away); rejected files say so out loud',
@@ -1322,7 +1502,11 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
 
   check('OP1: THE ONE PRODUCTION DOOR (plan AF) — every document any actor ships materializes through lib/documents/materialize.ts: the tier ladder (compiler for charts/revision/template-following → typed protocol → branded template renderers) and the deterministic floors (THE CONTENT FLOOR — the author\'s text is the document\'s text; THE FACTS FLOOR — tabular material without precomputed facts gets computeDataFacts AT THE DOOR, model discretion never decides; THE THEME — the one getDocTheme hierarchy) live in ONE module. Callers own only identity (ids, storage paths, rows): runDelegation (the chief\'s delegations), generateThreadDocument (coworker DMs — the legacy generators pipeline is RETIRED for documents; email drafts keep their card path; native + AgentOS both call the ONE function, and revision + tabular material AUTO-RESOLVE from the thread inside it so neither runtime can drift), and run-workflow (scheduled deliverables). THE INVARIANT: adding a document capability = one edit at the door, every actor upgrades at once',
     src('lib/documents/materialize.ts').includes('export async function materializeDocument') &&
-    src('lib/documents/materialize.ts').includes("tier: 'compiler' | 'typed' | 'template'") &&
+    // RE-POINTED (Sep 13): the ladder GREW a rung — the frames arc (Aug 19) seated `frame` above
+    // the document tiers at this same door, which is precisely the invariant this gate exists to
+    // prove ("adding a document capability = one edit at the door"). Asserted as a CONTAINMENT of
+    // the three document tiers, so the next rung upgrades every actor without breaking the law.
+    /tier: (?:'[a-z]+' \| )*'compiler' \| 'typed' \| 'template'/.test(src('lib/documents/materialize.ts')) &&
     src('lib/documents/materialize.ts').includes('THE FACTS FLOOR') &&
     src('lib/documents/materialize.ts').includes('computeDataFacts') &&
     src('lib/documents/materialize.ts').includes('getDocTheme') &&
@@ -1368,7 +1552,24 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/prepare/pass.ts').includes('a chase is never a silent none') &&
     src('lib/prepare/pass.ts').includes("attempt didn't pass review — it will retry") && // delegation honesty
     src('lib/prepare/pass.ts').includes('NEVER-ATTEMPTED FIRST') &&
-    src('lib/prepare/pass.ts').includes('attempted.has(keyOf(a))'));
+    // RE-POINTED (Sep 13, THE PROACTIVE REACH ARC — LAW 1 + the noise floor). TWO strengthenings,
+    // neither of which weakens the trichotomy; both of which it now carries:
+    //  (1) THE ONE ORDERING — the never-attempted discipline left the inline lane sort for the ONE
+    //      nominator (lib/work/judgment-nominator `orderForPreparation`), which puts ANCHOR-PASSED
+    //      items first (preparing a reply to a meeting that already happened is the exact cost the
+    //      arc ends), then never-attempted, then entity weight. The pass INJECTS its own facts
+    //      (`attempted`, `weightOf`) rather than re-deriving an order, and the judgment sweep calls
+    //      the same module — there is no second ordering in the codebase.
+    //  (2) THE NOISE FLOOR sits ABOVE the judge and is NOT an override: a deterministic, pre-AI
+    //      refusal to WORK on a row the posture seam, the notice law and the deck already put in
+    //      the awareness lane. Critically for THIS gate, the refusal is SPOKEN — it lands in the
+    //      prep_outcome ledger with its own reason, so the floor can never become a new silence.
+    src('lib/prepare/pass.ts').includes('orderForPreparation(') &&
+    src('lib/prepare/pass.ts').includes('attempted: (k) => attempted.has(k)') &&
+    src('lib/work/judgment-nominator.ts').includes('export function orderForPreparation') &&
+    src('lib/prepare/pass.ts').includes("const { itemIsNoise } = await import('@/lib/prepare/noise-floor')") &&
+    src('lib/prepare/pass.ts').includes("return { did: 'none', reason: n.reason ?? 'noise — nothing to prepare' }") &&
+    src('lib/prepare/pass.ts').includes('the refusal is SPOKEN'));
 
   check('TR2: THE DECISION HAS ONE SURFACE (owner correction, Aug 12 eve — "the left panel is too much... so many repeated things; it doesn\'t feel like one system"): the decision brief\'s depth renders IN the existing DecisionCard (trade-off line under each option, a quiet "recommended" chip + the grounded why — the brief\'s options SUPERSEDE the judge\'s bare labels when present), the prepared strip FILTERS decision artifacts (never a second document beside the card), the brief content is PLAIN TEXT (the stage once showed literal `**`), and prep:*/meeting-prep:* narration lines NEVER render standalone when the composed brief exists (the brief digests preparedness — three "Clara drafted/laid out…" echo lines under a brief saying the same thing read as spam, not narration; the ledger keeps the turns, law 6 rules the render)',
     src('lib/prepare/read.ts').includes('decision?: { options: Array<{ label: string; tradeoff?: string | null }>') &&
@@ -1380,10 +1581,15 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('components/home/item-detail.tsx').includes('!p.decision') &&                    // the strip filter
     src('lib/prepare/pass.ts').includes('PLAIN TEXT') &&
     !src('lib/prepare/pass.ts').includes('`**The decision:**') &&
-    src('components/home/item-rail.tsx').includes("|| ent?.brief || view.brief) && t.dkey && /^(prep:|meeting-prep:)/"));
+    // RE-POINTED (Sep 8) to the render guard as it stands — the composed-brief predicate moved with
+    // the threads port, and the prep CLASS now carries `anticipate:` narrations too.
+    src('components/home/item-rail.tsx').includes("|| composed) && t.dkey && /^(prep:|meeting-prep:|anticipate:)/"));
 
   check('AJ1: THE EDITOR — one composition owns the page (owner, Aug 13: "still doesn\'t feel like one system… some components feel created on the side"; the proof was a live contradiction — the brief claimed the reply prepared, an ask card said the same artifact was missing, the MOVE said review it). Inline components STAY (owner constraint); the responder becomes the page\'s EDITOR: (1) the compose pass SEES the components that will render (decision card, ask cards) and returns a keep/moot verdict per ask — a moot ask (the prepared column already holds it · the verdict no longer needs it · it requests something the team itself produces) is SETTLED at compose time (component stripped, ledger text kept); (2) COHERENCE laws in the prompt — the brief never restates what a component shows ("the choice is laid out below"), never claims prepared+missing, acknowledges a kept ask\'s gap exactly once; (3) THE ONE VOICE (lib/room/voice.ts TEAM_VOICE) injected into every room-prose author (brief + decision brief) — one register, defined once; (4) ASK–VERDICT COHERENCE at the data layer — a verdict whose work-class takes no inputs settles the item\'s asks deterministically (apply-verdict, no model); (5) THE ONE FACE (components/work/worker-face.tsx) — attribution rides the artifact as face+name (prepared bylines, DM bubbles — same visual, same meaning); the voice contract forbids re-attributing in prose. ROOM_BRIEF_VERSION 4. Eyes-on: the TECNICLIMA room went from three contradictory claims to one story',
-    /export const ROOM_BRIEF_VERSION = [5-9]/.test(src('lib/room/brief.ts')) && // RE-POINTED to a floor: ≥5 (GL2's present-tense editor; exact pins break on every bump)
+    // RE-POINTED (Sep 13): the floor is read as a NUMBER (`versionAtLeast`) — the `[5-9]` class
+    // died at ROOM_BRIEF_VERSION 10 (the threads arc's editor: ONE AGENDA PER ROOM, the ground
+    // evidence, the watermark). The LAW is a floor of ≥5, not a digit.
+    versionAtLeast('lib/room/brief.ts', 'ROOM_BRIEF_VERSION', 5) &&
     src('lib/room/brief.ts').includes('COMPONENTS THAT WILL RENDER BENEATH YOUR BRIEF') &&
     src('lib/room/brief.ts').includes('"verdict": "keep"|"moot"') &&
     src('lib/room/brief.ts').includes("THE EDITOR'S SETTLE") &&
@@ -1396,7 +1602,13 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/room/grounding.ts').includes('turnId: t.id ? String(t.id) : null') && // the editor can settle what it reads
     src('components/work/worker-face.tsx').includes('export function WorkerFace') &&
     src('components/home/item-detail.tsx').includes('<WorkerFace name={d.by}') &&
-    src('components/home/home-ask.tsx').includes("from '@/components/work/worker-face'"));
+    // RE-POINTED (Sep 13, THE THREADS ARC): the panel no longer imports the face directly — every
+    // thread bubble wears it through `components/thread/avatar-status.tsx`, which WRAPS
+    // `components/work/worker-face.tsx` and never forks the headshot. THE ONE FACE is intact and is
+    // now structurally unforkable: one wrapper, one source, all three thread kinds.
+    src('components/thread/avatar-status.tsx').includes("from '@/components/work/worker-face'") &&
+    src('components/thread/avatar-status.tsx').includes('it never forks the headshot') &&
+    src('components/home/home-ask.tsx').includes("from '@/components/thread'"));
 
   check('AK1: THE FORWARD-MOTION LAW (owner, Aug 13: "it almost looks and feels like a never ending loop with no meaningful value" — picking "Request clarifications" from OUR OWN decision menu earned a clarifying question back, raw [F3][L3][L2] grounding tags in the prose, an empty composer, and a ghost ask line). Five fixes, each a class: (1) A MENU CLICK EXECUTES ITS CONTRACT — the decision choice travels with {option, tradeoff, why} and the steer route wraps it as an execute-now instruction naming the deliverable shape (a clean ready-to-send message, no meta-commentary); walked live: choice → real drafted reply asking for the missing specifics. (2) NO QUESTIONS AFTER STRUCTURED CHOICES — "NEVER ask the user what they meant — we wrote the option; a missing detail becomes a stated assumption or [CONFIRM] slot". (3) THE REF-TAG FLOOR — unresolved grounding tags strip at the ONE core exit (converse wrapper), no caller can leak notation. (4) THE OFFERS SAY IS EXECUTABLE — a complete self-contained instruction, never a bare label needing re-interpretation. (5) SETTLED ENGINE ASKS ARCHIVE WHOLE — scaffolding text never survives as a ghost line (coworker asks keep their speech); 19 live ghosts swept. Replay T2–T7 green over the sanitizer wrapper',
     src('app/api/items/steer/route.ts').includes('DECISION MADE — the user picked an option') &&
@@ -1432,7 +1644,11 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
 
   check('VL1: THE VERB-LANE FIDELITY REPAIRS (the scenario matrix, Aug 13 — an Opus agent walked all 7 lanes end-to-end on the probe; five defects found and fixed, all verified live). B1 — a send_file item whose document can\'t be found RAISES the input_checklist ask in the room (askForFile mirrors the requirements.ts write shape, dedupeKey requires:<id>) instead of returning a silent none that left the machine in `preparing` forever (the one genuine machine-state lie in the matrix); verified live: ask landed, state read awaiting_input. B2 — the one reader serves the invite TIME (the writer stores startISO; reading `.start` served a timeless invite). B3 — the chase draft is ATTRIBUTED (prepared_by rides the nudge lane like every sibling). B4 — a commitment\'s decision brief grounds on the COMMITMENT\'S OWN row (description/counterparty/due_date), never a phantom inbox lookup. B5 — email extraction trims trailing sentence punctuation before validation in all three regex copies ("…to sam@acme.com." no longer yields the address twice, once broken)',
     src('lib/prepare/pass.ts').includes('async function askForFile') &&
-    src('lib/prepare/pass.ts').includes("dedupeKey: `requires:${w.entityId}`") &&
+    // RE-POINTED (Sep 13): the key was hoisted to a const because the ask now READS its standing
+    // turn by that same key before speaking (THE ASK SPEAKS CONSEQUENCE, composed ONCE — a standing
+    // ask for the same gap re-states its words, it never re-buys them). Same key, same write shape.
+    src('lib/prepare/pass.ts').includes("const dedupeKey = `requires:${w.entityId}`") &&
+    src('lib/prepare/pass.ts').includes('composeAskSpeech') &&
     src('lib/prepare/pass.ts').includes('asked in the room') &&
     src('lib/prepare/read.ts').includes('sd.prepared_invite.startISO ?? sd.prepared_invite.start') &&
     src('lib/prepare/read.ts').includes("content: sd.nudge_draft.body, by: sd.prepared_by?.worker ?? null") &&
@@ -1492,7 +1708,7 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('components/home/item-rail.tsx').includes('briefAt') &&
     src('lib/room/brief.ts').includes('async function presentOf') &&
     src('lib/room/brief.ts').includes("ONE CLAIM ABOUT WHAT'S OWED") &&
-    /export const ROOM_BRIEF_VERSION = [5-9]/.test(src('lib/room/brief.ts')) &&
+    versionAtLeast('lib/room/brief.ts', 'ROOM_BRIEF_VERSION', 5) && // RE-POINTED (Sep 13): numeric floor — see versionAtLeast
     src('lib/room/brief.ts').includes('present.groundAt') &&
     src('lib/entities/room-view.ts').includes('briefAt') &&
     src('lib/prepare/pass.ts').includes('THE ALREADY-BOOKED FLOOR') &&
@@ -1501,7 +1717,11 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/home/anticipation.ts').includes('${String(ev.start_time).slice(0, 16)}'));
 
   check('GL3: THE GROUND LAW\'s judgment half (the queued census finds, built + PROVEN LIVE on the found case). (1) THE ONE-CLAIM LAW AT STATE SYNTHESIS (STATE_PROMPT_VERSION 8) — the judge\'s standing verdicts are FACTS the entity-state prose must never contradict ("no reply needed yet" stood for days under a headline saying "confirm or propose" — two caches, one page, neither able to invalidate the other); the verdict digest rides the state sig so a verdict flip re-synthesizes; live re-synthesis on the found entity: whoOwes.you emptied, the contradiction gone. (2) THE BOOKED-CALENDAR FACT (JUDGE_VERSION 16) — the judge sees the user\'s real bookings with the item\'s sender (jsonb containment on attendees, −1d..+21d window) and the ALREADY-BOOKED rule judges scheduling work none/answered when the calendar shows the meeting booked; live re-judgment on the found item: schedule → none/answered citing the real event (the verdict that persisted forever while the lane floor burned an extraction per visit). (3) The stray-fragment turn archived; a composer min-length/in-flight guard was DELIBERATELY REJECTED — any block harms legitimate rapid steering ("ok", mid-flight corrections); the record tolerates a rare fragment. QUEUED FIND from the live proof: the deixis day-word arithmetic slip (a Monday "Thursday" resolved to Friday\'s date in the stored understanding, echoed by every downstream reader — the calendar row is right, the prose is off by one)',
-    src('lib/entities/state.ts').includes('export const STATE_PROMPT_VERSION = 8') &&
+    // A FLOOR, NOT A PIN (the recorded lesson: an exact `= N` breaks on every lawful bump). The law
+    // is "the one-claim law is IN the prompt and its version is at or above the release that landed
+    // it" — the version LOG carries the history, so the gate reads the log, not the integer.
+    /export const STATE_PROMPT_VERSION = (?:[89]|\d{2,});/.test(src('lib/entities/state.ts')) &&
+    src('lib/entities/state.ts').includes('THE ONE-CLAIM LAW') &&
     src('lib/entities/state.ts').includes("THE JUDGE'S STANDING VERDICTS") &&
     src('lib/entities/state.ts').includes('verdictDigest') &&
     src('lib/entities/state.ts').includes('${verdictDigest}') &&
@@ -1512,8 +1732,18 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
 
   check('CV1: THE COVERAGE REPAIR (Aug 14 — the census\'s root cause found: 18 profiles shared a 240s budget SEQUENTIALLY with a 20s floor = 360s of work in a 300s route; the route died mid-loop every run and tail users NEVER got a pass — a 22h gap on the owner\'s live account, ~5% judged coverage on the pilot\'s). The sweep now: (1) walks ACTIVE users only — a mail connection OR recent work signal; the sovereign tier has no mailbox, so a connections-only filter would have silenced those accounts\' passes AND their entity-state maintenance entirely; (2) LEAST-RECENTLY-SERVED FIRST — the user longest without a pass leads, so a budget-killed run self-balances instead of starving the same tail forever; (3) a WALL-CLOCK GUARD stops cleanly before the 300s kill and reports usersLeftBehind (never a silent mid-loop death); (4) per-user budget floor 30s / ceiling 120s over the REAL active count. Measured live on the owner: one 120s pass attempted ~30 candidates (judge → trichotomy), drained judged-none items out of the pool, left 151 honestly counted for the next sweep',
     src('app/api/cron/draft-sweep/route.ts').includes('THE COVERAGE REPAIR') &&
-    src('app/api/cron/draft-sweep/route.ts').includes('recentMeetings') &&
-    src('app/api/cron/draft-sweep/route.ts').includes('lastServed') &&
+    // RE-POINTED (Sep 13, THE PROACTIVE REACH ARC — LAW 1's "no second rotation"): the two halves
+    // this gate named (ACTIVE USERS ONLY, LEAST-RECENTLY-SERVED FIRST) were extracted into
+    // lib/work/sweep-users.ts so the new judgment sweep shares the SAME rotation instead of growing
+    // a second one that could starve a different tail. The route still owns its budget + honest
+    // leftBehind; the rotation is now one implementation, asserted at its module and at its use.
+    src('app/api/cron/draft-sweep/route.ts').includes("from '@/lib/work/sweep-users'") &&
+    src('lib/work/sweep-users.ts').includes('export async function activeUserIds') &&
+    src('lib/work/sweep-users.ts').includes('export async function orderLeastRecentlyServed') &&
+    src('lib/work/sweep-users.ts').includes('recentMeetings') &&
+    src('lib/work/sweep-users.ts').includes('lastServed') &&
+    src('app/api/cron/judgment-sweep/route.ts').includes("from '@/lib/work/sweep-users'") &&
+    src('app/api/cron/judgment-sweep/route.ts').includes("orderLeastRecentlyServed(sb, await activeUserIds(sb), 'judgment_sweep')") &&
     src('app/api/cron/draft-sweep/route.ts').includes('routeDeadline') &&
     src('app/api/cron/draft-sweep/route.ts').includes('usersLeftBehind') &&
     src('app/api/cron/draft-sweep/route.ts').includes('Math.min(120_000, Math.max(30_000'));
@@ -1583,11 +1813,17 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/work/apply-verdict.ts').includes('let narrationBacked = false') &&
     src('lib/work/apply-verdict.ts').includes("in('task_id', ['prepare-pass', 'decision-brief'])"));
 
-  check('SR1: SOFIA RETIRED + LUCA = BRANDING EXPERT (owner, Aug 14 — "there\'s not much value in Sofia as a coworker": document production is THE ONE PRODUCTION DOOR\'s job, a persona whose identity IS the capability every actor shares was roster noise; Luca\'s LinkedIn-only specialty widened to branding — the DocTheme/brand-kit capabilities finally have an owner persona). The seed ships THREE workers (Clara · Luca · Max); the produce-default and exhaustion hand-off re-pointed to Clara (the drafting assistant — a dead default would turn loop exhaustion into a dead end); every fit map speaks the new roster; the identity registries dropped sofia@ + slack-sofia; Luca keeps his NAME, FACE and internal role key (the identity is the person, the specialty is what changed) with Branding Expert instructions/title/starters on both runtimes (workers.py parity rides the box redeploy). THE LIVE-ROSTER FILTER: every reader that offers/routes work filters is_active (route-suggestion · standing-spec · converse delegate lookup · mentions) — a retired worker is history, not a target; legacy avatar/title maps stay for her past turns\' attribution. The guarded sweep (scripts/sweep-retire-sofia.ts, RUN ONLY AFTER DEPLOY — the old code\'s produce-default looks her up by name) deactivates rows, re-homes workflows to Clara, drops her skills + slack-sofia connections; dry-run across live users: zero workflows, zero skills, every user has an active Clara',
+  check('SR1: SOFIA RETIRED + LUCA RE-SPECIALISED (Branding Aug 14 → LinkedIn Expert Sep 1) (owner, Aug 14 — "there\'s not much value in Sofia as a coworker": document production is THE ONE PRODUCTION DOOR\'s job, a persona whose identity IS the capability every actor shares was roster noise; Luca\'s LinkedIn-only specialty widened to branding — the DocTheme/brand-kit capabilities finally have an owner persona). The seed ships THREE workers (Clara · Luca · Max); the produce-default and exhaustion hand-off re-pointed to Clara (the drafting assistant — a dead default would turn loop exhaustion into a dead end); every fit map speaks the new roster; the identity registries dropped sofia@ + slack-sofia; Luca keeps his NAME, FACE and internal role key (the identity is the person, the specialty is what changed) with Branding Expert instructions/title/starters on both runtimes (workers.py parity rides the box redeploy). THE LIVE-ROSTER FILTER: every reader that offers/routes work filters is_active (route-suggestion · standing-spec · converse delegate lookup · mentions) — a retired worker is history, not a target; legacy avatar/title maps stay for her past turns\' attribution. The guarded sweep (scripts/sweep-retire-sofia.ts, RUN ONLY AFTER DEPLOY — the old code\'s produce-default looks her up by name) deactivates rows, re-homes workflows to Clara, drops her skills + slack-sofia connections; dry-run across live users: zero workflows, zero skills, every user has an active Clara',
     src('lib/workers/seed.ts').includes('Sofia (content_manager) RETIRED') &&
     !src('lib/workers/seed.ts').includes("name: 'Sofia'") &&
-    src('lib/workers/seed.ts').includes('BRANDING_PROMPT') &&
-    src('lib/workers/seed.ts').includes('Keeps everything you ship on-brand') &&
+    // RE-POINTED (Sep 13): Luca's SPECIALTY moved again — Branding Expert → LINKEDIN EXPERT (owner,
+    // Sep 1, pilot feedback; the gate's own tail already followed that call in roles.ts). His
+    // identity did not move: same name, same face, same role key. The Aug-14 branding copy was the
+    // interim specialty, not the law; the law is that the seed ships THREE workers and every
+    // runtime speaks the SAME current specialty. Asserted on the current copy, both runtimes.
+    src('lib/workers/seed.ts').includes('LINKEDIN_PROMPT') &&
+    src('lib/workers/seed.ts').includes('Keeps your LinkedIn active and credible') &&
+    src('lib/workers/seed.ts').includes("name: 'Luca'") &&
     src('lib/converse/index.ts').includes("runCoworkerDelegation(client, userId, scope, 'clara'") &&
     !src('lib/converse/index.ts').includes("'sofia'") &&      // no live delegation target (found-live comments keep her name as history)
     !src('lib/converse/index.ts').includes('Sofia — writing') && // no fit-map entry
@@ -1596,7 +1832,7 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('lib/prepare/route-suggestion.ts').includes(".eq('is_worker', true).eq('is_active', true)") &&
     src('app/api/workers/mentions/route.ts').includes(".eq('is_active', true)") &&
     !src('infra/agentos/workers.py').includes('Sofia') &&
-    src('infra/agentos/workers.py').includes("care a lot about how things look and sound") &&
+    src('infra/agentos/workers.py').includes("You're the LinkedIn expert") && // the box speaks the same specialty (Sep 1 redeploy)
     src('scripts/sweep-retire-sofia.ts').includes('RUN ONLY AFTER') &&
     // Sep 1 (owner, pilot feedback): Luca REPOSITIONED again — Branding Expert → LINKEDIN
     // EXPERT (label + instructions + starters on both runtimes; key unchanged; existing rows

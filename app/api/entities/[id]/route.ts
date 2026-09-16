@@ -19,6 +19,81 @@ import { logActivity } from '@/lib/activity/log';
 const ACTIONS = ['track', 'untrack', 'done', 'archive', 'mute', 'reopen', 'rename', 'forget', 'intent', 'merge', 'category'] as const;
 type Action = (typeof ACTIONS)[number];
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// DELETE /api/entities/[id] — THE DELETE DOOR (owner walk, Sep 15: "maybe include a delete which
+// would delete context and chats about the project across DB for that user?").
+//
+// `forget` (the PATCH action above) already removed the row and its links, but it was reachable
+// from nowhere and it left the project's whole MIND behind: the room's conversation, its composed
+// brief, its cached judgments, its read marker, its title — all keyed to an id that no longer
+// existed, none of it ever read again, none of it ever collected. This door deletes the project's
+// context, not just its name.
+//
+// THE INVENTORY IS DELIBERATELY CONSERVATIVE — ONE USER, ONE PROJECT, AND NEVER THE WORK ITSELF:
+//   · work_entities      — the project row (this user's only).
+//   · entity_links       — its memberships. The items become LOOSE; nothing about them is deleted.
+//   · room_turns         — the room's conversation (room_key IS the entity id, by the one convention
+//                          in lib/room/turns.ts), live AND archived sessions alike.
+//   · item_plans         — every row this project KEYS (entity_id = <this id>): the composed brief,
+//                          the room title/scope, its read marker, its cached judgments. The column
+//                          is the key, so only rows that name THIS entity can match — a row keyed
+//                          to an inbox item or to 'home' is structurally unreachable from here.
+//   · entity_reflections — the merge/separate verdicts this project is half of (the same
+//                          `pair_key LIKE %id%` handle the absorb path uses).
+//   · knowledge_files    — UNFILED, never deleted: entity_id → null. A document survives its
+//                          project. (A FILED FILE IS A VISIBLE FILE — unfiling only unfiles.)
+//
+// What is NOT touched, by law: inbox_items · emails · meeting_transcripts · commitments ·
+// calendar_events · knowledge_files rows themselves. The user deleted a project, not their mail.
+//
+// Irreversible, and the dialog at the one client door says so. Logged to activity_events as the
+// record of the deed (the trail is not an undo).
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const supabase = await createClient();
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const { id } = await params;
+
+    // A stranger's project is indistinguishable from one that never existed.
+    const { data: ent } = await supabase.from('work_entities')
+      .select('id, name').eq('id', id).eq('user_id', user.id).maybeSingle();
+    if (!ent) return NextResponse.json({ error: 'not found' }, { status: 404 });
+
+    // THE DELETE DOOR IS A RESOLUTION DOOR (the workflow precedent): what lives ON the project is
+    // settled before the project itself dies. Its conversation, its asks and its cards are that
+    // life here — they go with it rather than standing as gate rows pointing at nothing. Each limb
+    // is independently best-effort: a missing table or a transient failure must never leave a
+    // half-deleted project standing.
+    const drop = async (fn: () => PromiseLike<unknown>) => { try { await fn(); } catch { /* non-fatal */ } };
+
+    await drop(() => supabase.from('room_turns').delete().eq('user_id', user.id).eq('room_key', id));
+    await drop(() => supabase.from('item_plans').delete().eq('user_id', user.id).eq('entity_id', id));
+    await drop(() => supabase.from('entity_reflections').delete().eq('user_id', user.id).like('pair_key', `%${id}%`));
+    // UNFILE, NEVER DELETE — the file outlives the project it was filed under.
+    await drop(() => supabase.from('knowledge_files').update({ entity_id: null }).eq('user_id', user.id).eq('entity_id', id));
+    // The links go last before the row: an item that loses its project becomes loose, never gone.
+    await drop(() => supabase.from('entity_links').delete().eq('user_id', user.id).eq('entity_id', id));
+
+    const { error: delErr } = await supabase.from('work_entities').delete().eq('id', id).eq('user_id', user.id);
+    if (delErr) return NextResponse.json({ error: 'failed' }, { status: 500 });
+
+    await logActivity(supabase, user.id, {
+      type: 'entity_deleted',
+      title: `Deleted project: ${ent.name}`,
+      entityType: 'work_entity', entityId: id,
+      metadata: { name: ent.name, irreversible: true },
+    }).catch(() => {});
+    import('@/lib/home/bust-brief').then(({ softBustBrief }) => softBustBrief(supabase, user.id)).catch(() => {});
+
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    console.error('[entities/delete] error:', e);
+    return NextResponse.json({ error: 'failed' }, { status: 500 });
+  }
+}
+
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const supabase = await createClient();

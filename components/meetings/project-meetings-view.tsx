@@ -12,6 +12,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { Badge, Button, SegmentedControl, EmptyState } from '@/components/ui';
 import type { Transcript } from '@/context/meetings-data-context';
+import { projectHref } from '@/lib/room/project-href';
 
 interface ProjectMeetingsViewProps {
   // A tracked project (filter by project_id) OR a suggested initiative (filter by an explicit id set).
@@ -149,7 +150,7 @@ export default function ProjectMeetingsView({ project, suggestion, transcripts, 
             </Button>
           ) : (
             <Link
-              href={`/home?view=projects&project=${project!.id}`}
+              href={projectHref(project!.id)}
               className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-1 text-[12px] font-medium text-neutral-600 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
             >
               Open project

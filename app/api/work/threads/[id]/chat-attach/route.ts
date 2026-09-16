@@ -166,6 +166,7 @@ export async function POST(
         mimeType: cf.mimeType,
         userId: user.id,
         storagePathInBucket: storagePath,
+        bucket: 'email-attachments', // where this route uploaded the bytes — the row records it
       }, adminClient)
         // FILE SPINE (A2): the KB row carries where it came from — a /work chat upload on this thread.
         .then((fid) => stampFileMeta(adminClient, fid, { kind: 'chat', ref: threadId }))

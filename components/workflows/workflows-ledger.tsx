@@ -16,7 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import {
-  BoltIcon, CheckIcon, FolderIcon, PauseIcon, PlayIcon,
+  BoltIcon, CheckIcon, FolderIcon, PlayIcon,
   ShieldCheckIcon, ArrowPathIcon, EnvelopeIcon, NewspaperIcon,
   EyeIcon, CalendarDaysIcon, DocumentTextIcon, TrashIcon, ChevronDownIcon,
 } from '@heroicons/react/24/outline';
@@ -789,8 +789,10 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                       ) : (
                         <><span className="text-neutral-300">·</span><span>hasn&apos;t run yet</span></>
                       )}
+                      {/* THE LINE AGREES WITH THE CONTROL (Sep 13): the control is a word now,
+                          so the line names the word — never "press play" beside a "Resume". */}
                       {w.autoPaused ? (
-                        <><span className="text-neutral-300">·</span><span className="text-amber-600">paused itself — runs went unopened · press play to resume</span></>
+                        <><span className="text-neutral-300">·</span><span className="text-amber-600">paused itself — runs went unopened · press Resume to restart it</span></>
                       ) : w.status === 'paused' ? (
                         <><span className="text-neutral-300">·</span><span className="text-neutral-400">paused</span></>
                       ) : null}
@@ -803,13 +805,22 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                   </div>
                   {/* VISIBLE verbs — a hidden door is no door (owner, Aug 9). */}
                   <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <button title="Run now" onClick={() => void runNow(w)} disabled={busy === w.id || !!w.runningProgress}
+                    {/* ONE GLYPH, ONE DEED (owner walk, Sep 13 — "these double play icons are a
+                        bit confusing"): the row used to carry ▷ beside ‖, and a PAUSED row carried
+                        ▷ beside ▷ — two identical triangles, one firing a single run, the other
+                        changing the schedule's standing state. The one-off deed KEEPS the play
+                        glyph (and now says its name to a screen reader); the standing toggle wears
+                        its VERB, never a second bare triangle. */}
+                    <button title="Run now" aria-label="Run now" onClick={() => void runNow(w)} disabled={busy === w.id || !!w.runningProgress}
                       className="p-1.5 rounded-lg text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
                       {busy === w.id ? <ArrowPathIcon className="w-4 h-4 animate-spin" /> : <PlayIcon className="w-4 h-4" />}
                     </button>
-                    <button title={w.status === 'paused' ? 'Resume schedule' : 'Pause schedule'} onClick={() => void togglePause(w)} disabled={busy === w.id}
-                      className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors">
-                      {w.status === 'paused' ? <PlayIcon className="w-4 h-4" /> : <PauseIcon className="w-4 h-4" />}
+                    <button
+                      title={w.status === 'paused' ? 'Resume the schedule' : 'Pause the schedule'}
+                      aria-label={w.status === 'paused' ? 'Resume the schedule' : 'Pause the schedule'}
+                      onClick={() => void togglePause(w)} disabled={busy === w.id}
+                      className="rounded-lg px-2 py-1 text-[12px] text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 transition-colors whitespace-nowrap">
+                      {w.status === 'paused' ? 'Resume' : 'Pause'}
                     </button>
                     {/* A soft nav, like the deep-dive's own pencil: a plain <a> here reloaded the
                         whole document (and threw away the ledger's warm cache with it). */}

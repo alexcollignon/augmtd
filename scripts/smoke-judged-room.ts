@@ -158,8 +158,11 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/work/decision-card.tsx').includes('Leave it with me') && detail.includes("kind: 'email', id, text: label"));
   check('J4: the pass prepares FROM the judged verdict (same cached judgment as the surface)',
     src('lib/prepare/pass.ts').includes('judgeWork(admin, userId') && src('lib/prepare/pass.ts').includes("verdict.work === 'send_file'"));
-  check('J4: a send reports back INTO the deal conversation (keyed turn, deduped)',
-    detail.includes('`sent:${id}`'));
+  // RE-POINTED (Sep 14, THE PROACTIVE REACH ARC): the sent narration moved SERVER-side — the Sep 8
+  // deed seam (noteItemAction) writes the ONE keyed `sent:<id>` turn at the send doors; the client's
+  // pushDealTurn copy was deleted (it raced the server on the same key). Same law, one narrator.
+  check('J4: a send reports back INTO the deal conversation (keyed turn, deduped, server-side)',
+    src('lib/entities/on-action.ts').includes('`sent:${item.id}`') && !detail.includes('`sent:${id}`'));
 
   // ── J2 VISUAL — the Scape order: message card → mounted work → one commit line ──
   const threadSrc = src('components/inbox/thread-messages.tsx');

@@ -1,35 +1,71 @@
 'use client';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// THE ONE-SURFACE SIDEBAR (Arc 3 THE SHELL, S1 — docs/one-surface-plan.md; the settled design,
-// mockup rev 4). THE FOLD HAPPENS HERE, WHOLESALE: this frame is owned by the CONVERSATIONAL
-// dimension — Home (the chat door) · Pinned rooms · Recent conversations · All conversations —
-// with the two
-// untouched SOURCES (Inbox · Meetings) and the team/Settings footer. Workers / Chat / Drive have
-// NO seats (their routes survive; Settings carries the Team + Knowledge doors). The ladder's laws:
-// the sidebar lists CONVERSATIONS, attention stays on the deck; nothing here is ever the item
-// firehose. This is lawful NOW (unlike the killed Aug-6 interims) because the fold ships WITH it.
+// THE SIDEBAR LISTS CONVERSATIONS, NOT MODULES (docs/threads-plan.md, "The Home thread's seat";
+// the frozen boards Main.dc.html / HomeThread.dc.html — owner-confirmed Sep 7; Phase 4b).
+//
+// The shape, top to bottom: Home + its needs-you badge · CONVERSATIONS (project threads with a
+// judged state dot · ONE row per coworker, face + name + the avatar's working state · the chats
+// you have spoken in) · "All conversations →" · the QUIET GROUP of module doors (Routines ·
+// Inbox · Meetings · Documents, feature-gated) · the team facepile · the account.
+//
+// THE LAWS THIS FRAME OWES:
+//   • THE CONTAINERS LAW — a coworker DM is ONE continuous thread (owner, Aug 13). The list holds
+//     ONE row per ACTIVE ROSTER coworker (the facepile's own presence source), wearing the bare
+//     NAME — never one row per DM session titled by its first ask. The roster rows render even
+//     with zero threads: the team is always reachable, and the door is the facepile's door.
+//   • THREE GRAMMARS, THREE WEIGHTS (owner walk, Sep 7 — "the sidebar feels a bit messy"): the
+//     projects block leads (≤6, the served order), the coworker block follows after real
+//     breathing room, the chat sessions trail (≤3, italic). Everything past those caps lives
+//     behind "All projects" / "All conversations →" — a sidebar is a list of doors, not a dump.
+//   • BADGES ARE HONEST OR ABSENT — every number here is a SERVED count (the deck's own
+//     dayProgress.needYou; the workflow ledger's unreviewed runs). A badge with nothing real
+//     behind it is a lying door, so silence is the fallback, never a placeholder.
+//   • ONE ADDRESS PRODUCER — a project thread's href comes from projectHref, never hand-rolled.
+//   • THE MODULES WHISPER — they are doors, not the shape of the product; conversations lead.
+//   • ATTENTION STAYS ON THE DECK — this list is never the item firehose.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import {
-  HomeIcon, EnvelopeIcon, VideoCameraIcon, FolderIcon,
+  HomeIcon, EnvelopeIcon, VideoCameraIcon, FolderIcon, DocumentTextIcon,
   Cog6ToothIcon, ArrowRightOnRectangleIcon, ShieldCheckIcon,
-  ChatBubbleLeftEllipsisIcon, UserCircleIcon, BoltIcon,
+  ChatBubbleLeftEllipsisIcon, BoltIcon,
 } from '@heroicons/react/24/outline';
 import { useRecordingContext } from '@/context/recording-context';
 import type { WorkspaceFeatures } from '@/lib/workspace/types';
 import { DEFAULT_FEATURES } from '@/lib/workspace/types';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
-import { ROLE_AVATARS, ROLE_LABELS } from '@/lib/workers/roles';
+import { ROLE_LABELS } from '@/lib/workers/roles';
 import { AnchoredPopover } from '@/components/ui/anchored-popover';
+import { AvatarStatus } from '@/components/thread/avatar-status';
+import { projectHref } from '@/lib/room/project-href';
+import { warmEntityRoom, cancelWarmEntityRoom } from '@/lib/room/warm-room';
+import { momentumOf } from '@/lib/work-items/states';
 import { toast } from 'sonner';
 
 type Conversation = { key: string; kind: 'room' | 'chat' | 'coworker'; label: string; href: string | null; sub?: string };
-type Rooms = { pinned: Array<{ id: string; name: string; href: string }>; conversations: Conversation[]; workflowsUnread?: number };
+// `unread` — THE PROJECT RAISING ITS HAND (Sep 7): per project room key, the count of live turns
+// that landed since the reader last saw the room and that the reader did not write. Served ONLY
+// for rooms with a real read marker, so an absent key means "nothing honest to say", never zero-
+// as-decoration. Coworker DM rows carry no badge by design (see the route's own note).
+type Rooms = { pinned: Array<{ id: string; name: string; href: string }>; conversations: Conversation[]; workflowsUnread?: number; unread?: Record<string, number> };
 const LS_KEY = 'aug-one-sidebar-v1';
+// THE BADGE IS HONEST OR ABSENT (threads-plan, the sidebar paragraph): the Home badge speaks the
+// DECK's own needs-you number — `dayProgress.needYou` off the served brief, read from the same
+// stamped cache the Home paints from (no second fetch, no second definition, and never a
+// placeholder). The stamp carries the action-surface freshness demand: a cache too old to trust
+// yields NO badge rather than a stale claim.
+const BRIEF_LS_KEY = 'aug-home-brief-v1';
+const BRIEF_MAX_AGE_MS = 15 * 60_000;
+type CachedBrief = { dayProgress?: { needYou?: number } | null };
+// The project dot reads the portfolio's own judged momentum (the ONE vocabulary, lib/work-items/
+// states) out of the shared portfolio cache. No cache → `unknown` → the honest neutral dot; the
+// sidebar never fetches the portfolio itself (an ambient row is not worth a query on every page).
+const PORTFOLIO_LS_KEY = 'aug-portfolio-v1';
+type CachedPortfolio = { entities?: Array<{ id: string; momentum?: string }> };
 
 function formatElapsed(secs: number) {
   const m = Math.floor(secs / 60); const s = secs % 60;
@@ -105,7 +141,7 @@ export default function OneSidebar({
     const refresh = () => {
       fetch('/api/rooms/recent').then((r) => (r.ok ? r.json() : null)).then((d) => {
         if (d && Array.isArray(d.pinned)) {
-          const next: Rooms = { pinned: d.pinned, conversations: Array.isArray(d.conversations) ? d.conversations : [], workflowsUnread: typeof d.workflowsUnread === 'number' ? d.workflowsUnread : 0 };
+          const next: Rooms = { pinned: d.pinned, conversations: Array.isArray(d.conversations) ? d.conversations : [], workflowsUnread: typeof d.workflowsUnread === 'number' ? d.workflowsUnread : 0, unread: (d.unread && typeof d.unread === 'object') ? d.unread as Record<string, number> : {} };
           setRooms(next); saveLS(LS_KEY, next);
         }
       }).catch(() => {});
@@ -116,6 +152,41 @@ export default function OneSidebar({
     return () => {
       window.removeEventListener('aug:membership-changed', refresh);
       window.removeEventListener('aug:conversation-changed', refresh);
+    };
+  }, []);
+
+  // ── THE HONEST BADGE + THE HONEST DOT ─────────────────────────────────────────────────────────
+  // Both read caches the shell already writes (the brief the Home paints from; the portfolio every
+  // picker hydrates from). Zero new fetches, and both degrade to SILENCE — no number, no badge; no
+  // momentum, a neutral dot — because a badge with nothing real behind it is a lying door.
+  const [needsYou, setNeedsYou] = useState<number | null>(null);
+  const [momentum, setMomentum] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const readCaches = () => {
+      const b = loadLS<CachedBrief>(BRIEF_LS_KEY, { maxAgeMs: BRIEF_MAX_AGE_MS });
+      const n = b?.dayProgress?.needYou;
+      setNeedsYou(typeof n === 'number' && n > 0 ? n : null);
+      const p = loadLS<CachedPortfolio>(PORTFOLIO_LS_KEY);
+      const next: Record<string, string> = {};
+      for (const e of p?.entities ?? []) if (e?.id && e.momentum) next[e.id] = e.momentum;
+      setMomentum(next);
+    };
+    readCaches();
+    const onVis = () => { if (document.visibilityState === 'visible') readCaches(); };
+    window.addEventListener('focus', readCaches);
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('aug:membership-changed', readCaches);
+    window.addEventListener('aug:conversation-changed', readCaches);
+    // THE COLD-LOAD SEAM (walk find, Sep 7): on a fresh open the sidebar's mount read runs BEFORE
+    // the brief fetch lands, and nothing re-read until a refocus — the honest-or-absent badge was
+    // honestly absent all session. The Home announces its save; the sidebar hears it.
+    window.addEventListener('aug:brief-updated', readCaches);
+    return () => {
+      window.removeEventListener('focus', readCaches);
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('aug:membership-changed', readCaches);
+      window.removeEventListener('aug:conversation-changed', readCaches);
+      window.removeEventListener('aug:brief-updated', readCaches);
     };
   }, []);
 
@@ -143,26 +214,28 @@ export default function OneSidebar({
   const [team, setTeam] = useState<TeamMate[] | null>(null);
   const [teamOpen, setTeamOpen] = useState(false);
   const teamRef = useRef<HTMLDivElement>(null);
+  // ONE PRESENCE READ, HYDRATE-THEN-REFRESH (the instant-load doctrine). The faces now carry the
+  // WORKING RING on the resting sidebar, so the state cannot only refresh when the popover opens
+  // — it hydrates from the cache instantly and always refreshes behind. `presenceRef` keeps the
+  // one fetch site: the popover's open re-runs the SAME reader, never a second definition.
+  const refreshTeam = useRef(() => {});
+  refreshTeam.current = () => {
+    fetch('/api/workers/presence').then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (Array.isArray(d?.team) && d.team.length) setTeam(d.team); })
+      .catch(() => { /* the cached roster stands; the next open is the retry */ });
+  };
+  useEffect(() => {
+    const cached = loadLS<TeamMate[]>('aug-team-presence-v1');
+    if (cached?.length) setTeam(cached);
+    refreshTeam.current();
+  }, []);
   useEffect(() => {
     if (!teamOpen) return;
-    fetch('/api/workers/presence').then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (Array.isArray(d?.team)) setTeam(d.team); })
-      .catch(() => setTeam((t) => t ?? []));
+    refreshTeam.current();
     const onDown = (e: MouseEvent) => { if (teamRef.current && !teamRef.current.contains(e.target as Node)) setTeamOpen(false); };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [teamOpen]);
-  // Cached roster for the collapsed facepile (avatars need no live state). First visit on a
-  // fresh device has NO cache — fetch once so the faces show without a click (found live on
-  // iScore: the facepile sat grey until the popover was opened, which is where the only
-  // fetch lived). Subsequent visits hydrate from LS instantly.
-  useEffect(() => {
-    const cached = loadLS<TeamMate[]>('aug-team-presence-v1');
-    if (cached?.length) { setTeam(cached); return; }
-    fetch('/api/workers/presence').then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (Array.isArray(d?.team) && d.team.length) setTeam(d.team); })
-      .catch(() => { /* the popover click remains the retry */ });
-  }, []);
   useEffect(() => { if (team?.length) saveLS('aug-team-presence-v1', team); }, [team]);
   const dmWorker = (w: TeamMate) => {
     setTeamOpen(false);
@@ -188,8 +261,41 @@ export default function OneSidebar({
     `flex items-center gap-2.5 px-2.5 py-[7px] mb-px rounded-lg text-[12.5px] transition-colors ${
       active ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-neutral-500 hover:text-neutral-800 hover:bg-neutral-200/50'
     }`;
+  // The quiet group's row — one step further back than a conversation (the modules whisper).
+  const quiet = (active: boolean) =>
+    `flex items-center gap-2.5 px-2.5 py-[6px] rounded-lg text-[12px] transition-colors ${
+      active ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-neutral-500 hover:text-neutral-800 hover:bg-neutral-200/50'
+    }`;
   const sectionLabel = 'px-2.5 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-400 select-none';
   const userInitial = userEmail?.[0]?.toUpperCase() ?? '?';
+
+  // ── THE CONVERSATIONS SECTION (the frozen boards' form) ───────────────────────────────────────
+  // THREE GRAMMARS, THREE WEIGHTS: project threads (a judged state dot, ≤6) · the COWORKERS (one
+  // row each, from the roster) · the chat sessions you have spoken in (≤3, italic, manageable in
+  // place). Nothing is invented here — projects and chats come from /api/rooms/recent, which
+  // already enforces the user-voice law (a room the user never spoke in is not a conversation; it
+  // surfaces through the deck), and the coworkers come from the presence roster the facepile
+  // already holds.
+  const roomConvos = rooms.conversations.filter((c) => c.kind === 'room' && !c.key.includes(':'));
+  // PROJECTS LEAD, CAPPED AT SIX — the order /api/rooms/recent already serves (pinned by reasoned
+  // priority, then conversed-in). The rest live behind "All projects" on the section label.
+  const PROJECT_ROWS_MAX = 6;
+  const projectRows = [
+    ...rooms.pinned.map((p) => ({ id: p.id, label: p.name })),
+    ...roomConvos.map((c) => ({ id: c.key, label: c.label })),
+  ].slice(0, PROJECT_ROWS_MAX);
+  const projectIds = new Set(projectRows.map((p) => p.id));
+  // THE TEAM IS ONE DOOR, NOT N ROWS (owner, Sep 7 — "wouldn't 'Your team' be a way to simplify
+  // the nav instead of 3 extra rows? as we scale coworkers, having multiple rows is weirder").
+  // The coworkers do NOT list in Conversations: the footer facepile is THE coworker door, and it
+  // stays one row whether the team is three people or thirty. The `coworker` kind from
+  // /api/rooms/recent (one row PER DM SESSION) stays excluded everywhere — a DM is one continuous
+  // thread, so a session list would be a second, wrong grammar for the same relationship.
+  // THE CHAT SESSIONS TRAIL, CAPPED AT THREE — the rest behind "All conversations →".
+  const CHAT_ROWS_MAX = 3;
+  const otherRows = rooms.conversations
+    .filter((c) => c.kind !== 'coworker' && !(c.kind === 'room' && projectIds.has(c.key)))
+    .slice(0, CHAT_ROWS_MAX);
 
   return (
     <div className="flex h-screen w-[212px] flex-col bg-neutral-50 flex-shrink-0 border-r border-neutral-200/60">
@@ -242,57 +348,83 @@ export default function OneSidebar({
           }}>
           <HomeIcon className={`w-[17px] h-[17px] flex-shrink-0 ${lensIs('dashboard', 'timeline') ? 'text-indigo-500' : 'text-neutral-400'}`} />
           Home
-        </Link>
-
-        {/* ONE NAME EVERYWHERE (owner call, refined Aug 7): Projects is ONE menu item — the
-            portfolio lens is the destination; the sidebar never carries the project LIST
-            (the roster lives on its own page, not the nav). */}
-        <Link href="/home?view=projects" className={item(lensIs('projects'))}>
-          <FolderIcon className={`w-[17px] h-[17px] flex-shrink-0 ${lensIs('projects') ? 'text-indigo-500' : 'text-neutral-400'}`} />
-          Projects
-        </Link>
-
-        {/* THE PRODUCTION DOOR (production arc step 5): Workflows is the LEDGER — what stands,
-            what ran, what waits on your approval; creation is describe→confirm; Studio stays
-            one click deep as the method editor. Coworkers = ad hoc; workflows = production. */}
-        <Link href="/home?view=workflows" className={item(lensIs('workflows', 'runs'))}>
-          <BoltIcon className={`w-[17px] h-[17px] flex-shrink-0 ${lensIs('workflows', 'runs') ? 'text-indigo-500' : 'text-neutral-400'}`} />
-          Workflows
-          {/* THE RUNS BADGE — deliveries you haven't opened; clears on opening Runs/a deliverable
-              (the same stamp that keeps auto-pause honest). Quiet count, never a red alarm —
-              a successful briefing is good news, not debt. */}
-          {(rooms.workflowsUnread ?? 0) > 0 && (
-            <span className="ml-auto rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 tabular-nums">
-              {rooms.workflowsUnread! > 9 ? '9+' : rooms.workflowsUnread}
+          {/* THE NEEDS-YOU BADGE — the deck's own count (dayProgress.needYou), never a decoration.
+              No fresh served count → no badge (honest or absent). */}
+          {needsYou !== null && (
+            <span className="ml-auto min-w-[18px] rounded-full bg-indigo-50 px-1.5 py-0.5 text-center text-[10px] font-semibold text-indigo-700 tabular-nums">
+              {needsYou > 9 ? '9+' : needsYou}
             </span>
           )}
         </Link>
 
-        {/* Inbox + Meetings sit WITH the primary nav (owner call, Aug 12 — a separate "Sources"
-            category read as taxonomy, not navigation; two items don't earn a section). */}
-        {features.email && (
-          <Link href="/inbox" className={item(pathname.startsWith('/inbox'))}>
-            <EnvelopeIcon className={`w-[17px] h-[17px] flex-shrink-0 ${pathname.startsWith('/inbox') ? 'text-indigo-500' : 'text-neutral-400'}`} />
-            Inbox
+        {/* ══ TWO LABELED SECTIONS, NOT ONE (owner walk, Sep 7 late: "should be a clearer
+            separation of projects and actual conversations no?"). Projects are PLACES, chats are
+            passing conversations — one shared header muddled two kinds that only italics told
+            apart. Each kind now owns its label and its own "All →" trailer; PROJECTS is literally
+            one of the five vocabulary words (threads-plan). The grid door stays on the label row,
+            lit while the lens is open. */}
+        <div className="flex items-baseline">
+          <div className={`${sectionLabel} flex-1`}>Projects</div>
+          <Link href="/home?view=projects"
+            className={`pt-4 pb-1 pr-2.5 text-[10px] transition-colors ${lensIs('projects') ? 'text-indigo-600 font-semibold' : 'text-neutral-400 hover:text-neutral-700'}`}>
+            All →
           </Link>
-        )}
-        {features.meetings && (
-          <Link href="/meetings" className={item(pathname.startsWith('/meetings'))}>
-            <VideoCameraIcon className={`w-[17px] h-[17px] flex-shrink-0 ${pathname.startsWith('/meetings') ? 'text-indigo-500' : 'text-neutral-400'}`} />
-            Meetings
-          </Link>
-        )}
+        </div>
 
-        {rooms.conversations.length > 0 && (
+        {/* PROJECT THREADS — the dot is the judged momentum (the ONE vocabulary), the address is
+            the ONE producer's (/project/<id>), and the row stays lit while you are inside it. */}
+        {projectRows.map((p) => {
+          const href = projectHref(p.id);
+          const active = pathname === href;
+          // THE PROJECT RAISING ITS HAND — the same quiet indigo badge grammar as Home's needs-you
+          // count, on the SAME honest-or-absent rule: a served count > 0, or nothing at all. The
+          // room you are standing in never badges (you are reading it); the marker stamps on serve,
+          // so the next read of this list agrees.
+          const n = active ? 0 : (rooms.unread?.[p.id] ?? 0);
+          return (
+            // THE ROOM WARM ON THE SIDEBAR (owner walk, Sep 7 — "clicking across projects takes
+            // so long"): the same warm the portfolio grid already uses (lib/room/warm-room — one
+            // implementation, 160ms hover intent, serial queue), plus the route's own prefetch so
+            // the RSC payload and the room's two payloads are both in hand before the click.
+            // Cancel on leave, exactly as the grid does.
+            <Link key={p.id} href={href} className={item(active)}
+              onMouseEnter={() => { if (!active) { warmEntityRoom(p.id); router.prefetch(href); } }}
+              onMouseLeave={() => cancelWarmEntityRoom(p.id)}
+              onFocus={() => { if (!active) { warmEntityRoom(p.id); router.prefetch(href); } }}
+              onBlur={() => cancelWarmEntityRoom(p.id)}>
+              <span className={`w-[7px] h-[7px] rounded-full flex-shrink-0 ${momentumOf(momentum[p.id] ?? 'unknown').dot}`}
+                title={momentumOf(momentum[p.id] ?? 'unknown').label} />
+              <span className="truncate">{p.label}</span>
+              {n > 0 && (
+                <span className="ml-auto min-w-[18px] rounded-full bg-indigo-50 px-1.5 py-0.5 text-center text-[10px] font-semibold text-indigo-700 tabular-nums">
+                  {n > 9 ? '9+' : n}
+                </span>
+              )}
+            </Link>
+          );
+        })}
+
+        {/* (THE COWORKERS DO NOT LIST HERE — the footer's "Your team" row is the one coworker
+            door; see the note above `otherRows`. Conversations holds project threads and the
+            chat sessions you have spoken in, and nothing else.) */}
+
+        {otherRows.length > 0 && (
           <>
-            <div className={sectionLabel}>Recent</div>
+            {/* CHATS — its own label + its own "All →" trailer (the Sep 7 separation): passing
+                conversations are a different KIND than the project places above. */}
+            <div className="flex items-baseline">
+              <div className={`${sectionLabel} flex-1`}>Chats</div>
+              <Link href="/home?view=conversations"
+                className={`pt-4 pb-1 pr-2.5 text-[10px] transition-colors ${lensIs('conversations') ? 'text-indigo-600 font-semibold' : 'text-neutral-400 hover:text-neutral-700'}`}>
+                All →
+              </Link>
+            </div>
             {/* THE KIND GLYPH + THE HOVER EXPAND (owner, Aug 8): a subtle icon says what each
-                conversation IS (chat · coworker DM · work room); hovering smoothly reveals the
-                second line — "with Clara" / "in EG Bank" / the kind word. Plain chats stay
-                quiet (nothing worth expanding). */}
-            {rooms.conversations.slice(0, 5).map((c) => {
-              const Glyph = c.kind === 'coworker' ? UserCircleIcon : c.kind === 'chat' ? ChatBubbleLeftEllipsisIcon : FolderIcon;
-              const manageable = c.kind === 'chat' || c.kind === 'coworker';
+                conversation IS (chat · work room); hovering smoothly reveals the second line —
+                "in EG Bank" / the kind word. Plain chats stay quiet. */}
+            {otherRows.map((c) => {
+              const Glyph = c.kind === 'chat' ? ChatBubbleLeftEllipsisIcon : FolderIcon;
+              const manageable = c.kind === 'chat';
               const inner = (
                 <>
                   <span className="flex items-center gap-2.5 min-w-0">
@@ -328,8 +460,11 @@ export default function OneSidebar({
                 <Link key={c.key} href={c.href ?? '/home'} className={rowCls}>{inner}</Link>
               );
             })}
-            {/* The one row menu (portaled — the overlay law). */}
-            <AnchoredPopover anchorRef={menuAnchorRef} open={!!convMenu} onClose={() => setConvMenu(null)} align="left" width={150}>
+          </>
+        )}
+
+        {/* The one row menu (portaled — the overlay law); it serves BOTH manageable grammars. */}
+        <AnchoredPopover anchorRef={menuAnchorRef} open={!!convMenu} onClose={() => setConvMenu(null)} align="left" width={150}>
               <div className="rounded-xl border border-neutral-200 bg-white shadow-lg py-1">
                 {(() => {
                   const c = rooms.conversations.find((x) => x.key === convMenu);
@@ -344,20 +479,63 @@ export default function OneSidebar({
                   );
                 })()}
               </div>
-            </AnchoredPopover>
-            <Link href="/home?view=conversations" className="block px-2.5 py-[6px] text-[11.5px] text-neutral-400 hover:text-neutral-700 transition-colors">
-              All conversations →
-            </Link>
-          </>
-        )}
+        </AnchoredPopover>
 
-        {isSuperAdmin && (
-          <Link href="/platform-admin" className={item(pathname.startsWith('/platform-admin'))}>
-            <ShieldCheckIcon className="w-[17px] h-[17px] flex-shrink-0 text-neutral-400" />
-            Platform Admin
+        {/* ("All conversations →" moved onto the CHATS label row — one door per section, no
+            trailing repeat; when no chats exist the door still needs a seat, so it renders alone.) */}
+        {otherRows.length === 0 && rooms.conversations.length + projectRows.length > 0 && (
+          <Link href="/home?view=conversations" className={`block px-2.5 py-[6px] text-[11.5px] transition-colors ${lensIs('conversations') ? 'text-indigo-600 font-medium' : 'text-neutral-400 hover:text-neutral-700'}`}>
+            All conversations →
           </Link>
         )}
       </nav>
+
+      {/* ══ THE QUIET GROUP — the modules, one step back. They are DOORS, not the shape of the
+          product: the conversations above are the product. Feature-gated per the tier law (an
+          email-off workspace never reads a mailbox door), and each count is a served fact. */}
+      <div className="px-2 pt-2 pb-1 border-t border-neutral-200/70">
+        {/* The ledger lives INSIDE the Home shell (the one-surface law); /workflows is only a
+            redirect seat, so the door points at the real surface and skips the round-trip. */}
+        {features.studio && (
+          <Link href="/home?view=workflows" className={quiet(pathname.startsWith('/workflows') || pathname.startsWith('/studio') || lensIs('workflows', 'runs'))}>
+            <BoltIcon className="w-[15px] h-[15px] flex-shrink-0 text-neutral-400" />
+            <span className="flex-1 truncate">Workflows</span>
+            {/* THE RUNS COUNT — deliveries you haven't opened; the same reviewed_at stamp that
+                keeps auto-pause honest. Quiet, never an alarm: a delivered briefing is good news. */}
+            {(rooms.workflowsUnread ?? 0) > 0 && (
+              <span className="flex-shrink-0 text-[10.5px] text-neutral-400 tabular-nums">
+                {rooms.workflowsUnread! > 99 ? '99+' : rooms.workflowsUnread}
+              </span>
+            )}
+          </Link>
+        )}
+        {features.email && (
+          <Link href="/inbox" className={quiet(pathname.startsWith('/inbox'))}>
+            <EnvelopeIcon className="w-[15px] h-[15px] flex-shrink-0 text-neutral-400" />
+            <span className="flex-1 truncate">Inbox</span>
+          </Link>
+        )}
+        {features.meetings && (
+          <Link href="/meetings" className={quiet(pathname.startsWith('/meetings'))}>
+            <VideoCameraIcon className="w-[15px] h-[15px] flex-shrink-0 text-neutral-400" />
+            <span className="flex-1 truncate">Meetings</span>
+          </Link>
+        )}
+        {/* Documents = the library's own address (owner, Sep 15): /drive and /knowledge are
+            redirect seats, so the door — and its active state — name the real path. */}
+        {features.drive && (
+          <Link href="/documents" className={quiet(pathname.startsWith('/documents'))}>
+            <DocumentTextIcon className="w-[15px] h-[15px] flex-shrink-0 text-neutral-400" />
+            <span className="flex-1 truncate">Documents</span>
+          </Link>
+        )}
+        {isSuperAdmin && (
+          <Link href="/platform-admin" className={quiet(pathname.startsWith('/platform-admin'))}>
+            <ShieldCheckIcon className="w-[15px] h-[15px] flex-shrink-0 text-neutral-400" />
+            <span className="flex-1 truncate">Platform Admin</span>
+          </Link>
+        )}
+      </div>
 
       {/* Recording indicator */}
       {(recording.state === 'recording' || recording.state === 'uploading') && (
@@ -372,34 +550,41 @@ export default function OneSidebar({
         </div>
       )}
 
-      {/* THE TEAM FACEPILE — quiet, global, always in the corner of your eye (like colleagues
-          in an office). Click = the one popover: live state per coworker · Chat · Settings. */}
+      {/* ══ "YOUR TEAM" — THE ONE COWORKER DOOR (owner, Sep 7: one row instead of N rows, so the
+          nav does not bloat as the roster grows). Quiet, global, always in the corner of your eye
+          (like colleagues in an office). The faces wear THE KIT'S avatar grammar — the same
+          working ring the threads use, off the same live presence signal, so a running coworker
+          is visible without opening anything. Click = the roster: face · name · role · what
+          they're doing, each row a DM door, plus the Settings manage door.
+          NO BADGE HERE, deliberately: an aggregate needs-you number would need a per-DM read
+          marker, and work_messages has none (see /api/rooms/recent's own note). Honest or absent. */}
       <div ref={teamRef} className="relative px-2 pt-1">
         {teamOpen && (
           <div className="absolute bottom-full left-2 mb-1.5 w-64 bg-white border border-neutral-200 shadow-lg z-50 rounded-xl overflow-hidden">
             <div className="py-1">
-              {(team ?? []).map((w) => (
-                <div key={w.id} className="flex items-center gap-2.5 px-3 py-2">
-                  {w.worker_role && ROLE_AVATARS[w.worker_role] ? (
-                    <Image src={ROLE_AVATARS[w.worker_role]} alt="" width={28} height={28} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
-                  ) : (
-                    <span className="w-7 h-7 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center text-[12px] font-semibold flex-shrink-0">{w.name[0]}</span>
-                  )}
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-baseline gap-1.5 min-w-0">
-                      <span className="text-[12.5px] font-medium text-neutral-800 leading-tight">{w.name.split(' ')[0]}</span>
-                      {w.worker_role && ROLE_LABELS[w.worker_role] && (
-                        <span className="truncate text-[10.5px] text-neutral-400 leading-tight">{ROLE_LABELS[w.worker_role]}</span>
-                      )}
+              {(team ?? []).map((w) => {
+                const working = !!w.state?.startsWith('Running');
+                return (
+                  /* THE WHOLE ROW IS THE DM DOOR (the word is the deed — a name you click is a
+                     conversation you open); the same `dmWorker` handler the nav rows used. */
+                  <div key={w.id} role="button" tabIndex={0}
+                    onClick={() => dmWorker(w)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') dmWorker(w); }}
+                    className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-neutral-50">
+                    <AvatarStatus name={w.name} actorId={w.id} size={28}
+                      status={working ? 'working' : 'idle'} hint={w.state} />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-baseline gap-1.5 min-w-0">
+                        <span className="text-[12.5px] font-medium text-neutral-800 leading-tight">{w.name.split(' ')[0]}</span>
+                        {w.worker_role && ROLE_LABELS[w.worker_role] && (
+                          <span className="truncate text-[10.5px] text-neutral-400 leading-tight">{ROLE_LABELS[w.worker_role]}</span>
+                        )}
+                      </span>
+                      <span className={`block truncate text-[11px] leading-tight ${working ? 'text-indigo-600' : 'text-neutral-400'}`}>{w.state}</span>
                     </span>
-                    <span className={`block truncate text-[11px] leading-tight ${w.state.startsWith('Running') ? 'text-indigo-600' : 'text-neutral-400'}`}>{w.state}</span>
-                  </span>
-                  <button onClick={() => dmWorker(w)}
-                    className="flex-shrink-0 rounded-lg px-2 py-1 text-[11.5px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors">
-                    Chat
-                  </button>
-                </div>
-              ))}
+                  </div>
+                );
+              })}
               {team === null && <div className="px-3 py-2 text-[12px] text-neutral-400">Loading…</div>}
               <div className="my-1 border-t border-neutral-100" />
               <Link href="/settings?tab=team" onClick={() => setTeamOpen(false)}
@@ -411,15 +596,19 @@ export default function OneSidebar({
         )}
         <button onClick={() => setTeamOpen((v) => !v)}
           className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 hover:bg-neutral-200/50 transition-colors">
-          <span className="flex -space-x-1.5">
+          {/* The pile keeps the overlap; each face is the kit's, so a live run rings THROUGH the
+              collapsed row. The gap is the ring's room — overlapped faces would clip it. */}
+          <span className="flex items-center gap-1">
             {(team ?? []).slice(0, 4).map((w) => (
-              w.worker_role && ROLE_AVATARS[w.worker_role]
-                ? <Image key={w.id} src={ROLE_AVATARS[w.worker_role]} alt="" width={20} height={20} className="w-5 h-5 rounded-full object-cover ring-2 ring-neutral-50" />
-                : <span key={w.id} className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 ring-2 ring-neutral-50 flex items-center justify-center text-[9px] font-semibold">{w.name[0]}</span>
+              <AvatarStatus key={w.id} name={w.name} actorId={w.id} size={20}
+                status={w.state?.startsWith('Running') ? 'working' : 'idle'} hint={w.state} />
             ))}
             {(team === null || team.length === 0) && <span className="w-5 h-5 rounded-full bg-neutral-200 ring-2 ring-neutral-50" />}
           </span>
           <span className="text-[12px] text-neutral-500">Your team</span>
+          {(team?.length ?? 0) > 4 && (
+            <span className="ml-auto flex-shrink-0 text-[11px] text-neutral-400 tabular-nums">+{team!.length - 4}</span>
+          )}
         </button>
       </div>
 

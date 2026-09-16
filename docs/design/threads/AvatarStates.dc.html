@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #171717; -webkit-font-smoothing: antialiased; }
+    a { color: #4f46e5; text-decoration: none; } a:hover { color: #4338ca; }
+    @keyframes ringspin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    .workring { animation: ringspin 2.4s linear infinite; }
+    @keyframes softpulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.12); opacity: 0.85; } }
+    .needpulse { animation: softpulse 2s ease-in-out infinite; }
+    @media (prefers-reduced-motion: reduce) { .workring, .needpulse { animation: none; } }
+  </style>
+</helmet>
+<div style="width: 900px; background: #F9FAFB; display: flex; flex-direction: column; gap: 20px; padding: 28px 32px 36px 32px; box-sizing: border-box;">
+
+  <div style="display: flex; flex-direction: column; gap: 4px;">
+    <div style="font-size: 18px; font-weight: 600; letter-spacing: -0.01em;">The avatar is the status system</div>
+    <div style="font-size: 13px; color: #737373;">One universal signal replaces spinners, pulses, and "preparing…" chips. Motion respects reduced-motion; hover names the step in one line, for reassurance only.</div>
+  </div>
+
+  <div style="display: flex; gap: 20px;">
+
+    <!-- idle -->
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 12px; background: #ffffff; border: 1px solid rgba(229,229,229,0.82); border-radius: 12px; padding: 22px 16px;">
+      <div style="width: 44px; height: 44px; border-radius: 999px; background: #6366f1; color: #ffffff; font-size: 17px; font-weight: 600; display: flex; align-items: center; justify-content: center;">C</div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px;">
+        <div style="font-size: 13px; font-weight: 600;">Idle</div>
+        <div style="font-size: 12px; color: #737373; text-align: center;">Still. Nothing running, nothing owed.</div>
+      </div>
+    </div>
+
+    <!-- working -->
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 12px; background: #ffffff; border: 1px solid rgba(229,229,229,0.82); border-radius: 12px; padding: 22px 16px;">
+      <div style="position: relative; width: 44px; height: 44px;">
+        <svg class="workring" width="56" height="56" viewBox="0 0 56 56" style="position: absolute; top: -6px; left: -6px;"><circle cx="28" cy="28" r="25" fill="none" stroke="#0d9488" stroke-width="2.2" stroke-dasharray="32 126" stroke-linecap="round"/></svg>
+        <div style="width: 44px; height: 44px; border-radius: 999px; background: #0d9488; color: #ffffff; font-size: 17px; font-weight: 600; display: flex; align-items: center; justify-content: center;">M</div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px;">
+        <div style="font-size: 13px; font-weight: 600;">Working</div>
+        <div style="font-size: 12px; color: #737373; text-align: center;">An orbiting arc while their run, delegation, or sandbox job is live.</div>
+      </div>
+    </div>
+
+    <!-- needs you -->
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 12px; background: #ffffff; border: 1px solid rgba(229,229,229,0.82); border-radius: 12px; padding: 22px 16px;">
+      <div style="position: relative; width: 44px; height: 44px;">
+        <div style="width: 44px; height: 44px; border-radius: 999px; background: #d97706; color: #ffffff; font-size: 17px; font-weight: 600; display: flex; align-items: center; justify-content: center;">L</div>
+        <div class="needpulse" style="position: absolute; top: -3px; right: -3px; min-width: 18px; height: 18px; border-radius: 999px; background: #4f46e5; color: #ffffff; font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center; border: 2px solid #ffffff; padding: 0 4px;">1</div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px;">
+        <div style="font-size: 13px; font-weight: 600;">Needs you</div>
+        <div style="font-size: 12px; color: #737373; text-align: center;">A badge: an approval, an input, a decision waiting in the thread.</div>
+      </div>
+    </div>
+
+    <!-- blocked -->
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 12px; background: #ffffff; border: 1px solid rgba(229,229,229,0.82); border-radius: 12px; padding: 22px 16px;">
+      <div style="position: relative; width: 44px; height: 44px;">
+        <div style="width: 44px; height: 44px; border-radius: 999px; background: #0d9488; color: #ffffff; font-size: 17px; font-weight: 600; display: flex; align-items: center; justify-content: center; opacity: 0.55;">M</div>
+        <div style="position: absolute; bottom: -2px; right: -2px; width: 16px; height: 16px; border-radius: 999px; background: #ef4444; border: 2px solid #ffffff; display: flex; align-items: center; justify-content: center;">
+          <svg width="8" height="8" viewBox="0 0 16 16" fill="none"><path d="M8 4v5M8 11.5v.5" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round"/></svg>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px;">
+        <div style="font-size: 13px; font-weight: 600;">Blocked</div>
+        <div style="font-size: 12px; color: #737373; text-align: center;">Dimmed + mark: a run failed or parked. The thread says why, spoken.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- hover reveal -->
+  <div style="display: flex; align-items: center; gap: 14px; background: #ffffff; border: 1px solid rgba(229,229,229,0.82); border-radius: 12px; padding: 16px 18px;">
+    <div style="position: relative; width: 28px; height: 28px; flex-shrink: 0;">
+      <svg class="workring" width="36" height="36" viewBox="0 0 36 36" style="position: absolute; top: -4px; left: -4px;"><circle cx="18" cy="18" r="16" fill="none" stroke="#0d9488" stroke-width="1.8" stroke-dasharray="20 81" stroke-linecap="round"/></svg>
+      <div style="width: 28px; height: 28px; border-radius: 999px; background: #0d9488; color: #ffffff; font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center;">M</div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 2px;">
+      <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #a3a3a3;">On hover</div>
+      <div style="font-size: 12px; color: #404040;">"Building the Harbor pricing structure — step 2 of 4"</div>
+    </div>
+    <div style="flex-grow: 1;"></div>
+    <div style="font-size: 12px; color: #a3a3a3; max-width: 260px; text-align: right;">One line, present tense, no tool names. Reassurance, not supervision.</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

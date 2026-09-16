@@ -1,15 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { userTimezone, localNow } from '@/lib/utils/user-time';
+import { isPastDue, judgeCommitmentExpiry, applyExpiryVerdict } from '@/lib/commitments/expiry';
 
 export const maxDuration = 120;
 
 // Aging sweep for commitments (Slice 4 of inbox-intelligence). For every open commitment:
 //  1. Auto-close it if the thread shows it was handled (you replied / they replied) — no nagware.
-//  2. If it's overdue or has gone stale, surface it once as an inbox item so it can't be dropped.
+//  2. LAW 2 · THE EXPIRY LAW (proactive-reach arc, Sep 13): past-due with no fulfilling reply is
+//     NOMINATED (deterministic) to one cheap reasoned verdict — did its moment pass, or is it a
+//     debt that survives its date? Only `expired` closes, undoably. This runs BEFORE the aging
+//     branch by construction: a lapsed obligation must never mint a fresh deck row in the same
+//     breath it should die.
+//  3. If it's still owed and overdue or stale, surface it once as an inbox item so it can't be
+//     dropped — and LAW 1's commitment clause: that row is JUDGED before it can lead the deck.
 // The Day Brief (Slice 5) reads the same commitments; this makes them actionable in the inbox now.
 
 const STALE_DAYS = 4;   // you_owe with no due date
 const AWAIT_DAYS = 5;   // awaiting a reply
+const EXPIRY_JUDGMENTS_PER_SWEEP = 25; // bounded reasoned spend; the rest ride the next run (counted)
 
 export async function GET(request: NextRequest) {
   if (request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -33,8 +42,17 @@ export async function GET(request: NextRequest) {
 
   const now = Date.now();
   const BUDGET_MS = 95_000; // leave headroom under maxDuration=120
-  const today = new Date().toISOString().slice(0, 10);
-  let closed = 0, surfaced = 0, leftBehind = 0;
+  // THE USER'S CLOCK (T-class): "past due" is decided in the OWNER'S day, never the server's in
+  // disguise — a Lisbon obligation is not overdue because it is already tomorrow in UTC.
+  const todayByUser = new Map<string, string>();
+  const userToday = async (userId: string): Promise<string> => {
+    const hit = todayByUser.get(userId);
+    if (hit) return hit;
+    const d = localNow(await userTimezone(sb, userId)).dateStr;
+    todayByUser.set(userId, d);
+    return d;
+  };
+  let closed = 0, surfaced = 0, leftBehind = 0, expired = 0, expiryJudged = 0, expiryLeftBehind = 0;
 
   for (const c of open) {
     if (Date.now() - now > BUDGET_MS) { leftBehind++; continue; } // counted, never silent
@@ -119,30 +137,61 @@ export async function GET(request: NextRequest) {
       continue;
     }
 
-    // ── 2. Aging? ──────────────────────────────────────────────────────────────
+    // ── 2. LAW 2 · THE EXPIRY LAW — the lane's missing third outcome. ──────────
+    // THE NOMINATION IS DETERMINISTIC (zero AI): open + past due on the USER'S clock + nothing
+    // fulfilling found above. THE DISPOSITION IS JUDGED: "past due" is not proof of mootness (an
+    // unpaid invoice survives its date; an ended meeting does not). Only `expired` closes —
+    // still_owed / unclear / an AI failure change NOTHING (the fulfillment-law asymmetry).
+    const today = await userToday(c.user_id);
+    if (isPastDue(c, today)) {
+      if (expiryJudged >= EXPIRY_JUDGMENTS_PER_SWEEP) {
+        expiryLeftBehind++; // counted, never silent — the cache makes the next run cheap
+      } else {
+        expiryJudged++;
+        const ev = await judgeCommitmentExpiry(sb, c.user_id, c, today);
+        if (await applyExpiryVerdict(sb, c.user_id, c, ev)) { expired++; continue; }
+      }
+    }
+
+    // ── 3. Aging? ──────────────────────────────────────────────────────────────
     const ageDays = (now - new Date(c.created_at).getTime()) / 86_400_000;
     const overdue = c.due_date && c.due_date < today;
     const stale = !c.due_date && c.direction === 'you_owe' && ageDays >= STALE_DAYS;
     const awaitingStale = c.direction === 'awaiting' && ageDays >= AWAIT_DAYS;
     if (!overdue && !stale && !awaitingStale) continue;
 
-    // ── 3. Surface once as an inbox item ───────────────────────────────────────
+    // ── 4. Surface once as an inbox item ───────────────────────────────────────
     const { data: existingItem } = await sb.from('inbox_items')
       .select('id').eq('user_id', c.user_id).eq('source', 'commitment').eq('source_id', c.id).limit(1).maybeSingle();
     if (!existingItem) {
       const label = c.direction === 'awaiting'
         ? `Waiting on ${c.counterparty || 'them'}: ${c.description}`
         : overdue ? `Overdue: ${c.description}` : `Follow up: ${c.description}`;
+      // LAW 1's commitment clause (THE REACH LAW): this lane used to mint a hand-built
+      // `action_required` row NO JUDGE HAD EVER SEEN — an unjudged row LEADING the deck. The
+      // judgment runs on the COMMITMENT ITSELF (its true subject: description, direction, due
+      // date, its entity neighbourhood and prepared pool — judgeWork's own commitment branch),
+      // never on the bare label a title-only inbox judgment would have to guess from. Its verdict
+      // decides the row's posture: real work leads the deck; a `none` verdict enters as awareness
+      // ('noted' — the unjudged/quiet tail classifyItem already demotes), never as an action.
+      // An unjudged row may exist; an unjudged row leading the deck may not.
+      let judgedWork = 'unjudged', judgedReason = '';
+      try {
+        const { judgeWork } = await import('@/lib/work/judge');
+        const v = await judgeWork(sb, c.user_id, { kind: 'commitment', id: c.id });
+        if (!v.failed) { judgedWork = v.work; judgedReason = v.reason; }
+      } catch { /* a judge outage never blocks the surface — it only withholds the lead seat */ }
       await sb.from('inbox_items').insert({
         user_id: c.user_id,
         source: 'commitment',
         source_id: c.id,
-        work_state: 'action_required',
+        work_state: judgedWork !== 'unjudged' && judgedWork !== 'none' ? 'action_required' : 'noted',
         work_title: label.slice(0, 200),
         item_type: 'review',
         source_data: {
           kind: 'commitment', commitment_id: c.id, direction: c.direction,
           due_date: c.due_date, counterparty: c.counterparty, description: c.description, thread_id: c.thread_id,
+          judged: { work: judgedWork, reason: judgedReason.slice(0, 200), at: new Date().toISOString() },
         },
         status: 'pending',
         auto_generated: true,
@@ -153,5 +202,6 @@ export async function GET(request: NextRequest) {
   }
 
   if (leftBehind) console.log(`[commitments-sweep] budget spent — ${leftBehind} candidate(s) left for the next run`);
-  return NextResponse.json({ open: open.length, closed, surfaced, leftBehind });
+  if (expiryLeftBehind) console.log(`[commitments-sweep] expiry cap reached — ${expiryLeftBehind} past-due candidate(s) left for the next run`);
+  return NextResponse.json({ open: open.length, closed, expired, surfaced, leftBehind, expiryLeftBehind });
 }

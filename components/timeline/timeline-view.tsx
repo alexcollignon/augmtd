@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowUturnLeftIcon, BoltIcon, ClockIcon, CalendarDaysIcon, FlagIcon, SparklesIcon,
@@ -11,6 +11,7 @@ import { WorkRow, workItemToRow } from '@/components/work/work-row';
 import { useLiveRefresh } from '@/hooks/use-live-refresh';
 import { BUCKET_ORDER, BUCKET_LABELS, type TimeBucket } from '@/lib/work-items/timeframe';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { mayReplaceInPlace, freezeRows, freezeMap, hasContent, type ArrivalReason } from '@/lib/room/no-mutation';
 
 // ── The Home TIMELINE — a simple, intuitive "what's on your plate, by when". NOT a duration-Gantt:
 // AUGMTD items are point obligations, most with no date, so we lay time out left→right as STATIONS
@@ -133,26 +134,50 @@ export default function TimelineView() {
   const [projectMap, setProjectMap] = useState<ProjectMap>({});
   const [err, setErr] = useState(false);
 
-  // Stable handle so the shared live-refresh hook can fire the latest load() closure.
-  const loadRef = useRef<(() => void) | null>(null);
+  // THE NO-MUTATION LAW needs the SERVED timeline synchronously — `apply` is the ONE write site and
+  // mirrors it into the ref the arrival decision reads.
+  const paintedRef = useRef<{ items: WorkItem[]; projectMap: ProjectMap } | null>(null);
+  const aliveRef = useRef(true);
+  const apply = useCallback((its: WorkItem[], tags: ProjectMap) => {
+    paintedRef.current = { items: its, projectMap: tags };
+    setItems(its); setProjectMap(tags);
+  }, []);
+
+  // THE NO-MUTATION LAW (lib/room/no-mutation.ts): a station's cards — their titles, their due words,
+  // their project tags, their seat in the lane — are the machine's claims, and a poll must not
+  // re-shuffle them under the reader. A `background` arrival APPENDS work that has genuinely arrived
+  // and leaves everything painted alone; an `open` landing on an already-painted view (the cache)
+  // becomes the NEXT open's first paint. Acting on a card routes away, so there is no `user` arrival
+  // on this surface — the row's own ✓/✕ live in WorkRow and take their own optimistic path.
+  const load = useCallback((reason: ArrivalReason) => {
+    fetch('/api/home/timeline')
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d) => {
+        if (!aliveRef.current) return;
+        const nextItems = (d.items ?? []) as WorkItem[];
+        const nextTags = (d.entityTags ?? {}) as ProjectMap;
+        // A held payload is never a lost one: the cache IS the next open's first paint.
+        saveLS('aug-timeline-v3', { items: nextItems, entityTags: nextTags });
+        // THE EMPTY-PAINT RULE: an empty painted timeline is a skeleton, never a hold.
+        const painted = paintedRef.current && hasContent(paintedRef.current.items.length) ? paintedRef.current : null;
+        if (mayReplaceInPlace(reason, !!painted) || !painted) { apply(nextItems, nextTags); return; }
+        if (reason !== 'background') return; // an `open` landing on a painted view is held whole
+        apply(freezeRows(painted.items, nextItems, (w) => w.id), freezeMap(painted.projectMap, nextTags) ?? {});
+      })
+      .catch(() => { if (aliveRef.current && !paintedRef.current) setErr(true); });
+  }, [apply]);
+
   useEffect(() => {
-    let alive = true;
+    aliveRef.current = true;
     // INSTANT: hydrate the last-known timeline from localStorage (no skeleton on reload), then refresh in
     // the background. The timeline spine (buildWorkItems) is expensive, so this matters most here.
     const cached = loadLS<{ items: WorkItem[]; entityTags: ProjectMap }>('aug-timeline-v3');
-    if (cached?.items) { setItems(cached.items); setProjectMap(cached.entityTags ?? {}); }
-    const load = () => fetch('/api/home/timeline')
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((d) => { if (alive) { setItems(d.items ?? []); setProjectMap(d.entityTags ?? {}); saveLS('aug-timeline-v3', { items: d.items ?? [], entityTags: d.entityTags ?? {} }); } })
-      .catch(() => { if (alive && !cached?.items) setErr(true); });
-    load();
-    // LIVE (Living-Home): the timeline reflects actions as they happen — refetch on focus/visibility +
-    // (Focus/visibility/interval refresh is the shared useLiveRefresh below.)
-    loadRef.current = load;
-    return () => { alive = false; };
-  }, []);
+    if (cached?.items) apply(cached.items, cached.entityTags ?? {});
+    load('open');
+    return () => { aliveRef.current = false; };
+  }, [apply, load]);
   // The ONE live-refresh idiom (focus + visibility + 90s while visible) — hooks/use-live-refresh.
-  useLiveRefresh(() => loadRef.current?.());
+  useLiveRefresh(() => load('background'));
 
   if (err) return <div className="mt-10 text-[13px] text-neutral-400">Couldn&apos;t load your timeline.</div>;
   if (!items) {

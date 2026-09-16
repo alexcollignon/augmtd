@@ -18,6 +18,52 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// ONE CLOCK PER SURFACE (proactive-reach W4 census, fix #1 — the worst offender: we manufactured
+// chores out of our own bug). Found live, in ONE paragraph of a served prep: the header said
+// "(Mon 16:00)" — formatted in the EVENT ROW's timezone — while the grounding page handed the model
+// raw UTC, so the prep's own prose read "the calendar shows 14:00" and the model, doing exactly what
+// a careful colleague would, invented the chore "confirm the correct time". The bug was ours; the
+// user got a task.
+//
+// THE LAW: a meeting's time is resolved ONCE, into the USER'S OWN zone (the T-class clock law —
+// lib/utils/user-time), and that ONE resolved string is what the header renders AND what the prompt
+// carries as a stated fact (the executeAIStep today-injection idiom). A surface that formats time
+// twice will eventually disagree with itself.
+//
+// AND ITS COROLLARY — CLEAN SILENCE: when the page genuinely holds nothing to prepare, the lane
+// writes NOTHING. A receipt for nothing is the chore-manufacturing class in a quieter voice, so the
+// composer gets an explicit NOTHING sentinel (the house idiom) and the pass honours it.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** The composer's sentinel for "there is nothing here to prepare". Silence is a valid answer. */
+export const PREP_NOTHING = 'NOTHING';
+
+/** THE ONE resolved meeting time — the single value both the header and the prompt read. */
+export function meetingWhenLabel(startIso: string, tz: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: tz,
+    }).format(new Date(startIso));
+  } catch { return new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }).format(new Date(startIso)); }
+}
+
+/**
+ * THE PREP TURN'S TEXT — or null when there is nothing to say.
+ *
+ * The fixed preamble ("— because this meeting is on your calendar and this room holds the work:")
+ * died here: it stood on all 30 live anticipation turns, and it is PROCESS NARRATION — it explains
+ * the machinery, not the work. The composed prep already leads with its own because; the header
+ * names the meeting and its (one, resolved) time. Nothing else is owed.
+ */
+export function prepTurnText(title: string, when: string, brief: string | null | undefined): string | null {
+  const t = String(brief ?? '').trim();
+  if (!t) return null;
+  // The sentinel may arrive bare or wrapped in the model's own punctuation.
+  if (new RegExp(`^["'\\s.]*${PREP_NOTHING}[.\\s"']*$`, 'i').test(t)) return null;
+  return `Prep for "${title}" (${when}):\n${t}`;
+}
+
 const KIND = 'anticipation';
 const RUN_TTL_MS = 6 * 60 * 60_000;
 const MAX_BRIEFS_PER_RUN = 2;
@@ -40,15 +86,20 @@ export async function runAnticipationPass(client: DBClient, userId: string): Pro
     let chases = 0;
 
     // ── 1. MEETING PREP — the brief exists before the ask. ──
+    // ONE CLOCK: the user's own zone, resolved once for the whole pass.
+    const { userTimezone } = await import('@/lib/utils/user-time');
+    const tz = await userTimezone(client, userId);
     const now = new Date();
     const horizon = new Date(now.getTime() + 36 * 60 * 60_000);
     const { data: events } = await client.from('calendar_events')
-      .select('id, title, start_time, attendees, timezone')
+      // The event row's OWN timezone is deliberately not read — one clock per surface, and it is
+      // the user's (reading both is how the header and the prose came to disagree).
+      .select('id, title, start_time, attendees')
       .eq('user_id', userId).eq('status', 'confirmed')
       .gte('start_time', new Date(now.getTime() + 30 * 60_000).toISOString())
       .lte('start_time', horizon.toISOString())
       .order('start_time', { ascending: true }).limit(6);
-    for (const ev of (events ?? []) as Array<{ id: string; title: string; start_time: string; attendees: unknown; timezone: string | null }>) {
+    for (const ev of (events ?? []) as Array<{ id: string; title: string; start_time: string; attendees: unknown }>) {
       if (briefs >= MAX_BRIEFS_PER_RUN) break;
       // THE RESCHEDULE RE-BRIEF (pilot diagnosis, Aug 13 — found live: a demo moved Mon→Thu on the
       // SAME calendar row, and the bare-id fire key meant the room kept its Monday prep brief as
@@ -68,28 +119,50 @@ export async function runAnticipationPass(client: DBClient, userId: string): Pro
 
       try {
         const { assembleRoomGrounding } = await import('@/lib/room/grounding');
+        const { GROUND_EVIDENCE_RULE } = await import('@/lib/room/ground-evidence');
         const g = await assembleRoomGrounding(client, userId, { kind: 'entity', entityId });
         if (!g?.text) continue;
-        const when = new Intl.DateTimeFormat('en-GB', {
-          weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: ev.timezone ?? 'UTC',
-        }).format(new Date(ev.start_time));
+        // THE ONE resolved time — the header below and the prompt here read the SAME value.
+        const when = meetingWhenLabel(ev.start_time, tz);
         const { aiCall } = await import('@/lib/ai/call');
         const res = await aiCall<{ brief?: string }>({
           userId, supabase: client, shape: { output: 'json' }, temperature: 0.2, maxTokens: 600, source: 'brain_synthesis',
           prompt:
             `You prepare a colleague for a meeting. Meeting: "${ev.title}" · ${when}.\n\n` +
+            // THE STATED TIME IS A FACT, NOT A QUESTION (W4 census fix #1). The clock is resolved in
+            // code, in the user's own zone; the model may never re-derive it, doubt it, or turn it
+            // into a chore. "Confirm the time" is not preparation — it is our own bug, spoken.
+            `THE MEETING'S TIME IS SETTLED: ${when} (${tz} — the user's own timezone, already ` +
+            `converted from the calendar). Treat it as the calendar's word. Never restate it ` +
+            `differently, never question it, and never write a line asking anyone to confirm, check ` +
+            `or verify the meeting's time, date, or place.\n\n` +
             `THE ROOM'S CURRENT PAGE (ground every line here; never invent):\n${g.text.replace(/\[(?:L|F)\d+\]\s?/g, '').slice(0, 3500)}\n\n` +
+            // ONE LAW, ONE COPY (Sep 8): a meeting prep that raises a thing the user already did
+            // is the same standing lie the room's brief was told to stop telling.
+            `${GROUND_EVIDENCE_RULE}\n\n` +
             `Write a SHORT prep (4-6 lines, plain prose): where this work stands, what they owe / are owed, ` +
             `the one thing to raise, any open ask. Skip anything the page doesn't support.\n` +
+            // CLEAN SILENCE: the explicit nothing-path. A prep that has to invent a chore to exist
+            // should not exist.
+            `If the page holds nothing worth preparing — no open ask, nothing owed either way, a ` +
+            `routine recurring sync — answer exactly {"brief": "${PREP_NOTHING}"}. Saying nothing is ` +
+            `a correct answer; never invent a task to fill the space.\n` +
             `JSON only: {"brief": "<the prep>"}`,
         });
-        const briefText = res.json?.brief?.trim();
-        if (!briefText) continue;
+        const text = prepTurnText(ev.title, when, res.json?.brief);
+        if (!text) {
+          // Nothing to prepare — and nothing written. The fire record still stamps, so a quiet
+          // meeting is not re-judged (and re-spent) every six hours until it starts.
+          await client.from('item_plans').insert({
+            user_id: userId, kind: KIND, entity_id: fireKey,
+            tasks: { kind: 'meeting_brief', silent: true, eventId: ev.id, entityId, at: new Date().toISOString() },
+          });
+          continue;
+        }
         const { writeRoomTurn } = await import('@/lib/room/turns');
         await writeRoomTurn(client, userId, entityId, {
           role: 'system',
-          // THE BECAUSE LINE leads — every proactive move says why it exists (the legibility rule).
-          text: `Prep for "${ev.title}" (${when}) — because this meeting is on your calendar and this room holds the work:\n${briefText}`,
+          text,
           dedupeKey: `anticipate:meeting:${ev.id}`,
         });
         await client.from('item_plans').insert({
@@ -178,17 +251,9 @@ export async function runAnticipationPass(client: DBClient, userId: string): Pro
   } catch { return null; }
 }
 
-/** The Home's This-week chip source: which upcoming events have a prep brief waiting. */
-export async function prepReadyEvents(client: DBClient, userId: string, eventIds: string[]): Promise<Map<string, string>> {
-  const out = new Map<string, string>(); // eventId → entityId
-  if (!eventIds.length) return out;
-  try {
-    const { data } = await client.from('item_plans').select('entity_id, tasks')
-      .eq('user_id', userId).eq('kind', KIND)
-      .in('entity_id', eventIds.map((id) => `meeting:${id}`));
-    for (const r of (data ?? []) as Array<{ entity_id: string; tasks: { eventId?: string; entityId?: string } }>) {
-      if (r.tasks?.eventId && r.tasks?.entityId) out.set(r.tasks.eventId, r.tasks.entityId);
-    }
-  } catch { /* chip is an enhancement */ }
-  return out;
-}
+// `prepReadyEvents` LIVED HERE and died Sep 13 with its only consumer. It answered one question —
+// "which upcoming events already have a prep brief waiting?" — for the Home's This-week rail, so
+// the rail could wear a "Prep ready" chip. The calm-Home walk (owner, Sep 8) retired the rail, and
+// THE THREADS ARC's deciding law says why nothing was lost: the prep brief ARRIVES in the room it
+// belongs to as a system turn, with its BECAUSE line leading. A chip pointing at the prep was
+// always weaker than the prep itself waiting where the work lives. The pass above still writes it.

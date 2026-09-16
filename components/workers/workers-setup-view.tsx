@@ -42,8 +42,8 @@ const COLOR_MAP: Record<string, { bg: string; light: string; text: string }> = {
 // Display copy per role — owned here so the setup view is never stale relative to DB values
 const ROLE_COPY: Record<string, { description: string; bullets: [string, string] }> = {
   personal_assistant: {
-    description: 'Keeps you on top of what needs attention.',
-    bullets: ['Flags emails that need a reply', 'Preps you for upcoming meetings'],
+    description: 'Runs your day and your team.',
+    bullets: ['Flags what needs a reply, preps your meetings', 'Routes work to the right coworker and tracks it back'],
   },
   branding_expert: {
     description: 'Keeps your LinkedIn active and credible — posts, series, presence.',

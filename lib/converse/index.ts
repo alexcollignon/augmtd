@@ -20,6 +20,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { GROUND_EVIDENCE_RULE } from '@/lib/room/ground-evidence';
 import { capabilitiesFor } from '@/lib/home/capability-map';
 import {
   executeResolveInboxItem, executeResolveCommitment, executeFindFile, executeRememberFact,
@@ -27,7 +28,12 @@ import {
 } from '@/lib/tools/item-actions';
 import { getEmailsDefinition, executeGetEmails, getMeetingContextDefinition, executeGetMeetingContext, readActionHistoryDefinition, executeReadActionHistory, type ActionHistoryConfig, runComputeDefinition, executeRunCompute, type ComputeConfig } from '@/lib/tools';
 import { proposeStandingTaskDefinition } from '@/lib/work/standing-spec';
+// EVERY THREAD, EVERY PRODUCER (threads plan, Sep 8): the invite card's producer is ONE tool
+// contract + ONE execution body, shared with the coworker DM. It prepares and never sends — and
+// the executor that DOES send is in no chat slice at all.
+import { prepareCalendarInviteDefinition, executePrepareCalendarInvite, inviteCardLine } from '@/lib/tools/prepare-calendar-invite';
 import { steerStandingTaskDefinition } from '@/lib/workflows/standing';
+import { downloadKbFile } from '@/lib/knowledge/file-bucket';
 import {
   executeMoveItemToProject, executeSetProjectStatus, executeMergeProjects, executeCreateProject, executeCreateTaskItem, resolveItemByDescription,
   moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition,
@@ -57,7 +63,7 @@ const prepareForwardDefinition = {
 // routing; decisions reach the user ONLY when consequential and non-inferable. ──
 const assignToCoworkerDefinition = {
   name: 'assign_to_coworker',
-  description: "Assign a production task (a report, draft, research, analysis, post) to the best-fit coworker on the user's team and start the work NOW. Use when the user asks for produced work WITHOUT naming who — pick the obvious fit yourself (writing/documents/reports/ops/admin/inbox/calendar → Clara · research/analysis → Max · branding/design/LinkedIn → Luca). Reversible: the work reports back into this conversation; nothing external is sent.",
+  description: "Assign a production task (a report, draft, research, analysis, post) to the best-fit coworker on the user's team and start the work NOW. Use when the user asks for produced work WITHOUT naming who — pick the obvious fit yourself (writing/documents/reports/ops/admin/inbox/calendar → Clara, the chief of staff · research/analysis → Max · branding/design/LinkedIn → Luca). Reversible: the work reports back into this conversation; nothing external is sent.",
   input_schema: { type: 'object', properties: {
     coworker: { type: 'string', description: 'first name or role of the coworker' },
     task: { type: 'string', description: "the task in one clear sentence, in the user's own terms" },
@@ -116,6 +122,7 @@ const TOOL_PROGRESS: Record<string, string> = {
   create_task_item: 'Creating the task…',
   send_prepared_reply: 'Checking the prepared reply…',
   prepare_forward: 'Preparing the forward…',
+  prepare_calendar_invite: 'Putting the invite together…',
   propose_standing_task: 'Drafting the standing task…',
   steer_standing_task: 'Adjusting how that task runs…',
 };
@@ -135,6 +142,10 @@ export type ConverseTurn = {
   /** THE PARITY LAW (Aug 4): a chat-approved send — the CLIENT fires this through the one send
    *  door (/api/inbox/[id]/send-reply). Emitted ONLY behind the explicit-send floor. */
   commit?: { kind: 'send_reply'; itemId: string; body: string } | null;
+  /** THE INVITE CARD (threads plan — THE CARD CONTRACT): a chat-born prepared invite, rendered
+   *  INLINE by the same kit card every other producer lands. `id` is its stored payload's ref —
+   *  the Send door reads THAT row, never these fields. Nothing is sent until the user clicks. */
+  invite?: { id: string; invite: Record<string, unknown> } | null;
   /** A verb whose review lives on a stage — the client summons it (forward/invite/reply). */
   openStage?: { stage: 'forward' | 'invite' | 'reply'; itemId: string } | null;
   /** THE SENSIBLE ASK (Aug 8): ONE consequential decision as tappable options — each tap SPEAKS
@@ -240,6 +251,86 @@ async function registryMatches(client: SupabaseClient, userId: string, text: str
   } catch { return ''; }
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE HONESTY FLOOR AT THE ANSWER DOOR — ONE implementation, EVERY answer door (Sep 13).
+//
+// Aug 4 gave the floor a seat inside the agent loop: no denial left THAT loop without a registry
+// check. But the loop is one of four doors an answer can leave by — the entity-question path, the
+// item-question path and the Home ask all return prose straight to the user, and each of them
+// carried only the PROMPT rule. That is the site-list decay class the excerpt law already taught
+// us: a law living in one branch is a law the next branch never learned. So the floor moved out of
+// the loop and became this function, and every door calls it.
+//
+// THE POINTER RIDES IN THE DENIAL'S OWN BREATH (the Sep 13 repair). The old rescue appended
+// "That said — …" under answers longer than 200 chars, which left the amnesia opener standing:
+//   "I don't have any information on a kiteschool assessment in the ZZ Meridian Rollout context.
+//    You may be referring to ZZ Kiteschool Pilot…"
+// — substantively right and still a lie in its first sentence, which is the sentence a person
+// reads. A denial about X, when memory holds a near-X, must SAY SO where it denies:
+//   "Nothing on that here — the closest I hold is "ZZ Kiteschool Pilot"."
+// So a PURE denial sentence is rewritten in place. A denial that PIVOTS into substance ("I don't
+// have the exact date, but the report went out Tuesday…") is never surgically cut — it keeps its
+// words and the pointer rides along behind, the Aug 10 protection unchanged.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+const DENIAL_RE = /\b(?:don't|do not|no)\b[^.!?]{0,50}\b(?:information|record|data|details?|found|see|have)\b|couldn't find|does not (?:provide|have|contain)|not (?:available|found)/i;
+/** The law as the mind reads it — ONE copy, every answering prompt in this module. */
+const ANSWER_HONESTY_RULE =
+  'RULE: never claim something does not exist or cannot be seen if THE CONVERSATION or MEMORY MATCHES ' +
+  'below name it — reference it instead. When this room holds nothing on what they asked but a MEMORY ' +
+  'MATCH does, do NOT open with "I don\'t have any information": say where it DOES live, in the same ' +
+  'sentence — "Nothing on that here — the closest I hold is \'<name>\'."';
+/** A denial that carries its own substance after a pivot — never cut, only supplemented. */
+const DENIAL_PIVOT_RE = /\b(?:but|however|though|although|that said)\b/i;
+
+async function honestyFloor(
+  client: SupabaseClient, userId: string, say: string, text: string, excludeEntityId: string | null,
+): Promise<string> {
+  if (!say || !DENIAL_RE.test(say)) return say;
+  try {
+    const mm = await registryMatches(client, userId, text, excludeEntityId);
+    if (!mm) return say;
+    // THE MISFIRE GATE (Aug 10, found live): the pointer is a RECALL rescue — it fires only when
+    // the DENIAL SENTENCE itself names something the registry holds. A capability/format denial
+    // ("I don't have it in that exact format yet") whose message merely CONTAINS project names
+    // must never grow a project pointer — it read as a non-sequitur.
+    const names = [...mm.matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+    const sentences = say.split(/(?<=[.!?])\s+/);
+    const denialText = sentences.filter((s) => DENIAL_RE.test(s)).join(' ').toLowerCase();
+    const denialNamesEntity = names.some((n) => n.toLowerCase().split(/[^a-z0-9]+/)
+      .some((tok) => tok.length >= 4 && denialText.includes(tok)));
+    if (!names.length || !denialNamesEntity) return say;
+    const many = names.length > 1;
+    const pointer = `this looks like ${mm.replace(/^MEMORY MATCHES[^:]*: /, '')}. ` +
+      (many ? 'Their work lives on those projects — open one, or tell me what to pull from it.'
+        : 'Its work lives on that project — open it, or tell me what to pull from it.');
+    // IN THE DENIAL'S OWN BREATH: every PURE denial sentence is replaced by the pointer-carrying
+    // form (the first one carries the names; a repeat denial just goes quiet rather than saying
+    // the same pointer twice).
+    let carried = false;
+    const closest = `the closest I hold ${many ? 'are' : 'is'} ${names.slice(0, 2).map((n) => `"${n}"`).join(' and ')}`;
+    /** Does THIS sentence deny something the registry holds? (the misfire gate, per sentence) */
+    const aboutAMatch = (s: string) => names.some((n) => n.toLowerCase().split(/[^a-z0-9]+/)
+      .some((tok) => tok.length >= 4 && s.toLowerCase().includes(tok)));
+    const rewritten = sentences.map((s) => {
+      if (!DENIAL_RE.test(s) || DENIAL_PIVOT_RE.test(s) || !aboutAMatch(s)) return s;
+      if (carried) return ''; // a REPEAT amnesia claim about the same held name — the pointer already stands.
+      carried = true;
+      return `Nothing on that here — ${closest}.`;
+    }).filter(Boolean);
+    if (carried) {
+      const rest = rewritten.join(' ').trim();
+      // When the rewrite is ALL that is left, the pointer's guidance completes the answer; when the
+      // model's own remaining sentences already say where to go, it would only repeat them.
+      const tail = many
+        ? 'Their work lives on those projects — open one, or tell me what to pull from it.'
+        : 'Its work lives on that project — open it, or tell me what to pull from it.';
+      return rest === `Nothing on that here — ${closest}.` ? `${rest} ${tail}` : rest;
+    }
+    // Every denial pivoted into substance: keep the answer whole, ride the pointer behind it.
+    return say.length <= 200 ? `Nothing directly on file here — but ${pointer}` : `${say}\n\nThat said — ${pointer}`;
+  } catch { return say; /* the floor is an enhancement — the honest answer still returns */ }
+}
+
 /** The item's entity (the deal the conversation is scoped to), when linked. */
 async function entityOfScope(client: SupabaseClient, userId: string, scope: ConverseScope): Promise<string | null> {
   if (scope.kind === 'entity') return scope.entityId;
@@ -283,12 +374,14 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
     `{"project_name":"Admin","item_description":"Acme invoice"}; "start a project called Acme Pilot ` +
     `from this" → create_project {"name":"Acme Pilot"}; "add a task: chase the signed NDA by Friday" → ` +
     `create_task_item {"text":"Chase the signed NDA","due_date":"<that Friday>"}; "send it" / "send the reply" → ` +
-    `send_prepared_reply {}; "forward this to Rita" → prepare_forward {"to":"Rita"}). Ambiguous / multi-step → null.\n` +
+    `send_prepared_reply {}; "forward this to Rita" → prepare_forward {"to":"Rita"}; "set up a meeting with Sam ` +
+    `Thursday 11h" / "book a call with them next week" → prepare_calendar_invite {"request":"<their words>"} — ` +
+    `it prepares the card, it never sends). Ambiguous / multi-step → null.\n` +
     `- "question" = the note primarily ASKS (status/info/advice). A correction/instruction is NOT a question.\n` +
     `- "facts" = durable constraints/preferences/numbers to remember; a one-off phrasing tweak is NOT one.\n` +
     `- "delegate" when a named coworker/assistant is explicitly asked — AND for PRODUCED work ` +
     `(fill in / complete a document, draft a report or long deliverable, write up material from ` +
-    `pasted source) even when no coworker is named: pick the fit — Clara (writing, documents, ops, admin), ` +
+    `pasted source) even when no coworker is named: pick the fit — Clara (chief of staff: writing, documents, ops, admin), ` +
     `Max (research, analysis), Luca (branding, design, LinkedIn) — and put the WHOLE job in ` +
     `"task". A question, a quick command, or a short reply tweak is NOT produced work. ` +
     `"revises" = true ONLY when the task MODIFIES the document this conversation just produced ` +
@@ -349,6 +442,9 @@ async function sendTargetOf(
 async function dispatchCommand(
   client: SupabaseClient, userId: string, scope: ConverseScope, tool: string, args: Record<string, unknown>,
   userText = '',
+  /** The conversation the turn happens in — a preparer that must read the thread (the invite card)
+   *  gets the SAME merged transcript every other reader sees, plus the room it belongs to. */
+  convo: { transcript?: string; roomKey?: string | null } = {},
 ): Promise<ConverseTurn | null> {
   const allowed = new Set(capabilitiesFor('chief_of_staff').map((c) => c.tool));
   if (!allowed.has(tool)) return null;
@@ -381,6 +477,25 @@ async function dispatchCommand(
     if ('ambiguous' in target) return { say: `More than one draft is ready — which one: ${target.ambiguous.join(' · ')}?`, refs: [] };
     // The CLIENT fires the one send door (route + exactly-once hash + outcome log) with this body.
     return { say: 'Sending it now…', refs: [], commit: { kind: 'send_reply', itemId: target.itemId, body: target.draftBody } };
+  }
+  // ── THE INVITE CARD (threads plan — EVERY THREAD, EVERY PRODUCER): the plain prompt's producer.
+  // It PREPARES through the same grounding the proactive pass uses, stores the payload, and hands
+  // the card back on the turn. Nothing sends here; the card's Send is the user's click, through
+  // the commit door. A time nobody stated comes back EMPTY and the card asks for it.
+  if (tool === 'prepare_calendar_invite') {
+    const card = await executePrepareCalendarInvite(client, userId, {
+      request: (String(args.request ?? '').trim() || userText).trim(),
+      transcript: convo.transcript ?? '',
+      entityId: scope.kind === 'entity' ? scope.entityId : await entityOfScope(client, userId, scope),
+      roomKey: convo.roomKey ?? null,
+    });
+    // A card that cannot survive a reload is not offered — the conversation says so plainly
+    // instead of rendering a button that dies with the tab (truth before presentation).
+    if (!card) return { say: "I couldn't put the invite together just now — say the time and who's on it and I'll try again.", refs: [] };
+    return {
+      say: inviteCardLine(card.invite), refs: [],
+      invite: { id: card.id, invite: card.invite as unknown as Record<string, unknown> },
+    };
   }
   if (tool === 'prepare_forward') {
     if (scope.kind === 'item' && linkKindOf(scope) === 'inbox_item') {
@@ -641,23 +756,19 @@ async function resolveTemplateFile(
     if (!m) return null;
     const tokens = m[1].trim().split(/\s+/).filter((t) => t.length > 2).slice(0, 4);
     if (!tokens.length) return null;
-    let q = admin.from('knowledge_files').select('id, filename, storage_path')
+    let q = admin.from('knowledge_files').select('id, filename, storage_path, origin')
       .eq('user_id', userId).not('storage_path', 'is', null)
       .order('created_at', { ascending: false }).limit(5);
     for (const t of tokens) q = q.ilike('filename', `%${t}%`);
     const { data: rows } = await q;
     const row = (rows ?? []).find((r) => OFFICE_EXT.test(String(r.filename)));
     if (!row?.storage_path) return null;
-    for (const bucket of ['drive-uploads', 'work-artifacts'] as const) {
-      const { data } = await admin.storage.from(bucket).download(String(row.storage_path));
-      if (data) {
-        const buf = Buffer.from(await data.arrayBuffer());
-        if (buf.length > 8 * 1024 * 1024) return null;
-        const ext = String(row.filename).split('.').pop()!.toLowerCase() as 'docx' | 'pptx' | 'xlsx';
-        return { bytes: buf, ext };
-      }
-    }
-    return null;
+    // THE ROW'S OWN BUCKET (Sep 14, lib/knowledge/file-bucket.ts) — this blind two-bucket probe
+    // never looked in email-attachments, so a template that arrived by mail was invisible here.
+    const got = await downloadKbFile(admin, row);
+    if (!got || got.bytes.length > 8 * 1024 * 1024) return null;
+    const ext = String(row.filename).split('.').pop()!.toLowerCase() as 'docx' | 'pptx' | 'xlsx';
+    return { bytes: got.bytes, ext };
   } catch { return null; }
 }
 
@@ -769,7 +880,7 @@ async function runCoworkerDelegation(
 }
 
 // ── The bounded AGENT LOOP (the 20%) — function-calling over the chief-of-staff toolset. ──
-const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, prepareForwardDefinition, readActionHistoryDefinition, proposeStandingTaskDefinition, steerStandingTaskDefinition, runComputeDefinition, assignToCoworkerDefinition, offerChoicesDefinition];
+const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, prepareForwardDefinition, prepareCalendarInviteDefinition, readActionHistoryDefinition, proposeStandingTaskDefinition, steerStandingTaskDefinition, runComputeDefinition, assignToCoworkerDefinition, offerChoicesDefinition];
 
 async function agentLoop(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string, grounding: string,
@@ -777,6 +888,7 @@ async function agentLoop(
   onProgress?: (label: string) => void,
   material = '',
   onToken?: (t: string) => void,
+  convo: { transcript?: string; roomKey?: string | null } = {},
 ): Promise<ConverseTurn & { exhausted?: boolean }> {
   const { toOpenAITool } = await import('@/lib/tools');
   const { client: ai, model } = await getAIClient(userId, 'conversation', client);
@@ -801,17 +913,25 @@ async function agentLoop(
       `(resolving items, finding files, remembering facts, reading the action ledger of what was sent/done) — ` +
       `use them when the user asks. You never CREATE ` +
       `and send anything in one motion: send_prepared_reply fires ONLY the already-drafted reply and ONLY when ` +
-      `the user's own words explicitly say send; prepare_forward only prepares (the approve stays with the user). ` +
+      `the user's own words explicitly say send; prepare_forward and prepare_calendar_invite only PREPARE — they ` +
+      `hand the user a card to review, and the approve stays with them. When they ask to set up, schedule or book ` +
+      `a meeting, call prepare_calendar_invite and keep your line to ONE sentence: the card carries the detail. ` +
       `Ground every claim in the ` +
       `CONTEXT below; when it doesn't cover something, say so plainly. PLAIN PROSE, no markdown, 1-4 sentences.\n\n` +
-      `THE TEAM (assign production work with assign_to_coworker): Clara — ops, admin, inbox, calendar, ` +
-      `writing, documents, reports · Max — research, analysis · Luca — branding, design, LinkedIn. When the user asks ` +
+      `THE TEAM (assign production work with assign_to_coworker): Clara — chief of staff: ops, admin, inbox, ` +
+      `calendar, writing, documents, reports, and anything that spans the team · Max — research, analysis · ` +
+      `Luca — branding, design, LinkedIn. When the user asks ` +
       `for PRODUCED work (a report, draft, analysis, post) without naming who, assign the obvious fit ` +
       `YOURSELF and say who's on it — the work is reversible and reports back here; never ask permission ` +
       `for a hand-off. THE SENSIBLE ASK: offer_choices is for ONE genuinely consequential decision you ` +
       `cannot infer (ambiguous scope that changes the work, two truly equal owners, a choice with external ` +
       `impact) — NEVER to confirm reversible steps, never for what context already answers, at most one ` +
       `ask per turn. Asking for the sake of asking is a failure.\n\n` +
+      // ONE LAW, ONE COPY (Sep 8): the loop reads THE ONE GROUNDING, so it must read the one law
+      // about the world's record too — an answer ranking the board above the world contradicts the
+      // very brief the evidence settled (lib/room/ground-evidence.ts). Self-gating: a page with no
+      // GROUND EVIDENCE block is untouched by it.
+      `${GROUND_EVIDENCE_RULE}\n\n` +
       `--- CONTEXT ---\n${grounding.slice(0, 4000)}` },
     // THE PANEL CONVERSATION as real turns (Aug 10, the amnesia class): a follow-up ("yes
     // please" · "in bullet points" · "ask Sofia to do it") resolves against what was just
@@ -861,39 +981,10 @@ async function agentLoop(
     // answer — the NUL sentinel tells the client to clear its preview.
     if (calls.length && msg.content && onToken) onToken('\u0000');
     if (!calls.length) {
-      let say = (msg.content ?? '').trim() || 'Done.';
-      // THE HONESTY FLOOR AT THE ANSWER DOOR (Aug 4, found by the P30 gate): registryMatches
-      // guarded only the SEARCH tools — when the model answered a recall question directly
-      // (no tool call), the denial bypassed the floor and the brain looked amnesiac about a
-      // name it holds ("no information on the kiteschool assessment" beside a registered
-      // "ZZ Kiteschool Pilot"). No denial leaves the loop without checking the registry.
-      const DENIAL_RE = /\b(?:don't|do not|no)\b[^.!?]{0,50}\b(?:information|record|data|details?|found|see|have)\b|couldn't find|does not (?:provide|have|contain)|not (?:available|found)/i;
-      if (DENIAL_RE.test(say)) {
-        try {
-          const mm = await registryMatches(client, userId, text, scope.kind === 'entity' ? scope.entityId : null);
-          // THE MISFIRE GATE (Aug 10, found live): the pointer is a RECALL rescue — it fires only
-          // when the DENIAL SENTENCE itself names something the registry holds ("no information
-          // on the kiteschool assessment" beside a "Kiteschool Pilot"). A capability/format
-          // denial ("I don't have it in that exact format yet") whose message merely CONTAINS
-          // project names must never grow a project pointer — it read as a non-sequitur.
-          const names = mm ? [...mm.matchAll(/"([^"]+)"/g)].map((x) => x[1]) : [];
-          const denialSentences = say.split(/(?<=[.!?])\s+/).filter((s: string) => DENIAL_RE.test(s)).join(' ').toLowerCase();
-          const denialNamesEntity = names.some((n) => n.toLowerCase().split(/[^a-z0-9]+/)
-            .some((tok) => tok.length >= 4 && denialSentences.includes(tok)));
-          if (mm && denialNamesEntity) {
-            const many = names.length > 1;
-            const pointer = `this looks like ${mm.replace(/^MEMORY MATCHES[^:]*: /, '')}. ` +
-              (many ? 'Their work lives on those projects — open one, or tell me what to pull from it.'
-                : 'Its work lives on that project — open it, or tell me what to pull from it.');
-            // A hedge inside a substantive answer ("I don't have the exact date, but the report
-            // went out Tuesday…") must never DESTROY the answer — replace only a short pure
-            // denial; a longer answer keeps its substance and the pointer rides along.
-            say = say.length <= 200
-              ? `Nothing directly on file here — but ${pointer}`
-              : `${say}\n\nThat said — ${pointer}`;
-          }
-        } catch { /* the floor is an enhancement — the honest answer still returns */ }
-      }
+      const raw = (msg.content ?? '').trim() || 'Done.';
+      // THE HONESTY FLOOR AT THE ANSWER DOOR (Aug 4, found by the P30 gate; hoisted Sep 13 so the
+      // question doors carry it too): no denial leaves ANY answer door without a registry check.
+      const say = await honestyFloor(client, userId, raw, text, scope.kind === 'entity' ? scope.entityId : null);
       return { say, refs: [], applied, files: files.length ? files : undefined };
     }
     messages.push(msg);
@@ -901,12 +992,12 @@ async function agentLoop(
       let args: Record<string, unknown> = {};
       try { args = JSON.parse(call.function.arguments || '{}'); } catch { /* empty */ }
       onProgress?.(progressLabelFor(call.function.name));
-      const out = await dispatchCommand(client, userId, scope, call.function.name, args, text);
+      const out = await dispatchCommand(client, userId, scope, call.function.name, args, text, convo);
       if (out?.applied) applied.push(...out.applied);
       if (out?.files) files.push(...out.files);
       // A commit/stage/options/delegation signal ends the loop — the client (or the coworker)
       // owns the next step; the loop never talks past its own hand-off.
-      if (out?.commit || out?.openStage || out?.options || out?.delegated) return { ...out, applied: applied.length ? applied : out.applied };
+      if (out?.commit || out?.openStage || out?.options || out?.delegated || out?.invite) return { ...out, applied: applied.length ? applied : out.applied };
       messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(out ?? { error: 'tool unavailable in this context' }).slice(0, 1500) });
     }
   }
@@ -962,11 +1053,105 @@ function panelTranscript(history: ConverseHistoryTurn[] | undefined): string {
 // negative lookahead spares markdown links; [CONFIRM: …] doesn't match the letter+digits shape.
 const GROUNDING_TAG_RE = /\s?\[(?:[EFLCRKW]\d+)\](?!\()/g;
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// A PREVIEW IS NOT A DEED (Sep 10 — the tab-latency correction)
+//
+// `redraftItemDraft` IS the redraft lane: ONE drafter (`generateReplyDraft` / `generateNudgeDraft`,
+// which carry THE ONE GROUNDING — the attached-documents block included, T26.2), ONE instruction
+// composition, and the persistence sitting BEHIND `persist`. Nothing here is a second drafter.
+//
+//   persist: true  — the deed. The prior draft VERSIONS into item_deliverables, the new body lands
+//                    as the next version, the evaluator reviews it, and the serving pointer
+//                    (`inbox_items.source_data.draft`) MOVES. This is what a picked steer earns.
+//   persist: false — the preview. The SAME words, and every write site above is skipped: no
+//                    version row, no steered row, no evaluator pass, no pointer move, no stamp.
+//                    Nothing anywhere records that this call happened.
+//
+// The preview exists so the card can pre-generate the direction tabs a user has NOT picked. Under
+// the persisting form that would rewrite the room's prepared reply once per unpicked direction —
+// the deck, the room brief and the next visit would all speak a draft nobody chose. So the law is:
+// pre-generation flows ONLY through the preview lane; the persisting door stays forbidden for a
+// direction nobody picked (gate T24.11b).
+async function redraftItemDraft(
+  client: SupabaseClient, userId: string, scope: Extract<ConverseScope, { kind: 'item' }>, text: string,
+  opts: { persist: boolean; learned?: string[] },
+): Promise<string | null> {
+  const { persist, learned } = opts;
+  const facts = learned?.length ? `\nDURABLE FACTS on this work: ${learned.join(' · ')}` : '';
+  if (linkKindOf(scope) === 'inbox_item') {
+    const { data: item } = await client.from('inbox_items').select('source_data').eq('id', scope.itemId).eq('user_id', userId).maybeSingle();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sd = (item?.source_data ?? {}) as Record<string, any>;
+    if (!(sd.from || sd.from_address)) return null;
+    const { generateReplyDraft } = await import('@/lib/inbox/draft-reply');
+    const instr = `THE USER'S STEERING NOTE (fold this into the reply — it overrides anything conflicting): ${text}` + facts;
+    const body = await generateReplyDraft(userId, sd, client, instr);
+    if (!body) return null;
+    if (!persist) return body; // ← THE PREVIEW RETURNS HERE: every write below is structurally out of reach.
+    // J3 — a rework is a NEW VERSION, never a mutation: the prior draft is RETAINED in the
+    // pool (version_of rows are ledger-only; the reader skips them), the new body lands as
+    // the next version, and only then does the serving pointer (sd.draft) move.
+    if (sd.draft?.body) {
+      await client.from('item_deliverables').insert({
+        user_id: userId, kind: 'email', entity_id: scope.itemId, type: 'draft',
+        title: 'Reply draft — prior version', content: String(sd.draft.body), ref: null,
+        metadata: { version_of: 'reply_draft', superseded: true },
+      }).then(() => {}, () => {});
+    }
+    await client.from('item_deliverables').insert({
+      user_id: userId, kind: 'email', entity_id: scope.itemId, type: 'draft',
+      title: 'Reply draft — steered', content: body, ref: null,
+      metadata: { version_of: 'reply_draft', steered: true },
+    }).then(() => {}, () => {});
+    // J3 — the evaluator reviews reworks like ambient work (same reviewer, same annotations).
+    const { evaluateDeliverable } = await import('@/lib/prepare/evaluate');
+    const review = await evaluateDeliverable(client, userId, {
+      content: body, task: `Reply to ${String(sd.from_name ?? sd.from ?? sd.from_address ?? '')} re: ${String(sd.subject ?? '')}`,
+      recipient: String(sd.from ?? sd.from_address ?? '') || null,
+      entityId: await entityOfScope(client, userId, scope), kind: 'reply',
+    }).catch(() => ({ verdict: 'pass' as const, objection: null }));
+    await client.from('inbox_items').update({ source_data: { ...sd, draft: { ...(sd.draft ?? {}), body, generated_at: new Date().toISOString(), steered: true, law_version: (await import('@/lib/inbox/attachment-context')).DRAFT_LAW_VERSION, ...(review.verdict !== 'pass' ? { review } : {}) } } }).eq('id', scope.itemId);
+    return body;
+  }
+  if (linkKindOf(scope) === 'commitment') {
+    const { data: c } = await client.from('commitments').select('id, description, counterparty').eq('id', scope.itemId).eq('user_id', userId).maybeSingle();
+    if (!c) return null;
+    const { generateNudgeDraft } = await import('@/lib/inbox/draft-reply');
+    const instr = `THE USER'S STEERING NOTE (fold this in — it overrides anything conflicting): ${text}` + facts;
+    const body = await generateNudgeDraft(userId, { counterparty: (c.counterparty as string) ?? null, description: String(c.description), ageDays: 0, instructions: instr }, client);
+    if (!body) return null;
+    if (!persist) return body; // ← THE PREVIEW RETURNS HERE: nothing below runs.
+    // J3 — the evaluator reviews reworks like ambient work; the pool append IS the version
+    // history (prior nudge rows are never touched).
+    const { evaluateDeliverable } = await import('@/lib/prepare/evaluate');
+    const review = await evaluateDeliverable(client, userId, {
+      content: body, task: `Nudge about: ${String(c.description)}`,
+      recipient: (c.counterparty as string) ?? null,
+      entityId: await entityOfScope(client, userId, scope), kind: 'nudge',
+    }).catch(() => ({ verdict: 'pass' as const, objection: null }));
+    await client.from('item_deliverables').insert({
+      user_id: userId, kind: 'commitment', entity_id: scope.itemId, type: 'draft',
+      title: `Nudge — ${String(c.counterparty ?? '').split('<')[0].trim() || 'follow-up'}`.slice(0, 100),
+      content: body, ref: null, metadata: { steered: true, ...(review.verdict !== 'pass' ? { review } : {}) },
+    }).then(() => {}, () => {});
+    return body;
+  }
+  return null;
+}
+
 /** THE entry — every chat surface calls this with its scope. */
 export async function converse(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string,
-  opts: { history?: ConverseHistoryTurn[]; attachments?: ConverseAttachment[]; onProgress?: (label: string) => void; onToken?: (t: string) => void } = {},
+  opts: { history?: ConverseHistoryTurn[]; attachments?: ConverseAttachment[]; onProgress?: (label: string) => void; onToken?: (t: string) => void; preview?: boolean } = {},
 ): Promise<ConverseTurn> {
+  // THE PREVIEW LANE short-circuits HERE — above the classifier, above every branch that can write.
+  // A preview is only ever a redraft of one item's prepared work, so it never needs the router; and
+  // sitting above it is what makes "writes nothing" structural rather than a list of skipped flags.
+  if (opts.preview) {
+    if (scope.kind !== 'item') return { say: '', refs: [], draft: null };
+    const body = await redraftItemDraft(client, userId, scope, text, { persist: false }).catch(() => null);
+    return { say: '', refs: [], draft: body };
+  }
   const turn = await converseInner(client, userId, scope, text, opts);
   if (turn?.say) turn.say = turn.say.replace(GROUNDING_TAG_RE, '');
   return turn;
@@ -1130,7 +1315,7 @@ async function converseInner(
   // COMPOSITION go through the agent loop, which reads the block as a tool result and answers.
   if (verdict.command && verdict.command.tool !== 'search_knowledge_base') {
     opts.onProgress?.(progressLabelFor(verdict.command.tool));
-    const out = await dispatchCommand(client, userId, scope, verdict.command.tool, verdict.command.args, text);
+    const out = await dispatchCommand(client, userId, scope, verdict.command.tool, verdict.command.args, text, { transcript, roomKey: dlg.roomKey });
     if (out) return out;
   }
 
@@ -1149,21 +1334,21 @@ async function converseInner(
     const scopeEntity = scope.kind === 'entity' ? scope.entityId : null;
     const matches = await registryMatches(client, userId, text, scopeEntity);
     const dialogueBlock = [
-      'RULE: never claim something does not exist or cannot be seen if THE CONVERSATION or MEMORY MATCHES below name it — reference it instead.',
+      ANSWER_HONESTY_RULE,
       transcript, matches,
     ].filter(Boolean).join('\n');
     if (scope.kind === 'global') {
       opts.onProgress?.('Looking across your work…');
       const { answerHomeQuestion } = await import('@/lib/home/ask');
       const { answer, refs } = await answerHomeQuestion(client, userId, text, opts.history ?? []);
-      return { say: answer, refs };
+      return { say: await honestyFloor(client, userId, answer, text, null), refs };
     }
     const entityId = await entityOfScope(client, userId, scope);
     if (entityId) {
       const { answerEntityQuestion } = await import('@/lib/entities/ask');
       const { answer, refs } = await answerEntityQuestion(client, userId, entityId, text, opts.history ?? [],
         { viewing: [dialogueBlock, viewing].filter(Boolean).join('\n\n') });
-      return { say: answer, refs };
+      return { say: await honestyFloor(client, userId, answer, text, scopeEntity), refs };
     }
     if (scope.kind === 'item') {
       const { buildItemContext } = await import('@/lib/home/item-context');
@@ -1173,7 +1358,8 @@ async function converseInner(
         userId, supabase: client, shape: { output: 'json' }, maxTokens: 300, temperature: 0.2, source: 'brain_synthesis',
         prompt: `Answer STRICTLY from this context — plainly, a couple of sentences; if it doesn't cover the question, say so. PLAIN PROSE.\n${dialogueBlock ? `${dialogueBlock}\n` : ''}${viewing ? `${viewing}\n` : ''}--- CONTEXT ---\n${(ctx?.text || '').slice(0, 3000)}\n--- QUESTION ---\n${text}\nReturn ONLY JSON: {"answer":"..."}`,
       });
-      return { say: String(res.json?.answer || "I don't have enough on that here."), refs: [] };
+      const answer = String(res.json?.answer || "I don't have enough on that here.");
+      return { say: await honestyFloor(client, userId, answer, text, null), refs: [] };
     }
   }
 
@@ -1187,68 +1373,12 @@ async function converseInner(
       }
     }
     // Rework the prepared draft with the guidance (email → reply draft; followup/commitment → nudge).
+    // ONE LANE, TWO CONSEQUENCES: `redraftItemDraft` IS the redraft path — this door asks it for the
+    // PERSISTING form (a picked steer is a deed), the preview door asks it for the same words with
+    // nothing written. See A PREVIEW IS NOT A DEED above the helper.
     try {
-      if (linkKindOf(scope) === 'inbox_item') {
-        const { data: item } = await client.from('inbox_items').select('source_data').eq('id', scope.itemId).eq('user_id', userId).maybeSingle();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const sd = (item?.source_data ?? {}) as Record<string, any>;
-        if (sd.from || sd.from_address) {
-          const { generateReplyDraft } = await import('@/lib/inbox/draft-reply');
-          const instr = `THE USER'S STEERING NOTE (fold this into the reply — it overrides anything conflicting): ${text}` +
-            (turn.learned?.length ? `\nDURABLE FACTS on this work: ${turn.learned.join(' · ')}` : '');
-          const body = await generateReplyDraft(userId, sd, client, instr);
-          if (body) {
-            // J3 — a rework is a NEW VERSION, never a mutation: the prior draft is RETAINED in the
-            // pool (version_of rows are ledger-only; the reader skips them), the new body lands as
-            // the next version, and only then does the serving pointer (sd.draft) move.
-            if (sd.draft?.body) {
-              await client.from('item_deliverables').insert({
-                user_id: userId, kind: 'email', entity_id: scope.itemId, type: 'draft',
-                title: 'Reply draft — prior version', content: String(sd.draft.body), ref: null,
-                metadata: { version_of: 'reply_draft', superseded: true },
-              }).then(() => {}, () => {});
-            }
-            await client.from('item_deliverables').insert({
-              user_id: userId, kind: 'email', entity_id: scope.itemId, type: 'draft',
-              title: 'Reply draft — steered', content: body, ref: null,
-              metadata: { version_of: 'reply_draft', steered: true },
-            }).then(() => {}, () => {});
-            // J3 — the evaluator reviews reworks like ambient work (same reviewer, same annotations).
-            const { evaluateDeliverable } = await import('@/lib/prepare/evaluate');
-            const review = await evaluateDeliverable(client, userId, {
-              content: body, task: `Reply to ${String(sd.from_name ?? sd.from ?? sd.from_address ?? '')} re: ${String(sd.subject ?? '')}`,
-              recipient: String(sd.from ?? sd.from_address ?? '') || null,
-              entityId: await entityOfScope(client, userId, scope), kind: 'reply',
-            }).catch(() => ({ verdict: 'pass' as const, objection: null }));
-            await client.from('inbox_items').update({ source_data: { ...sd, draft: { ...(sd.draft ?? {}), body, generated_at: new Date().toISOString(), steered: true, ...(review.verdict !== 'pass' ? { review } : {}) } } }).eq('id', scope.itemId);
-            turn.draft = body;
-          }
-        }
-      } else if (linkKindOf(scope) === 'commitment') {
-        const { data: c } = await client.from('commitments').select('id, description, counterparty').eq('id', scope.itemId).eq('user_id', userId).maybeSingle();
-        if (c) {
-          const { generateNudgeDraft } = await import('@/lib/inbox/draft-reply');
-          const instr = `THE USER'S STEERING NOTE (fold this in — it overrides anything conflicting): ${text}` +
-            (turn.learned?.length ? `\nDURABLE FACTS on this work: ${turn.learned.join(' · ')}` : '');
-          const body = await generateNudgeDraft(userId, { counterparty: (c.counterparty as string) ?? null, description: String(c.description), ageDays: 0, instructions: instr }, client);
-          if (body) {
-            // J3 — the evaluator reviews reworks like ambient work; the pool append IS the version
-            // history (prior nudge rows are never touched).
-            const { evaluateDeliverable } = await import('@/lib/prepare/evaluate');
-            const review = await evaluateDeliverable(client, userId, {
-              content: body, task: `Nudge about: ${String(c.description)}`,
-              recipient: (c.counterparty as string) ?? null,
-              entityId: await entityOfScope(client, userId, scope), kind: 'nudge',
-            }).catch(() => ({ verdict: 'pass' as const, objection: null }));
-            await client.from('item_deliverables').insert({
-              user_id: userId, kind: 'commitment', entity_id: scope.itemId, type: 'draft',
-              title: `Nudge — ${String(c.counterparty ?? '').split('<')[0].trim() || 'follow-up'}`.slice(0, 100),
-              content: body, ref: null, metadata: { steered: true, ...(review.verdict !== 'pass' ? { review } : {}) },
-            }).then(() => {}, () => {});
-            turn.draft = body;
-          }
-        }
-      }
+      const body = await redraftItemDraft(client, userId, scope, text, { persist: true, learned: turn.learned });
+      if (body) turn.draft = body;
     } catch { /* non-fatal — memory still landed */ }
     const bits: string[] = [];
     if (turn.draft) bits.push(isTransition ? 'Done — the reply enacting your choice is ready to review' : 'I reworked the draft with that');
@@ -1285,14 +1415,14 @@ async function converseInner(
   // same honesty floor.
   const matches = await registryMatches(client, userId, text, scope.kind === 'entity' ? scope.entityId : null);
   const preamble = [
-    'RULE: never claim something does not exist or cannot be seen if THE CONVERSATION or MEMORY MATCHES below name it — reference it instead.',
+    ANSWER_HONESTY_RULE,
     dlg.transcript, matches, viewing,
   ].filter(Boolean).join('\n\n');
   // The PANEL conversation rides as REAL messages (not a squeezed grounding block) — a follow-up
   // operates on the prior answer at full fidelity, the way any chat model expects. The room
   // narration transcript stays in the preamble (room callers don't always carry panel history).
   const loopTurn = await agentLoop(client, userId, scope, text, preamble ? `${preamble}\n\n${grounding}` : grounding,
-    opts.history, opts.onProgress, material, opts.onToken);
+    opts.history, opts.onProgress, material, opts.onToken, { transcript, roomKey: dlg.roomKey });
   // THE EXHAUSTION HAND-OFF (Aug 10, found live: the loop's old bare "I couldn't finish that
   // one." beside a competitor's finished document): when the inline loop can't land the work,
   // the work — WITH the user's full material and the conversation — goes to the production

@@ -427,6 +427,14 @@ def apply_skill(run_context: RunContext, skill_name: str) -> str:
     return _call("apply_skill", run_context, skill_name=skill_name)
 
 
+# ⚠️ GAP, STATED (threads arc, Sep 8 — the invite card): the native chat loop now carries
+# `prepare_calendar_invite` (it PREPARES an invite card the user reviews and sends; it never sends).
+# Its Python twin belongs HERE — one @tool calling _call("prepare_calendar_invite", …) plus the
+# matching half in app/api/internal/agentos/tools/route.ts and a row in this list — but a Python
+# change needs an AgentOS BOX REDEPLOY (the image bakes these files), so it is deliberately NOT in
+# this wave. Until then, a worker running under WORKERS_USE_AGENTOS prepares invites only on the
+# native path; nothing is silently missing on Vercel.
+
 # All task tools — assigned to every worker (matches the native chat loop).
 TASK_TOOLS = [
     list_tasks, create_task, get_task, update_task, run_task, supply_run_input, duplicate_task,

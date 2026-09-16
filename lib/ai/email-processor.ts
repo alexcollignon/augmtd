@@ -593,9 +593,15 @@ STEP 4: FRAME AS WORK
 
 Create user-facing text (OUTCOME-CENTRIC, NOT EMAIL-CENTRIC):
 - workTitle: Focus on the OUTCOME/ACTION, not the email mechanics
-  GOOD: "Confirm Tuesday meeting" | "Review Q4 budget proposal" | "Decide on vendor selection"
-  BAD: "Reply to John" | "Respond to Sarah" | "Email back to client"
+  GOOD: "Confirm the kickoff meeting" | "Review Q4 budget proposal" | "Decide on vendor selection"
+  BAD: "Reply to <sender>" | "Respond to <sender>" | "Email back to client"
   Pattern: [Verb] + [Object/Topic] (the actual work to be done)
+  THE DEIXIS LAW — WRITE DATES ABSOLUTELY: this title is STORED and re-read for weeks, so it must stay
+  TRUE as time passes. Never let it point at a day RELATIVELY — any word whose meaning moves with the
+  calendar (the equivalents of "tomorrow", "today", "tonight", "this week", "next week", or a bare
+  weekday name, in ANY language) is a lie the day after. Resolve it against THIS EMAIL'S OWN DATE (the
+  "Received:" line above — never the day you are reading this) and
+  write the absolute instead ("Confirm the lunch — Sep 10, 12:30"), or leave the day out entirely.
 
 ---
 
@@ -876,11 +882,24 @@ Respond ONLY with valid JSON matching the structure above.`;
     let understanding = await computeUnderstanding(email, supabase).catch(() => null);
     if (!understanding) understanding = coerceUnderstanding(result.understanding);
 
+    // ── THE SERVED-WORDS LAW, write seam 3 of 3 (proactive-reach LAW 3) ─────────────────────────
+    // `work_title` is the deck's fallback label under `understanding.ask` — and, like the ask, a
+    // frozen ingest snapshot. A model-authored "Confirm lunch tomorrow" decays into a lie the next
+    // morning. Lexical detect (zero AI in the common case), reasoned rewrite for offenders only,
+    // anchored to the email's OWN date. Non-fatal — the model's title stands on failure.
+    // (A subject-line fallback is the SENDER'S words, not ours; the serve guard heals those.)
+    let workTitle: string = result.workTitle || email.subject || 'Review email';
+    if (result.workTitle) {
+      const { resolveDeixisText } = await import('@/lib/inbox/deixis');
+      const refForTitle = email.received_at && !Number.isNaN(Date.parse(email.received_at)) ? email.received_at : null;
+      workTitle = await resolveDeixisText(supabase, email.user_id!, workTitle, refForTitle).catch(() => workTitle);
+    }
+
     // Validate and return with defaults
     return {
       itemType: result.itemType || deriveItemType(result),
       workState: result.workState || 'noted',
-      workTitle: result.workTitle || email.subject || 'Review email',
+      workTitle,
 
       signals: result.signals || {
         hasDirectQuestion: false,
@@ -982,12 +1001,31 @@ export async function computeUnderstanding(email: EmailData, supabase: SupabaseC
     `- kind: what this mail IS — one of: "receipt" (a purchase/payment/order confirmation), "newsletter" (editorial/digest/marketing content sent to a list), "notification" (an automated system/service alert — builds, logins, social notices, portal updates), "calendar" (an invite/acceptance/reschedule), "cold_outreach" (an unsolicited pitch from someone with NO existing relationship — check the relationship context above), "customer" (correspondence with a client/deal counterparty — someone the relationship context ties to the user's work), "team" (one of the user's OWN colleagues per the team roster above), "personal" (private life — family, friends, personal admin), "other". GROUND it in the roster + relationship context, not the sender address alone.\n` +
     `- confidence: 0–100, how confident you are in the role + relevance judgment.\n` +
     `- ask: ONLY when relevance is "reply" or "action" — the ONE thing the user must DO, as a short ` +
-    `IMPERATIVE phrase starting with a verb, <=8 words ("Confirm the Thursday slot", "Pay the renewal ` +
+    `IMPERATIVE phrase starting with a verb, <=8 words ("Confirm the proposed slot", "Pay the renewal ` +
     `invoice", "Send the pricing offer") — a to-do, NEVER a topic or a restated subject line. null otherwise.\n` +
+    `  THE DEIXIS LAW — WRITE DATES ABSOLUTELY: this ask is STORED and re-read for weeks, so it must ` +
+    `stay TRUE as time passes. Write it in whatever language fits, but NEVER let it point at a day ` +
+    `RELATIVELY — any word whose meaning moves with the calendar (the equivalents of "tomorrow", ` +
+    `"today", "tonight", "this week", "next week", or a bare weekday name, in ANY language) is a lie ` +
+    `the day after. THIS EMAIL WAS SENT ON ${refStr}: resolve every such word against THAT day and ` +
+    `write the absolute date instead ("Confirm the lunch — Sep 10, 12:30"), or leave the day out ` +
+    `entirely. Clock times stay; day-words become dates.\n` +
     `Return ONLY JSON: {"role":"addressed|one_of_many|bystander","relevance":"reply|action|awareness","bulk":true|false,"kind":"receipt|newsletter|notification|calendar|cold_outreach|customer|team|personal|other","initiative":"<short label or null>","deadline":"<YYYY-MM-DD or null>","ownership":"you_owe|awaiting|none","effort":"quick|medium|deep|null","confidence":0-100,"ask":"<imperative phrase or null>","language":"<lowercase ISO code, the language of THIS email, e.g. en, pt>"}. Use ONLY the allowed values.`;
   const res = await aiCreate(ai, {
     model, response_format: { type: 'json_object' as const }, max_tokens: 500, temperature: 0,
     messages: [{ role: 'user', content }],
   });
-  return coerceUnderstanding(parseModelJSON(res.choices?.[0]?.message?.content || '', {}));
+  const u = coerceUnderstanding(parseModelJSON(res.choices?.[0]?.message?.content || '', {}));
+  // ── THE SERVED-WORDS LAW, write seam 2 of 3 (proactive-reach LAW 3) ───────────────────────────
+  // `understanding.ask` is the FIRST thing the deck's whisper speaks (the ask→title precedence), and
+  // it is a frozen ingest snapshot: a "Confirm lunch tomorrow" stored on a Wednesday is a lie every
+  // day after. The prompt above asks for absolute dates; this is the structural belt behind it —
+  // lexical detect (zero AI on the overwhelming majority), reasoned rewrite for offenders only,
+  // anchored to THIS EMAIL'S OWN DATE. Non-fatal: a failure keeps the model's words.
+  if (u?.ask) {
+    const { resolveDeixisText } = await import('@/lib/inbox/deixis');
+    const fixed = await resolveDeixisText(supabase, email.user_id!, u.ask, refISO).catch(() => u.ask!);
+    if (fixed) u.ask = fixed.slice(0, 90);
+  }
+  return u;
 }

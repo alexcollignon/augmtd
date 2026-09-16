@@ -11,6 +11,24 @@ import { logAIUsage } from '@/lib/ai/log-usage';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
 import { getOAuth2Client } from '@/lib/google/oauth';
 import { indexArtifact } from '@/lib/knowledge/indexer';
+import { resolveDeixisInDescriptions } from '@/lib/inbox/deixis';
+
+// ── THE SERVED-WORDS LAW (proactive-reach LAW 3) — the meeting half of the `work_title` seam ─────
+// A meeting action item becomes an inbox_item whose `work_title` IS the spoken action, and speech is
+// where deixis is densest ("send it by Thursday", "let's confirm tomorrow"). The same ONE resolver
+// the email seams use, batched once per meeting, anchored to THE MEETING'S OWN start time. Lexical
+// detect first — a meeting with no day-words costs zero AI. Non-fatal: originals stand on failure.
+async function resolveActionItemDeixis<T extends { action?: string }>(
+  supabase: SupabaseClient, userId: string, items: T[], anchorIso: string | null,
+): Promise<T[]> {
+  try {
+    const fixed = await resolveDeixisInDescriptions(
+      supabase, userId, items.map((i) => ({ description: String(i.action ?? '') })), anchorIso,
+    );
+    return items.map((i, n) => (fixed[n]?.description && fixed[n].description !== i.action
+      ? { ...i, action: fixed[n].description } : i));
+  } catch { return items; }
+}
 
 interface ExtractedActionItem {
   action: string;
@@ -279,7 +297,11 @@ export async function storeTranscriptAndGenerateWork(
 
   let workItemsCreated = 0;
 
-  for (const item of insights.actionItems) {
+  // THE SERVED-WORDS LAW: resolve every spoken day-word against the MEETING'S own date before any
+  // of these actions is stored as an inbox_item's `work_title`.
+  const actionItemsForWork = await resolveActionItemDeixis(supabase, userId, insights.actionItems, startTime);
+
+  for (const item of actionItemsForWork) {
     const isUserTask = item.isUserTask === true || item.isUserTask == null || !item.assignee;
     if (!isUserTask) {
       console.log(`[MeetingBot] Skipping non-user task: ${item.action} (assignee: ${item.assignee})`);
@@ -495,7 +517,9 @@ export async function reprocessTranscripts(
       const segments = transcript.transcript_segments || [];
       if (segments.length === 0) continue;
 
-      const actionItems = await extractActionItemsWithAI(userId, transcript.title, segments, supabase);
+      const actionItemsRaw = await extractActionItemsWithAI(userId, transcript.title, segments, supabase);
+      // THE SERVED-WORDS LAW — same ONE resolver, anchored to this transcript's own start time.
+      const actionItems = await resolveActionItemDeixis(supabase, userId, actionItemsRaw, transcript.start_time ?? null);
       const keyTopics = extractKeyTopics(segments);
 
       let workItemsCreated = 0;

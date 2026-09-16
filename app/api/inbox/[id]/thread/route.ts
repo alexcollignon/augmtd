@@ -118,6 +118,18 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     fromName: newest?.fromName ?? sd.from_name ?? null,
     fromAddress: newest?.from ?? sd.from ?? null,
     receivedAt: newest?.receivedAt ?? sd.received_at ?? item.created_at ?? null,
+    // WHAT CAME WITH IT (Sep 9, the item-context drawer): the item's own stored attachments, as
+    // the ONE viewer's file shape — `ref` is the same {kind:'attachment', path} address the
+    // project room's Files list has always used, so one lightbox serves both. A file whose upload
+    // was skipped (unsupported storage MIME) has no path and is NOT offered as viewable.
+    attachments: (Array.isArray(sd.attachments) ? sd.attachments : [])
+      .filter((a: { storagePath?: string }) => typeof a?.storagePath === 'string' && a.storagePath)
+      .map((a: { filename?: string; mimeType?: string; size?: number; storagePath: string }) => ({
+        name: a.filename ?? 'Attachment',
+        mime: a.mimeType ?? null,
+        size: typeof a.size === 'number' ? a.size : null,
+        ref: { kind: 'attachment' as const, path: a.storagePath },
+      })),
     // Separate messages (oldest→newest). Empty when neither thread_id nor email_id resolved.
     messages,
     // Legacy fallback body (used only if messages is empty) — the inbox item's own stored body.

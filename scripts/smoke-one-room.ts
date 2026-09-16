@@ -146,12 +146,24 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('R3: the CONTEXT STRIP exists — per-anchor (project door / siblings / founding), collapsed on the stage',
     strip.includes('export function ContextStrip') && strip.includes('Start a project from this') &&
     strip.includes("tracked === false ? 'Connects to' : 'In'"));
-  check('R3: the strip mounts on the email/followup/commitment stages (hidden when embedded — the room IS the context)',
-    (detail.match(/<ContextStrip kind=/g)?.length ?? 0) >= 3 &&
-    detail.includes('!embedded && railView && <ContextStrip'));
+  // RE-POINTED (Sep 7, THE ONE ROOM GRAMMAR): the strip is FILED TRUTH, so it moved off the stage
+  // into the item room's drawer — where filed truth lives in every room. The law is unchanged and
+  // now stronger: ONE mount serves all four kinds (it was three near-identical ones), and it never
+  // renders embedded (the project room IS the context).
+  // RE-POINTED AGAIN (Sep 9, the owner's context-drawer walk — "the side panel just flags all items
+  // that might be related… make this more meaningful"): the inventory is still ONE mount in the
+  // drawer for every kind, but the flat chips became ROWS that carry their kind, their who and
+  // their when (smoke-threads T25.2 owns the row law). The strip's founding ask was a second seat
+  // for the header's own filing control and died with it — the drawer never asks.
+  check('R3: the related inventory is the item room’s filed truth — ONE mount, in the drawer, for every kind',
+    (detail.match(/node: <RelatedRows view=\{railView\} \/>/g)?.length ?? 0) === 1 &&
+    detail.includes('function commonRoomTabs') && detail.includes("id: 'related'") &&
+    !detail.includes('<ContextStrip') && !detail.includes('!embedded && railView && <ContextStrip'));
   check('R3: the conversation no longer carries the room index (navigation is spatial, never repeated in the stream)',
+    // Re-pointed Sep 7 (threads P2d): the stream renders through the ONE kit timeline, which has
+    // no index seat at all — the law's strongest form. The negatives keep the old index dead.
     !railSrc.includes('THE ROOM INDEX (P7c-c1)') && !railSrc.includes('Start a project from this') &&
-    railSrc.includes('moved to THE CONTEXT STRIP'));
+    railSrc.includes("from '@/components/thread'"));
   check('R3: the launcher\'s ask lands in the SAME durable conversation (the room mounts the ONE rail on the ONE key)',
     room2.includes('<ItemRail kind="entity" id={entityId}'));
 
@@ -207,13 +219,20 @@ const src = (p: string) => readFileSync(p, 'utf8');
   // ═══ R5 — THE PARITY MATRIX + THE NOTHING-IS-LOST INVENTORY (live, all four users) ═══
   // Structural: the project room's stage still serves EVERY content type the old room held —
   // each reachable in ≤2 taps (a disclosure is one tap from the launcher's first paint).
+  // ⚠️ RE-POINTED (owner, Sep 14 — the maintenance-work complaint): the tab bar itself moved into
+  // THE ONE FILED DRAWER (components/room/filed-drawer.tsx), which both room doors mount. The LAW
+  // is unchanged — every content section reachable behind one tab bar, goals/rules, status
+  // controls — so it is asserted across the room's SECTIONS plus the one pane that renders them.
   check('R5 inventory · the launcher renders every content section behind ONE tab bar (experience-spec seat: the right pane inventories, it never asks) + goals/rules + status controls',
-    room2.includes('<TabBar') &&
+    room2.includes('<FiledDrawer') && src('components/room/filed-drawer.tsx').includes('<TabBar') &&
     ["'Tasks'", 'Schedule · ', 'Meetings · ', 'Conversations · ', 'Files · ', 'Activity · '].every((t) => room2.includes(t)) &&
     room2.includes('Goals') && room2.includes('Rules') && room2.includes('StatusUpdateModal'));
-  check('R5b · THE LIVING BRIEF (experience-spec laws 1/2/7/8): the room opens with position+debts (never mute), the engine ask is LIFTED into the brief with the one CTA row, history folds past 3 turns, and refs render as inline links — never pills',
+  // ⚠️ RE-POINTED (owner, Sep 14, twice): history no longer FOLDS in the stream — it LEAVES it for
+  // the one drawer. The rest of the law (position+debts, the lifted ask, inline refs) is untouched.
+  check('R5b · THE LIVING BRIEF (experience-spec laws 1/2/7/8): the room opens with position+debts (never mute), the engine ask is LIFTED into the brief with the one CTA row, the record leaves the stream for the drawer, and refs render as inline links — never pills',
     src('components/home/item-rail.tsx').includes('THE LIVING BRIEF') &&
-    src('components/home/item-rail.tsx').includes('earlier (') &&
+    src('components/home/item-rail.tsx').includes('onHistoryRef.current?.(historyLinesRef.current);') &&
+    !src('components/home/item-rail.tsx').includes("variant: 'fold'") &&
     src('components/home/item-rail.tsx').includes('never twice on screen') &&
     src('components/home/item-rail.tsx').includes('the word is the deed') &&
     !src('components/home/item-rail.tsx').includes('<Chip key={j} label={r.label}'));
@@ -274,12 +293,21 @@ const src = (p: string) => readFileSync(p, 'utf8');
     check('R6 · deck rows on project-member items open the PROJECT ROOM (one door() rule, every lane; projectByAtom served from the tag derivation point)',
       brief.includes('projectByAtom') && hv.includes('const door = (itemId: string, fallback: string)') &&
       (hv.match(/door\(/g)?.length ?? 0) >= 3); // reply + notice + commitment lanes
-    check('R6 · deep-link doors survive: /home?view= everywhere (never /?view= — middleware dropped the query), middleware preserves search, lens+entity react to soft navs',
+    check('R6 · deep-link doors survive: middleware preserves search; the room owns /project/<id> and legacy query addresses forward (THE ADDRESS LAW superseded the query-state door, Sep 5)',
       !src('components/room/context-strip.tsx').includes("'/?view=") &&
       src('middleware.ts').includes('home.search = request.nextUrl.search') &&
-      hv.includes('useSearchParams') && src('components/entities/portfolio-view.tsx').includes('[searchParams]'));
-    check('R6 · the word is the deed: the rail\'s room title IS the project door; the "Open project" chip is gone (tracked); no click-echo turn on the next-move CTA',
-      rail.includes('/home?view=projects&entity=') && !src('components/room/context-strip.tsx').includes("'Open project'") &&
+      hv.includes('useSearchParams') &&
+      src('app/(main)/home/page.tsx').includes('redirect(projectHref') &&
+      src('components/entities/portfolio-view.tsx').includes('projectHref'));
+    // RE-POINTED (owner walk, Sep 10 — "confusing to have 2 elements… like a header and then the
+    // conversation"): the rail's own name row was a SECOND chrome band under the room's 52px
+    // header, so it died. The law is untouched — the room's NAME is still the project door, via
+    // the ONE address producer — it now sits in the one header (ItemRoomFrame's `room.project`),
+    // and the gate additionally asserts the rail does NOT draw a second one.
+    check('R6 · the word is the deed: the room\'s name IS the project door (via the ONE address producer, in the ONE chrome band); the "Open project" chip is gone (tracked); no click-echo turn on the next-move CTA',
+      src('components/home/item-detail.tsx').includes('projectHref(room.project.id)') &&
+      !rail.includes('projectHref(') &&
+      !src('components/room/context-strip.tsx').includes("'Open project'") &&
       !rail.includes('Opening the next move'));
     const rb = src('lib/room/brief.ts');
     // Aug 5 (the one responder): the brief grew into {brief, MOVE, offers} composed from THE ONE
@@ -290,7 +318,7 @@ const src = (p: string) => readFileSync(p, 'utf8');
       src('lib/entities/room-view.ts').includes('readRoomResponse') &&
       src('app/api/entities/[id]/room/route.ts').includes('ensureRoomBrief') &&
       src('app/api/items/view/route.ts').includes('ensureRoomBrief') &&
-      rail.includes('ent?.brief') && rail.includes("ent.brief") );
+      rail.includes('ent?.brief') && rail.includes('view.brief') );
     // LIVE — the composer produces one grounded paragraph for a real tracked project on the probe
     // host (or a real account), and the sig gate makes the second call a no-op (no re-burn).
     const { data: cand } = await sb.from('work_entities').select('id, user_id, name, state')
@@ -366,18 +394,25 @@ const src = (p: string) => readFileSync(p, 'utf8');
       !idt.includes('>⋯<') && !idt.includes('More ⌄') &&
       idt.includes('onClick={() => { setMenuOpen(false); onDismiss(); }}') &&
       idt.includes('border-b border-neutral-100 pb-4'));
-    // SUPERSEDED (Aug 4, 2nd pass): the directions live ONLY in the CONVERSATION (the exchange) —
-    // the stage is purely read/edit/send; the open option is the composer itself ("or just tell me").
-    check('R8 · REPLY DIRECTIONS live in the CONVERSATION only: the exchange offers grounded picks + the open composer; the stage carries no chips',
-      !idt.includes('function ReplyDirections') && idt.includes('startReplyExchange') &&
-      idt.includes('or just tell me') &&
-      rail.includes("act: 'direction'") &&
+    // ⚠️ RE-POINTED (THE EMAIL CARD, Sep 8 — the SEAT moved ONE more time; the LAW did not): the
+    // directions were chips in the conversation beside a card that had none. They are now that
+    // card's own top-edge TABS (THE CARD CONTRACT law 2: options live IN the card), still served by
+    // the SAME grounded organ, and the stage is still purely read/edit/send.
+    check('R8 · REPLY DIRECTIONS live ON THE CARD, never as loose chips: one grounded organ, the card\'s own tabs, and a stage that carries none',
+      !idt.includes('function ReplyDirections') &&
+      !idt.replace(/\/\/[^\n]*/g, '').includes('reply-directions') &&
+      !rail.includes("act: 'direction'") &&
+      src('components/home/email-card.tsx').includes("fetch('/api/items/reply-directions'") &&
+      src('lib/prepare/email-card.ts').includes('const variants: EmailCardVariantProps[] = dirs.length') &&
       src('app/api/items/reply-directions/route.ts').includes('topMessageOf') &&
       src('app/api/items/reply-directions/route.ts').includes("kind: 'reply_directions'"));
-    check('R8 · TWO TEXT CLASSES in the rail: events + refs whisper in ONE muted style (12.5px neutral-500) — no 11–12px neutral-400 ladder in the stream',
-      rail.includes('TWO TEXT CLASSES ONLY') &&
-      !rail.includes('text-[12px] text-neutral-400 leading-snug') &&
-      !rail.includes('text-[11px] text-neutral-400">'));
+    check('R8 · ONE muted style in the STREAM: events + their refs whisper in the kit timeline\'s one event-line style; the rail no longer renders stream text itself (threads P2d — the law moved into the kit)',
+      // Re-pointed Sep 7: the stream is the kit's; the rail only DERIVES items. The kit's
+      // event_line is the one muted seat (12px neutral-400, refs inline in the same element).
+      rail.includes("type: 'event_line'") &&
+      src('components/thread/thread-timeline.tsx').includes("case 'event_line':") &&
+      src('components/thread/thread-timeline.tsx').includes('px-1 text-[12px] leading-[1.5] text-neutral-400') &&
+      !src('components/thread/thread-timeline.tsx').includes('text-[12.5px]'));
   }
 
   // ═══ R9 — EXCERPT HONESTY · ONE NAVIGATION · CHAT PARITY · CTA COLLAPSE (Aug 4) ═══
@@ -396,10 +431,17 @@ const src = (p: string) => readFileSync(p, 'utf8');
       src('app/api/items/reply-directions/route.ts').includes('clipForPrompt') &&
       /JUDGE_VERSION = 1[3-9]/.test(src('lib/work/surface-registry.ts')) && // ≥13 (the law landed at 13)
       /STATE_PROMPT_VERSION = [7-9]/.test(src('lib/entities/state.ts')) && // ≥7 (the law landed at 7; 8 = the one-claim law)
-      src('lib/commitments/fulfillment.ts').includes('FULFILLMENT_LAW_VERSION = 3'));
-    check('R9 · THE ONE-NAVIGATION LAW: in-room rail links route through the room opener (onOpenHref on refs + next-move; entity-room passes focusFromHref/openHref)',
+      // Re-pointed Sep 13 (THE PROACTIVE REACH ARC): exact `= 3` pin → floor ≥3 — the version-pin
+      // trap ("exact VERSION = N pins break on every bump", CLAUDE.md) bit here when the expiry
+      // law's open-age fact lawfully bumped it to 4. The law landed at 3; the floor is the claim.
+      /FULFILLMENT_LAW_VERSION = ([3-9]|[1-9][0-9])/.test(src('lib/commitments/fulfillment.ts')));
+    check('R9 · THE ONE-NAVIGATION LAW: in-room rail links route through the room opener (the ONE go() consults onOpenHref before the router; refs, move and event-line refs all call go)',
+      // Re-pointed Sep 7 (threads P2d): navigation consolidated into ONE `go()` — the opener
+      // consult lives there once and every link path calls it (fewer raw onOpenHref sites is the
+      // consolidation, not a loosening).
       rail.includes('onOpenHref?: (href: string) => boolean') && rail.includes('const go = (href: string)') &&
-      (rail.match(/onOpenHref\?\.\(/g)?.length ?? 0) >= 3 &&
+      rail.includes('if (onOpenHref?.(href)) return; router.push(href);') &&
+      (rail.match(/\bgo\(/g)?.length ?? 0) >= 3 &&
       src('components/entities/entity-room.tsx').includes('onOpenHref={(href)'));
     check('R9 · THE PARITY LAW: send_prepared_reply + prepare_forward in the chief slice; the explicit-send FLOOR is deterministic; the client fires the ONE send door',
       src('lib/work/surface-registry.ts').includes('send_prepared_reply:') &&
@@ -435,18 +477,29 @@ const src = (p: string) => readFileSync(p, 'utf8');
     check('R10 · ONE STAGE AT A TIME: opening any stage lowers the others (the covered-Open dead-click class, found live)',
       idt.includes('ONE STAGE AT A TIME') && idt.includes('setForwarding(false);\n    setInviteOpen(false);') &&
       idt.includes('onOpen: openForward'));
-    check('R10 · THE REPLY EXCHANGE: Reply opens a DIALOGUE (offer turn + grounded directions), the pick is the USER\'S turn, ack shows, result lands; typing always works',
-      idt.includes('startReplyExchange') && (idt.match(/onReply=\{startReplyExchange\}/g)?.length ?? 0) >= 1 &&
-      rail.includes("act: 'direction'") && rail.includes("addTurn({ role: 'user', text: a.label })") &&
-      rail.includes('Got it — drafting.'));
-    check('R10 · EPHEMERAL SCAFFOLDING: offers/acks render live but never persist (a reloaded offer with dead buttons is noise, not history)',
+    // ⚠️ RE-POINTED (THE EMAIL CARD, Sep 8): the EXCHANGE — offer → pick → ack → result — happens
+    // INSIDE the card now (tabs → the one redraft path → the body lands), and "typing always works"
+    // is the card's own open tab and steer field. The law is intact; the seat is the card.
+    check('R10 · THE REPLY EXCHANGE happens IN THE CARD: grounded directions to pick, lazy regeneration through the ONE steer path, and typing always works',
+      idt.includes('const startReplyExchange = openComposer;') &&
+      (idt.match(/onReply=\{startReplyExchange\}/g)?.length ?? 0) >= 1 &&
+      src('components/home/email-card.tsx').includes("fetch('/api/items/steer'") &&
+      src('components/home/email-card.tsx').includes('const pickVariant = (id: string)') &&
+      src('lib/prepare/email-card.ts').includes('EMAIL_OPEN_VARIANT'));
+    check('R10 · EPHEMERAL SCAFFOLDING: live-only turns never persist (a reloaded offer with dead buttons is noise, not history)',
       rail.includes('ephemeral?: boolean') && rail.includes('if (!opts?.ephemeral) persistTurn') &&
-      rail.includes('export function dropDealTurn') && idt.includes('ephemeral: true'));
+      rail.includes('export function dropDealTurn'));
+    // ⚠️ RE-POINTED (the invite card, Sep 8 — the SEAT moved to the kit card + its one mapper; the
+    // LAW did not): the proposal still says it is ours, and a time-less invite still asks plainly
+    // — now by rendering the SELECTOR ALONE, with no fields and no commit row to lie with.
     check('R10 · THE PROPOSE TIER on invites: a stated day/window earns a grounded PROPOSED time (user clock, weekday stated), labeled as ours; no time stated → the card asks plainly',
       src('lib/home/prepare-action.ts').includes('THE PROPOSE TIER') &&
       src('lib/home/prepare-action.ts').includes('userTimezone') &&
-      idt.includes('The time is a proposal within what they suggested') &&
-      idt.includes('No time was stated — pick one below') &&
+      src('lib/prepare/invite-card.ts').includes("'our proposal — inside what they stated'") &&
+      src('lib/prepare/invite-card.ts').includes("state: ready ? 'ready' : 'needs_time'") &&
+      // needs_time renders NO filled fields and NO Send — the card asks, it never poses as a form.
+      src('components/thread/thread-cards.tsx').includes("const filled = card.state === 'ready';") &&
+      src('components/home/invite-card.tsx').includes("...(props.state === 'ready' ? { onSend: send") &&
       idt.includes("view?.inviteHasTime === false ? 'Invite drafted — needs a time from you'"));
   }
 
@@ -454,11 +507,20 @@ const src = (p: string) => readFileSync(p, 'utf8');
   // type — grounded in the user's own correspondence, never invented; one shared input) ═══
   {
     const idt = src('components/home/item-detail.tsx');
+    // ⚠️ RE-POINTED (Sep 8): the ONE input moved to components/home/people-chips.tsx when a second
+    // host (the invite card) needed it — the law is "one implementation, every people field", so
+    // the gate now asserts exactly ONE definition in the codebase and both chip fields mounting it.
+    const chips = src('components/home/people-chips.tsx');
     check('R11 · one PeopleSuggestInput mounts in BOTH chip fields (attendees + recipients); the suggest route is user-scoped, graph-ranked, robots filtered',
-      idt.includes('function PeopleSuggestInput') &&
-      (idt.match(/<PeopleSuggestInput/g)?.length ?? 0) >= 2 &&
-      src('app/api/people/suggest/route.ts').includes('relationship_graph') &&
-      src('app/api/people/suggest/route.ts').includes("no-?reply|notification|mailer"));
+      chips.includes('export function PeopleSuggestInput') && !idt.includes('function PeopleSuggestInput') &&
+      ((chips.match(/<PeopleSuggestInput/g)?.length ?? 0) + (idt.match(/<PeopleSuggestInput/g)?.length ?? 0)) >= 2 &&
+      // ⚠️ RE-POINTED (Sep 8): the LOOKUP moved out of the route into lib/people/suggest.ts when the
+      // chat-born invite had to resolve names through the SAME grounded source server-side. One
+      // implementation is still the law — the route is now a caller of it, not a second copy.
+      src('lib/people/suggest.ts').includes('relationship_graph') &&
+      src('lib/people/suggest.ts').includes("no-?reply|notification|mailer") &&
+      src('app/api/people/suggest/route.ts').includes('suggestPeople(') &&
+      !src('app/api/people/suggest/route.ts').includes('relationship_graph'));
   }
 
   // ═══ R12 — THE ATTACHABLE-REQUIRES LAW (Aug 4, found live: "attach a confirmation of the
@@ -502,9 +564,18 @@ const src = (p: string) => readFileSync(p, 'utf8');
       src('lib/room/brief.ts').includes('assembleRoomGrounding') &&
       src('lib/entities/ask.ts').includes('assembleRoomGrounding') &&
       src('lib/converse/index.ts').includes('assembleRoomGrounding'));
-    check('R13 · THE MOVE is board-validated (the model picks, the code verifies the ref) and OFFERS are utterances (chips send words through the one composer)',
-      src('lib/room/brief.ts').includes('boardRefs.has(String(mv.target))') &&
-      rail.includes('send(o.say)') && rail.includes('THE MOVE + THE OFFERS'));
+    // RE-POINTED, STRICTER (Sep 8): board membership alone was never the law — a settled deed's CTA
+    // bound to an unrelated notice that happened to be on the same board. The ref must be ON the
+    // board AND be what the move is ABOUT (the house distinctive-token test).
+    // ⚠️ RE-POINTED (owner walk, Sep 14 — "I think I had told you to remove the chips here too"):
+    // the OFFERS half of this check named a RENDERER the owner retired. The composition law it
+    // cared about is untouched (the move is board-validated and about its own object; the offers
+    // are still composed, deduped against the move and served); what the room renders is now ONE
+    // pinned CTA and a composer, so that is what the gate reads.
+    check('R13 · THE MOVE is board-validated AND about its own object (the model picks, the code verifies the ref); the room renders ONE CTA and no chip row',
+      src('lib/room/brief.ts').includes('boardByRef.get(target)') &&
+      src('lib/room/brief.ts').includes('namesOverlap(label, about)') &&
+      !rail.includes('offerChips') && rail.includes('THE MOVE + THE OFFERS'));
     // LIVE — the responder composes {brief, move, offers} for a real tracked project; the move's
     // target, when present, is a real board ref (never an invented deed).
     const { data: cand13 } = await sb.from('work_entities').select('id, user_id, name')
@@ -521,6 +592,53 @@ const src = (p: string) => readFileSync(p, 'utf8');
         !!r?.text && (!r.move?.ref || refs.has(r.move.ref)),
         r ? `move=${r.move ? `"${r.move.label}"→${r.move.ref ?? 'no-target'}` : 'none'} · offers=${r.offers.length}` : 'no response composed');
     } else check('R13 live · responder compose (vacuous — no tracked entity with state)', true);
+  }
+
+  // ── R14 · A BRIEF NEVER OBLIGES THE MISADDRESSED (census fix #3, Sep 13) ──────────────────────
+  // Live: six of six newest room briefs were about cold outreach addressed to OTHER PEOPLE. One
+  // wrote "The email went to the wrong person and was dismissed" AND, in the same breath, "You need
+  // to confirm whether this allocation stands"; another reframed the user's own dismissal as "she's
+  // waiting on your availability". The composer could SEE the fact and obliged the user anyway —
+  // which is why the fact now arrives as a DIRECTIVE and the deed is settled in CODE.
+  {
+    const b = src('lib/room/brief.ts');
+    check('R14: the deterministic noise verdict reaches the mind through THE PRESENT',
+      /itemIsNoise\(client, userId, item\.id\)/.test(b) && /NOISE FLOOR: this item is/.test(b));
+    check('R14: it arrives as a directive, not a datum (a fact a small model can read as colour)',
+      /do NOT tell the user to reply, decide, pursue, confirm, or give availability/.test(b));
+    check('R14: the composer law — noise is named ONCE and obliges nothing',
+      /NOISE OWES NOTHING/.test(b) && /the MOVE is null/.test(b));
+    check('R14: THE USER\'S OWN DECISION IS NOT A DEBT — a dismissal is never re-opened as delinquency',
+      /THE USER'S OWN DECISION IS NOT A DEBT/.test(b) && /never re-open it as something they/.test(b));
+    check('R14: a MOVE dies on a noise anchor — a prompt rule is a hope, this is the floor',
+      /if \(move && noiseAnchor\) move = null;/.test(b));
+    check('R14: …and a MOVE may not TARGET a floored board row either',
+      /move\.ref\.startsWith\('inbox:'\)/.test(b) && /if \(n\?\.noise\) move = null;/.test(b));
+    check('R14: the noise verdict rides the sig (an un-marked row re-composes, never stands on a dead floor)',
+      /\$\{present\.noise \? 'noise' : ''\}/.test(b));
+    check('R14: the prompt changed, so the version did (every cached opening re-authors once)',
+      /ROOM_BRIEF_VERSION = 11;/.test(b) && /NOISE OWES NOTHING \+ A DISMISSAL IS A DECISION/.test(b));
+    // LIVE — a real campaign-echo room composes a position with NO move. Read-only except the
+    // room_brief cache the composer owns.
+    const { getCampaignSignature } = await import('../lib/inbox/campaign-echo');
+    const { noiseOf } = await import('../lib/prepare/noise-floor');
+    const sig = await getCampaignSignature(sb, A);
+    const { data: pend } = await sb.from('inbox_items')
+      .select('id, user_id, work_title, work_state, rule_type, type_override, source_data')
+      .eq('user_id', A).eq('status', 'pending').limit(600);
+    const noisy = (pend ?? []).find((r) => noiseOf(r as never, sig).noise);
+    if (noisy) {
+      const { ensureLooseRoomBrief, readRoomResponse } = await import('../lib/room/brief');
+      const key = `inbox:${noisy.id}`;
+      const sd = (noisy.source_data ?? {}) as Record<string, any>;
+      await ensureLooseRoomBrief(sb, A, key, {
+        title: (noisy.work_title as string) ?? null, who: sd.from_name ?? null,
+        ask: sd.understanding?.ask ?? null, prepared: sd.draft ? 'draft' : null,
+      });
+      const r = await readRoomResponse(sb, A, key);
+      check('R14 live · a noise room opens with a position and NO move',
+        !!r?.text && !r!.move, r ? `move=${r.move?.label ?? 'none'} · "${r.text.slice(0, 70)}"` : 'no response composed');
+    } else check('R14 live · noise room compose (vacuous — no floored pending row on the reference account)', true);
   }
 
   console.log('\n════ THE ONE ROOM GATES ════');

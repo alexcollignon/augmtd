@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
       // Fallback: no connected mailbox → send from the coworker (Clara) address, Reply-To the user.
       viaCoworker = true;
       const admin = createAdminClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-      // Attribute to the user's personal assistant so the from-name + signature read sensibly.
+      // Attribute to the user's chief of staff so the from-name + signature read sensibly.
       const { data: pa } = await admin
         .from('custom_agents')
         .select('id')

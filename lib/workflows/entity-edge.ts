@@ -25,6 +25,7 @@ import { findEntityFocus } from '@/lib/home/ask';
 // `distinctiveTokens` → `GENERIC_WORK_WORDS` (lib/entities/recognize), the same law the case
 // pre-pass and the named-subject veto speak.
 import { namesStatedIn } from '@/lib/workflows/case-step';
+import { GROUND_EVIDENCE_RULE } from '@/lib/room/ground-evidence';
 
 export interface WorkflowScope {
   entityId: string;
@@ -167,7 +168,10 @@ export async function entityRunGrounding(
       `far (the same page its room reads), including what arrived on earlier runs. Use it to ` +
       `compare, rank and decide against what is already here; never contradict it, and never ` +
       `present its history as this run's news:]\n` +
-      g.text.replace(/\[(?:L|F)\d+\]\s?/g, '').slice(0, 3000)
+      g.text.replace(/\[(?:L|F)\d+\]\s?/g, '').slice(0, 3000) +
+      // ONE LAW, ONE COPY (Sep 8): a run comparing against the case's accumulated page must rank
+      // the world's record above the board, or it re-raises work the case already settled.
+      `\n${GROUND_EVIDENCE_RULE}`
     );
   } catch { return null; }
 }
@@ -188,7 +192,8 @@ export async function workflowRunGrounding(
       `(the same page the project's room reads). Use it to judge relevance and frame the ` +
       `deliverable for where this work actually stands; never contradict it, and never present ` +
       `its history as this run's news:]\n` +
-      g.text.replace(/\[(?:L|F)\d+\]\s?/g, '').slice(0, 3000)
+      g.text.replace(/\[(?:L|F)\d+\]\s?/g, '').slice(0, 3000) +
+      `\n${GROUND_EVIDENCE_RULE}`
     );
   } catch { return null; }
 }

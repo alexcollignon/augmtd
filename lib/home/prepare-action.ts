@@ -3,6 +3,10 @@ import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { CAPABILITY_MAP } from './capability-map';
 import { buildItemContext, type ItemContext } from './item-context';
 import type { ItemPlanKind, ItemPlanTask } from './item-plan';
+import { dateStatedInText, timesInText } from '@/lib/utils/user-time';
+// The slot shape lives in the CLIENT-SAFE mapper (lib/prepare/invite-card.ts) so the card and the
+// preparer cannot drift; a TYPE-only import keeps this server module out of the client graph.
+import type { InviteSlot } from '@/lib/prepare/invite-card';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // PREPARE ACTION — stage 3a of the Identified-tasks execution plan. Turn a [System] step into a
@@ -34,6 +38,39 @@ export interface PreparedCalendarInvite {
    *  grounded PROPOSAL within the stated constraints (working hours, timezones), not the item's own
    *  words. The card says so; the approve gate protects. Absent/false = the item stated the time. */
   proposed?: boolean;
+  /** THE CARD CONTRACT's must-refuse, as OUTPUT (Sep 8): the OTHER slots the item itself stated —
+   *  the in-card selector's alternatives. The model may only nominate them; every one is
+   *  CODE-VERIFIED against the item's own text (`statedSlot`) before it survives, so a slot nobody
+   *  stated and the propose tier didn't ground can never render. Capped at 2. The judgment is
+   *  unchanged — this is the same single pass, retaining what it already parsed. */
+  alternatives?: InviteSlot[];
+}
+
+/** The date + time of an ISO instant, rendered in the user's zone (the clock law: never the server's). */
+function localParts(iso: string, timezone: string): { dateStr: string; hhmm: string } | null {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  try {
+    const p = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(d);
+    const g = (t: string) => p.find((x) => x.type === t)?.value ?? '';
+    const hh = g('hour') === '24' ? '00' : g('hour');
+    return { dateStr: `${g('year')}-${g('month')}-${g('day')}`, hhmm: `${hh}:${g('minute')}` };
+  } catch { return null; }
+}
+
+/**
+ * THE EVIDENCE CHECK FOR A SLOT — the same idiom as the judge's same-day mootness and the matching
+ * arc's evidence law: the model supplies the candidate, the TEXT supplies the fact. A slot survives
+ * only when BOTH its day and its clock time appear in the source's own words (dateStatedInText ·
+ * timesInText, in the user's zone). Exported so the gate can call it, not merely grep for it.
+ */
+export function statedSlot(text: string, startISO: string, timezone: string): boolean {
+  const parts = localParts(startISO, timezone);
+  if (!parts) return false;
+  return dateStatedInText(text, parts.dateStr) && timesInText(text).includes(parts.hhmm);
 }
 
 // A prepared FORWARD — the S5 send-type, mirroring the invite. The forwarded content is grounded in the
@@ -122,39 +159,48 @@ function plus30(iso: string): string {
 }
 
 /**
- * prepareCalendarInvite — GROUNDED extraction of a prepared calendar invite from the item context.
- * Uses the classification tier (NON-reasoning — same reason the item-plan classifier does: a reasoning
- * model burns its budget in the reasoning channel and emits empty content). Never invents a date or an
- * attendee: relative times ("tomorrow at 10am") resolve against the item's own date (or today); the
- * attendee list is seeded from the item's REAL participants and the model may only pick among them.
- * Returns the best partial if it can't fully ground — the card lets the user complete it.
+ * THE ONE INVITE GROUNDING (Sep 8, the chat-born card): the single pass that turns SOURCE MATERIAL
+ * + the user's ask into a prepared invite — the time discipline (the user's clock, the propose
+ * tier, the alternatives' evidence check), the attendee floor, and the honest partial, all in one
+ * place. `prepareCalendarInvite` (the item lane) and `prepareInviteFromConversation` (the chat
+ * lane) are both thin callers: forking this is how two producers would start disagreeing about
+ * what "Thursday 11h" means.
+ *
+ * Uses the classification tier (NON-reasoning — same reason the item-plan classifier does: a
+ * reasoning model burns its budget in the reasoning channel and emits empty content).
+ *
+ * THE ATTENDEE FLOOR: the model may only PICK from `knownEmails` (addresses already evidenced) —
+ * and, when `resolveNames` is supplied, NOMINATE bare names that CODE resolves through the people
+ * registry (ambiguity refuses). A model-authored address can never survive either path.
  */
-export async function prepareCalendarInvite(
+export interface InviteGrounding {
+  /** The material the invite is grounded in — its own words are the evidence for every slot. */
+  sourceText: string;
+  /** What the user asked for, in their words (the title's seed). */
+  askText: string;
+  /** The ONLY addresses the invite may carry outright (evidenced participants). */
+  knownEmails: string[];
+  /** "now" for relative-time resolution. */
+  anchorISO: string;
+  timezone: string;
+  /** What the source IS, for the prompt's header ("ITEM CONTEXT (email)" / "THE CONVERSATION"). */
+  sourceLabel: string;
+  /** The chat lane's name door: nominated names → real addresses, resolved BY CODE. */
+  resolveNames?: (names: string[]) => Promise<string[]>;
+}
+
+export async function groundInviteFromText(
   supabase: SupabaseClient,
   userId: string,
-  kind: ItemPlanKind,
-  ctx: ItemContext,
-  stepText: string,
+  g: InviteGrounding,
 ): Promise<PreparedCalendarInvite> {
-  // THE USER'S CLOCK (Aug 4): "Thursday" resolves in the USER'S timezone, never UTC — and the
-  // weekday of the anchor is STATED to the model (never model-derived; the T-class law).
-  const { userTimezone, localNow } = await import('@/lib/utils/user-time');
-  const timezone = await userTimezone(supabase, userId).catch(() => 'UTC');
-  // The real participant emails evidenced in the item — the ONLY attendees the invite may use.
-  const knownEmails = ctx.participants
-    .map((p) => (p.email || '').trim())
-    .filter((e) => EMAIL_RE.test(e));
+  const { localNow } = await import('@/lib/utils/user-time');
+  const { sourceText, askText, knownEmails, anchorISO, timezone } = g;
 
-  // Anchor for relative-time resolution: the item's own date if we have one, else today. Passed to the
-  // model as the reference "now" so "tomorrow at 10am" resolves deterministically.
-  const anchorISO = ctx.itemDateISO && !isNaN(new Date(ctx.itemDateISO).getTime())
-    ? new Date(ctx.itemDateISO).toISOString()
-    : new Date().toISOString();
-
-  // Honest empty/partial fallback — a card the user fills in (title from the step, no invented date).
+  // Honest empty/partial fallback — a card the user fills in (title from the ask, no invented date).
   const fallback = (): PreparedCalendarInvite => ({
     type: 'calendar_invite',
-    title: (stepText || 'Meeting').replace(/\s+/g, ' ').trim().slice(0, 120),
+    title: (askText || 'Meeting').replace(/\s+/g, ' ').trim().slice(0, 120),
     startISO: '',
     endISO: '',
     attendees: knownEmails.slice(0, 10),
@@ -184,11 +230,22 @@ export async function prepareCalendarInvite(
     `the stated day/window; never propose when no day or window is stated at all — then return "" for both ` +
     `("proposed" false) and the user sets it.\n` +
     `- "attendees": ONLY emails from the KNOWN list above that should be invited. If none apply, [].\n` +
-    `- "description": one short line of agenda/purpose from the context, or "".\n\n` +
+    (g.resolveNames
+      ? `- "attendee_names": the people the user NAMED who have no address in the KNOWN list ` +
+        `("with Sam" → ["Sam"]). Names exactly as written, never an address you compose — we resolve ` +
+        `them against the user's own contacts ourselves. [] when everyone is already covered.\n`
+      : '') +
+    `- "description": one short line of agenda/purpose from the context, or "".\n` +
+    `- "alternatives": the OTHER times the context ITSELF states as options ("Tuesday or Wednesday at ` +
+    `11", "I'm free Thursday 10:00 or Friday 14:00") — never a time you invent, never a variation of ` +
+    `the one you chose. Each: {"startISO","endISO","note":"a few words on whose/what slot it is"}. ` +
+    `Resolve them against the REFERENCE DATE like the main one. [] when the context names only one time.\n\n` +
     `Return ONLY JSON:\n` +
-    `{"title":"...","startISO":"...or empty","endISO":"...or empty","proposed":true|false,"attendees":["..."],"description":"..."}\n\n` +
-    `--- THE STEP THE USER WANTS DONE ---\n${(stepText || '').slice(0, 200)}\n\n` +
-    `--- ITEM CONTEXT (${kind}) ---\n${(ctx.text || '').slice(0, 2500)}`;
+    `{"title":"...","startISO":"...or empty","endISO":"...or empty","proposed":true|false,"attendees":["..."],` +
+    (g.resolveNames ? `"attendee_names":["..."],` : '') +
+    `"description":"...","alternatives":[]}\n\n` +
+    `--- THE STEP THE USER WANTS DONE ---\n${(askText || '').slice(0, 400)}\n\n` +
+    `--- ${g.sourceLabel} ---\n${(sourceText || '').slice(0, 2500)}`;
 
   try {
     const { client: ai, model } = await getAIClient(userId, 'classification', supabase);
@@ -218,16 +275,80 @@ export async function prepareCalendarInvite(
     const picked = Array.isArray(obj.attendees)
       ? (obj.attendees as unknown[]).map((a) => String(a).trim()).filter((e) => EMAIL_RE.test(e) && known.has(e.toLowerCase()))
       : [];
+    // THE NAME DOOR (the chat lane): names the pass NOMINATED are resolved by CODE against the
+    // user's own people registry — ambiguity refuses (the card then asks). The model never
+    // supplies an address; it only points at a human the user already corresponds with.
+    let resolved: string[] = [];
+    if (g.resolveNames) {
+      const names = Array.isArray(obj.attendee_names)
+        ? (obj.attendee_names as unknown[]).map((n) => String(n).trim()).filter((n) => n && !n.includes('@')).slice(0, 5)
+        : [];
+      if (names.length) resolved = (await g.resolveNames(names)).filter((e) => EMAIL_RE.test(e));
+    }
     // If the model returned none but we DO have known participants, seed them (the user can trim).
-    const attendees = (picked.length ? picked : knownEmails).slice(0, 10);
+    const attendees = [...new Set([...(picked.length ? picked : knownEmails), ...resolved])].slice(0, 10);
 
     const description = typeof obj.description === 'string' ? obj.description.trim().slice(0, 1000) : '';
 
-    return { type: 'calendar_invite', title: title.slice(0, 120), startISO, endISO, attendees, description, timezone, proposed: obj.proposed === true && !!startISO };
+    // THE ALTERNATIVES — nominated by the same pass, then CODE-VERIFIED against the item's own
+    // words (statedSlot). An unverifiable slot is DROPPED, never softened into a suggestion: the
+    // card contract's must-refuse is enforced here, before anything can render.
+    const alternatives: InviteSlot[] = [];
+    const seen = new Set([startISO]);
+    for (const raw of Array.isArray(obj.alternatives) ? (obj.alternatives as unknown[]) : []) {
+      if (alternatives.length >= 2) break;
+      const a = raw as { startISO?: unknown; endISO?: unknown; note?: unknown };
+      let s = typeof a?.startISO === 'string' ? a.startISO.trim() : '';
+      if (!s || isNaN(new Date(s).getTime())) continue;
+      s = new Date(s).toISOString();
+      if (seen.has(s)) continue;
+      if (!statedSlot(sourceText, s, timezone)) continue;   // ← the evidence check
+      let e = typeof a?.endISO === 'string' && !isNaN(new Date(a.endISO).getTime()) ? new Date(a.endISO).toISOString() : '';
+      if (!e || new Date(e) <= new Date(s)) e = plus30(s);
+      seen.add(s);
+      alternatives.push({ startISO: s, endISO: e, note: typeof a?.note === 'string' ? a.note.trim().slice(0, 60) : undefined });
+    }
+
+    return {
+      type: 'calendar_invite', title: title.slice(0, 120), startISO, endISO, attendees, description, timezone,
+      proposed: obj.proposed === true && !!startISO,
+      ...(alternatives.length ? { alternatives } : {}),
+    };
   } catch (e) {
-    console.error('[prepare-action] prepareCalendarInvite failed:', e);
+    console.error('[prepare-action] groundInviteFromText failed:', e);
     return fallback();
   }
+}
+
+/**
+ * prepareCalendarInvite — the ITEM lane's caller of the one grounding. Never invents a date or an
+ * attendee: relative times ("tomorrow at 10am") resolve against the item's own date (or today); the
+ * attendee list is seeded from the item's REAL participants and the model may only pick among them
+ * (no name door here — an item's people ARE its evidenced addresses).
+ * Returns the best partial if it can't fully ground — the card lets the user complete it.
+ */
+export async function prepareCalendarInvite(
+  supabase: SupabaseClient,
+  userId: string,
+  kind: ItemPlanKind,
+  ctx: ItemContext,
+  stepText: string,
+): Promise<PreparedCalendarInvite> {
+  // THE USER'S CLOCK (Aug 4): "Thursday" resolves in the USER'S timezone, never UTC.
+  const { userTimezone } = await import('@/lib/utils/user-time');
+  const timezone = await userTimezone(supabase, userId).catch(() => 'UTC');
+  return groundInviteFromText(supabase, userId, {
+    sourceText: ctx.text || '',
+    askText: stepText || '',
+    // The real participant emails evidenced in the item — the ONLY attendees the invite may use.
+    knownEmails: ctx.participants.map((p) => (p.email || '').trim()).filter((e) => EMAIL_RE.test(e)),
+    // Anchor for relative-time resolution: the item's own date if we have one, else today.
+    anchorISO: ctx.itemDateISO && !isNaN(new Date(ctx.itemDateISO).getTime())
+      ? new Date(ctx.itemDateISO).toISOString()
+      : new Date().toISOString(),
+    timezone,
+    sourceLabel: `ITEM CONTEXT (${kind})`,
+  });
 }
 
 /**
@@ -344,6 +465,12 @@ export async function prepareAction(
       attendees: Array.isArray(stored.attendees) ? (stored.attendees as string[]).filter((a) => typeof a === 'string') : [],
       description: typeof stored.description === 'string' ? stored.description : '',
       timezone: typeof stored.timezone === 'string' && stored.timezone ? stored.timezone : 'UTC',
+      proposed: stored.proposed === true,
+      // The pass stored its verified alternatives with the artifact — the selector survives the
+      // round-trip (a stored invite that lost its options would silently become a one-slot card).
+      ...(Array.isArray(stored.alternatives) && (stored.alternatives as unknown[]).length
+        ? { alternatives: (stored.alternatives as InviteSlot[]).filter((a) => a && typeof a.startISO === 'string').slice(0, 2) }
+        : {}),
     };
   }
   const ctx = await buildItemContext(supabase, userId, input.kind, input.entityId);

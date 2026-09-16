@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import {
   ChevronRightIcon, CheckIcon, XMarkIcon, ArrowRightIcon, StarIcon,
   ArchiveBoxIcon, PencilIcon, TrashIcon, ArrowUturnLeftIcon, BellSlashIcon, MagnifyingGlassIcon, PlusIcon, ArrowsPointingInIcon,
@@ -24,8 +24,11 @@ import {
 import { toast } from 'sonner';
 import { broadcastProjectsUpdated } from '@/lib/projects/broadcast';
 import { RiseIn } from '@/components/home/rise-in';
-import EntityRoom, { warmEntityRoom, cancelWarmEntityRoom } from '@/components/entities/entity-room';
+import { warmEntityRoom, cancelWarmEntityRoom } from '@/components/entities/entity-room';
+import { projectHref } from '@/lib/room/project-href';
+import { ENTITY_CATEGORIES, categoryOf, categorySwatchClass } from '@/lib/entities/category-colors';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { mayReplaceInPlace, freezeRows, hasContent, type ArrivalReason } from '@/lib/room/no-mutation';
 import { useFeatures } from '@/context/workspace-context';
 import { useLiveRefresh } from '@/hooks/use-live-refresh';
 import { MOMENTUM as MOMENTUM_TOKENS } from '@/lib/work-items/states';
@@ -35,7 +38,7 @@ type Entity = {
   momentum: string; summary: string | null; stage: string | null;
   whoOwes: { you: string[]; them: string[] };
   nextMove: { title: string; entityRef: string | null } | null;
-  weight: number; nextDue?: string | null; quietDays: number | null; itemCount: number; closureCandidate: boolean; prominent: boolean; category: string | null;
+  weight: number; nextDue?: string | null; lastEventAt?: string | null; quietDays: number | null; itemCount: number; closureCandidate: boolean; prominent: boolean; category: string | null;
   scope: 'project' | 'errand' | 'background' | null;
   events: Array<{ at: string; kind: string; label: string; id: string }>;
   goals?: string[]; rules?: string[];
@@ -192,10 +195,13 @@ function Row({ e, onAction, onOpen, others = [] }: { e: Entity; onAction: (id: s
                             <button onClick={() => { setMore(false); setRenaming(true); }} className="flex items-center gap-2 w-full px-3 py-1.5 text-[12px] text-neutral-600 hover:bg-neutral-50"><PencilIcon className="w-3.5 h-3.5" />Rename</button>
                             <button onClick={() => setMerging(true)} className="flex items-center gap-2 w-full px-3 py-1.5 text-[12px] text-neutral-600 hover:bg-neutral-50"><ArrowsPointingInIcon className="w-3.5 h-3.5" />Merge into…</button>
                         <div className="my-1 border-t border-neutral-100" />
-                        {(['client', 'internal', 'personal', 'admin'] as const).map((c) => (
+                        {ENTITY_CATEGORIES.map((c) => (
                           <button key={c} onClick={() => { setMore(false); onAction(e.id, 'category', c); }} className={`flex items-center gap-2 w-full px-3 py-1 text-[12px] hover:bg-neutral-50 ${e.category === c ? 'text-indigo-600 font-medium' : 'text-neutral-500'}`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${c === 'client' ? 'bg-emerald-500' : c === 'internal' ? 'bg-indigo-500' : c === 'personal' ? 'bg-violet-500' : 'bg-neutral-400'}`} />
-                            {c[0].toUpperCase() + c.slice(1)}
+                            {/* A SQUARE, not a dot — category is a different DIMENSION than the
+                                momentum circles on these same rows (ONE SHAPE PER FACT). Colors come
+                                from the ONE category map, never an inline ternary. */}
+                            <span className={categorySwatchClass(c)} />
+                            {categoryOf(c).label}
                           </button>
                         ))}
                           </>
@@ -217,24 +223,27 @@ function Row({ e, onAction, onOpen, others = [] }: { e: Entity; onAction: (id: s
 export default function PortfolioView({ onDetailChange }: { onDetailChange?: (open: boolean) => void } = {}) {
   // Sovereign copy law: an email-off workspace never reads mailbox framing ("as mail flows in").
   const features = useFeatures();
+  const router = useRouter();
   // SSR'd-route rule: initializer COLD; the cache hydrates pre-paint in a layout effect.
   const [data, setData] = useState<Portfolio | null>(null);
-  useLayoutEffect(() => { const c = loadLS<Portfolio>('aug-portfolio-v1'); if (c) setData((prev) => prev ?? c); }, []);
-  const [statusTab, setStatusTab] = useState<'active' | 'done' | 'archived' | 'muted'>('active');
+  // THE NO-MUTATION LAW needs the SERVED portfolio synchronously (a landing payload decides what the
+  // reader keeps against what is painted RIGHT NOW, not against a state read from a stale closure).
+  // This ref mirrors `data` at every write — every setData site goes through `apply`.
+  const dataRef = useRef<Portfolio | null>(null);
+  const apply = useCallback((next: Portfolio | ((prev: Portfolio | null) => Portfolio | null)) => {
+    setData((prev) => {
+      const v = typeof next === 'function' ? next(prev) : next;
+      dataRef.current = v;
+      return v;
+    });
+  }, []);
+  useLayoutEffect(() => { const c = loadLS<Portfolio>('aug-portfolio-v1'); if (c) apply((prev) => prev ?? c); }, [apply]);
   const [tailOpen, setTailOpen] = useState(false);
+  const [pastOpen, setPastOpen] = useState(false); // THE PAST — concluded / archived / muted, folded
   const [hidden, setHidden] = useState<Set<string>>(new Set()); // optimistic removals this session
-  const [selected, setSelected] = useState<string | null>(null); // the open entity detail
-  // Deep-link door (P7c → room-door law, Aug 3): /home?view=projects&entity=<id> opens straight
-  // into this deal's ROOM — deck rows on project items, "Open project", any surface routes here.
-  // Keyed on useSearchParams so a soft nav while already mounted (query-only change) still lands.
-  const searchParams = useSearchParams();
-  useEffect(() => {
-    try {
-      const id = searchParams.get('entity');
-      if (id) { setSelected(id); onDetailChange?.(true); }
-    } catch { /* non-fatal */ }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  // THE ADDRESS LAW (Sep 5): the deep-link door moved to the ROUTE — /project/<id> IS the room.
+  // The legacy `?entity=`/`?project=` forms are forwarded by the Home page, so nothing reads a
+  // query param here any more (the old in-place `selected` room is gone with it).
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
@@ -242,20 +251,40 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
   const [saving, setSaving] = useState(false);
 
   const [fresh, setFresh] = useState(false); // a REAL fetch landed this session (empty-state honesty gate)
-  const load = useCallback(() => {
+  // THE NO-MUTATION LAW (lib/room/no-mutation.ts): the portfolio is a SERVED surface — its rows carry
+  // the machine's verdicts (the momentum word, the subline, the fold's order), and nobody asked a
+  // poll to rewrite them mid-read. So a `background` arrival APPENDS projects the reader has never
+  // seen and leaves every painted row exactly as it opened; an `open` arrival with something already
+  // painted (the cache) becomes the NEXT open's first paint; only the reader's own deed (`user` —
+  // create, track, done, archive, mute, rename, merge, category, intent) replaces in place.
+  const load = useCallback((reason: ArrivalReason = 'user') => {
     // LAST-GOOD LAW: only a VALID response replaces state or touches the shared cache — an
     // error/empty payload must never clobber last-good nor poison aug-portfolio-v1 (the
     // "Nothing here" flash, July 29).
-    fetch('/api/entities/portfolio').then((r) => r.json()).then((d) => {
+    fetch('/api/entities/portfolio').then((r) => r.json()).then((d: Portfolio) => {
       if (!d || !Array.isArray(d.entities)) return;
-      setData(d); saveLS('aug-portfolio-v1', d); setFresh(true);
+      // A held payload is never a lost one: the cache IS the next open's first paint.
+      saveLS('aug-portfolio-v1', d); setFresh(true);
+      // THE EMPTY-PAINT RULE: a painted empty portfolio is a skeleton, not content — it must
+      // never hold a real payload behind "being mapped" (found live, Sep 7).
+      const painted = dataRef.current && hasContent(dataRef.current.entities.length) ? dataRef.current : null;
+      if (mayReplaceInPlace(reason, !!painted) || !painted) { apply(d); return; }
+      if (reason !== 'background') return; // an `open` landing on a painted view is held whole
+      apply({
+        // hasMemory governs whether the rows render at all — a background flip would blank a
+        // painted portfolio, so the painted answer stands for this open.
+        hasMemory: painted.hasMemory || d.hasMemory,
+        entities: freezeRows(painted.entities, d.entities, (e) => e.id),
+      });
     }).catch(() => {});
-  }, []);
-  useEffect(() => { load(); }, [load]);
-  // 2-WAY LIVE (F5): a meeting-side attach / room change / chat command shows here without a reload.
-  useLiveRefresh(load);
-  // Hide the Home greeting while a detail is open (like the item deep-dive). Refresh the list on close.
-  const openDetail = useCallback((id: string) => { setSelected(id); onDetailChange?.(true); }, [onDetailChange]);
+  }, [apply]);
+  useEffect(() => { load('open'); }, [load]);
+  // 2-WAY LIVE (F5): a meeting-side attach / room change / chat command shows here without a reload —
+  // as an APPEND (a new project takes its seat); painted rows keep their words until the next open.
+  useLiveRefresh(() => load('background'));
+  // Opening a project is a NAVIGATION now — the room owns its address (/project/<id>), so back,
+  // refresh and a copied URL all tell the truth.
+  const openDetail = useCallback((id: string) => { router.push(projectHref(id)); }, [router]);
   // Create a project by hand — founds a TRACKED entity (same endpoint + registry the meetings sidebar uses;
   // transversal by construction). Opens the new project so goals/rules can be set. Broadcasts so meetings picks it up.
   const createProject = useCallback(async () => {
@@ -269,12 +298,13 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
       // Attach the chosen work — the ONE sticky membership write per item (locked, cascaded, reconciled).
       broadcastProjectsUpdated({ reason: 'create' });
       setCreating(false); setNewName(''); setNewDesc('');
-      load();
+      load('user');
       if (id) openDetail(id);
     } catch { toast.error('Could not create the project'); } finally { setSaving(false); }
   }, [newName, newDesc, saving, load, openDetail]);
-  const closeDetail = useCallback(() => { setSelected(null); onDetailChange?.(false); load(); }, [onDetailChange, load]);
-  useEffect(() => () => onDetailChange?.(false), [onDetailChange]);
+  // The grid never hosts a room any more, so the "a detail is open" signal is always false —
+  // announced once so the Home greeting state can't be left stuck from an earlier session.
+  useEffect(() => { onDetailChange?.(false); }, [onDetailChange]);
   // Lock body scroll while the modal is open (stops the page jumping / scrolling behind the overlay).
   useEffect(() => {
     if (!creating) return;
@@ -286,14 +316,14 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
   // ACCEPT is INSTANT (5A.2): flip tracked locally (the row moves to "Your projects" in the same
   // render), fire the PATCH behind, restore + toast on failure. A silent reconcile load follows.
   const acceptOptimistic = useCallback((id: string) => {
-    setData((prev) => (prev ? { ...prev, entities: prev.entities.map((e) => (e.id === id ? { ...e, tracked: true } : e)) } : prev));
+    apply((prev) => (prev ? { ...prev, entities: prev.entities.map((e) => (e.id === id ? { ...e, tracked: true } : e)) } : prev));
     fetch(`/api/entities/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'track' }) })
-      .then((r) => { if (!r.ok) throw new Error(); load(); })
+      .then((r) => { if (!r.ok) throw new Error(); load('user'); })
       .catch(() => {
-        setData((prev) => (prev ? { ...prev, entities: prev.entities.map((e) => (e.id === id ? { ...e, tracked: false } : e)) } : prev));
+        apply((prev) => (prev ? { ...prev, entities: prev.entities.map((e) => (e.id === id ? { ...e, tracked: false } : e)) } : prev));
         toast.error("Couldn't accept — try again");
       });
-  }, [load]);
+  }, [load, apply]);
 
   const onAction = useCallback(async (id: string, action: string, name?: string) => {
     if (action === 'track') { acceptOptimistic(id); return; }
@@ -301,16 +331,18 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
       const vals = JSON.parse(name || '[]') as string[];
       const body = action === 'intent-goals' ? { action: 'intent', goals: vals } : { action: 'intent', rules: vals };
       await fetch(`/api/entities/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
-      load();
+      load('user');
       return;
     }
     if (!['rename', 'track', 'untrack', 'category'].includes(action)) setHidden((p) => new Set(p).add(id));
     const payload = action === 'merge' ? { action, targetId: name } : action === 'category' ? { action, category: name } : { action, name };
     await fetch(`/api/entities/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => {});
-    load();
+    load('user');
   }, [load, acceptOptimistic]);
 
-  if (selected) return <EntityRoom entityId={selected} onBack={closeDetail} />;
+  // THE ADDRESS LAW (Sep 5): the room is no longer rendered in place here — a row click navigates
+  // to /project/<id>, the room's own address. What used to live at this line was the violation:
+  // a full room painted while the URL still said /home.
 
   if (!data) {
     return (
@@ -345,13 +377,25 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
     return hay.includes(q);
   };
   const searching = q.length > 0;
-  const inTab = live.filter((e) => e.status === statusTab && matches(e)).sort((a, b) => b.weight - a.weight);
+  // ── THE PORTFOLIO SHOWS THE PAST, SUBTLY (owner walk, Sep 14: "missing the concluded, archived
+  // etc? so user can still see all? maybe toggle/tabs? subtle") ─────────────────────────────────
+  // The past WAS reachable — via three status pills top-right that swapped the whole list for a
+  // tab. Two things made that a dead end: the pills HID THEMSELVES at zero (and under the pinning
+  // law a tracked project is only ever concluded by hand, so most accounts never saw one), and a
+  // tab-swap answers "show me only the past" when the question was "can I still see all of it?".
+  // So the past comes back where it belongs — AT THE TAIL of the living list, folded, muted, in
+  // the fold idiom the quiet tail already uses. ONE HOME for concluded work; no second lens.
+  // THE ACTIVE LIST NEVER MIXES: `inTab` is active-only by construction, so a concluded project
+  // can only ever appear inside the fold the reader opened.
+  const inTab = live.filter((e) => e.status === 'active' && matches(e)).sort((a, b) => b.weight - a.weight);
+  const past = live.filter((e) => e.status !== 'active' && matches(e))
+    .sort((a, b) => (b.lastEventAt ?? '').localeCompare(a.lastEventAt ?? ''));
   // ── THE CURATED PORTFOLIO (Phase 3 F3): "Your projects" = ACCEPTED only (created or accepted —
   // the tracked flag); the brain NEVER silently places. "Suggested" = the JUDGE's scope='project'
   // verdict awaiting your one-tap acceptance (no growth heuristics — suggestion is the judge's
   // verdict, acceptance is yours). Errands + not-yet-judged fold as Smaller things; background
   // hidden. While searching/filtering: flat list of EVERYTHING — search must always find things.
-  const flat = searching || statusTab !== 'active';
+  const flat = searching;
   const projects = flat ? inTab : inTab.filter((e) => e.tracked);
   // R4 (one-room) — projects are HUMAN-CREATED only: the brain never pushes containers. Everything
   // (smaller-things fold removed — see the tracked-only filter above); the discovery path
@@ -372,7 +416,6 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
   const tail = folded ? rest : [];
   // Merge targets: every ACTIVE project (the ⋯ "Merge into…" list).
   const mergeTargets = live.filter((e) => e.status === 'active' && (e.tracked || e.scope === 'project' || e.scope === null)).map((e) => ({ id: e.id, name: e.name }));
-  const counts = { active: live.filter((e) => e.status === 'active').length, done: live.filter((e) => e.status === 'done').length, archived: live.filter((e) => e.status === 'archived').length, muted: live.filter((e) => e.status === 'muted').length };
 
   return (
     <div className="mt-7">
@@ -431,8 +474,8 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
           </p>
         </div>
       ) : (<>
-      {/* Toolbar — instant search + filter chips. The Active status is the implicit default (no pill);
-          Done/Archived/Muted appear only when they exist. */}
+      {/* Toolbar — instant search. The Done/Archived/Muted status PILLS are retired: the past is
+          not a lens you switch into, it is a fold at the tail of the living list (see `past`). */}
       <div className="mb-4 flex items-center gap-2 flex-wrap">
         <div className="relative flex-1 min-w-[200px] max-w-[340px]">
           <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-neutral-300" />
@@ -442,15 +485,6 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
             className="w-full rounded-full border border-neutral-200 bg-white/80 pl-8 pr-8 py-1.5 text-[12.5px] text-neutral-700 placeholder:text-neutral-300 outline-none focus:border-indigo-300 transition-colors"
           />
           {query && <button onClick={() => setQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-300 hover:text-neutral-500"><XMarkIcon className="w-3.5 h-3.5" /></button>}
-        </div>
-        <div className="flex items-center gap-1 ml-auto">
-          {(['done', 'archived', 'muted'] as const).map((t) => (
-            counts[t] > 0 && (
-              <button key={t} onClick={() => setStatusTab(statusTab === t ? 'active' : t)} className={`rounded-full px-2.5 py-1 text-[12px] font-medium transition-all duration-150 ${statusTab === t ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:text-neutral-600'}`}>
-                {t[0].toUpperCase() + t.slice(1)} {counts[t]}
-              </button>
-            )
-          ))}
         </div>
       </div>
       <div className="space-y-2">
@@ -464,6 +498,37 @@ export default function PortfolioView({ onDetailChange }: { onDetailChange?: (op
               <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${tailOpen ? 'rotate-90' : ''}`} />
             </button>
             {tailOpen && <div className="space-y-2 pt-1">{tail.map((e) => <Row key={e.id} e={e} onAction={onAction} onOpen={openDetail} others={mergeTargets} />)}</div>}
+          </>
+        )}
+        {/* THE PAST, FOLDED — one muted text-toggle at the tail, the same fold idiom as the quieter
+            projects above it. Slim rows: the status word · the name · a category swatch · when it
+            last moved. A row still OPENS its room (a concluded project is readable, not deleted —
+            the pinning law: archived ≠ gone), and Reopen lives inside the room's own verbs. */}
+        {past.length > 0 && (
+          <>
+            <button onClick={() => setPastOpen((v) => !v)} className="inline-flex items-center gap-1 text-[12px] font-medium text-neutral-400 hover:text-neutral-600 transition-colors pt-1">
+              Concluded &amp; archived · {past.length}
+              <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${pastOpen ? 'rotate-90' : ''}`} />
+            </button>
+            {pastOpen && (
+              <div className="pt-1">
+                {past.map((e) => (
+                  <button key={e.id} onClick={() => openDetail(e.id)}
+                    onMouseEnter={() => warmEntityRoom(e.id)} onMouseLeave={() => cancelWarmEntityRoom(e.id)}
+                    className="w-full flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-left transition-colors hover:bg-neutral-50">
+                    {/* THE SWATCH — square by law, from the one category vocabulary. */}
+                    <span className={`flex-shrink-0 ${categorySwatchClass(e.category)}`} />
+                    <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-500">{e.name}</span>
+                    <span className="flex-shrink-0 text-[11px] text-neutral-300 capitalize">{e.status}</span>
+                    {e.lastEventAt && (
+                      <span className="flex-shrink-0 text-[11px] text-neutral-300 w-[52px] text-right">
+                        {new Date(e.lastEventAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
           </>
         )}
         {/* "Nothing here" is a CLAIM — only made once a real fetch has confirmed it. Until then

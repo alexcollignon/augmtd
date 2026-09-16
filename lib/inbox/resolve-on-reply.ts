@@ -182,6 +182,19 @@ export async function resolveThreadOnReply(opts: {
       });
     }
 
+    // ── LAW 4 · ONE CONVERSATION, ONE OBLIGATION: the same exchange may live on a second thread
+    // (a counterparty told to write to the user's other address). Settlement spreads — bounded,
+    // best-effort, once per settle, and only across a STRUCTURAL bridge that has not moved since;
+    // everything softer is nominated for the judge. Never fatal to the resolution itself. ──
+    if (out.resolvedItems || out.resolvedCommitments) {
+      try {
+        const { cascadeConversationSettlement } = await import('@/lib/inbox/conversation-identity');
+        await cascadeConversationSettlement(client, userId, {
+          threadId, settledAt: new Date().toISOString(), via: 'you replied',
+        });
+      } catch { /* the cascade is an enhancement — this thread is settled regardless */ }
+    }
+
     // Bust the Home brief cache once, only if something actually resolved, so the Home drops it.
     if ((out.resolvedItems || out.resolvedCommitments) && opts.bustBriefCache) {
       await opts.bustBriefCache().catch(() => {});

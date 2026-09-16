@@ -17,6 +17,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
+import { signedUrlForKbFile, type KbFileRowMeta } from '@/lib/knowledge/file-bucket';
 
 export interface ComputeConfig {
   description?: string;   // one line: what this computes (for the log/narration)
@@ -51,7 +52,7 @@ export const runComputeDefinition = {
   },
 };
 
-const BUCKETS = ['drive-uploads', 'work-artifacts'] as const; // where storage-backed KB files live
+
 
 function admin(): SupabaseClient {
   return createAdminClient(
@@ -61,14 +62,11 @@ function admin(): SupabaseClient {
   );
 }
 
-/** A signed URL for a knowledge file's raw bytes — the row doesn't record its bucket, so probe
- *  the known ones (uploads first — the common case). Null = not storage-backed (drive-connector). */
-async function signedUrlFor(adminClient: SupabaseClient, storagePath: string): Promise<string | null> {
-  for (const bucket of BUCKETS) {
-    const { data } = await adminClient.storage.from(bucket).createSignedUrl(storagePath, 3600);
-    if (data?.signedUrl) return data.signedUrl;
-  }
-  return null;
+/** A signed URL for a knowledge file's raw bytes, signed against THE ROW'S OWN BUCKET (Sep 14 —
+ *  lib/knowledge/file-bucket.ts; the row used to record only its path, so this probed blindly and
+ *  never looked in email-attachments at all). Null = not storage-backed (drive-connector). */
+async function signedUrlFor(adminClient: SupabaseClient, row: KbFileRowMeta): Promise<string | null> {
+  return (await signedUrlForKbFile(adminClient, row, 3600))?.url ?? null;
 }
 
 // ── THE RAW JOB RUNNER (DH6, the document compiler) — same locked room, but the caller gets
@@ -122,7 +120,7 @@ export async function executeRunCompute(
   const ids = [...new Set((config.file_ids ?? []).map(String))].slice(0, 20);
   if (ids.length) {
     const { data: rows } = await supabase.from('knowledge_files')
-      .select('id, filename, storage_path, mime_type')
+      .select('id, filename, storage_path, origin, mime_type')
       .in('id', ids).eq('user_id', userId);
     const found = new Map((rows ?? []).map((r) => [String(r.id), r]));
     for (const id of ids) {
@@ -131,7 +129,7 @@ export async function executeRunCompute(
       if (!row.storage_path) {
         return `Input "${row.filename}" lives in a connected drive (not our storage) and can't be mounted into the sandbox yet — nothing was run. Ask the user to upload it, or work from its indexed text instead.`;
       }
-      const url = await signedUrlFor(adminClient, String(row.storage_path));
+      const url = await signedUrlFor(adminClient, row as KbFileRowMeta);
       if (!url) return `Input "${row.filename}" could not be retrieved from storage — nothing was run.`;
       files.push({ name: String(row.filename), url });
       manifest.push(String(row.filename));

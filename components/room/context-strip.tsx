@@ -13,6 +13,7 @@ import { useRouter } from 'next/navigation';
 import { ChevronRightIcon, EnvelopeIcon, CalendarDaysIcon, DocumentIcon, CheckCircleIcon, FolderIcon } from '@heroicons/react/24/outline';
 import { fmtMonthDay } from '@/lib/utils/format-date';
 import type { RailView } from '@/components/home/item-rail';
+import { projectHref } from '@/lib/room/project-href';
 
 type StripKind = 'email' | 'followup' | 'commitment' | 'meeting' | 'awareness';
 
@@ -28,9 +29,12 @@ function Chip({ icon, label, onClick }: { icon?: React.ReactNode; label: string;
   );
 }
 
-export function ContextStrip({ kind, id, view }: { kind: StripKind; id: string; view: RailView }) {
+export function ContextStrip({ kind, id, view, defaultOpen = false }: { kind: StripKind; id: string; view: RailView; defaultOpen?: boolean }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  // THE DRAWER IS ALREADY THE DISCLOSURE (Sep 7): summoned inside the item room's Filed drawer the
+  // strip opens with it — a fold inside a fold is a click that buys nothing. On a stage it stays
+  // collapsed, as it always has.
+  const [open, setOpen] = useState(defaultOpen);
   const [founding, setFounding] = useState(false);
   const [foundName, setFoundName] = useState('');
   const [founded, setFounded] = useState<string | null>(null);
@@ -75,7 +79,7 @@ export function ContextStrip({ kind, id, view }: { kind: StripKind; id: string; 
               discovery chip stays: it's the "connects to X" door, a different job. */}
           {ent && ent.tracked === false && (
             <div className="flex flex-wrap gap-1.5">
-              <Chip label={`Related work · ${ent.name}`} onClick={() => router.push(`/home?view=projects&entity=${ent.id}`)} />
+              <Chip label={`Related work · ${ent.name}`} onClick={() => router.push(projectHref(ent.id))} />
             </div>
           )}
           {!ent && !founded && (

@@ -30,11 +30,47 @@ export function loadLS<T>(key: string, opts?: { maxAgeMs?: number }): T | null {
   }
 }
 
+// ── THE QUOTA EVICTION (found live, Sep 7 — the walk) ──────────────────────────────────────────
+// localStorage hit its ~5MB quota and every save on the origin failed SILENTLY for two days: the
+// instant-load layer kept serving increasingly stale paint (a stale-empty portfolio, a 2-day-old
+// brief, a dead sidebar badge) while looking perfectly healthy. The layer must SELF-HEAL: on
+// quota, evict the OLDEST of our own stamped envelopes and retry once. Scope is strictly `aug-`
+// keys with the envelope shape — a dev origin (localhost:3000) is shared with other apps' storage,
+// which is never ours to delete.
+function evictOldestAugEnvelopes(sparedKey: string, maxEvictions = 12): number {
+  let evicted = 0;
+  try {
+    const candidates: Array<{ key: string; at: number }> = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (!k || !k.startsWith('aug-') || k === sparedKey) continue;
+      try {
+        const parsed: unknown = JSON.parse(window.localStorage.getItem(k) ?? '');
+        if (isEnvelope(parsed)) candidates.push({ key: k, at: parsed.__at });
+      } catch { /* not ours to judge */ }
+    }
+    candidates.sort((a, b) => a.at - b.at);
+    for (const c of candidates.slice(0, maxEvictions)) {
+      window.localStorage.removeItem(c.key);
+      evicted++;
+    }
+  } catch { /* best-effort */ }
+  return evicted;
+}
+
 export function saveLS(key: string, value: unknown): void {
   try {
     if (typeof window === 'undefined') return;
-    window.localStorage.setItem(key, JSON.stringify({ __at: Date.now(), __v: value } satisfies Envelope));
+    const blob = JSON.stringify({ __at: Date.now(), __v: value } satisfies Envelope);
+    try {
+      window.localStorage.setItem(key, blob);
+    } catch {
+      // Quota: evict our oldest stamped caches and retry ONCE. A cache is a convenience — the
+      // oldest ones are the least likely to ever be read again, and a failed save that leaves a
+      // STALE blob standing is worse than a missing one.
+      if (evictOldestAugEnvelopes(key) > 0) window.localStorage.setItem(key, blob);
+    }
   } catch {
-    /* quota / serialization — non-fatal */
+    /* quota after eviction / serialization — non-fatal */
   }
 }

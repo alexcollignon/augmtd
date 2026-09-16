@@ -13,6 +13,7 @@ import { useRouter } from 'next/navigation';
 import { CheckCircleIcon, ChevronRightIcon, FolderIcon } from '@heroicons/react/24/outline';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { useLiveRefresh } from '@/hooks/use-live-refresh';
+import { mayReplaceInPlace, freezeRows, hasContent, type ArrivalReason } from '@/lib/room/no-mutation';
 import { cleanTitle } from '@/lib/work-items/report';
 import type { WorkItem } from '@/lib/work-items/model';
 import { RiseIn } from '@/components/home/rise-in';
@@ -99,28 +100,58 @@ function FoldList({ items, todayStr, marker, onActed, visible, muted }: {
   );
 }
 
+// THE NO-MUTATION LAW (lib/room/no-mutation.ts): the report's lines ARE its composed prose — a
+// title, an entity, a due word, a "blocked on" — written by the machine and read by a person. On a
+// background arrival every painted line keeps its words and its seat under its section; work that
+// has genuinely arrived APPENDS at the end of its lane. The counts ride the fresh payload: they are
+// ambient chrome (the day ring), and the two that sit beside a list are re-derived from the served
+// lanes in `live` below, so a frozen lane and its number can never disagree.
+function freezeForOpen(prev: Report, next: Report): Report {
+  const lane = (p: WorkItem[] | undefined, n: WorkItem[] | undefined) => freezeRows(p, n, (w) => w.id);
+  return {
+    ...next,
+    doneToday: lane(prev.doneToday, next.doneToday),
+    needsYou: lane(prev.needsYou, next.needsYou),
+    openQuestions: lane(prev.openQuestions, next.openQuestions),
+    triage: lane(prev.triage, next.triage),
+    stale: lane(prev.stale, next.stale),
+    meetingsToday: lane(prev.meetingsToday, next.meetingsToday),
+  };
+}
+
 export default function DailyReport({ onCounts }: { onCounts?: (c: ReportCounts) => void }) {
   const [report, setReport] = useState<Report | null>(() => null);
   const [acted, setActed] = useState<Set<string>>(new Set()); // optimistic hide this session
   const aliveRef = useRef(true);
+  // The SERVED report, synchronously — the arrival decision reads what is painted RIGHT NOW.
+  const paintedRef = useRef<Report | null>(null);
+  const apply = useCallback((r: Report) => { paintedRef.current = r; setReport(r); }, []);
 
-  const load = useCallback((background = false) => {
-    void background;
-    fetch('/api/home/report').then((r) => (r.ok ? r.json() : null)).then((d) => {
+  const load = useCallback((reason: ArrivalReason) => {
+    fetch('/api/home/report').then((r) => (r.ok ? r.json() : null)).then((d: Report & { error?: unknown }) => {
       if (!aliveRef.current || !d || d.error) return;
-      setReport(d); saveLS(LS_KEY, d);
+      // A held payload is never a lost one: the cache IS the next open's first paint.
+      saveLS(LS_KEY, d);
+      // THE EMPTY-PAINT RULE: a report with zero lines everywhere is a skeleton, never a hold.
+      const p0 = paintedRef.current;
+      const painted = p0 && hasContent(
+        p0.doneToday.length + p0.needsYou.length + p0.openQuestions.length + p0.triage.length + p0.stale.length + p0.meetingsToday.length,
+      ) ? p0 : null;
+      if (mayReplaceInPlace(reason, !!painted) || !painted) { apply(d); return; }
+      if (reason !== 'background') return; // an `open` landing on a painted report is held whole
+      apply(freezeForOpen(painted, d));
     }).catch(() => {});
-  }, []);
+  }, [apply]);
 
   useEffect(() => {
     aliveRef.current = true;
     const cached = loadLS<Report>(LS_KEY);
-    if (cached) setReport(cached);
-    load(true);
+    if (cached) apply(cached);
+    load('open');
     return () => { aliveRef.current = false; };
-  }, [load]);
+  }, [load, apply]);
   // The ONE live-refresh idiom — hooks/use-live-refresh.
-  useLiveRefresh(() => load(true));
+  useLiveRefresh(() => load('background'));
 
   // Live counts (session-acted removed) → the ring, so the numbers on screen stay ONE truth.
   const live = useMemo(() => {
@@ -142,7 +173,8 @@ export default function DailyReport({ onCounts }: { onCounts?: (c: ReportCounts)
     const call = w.id.startsWith('commit:')
       ? fetch(`/api/commitments/${w.entityId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: action === 'done' ? 'done' : 'dismissed' }) })
       : fetch(`/api/inbox/${w.entityId}/${action === 'done' ? 'complete' : 'dismiss'}`, { method: 'POST' });
-    call.catch(() => {}).finally(() => { window.setTimeout(() => load(true), 4000); });
+    // The reader's own deed — this refetch is theirs, so it replaces in place (the law's `user` arrival).
+    call.catch(() => {}).finally(() => { window.setTimeout(() => load('user'), 4000); });
   }, [load]);
 
   if (!live) return null;

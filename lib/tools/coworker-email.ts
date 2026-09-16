@@ -7,17 +7,12 @@ import { Resend } from 'resend';
 import { randomUUID } from 'crypto';
 import { coworkerEmailForRole, EMAIL_LOCAL_BY_ROLE } from '@/lib/integrations/registry';
 import { isToolEnabledForAgent } from '@/lib/integrations/connection';
+import { ROLE_LABELS } from '@/lib/workers/roles';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Admin = any;
 
-const ROLE_LABELS: Record<string, string> = {
-  personal_assistant: 'Personal Assistant',
-  content_manager: 'Content Strategist', // retired Aug 14 — legacy rows only
-  branding_expert: 'LinkedIn Expert',
-  linkedin_drafter: 'LinkedIn Expert', // legacy role key — persisted rows only
-  research_analyst: 'Research Analyst',
-};
+// ONE label map (lib/workers/roles.ts) — a private copy is how a role rename half-lands.
 const DAILY_CAP = Number(process.env.COWORKER_EMAIL_DAILY_CAP || 50);
 const MAX_RECIPIENTS = 20;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

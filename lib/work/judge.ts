@@ -20,8 +20,11 @@ import { isNoMoveNotice, isAutomatedSenderStrong, rawMailKindOf } from '@/lib/in
 import { computeThreadReplyState, type ThreadMessage } from '@/lib/inbox/thread-resolution';
 import { getPrepared, type PreparedArtifact } from '@/lib/prepare/read';
 import { loadRoster, type RosterEntry } from '@/lib/prepare/route-suggestion';
-import { userTimezone, localNow, timesInText, dateStatedInText } from '@/lib/utils/user-time';
+import { userTimezone, localNow, timesInText, dateStatedInText, dateStatedInTextVerified } from '@/lib/utils/user-time';
 import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { anchorPassedFact } from '@/lib/work/judgment-nominator';
+import { readOutcomeFacts, outcomeHistoryFact, outcomeSigPart, type CounterpartyClass } from '@/lib/prepare/outcome-facts';
+import { readSiblingNomination, siblingSettledFact } from '@/lib/inbox/conversation-identity';
 
 // Word-boundary label clip (UI text, no excerpt marker — labels aren't prompts).
 function clipLabel(text: string, max: number): string {
@@ -80,7 +83,12 @@ function fallbackVerdict(reason: string, resolution?: 'expired' | 'answered'): W
  *  own text, the expired_on pattern extended to hours). */
 type TimeCtx = { todayStr: string; nowHHMM: string; itemText: string };
 
-function coerceVerdict(raw: unknown, roster: RosterEntry[], ctx: TimeCtx): WorkVerdict | null {
+/** The reasoned second layer of THE STATED-DATE CHECK, injected so coerceVerdict stays a pure
+ *  shape-coercer that never reaches for a client of its own. Absent → layer 1 alone (the tests'
+ *  and the fallback path's shape). Returns a code-verified verdict, never the model's assertion. */
+type DateVerifier = (text: string, iso: string) => Promise<boolean>;
+
+async function coerceVerdict(raw: unknown, roster: RosterEntry[], ctx: TimeCtx, verifyDate?: DateVerifier): Promise<WorkVerdict | null> {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   const work = String(r.work || '').toLowerCase();
@@ -121,7 +129,15 @@ function coerceVerdict(raw: unknown, roster: RosterEntry[], ctx: TimeCtx): WorkV
       // THE STATED-DATE CHECK (P27 hardening): a past basis is only an expiry when the item's OWN
       // text states that date (any common rendering — dateStatedInText). A fabricated yesterday
       // no longer defeats the same-day protection; an unverifiable claim keeps the item live.
-      if (basis < ctx.todayStr) { if (dateStatedInText(ctx.itemText, basis)) out.resolution = 'expired'; }
+      if (basis < ctx.todayStr) {
+        // LAYER 1 (free, deterministic). LAYER 2 (proactive-reach LAW 3, owner amendment): when the
+        // item states its date in a language or a rendering layer 1 cannot render, ONE cheap reasoned
+        // call is asked to QUOTE the span — and CODE verifies the quote is a verbatim substring
+        // carrying the date's own digits before it counts. The model can propose; only code disposes,
+        // so the fail-safe asymmetry P27 bought is preserved in both layers.
+        if (dateStatedInText(ctx.itemText, basis)) out.resolution = 'expired';
+        else if (verifyDate && await verifyDate(ctx.itemText, basis)) out.resolution = 'expired';
+      }
       else if (basis === ctx.todayStr) {
         const t = /^(\d{1,2}):(\d{2})$/.exec(String(r.expired_time ?? '').trim());
         if (t) {
@@ -195,6 +211,11 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     let u: ItemUnderstanding | null = null, activityAt = '', workState: string | null = null, rawKind: string | null = null;
     let dueDate: string | null = null; // the item's own stated date (commitment due / extracted deadline) — the event-boundary anchor
     let threadMsgs: ThreadMessage[] = [];
+    // AN ITEM'S OWN DOCUMENT IS THE ITEM'S OWN CONTEXT (owner walk, Sep 10): the files that arrived
+    // WITH the item are facts about the work. Names + a one-line gist only (the judge is token-tight),
+    // but with the DIRECTION stated — a document the counterparty sent us can never be judged as
+    // something we owe them back. Facts ride the day-keyed sig, so no JUDGE_VERSION bump is needed.
+    let attachFacts = '';
     if (input.kind === 'inbox') {
       const { data: it } = await client.from('inbox_items')
         .select('id, work_title, work_state, status, last_activity_at, created_at, source_data')
@@ -212,6 +233,10 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       dueDate = u?.deadline ?? null;
       rawKind = rawMailKindOf(sd);
       workState = (it.work_state as string) || null;
+      try {
+        const { readItemAttachments, attachmentFactBlock } = await import('@/lib/inbox/attachment-context');
+        attachFacts = attachmentFactBlock(await readItemAttachments(client, userId, sd, String(it.id)), who);
+      } catch { /* the attachment fact is an enhancement */ }
       activityAt = String(it.last_activity_at || it.created_at || '');
       const tid = (sd.thread_id as string) || null;
       if (tid) {
@@ -283,7 +308,22 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     const todayStr = nowL.dateStr;
     const itemText = `${title}\n${body}${threadNow ? `\n\nWHERE THE THREAD STANDS NOW (newest last — judge the PRESENT position, not the founding ask; a pure closure/thank-you with nothing further asked = resolution "answered"):\n${threadNow}` : ''}`;
     const eventPassed = !!dueDate && dueDate === todayStr && timesInText(itemText).some((t) => t < nowL.hhmm);
-    const sig = `${JUDGE_VERSION}:${todayStr}:${activityAt}:${pool.length}:${pool[0]?.at ?? ''}${eventPassed ? ':past' : ''}`;
+    // LAW 4 · ONE CONVERSATION, ONE OBLIGATION: when the same human exchange was settled on ANOTHER
+    // thread, the settlement is handed to the judge as a FACT (never as a disposition — the judge
+    // still decides, exactly as with the anchor fact). It rides the SIG, because a fact that arrives
+    // after today's verdict was cached would otherwise be invisible until tomorrow.
+    const siblingNom = await readSiblingNomination(client, userId, `${input.kind}:${input.id}`);
+    // LAW 7 · THE OUTCOME LOOP: what the user actually DID with our preparations of this shape —
+    // sent as written, edited, or resolved the item without using it — reaches the judge as a FACT,
+    // narrowed to this item's own counterparty class. Deterministic, zero-AI, cached per user per
+    // day; SILENT under the N-floor. It rides the sig (via a hash of exactly what is spoken), so a
+    // history that shifted re-judges today instead of waiting for tomorrow — and when nothing is
+    // speakable the sig is byte-identical to the pre-LAW-7 sig, which is why this is a FACTS
+    // addition and needs no JUDGE_VERSION bump (the attachment/anchor/sibling-fact precedent).
+    const outcomeFacts = await readOutcomeFacts(client, userId, todayStr).catch(() => null);
+    const outcomeKlass: CounterpartyClass = input.kind !== 'inbox' ? 'unknown'
+      : (isAutomatedSenderStrong(whoEmail, who, title) ? 'automated' : 'human');
+    const sig = `${JUDGE_VERSION}:${todayStr}:${activityAt}:${pool.length}:${pool[0]?.at ?? ''}${eventPassed ? ':past' : ''}${siblingNom ? `:sib${siblingNom.at}` : ''}${outcomeSigPart(outcomeFacts)}`;
     const { hit: cached, prior, priorSig } = await readCache(client, userId, input, sig);
     if (cached) return cached;
     // W4 PARKED SERVE — a revisit verdict holds WITHOUT AI until its date: same item facts (only
@@ -384,7 +424,15 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         // 12:30" reasoning from a bare ISO date made the model guess (real mootness misfires). All
         // in the USER'S zone: their day boundary, their hour.
         `RIGHT NOW for the user it is ${nowL.pretty} (${nowL.tz}); today's date is ${todayStr}. Times mentioned in items are in this zone unless they say otherwise. The item's last activity was ${activityAt.slice(0, 10) || 'unknown'}.\n\n` +
-        dealBlock + personBlock + poolBlock + calBlock +
+        // THE ANCHOR FACT (proactive-reach LAW 1): when the item's OWN stated date has passed, say
+        // so in CODE — computed, never inferred from the model's date arithmetic. It is a FACT, not
+        // a disposition: the judge still decides moot vs still-owed (its own July law — an overdue
+        // invoice is still owed). Rides the day-keyed sig, so no JUDGE_VERSION bump is needed.
+        anchorPassedFact(dueDate, todayStr) +
+        siblingSettledFact(siblingNom) +
+        // LAW 7 — the user's own verdicts on our preparations. A fact; the judge decides.
+        outcomeHistoryFact(outcomeFacts, { klass: outcomeKlass }) +
+        dealBlock + personBlock + poolBlock + calBlock + attachFacts +
         (u ? `UNDERSTANDING: relevance=${u.relevance} ownership=${u.ownership ?? '?'} kind=${u.mailKind ?? '?'}${u.ask ? ` ask="${u.ask}"` : ''}${u.deadline ? ` deadline=${u.deadline}` : ''}\n` : '') +
         `THE ITEM${who ? ` (from ${who})` : ''}: ${title.slice(0, 140)}\n${body ? `${body}\n` : ''}` +
         `${threadNow ? `\nWHERE THE THREAD STANDS NOW (newest last — judge THIS position, not the founding ask): \n${threadNow}\n` : ''}` +
@@ -412,10 +460,11 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         userId, supabase: client, shape: { output: 'json' }, temperature: 0, maxTokens: 350, source: 'task_preparation',
         prompt: judgePrompt + extra,
       });
-      return coerceVerdict(res.json, roster, { todayStr, nowHHMM: nowL.hhmm, itemText });
+      return await coerceVerdict(res.json, roster, { todayStr, nowHHMM: nowL.hhmm, itemText },
+        (text, iso) => dateStatedInTextVerified(client, userId, text, iso));
     };
     // The structural floors — applied to EVERY verdict (first pass and coherence retry alike).
-    const applyFloors = (v: NonNullable<ReturnType<typeof coerceVerdict>>) => {
+    const applyFloors = (v: NonNullable<Awaited<ReturnType<typeof coerceVerdict>>>) => {
       // STRUCTURAL TIME FLOOR — the brain's own extracted deadline outranks the model's date
       // arithmetic: a deadline that is TODAY or LATER can never be "expired" (the for-Friday
       // misfire). Facts are structural; the disposition drops, nothing resolves, the item stays live.
@@ -435,7 +484,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     // floors — is an INCOHERENT verdict, not a judgment ("due tomorrow, but it is now past" stood
     // as none and vanished live work). Deterministic check on the model's own words; one
     // corrective retry; still incoherent → FAILED (never cached, never demotes — failure honesty).
-    const incoherentNone = (v: NonNullable<ReturnType<typeof coerceVerdict>>) =>
+    const incoherentNone = (v: NonNullable<Awaited<ReturnType<typeof coerceVerdict>>>) =>
       v.work === 'none' && !v.resolution && !v.revisit &&
       !v.reason.startsWith('automated sender') &&
       /(?:\bis\b|\bnow\b|\balready\b|\bhas\b)[^.]{0,20}\b(?:past|passed|expired)\b|\bwindow (?:has )?(?:passed|closed)\b|\bno longer (?:relevant|actionable|needed|possible)\b|\btoo late\b/i.test(v.reason);

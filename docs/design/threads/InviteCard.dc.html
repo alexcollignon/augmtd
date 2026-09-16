@@ -1,0 +1,114 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #171717; -webkit-font-smoothing: antialiased; background: #F9FAFB; }
+    a { color: #4f46e5; text-decoration: none; } a:hover { color: #4338ca; }
+  </style>
+</helmet>
+<div style="width: 820px; background: #F9FAFB; display: flex; flex-direction: column; gap: 18px; padding: 26px 30px 34px 30px; box-sizing: border-box;">
+
+  <div style="display: flex; flex-direction: column; gap: 3px;">
+    <div style="font-size: 18px; font-weight: 600; letter-spacing: -0.01em;">The invite card</div>
+    <div style="font-size: 13px; color: #737373;">A filled invite arrives in the thread — send it, or pick a grounded alternative. Every slot below is STATED in the room or confirmed by the calendar; nothing is invented.</div>
+  </div>
+
+  <!-- in-thread context: the mind speaks, the card is its utterance -->
+  <div style="display: flex; gap: 10px; max-width: 720px;">
+    <div style="width: 28px; height: 28px; border-radius: 999px; background: #6366f1; color: #ffffff; font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">C</div>
+    <div style="display: flex; flex-direction: column; gap: 8px; min-width: 0; flex-grow: 1;">
+      <div style="display: flex; align-items: baseline; gap: 8px;">
+        <div style="font-size: 13px; font-weight: 600;">Clara</div>
+        <div style="font-size: 11px; color: #a3a3a3;">chief of staff · 09:40</div>
+      </div>
+      <!-- THE COMPOSED INTRO — the mind speaking, never a static label -->
+      <div style="font-size: 13px; line-height: 1.55; color: #262626;">Sam offered two slots — Tuesday's filled in below, Wednesday is one tap away. Your calendar is clear for both.</div>
+
+      <!-- ═══ THE CARD — filled, editable, one commit ═══ -->
+      <div style="display: flex; flex-direction: column; background: #ffffff; border: 1px solid rgba(229,229,229,0.82); border-radius: 12px; max-width: 560px; overflow: hidden;">
+        <!-- the filled invite -->
+        <div style="display: flex; flex-direction: column; gap: 10px; padding: 14px 16px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 34px; height: 34px; border-radius: 8px; background: #eef2ff; display: flex; flex-direction: column; align-items: center; justify-content: center; flex-shrink: 0;">
+              <div style="font-size: 8px; font-weight: 700; text-transform: uppercase; color: #4f46e5; letter-spacing: 0.05em;">Sep</div>
+              <div style="font-size: 14px; font-weight: 700; color: #4338ca; line-height: 1;">9</div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 1px; min-width: 0;">
+              <div style="font-size: 13px; font-weight: 600;">Atlas × AUGMTD — kickoff</div>
+              <div style="font-size: 12px; color: #737373;">Tuesday, Sep 9 · 11:00–11:30 · video call</div>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+            <div style="font-size: 11px; color: #a3a3a3; margin-right: 2px;">With</div>
+            <div style="display: flex; align-items: center; gap: 5px; border: 1px solid rgba(229,229,229,0.82); border-radius: 999px; padding: 2px 8px 2px 3px;">
+              <div style="width: 16px; height: 16px; border-radius: 999px; background: #a8a29e; color: #ffffff; font-size: 8px; font-weight: 600; display: flex; align-items: center; justify-content: center;">L</div>
+              <div style="font-size: 12px; color: #404040;">Sam Rivet</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 5px; border: 1px solid rgba(229,229,229,0.82); border-radius: 999px; padding: 2px 8px 2px 3px;">
+              <div style="width: 16px; height: 16px; border-radius: 999px; background: #78716c; color: #ffffff; font-size: 8px; font-weight: 600; display: flex; align-items: center; justify-content: center;">E</div>
+              <div style="font-size: 12px; color: #404040;">Emma Duret</div>
+            </div>
+            <div style="font-size: 12px; color: #a3a3a3;">· edit</div>
+          </div>
+          <div style="font-size: 12px; color: #737373; line-height: 1.5; border-left: 2px solid rgba(229,229,229,0.82); padding-left: 10px;">Kickoff for the AI-agent pilot — agenda: capture layer demo, the first routine, next steps.<span style="color: #a3a3a3;"> · edit</span></div>
+        </div>
+        <!-- THE IN-CARD SELECTOR — stated slots only, contained rows (never pills below the card) -->
+        <div style="display: flex; flex-direction: column; border-top: 1px solid rgba(229,229,229,0.72);">
+          <div style="display: flex; align-items: center; gap: 10px; padding: 9px 16px; background: #ffffff;">
+            <div style="width: 13px; height: 13px; border-radius: 999px; border: 4.5px solid #4f46e5; flex-shrink: 0;"></div>
+            <div style="font-size: 12.5px; color: #262626; flex-grow: 1;">Tuesday, Sep 9 · 11:00 <span style="color: #a3a3a3;">— filled in above</span></div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; padding: 9px 16px; border-top: 1px solid rgba(229,229,229,0.55);">
+            <div style="width: 13px; height: 13px; border-radius: 999px; border: 1.5px solid #d4d4d4; flex-shrink: 0;"></div>
+            <div style="font-size: 12.5px; color: #525252; flex-grow: 1;">Wednesday, Sep 10 · 11:00 <span style="color: #a3a3a3;">— Sam's other slot</span></div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; padding: 9px 16px; border-top: 1px solid rgba(229,229,229,0.55);">
+            <div style="width: 13px; height: 13px; border-radius: 999px; border: 1.5px solid #d4d4d4; flex-shrink: 0;"></div>
+            <div style="font-size: 12.5px; color: #a3a3a3; flex-grow: 1;">Suggest another time…</div>
+          </div>
+        </div>
+        <!-- the commit row — always the card's bottom edge -->
+        <div style="display: flex; align-items: center; gap: 10px; padding: 11px 16px; border-top: 1px solid rgba(229,229,229,0.72); background: #fafafa;">
+          <div style="background: #4f46e5; color: #ffffff; font-size: 12.5px; font-weight: 500; padding: 7px 14px; border-radius: 8px;">Send invite</div>
+          <div style="flex-grow: 1;"></div>
+          <div style="font-size: 11px; font-weight: 500; color: #4f46e5;">ready</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- the refusal state: truth before presentation -->
+  <div style="display: flex; flex-direction: column; gap: 8px; max-width: 720px;">
+    <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: #a3a3a3;">When a fact is missing, the card asks — it never renders empty fields</div>
+    <div style="display: flex; gap: 10px;">
+      <div style="width: 28px; height: 28px; border-radius: 999px; background: #6366f1; color: #ffffff; font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">C</div>
+      <div style="display: flex; flex-direction: column; gap: 8px; min-width: 0;">
+        <div style="font-size: 13px; line-height: 1.55; color: #262626;">Jordan wants to meet next week but named no day — pick one and I'll fill the invite in.</div>
+        <div style="display: flex; flex-direction: column; background: #ffffff; border: 1px solid rgba(229,229,229,0.82); border-radius: 12px; max-width: 420px; overflow: hidden;">
+          <div style="display: flex; align-items: center; gap: 10px; padding: 9px 14px;">
+            <div style="width: 13px; height: 13px; border-radius: 999px; border: 1.5px solid #d4d4d4; flex-shrink: 0;"></div>
+            <div style="font-size: 12.5px; color: #525252; flex-grow: 1;">Tuesday 14:00 <span style="color: #a3a3a3;">— you're free</span></div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-top: 1px solid rgba(229,229,229,0.55);">
+            <div style="width: 13px; height: 13px; border-radius: 999px; border: 1.5px solid #d4d4d4; flex-shrink: 0;"></div>
+            <div style="font-size: 12.5px; color: #525252; flex-grow: 1;">Thursday 10:00 <span style="color: #a3a3a3;">— you're free</span></div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-top: 1px solid rgba(229,229,229,0.55);">
+            <div style="width: 13px; height: 13px; border-radius: 999px; border: 1.5px solid #d4d4d4; flex-shrink: 0;"></div>
+            <div style="font-size: 12.5px; color: #a3a3a3; flex-grow: 1;">Type a time…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

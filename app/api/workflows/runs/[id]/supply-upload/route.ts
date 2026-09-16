@@ -138,7 +138,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     let kbFileId: string;
     try {
       kbFileId = await indexUploadedFile(
-        { buffer, filename: file.name, mimeType, userId: user.id, storagePathInBucket: storagePath },
+        { buffer, filename: file.name, mimeType, userId: user.id, storagePathInBucket: storagePath, bucket: 'drive-uploads' },
         admin,
       );
     } catch (e) {

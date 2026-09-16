@@ -4,6 +4,7 @@ import { generateReplyDraft } from '@/lib/inbox/draft-reply';
 import { loadUserRules } from '@/lib/inbox/rules/load';
 import { setInboxRules, shouldDraftReply } from '@/lib/inbox/classify-item';
 import { loadPlanStepSummaries } from '@/lib/home/item-plan';
+import { DRAFT_LAW_VERSION } from '@/lib/inbox/attachment-context';
 
 export const maxDuration = 30;
 
@@ -55,7 +56,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // points below fall through to regeneration instead.
   const { groundOf, groundMoved } = await import('@/lib/prepare/ground');
   const currentGround = await groundOf(supabase, user.id, { kind: 'inbox', id });
-  const draftSuperseded = !!sd.draft?.body && groundMoved(sd.draft?.prepared_from ?? null, currentGround);
+  // THE DRAFTER LAW VERSION: a draft written under an older drafting law is superseded the same way
+  // a moved ground supersedes one. Without this, every draft that already claims "I did not receive
+  // the attachment" would be served forever — the fix would ship and the lie would stand.
+  const { draftLawStale } = await import('@/lib/inbox/attachment-context');
+  const draftSuperseded = !!sd.draft?.body
+    && (groundMoved(sd.draft?.prepared_from ?? null, currentGround) || draftLawStale(sd.draft ?? null));
   if (!fresh && sd.draft?.body && !draftSuperseded) {
     const { data: jrow } = await supabase.from('item_plans').select('tasks')
       .eq('user_id', user.id).eq('kind', 'judgment').eq('entity_id', `inbox:${id}`).maybeSingle();
@@ -86,7 +92,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         .eq('user_id', user.id).eq('item_kind', 'inbox_item').eq('item_id', id).not('entity_id', 'is', null).maybeSingle();
       const reqs = await resolveRequirements(supabase, user.id, {
         itemKind: 'inbox', itemId: id, itemTitle: String(item.work_title ?? sd.subject ?? ''),
-        entityId: (linkRow?.entity_id as string) ?? null, requires: verdict.requires,
+        entityId: (linkRow?.entity_id as string) ?? null, requires: verdict.requires, work: verdict.work,
       });
       artifactTruth = reqs.artifactTruth || null;
     }
@@ -103,7 +109,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const planSteps = await loadPlanStepSummaries(supabase, user.id, 'email', id).catch(() => []);
     const draft = await generateReplyDraft(user.id, sd, supabase, artifactTruth, planSteps);
     await supabase.from('inbox_items')
-      .update({ source_data: { ...sd, draft: { body: draft, generated_at: new Date().toISOString(), prepared_from: currentGround } } })
+      .update({ source_data: { ...sd, draft: { body: draft, generated_at: new Date().toISOString(), prepared_from: currentGround, law_version: DRAFT_LAW_VERSION } } })
       .eq('id', id).eq('user_id', user.id);
     return NextResponse.json({ draft });
   } catch {

@@ -67,6 +67,10 @@ const src = (p: string) => readFileSync(p, 'utf8');
     noReply.verdict !== 'revise' || !/no one|no-reply/i.test(noReply.objection ?? ''), `verdict=${noReply.verdict}`);
 
   // ── T4 STRUCTURAL ──
+  // NOTE (Sep 13, cheap prevention): the anchor still means what it says, and now means it twice —
+  // the threads arc narrowed DetailHeader to the EMBEDDED door only (on the loose door the ROOM
+  // header carries those facts once, so there is no header to wear a pill at all). If that header
+  // ever returns to the loose door, this clause is the one that must be re-read, not just re-run.
   check('T4: the email deep-dive shows NO posture pill', src('components/home/item-detail.tsx').includes('chip={null}'));
   check('T4: an untracked entity renders as quiet context with Track (membership chip)',
     src('components/entities/add-to-work-control.tsx').includes('connects to') &&
@@ -172,30 +176,90 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('H1: ONE line per row — the second line is DEAD (folded inline, boilerplate dropped)',
     wr.includes('SECOND LINE IS DEAD') && !wr.includes('line-clamp-1`}>{item.second}</p>') &&
     wr.includes("item.second !== 'Action needed'"));
-  check('H2: Tasks | By project lens on the deck (same entries, regrouped; persisted; effect-hydrated)',
-    hv.includes("'aug-do-group'") && hv.includes('trackedLookup') && src('components/one/one-home.tsx').includes('By project') &&
-    !hv.includes("useState<'time' | 'project'>(() =>"));
+  // RETIRED + NARROWED (Sep 13, THE THREADS ARC reconciliation). The LENS died by owner call — the
+  // Sep 8 calm-Home walk ("this is awful, looks bad and not aligned with the new design at all")
+  // took the whole legacy deck, and the Tasks | By-project toggle with it; home-view records the
+  // death in code ("H2's grouping lens + the calm-group hover/pin state died with the legacy deck").
+  // The Home has ONE row grammar and ONE order now, so a second grouping of the same rows would be
+  // a second surface — exactly what the arc forbids. WHAT SURVIVES is the half that was ever a law
+  // rather than a control: a row still NAMES its project, and only a TRACKED one (the P15 law) —
+  // `trackedLookup` still feeds the flattened rows, and the chip itself is gated by H8b below. The
+  // project DIMENSION kept its home: the portfolio lens and the sidebar's Projects section.
+  check('H2: THE GROUPING LENS IS RETIRED (owner, Sep 8) — one row grammar, one order; a row still wears its TRACKED project name (P15), and the project dimension lives in the portfolio lens',
+    hv.includes('trackedLookup') &&
+    hv.includes("died with the legacy deck") &&
+    !hv.includes("'aug-do-group'") &&
+    !src('components/one/one-home.tsx').includes('By project') &&
+    !hv.includes("useState<'time' | 'project'>(() ="));
   // The final Home simplification: ONE row species — bundles retired from the deck. RE-POINTED
   // Aug 6 (the one-surface shell, owner-triggered): the deck wears THE CARD GRAMMAR (a calm
   // space-y stack of WorkRow variant="card" — state dot · sentence · sub · one CTA row); the
   // bordered divide-y container retired with the one-line rows. Other surfaces keep the row.
-  check('H6: bundles are RETIRED from the deck (ONE species: the card stack — no bundle cards, no divided container)',
-    !hv.includes('<BundleGroup') && src('components/one/one-home.tsx').includes('variant="card"') && hv.includes('flat.push') &&
+  // RE-POINTED Sep 13 (cleanup): the `variant="card"` clause outlived its subject twice over — the
+  // deck that mounted it died in the Sep 8 calm-Home walk, and the card SKIN itself was deleted
+  // from WorkRow the same day (zero callers). The law this gate has always carried survives and
+  // narrows: ONE ROW SPECIES on the Home, no bundle cards, no divided container — and now no
+  // second skin anywhere for one to drift back into.
+  // RE-POINTED Sep 13 (again): the flatten itself only got RENAMED (`flat` → `flatRows`) when the
+  // calm Home took over — the law is untouched and is the whole point of the gate: every agenda
+  // entry, bundle or not, lands as ONE row species before anything renders.
+  check('H6: bundles are RETIRED from the deck (ONE species — no bundle cards, no divided container, no second row skin)',
+    !hv.includes('<BundleGroup') && !wr.includes("variant === 'card'") && hv.includes('flatRows.push') &&
+    hv.includes("if (e.kind === 'bundle') for (const it of e.items) flatRows.push") &&
     !hv.includes('border-neutral-200/70 bg-white divide-y'));
   check('H6: WorkRow flat mode + the row-density law (one signal per category; prepared = one word: ready)',
     wr.includes('flat = false') && wr.includes('ONE signal per category') && wr.includes('>ready</span>'));
-  check('H7: calm groups collapse (hover-preview + click-pin, persisted — owner-reinstated July 30); urgent groups always open',
-    src('components/one/one-home.tsx').includes("g.key === 'overdue' || g.key === 'today'") && hv.includes("'aug-do-pinned'") && src('components/one/one-home.tsx').includes('hoverGroup === g.key'));
+  // RETIRED + RE-SEATED (Sep 13). The GROUPS died by owner call (Sep 8) — with them the time-group
+  // headers, the hover-preview and the click-pin this gate pinned. The LAW underneath them never
+  // was "groups collapse"; it was NOTHING IS HIDDEN — what does not lead is still reachable, and
+  // the urgent never folds. Both halves are stronger at the new seat: A NAMED FIRE IS A SEATED FIRE
+  // (pickWhispers seats every overdue row FIRST, above the fold, in every lane — so urgency can no
+  // longer sit inside a collapsed group at all), and the door expands the remainder IN PLACE, in
+  // the calm module's ONE stated order, in the SAME row grammar — never a second deck.
+  check('H7: NOTHING IS HIDDEN (the groups retired Sep 8) — every fire is SEATED above the fold, and the door expands the rest in place, in one stated order and one grammar',
+    src('lib/home/calm.ts').includes('A NAMED FIRE IS A SEATED FIRE') &&
+    src('lib/home/calm.ts').includes('export function sortDoorRows') &&
+    src('lib/home/calm.ts').includes('function doorRank') &&
+    hv.includes('THE DOOR EXPANDS IN PLACE, IN ORDER') &&
+    hv.includes('<CalmDoor remaining={restRows.length}') &&
+    !hv.includes("'aug-do-pinned'") &&
+    !src('components/one/one-home.tsx').includes('hoverGroup === g.key'));
   check('H8: membership is visible IMMEDIATELY (July 30) — attach busts the brief server-side, the Home listens for membership-changed, and the row wears an optimistic TRACKED-only tag until the server tag arrives',
     src('app/api/items/entity/route.ts').includes('softBustBrief') &&
     hv.includes("addEventListener('aug:membership-changed'") &&
     wr.includes('onAttached') && wr.includes('if (tracked) setLocalTag(name)') &&
     wr.includes('item.initiative ?? localTag'));
-  check('H10: NO SILENT CAPS on the deck\'s candidate pool (Aug 2 — an overdue obligation ranked 61st of a 60 cap and vanished): high bound + a loud saturation warning',
-    src('app/api/home/brief/route.ts').includes('.limit(250)') &&
-    src('app/api/home/brief/route.ts').includes('SATURATED the 250 cap'));
-  check('H9: a LONG deck group folds past 8 rows behind the ONE expander idiom (ExpandableRows in the group container — nothing hidden, just folded; lives in one-home since the Aug 6 extraction)',
-    src('components/one/one-home.tsx').includes('<ExpandableRows items={g.rows} limit={8}'));
+  // RE-POINTED (Sep 13, THE PROACTIVE REACH ARC — the serving-truth wave). The law got STRICTLY
+  // STRONGER on both halves, so the gate follows it up rather than pinning the old numbers:
+  //  · THE BOUND: 250 → DECK_POOL_LIMIT 800, plus a named ACTION_NOTICE_LIMIT 200 for the notice
+  //    lane that previously had none. The numbers moved OUT of the route into lib/home/deck-floors
+  //    — named once, imported everywhere, so a second surface cannot quietly pick its own cap.
+  //  · THE WARNING: the August comment PROMISED a loud log and never wrote one ("a bound that
+  //    saturates IS a gate" only if it speaks). Both logs are real now and fire off the same
+  //    constants they guard — no literal can drift from its bound.
+  check('H10: NO SILENT CAPS on the deck\'s candidate pool (Aug 2 — an overdue obligation ranked 61st of a 60 cap and vanished): the bound is NAMED once (deck-floors), raised, and it SPEAKS when it binds',
+    src('lib/home/deck-floors.ts').includes('export const DECK_POOL_LIMIT = 800') &&
+    src('lib/home/deck-floors.ts').includes('export const ACTION_NOTICE_LIMIT = 200') &&
+    src('app/api/home/brief/route.ts').includes('.limit(DECK_POOL_LIMIT)') &&
+    src('app/api/home/brief/route.ts').includes('items.length >= DECK_POOL_LIMIT') &&
+    src('app/api/home/brief/route.ts').includes('deck pool SATURATED at ${DECK_POOL_LIMIT}') &&
+    src('app/api/home/brief/route.ts').includes('actionNoticesEligible.length >= ACTION_NOTICE_LIMIT') &&
+    // A SATURATION LOG MUST NAME ITS OWN BOUND: no log may quote a cap the route no longer sets
+    // (see the regression note in the reconciliation report — a stale 250 log was removed here).
+    !src('app/api/home/brief/route.ts').includes('SATURATED the 250 cap'));
+  // RE-POINTED (Sep 13): the DECK's fold moved to the density cap + the door — the Home's fold is
+  // now enforced in ONE place (CALM_MAX_WHISPERS in lib/home/calm.ts, so no surface can quietly
+  // widen it) and the remainder opens in place rather than per-group. The ONE EXPANDER IDIOM did
+  // NOT die with the deck: ExpandableRows is still the single expander every other lane uses
+  // (the Home's follow-ups + waiting-on lanes, the workflows ledger, the team home) — asserted here
+  // so the idiom can never fork into a second "show more" while this gate watches.
+  check('H9: the fold has ONE enforcement point (CALM_MAX_WHISPERS + the door, in place) and ExpandableRows remains the ONE expander idiom everywhere else — nothing hidden, just folded',
+    src('lib/home/calm.ts').includes('export const CALM_MAX_WHISPERS') &&
+    src('lib/home/calm.ts').includes('is the cap and it is enforced HERE') &&
+    hv.includes('pickWhispers(flatRows.map((r) => r.item), CALM_MAX_WHISPERS)') &&
+    hv.includes('<ExpandableRows items={looseWaiting}') &&
+    src('components/home/expandable-rows.tsx').includes('export function ExpandableRows') &&
+    src('components/workflows/workflows-ledger.tsx').includes('<ExpandableRows'));
   check('H8b: EVERY deck lane derives its row tag from the ENTITY LINK against the tracked registry — on the SERVED payload the client actually builds the deck from (reply + notice + commitment; P15 tracked-only; independent of state synthesis) + the client notice mapping carries it',
     src('app/api/home/brief/route.ts').includes('tagByAtom = new Map') &&
     (src('app/api/home/brief/route.ts').match(/tagByAtom\.get\(/g) ?? []).length >= 3 &&
@@ -203,14 +267,40 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/home/home-view.tsx').includes('initiative: a.initiative ?? null'));
   const brief = src('app/api/home/brief/route.ts');
   // J1 moved the law into lib/inbox/notice-demotion.ts (ONE module, shared with judgeWork).
-  check('H4: the demotion is OWNERSHIP-KEYED (the ONE shared law), on BOTH paths, override-guarded',
+  // RE-POINTED (Sep 13, THE PROACTIVE REACH ARC): the deck's lane-entry floors were extracted into
+  // lib/home/deck-floors.ts — `rePromotesToDeck` + `noticeIsDemoted`, with `deckEligible` as their
+  // conjunction — so the route no longer inlines the question. THE NO-SECOND-DERIVATION PRINCIPLE
+  // is what this gate has always been about, and the extraction makes it structural: the module
+  // does not re-implement the law, it CALLS `isNoMoveNotice` (the one shared reader, still keyed on
+  // ownership), keeps the human `type_override` guard inside the floor, and is the same predicate
+  // the standing deck-truth suite asserts the world against.
+  check('H4: the demotion is OWNERSHIP-KEYED (the ONE shared law), asked in ONE place (deck-floors), override-guarded',
     src('lib/inbox/notice-demotion.ts').includes("u.ownership === 'none' && structuralNotice") &&
-    brief.includes('isNoMoveNotice({ u,') &&
+    src('lib/home/deck-floors.ts').includes('export function noticeIsDemoted') &&
+    src('lib/home/deck-floors.ts').includes('return isNoMoveNotice({') &&
+    src('lib/home/deck-floors.ts').includes("if (it.type_override === 'needs_reply' || it.type_override === 'to_do') return false;") &&
+    src('lib/home/deck-floors.ts').includes('export function deckEligible') &&
+    brief.includes('noticeIsDemoted(it as never, deckFloors)') &&
+    brief.includes('rePromotesToDeck(x.it as never, x.posture, deckFloors)') &&
     brief.includes('if (noticeDemoted) continue;') &&
-    (brief.match(/type_override !== 'needs_reply'/g) ?? []).length >= 1 &&
+    // THE OVERRIDE GUARD MOVED WITH THE LAW: the route's inline `type_override !== 'needs_reply'`
+    // test is gone precisely BECAUSE the floor now owns it (asserted above, inside noticeIsDemoted,
+    // where it can never be forgotten by a new caller). A route-side copy would be the second
+    // derivation this gate exists to forbid — so its absence here is the law holding, not slipping.
+    !brief.includes("type_override !== 'needs_reply'") &&
     !brief.includes('kindDemoted'));
-  check('H5: the This-week rail matches the dense scale (slim, sticky)',
-    hv.includes('slim, calm agenda rail'));
+  // RETIRED (Sep 13) — THE CALENDAR LEFT THE HOME (owner walk, Sep 8). The This-week rail, the
+  // day-grouped meeting column this gate measured, is gone: the meetings surface is the calendar's
+  // home, and a fact with another home never earns a second seat on the Home. Nothing about the
+  // dense scale was weakened — the column it applied to no longer exists, so the gate now holds the
+  // RETIREMENT itself (a rail quietly growing back would fail here) and the meetings door that
+  // replaced it. The prep that used to ride that rail arrives as a message in its room instead
+  // (smoke-compute AN1, lib/home/anticipation.ts).
+  check('H5: THE CALENDAR LEFT THE HOME (owner, Sep 8) — no This-week rail on the Home; the meetings surface is the calendar\'s one home',
+    hv.includes('THE CALENDAR LEFT THE HOME') &&
+    !hv.includes('slim, calm agenda rail') &&
+    !hv.includes("{ title: 'This week', days:") &&
+    src('components/one/one-sidebar.tsx').includes('<Link href="/meetings"'));
 
   // ── H LIVE — the demotion on user A's REAL pool: the junk class goes, real obligations stay ──
   {

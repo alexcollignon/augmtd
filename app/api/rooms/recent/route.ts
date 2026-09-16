@@ -9,6 +9,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { projectHref } from '@/lib/room/project-href';
 
 export async function GET(request: NextRequest) {
   try {
@@ -31,7 +32,7 @@ export async function GET(request: NextRequest) {
     const pinned = ((entsRes.data ?? []) as Array<{ id: string; name: string; priority: { weight?: number } | null }>)
       .sort((a, b) => Number(b.priority?.weight ?? 0) - Number(a.priority?.weight ?? 0))
       .slice(0, 6)
-      .map((e) => ({ id: e.id, name: e.name, href: `/home?view=projects&entity=${e.id}` }));
+      .map((e) => ({ id: e.id, name: e.name, href: projectHref(e.id) }));
     const pinnedIds = new Set(pinned.map((p) => p.id));
 
     // A CONVERSATION REQUIRES THE USER'S VOICE (owner, Aug 8 — "do we create a conversation
@@ -101,7 +102,7 @@ export async function GET(request: NextRequest) {
     } catch { /* the name is an enhancement — the kind word still shows */ }
 
     const hrefOf = (k: string) =>
-      !k.includes(':') ? `/home?view=projects&entity=${k}`
+      !k.includes(':') ? projectHref(k)
       : k.startsWith('inbox:') ? `/item/${k.slice(6)}`
       : k.startsWith('commitment:') ? `/item/${k.slice(11)}?kind=commitment`
       : k.startsWith('meeting:') ? `/item/${k.slice(8)}?kind=meeting` : null;
@@ -220,6 +221,45 @@ export async function GET(request: NextRequest) {
       .sort((a, b) => new Date(b.at ?? 0).getTime() - new Date(a.at ?? 0).getTime())
       .slice(0, all ? 40 : 8);
 
+    // ══ THE PROJECT RAISES ITS HAND (owner, Sep 7 — "it worked while you were away and has
+    // something for you"): per PROJECT room, how many LIVE turns landed since the reader last saw
+    // it that the reader did NOT write. Narrations + coworker speech only — the room's turns are
+    // already curated deltas, so "not mine, and new" IS the meaningfulness filter.
+    //
+    // HONEST OR ABSENT: a room with no read marker (never opened) serves NO count — day one must
+    // never paint "everything is unread". Cost shape: TWO slim indexed reads for the whole sidebar
+    // — one markers read (item_plans by kind+keys), one turns read bounded by the OLDEST marker,
+    // row-capped, then counted per room in JS (never one count query per room).
+    //
+    // ⚠️ COWORKER DMs ARE DELIBERATELY SKIPPED: their messages live in `work_messages`, a different
+    // store with no marker of its own, so an honest DM badge needs its own read fact. Rather than
+    // invent a second mechanic here, the roster rows stay badge-free until that fact exists — an
+    // absent badge is honest, an approximated one is a lying door. (This is where it would go.)
+    const unread: Record<string, number> = {};
+    try {
+      const projectKeys = [...new Set([
+        ...pinned.map((p) => p.id),
+        ...keys.filter((k) => !k.includes(':')),
+      ])].slice(0, 12);
+      const { readRoomMarkers } = await import('@/lib/room/read-marker');
+      const markers = await readRoomMarkers(supabase, user.id, projectKeys);
+      const marked = projectKeys.filter((k) => markers.has(k));
+      if (marked.length) {
+        const oldest = marked.map((k) => markers.get(k)!).sort()[0];
+        const { data: fresh } = await supabase.from('room_turns')
+          .select('room_key, created_at')
+          .eq('user_id', user.id).is('archived_at', null)
+          .in('room_key', marked).neq('role', 'user').gt('created_at', oldest)
+          .order('created_at', { ascending: false }).limit(300);
+        for (const t of (fresh ?? []) as Array<{ room_key: string; created_at: string }>) {
+          const at = markers.get(t.room_key);
+          if (!at || !(t.created_at > at)) continue;
+          if ((unread[t.room_key] ?? 0) >= 10) continue; // the badge renders 9+; counting past it buys nothing
+          unread[t.room_key] = (unread[t.room_key] ?? 0) + 1;
+        }
+      }
+    } catch { /* the badge is an enhancement — silence, never a placeholder */ }
+
     // THE RUNS BADGE (coherence slice #1 — the Claude "9 new" pattern): succeeded runs the user
     // hasn't opened yet. Same fact that feeds auto-pause (reviewed_at) — one mechanic, not three.
     let workflowsUnread = 0;
@@ -232,7 +272,7 @@ export async function GET(request: NextRequest) {
       workflowsUnread = count ?? 0;
     } catch { /* the badge is an enhancement */ }
 
-    return NextResponse.json({ pinned, recent, chats, conversations, workflowsUnread });
+    return NextResponse.json({ pinned, recent, chats, conversations, workflowsUnread, unread });
   } catch (e) {
     console.error('[rooms/recent]', e);
     return NextResponse.json({ pinned: [], recent: [] });

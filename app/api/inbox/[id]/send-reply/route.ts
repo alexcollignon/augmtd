@@ -168,8 +168,19 @@ export async function POST(
     // Resolution-on-reply: the loop is closed — clear this item so it leaves "Needs reply"
     // (inbox + Home). Replying ≠ reading; this fires only on an actual sent reply. Stamp
     // source_data.resolved_at — the REAL resolution timestamp the Day-cleared ring counts by.
+    // A SENT DRAFT IS NOT PREPARED WORK (Sep 8): the prepared reply is SPENT the moment it goes —
+    // stamped like the invite and the forward always were, so `preparedOf` (lib/room/grounding.ts)
+    // stops counting it whatever this item's status later becomes.
+    const sentDraft = (sourceData as { draft?: Record<string, unknown> } | null)?.draft;
     await supabase.from('inbox_items')
-      .update({ status: 'completed', source_data: { ...sourceData, resolved_at: new Date().toISOString(), last_reply_hash: bodyHash, last_reply_at: new Date().toISOString() } })
+      .update({
+        status: 'completed',
+        source_data: {
+          ...sourceData,
+          ...(sentDraft && typeof sentDraft === 'object' ? { draft: { ...sentDraft, sent_at: new Date().toISOString() } } : {}),
+          resolved_at: new Date().toISOString(), last_reply_hash: bodyHash, last_reply_at: new Date().toISOString(),
+        },
+      })
       .eq('id', id).eq('user_id', user.id);
 
     // Swap the mailbox label to AUGMTD/Done (honors auto_label). Non-fatal, after() so it never
@@ -177,7 +188,15 @@ export async function POST(
     // re-resolves them cheaply from the item for a single code path.
     after(async () => {
       // L2 ACTION EVENT — the brain hears this send (entity re-synthesis + brief-cache bust).
-      await noteItemAction(supabase, user.id, { kind: 'inbox_item', id }).catch(() => {});
+      // THE DEED MOVES THE BRIEF (Sep 8): the send is the action the brain hears — the room's
+      // opening is re-authored on the spot AND the deed lands as one appended event line, so the
+      // pinned brief can never keep asking for a thing the reader just sent.
+      const sentTo = (() => {
+        const pick = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().split('<')[0].trim() : '');
+        return pick(to) || pick(sourceData.from_name) || pick(sourceData.from) || '';
+      })();
+      await noteItemAction(supabase, user.id, { kind: 'inbox_item', id },
+        { said: sentTo ? `Reply sent to ${sentTo}.` : 'Reply sent.' }).catch(() => {});
       // PLAN COHERENCE (just-works P1): the send IS the reply step resolving — mark it done in the
       // cached plan SERVER-side (the deep-dive no longer shows steps, so no client hook does this).
       // Non-fatal; only reply-like steps flip, real remaining actions stay open.

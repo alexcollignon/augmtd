@@ -18,10 +18,13 @@ export function WorkerFace({ name, size = 20 }: { name: string; size?: number })
     // eslint-disable-next-line @next/next/no-img-element
     return <img src={src} alt="" style={{ width: size, height: size }} className="rounded-full object-cover inline-block align-[-4px]" />;
   }
+  // THE INITIAL CHIP IS QUIET (owner walk, Sep 7 — "what is that J and L next to Clara?"): an
+  // initials fallback wearing the primary accent read as a BUTTON in the room header. A face is
+  // identity, never an affordance; the accent belongs to the one CTA.
   return (
     <span
       style={{ width: size, height: size, fontSize: Math.round(size * 0.5) }}
-      className="inline-flex items-center justify-center rounded-full bg-indigo-100 font-semibold text-indigo-700 align-[-4px]"
+      className="inline-flex items-center justify-center rounded-full bg-neutral-100 font-semibold text-neutral-600 align-[-4px]"
       aria-hidden="true"
     >
       {first.charAt(0).toUpperCase()}

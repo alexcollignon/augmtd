@@ -18,6 +18,7 @@ import type { WorkItem } from '@/lib/work-items/model';
 import { buildWorkItems } from '@/lib/work-items/model';
 import { partitionDailyReport } from '@/lib/work-items/report';
 import { generateReplyDraft, generateNudgeDraft, getDraftingAssistant } from '@/lib/inbox/draft-reply';
+import { DRAFT_LAW_VERSION as DRAFT_LAW_VERSION_C } from '@/lib/inbox/attachment-context';
 import type { TaskRoute } from '@/lib/prepare/route-suggestion';
 import { evaluateDeliverable, type EvalVerdict } from '@/lib/prepare/evaluate';
 import { aiCall } from '@/lib/ai/call';
@@ -44,6 +45,8 @@ async function reviewAndRevise(
 }
 import { resolveFileUniversal } from '@/lib/knowledge/resolve';
 import { logActivity } from '@/lib/activity/log';
+import { orderForPreparation, type NominatorItem, type JudgmentAge } from '@/lib/work/judgment-nominator';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
 
 const FRESH_HOURS = 24;   // a draft older than this (or older than new thread activity) re-prepares
 
@@ -82,6 +85,26 @@ export async function prepareOneItem(
     // below flows through it.
     if (w.automated) return { did: 'none', reason: 'automated notice — nothing to prepare' };
     if (!w.id.startsWith('inbox:') && !w.id.startsWith('commit:')) return { did: 'none', reason: 'not a preparable item' };
+
+    // ── THE NOISE FLOOR (census fix #3, Sep 13): NOISE IS NEVER PREPARED. ──────────────────────
+    // The pass builds its candidates from the SPINE (buildWorkItems → partitionDailyReport), which
+    // never passes through `classifyItem` — so every floor LAW 5 installed at the posture seam was
+    // asked somewhere this lane does not look, and the engine went on drafting replies to the
+    // user's own outbound campaign coming back (35 of 135 live prep narrations on the reference
+    // account; three standing drafts; five re-judged that same day).
+    //
+    // This sits ABOVE the judge deliberately and it is NOT a judgment override — the judge is not
+    // wrong about these rows, it is merely ASKED about them. The floor is the same shape as the
+    // intake poverty gate: a cost/noise refusal taken BEFORE any AI call, on deterministic facts,
+    // that resolves nothing, hides nothing and re-postures nothing. Judgment stays the judge's;
+    // this only declines to work on a row the posture seam, the notice law and the deck have all
+    // already put in the awareness lane. A human `type_override` still outranks it (inside the
+    // floor), and the refusal is SPOKEN — it lands in the prep_outcome ledger as its own reason.
+    if (w.id.startsWith('inbox:')) {
+      const { itemIsNoise } = await import('@/lib/prepare/noise-floor');
+      const n = await itemIsNoise(admin, userId, w.entityId);
+      if (n.noise) return { did: 'none', reason: n.reason ?? 'noise — nothing to prepare' };
+    }
 
     // J4 (judged room): the pass prepares FROM THE ONE WORK JUDGMENT — the same cached verdict the
     // surface mounts, so ambient work and the room can never disagree about what an item needs.
@@ -140,7 +163,7 @@ export async function prepareOneItem(
         const { resolveRequirements } = await import('@/lib/prepare/requirements');
         const reqs = await resolveRequirements(admin, userId, {
           itemKind: w.id.startsWith('commit:') ? 'commitment' : 'inbox', itemId: w.entityId,
-          itemTitle: w.title, entityId: w.entity?.id ?? null, requires: verdict.requires,
+          itemTitle: w.title, entityId: w.entity?.id ?? null, requires: verdict.requires, work: verdict.work,
         });
         artifactTruth = reqs.artifactTruth;
         // W3: a PROCEEDED ask means the user already said "go ahead with what's available" — the
@@ -348,15 +371,20 @@ async function prepareReplyDraft(admin: SupabaseClient, userId: string, w: WorkI
   if (kindNow && ['receipt', 'newsletter', 'notification', 'cold_outreach', 'calendar'].includes(kindNow) && it.rule_type !== 'needs_reply') {
     return { did: 'none', reason: `${kindNow.replace('_', ' ')} — no reply expected` };
   }
-  const existing = (sd.draft ?? null) as { body?: string; generated_at?: string; prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null } | null;
+  const existing = (sd.draft ?? null) as { body?: string; generated_at?: string; law_version?: number; prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null } | null;
   // THE GROUND LAW: the newest inbound RIGHT NOW — compared against what the draft was prepared
   // FROM. A ground move supersedes regardless of clock freshness (the counterparty's new message
   // is their supply; found live: a Monday reply offered as current after the plan moved to Thursday).
   const { groundOf, groundMoved } = await import('@/lib/prepare/ground');
   const currentGround = await groundOf(admin, userId, { kind: 'inbox', id: String(it.id) });
   const movedPast = !!existing?.body && groundMoved(existing.prepared_from ?? null, currentGround);
+  // THE DRAFTER LAW VERSION: a draft written under an older drafting law is stale on its own — the
+  // attachment-blind drafts that told counterparties their document never arrived must be rewritten,
+  // not aged out.
+  const { draftLawStale, DRAFT_LAW_VERSION } = await import('@/lib/inbox/attachment-context');
   const stale = !existing?.body
     || movedPast
+    || draftLawStale(existing)
     || (Date.now() - Date.parse(existing.generated_at || '0')) > FRESH_HOURS * 3_600_000
     || (!!it.last_activity_at && Date.parse(it.last_activity_at as string) > Date.parse(existing.generated_at || '0'));
   if (!stale) return { did: 'none', reason: 'a fresh draft is already on it' };
@@ -370,7 +398,7 @@ async function prepareReplyDraft(admin: SupabaseClient, userId: string, w: WorkI
     const { resolveRequirements } = await import('@/lib/prepare/requirements');
     const reqs = await resolveRequirements(admin, userId, {
       itemKind: 'inbox', itemId: String(it.id), itemTitle: w.title,
-      entityId: w.entity?.id ?? null, requires: verdict.requires,
+      entityId: w.entity?.id ?? null, requires: verdict.requires, work: verdict.work,
     });
     artifactTruth = reqs.artifactTruth;
     // Only KB-held bytes are attachable from the composer (the doc-send rule); drive-catalog and
@@ -389,7 +417,7 @@ async function prepareReplyDraft(admin: SupabaseClient, userId: string, w: WorkI
   // O3a: ambient work is ATTRIBUTED — the assistant coworker drafted this (her skills shaped it).
   const pa = await getDraftingAssistant(admin, userId);
   await admin.from('inbox_items')
-    .update({ source_data: { ...sd, draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', prepared_from: currentGround, ...(stagedAttachment ? { attachment: stagedAttachment } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) } })
+    .update({ source_data: { ...sd, draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', prepared_from: currentGround, law_version: DRAFT_LAW_VERSION, ...(stagedAttachment ? { attachment: stagedAttachment } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) } })
     .eq('id', it.id);
   if (movedPast) await narrateGroundMove(admin, userId, w, currentGround);
   return { did: 'draft', worker: pa?.name };
@@ -790,14 +818,23 @@ async function narrateGroundMove(admin: SupabaseClient, userId: string, w: WorkI
 async function askForFile(admin: SupabaseClient, userId: string, w: WorkItem, label: string): Promise<void> {
   try {
     const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
+    const { composeAskSpeech } = await import('@/lib/prepare/requirements');
     const itemKind = w.id.startsWith('commit:') ? 'commitment' as const : 'inbox' as const;
     const roomKey = await roomKeyForItem(admin, userId, itemKind, w.entityId);
+    const dedupeKey = `requires:${w.entityId}`;
+    // THE ASK SPEAKS CONSEQUENCE (law 4) — the SAME reasoned composer every ask-authoring seam uses,
+    // COMPOSED ONCE: a standing ask for this same gap re-states its words, it never re-buys them.
+    const { data: standing } = await admin.from('room_turns').select('text')
+      .eq('user_id', userId).eq('room_key', roomKey).eq('dedupe_key', dedupeKey).maybeSingle();
+    const priorText = typeof standing?.text === 'string' ? standing.text.trim() : '';
     await writeRoomTurn(admin, userId, roomKey, {
       role: 'system',
-      text: `To send this I need the document itself — I couldn't find it anywhere. Attach below or tell me where to look.`,
+      text: priorText || await composeAskSpeech(admin, userId, {
+        labels: [label], itemTitle: w.title, work: 'send_file',
+      }),
       refs: [{ label: w.title.slice(0, 60), href: itemKind === 'commitment' ? `/item/${w.entityId}?kind=commitment` : `/item/${w.entityId}` }],
       component: { key: 'input_checklist', state: { items: [label.slice(0, 120)], taskId: null } },
-      dedupeKey: `requires:${w.entityId}`,
+      dedupeKey,
     });
   } catch { /* the honest none still records via prep_outcome */ }
 }
@@ -810,12 +847,12 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
     if ((prior?.metadata as { attachment?: unknown } | null)?.attachment) return { did: 'none', reason: 'already prepared with the file' };
     const cCands = await resolveFileUniversal(admin, { userId, entityId: w.entity?.id ?? null }, w.title, 4).catch(() => []);
     const cTop = cCands.find((c) => c.source === 'kb');
-    if (!cTop || cTop.score < 0.7) { await askForFile(admin, userId, w, `the document to send for: ${w.title.slice(0, 90)}`); return { did: 'none', reason: 'could not find the document — asked in the room' }; }
+    if (!cTop || cTop.score < 0.7) { await askForFile(admin, userId, w, `the document itself`); return { did: 'none', reason: 'could not find the document — asked in the room' }; }
     // W6 — the ONE evidence-quoting verifier (cross-entity rejected structurally; the quote is
     // code-checked): a wrong attach is worse than none.
     const { verifyArtifactMatch: verifyC } = await import('@/lib/prepare/requirements');
     const cJudge = await verifyC(admin, userId, { task: w.title, candidate: cTop, entityId: w.entity?.id ?? null });
-    if (!cJudge.match) { await askForFile(admin, userId, w, `the document to send for: ${w.title.slice(0, 90)}`); return { did: 'none', reason: 'no confident file match — asked in the room' }; }
+    if (!cJudge.match) { await askForFile(admin, userId, w, `the document itself`); return { did: 'none', reason: 'no confident file match — asked in the room' }; }
     const cBody = await generateNudgeDraft(userId, { counterparty: w.who ?? w.blockedOn ?? null, description: `${w.title} — the document "${cTop.filename}" will be attached.` }, admin).catch(() => null);
     if (!cBody) return { did: 'none', reason: 'could not draft the send' };
     const { writeDeliverable } = await import('@/lib/home/deliverable-pool');
@@ -842,7 +879,7 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
     const { resolveRequirements } = await import('@/lib/prepare/requirements');
     const reqs = await resolveRequirements(admin, userId, {
       itemKind: 'inbox', itemId: String(it.id), itemTitle: w.title,
-      entityId: w.entity?.id ?? null, requires: verdict.requires,
+      entityId: w.entity?.id ?? null, requires: verdict.requires, work: verdict.work,
     });
     const kbHave = reqs.have.find((h) => h.file?.source === 'kb');
     const body2 = await generateReplyDraft(userId, sd as Record<string, never>, admin,
@@ -853,7 +890,7 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
         async () => body2);
       const pa2 = await getDraftingAssistant(admin, userId);
       await admin.from('inbox_items').update({
-        source_data: { ...sd, draft: { body: body2, generated_at: new Date().toISOString(), prepared: 'pass', ...(kbHave?.file ? { attachment: { fileId: kbHave.file.id, filename: kbHave.file.filename, source: kbHave.file.source } } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa2 ? { prepared_by: { worker: pa2.name, at: new Date().toISOString() } } : {}) },
+        source_data: { ...sd, draft: { body: body2, generated_at: new Date().toISOString(), prepared: 'pass', law_version: DRAFT_LAW_VERSION_C, ...(kbHave?.file ? { attachment: { fileId: kbHave.file.id, filename: kbHave.file.filename, source: kbHave.file.source } } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa2 ? { prepared_by: { worker: pa2.name, at: new Date().toISOString() } } : {}) },
       }).eq('id', it.id);
       return { did: reqs.have.length ? 'docsend' : 'draft', worker: pa2?.name };
     }
@@ -864,7 +901,7 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
   // Only attach on a CONFIDENT KB hit (bytes we hold → previewable + attachable); drive-catalog
   // candidates surface in the deep-dive picker instead of silently auto-attaching.
   const top = cands.find((c) => c.source === 'kb');
-  if (!top || top.score < 0.7) { await askForFile(admin, userId, w, `the document to send for: ${w.title.slice(0, 90)}`); return { did: 'none', reason: 'could not find the document — asked in the room' }; }
+  if (!top || top.score < 0.7) { await askForFile(admin, userId, w, `the document itself`); return { did: 'none', reason: 'could not find the document — asked in the room' }; }
   // THE REASONED PICK (the S4 rule — a score is retrieval, not judgment), upgraded to the W6
   // evidence law: the verifier quotes the proving phrase (code-checked) and rejects cross-entity
   // candidates structurally. Reject → no auto-attach (the deep-dive's picker offers candidates
@@ -875,14 +912,69 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
     emailExcerpt: String(sd.body || '').slice(0, 400) || null,
   });
   if (!judge.match) return { did: 'none', reason: 'no confident file match' };
+  const reusedDraft = !!existingDraft?.body;
   const body = existingDraft?.body
     || (await generateReplyDraft(userId, sd as Record<string, never>, admin, `The reply should send the document "${top.filename}" (it will be attached).`).catch(() => null));
   if (!body) return { did: 'none', reason: 'could not draft the send' };
+  // Stamp the drafting law ONLY on words this run actually authored — a reused body keeps whatever
+  // law it was written under, so a stale one is still caught by the serve gates.
+  const lawStamp = reusedDraft
+    ? ((existingDraft as { law_version?: number } | null)?.law_version !== undefined
+        ? { law_version: (existingDraft as { law_version?: number }).law_version } : {})
+    : { law_version: DRAFT_LAW_VERSION_C };
   const pa = await getDraftingAssistant(admin, userId); // O3a attribution
   await admin.from('inbox_items').update({
-    source_data: { ...sd, draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', attachment: { fileId: top.id, filename: top.filename, source: top.source } }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) },
+    source_data: { ...sd, draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', ...lawStamp, attachment: { fileId: top.id, filename: top.filename, source: top.source } }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) },
   }).eq('id', it.id);
   return { did: 'docsend', worker: pa?.name };
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE CANDIDATE DERIVATION — ONE definition of "an item the engine may work on", shared by the
+// preparation walker below and the JUDGMENT SWEEP (proactive-reach LAW 1). The sweep judges the
+// whole set; the pass prepares its three lanes out of it. Forking this is how reach and
+// preparation would come to disagree about what counts as actionable.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** Preparable + open + not an automated notice — the engine's working universe for one user. */
+export function isPreparableCandidate(w: WorkItem): boolean {
+  return !w.automated
+    && (w.id.startsWith('inbox:') || w.id.startsWith('commit:'))
+    && (w.state === 'todo' || w.state === 'waiting' || w.state === 'in_progress');
+}
+
+/** Every actionable item the judge must be able to reach (LAW 1: no item beyond its reach). */
+export function judgmentCandidates(items: WorkItem[]): WorkItem[] {
+  return items.filter(isPreparableCandidate);
+}
+
+/** The judgment cache key for an item — `inbox:<id>` | `commitment:<id>` (item_plans.entity_id). */
+export function judgmentKeyOf(w: WorkItem): string {
+  return w.id.startsWith('commit:') ? `commitment:${w.entityId}` : `inbox:${w.entityId}`;
+}
+
+/** THE JUDGMENT AGES — when each of this user's items was last judged (item_plans kind 'judgment').
+ *  PAGED (the repo's oldest lesson: PostgREST silently caps a single read at 1000 rows, and a
+ *  truncated read would make judged items look never-judged and re-burn the backlog every sweep). */
+export async function readJudgmentAges(admin: SupabaseClient, userId: string): Promise<JudgmentAge[]> {
+  try {
+    const rows = await fetchAllRows<{ entity_id: string; updated_at: string | null }>((from, to) =>
+      admin.from('item_plans').select('entity_id, updated_at')
+        .eq('user_id', userId).eq('kind', 'judgment')
+        .order('entity_id', { ascending: true }).range(from, to));
+    return rows.map((r) => ({ key: String(r.entity_id), judgedAt: r.updated_at ?? null }));
+  } catch { return []; }
+}
+
+/** Project a spine item into the nominator's shape: its own code-verifiable anchor + activity. */
+export function toNominatorItem(w: WorkItem, meetingPassedAt?: string | null): NominatorItem {
+  return {
+    key: judgmentKeyOf(w),
+    anchor: w.when.explicit,          // understanding.deadline (inbox) / due_date (commitment)
+    activityAt: w.at || null,
+    meetingPassedAt: meetingPassedAt ?? null,
+    title: w.title,
+  };
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -919,6 +1011,10 @@ export async function runPreparationPass(
 
   // ── W2: the ENTITY-PRIORITY order — the reasoned weight the brain already synthesizes is the
   // queue discipline (a hot deal's reply outranks a loose thread's), never a date heuristic.
+  // REACH LEADS IT (proactive-reach LAW 1): the ordering is now the ONE nominator's
+  // `orderForPreparation` — anchor-passed first (preparing a reply to a meeting that already
+  // happened is the exact cost the arc ends), then this never-attempted/weight discipline. There is
+  // no second ordering in the codebase: the judgment sweep calls the same module.
   const weights = new Map<string, number>();
   try {
     const { data: ents } = await admin.from('work_entities').select('id, priority')
@@ -938,21 +1034,34 @@ export async function runPreparationPass(
       .eq('user_id', userId).eq('kind', 'prep_outcome').limit(1000);
     for (const o of outs ?? []) attempted.add(String(o.entity_id));
   } catch { /* unordered walk */ }
-  const keyOf = (x: WorkItem) => (x.id.startsWith('commit:') ? `commitment:${x.entityId}` : `inbox:${x.entityId}`);
-  const byPriority = (a: WorkItem, b: WorkItem) => {
-    const aNew = attempted.has(keyOf(a)) ? 1 : 0, bNew = attempted.has(keyOf(b)) ? 1 : 0;
-    if (aNew !== bNew) return aNew - bNew; // unattempted (0) first
-    return weightOf(b) - weightOf(a);
-  };
+  const keyOf = judgmentKeyOf;
 
-  // The three candidate lanes, each walked in priority order under ONE shared budget. Lane 3 is
+  // The three candidate lanes, each walked in ONE nominated order under ONE shared budget. Lane 3 is
   // judge-driven end to end (W1): the cached work judgment decides chase/produce/schedule/forward/
   // send_file + the executor — the second batch router is gone (one judge, not two).
   const lanes: WorkItem[][] = [
-    autoDraft ? rep.needsYou.filter((x) => x.kind === 'reply' && x.id.startsWith('inbox:')).sort(byPriority) : [],
-    rep.openQuestions.filter((x) => x.blockedOn).sort(byPriority),
-    rep.needsYou.filter((w) => !w.automated && w.kind !== 'reply' && (w.id.startsWith('inbox:') || w.id.startsWith('commit:'))).sort(byPriority),
+    autoDraft ? rep.needsYou.filter((x) => x.kind === 'reply' && x.id.startsWith('inbox:')) : [],
+    rep.openQuestions.filter((x) => x.blockedOn),
+    rep.needsYou.filter((w) => !w.automated && w.kind !== 'reply' && (w.id.startsWith('inbox:') || w.id.startsWith('commit:'))),
   ];
+  // THE ONE ORDERING (proactive-reach LAW 1): computed once over the union of the lanes and applied
+  // to each — the judgment ages come from the same cache the judge writes, so "least recently
+  // judged" is a fact, never an estimate.
+  const laneUnion = new Map<string, WorkItem>();
+  for (const lane of lanes) for (const w of lane) laneUnion.set(keyOf(w), w);
+  const ages = await readJudgmentAges(admin, userId);
+  // THE USER'S CLOCK (T-class) owns the anchor test: "has this date passed" is answered in the
+  // user's own day boundary, never the server's — the same day the judge reasons in.
+  const { userTimezone, localNow } = await import('@/lib/utils/user-time');
+  const anchorDay = localNow(await userTimezone(admin, userId)).dateStr;
+  const nominated = orderForPreparation(
+    [...laneUnion.values()].map((w) => toNominatorItem(w)), ages,
+    { todayStr: anchorDay, attempted: (k) => attempted.has(k), weightOf: (k) => { const w = laneUnion.get(k); return w ? weightOf(w) : 0; } },
+  );
+  const rankOf = new Map(nominated.map((n) => [n.item.key, n.rank]));
+  for (const lane of lanes) {
+    lane.sort((a, b) => (rankOf.get(keyOf(a)) ?? Number.MAX_SAFE_INTEGER) - (rankOf.get(keyOf(b)) ?? Number.MAX_SAFE_INTEGER));
+  }
   // ── THE TRICHOTOMY LAW (plan AH): every candidate's outcome is RECORDED — `prep_outcome`
   // rows (item_plans, zero-migration) are the pass's observable ledger: what was prepared,
   // what was asked, what was skipped and WHY. Silence stops being unmeasurable. ──

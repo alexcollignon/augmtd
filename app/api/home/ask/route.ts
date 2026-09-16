@@ -41,6 +41,10 @@ export async function POST(request: NextRequest) {
         await writeRoomTurn(supabase, user.id, roomKey, {
           role: 'system', text: turn.say,
           refs: turn.refs?.length ? turn.refs.map((r) => ({ label: r.label, href: r.href ?? null })) : undefined,
+          // A CARD IS A TURN (threads plan — THE CARD CONTRACT): a prepared invite is DURABLE
+          // state, so it rides the turn as a component and survives the reload that used to eat
+          // it. The payload here is for RENDERING; the send door reads the stored row by id.
+          ...(turn.invite ? { component: { key: 'invite_card', refId: turn.invite.id, state: { invite: turn.invite.invite } } } : {}),
         });
       } catch { /* durability is best-effort — the answer itself still returns */ }
     };
@@ -113,6 +117,8 @@ export async function POST(request: NextRequest) {
       ...(turn.artifacts?.length ? { artifacts: turn.artifacts } : {}),
       // THE ONE CREATION CARD (Aug 10): the drafted standing task reviews inline.
       ...(turn.workflowDraft ? { workflowDraft: turn.workflowDraft } : {}),
+      // THE INVITE CARD: the prepared invite rides the answer and mounts inline (nothing sent).
+      ...(turn.invite ? { invite: turn.invite } : {}),
       // The filing nudge never decorates a failed/empty answer (found live: a wrong "File it"
       // chip beside a dead reply compounds the miss).
       ...(focus && turn.say?.trim() ? { focus } : {}),

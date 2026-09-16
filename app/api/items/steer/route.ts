@@ -31,12 +31,22 @@ export async function POST(request: NextRequest) {
        *  consequence instead of re-interpreting its own menu label as ambiguous free text
        *  (found live: picking "Request clarifications" earned a clarifying question BACK). */
       decision?: { option?: string; tradeoff?: string | null; why?: string | null };
+      /** A PREVIEW IS NOT A DEED (Sep 10): ask the SAME redraft lane for the words WITHOUT any
+       *  persistence — no version rows, no evaluator pass, no move of the serving pointer. This is
+       *  the only door a surface may use to generate a direction the user has not picked. */
+      preview?: boolean;
     };
     const kind = body.kind && VALID.includes(body.kind) ? body.kind : null;
     const id = body.id?.trim();
     // Same paste ceiling as the Home door — pasted source material must reach the brain whole.
     let text = (body.text ?? '').trim().slice(0, 20000);
     if (!kind || !id || !text) return NextResponse.json({ error: 'kind, id and text required' }, { status: 400 });
+    // A preview is a read of what a direction WOULD say — it can never carry a decision's consequence.
+    const preview = body.preview === true;
+    if (preview && kind !== 'entity') {
+      const turn = await converse(supabase, user.id, { kind: 'item', itemKind: kind, itemId: id }, text, { preview: true });
+      return NextResponse.json({ ok: true, preview: true, say: '', refs: [], draft: turn.draft ?? null });
+    }
     if (body.decision?.option) {
       const d = body.decision;
       text =

@@ -59,6 +59,7 @@ export async function GET(request: NextRequest) {
           const { resolveRequirements } = await import('@/lib/prepare/requirements');
           await resolveRequirements(supabase, uid, {
             itemKind: kind, itemId: id, itemTitle: title, entityId: (linkRow?.entity_id as string) ?? null, requires,
+            work: verdict.work,
           });
         } catch { /* resolution is an enhancement */ }
       });

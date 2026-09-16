@@ -9,12 +9,14 @@
 // lane opens the project room; a loose item opens its own deep-dive (href). Self-contained detail.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import GanttChart, { type GanttGroup } from '@/components/entities/gantt-chart';
-import EntityRoom from '@/components/entities/entity-room';
+import { useRouter } from 'next/navigation';
+import { projectHref } from '@/lib/room/project-href';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { useLiveRefresh } from '@/hooks/use-live-refresh';
+import { mayReplaceInPlace, freezeRows, hasContent, type ArrivalReason } from '@/lib/room/no-mutation';
 
 type Data = { ganttGroups: GanttGroup[]; looseGroup: GanttGroup | null; todayStr: string };
 
@@ -22,47 +24,78 @@ export default function TimelineGantt({ onDetailChange }: { onDetailChange?: (op
   // SSR'd-route rule: initializer COLD; cache hydrates pre-paint. Key v3: the loose band joined
   // the payload (a stale v2 blob has no looseGroup).
   const [data, setData] = useState<Data | null>(null);
+  // THE NO-MUTATION LAW needs the SERVED chart synchronously — `apply` is the ONE write site.
+  const paintedRef = useRef<Data | null>(null);
+  const apply = useCallback((next: Data | ((prev: Data | null) => Data | null)) => {
+    setData((prev) => {
+      const v = typeof next === 'function' ? next(prev) : next;
+      paintedRef.current = v;
+      return v;
+    });
+  }, []);
   useLayoutEffect(() => {
     const c = loadLS<Data>('aug-timeline-gantt-v3');
     if (!c) return;
-    setData((prev) => prev ?? c);
+    apply((prev) => prev ?? c);
     // The smart default applies to the INSTANT paint too — a projectless user lands on
     // Everything from the cache, not after the refetch.
     if (!touchedRef.current && c.ganttGroups.length === 0 && c.looseGroup) setMode('all');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [mode, setMode] = useState<'gantt' | 'all'>('gantt');
   const touchedRef = useRef(false); // the user's explicit toggle outranks the smart default
-  const [selected, setSelected] = useState<{ id: string; tab: 'overview' | 'work' } | null>(null);
+  const router = useRouter();
   const [err, setErr] = useState(false);
 
-  // Stable handle so the shared live-refresh hook can fire the latest load() closure.
-  const loadRef = useRef<(() => void) | null>(null);
-  useEffect(() => {
-    let alive = true;
-    const load = () => fetch('/api/home/timeline').then((r) => (r.ok ? r.json() : Promise.reject())).then((d) => {
-      if (!alive) return;
+  const aliveRef = useRef(true);
+  // THE NO-MUTATION LAW (lib/room/no-mutation.ts): a lane's bars are dated CLAIMS — a poll that
+  // re-lays them (a bar moving, a lane re-ordering, a marker changing colour) is exactly the
+  // mutation the law forbids. A `background` arrival APPENDS lanes the reader has never seen and
+  // leaves every painted lane as it opened; an `open` landing on a painted chart (the cache) becomes
+  // the NEXT open's first paint. A painted lane is frozen WHOLE rather than merged item-by-item:
+  // GanttItem carries no stable id, so appending inside a lane could redraw a moved bar twice — and
+  // a duplicate is a mutation too.
+  const load = useCallback((reason: ArrivalReason) => {
+    fetch('/api/home/timeline').then((r) => (r.ok ? r.json() : Promise.reject())).then((d) => {
+      if (!aliveRef.current) return;
       const next: Data = { ganttGroups: (d.ganttGroups ?? []) as GanttGroup[], looseGroup: (d.looseGroup ?? null) as GanttGroup | null, todayStr: d.todayStr as string };
-      setData(next); saveLS('aug-timeline-gantt-v3', next);
+      // A held payload is never a lost one: the cache IS the next open's first paint.
+      saveLS('aug-timeline-gantt-v3', next);
+      // THE EMPTY-PAINT RULE: a laneless painted Gantt is a skeleton, never a hold.
+      const painted = paintedRef.current && hasContent(paintedRef.current.ganttGroups.length + (paintedRef.current.looseGroup ? 1 : 0))
+        ? paintedRef.current : null;
+      const paint = mayReplaceInPlace(reason, !!painted) || !painted;
+      if (paint) apply(next);
+      else if (reason === 'background') {
+        apply({
+          ganttGroups: freezeRows(painted!.ganttGroups, next.ganttGroups, (g) => g.id),
+          looseGroup: painted!.looseGroup ?? next.looseGroup,
+          todayStr: next.todayStr, // the clock is ambient, never a claim about a bar
+        });
+      }
       // SMART DEFAULT (the Projects-lens pattern): land on the tab that HAS content — a
-      // projectless user opens straight onto Everything instead of an empty By-project.
-      if (!touchedRef.current && next.ganttGroups.length === 0 && next.looseGroup) setMode('all');
-    }).catch(() => { if (alive && !data) setErr(true); });
-    load();
-    loadRef.current = load;
-    return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+      // projectless user opens straight onto Everything instead of an empty By-project. It is a
+      // choice about an EMPTY view, so it moves nothing painted; a held arrival never re-decides it.
+      if (paint && !touchedRef.current && next.ganttGroups.length === 0 && next.looseGroup) setMode('all');
+    }).catch(() => { if (aliveRef.current && !paintedRef.current) setErr(true); });
+  }, [apply]);
+  useEffect(() => {
+    aliveRef.current = true;
+    load('open');
+    return () => { aliveRef.current = false; };
+  }, [load]);
   // The ONE live-refresh idiom — hooks/use-live-refresh.
-  useLiveRefresh(() => loadRef.current?.());
+  useLiveRefresh(() => load('background'));
 
+  // THE ADDRESS LAW (Sep 7 — the last in-place room mount, missed by the first inventory): a lane
+  // click NAVIGATES to the room's own address; the tab nuance rides `?tab=`. The old `selected`
+  // state painted a full EntityRoom while the URL still said /home.
   const open = (id: string, tab: 'overview' | 'work' = 'overview') => {
     if (id === 'loose') return; // the loose band is not a project room; its items link out themselves
-    setSelected({ id, tab }); onDetailChange?.(true);
+    router.push(`${projectHref(id)}${tab === 'work' ? '?tab=work' : ''}`);
   };
-  const close = () => { setSelected(null); onDetailChange?.(false); };
-  useEffect(() => () => onDetailChange?.(false), [onDetailChange]);
-
-  if (selected) return <EntityRoom entityId={selected.id} initialTab={selected.tab} onBack={close} />;
+  // The lens never hosts a room any more — announced once so the Home greeting can't stay stuck.
+  useEffect(() => { onDetailChange?.(false); }, [onDetailChange]);
   if (err) return <div className="mt-10 text-[13px] text-neutral-400">Couldn&apos;t load your timeline.</div>;
 
   const lanes = data?.ganttGroups ?? [];

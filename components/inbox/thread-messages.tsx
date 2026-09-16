@@ -10,8 +10,14 @@
 // Feed it a NORMALIZED ThreadMessage[] (oldest→newest). `fallback` supplies header fields when the
 // thread is empty but the caller still has a single stored body (the inbox item's source_data).
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { ChevronRightIcon } from '@heroicons/react/24/outline';
+import { AttachmentLightbox, AttachmentChip, type LightboxFile } from '@/components/ui/attachment-lightbox';
+
+// An attachment as this renderer takes it — the ONE viewer's own file shape, so a chip and the
+// lightbox can never describe the same file differently. Callers that serve no attachments pass
+// nothing and this whole lane renders NOTHING (the inbox's own layout is untouched by construction).
+export type ThreadAttachment = LightboxFile;
 
 // One normalized message. Both the inbox's `/api/inbox/thread` rows and the Home's
 // `/api/inbox/[id]/thread` messages map onto this shape (see the mappers at each call site).
@@ -25,6 +31,8 @@ export interface ThreadMessage {
   is_from_user?: boolean;
   to_addresses?: string[] | null;
   cc_addresses?: string[] | null;
+  /** Files that rode THIS message. Optional — a caller that doesn't serve them renders no lane. */
+  attachments?: ThreadAttachment[] | null;
 }
 
 interface ThreadFallback {
@@ -136,6 +144,7 @@ export function ThreadMessages({
   messages,
   fallback,
   compact = false,
+  attachments,
 }: {
   messages: ThreadMessage[] | null;  // null = loading
   fallback?: ThreadFallback | null;
@@ -143,6 +152,9 @@ export function ThreadMessages({
    *  clean height-capped card ("Show full message" to unfold) and ALL earlier messages sit behind
    *  the "Show N earlier" fold. The full mail client stays the inbox's job (compact=false). */
   compact?: boolean;
+  /** THREAD-LEVEL files — what arrived with this conversation, where the store keeps them on the
+   *  thread rather than per message. Rendered under the latest card. Absent → no lane, no chrome. */
+  attachments?: ThreadAttachment[] | null;
 }) {
   const [expandedEmails, setExpandedEmails] = useState<Record<number, boolean>>({});
   const [showAllHistory, setShowAllHistory] = useState(false);
@@ -153,6 +165,34 @@ export function ThreadMessages({
     setExpandedEmails(prev => ({ ...prev, [idx]: !prev[idx] }));
 
   const sd = fallback ?? {};
+
+  // ── THE ONE VIEWER, ONE CONTEXT (T25). Every file this thread holds — per-message first, in
+  // thread order, then the thread's own — is ONE list, so the lightbox's ‹ › walk the conversation
+  // instead of a single card, and its "N of M" is a truth about what the reader can actually reach.
+  const allFiles: ThreadAttachment[] = useMemo(() => {
+    const out: ThreadAttachment[] = [];
+    for (const m of messages ?? []) for (const a of m.attachments ?? []) out.push(a);
+    for (const a of attachments ?? []) out.push(a);
+    return out;
+  }, [messages, attachments]);
+  const [lightbox, setLightbox] = useState<number | null>(null);
+  // A chip opens the shared viewer AT ITS OWN file — matched by identity, so a duplicate filename
+  // in another message can never steal the seat.
+  const openFile = (a: ThreadAttachment) => {
+    const at = allFiles.indexOf(a);
+    setLightbox(at >= 0 ? at : 0);
+  };
+  const chipRow = (list: ThreadAttachment[] | null | undefined, cls: string) =>
+    (list && list.length > 0) ? (
+      <div className={cls}>
+        {list.map((a, k) => (
+          <AttachmentChip key={`${a.name}-${k}`} name={a.name} size={a.size} onClick={() => openFile(a)} />
+        ))}
+      </div>
+    ) : null;
+  const viewer = lightbox !== null && allFiles.length > 0 ? (
+    <AttachmentLightbox files={allFiles} index={lightbox} onIndex={setLightbox} onClose={() => setLightbox(null)} />
+  ) : null;
 
   // Loading skeleton
   if (messages === null) {
@@ -204,6 +244,7 @@ export function ThreadMessages({
         {isExpanded && (
           <div className="border-t border-neutral-100">
             <IframeEmailBody html={msg.html_body ?? null} plain={msg.body ?? null} />
+            {chipRow(msg.attachments, 'flex flex-wrap gap-1.5 px-4 pb-3 pt-1')}
           </div>
         )}
       </div>
@@ -216,6 +257,7 @@ export function ThreadMessages({
 
   return (
     <div className="space-y-1.5">
+      {viewer}
       {/* Hidden older messages behind fold */}
       {hidden.length > 0 && showAllHistory && hidden.map((msg, i) => renderOlderMsg(msg, i))}
 
@@ -302,6 +344,12 @@ export function ThreadMessages({
               html={latest?.html_body ?? (sd.html_body as string | null)}
               plain={latest?.body ?? (sd.body as string | null)}
             />
+          )}
+          {/* WHAT CAME WITH IT — the latest message's own files, then the thread's. One chip
+              grammar, one viewer; nothing renders when nothing arrived. */}
+          {chipRow(
+            [...(latest?.attachments ?? []), ...(attachments ?? [])],
+            'flex flex-wrap gap-1.5 px-3 pb-3 pt-1 border-t border-neutral-100 mt-1',
           )}
         </div>
       )}

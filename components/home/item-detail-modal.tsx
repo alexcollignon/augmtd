@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
-import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import { ItemDetail, type ItemKind } from './item-detail';
 
 // ── The item-detail rendered as a DEEP DIVE IN the Home — NOT a centered popup. Mounted by the
@@ -71,19 +70,10 @@ export function ItemDetailModal({ id }: { id: string }) {
       <div
         className={`relative pointer-events-auto flex-1 min-h-0 flex flex-col bg-white border-l border-neutral-200 transition-all duration-300 ease-out ${shown ? 'translate-x-0 opacity-100' : 'translate-x-6 opacity-0'}`}
       >
-        {/* Back bar */}
-        <div className="flex-shrink-0 flex items-center px-5 py-3 border-b border-neutral-200 bg-white/95 backdrop-blur">
-          <button
-            onClick={close}
-            className="inline-flex items-center gap-1.5 text-[13px] font-medium text-neutral-500 hover:text-indigo-600 transition-colors"
-          >
-            <ArrowLeftIcon className="w-4 h-4" />Back to Home
-          </button>
-        </div>
-        {/* Deep-dive body — the ItemDetail owns its own scroll (thread scrolls, composer docks) AND
-            its own centering/width: single column caps at the classic readable width; a two-column
-            breakdown widens (main + tasks panel) via DeepDiveShell. */}
-        <div className="flex-1 min-h-0 flex flex-col px-2 sm:px-4">
+        {/* THE ROOM OWNS ITS CHROME (Sep 7 — the one room grammar): the item room's own 52px
+            header carries back, the same way the project room's does. The modal's own back bar was
+            a second back affordance stacked on the first. Escape and the backdrop still close. */}
+        <div className="flex-1 min-h-0 flex flex-col">
           <ItemDetail id={id} angle={angle} kind={kind} />
         </div>
       </div>

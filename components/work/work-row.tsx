@@ -23,17 +23,29 @@ import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { fmtMonthDay } from '@/lib/utils/format-date';
 import { AnchoredPopover } from '@/components/ui/anchored-popover';
 
-// ── A row control that SAYS what it does on hover — icon at rest, label slides out smoothly
-// (per-button `group/act`, so only the hovered control expands). One idiom for ✓ / ✕ / folder. ──
-function RowAction({ label, onClick, disabled, hoverTone, children }: {
+// ── A row control that SAYS WHAT IT DOES, in words (owner walk, Sep 15: "longer labels in front of
+// action buttons in home"). The label used to slide out on each control's own hover (`group/act`,
+// max-w-0 → max-w-[110px]) — so at rest the rail was three mute glyphs, and reading one meant
+// hovering it and waiting. Now the word is ALWAYS there the moment the rail is: label leading the
+// glyph (the folder leads with its icon, since a folder IS the word). Costs nothing in layout — the
+// rail is absolutely positioned, so a longer word can never re-truncate the sentence behind it.
+//
+// THE TOOLTIP DIES WITH THE LABEL: a native `title` beside a visible word is redundant chrome that
+// floats a second copy over the row half a second later (the collision in the owner's screenshot).
+// A control carries a `title` ONLY where no label is rendered. ──
+function RowAction({ label, onClick, disabled, hoverTone, iconFirst = false, children }: {
   label: string; onClick: (e: React.MouseEvent) => void; disabled?: boolean;
-  hoverTone: string; children: React.ReactNode;
+  hoverTone: string;
+  /** The glyph leads the word (the folder) instead of the word leading the glyph. */
+  iconFirst?: boolean;
+  children: React.ReactNode;
 }) {
+  const word = <span className="whitespace-nowrap text-[11px] font-medium leading-none">{label}</span>;
+  const glyph = <span className="text-[13px] leading-none flex items-center">{children}</span>;
   return (
-    <button onClick={onClick} disabled={disabled} title={label}
-      className={`group/act flex items-center text-neutral-300 ${hoverTone} transition-colors disabled:opacity-50`}>
-      <span className="text-[13px] leading-none flex items-center">{children}</span>
-      <span className="max-w-0 overflow-hidden group-hover/act:max-w-[110px] group-hover/act:ml-1 transition-all duration-200 ease-out whitespace-nowrap text-[11px] font-medium">{label}</span>
+    <button onClick={onClick} disabled={disabled}
+      className={`flex items-center gap-1 text-neutral-400 ${hoverTone} transition-colors disabled:opacity-50`}>
+      {iconFirst ? <>{glyph}{word}</> : <>{word}{glyph}</>}
     </button>
   );
 }
@@ -162,7 +174,7 @@ function RowProjectPicker({ itemKind, itemId, onAttached }: { itemKind: 'inbox_i
   };
   return (
     <span ref={boxRef} className="relative inline-flex" onClick={(e) => e.stopPropagation()}>
-      <RowAction label="Add to project" hoverTone="hover:text-indigo-600" disabled={busy}
+      <RowAction label="Add to project" hoverTone="hover:text-indigo-600" disabled={busy} iconFirst
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}>
         <FolderIcon className="w-3.5 h-3.5" />
       </RowAction>
@@ -288,15 +300,155 @@ export const isReadonlyWorkItem = (w: WorkItem): boolean =>
   w.kind === 'event' || w.kind === 'deliverable' || w.kind === 'meeting' || w.state === 'done' || w.state === 'dismissed';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE ROW'S DEEDS, EXTRACTED — one implementation of open · prefetch · ✓ · ✕ for a DoItem, so a
+// second surface that lists work (THE CALM HOME's whispered lines) shares the row's doors instead
+// of forking them. WorkRow itself runs on this hook: one logic, many skins.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+export type RowActionCallbacks = {
+  onDismissInbox?: (id: string) => void; onClearedCommitment?: (id: string) => void;
+  onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void;
+  onUndoCommitment?: (message: string, id: string) => void;
+  /** A session-only dismiss (slipping deals) — replaces the endpoint call. */
+  dismissOverride?: () => void;
+};
+export function useRowActions(item: DoItem, cbs: RowActionCallbacks = {}) {
+  const router = useRouter();
+  const isCommit = item.source === 'commitment';
+  const isDeal = item.source === 'deal';
+  const inbox = useExit();
+  const commit = useCommitmentAct(isCommit ? item.entityId : undefined, cbs.onClearedCommitment, cbs.onUndoCommitment);
+  const [acting, setActing] = useState(false);
+  useEffect(() => { if (inbox.removed) cbs.onDismissInbox?.(item.entityId); }, [inbox.removed]); // eslint-disable-line react-hooks/exhaustive-deps
+  const removed = isCommit ? commit.removed : inbox.removed;
+  const exiting = isCommit ? commit.exiting : inbox.exiting;
+
+  const actInbox = async (kind: 'complete' | 'dismiss', e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (acting || !item.entityId) return;
+    setActing(true); inbox.startExit();
+    cbs.onUndoInbox?.(kind === 'complete' ? 'Marked done' : 'Dismissed', item.entityId, [item.entityId]);
+    try { await fetch(`/api/inbox/${item.entityId}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) }); } finally { setActing(false); }
+  };
+  const done = (e?: React.MouseEvent) => { e?.stopPropagation(); if (isDeal) return; if (isCommit) commit.act('done'); else actInbox('complete', e); };
+  const drop = (e?: React.MouseEvent) => { e?.stopPropagation(); if (cbs.dismissOverride) { cbs.dismissOverride(); return; } if (isCommit) commit.act('dismissed'); else actInbox('dismiss', e); };
+  const open = () => {
+    // THE SEED HANDOFF (UX arc): the deep-dive's first paint must never know LESS than the row
+    // just clicked — carry the row's own truth (title, who) across the navigation so the shell
+    // opens with the real subject/sender, never a placeholder while the fetch runs.
+    try { saveLS(`aug-item-seed-${item.entityId}`, { title: item.ask ?? null, who: item.primary ?? null }); } catch { /* non-fatal */ }
+    router.push(item.href);
+  };
+  // Hover = intent to open → warm the deep-dive cache + the route JS so the click is instant.
+  // Mousedown fires it too — fast clicks and touch get no hover dwell.
+  const prefetch = () => { prefetchItem(item.href); router.prefetch?.(item.href); warmProjectPicker(); };
+  return { isCommit, isDeal, removed, exiting, busy: acting || commit.acting, done, drop, open, prefetch };
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE HOVER CLUSTER, EXTRACTED (owner walk, Sep 7 — "the hover expand disappeared"). THE CAUSE was
+// a FORK: THE CALM HOME's whispered line hand-rolled bare ✓/✕ buttons instead of mounting the row
+// kit's controls, so hovering a whisper revealed two mute glyphs — no expanding label, no
+// Add-to-project door — while the deck's own rows kept all three. One control cluster, one idiom,
+// every surface that lists work: each control SAYS WHAT IT DOES IN WORDS (Sep 15 — the label is no
+// longer a per-control hover reveal), and the folder is the filing door (the row itself is the open
+// affordance).
+//
+// THE HOVER FLOOR: the cluster always renders at least one verb. ✓ hides on a deal (nothing to
+// complete) and the folder hides where there is no filable item — so ✕ and the CTA are
+// UNCONDITIONAL, which is what makes "every hover offers something" true by construction rather
+// than by row class. `ctaFor` is total (a string for every DoItem) — the caller renders it beside
+// this cluster, never inside a conditional.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+export function RowControls({ item, busy, done, drop, readonly = false, onAttached }: {
+  item: DoItem; busy: boolean;
+  done: (e?: React.MouseEvent) => void; drop: (e?: React.MouseEvent) => void;
+  readonly?: boolean;
+  onAttached?: (name: string, tracked: boolean) => void;
+}) {
+  if (readonly) return null;
+  const isDeal = item.source === 'deal';
+  const isCommit = item.source === 'commitment';
+  return (
+    <>
+      {!isDeal && <RowAction label="Done" hoverTone="hover:text-emerald-600" disabled={busy} onClick={done}>✓</RowAction>}
+      <RowAction label="Dismiss" hoverTone="hover:text-rose-600" disabled={busy} onClick={drop}>✕</RowAction>
+      {!isDeal && item.entityId && (
+        <RowProjectPicker itemKind={isCommit ? 'commitment' : 'inbox_item'} itemId={item.entityId} onAttached={onAttached} />
+      )}
+    </>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE HOVER RAIL — THE CONTROLS OVERLAY, THEY NEVER PUSH (owner walk, Sep 14: "the animation makes
+// it a bit hard to select the middle ones, as the label pushes to the side").
+//
+// THE CAUSE was structural, not cosmetic: the cluster sat IN FLOW as a flex sibling, so each
+// control's own label expansion (max-w-0 → max-w-[110px]) grew the cluster, stole width from the
+// flex-1 sentence, and re-truncated the row MID-HOVER ("2 00:0…"). Every click target under the
+// cursor shifted while the cursor was already moving toward one — the middle controls worst of all.
+//
+// THE LAW: a hover reveal may change what is VISIBLE, never what is LAID OUT. The rail is absolutely
+// positioned against the row's right edge (zero width in flow, so no label ever reflows and no
+// target ever moves), and a soft gradient in the row's own background fades the text beneath it —
+// the sentence YIELDS VISUALLY without yielding a single pixel of layout. The reveal keeps its
+// smooth motion (opacity + a few px of travel), and `motion-reduce` makes it instant.
+//
+// ONE IMPLEMENTATION, every seat that lists work (the RowControls precedent): WorkRow mounts it,
+// the calm Home's whisper mounts it. A surface that hand-rolls its own positioned cluster forks
+// this law back open.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// THE SOLID BACKING (owner walk, Sep 15 — his screenshot: the row's strikethrough sentence and the
+// overdue word reading THROUGH the controls, "overdue×Dismiss" as one soup). The rail used to be a
+// single translucent gradient all the way across, so the text under the controls merely dimmed. Now
+// the gradient is only the LEADING EDGE — a short fade from transparent into the row's own colour —
+// and the controls themselves sit on that colour SOLID. Text may never show through a control.
+const RAIL_BG = {
+  white: { to: 'to-white', solid: 'bg-white' },
+  'neutral-50': { to: 'to-neutral-50', solid: 'bg-neutral-50' },
+} as const;
+
+export function RowHoverRail({ children, bg = 'white' }: {
+  children: React.ReactNode;
+  /** The row's own hover background, so the rail reads as the row breathing, not a white card. */
+  bg?: keyof typeof RAIL_BG;
+}) {
+  const { to, solid } = RAIL_BG[bg];
+  return (
+    <span
+      className="pointer-events-none absolute inset-y-0 right-0 z-[1] flex items-stretch opacity-0 translate-x-1 transition-[opacity,transform] duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 group-focus-within:opacity-100 group-focus-within:translate-x-0 motion-reduce:transition-none motion-reduce:translate-x-0"
+    >
+      {/* THE LEADING EDGE — the only gradient: the sentence fades out INTO the backing, it is never
+          left half-legible beneath a word. */}
+      <span className={`w-12 bg-gradient-to-r from-transparent ${to}`} />
+      {/* Click-through at rest: the rail sits OVER the sentence, so it may only take pointer events
+          while it is actually shown (opacity alone would swallow clicks on an invisible strip). */}
+      <span className={`${solid} pointer-events-none group-hover:pointer-events-auto group-focus-within:pointer-events-auto flex items-center gap-3 pr-3`}>{children}</span>
+    </span>
+  );
+}
+
+/** THE ONE VERB — the CTA speaks the JUDGED state, never a promise ("Review & send" only when a
+ *  prepared draft truly exists). The deck card and the calm whisper's hover verb read it from HERE.
+ *  TOTAL BY CONSTRUCTION: every DoItem gets a word, so no row class can hover into silence. */
+export function ctaFor(item: DoItem): string {
+  if (item.prepared) return item.source === 'reply' ? 'Review & send →' : 'Review →';
+  return item.source === 'deal' ? 'Open project →' : 'Open →';
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE ROW — one component for everything you owe. A leading TYPE ICON carries the species; the body
 // is one line (who · ask) + an optional second line; controls appear only on hover.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-export function WorkRow({ item, emphasis = false, hideInitiative = false, readonly = false, evidence = false, flat = false, variant = 'row', onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment, dismissOverride }: {
+export function WorkRow({ item, emphasis = false, hideInitiative = false, readonly = false, evidence = false, flat = false, onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment, dismissOverride }: {
   item: DoItem; emphasis?: boolean; hideInitiative?: boolean;
-  /** THE CARD VARIANT (Arc 3 shell, owner-triggered Aug 6 — the mockup's deck grammar for the
-   *  HOME only): state dot · sentence · sub-line · one CTA row. Other surfaces keep the
-   *  one-line row anatomy; same handlers either way (one logic, two skins). */
-  variant?: 'row' | 'card';
+  // THE CARD VARIANT IS DEAD (Sep 13): `variant: 'row' | 'card'` carried the Aug 6 deck grammar
+  // (state dot · sentence · sub-line · one CTA row) for the Home alone. The Sep 8 calm-Home walk
+  // retired the deck, and with it the only caller that ever asked for a card — the branch stood as
+  // a second skin nothing mounted. ONE ROW ANATOMY now, for every door. The laws it carried live
+  // on where they belong: the judged CTA in `ctaFor` (one producer, shared with the whisper) and
+  // the prepared word in the row's own `ready` chip.
   /** flat = the row lives inside a GROUP CONTAINER (hairline dividers own the chrome) — no border,
    *  no rounding, no shadow of its own. The one-container-per-group anatomy. */
   flat?: boolean;
@@ -311,36 +463,9 @@ export function WorkRow({ item, emphasis = false, hideInitiative = false, readon
   /** A session-only dismiss (slipping deals) — replaces the endpoint call; ✓ hides (nothing to complete). */
   dismissOverride?: () => void;
 }) {
-  const router = useRouter();
-  const isCommit = item.source === 'commitment';
-  const isDeal = item.source === 'deal';
-  const inbox = useExit();
-  const commit = useCommitmentAct(isCommit ? item.entityId : undefined, onClearedCommitment, onUndoCommitment);
-  const [acting, setActing] = useState(false);
+  const { isCommit, isDeal, removed, exiting, busy, done, drop, open, prefetch } =
+    useRowActions(item, { onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment, dismissOverride });
   const [localTag, setLocalTag] = useState<string | null>(null); // optimistic project tag (tracked-only)
-  useEffect(() => { if (inbox.removed) onDismissInbox?.(item.entityId); }, [inbox.removed]); // eslint-disable-line react-hooks/exhaustive-deps
-  const removed = isCommit ? commit.removed : inbox.removed;
-  const exiting = isCommit ? commit.exiting : inbox.exiting;
-
-  const actInbox = async (kind: 'complete' | 'dismiss', e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    if (acting || !item.entityId) return;
-    setActing(true); inbox.startExit();
-    onUndoInbox?.(kind === 'complete' ? 'Marked done' : 'Dismissed', item.entityId, [item.entityId]);
-    try { await fetch(`/api/inbox/${item.entityId}/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'home' }) }); } finally { setActing(false); }
-  };
-  const done = (e?: React.MouseEvent) => { e?.stopPropagation(); if (isDeal) return; if (isCommit) commit.act('done'); else actInbox('complete', e); };
-  const drop = (e?: React.MouseEvent) => { e?.stopPropagation(); if (dismissOverride) { dismissOverride(); return; } if (isCommit) commit.act('dismissed'); else actInbox('dismiss', e); };
-  const open = () => {
-    // THE SEED HANDOFF (UX arc): the deep-dive's first paint must never know LESS than the row
-    // just clicked — carry the row's own truth (title, who) across the navigation so the shell
-    // opens with the real subject/sender, never a placeholder while the fetch runs.
-    try { saveLS(`aug-item-seed-${item.entityId}`, { title: item.ask ?? null, who: item.primary ?? null }); } catch { /* non-fatal */ }
-    router.push(item.href);
-  };
-  // Hover = intent to open → warm the deep-dive cache + the route JS so the click is instant.
-  // Mousedown fires it too — fast clicks and touch get no hover dwell.
-  const prefetch = () => { prefetchItem(item.href); router.prefetch?.(item.href); warmProjectPicker(); };
 
   if (removed) return null;
   // Optimistic project tag: set the instant an attach succeeds (tracked-only), replaced by the
@@ -349,58 +474,6 @@ export function WorkRow({ item, emphasis = false, hideInitiative = false, readon
   const { Icon, ring, text } = DO_META[item.source];
   const iconTone = isCommit && item.overdue ? 'text-rose-500' : text;
   const badge = item.overdue ? 'Overdue' : item.dueToday ? 'Today' : (isCommit && item.dueDate) ? fmtDue(item.dueDate) : null;
-  const busy = acting || commit.acting;
-
-  if (variant === 'card') {
-    // The state dot IS the judgment (semantic, never decorative): overdue → rose · prepared →
-    // indigo (something awaits your sign-off) · due today → amber · else quiet.
-    const dot = item.overdue ? 'bg-rose-400' : item.prepared ? 'bg-indigo-400' : item.dueToday ? 'bg-amber-400' : 'bg-neutral-300';
-    // The CTA speaks the JUDGED state, never a promise: "Review & send" only when a prepared
-    // draft truly exists (server truth — the July "See X's work" lesson honored); it opens the
-    // same room the row itself opens.
-    const cta = item.prepared
-      ? (item.source === 'reply' ? 'Review & send →' : 'Review →')
-      : (isDeal ? 'Open project →' : 'Open →');
-    const sub = [
-      !hideInitiative && shownInitiative ? shownInitiative : null,
-      item.second && item.second !== 'Action needed' ? item.second : null,
-      !item.overdue && !item.dueToday && item.dueDate ? `due ${fmtDue(item.dueDate)}` : null,
-    ].filter(Boolean).join(' · ');
-    return (
-      // COMPACT (owner: "the cards are too big"): TWO lines, tight — title+badge · verb+context.
-      <div onMouseEnter={prefetch} onFocus={prefetch} onMouseDown={prefetch} onTouchStart={prefetch}
-        className={`group rounded-[10px] border bg-white transition-all duration-300 ease-out ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${emphasis ? 'border-indigo-200' : 'border-neutral-200/70 hover:border-indigo-200'}`}>
-        <div role="button" tabIndex={0} onClick={open}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
-          className="w-full flex items-start gap-2.5 px-3.5 py-2 text-left cursor-pointer">
-          <span className={`flex-shrink-0 mt-[7px] w-1.5 h-1.5 rounded-full ${dot}`} />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-baseline gap-2">
-              <h3 className={`min-w-0 truncate text-[13px] leading-snug ${evidence ? 'font-normal text-neutral-500' : 'font-medium text-neutral-900'}`}>
-                {item.primary}{item.primary && item.ask && <span className="font-normal text-neutral-400"> — </span>}{item.ask && <span className={evidence ? 'font-normal' : 'font-medium text-neutral-800'}>{item.ask}</span>}
-              </h3>
-              {(item.overdue || item.dueToday) && (
-                <span className={`flex-shrink-0 ml-auto text-[10px] font-semibold uppercase tracking-wide ${item.overdue ? 'text-rose-500' : 'text-amber-500'}`}>{item.overdue ? 'Overdue' : 'Today'}</span>
-              )}
-            </div>
-            <div className="mt-[3px] flex items-center gap-2 min-w-0">
-              <span className="flex-shrink-0 text-[12px] font-semibold text-indigo-600 group-hover:text-indigo-700 transition-colors">{cta}</span>
-              {item.prepared && <span className="flex-shrink-0 text-[10.5px] font-semibold text-indigo-400">ready</span>}
-              {sub && <span className="min-w-0 truncate text-[11.5px] text-neutral-400">{sub}</span>}
-              <span className="ml-auto flex-shrink-0 flex items-center gap-2.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                {!readonly && !isDeal && <RowAction label="Mark done" hoverTone="hover:text-emerald-600" disabled={busy} onClick={done}>✓</RowAction>}
-                {!readonly && <RowAction label="Dismiss" hoverTone="hover:text-rose-600" disabled={busy} onClick={drop}>✕</RowAction>}
-                {!readonly && !isDeal && item.entityId && (
-                  <RowProjectPicker itemKind={isCommit ? 'commitment' : 'inbox_item'} itemId={item.entityId}
-                    onAttached={(name, tracked) => { if (tracked) setLocalTag(name); }} />
-                )}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     // ONE LINE PER ROW (work-surface correction — the real list-wise anatomy, not padding): the
@@ -411,7 +484,7 @@ export function WorkRow({ item, emphasis = false, hideInitiative = false, readon
       : `group rounded-lg border bg-white transition-all duration-300 ease-out hover:shadow-[0_2px_12px_-4px_rgba(0,0,0,0.07)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/60 hover:border-neutral-300'}`}>
       <div role="button" tabIndex={0} onClick={open}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
-        className="w-full flex items-center gap-2.5 px-3 py-[7px] text-left cursor-pointer">
+        className="relative w-full flex items-center gap-2.5 px-3 py-[7px] text-left cursor-pointer">
         <span className={`flex-shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-md ${evidence ? 'bg-neutral-50 text-neutral-400' : `${ring} ${iconTone}`}`}><Icon className="w-3 h-3" /></span>
         <div className="min-w-0 flex-1 flex items-baseline gap-2">
             {emphasis && <span className="flex-shrink-0 text-[10px] font-semibold uppercase tracking-wide text-indigo-500">Start here</span>}
@@ -440,17 +513,15 @@ export function WorkRow({ item, emphasis = false, hideInitiative = false, readon
             </span>
         </div>
         {/* Controls appear ONLY on hover — at rest every row is a pure line. Identical set, identical
-            position, every species and every surface. Each control SAYS what it does on its own
-            hover (Mark done · Dismiss · Add to project — the folder replaces the old arrow; the
-            row itself is the open affordance). */}
-        <span className="flex-shrink-0 flex items-center gap-2.5 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-          {!readonly && !isDeal && <RowAction label="Mark done" hoverTone="hover:text-emerald-600" disabled={busy} onClick={done}>✓</RowAction>}
-          {!readonly && <RowAction label="Dismiss" hoverTone="hover:text-rose-600" disabled={busy} onClick={drop}>✕</RowAction>}
-          {!readonly && !isDeal && item.entityId && (
-            <RowProjectPicker itemKind={isCommit ? 'commitment' : 'inbox_item'} itemId={item.entityId}
-              onAttached={(name, tracked) => { if (tracked) setLocalTag(name); }} />
-          )}
-        </span>
+            position, every species and every surface. Each control SAYS what it does IN WORDS
+            (Done · Dismiss · Add to project — the folder replaces the old arrow; the row itself is
+            the open affordance). They ride THE HOVER RAIL, so the sentence beside them never
+            reflows and no click target moves mid-hover, on a SOLID backing so no word reads
+            through them. */}
+        <RowHoverRail bg={flat ? 'neutral-50' : 'white'}>
+          <RowControls item={item} busy={busy} done={done} drop={drop} readonly={readonly}
+            onAttached={(name, tracked) => { if (tracked) setLocalTag(name); }} />
+        </RowHoverRail>
       </div>
       {/* The "See X's work" hero CTA was REMOVED (July 29, user-rejected): it duplicated the row's
           own click while PROMISING a specific thing the room then had to keep — and when the

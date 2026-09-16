@@ -19,8 +19,66 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkVerdict, JudgeInput } from './judge';
+import { clip } from '@/lib/room/turns';
 
 export type VerdictConsequence = { resolved: boolean; stripped: string[] };
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE EVENT LINE CARRIES THE OUTCOME, NOT THE ARGUMENT (owner walk, Sep 8 — root cause C5).
+// Live, verbatim shape: `…"Acme Workflow" a I marked it done` — a raw `.slice(120)` cut the judgment's
+// reason mid-word and ran it straight into the next sentence with no separator. Two laws, both in
+// code here: (1) every clip is the house WORD-BOUNDARY clip; (2) the muted event line is ONE SHORT
+// LINE about the outcome — the full reasoning belongs to Activity and to the judgment record, not
+// to the stream (THE ONE-NARRATOR event grammar: deltas, not transcripts).
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+const NARRATION_MAX = 140;   // the composed event line's ceiling
+const NARRATION_TITLE = 48;  // the subject inside it
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// DELTAS, NOT EVENTS — A DRAIN SPEAKS ONCE (proactive-reach W4 census, fix #4). Found live: eight
+// identical "Marked X done — already settled" lines inside ONE minute, 44 of them standing across
+// the account. Each was individually true and collectively a transcript of our backlog run — the
+// exact grammar the one-narrator law outlaws.
+//
+// THE LAW: per room, per day, resolutions COALESCE. The first writes its line; every later one the
+// same day UPDATES IT IN PLACE (the keyed-dedupe idiom) into a composed count. The roll-up's
+// members live in the house store (`item_plans`, kind `verdict_resolve_roll`), never parsed back
+// out of the rendered sentence.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+const ROLL_KIND = 'verdict_resolve_roll';
+const ROLL_MAX_REFS = 6;
+
+export type ResolvedEntry = { title: string; expired: boolean; href: string };
+
+/** THE ONE composed resolution line — singular keeps its sentence, plural becomes a count. */
+export function composeResolutionLine(entries: ResolvedEntry[]): string {
+  if (entries.length === 0) return '';
+  if (entries.length === 1) {
+    const e = entries[0];
+    return clip(e.expired
+      ? `Filed "${clip(e.title, NARRATION_TITLE)}" — out of date. Undo from Activity.`
+      : `Marked "${clip(e.title, NARRATION_TITLE)}" done — already settled. Undo from Activity.`, NARRATION_MAX);
+  }
+  const n = entries.length;
+  const allExpired = entries.every((e) => e.expired);
+  const allAnswered = entries.every((e) => !e.expired);
+  const body = allExpired ? `Filed ${n} items that were out of date`
+    : allAnswered ? `Marked ${n} items done — they had already settled themselves`
+      : `Settled ${n} items that had already resolved themselves`;
+  return clip(`${body} — undo from Activity.`, NARRATION_MAX);
+}
+
+/**
+ * THE PARK LINE, COMPOSED — never the judge's own prose. Only the verdict's structured fields reach
+ * it: the subject, the date it comes back, and (when the item itself names one) who it waits on.
+ * The judge's reason is a reasoning artefact written for the judge; it belongs to the activity
+ * record, whole, and to nothing the user reads in the stream.
+ */
+export function composeRevisitLine(title: string, after: string, who?: string | null): string {
+  const whoName = String(who ?? '').trim();
+  const waiting = whoName ? ` — waiting on ${clip(whoName, 40)}` : '';
+  return clip(`Set "${clip(title, NARRATION_TITLE)}" aside until ${after}${waiting}. Say the word if you want it now.`, NARRATION_MAX);
+}
 
 export async function applyVerdictConsequences(
   client: SupabaseClient, userId: string, input: JudgeInput, verdict: WorkVerdict,
@@ -80,6 +138,23 @@ export async function applyVerdictConsequences(
       }
       if (out.resolved) {
         import('@/lib/home/bust-brief').then(({ softBustBrief }) => softBustBrief(client, userId)).catch(() => {});
+        // ── LAW 4 · ONE CONVERSATION, ONE OBLIGATION: the judge just settled this item; if the same
+        // human exchange also lives on another thread (the counterparty switched address), that copy
+        // must not keep standing as an independent debt. Bounded, best-effort, once per settle. ──
+        try {
+          const { cascadeConversationSettlement } = await import('@/lib/inbox/conversation-identity');
+          const threadId = input.kind === 'inbox'
+            ? ((await client.from('inbox_items').select('source_data').eq('id', input.id).eq('user_id', userId).maybeSingle())
+              .data?.source_data as { thread_id?: string } | null)?.thread_id ?? null
+            : ((await client.from('commitments').select('thread_id').eq('id', input.id).eq('user_id', userId).maybeSingle())
+              .data?.thread_id as string | null) ?? null;
+          if (threadId) {
+            await cascadeConversationSettlement(client, userId, {
+              threadId, settledAt: now,
+              via: expired ? 'the judge filed it as out of date' : 'the judge found it already settled',
+            });
+          }
+        } catch { /* non-fatal */ }
       }
       return out; // resolved → no artifact hygiene needed (drafts stripped with the resolve)
     }
@@ -91,20 +166,39 @@ export async function applyVerdictConsequences(
       try {
         const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
         let title = '';
+        let who: string | null = null;
         if (input.kind === 'inbox') {
-          const { data: it } = await client.from('inbox_items').select('work_title').eq('id', input.id).eq('user_id', userId).maybeSingle();
+          const { data: it } = await client.from('inbox_items').select('work_title, source_data').eq('id', input.id).eq('user_id', userId).maybeSingle();
           title = String(it?.work_title ?? '');
+          const sd = (it?.source_data ?? {}) as Record<string, unknown>;
+          who = (sd.from_name as string) || (sd.from_address as string) || null;
         } else {
-          const { data: c } = await client.from('commitments').select('description').eq('id', input.id).eq('user_id', userId).maybeSingle();
+          const { data: c } = await client.from('commitments').select('description, counterparty').eq('id', input.id).eq('user_id', userId).maybeSingle();
           title = String(c?.description ?? '');
+          who = (c?.counterparty as string) || null;
         }
         const roomKey = await roomKeyForItem(client, userId, input.kind === 'inbox' ? 'inbox' : 'commitment', input.id);
         await writeRoomTurn(client, userId, roomKey, {
           role: 'system',
-          text: `Set "${title.slice(0, 60)}" aside until ${verdict.revisit.after}${verdict.revisit.reason ? ` — ${verdict.revisit.reason.slice(0, 110)}` : ''}. I'll bring it back then; say the word if you want it now.`,
-          refs: [{ label: title.slice(0, 60), href: input.kind === 'inbox' ? `/item/${input.id}` : `/item/${input.id}?kind=commitment` }],
+          // THE REASON NEVER PIPES RAW (W4 census fix #5). Live, verbatim: "…aside until 2026-09-20
+          // — no concrete action is owed by the us. I'll bring it now…" — the judge's internal reason,
+          // written for the judge, cut at 60 characters mid-word and mid-thought. The reason belongs
+          // to the RECORD (the activity entry + the judgment itself, whole); the room line is COMPOSED
+          // from the verdict's own structured fields, in the team voice, and says only the consequence.
+          text: composeRevisitLine(title, verdict.revisit.after, who),
+          refs: [{ label: clip(title, 60), href: input.kind === 'inbox' ? `/item/${input.id}` : `/item/${input.id}?kind=commitment` }],
           dedupeKey: `revisit:${input.kind}:${input.id}`,
         });
+        // THE WHOLE REASON LIVES IN THE RECORD — boundary-clipped, never cut mid-word.
+        try {
+          const { logActivity } = await import('@/lib/activity/log');
+          await logActivity(client, userId, {
+            type: 'work_parked',
+            title: `Set aside until ${verdict.revisit.after}: ${clip(title, 80)}`,
+            entityType: input.kind === 'inbox' ? 'inbox_item' : 'commitment', entityId: input.id,
+            metadata: { via: 'verdict', revisitAfter: verdict.revisit.after, reason: clip(verdict.reason, 300) },
+          });
+        } catch { /* the ledger is a receipt, never a gate */ }
       } catch { /* narration is an enhancement */ }
       // fall through to artifact hygiene — a parked item's stale artifacts strip with the verdict
     }
@@ -161,21 +255,70 @@ async function narrateAndLog(
     const { logActivity } = await import('@/lib/activity/log');
     await logActivity(client, userId, {
       type: expired ? 'dismissed' : 'marked_done',
-      title: `${expired ? 'Filed (out of date)' : 'Resolved (already settled)'}: ${title.slice(0, 80)}`,
+      title: `${expired ? 'Filed (out of date)' : 'Resolved (already settled)'}: ${clip(title, 80)}`,
       entityType: input.kind === 'inbox' ? 'inbox_item' : 'commitment', entityId: input.id,
-      metadata: { via: 'verdict', resolution: verdict.resolution, reason: verdict.reason.slice(0, 140) },
+      // THE WHOLE REASON LIVES HERE — the record keeps what the stream must not carry.
+      metadata: { via: 'verdict', resolution: verdict.resolution, reason: clip(verdict.reason, 300) },
     });
   } catch { /* non-fatal */ }
   try {
     const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
     const roomKey = await roomKeyForItem(client, userId, input.kind === 'inbox' ? 'inbox' : 'commitment', input.id);
+
+    // ── THE ITEM'S OWN NARRATIONS DIE WITH IT (the narration-follows-its-artifact precedent): the
+    // work it was preparing/parking is settled, so the lines about that preparation are record, not
+    // news. They archive here, at the resolution seam — never left to a fold rule to hide. ──
+    await archiveItemNarrations(client, userId, input, roomKey);
+
+    // ── THE DRAIN SPEAKS ONCE — one keyed turn per room per day, updated in place. ──
+    const { userTimezone, localNow } = await import('@/lib/utils/user-time');
+    const day = localNow(await userTimezone(client, userId)).dateStr;
+    const rollKey = `${roomKey}:${day}`;
+    const entry: ResolvedEntry = {
+      title: clip(title, NARRATION_TITLE), expired,
+      href: input.kind === 'inbox' ? `/item/${input.id}` : `/item/${input.id}?kind=commitment`,
+    };
+    let entries: ResolvedEntry[] = [entry];
+    try {
+      const { data: prior } = await client.from('item_plans').select('tasks')
+        .eq('user_id', userId).eq('kind', ROLL_KIND).eq('entity_id', rollKey).maybeSingle();
+      const held = ((prior?.tasks as { entries?: ResolvedEntry[] } | null)?.entries ?? [])
+        .filter((e) => e && typeof e.title === 'string' && e.href !== entry.href);
+      entries = [...held, entry];
+      await client.from('item_plans').upsert({
+        user_id: userId, kind: ROLL_KIND, entity_id: rollKey,
+        tasks: { entries: entries.slice(-50), day }, updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id,kind,entity_id' });
+    } catch { /* the store is the memory, never the gate — a single line still lands */ }
+
     await writeRoomTurn(client, userId, roomKey, {
       role: 'system',
-      text: expired
-        ? `"${title.slice(0, 60)}" ran out of time — ${verdict.reason.slice(0, 120)} I filed it; undo from Activity if I'm wrong.`
-        : `"${title.slice(0, 60)}" is already settled — ${verdict.reason.slice(0, 120)} I marked it done; undo from Activity if I'm wrong.`,
-      refs: [{ label: title.slice(0, 60), href: input.kind === 'inbox' ? `/item/${input.id}` : `/item/${input.id}?kind=commitment` }],
-      dedupeKey: `verdict-resolve:${input.kind}:${input.id}`,
+      // ONE LINE, ONE OUTCOME — the reason is recorded on the activity entry above (and on the
+      // judgment itself); the stream says what happened and where to undo it.
+      text: composeResolutionLine(entries),
+      refs: entries.slice(-ROLL_MAX_REFS).map((e) => ({ label: clip(e.title, 60), href: e.href })),
+      dedupeKey: `verdict-resolve:${day}`,
     });
   } catch { /* non-fatal */ }
+}
+
+/** The keyed narrations that belong to ONE item — archived when that item resolves. Pre-migration
+ *  (no `archived_at` column) degrades to a delete, exactly as the room's own Clear does. */
+async function archiveItemNarrations(
+  client: SupabaseClient, userId: string, input: JudgeInput, roomKey: string,
+): Promise<void> {
+  try {
+    const keys = [
+      `prep:${input.kind}:${input.id}`,
+      `revisit:${input.kind}:${input.id}`,
+      `verdict-resolve:${input.kind}:${input.id}`, // the pre-coalesce per-item line
+    ];
+    const { error } = await client.from('room_turns')
+      .update({ archived_at: new Date().toISOString() })
+      .eq('user_id', userId).eq('room_key', roomKey).in('dedupe_key', keys).is('archived_at', null);
+    if (error) {
+      await client.from('room_turns').delete()
+        .eq('user_id', userId).eq('room_key', roomKey).in('dedupe_key', keys);
+    }
+  } catch { /* narration hygiene is never fatal */ }
 }

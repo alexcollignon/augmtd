@@ -19,6 +19,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { embedText } from '@/lib/knowledge/indexer';
+import { subjectIsCampaignEcho } from '@/lib/inbox/campaign-echo';
 
 // ── The item shape recognition reads (assembled by callers from any source: email/meeting/calendar). ──
 export type RecogItem = {
@@ -372,12 +373,24 @@ export async function recognizeItem(
     // Promise fix #5 — noise never founds: a receipt/newsletter/notification (or automated sender)
     // can join an EXISTING entity above, but a NEW entity from it would be registry pollution
     // (the "82 smaller things" class). Record the refusal instead.
-    if (item.noise) {
+    // THE ECHO FLOOR (LAW 5 — proactive-reach) extends the SAME guard: a reply into the user's OWN
+    // outbound sequence may join an existing body of work, but can never FOUND one. The census
+    // found a whole entity ("<person> Lunch Meeting") founded from one sequencer echo. The
+    // signature is derived from the user's own sent corpus at runtime (agnostic clause); a failed
+    // derivation yields the empty signature and this guard goes inert.
+    const echo = item.noise
+      ? false
+      : item.kind === 'inbox_item'
+        && await subjectIsCampaignEcho(supabase, userId, item.title).catch(() => false);
+    if (item.noise || echo) {
+      const reason = echo
+        ? "the user's own outbound campaign echoing back — never founds a new body of work"
+        : 'noise mail — never founds a new body of work';
       await supabase.from('entity_links').upsert(
-        { user_id: userId, entity_id: null, item_kind: item.kind, item_id: item.id, via: 'none', reason: 'noise mail — never founds a new body of work' },
+        { user_id: userId, entity_id: null, item_kind: item.kind, item_id: item.id, via: 'none', reason },
         { onConflict: 'user_id,item_kind,item_id' },
       ).then(() => {}, () => {});
-      return { entityId: null, via: 'none', founded: false, reason: 'noise mail — never founds a new body of work' };
+      return { entityId: null, via: 'none', founded: false, reason };
     }
     const emb = await embedText(entityEmbedText(verdict.name, verdict.summary, item.from ? [item.from] : []), userId, supabase);
     const { data: created } = await supabase.from('work_entities')

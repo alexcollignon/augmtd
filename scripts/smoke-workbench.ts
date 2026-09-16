@@ -23,15 +23,27 @@ const src = (p: string) => readFileSync(p, 'utf8');
   PERSONAL = await resolveProbeUser(sb);
   // ── B1 STRUCTURAL ──
   const room = src('components/entities/entity-room.tsx');
+  // ⚠️ Re-pointed Sep 8 (THE THREADS ARC): the Schedule tab's label now carries its live count
+  // (`Schedule · ${scheduleRows.length}`) — the law (ONE shared Gantt, mounted in the room) is
+  // unchanged; only the literal anchor moved.
   check('B1a: the room renders the ONE shared Gantt over the served rows',
-    room.includes("import GanttChart from '@/components/entities/gantt-chart'") && room.includes('label="Schedule"'));
+    room.includes("import GanttChart from '@/components/entities/gantt-chart'") &&
+    room.includes('<GanttChart') && room.includes('Schedule · ${scheduleRows.length}'));
   const brief = src('lib/entities/status-brief.ts');
   check('B1b: the brief is PURE ASSEMBLY — zero AI in the module', !brief.includes('aiCall') && !brief.includes('getAIClient'));
   check('B1b: the detail route assembles + serves statusBrief (people via the registry, self excluded)',
     src('app/api/entities/[id]/detail/route.ts').includes('assembleStatusBrief') &&
     src('app/api/entities/[id]/detail/route.ts').includes('rid.isSelf) return null'));
-  check('B1b: every brief line links to its source (dates → openHref, deliverables → preview)',
-    room.includes('StatusBriefCard') && room.includes('onOpen(k.href)') && room.includes('onPreviewDeliverable(dv.title, dv.ref)'));
+  // ONE FACT ONE HOME (docs/threads-plan.md): Key dates + People left the card — both re-rendered
+  // rows the same pane already shows in Tasks/Meetings. The gate follows the law: what the card
+  // still renders must link to its source, and the deleted duplicates must STAY deleted.
+  // ⚠️ Re-pointed Sep 8 (THE THREADS ARC): StatusBriefCard was refactored into DeliverablesBlock
+  // during the P3 room collapse — the law (a produced deliverable links to its preview, never a
+  // dead title) is unchanged; the anchor follows the component that renders it now.
+  check('B1b: every brief line links to its source (deliverables → preview)',
+    room.includes('DeliverablesBlock') && room.includes('onPreviewDeliverable: (name: string, ref: string) => void'));
+  check('B1b: the card never re-renders the pane\'s own inventory (no Key dates / People sections)',
+    !room.includes('label="Key dates"') && !room.includes('label="People"'));
   check('B1b: evaluator objections feed Watch-outs', src('app/api/entities/[id]/detail/route.ts').includes('reviewNotes'));
 
   // ── B2 STRUCTURAL — meeting follow-ups are PROPOSED (Accept/Reject), never imposed ──
@@ -64,21 +76,35 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('B4: the priority migration exists (apply manually)',
     (() => { try { src('supabase/migrations/20260724c_commitments_priority.sql'); return true; } catch { return false; } })());
 
-  // ── B3 STRUCTURAL — the Home invites work + shows the horizon; the pass preps meetings ──
+  // ── B3 STRUCTURAL — the Home invites work; the pass preps meetings ──
+  // ("shows the horizon" struck Sep 13: the calm-Home walk retired the rail (owner, Sep 8); the
+  //  prep brief's surface is the room turn — gated at its seat in smoke-compute AN1. /api/home/
+  //  horizon was deleted the same day, so the lane this header named no longer exists.)
   const hv = src('components/home/home-view.tsx');
-  check('B3a: the composer invites work (Add a task… prefills, Plan my week asks)',
-    hv.includes("'Add a task…'") && hv.includes("'Plan my week'") &&
+  // RE-POINTED Sep 13 (OWNER CALL: "lets also remove the chips"): the warm Home's standing four —
+  // "Add a task… · Plan my week · What's slipping? · What did I miss?" — are retired from over the
+  // composer. The CHIP MECHANISM is untouched and still gated here (a trailing "…" prefills the box
+  // rather than sending), because the sovereign day-one chips are a different feature and still
+  // ride it; only the warm Home's list is now empty.
+  check('B3a: the chip mechanism survives its retirement from the warm Home (a "…" chip prefills; the sovereign day-one chips still use it)',
+    hv.includes("if (sovereignCenter) return ['Draft a document…'") &&
+    !hv.includes("'Plan my week'") &&
     src('components/home/home-ask.tsx').includes("s.endsWith('…')"));
-  // Iterated (user call, July 24 evening): the To-prep card is REMOVED; This-week rides BESIDE the
-  // list as column two, day-grouped; the deck became the TIME-GROUPED LIST (one row anatomy, all
-  // visible — curation decides what, time decides the frame, judged priority orders within groups).
-  check('B3b: This-week rides beside the list (two columns, day-grouped; To-prep card gone)',
-    src('app/api/home/horizon/route.ts').includes('calendar_event') && hv.includes('ThisWeekCard') &&
-    hv.includes('lg:grid-cols-[minmax(0,1fr)_300px]') && !hv.includes('To prep · next 2 weeks') &&
-    !hv.includes("useState(() => loadLS<{ thisWeek"));
-  check('B3d: the deck is the TIME-GROUPED list (Overdue · Due today · This week · When you can), hero/peek gone',
-    hv.includes("label: 'Overdue'") && hv.includes("label: 'Due today'") && hv.includes("label: 'When you can'") &&
-    !hv.includes('PEEK_VISIBLE') && !hv.includes('setFocusKey'));
+  // RE-POINTED Sep 8 (THE CALM HOME's repair wave), AGAIN Sep 13 (OWNER CALL: "in home, this feels
+  // too much, remove"). The This-week rail and the time-grouped deck were retired from the Home on
+  // Sep 8, with the day shape surviving as one clause of the CoS sentence ("free until …"); that
+  // sentence is now retired too, and the clause went with it — it had no other seat. The law the
+  // gate has always carried is the one that stands: THE CALENDAR'S HOME IS /meetings, and the Home
+  // never grows a second one.
+  check('B3b: the calendar LEFT the Home — no rail, no day clause, no second seat for the schedule',
+    !hv.includes('ThisWeekCard') && !hv.includes('To prep · next 2 weeks') &&
+    !hv.includes('const nextEvent = b?.schedule?.[0] ?? null;') && !hv.includes('freeUntil'));
+  // The Home has ONE row grammar now: the whisper. The old deck's time groups (Overdue · Due today ·
+  // This week · When you can) died with OneDeck; their ORDERING survives as the door's stated sort
+  // (lib/home/calm.ts sortDoorRows), which smoke-threads T19.4 proves on data.
+  check('B3d: the Home holds ONE row grammar (the whisper) — the grouped deck, hero and peek all gone',
+    !hv.includes('<OneDeck') && !hv.includes('PEEK_VISIBLE') && !hv.includes('setFocusKey') &&
+    hv.includes('<WhisperLine') && src('lib/home/calm.ts').includes('export function sortDoorRows'));
   const passB3 = src('lib/prepare/pass.ts');
   check('B3c: the pass preps DEAL-LINKED upcoming meetings (idempotent per meeting, capped, evaluated, attributed)',
     passB3.includes('meeting-prep-') && passB3.includes('PREP_CAP') &&

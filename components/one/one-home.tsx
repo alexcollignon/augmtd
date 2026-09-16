@@ -12,10 +12,7 @@
 // long groups fold behind the one expander · the card grammar (compact, verb speaks the judged
 // state).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-import { useMemo } from 'react';
-import { CalendarDaysIcon, CheckCircleIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
-import { WorkRow } from '@/components/work/work-row';
-import { ExpandableRows } from '@/components/home/expandable-rows';
+import { CalendarDaysIcon } from '@heroicons/react/24/outline';
 import type { DoItem } from '@/lib/home/agenda';
 
 // ── THE TOP CLUSTER — eyebrow · greeting · today line, with the live cluster (sync/ring/activity)
@@ -47,116 +44,11 @@ export function OneHomeHeader({ name, greeting, todayLine, right }: {
   );
 }
 
-// ── THE DECK — the curated card stack. Pure composition over the host's flattened rows; the
-// time/project grouping is a pure function of the rows + mode. ──
+// ── THE DECK IS RETIRED (owner walk, Sep 8: "this is awful, looks bad and not aligned with the new
+// design at all"). `OneDeck` — the "What needs you N" header, the Tasks/By-project toggle, the
+// rose/amber time-group headers and the boxed WorkRow cards — was the OLD Home living beneath the
+// calm one. The Home now has ONE row grammar: the whisper (components/home/home-view.tsx
+// WhisperLine), and the door expands the rest IN PLACE in that same grammar, sorted by
+// lib/home/calm.ts `sortDoorRows`. Only the row TYPE survives, because the host still flattens the
+// agenda into it. ──
 export type FlatRow = { item: DoItem; dealKey?: string };
-
-export function OneDeck({
-  flat, groupMode, onGroupMode, projectLookup,
-  pinnedGroups, hoverGroup, onHoverGroup, onTogglePin,
-  handlers,
-}: {
-  flat: FlatRow[];
-  groupMode: 'time' | 'project';
-  onGroupMode: (m: 'time' | 'project') => void;
-  /** tracked-only canonical names (USER-CREATED ONLY — an untracked label never surfaces). */
-  projectLookup: Map<string, string>;
-  pinnedGroups: Set<string>;
-  hoverGroup: string | null;
-  onHoverGroup: (updater: (h: string | null) => string | null) => void;
-  onTogglePin: (key: string) => void;
-  handlers: {
-    dismissDeal: (key: string) => void;
-    onDismissInbox?: (id: string) => void;
-    onClearedCommitment?: (id: string) => void;
-    onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void;
-    onUndoCommitment?: (message: string, id: string) => void;
-  };
-}) {
-  const groups = useMemo(() => {
-    if (groupMode === 'project') {
-      const by = new Map<string, FlatRow[]>();
-      for (const r of flat) {
-        const raw = r.item.initiative ?? null;
-        const k = raw ? (projectLookup.get(raw.toLowerCase()) ?? 'No project') : 'No project';
-        (by.get(k) ?? by.set(k, []).get(k)!).push(r);
-      }
-      return [...by.entries()]
-        .sort((a, b) => (a[0] === 'No project' ? 1 : 0) - (b[0] === 'No project' ? 1 : 0))
-        .map(([k, rows]) => ({ key: `p-${k}`, label: k, rows }));
-    }
-    const todayISO = new Date().toISOString().slice(0, 10);
-    const weekISO = new Date(Date.now() + 6 * 86_400_000).toISOString().slice(0, 10);
-    return [
-      { key: 'overdue', label: 'Overdue', rows: flat.filter((r) => !!r.item.dueDate && r.item.dueDate < todayISO) },
-      { key: 'today', label: 'Due today', rows: flat.filter((r) => r.item.dueDate === todayISO) },
-      { key: 'week', label: 'This week', rows: flat.filter((r) => !!r.item.dueDate && r.item.dueDate > todayISO && r.item.dueDate <= weekISO) },
-      { key: 'rest', label: 'When you can', rows: flat.filter((r) => !r.item.dueDate || r.item.dueDate > weekISO) },
-    ].filter((g) => g.rows.length > 0);
-  }, [flat, groupMode, projectLookup]);
-
-  let firstRow = true;
-  return (
-    <section>
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-neutral-400 select-none">
-          What needs you{flat.length > 0 && <span className="ml-1.5 text-neutral-300 tabular-nums normal-case tracking-normal">{flat.length}</span>}
-        </p>
-        {flat.length > 0 && (
-          <div className="flex items-center rounded-lg border border-neutral-200 p-0.5">
-            {(['time', 'project'] as const).map((m) => (
-              <button key={m} onClick={() => onGroupMode(m)}
-                className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-all duration-150 ${groupMode === m ? 'bg-neutral-100 text-neutral-800' : 'text-neutral-400 hover:text-neutral-600'}`}
-              >{m === 'time' ? 'Tasks' : 'By project'}</button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {flat.length === 0 ? (
-        <div className="mt-3 flex items-center gap-2 text-[12.5px] text-neutral-400">
-          <CheckCircleIcon className="w-4 h-4 text-emerald-400" />
-          All handled — nothing else needs you.
-        </div>
-      ) : (
-        <div className="space-y-5 mt-2">
-          {groups.map((g) => {
-            // Urgent groups are why the deck exists — always open. Calm groups rest as a header
-            // + count: hover previews (grid morph), click pins (persisted; touch needs the tap).
-            const alwaysOpen = g.key === 'overdue' || g.key === 'today';
-            const isOpen = alwaysOpen || pinnedGroups.has(g.key) || hoverGroup === g.key;
-            return (
-              <div key={g.key}
-                onMouseEnter={() => { if (!alwaysOpen) onHoverGroup(() => g.key); }}
-                onMouseLeave={() => onHoverGroup((h) => (h === g.key ? null : h))}>
-                <button
-                  onClick={() => { if (!alwaysOpen) onTogglePin(g.key); }}
-                  className={`flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wide mb-1.5 transition-colors ${
-                    g.key === 'overdue' ? 'text-rose-500' : g.key === 'today' ? 'text-amber-500' : 'text-neutral-400 hover:text-neutral-600'}`}
-                >
-                  {g.label} · {g.rows.length}
-                  {!alwaysOpen && <ChevronRightIcon className={`w-3 h-3 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`} />}
-                </button>
-                <div className={`grid transition-all duration-300 ease-out ${isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
-                  <div className="overflow-hidden min-h-0">
-                    <div className="space-y-2">
-                      <ExpandableRows items={g.rows} limit={8} toggleClass="px-3 py-1.5" render={(r) => {
-                        const em = firstRow; firstRow = false;
-                        return (
-                          <WorkRow key={r.item.key} item={r.item} variant="card" emphasis={em}
-                            dismissOverride={r.dealKey ? () => handlers.dismissDeal(r.dealKey!) : undefined}
-                            onDismissInbox={handlers.onDismissInbox} onClearedCommitment={handlers.onClearedCommitment}
-                            onUndoInbox={handlers.onUndoInbox} onUndoCommitment={handlers.onUndoCommitment} />
-                        );
-                      }} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}

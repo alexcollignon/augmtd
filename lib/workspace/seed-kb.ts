@@ -168,6 +168,7 @@ export async function seedKnowledgeForUser(
           mimeType: file.mime,
           userId,
           storagePathInBucket: storagePath,
+          bucket: KB_BUCKET,
           ...(folderId ? { folderId } : {}),
         }, admin);
         out.files++;

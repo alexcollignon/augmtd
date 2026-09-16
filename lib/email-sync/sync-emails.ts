@@ -75,6 +75,10 @@ import { buildUserContextBlock } from '@/lib/context/build-user-context';
 import type { UserContextProfile } from '@/lib/types/user-context';
 import { computeRecipientRole } from '@/lib/inbox/recipient-role';
 import { withPreservedUnderstanding } from '@/lib/inbox/item-understanding';
+// THE LABEL FOLLOWS THE PRESENT (LAW 3, lib/inbox/refresh-understanding.ts): every rebuild that
+// PRESERVES an understanding must carry its freshness stamp with it, or the claim becomes
+// unprovable and the serve floor can no longer degrade a frozen label.
+import { carryUnderstandingStamp, understandingStamp } from '@/lib/inbox/refresh-understanding';
 
 /**
  * Detect whether an email was forwarded based on subject and body patterns
@@ -810,6 +814,20 @@ export async function syncEmailsForConnection(
               });
               if (reopened) result.inboxItemsCreated++;
             }
+            // ── THE LABEL FOLLOWS THE PRESENT (lib/inbox/refresh-understanding.ts) ────────────────
+            // This branch is the one that `continue`s with the item UNTOUCHED: the email row was
+            // already stored (a push delivered it) and the item already exists, so neither Phase 2
+            // nor the fyi/noise fast path will ever see this arrival. Without the re-derivation here
+            // the item's `understanding.ask` — the deck's whisper — stays frozen at whatever the
+            // thread's FIRST message asked, forever. Bounded + idempotent + non-fatal inside.
+            else if (orphanCheck.status === 'pending') {
+              const { refreshUnderstandingForArrival } = await import('@/lib/inbox/refresh-understanding');
+              await refreshUnderstandingForArrival({
+                userId: connection.user_id, item: orphanCheck, message: existingEmail,
+                isFromUser: !!existingEmail.is_from_user, userAddresses: Array.from(_userAddresses),
+                client: adminSupabase,
+              });
+            }
             // Inbox item exists — already processed (or just reopened above), skip further work.
             console.log(`    ✓ Already exists, skipping`);
             continue;
@@ -1008,6 +1026,15 @@ export async function syncEmailsForConnection(
                     client: adminSupabase,
                   });
                   if (reopened2) result.inboxItemsCreated++;
+                } else if (orphanCheck2.status === 'pending') {
+                  // THE LABEL FOLLOWS THE PRESENT — same seam, reached when a parallel sync won the
+                  // email insert. Nothing downstream sees this arrival either.
+                  const { refreshUnderstandingForArrival } = await import('@/lib/inbox/refresh-understanding');
+                  await refreshUnderstandingForArrival({
+                    userId: connection.user_id, item: orphanCheck2, message: racedEmail,
+                    isFromUser: !!racedEmail.is_from_user, userAddresses: Array.from(_userAddresses),
+                    client: adminSupabase,
+                  });
                 }
                 console.log(`    ✓ Already exists, skipping`);
                 continue;
@@ -1201,7 +1228,7 @@ export async function syncEmailsForConnection(
               // Preserve any existing `understanding` — this rebuild path must never drop it.
               await adminSupabase
                 .from('inbox_items')
-                .update(stripNulls({ source_data: withPreservedUnderstanding(_snSourceData as Record<string, unknown>, _snExisting), source_id: storedEmail.id, last_activity_at: storedEmail.received_at || new Date().toISOString() }) as Record<string, unknown>)
+                .update(stripNulls({ source_data: withPreservedUnderstanding({ ..._snSourceData as Record<string, unknown>, ...carryUnderstandingStamp(_snExisting?.source_data as Record<string, unknown> | null) }, _snExisting), source_id: storedEmail.id, last_activity_at: storedEmail.received_at || new Date().toISOString() }) as Record<string, unknown>)
                 .eq('id', _snExisting.id);
             }
           } else if (_snExisting.status === 'completed' || _snExisting.status === 'dismissed') {
@@ -1310,6 +1337,18 @@ export async function syncEmailsForConnection(
                     last_activity_at: storedEmail.received_at || new Date().toISOString(),
                   }) as Record<string, unknown>)
                   .eq('id', fastExisting.id);
+                // ── THE LABEL FOLLOWS THE PRESENT ────────────────────────────────────────────────
+                // The fast path deliberately never COMPUTES an understanding (cost) and correctly
+                // PRESERVES an existing one — but an item that once carried a real ask now shows the
+                // envelope of a newer message while still speaking the old ask. Re-derive for those
+                // rows only (`skipped:no-claim` for every genuine fyi/noise row, so the fast path
+                // stays as cheap as it was).
+                const { refreshUnderstandingForArrival } = await import('@/lib/inbox/refresh-understanding');
+                await refreshUnderstandingForArrival({
+                  userId: connection.user_id, item: fastExisting, message: storedEmail,
+                  isFromUser: !!storedEmail.is_from_user, userAddresses: Array.from(_userAddresses),
+                  client: adminSupabase,
+                });
               } else {
                 console.log(`    ⏩ ${emailClass} email older than current thread item — skipping source_data update`);
               }
@@ -1386,8 +1425,12 @@ export async function syncEmailsForConnection(
               // is never a final verdict.
               if (ok === 'applied') {
                 const tier = kindTier(fastSourceData as Record<string, unknown>, null, hints);
+                // Carry the understanding's own freshness stamp across this rebuild too — the
+                // understanding is preserved by the helper, and a preserved claim whose stamp was
+                // dropped would read as legacy/unprovable to the serve floor (LAW 3's asymmetry).
+                const _keptStamp = carryUnderstandingStamp(fastExisting?.source_data as Record<string, unknown> | null);
                 await adminSupabase.from('inbox_items')
-                  .update({ source_data: withPreservedUnderstanding({ ...(fastSourceData as Record<string, unknown>), labeled: tier === 'fallback' ? 'fallback' : true }, fastExisting) })
+                  .update({ source_data: withPreservedUnderstanding({ ...(fastSourceData as Record<string, unknown>), ..._keptStamp, labeled: tier === 'fallback' ? 'fallback' : true }, fastExisting) })
                   .eq('source_id', storedEmail.id).eq('user_id', connection.user_id);
               }
             }).catch(() => {});
@@ -1725,6 +1768,14 @@ export async function syncEmailsForConnection(
                   // Prefer this run's freshly-computed value; if it's null (AI hiccup), PRESERVE the
                   // existing item's understanding so a full re-classification never erases one.
                   understanding: withPreservedUnderstanding({}, existingInboxItem, processed.understanding).understanding,
+                  // ── THE LABEL FOLLOWS THE PRESENT ────────────────────────────────────────────
+                  // This path already re-derives on the thread's LATEST INCOMING message (that is
+                  // what `emailForProcessing` is) — it only lacked provenance. Stamp WHICH message
+                  // the claim speaks for, so the serve floor can tell a current claim from a frozen
+                  // one; a null recompute preserves the prior claim, so it keeps the PRIOR stamp.
+                  ...(processed.understanding
+                    ? understandingStamp(processed.understanding, emailForProcessing)
+                    : carryUnderstandingStamp(existingInboxItem?.source_data as Record<string, unknown> | null)),
                   calendar_event_id: calendarEventId || undefined,
                   isForwarded,
                   thread_history: threadEmails?.map(e => ({
@@ -1864,6 +1915,9 @@ export async function syncEmailsForConnection(
                 // Unified understanding — reasoned role/relevance/language from the SAME AI pass.
                 // The PRIMARY signal consumers read (is_cc_only is now just an input to it).
                 understanding: processed.understanding || undefined,
+                // THE LABEL FOLLOWS THE PRESENT — a claim is born stamped with the message it
+                // speaks for, so every later arrival can be compared against it.
+                ...understandingStamp(processed.understanding, storedEmail),
                 calendar_event_id: calendarEventId || undefined,
                 isForwarded,
                 thread_history: threadEmailsForNew?.map(e => ({

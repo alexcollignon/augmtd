@@ -188,8 +188,15 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
       dt2.includes('byName') && dt2.includes("kind: 'kb'") && er2.includes('FilePreviewModal') && existsSync('app/api/files/preview/route.ts'));
     // T4 (work-surface) made the EMAIL chip ALWAYS null (posture vocabulary is internal) —
     // stronger than embedded-only; the other kinds stay embedded-conditional.
-    check('5A.4 · embedded artifact hides type/project pills (email chip gone entirely)',
-      id2.includes('chip={null}') && (id2.match(/chip=\{embedded \? null/g) ?? []).length === 3 && (id2.match(/action=\{embedded \? undefined/g) ?? []).length >= 2);
+    // RE-POINTED (Sep 7, THE ONE ROOM GRAMMAR): the stage's own DetailHeader now renders ONLY when
+    // embedded — on the loose door the ROOM header states the title/meta/state word exactly once.
+    // So "hides pills when embedded" became structural: every DetailHeader mount is embedded-gated,
+    // and no posture pill survives anywhere. Counting chips is the weaker form of that.
+    check('5A.4 · the stage header is EMBEDDED-only, and it never wears a posture pill',
+      id2.includes('chip={null}')
+      && (id2.match(/\{embedded && \(\s*\n\s*<DetailHeader/g) ?? []).length === 4
+      && (id2.match(/chip=\{embedded \? null/g) ?? []).length >= 2
+      && (id2.match(/action=\{embedded \? undefined/g) ?? []).length >= 2);
     // W3 superseded the static line: the narration is now COMPOSED from the board row's prepared
     // facts (keyed dedup, real offers) — still deterministic, never a hedge.
     // Aug 3 (the CTA is the deed — laws 5+8): the rail's next-move click ONLY navigates — the

@@ -232,7 +232,7 @@ export async function synthesizeBrief(
     ? input.commitmentCandidates.map((c, i) => `[C${i}] "${c.description}"${c.counterparty ? ` — with ${c.counterparty}` : ''}${c.dueDate ? ` (due ${c.dueDate}${c.overdue ? ', OVERDUE' : c.dueToday ? ', today' : ''})` : ''} — ${c.ageDays}d old — system guessed: ${c.direction === 'awaiting' ? 'you are waiting on them' : 'you owe it'}`).join('\n')
     : 'none';
 
-  const prompt = `You are ${me}'s personal assistant. Write today's brief in a warm, first-person PA voice — as if you personally keep ${me}'s day in order (met X, owe Y, waiting on Z). Use ${me}'s first name naturally.
+  const prompt = `You are ${me}'s chief of staff. Write today's brief in a warm, first-person voice — as if you personally keep ${me}'s day in order (met X, owe Y, waiting on Z). Use ${me}'s first name naturally.
 
 You are given the COMPLETE grounded picture, reconciled per person. Reason over it holistically before writing:
 - ALREADY RESPONDED (structural, trustworthy): if the per-person context marks a thread "YOU ALREADY REPLIED on this thread (handled)", ${me} has structurally sent a message on that thread AFTER it landed — the ball is no longer in ${me}'s court. Treat it as HANDLED: DROP that reply (list its [Rn] index in "droppedReplies") unless a NEWER inbound message on the thread reopened it (a fresh question after ${me}'s reply). This flag comes from real message direction + timestamps, not phrasing — trust it.

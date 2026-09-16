@@ -2,6 +2,8 @@
 // Email path uses a cheap keyword pre-filter to gate the AI call (most mail has no commitment).
 
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { subjectIsCampaignEcho } from '@/lib/inbox/campaign-echo';
+import { resolveDeixisInDescriptions } from '@/lib/inbox/deixis';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
@@ -302,45 +304,13 @@ export async function writeMeetingCommitments(
   await writeCommitments(userId, list, { source: 'meeting', sourceId: meta.transcriptId, threadId: null, status: 'suggested' }, client);
 }
 
-// ── THE DEIXIS SCRUBBER (proactive-team T-class) — stored text must stay true as time passes.
-// Detection is LEXICAL (relative day-words in any of the user's working languages here — extend the
-// list as languages appear); the rewrite is REASONED: one capped call over the offending titles
-// only, anchored to the source's own date. Failure keeps the original (non-fatal, honest). ──
-export const DEICTIC_RE = /\b(tomorrow|today|tonight|yesterday|next week|next month|this week|this (?:mon|tues|wednes|thurs|fri|satur|sun)day|amanh[ãa]|hoje|ontem|pr[óo]xima semana)\b/i;
-
-export async function resolveDeixisInDescriptions<T extends { description: string }>(
-  client: DBClient, userId: string, list: T[], anchorIso: string | null,
-): Promise<T[]> {
-  const offenders = list.map((c, i) => ({ c, i })).filter(({ c }) => DEICTIC_RE.test(c.description));
-  if (!offenders.length) return list;
-  try {
-    const anchor = anchorIso && !isNaN(Date.parse(anchorIso)) ? new Date(anchorIso) : new Date();
-    const anchorPretty = anchor.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-    const { client: ai, model } = await getAIClient(userId, 'classification', client);
-    const res = await aiCreate(ai, {
-      model, max_tokens: 300, temperature: 0,
-      messages: [{ role: 'user', content:
-        `These task titles contain RELATIVE time words that decay ("tomorrow" stops being true in a day). ` +
-        `The source they came from is dated ${anchorPretty}. Rewrite each title with the relative words ` +
-        `resolved to ABSOLUTE dates forward from THAT date (keep clock times; "tomorrow" → the next day's ` +
-        `"MMM D"). Change NOTHING else about the title.\n\n` +
-        offenders.map(({ c }, n) => `${n}. ${c.description}`).join('\n') +
-        `\n\nJSON only: {"titles":["…", …]} (same order, same count)` }],
-    });
-    const m = (res.choices?.[0]?.message?.content ?? '').match(/\{[\s\S]*\}/);
-    const titles = m ? (JSON.parse(m[0]) as { titles?: string[] }).titles : null;
-    if (Array.isArray(titles) && titles.length === offenders.length) {
-      const out = [...list];
-      offenders.forEach(({ i }, n) => {
-        const t = String(titles[n] ?? '').trim();
-        // Accept only a rewrite that actually removed the deixis — a lazy echo keeps the original.
-        if (t && !DEICTIC_RE.test(t)) out[i] = { ...out[i], description: t.slice(0, 140) };
-      });
-      return out;
-    }
-  } catch { /* the scrubber is a belt — the original title stands */ }
-  return list;
-}
+// ── THE DEIXIS SCRUBBER — MOVED (proactive-reach LAW 3, THE SERVED-WORDS LAW).
+// This module used to OWN the resolver, which is precisely why the law decayed into a site list:
+// commitment descriptions were scrubbed and the two fields the deck actually leads with
+// (`understanding.ask`, `work_title`) were not. The resolver and its multilingual day-word table now
+// live in ONE shared seam — `lib/inbox/deixis.ts` — applied at EVERY write seam. Re-exported here so
+// the historical callers (and the gates that pin them) keep pointing at the one law. ──
+export { DEICTIC_RE, resolveDeixisInDescriptions } from '@/lib/inbox/deixis';
 
 // Extract commitments from one email and persist them. Returns the count written.
 export async function extractEmailCommitments(opts: {
@@ -363,6 +333,12 @@ export async function extractEmailCommitments(opts: {
   if (text.length < 20 || !COMMITMENT_HINT.test(text)) return 0;
   // Received bulk/newsletter mail never carries a real commitment — skip before the AI call.
   if (!isFromUser && BULK_HINT.test(text)) return 0;
+  // THE ECHO FLOOR (LAW 5 — proactive-reach): a reply into the user's OWN outbound sequence never
+  // mints a commitment. The census found a lunch commitment minted for a meeting that never
+  // existed, off one sequencer reply. Derived per user from their own sent corpus at runtime — no
+  // vendor, token or language is named; an empty signature leaves this inert. Skipped before the
+  // AI call (cheap, and the refusal costs nothing).
+  if (!isFromUser && await subjectIsCampaignEcho(client, userId, subject)) return 0;
 
   const who = userName || 'the user';
   // Context-grounded initiative: the labels this counterparty/thread already carries, so a commitment

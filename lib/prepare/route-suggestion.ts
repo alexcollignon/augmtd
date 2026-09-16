@@ -92,11 +92,29 @@ type NextMove = { title?: string; entityRef?: string | null; routedWorker?: { id
 
 const sigOf = (t: string): string => { let h = 0; for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0; return String(h); };
 
+// ── THE READ PATH CARRIES NO AI (T21.2's law, reaching the project room — owner walk, Sep 8:
+// "project room still takes too long") ──────────────────────────────────────────────────────────
+// This verdict is sig-cached on next_move, so it is free on a repeat load — but every time the
+// state synthesis rewrites the next move, the NEXT room open pays a full model round-trip BEFORE
+// anything paints (the room's conversation pane is gated on this same read). A CHIP is not worth a
+// blank page. `deferOnMiss` serves the honest absence now and computes the verdict in the
+// background, so the very next open serves it from the cache — the sig-gated after() doctrine this
+// codebase already runs everywhere else. Default is UNCHANGED (blocking): the write paths and the
+// W2 gate still want the verdict in hand.
+function inBackground(fn: () => Promise<unknown>): void {
+  void import('next/server')
+    .then((m) => { try { m.after(fn); } catch { void fn().catch(() => {}); } })
+    .catch(() => { void fn().catch(() => {}); });
+}
+
 /** The served suggestion for an entity's next move — the roster judge's verdict, sig-cached on
- *  next_move. Non-fatal by design: any failure → null (no chip). */
+ *  next_move. Non-fatal by design: any failure → null (no chip).
+ *  `deferOnMiss` — a READ surface: a cache miss returns null and warms the cache in the
+ *  background, never blocking a paint on a model call. */
 export async function suggestWorkerForMove(
   supabase: SupabaseClient, userId: string, entityId: string,
   preloaded?: { next_move?: unknown } | null,
+  opts?: { deferOnMiss?: boolean },
 ): Promise<SuggestedWorker | null> {
   try {
     let nmRaw = preloaded?.next_move;
@@ -113,12 +131,16 @@ export async function suggestWorkerForMove(
     if (nm.routeSig === sig && nm.routedWorker !== undefined) {
       return nm.routedWorker === 'none' ? null : (nm.routedWorker ?? null); // cached verdict (incl. cached "no")
     }
-    const [route] = await routeTasks(supabase, userId, [title]);
-    const verdict: NextMove['routedWorker'] = route?.worker
-      ? { id: route.worker.id, name: route.worker.name, role: route.worker.role } : 'none';
-    await supabase.from('work_entities')
-      .update({ next_move: { ...nm, routedWorker: verdict, routeSig: sig } })
-      .eq('id', entityId).eq('user_id', userId).then(() => {}, () => {});
-    return verdict === 'none' ? null : verdict;
+    const compute = async (): Promise<SuggestedWorker | null> => {
+      const [route] = await routeTasks(supabase, userId, [title]);
+      const verdict: NextMove['routedWorker'] = route?.worker
+        ? { id: route.worker.id, name: route.worker.name, role: route.worker.role } : 'none';
+      await supabase.from('work_entities')
+        .update({ next_move: { ...nm, routedWorker: verdict, routeSig: sig } })
+        .eq('id', entityId).eq('user_id', userId).then(() => {}, () => {});
+      return verdict === 'none' ? null : verdict;
+    };
+    if (opts?.deferOnMiss) { inBackground(() => compute().catch(() => null)); return null; }
+    return await compute();
   } catch { return null; }
 }
