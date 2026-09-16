@@ -23,7 +23,9 @@ export async function middleware(request: NextRequest) {
   // Protected routes - require authentication. /work, /join and /suspended
   // need auth but have their own server-side logic for orphan / workspace-state
   // handling, so they don't appear in authRoutes (won't be redirected away).
-  const protectedRoutes = ['/home', '/inbox', '/settings', '/activity', '/company', '/admin', '/platform-admin', '/drive', '/meetings', '/work', '/join', '/onboarding', '/suspended'];
+  // '/project' is THE ADDRESS LAW's room address (lib/room/project-href.ts) — an authed surface
+  // like every other room door.
+  const protectedRoutes = ['/home', '/project', '/inbox', '/settings', '/activity', '/company', '/admin', '/platform-admin', '/drive', '/meetings', '/work', '/join', '/onboarding', '/suspended'];
   const isProtectedRoute = protectedRoutes.some(route =>
     pathname.startsWith(route)
   );

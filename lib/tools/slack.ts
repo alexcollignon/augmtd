@@ -7,6 +7,7 @@
 import { nangoProxy } from '@/lib/integrations/nango';
 import { resolveConnection, isToolEnabledForAgent, getAgentToolConfig } from '@/lib/integrations/connection';
 import { slackKeyForRole } from '@/lib/integrations/registry';
+import { ROLE_LABELS } from '@/lib/workers/roles';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Admin = any;
@@ -268,15 +269,9 @@ export async function executeSlackListMembers(
 
 // One Slack bot per coworker role is shared across all users in a company, so a
 // channel post from "Clara" can't be traced to a person on its own. We append a
-// context label ("Alex's Personal Assistant") to channel posts so it's attributable.
-// DMs need none — they're already per-user threads.
-const ROLE_LABELS: Record<string, string> = {
-  personal_assistant: 'Personal Assistant',
-  content_manager: 'Content Strategist', // retired Aug 14 — legacy rows only
-  branding_expert: 'LinkedIn Expert',
-  linkedin_drafter: 'LinkedIn Expert', // legacy role key — persisted rows only
-  research_analyst: 'Research Analyst',
-};
+// context label ("Sam's Chief of Staff") to channel posts so it's attributable.
+// DMs need none — they're already per-user threads. Labels come from the ONE map
+// (lib/workers/roles.ts) — a private copy is how a role rename half-lands.
 
 async function attributionLabel(admin: Admin, userId: string, agentId?: string): Promise<string | null> {
   let role: string | null = null;

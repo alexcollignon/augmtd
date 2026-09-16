@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { announceDeed } from '@/lib/room/deed-echo';
 import { WorkerFace } from '@/components/work/worker-face';
 import { useRouter } from 'next/navigation';
 import {
@@ -9,7 +10,6 @@ import {
   ClipboardDocumentIcon,
   CheckIcon,
   CheckCircleIcon,
-  ClockIcon,
   PaperAirplaneIcon,
   PaperClipIcon,
   XMarkIcon,
@@ -18,16 +18,37 @@ import {
   ChevronRightIcon,
   ChevronDownIcon,
   DocumentTextIcon,
+  DocumentIcon,
+  FolderIcon,
 } from '@heroicons/react/24/outline';
+import Link from 'next/link';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import { RoomShell } from '@/components/room/room-shell';
-import { ContextStrip } from '@/components/room/context-strip';
+import { projectHref } from '@/lib/room/project-href';
+// THE ONE ROOM GRAMMAR (threads Phase 3, owner walk Sep 7 — "the room isn't the same across items
+// and projects"): the loose item room wears the project room's own chrome — the 52px header line,
+// the FacePile, the Filed handle, the summoned drawer. Same parts, same file, never a lookalike.
+import { FacePile } from '@/components/thread/avatar-status';
+import { FiledIcon } from '@/components/room/filed-icon';
+import { BackLink, AttachmentLightbox, type LightboxFile } from '@/components/ui';
+// THE ONE FILED DRAWER — the same pane the project door mounts (owner, Sep 14: one component, not
+// one per door), plus the record's new seat inside it.
+import { FiledDrawer, RoomHistorySection, FILED_LABEL, type RoomHistoryLine } from '@/components/room/filed-drawer';
+import { toast } from 'sonner';
+import { ChevronLeftIcon } from '@heroicons/react/24/outline';
 import ReplyEditor from '@/components/inbox/reply-editor';
 import KbFilePicker from '@/components/inbox/kb-file-picker';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+// THE NO-MUTATION LAW — the one mechanism a loader consults before replacing what is painted.
+import { mayReplaceInPlace, ROOM_CACHE_MAX_AGE_MS, type ArrivalReason } from '@/lib/room/no-mutation';
 import { fmtMonthDay, fmtDateTime, fmtWeekdayDate } from '@/lib/utils/format-date';
 import AddToProjectControl from '@/components/entities/add-to-work-control';
 import { ItemRail, pushDealTurn, type RailView } from '@/components/home/item-rail';
+// THE CARD CONTRACT (Sep 8): the invite is a KIT CARD with a host — the donor InvitePreviewCard
+// retired into it. The people typeahead it shared with the forward now lives in ONE module.
+import { InviteCard } from '@/components/home/invite-card';
+import { EmailCard } from '@/components/home/email-card';
+import { PeopleSuggestInput } from '@/components/home/people-chips';
 import { panelPlan, applyPanelPlan } from '@/lib/room/render-plan';
 import dynamic from 'next/dynamic';
 
@@ -404,324 +425,12 @@ function ComposePanel({ kind, entityId, onSent }: { kind: ComposeKind; entityId:
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// PREPARED CALENDAR INVITE — the FIRST non-email prepared-action type (stage 3a). A [System] step whose
-// intent is "send a calendar invite" routes here instead of the email composer: /api/items/prepare
-// extracts a GROUNDED, editable invite (title / date / start-end / attendees / description), the user
-// reviews & edits it, then a single "Approve & send invite" click → /api/items/execute (the ONLY place
-// a real invite fires). Approve-before-commit: nothing sends until that click. Mirrors ComposePanel's
-// prepared-work-you-validate shape + tokens.
+// PREPARED CALENDAR INVITE — retired from this file (THE CARD CONTRACT, Sep 8). The invite is now a
+// KIT CARD kind: `components/home/invite-card.tsx` hosts it (the same /api/items/prepare pre-fill and
+// the same /api/items/execute commit door, unchanged) and `components/thread/thread-cards.tsx`
+// renders it. ONE rendering of an invite exists in the codebase — a second would be a build error by
+// the T16 gate. `InvitePreviewCard` is gone; its mechanics live on in the host.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-
-// ISO ↔ <input type="datetime-local"> (which is local, no tz suffix). We keep the invite's canonical
-// value as an ISO string; the input shows/edits it in the browser's local time.
-function isoToLocalInput(iso: string): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '';
-  // Shift by the tz offset so toISOString's slice reads as LOCAL wall-clock for the input.
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 16);
-}
-function localInputToISO(v: string): string {
-  if (!v) return '';
-  const d = new Date(v); // parsed as local time
-  return isNaN(d.getTime()) ? '' : d.toISOString();
-}
-function fmtInviteWhen(iso: string): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '';
-  return d.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
-}
-
-type PreparedInvite = {
-  type: 'calendar_invite';
-  title: string;
-  startISO: string;
-  endISO: string;
-  attendees: string[];
-  description: string;
-  timezone: string;
-  /** The time is OUR grounded proposal within the item's stated day/window (not its own words). */
-  proposed?: boolean;
-};
-
-// THE PEOPLE TYPEAHEAD (Aug 4): every people field suggests KNOWN contacts as you type — grounded
-// in the user's own correspondence (relationship graph + real mail), never invented. One shared
-// input; the invite attendees and forward recipients both mount it.
-function PeopleSuggestInput({ placeholder, onPick }: { placeholder: string; onPick: (email: string) => void }) {
-  const [input, setInput] = useState('');
-  const [sugs, setSugs] = useState<Array<{ email: string; name: string | null }>>([]);
-  const [hi, setHi] = useState(0); // highlighted row
-  const boxRef = useRef<HTMLDivElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    const q = input.trim();
-    if (q.length < 2 || q.includes('@') && q.split('@')[1]?.includes('.')) { setSugs([]); return; }
-    debounceRef.current = setTimeout(() => {
-      fetch(`/api/people/suggest?q=${encodeURIComponent(q)}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => { if (Array.isArray(d?.people)) { setSugs(d.people); setHi(0); } })
-        .catch(() => {});
-    }, 220);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [input]);
-  useEffect(() => {
-    const close = (e: MouseEvent) => { if (!boxRef.current?.contains(e.target as Node)) setSugs([]); };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, []);
-  const pick = (email: string) => { onPick(email); setInput(''); setSugs([]); };
-  const commitFree = () => {
-    const v = input.trim();
-    if (v && v.includes('@')) { onPick(v); setInput(''); setSugs([]); }
-    else if (!v) setSugs([]);
-  };
-  return (
-    <div ref={boxRef} className="relative min-w-[140px] flex-1">
-      <input
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'ArrowDown' && sugs.length) { e.preventDefault(); setHi((h) => Math.min(h + 1, sugs.length - 1)); }
-          else if (e.key === 'ArrowUp' && sugs.length) { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); }
-          else if ((e.key === 'Enter' || e.key === ',')) {
-            e.preventDefault();
-            if (sugs.length) pick(sugs[hi]?.email ?? sugs[0].email); else commitFree();
-          } else if (e.key === 'Escape') setSugs([]);
-        }}
-        onBlur={() => setTimeout(commitFree, 150)}
-        placeholder={placeholder}
-        className="w-full bg-transparent text-[12.5px] text-neutral-800 placeholder:text-neutral-300 focus:outline-none py-0.5"
-      />
-      {sugs.length > 0 && (
-        <div className="absolute left-0 top-full mt-1 z-30 w-72 max-w-[80vw] rounded-lg border border-neutral-200 bg-white shadow-lg py-1">
-          {sugs.map((s, i) => (
-            <button
-              key={s.email}
-              onMouseDown={(e) => { e.preventDefault(); pick(s.email); }}
-              onMouseEnter={() => setHi(i)}
-              className={`w-full text-left px-3 py-1.5 ${i === hi ? 'bg-indigo-50' : ''}`}
-            >
-              <span className="block text-[12.5px] text-neutral-800 truncate">{s.name || s.email}</span>
-              {s.name && <span className="block text-[11.5px] text-neutral-400 truncate">{s.email}</span>}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// The editable invite chips (attendees) — typeahead over known people, remove via ✕. Never invents.
-function AttendeeChips({ attendees, onChange }: { attendees: string[]; onChange: (next: string[]) => void }) {
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {attendees.map((a) => (
-        <span key={a} className="inline-flex items-center gap-1 rounded-full bg-neutral-100 pl-2.5 pr-1.5 py-0.5 text-[11.5px] text-neutral-700">
-          {a}
-          <button onClick={() => onChange(attendees.filter((x) => x !== a))} className="hover:text-rose-500 transition-colors" aria-label={`Remove ${a}`}>
-            <XMarkIcon className="w-3 h-3" />
-          </button>
-        </span>
-      ))}
-      <PeopleSuggestInput
-        placeholder={attendees.length ? 'Add another…' : 'attendee@email.com'}
-        onPick={(email) => { if (!attendees.includes(email)) onChange([...attendees, email]); }}
-      />
-    </div>
-  );
-}
-
-// The prepared invite card — pre-filled from /api/items/prepare, fully editable, approve-to-send.
-function InvitePreviewCard({ kind, entityId, taskId, verdictLevel, onSent, onCancel }: {
-  kind: ItemKind;
-  entityId: string;
-  taskId?: string;
-  /** W1 — the card was mounted by the judged `schedule` VERDICT (no plan step): hint the prepare
-   *  endpoint so it routes to the invite builder and serves the ambient prepared artifact first. */
-  verdictLevel?: boolean;
-  onSent?: () => void;
-  onCancel?: () => void;
-}) {
-  const [loading, setLoading] = useState(true);
-  const [title, setTitle] = useState('');
-  const [startISO, setStartISO] = useState('');
-  const [endISO, setEndISO] = useState('');
-  const [attendees, setAttendees] = useState<string[]>([]);
-  const [description, setDescription] = useState('');
-  const [timezone, setTimezone] = useState('UTC');
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [proposed, setProposed] = useState(false); // truth label: the time is OUR proposal
-
-  // Pre-fill from the grounded extractor (NO side effects — prepare never sends).
-  useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    fetch('/api/items/prepare', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind, entityId, taskId, ...(verdictLevel ? { actionType: 'calendar_invite' } : {}) }),
-    })
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((d: PreparedInvite | { type: string }) => {
-        if (!alive) return;
-        if (d && (d as PreparedInvite).type === 'calendar_invite') {
-          const inv = d as PreparedInvite;
-          setTitle(inv.title || '');
-          setStartISO(inv.startISO || '');
-          setEndISO(inv.endISO || '');
-          setAttendees(Array.isArray(inv.attendees) ? inv.attendees : []);
-          setDescription(inv.description || '');
-          setTimezone(inv.timezone || 'UTC');
-          setProposed(inv.proposed === true);
-        }
-      })
-      .catch(() => { if (alive) setErr('Could not prepare the invite — fill it in below.'); })
-      .finally(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
-  }, [kind, entityId, taskId, verdictLevel]);
-
-  // On start change with no/earlier end, default a 30-min end.
-  const onStart = (v: string) => {
-    setStartISO(v);
-    if (v && (!endISO || new Date(endISO) <= new Date(v))) {
-      setEndISO(new Date(new Date(v).getTime() + 30 * 60000).toISOString());
-    }
-  };
-
-  const send = async () => {
-    if (sending) return;
-    if (!title.trim()) { setErr('Add a title.'); return; }
-    if (!startISO || !endISO) { setErr('Set a date and time.'); return; }
-    if (attendees.length === 0) { setErr('Add at least one attendee.'); return; }
-    setSending(true); setErr(null);
-    try {
-      const res = await fetch('/api/items/execute', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          kind, entityId, taskId,
-          action: { type: 'calendar_invite', title: title.trim(), startISO, endISO, attendees, description, timezone },
-        }),
-      });
-      if (res.ok) {
-        setSent(true);
-        onSent?.();
-      } else {
-        const d = await res.json().catch(() => ({}));
-        setErr(d.error || 'Could not send the invite.');
-      }
-    } catch {
-      setErr('Could not send the invite.');
-    } finally {
-      setSending(false);
-    }
-  };
-
-  if (sent) {
-    return (
-      <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
-        <div className="flex items-center gap-2">
-          <CheckIcon className="w-4 h-4 text-emerald-600" />
-          <p className="text-[13px] font-medium text-emerald-700">Invite sent{startISO ? ` — ${fmtInviteWhen(startISO)}` : ''}.</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={CARD}>
-      {/* "Review before it sends" affordance — this is prepared work the user validates. */}
-      <div className="flex items-center gap-1.5 px-4 pt-3 pb-2 border-b border-neutral-100">
-        <CalendarDaysIcon className="w-3.5 h-3.5 text-violet-500" />
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Calendar invite</span>
-        <span className="ml-auto text-[10.5px] text-amber-600">Review before it sends</span>
-      </div>
-
-      {loading ? (
-        <div className="p-4"><div className="h-40 rounded-lg bg-neutral-100 animate-pulse" /></div>
-      ) : (
-        <div className="p-4 space-y-3">
-          {/* TRUTH BEFORE PRESENTATION: a proposed time says so; a missing time is asked for plainly. */}
-          {proposed && startISO && (
-            <p className="text-[12px] text-neutral-500">The time is a proposal within what they suggested — adjust if it doesn&apos;t work.</p>
-          )}
-          {!startISO && (
-            <p className="text-[12px] text-amber-700">No time was stated — pick one below before it can send.</p>
-          )}
-          <div>
-            <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Title</label>
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Meeting title"
-              className="w-full rounded-lg border border-neutral-200 px-3 py-1.5 text-[13px] text-neutral-800 placeholder:text-neutral-300 focus:outline-none focus:border-indigo-300"
-            />
-          </div>
-
-          <div className="flex gap-3">
-            <div className="flex-1 min-w-0">
-              <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Starts</label>
-              <input
-                type="datetime-local"
-                value={isoToLocalInput(startISO)}
-                onChange={(e) => onStart(localInputToISO(e.target.value))}
-                className="w-full rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[12.5px] text-neutral-800 focus:outline-none focus:border-indigo-300"
-              />
-            </div>
-            <div className="flex-1 min-w-0">
-              <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Ends</label>
-              <input
-                type="datetime-local"
-                value={isoToLocalInput(endISO)}
-                onChange={(e) => setEndISO(localInputToISO(e.target.value))}
-                className="w-full rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[12.5px] text-neutral-800 focus:outline-none focus:border-indigo-300"
-              />
-            </div>
-          </div>
-          {startISO && (
-            <p className="text-[11px] text-neutral-500 -mt-1">{fmtInviteWhen(startISO)}{endISO ? ` → ${fmtInviteWhen(endISO)}` : ''}</p>
-          )}
-
-          <div>
-            <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Attendees</label>
-            <div className="rounded-lg border border-neutral-200 px-2.5 py-1.5">
-              <AttendeeChips attendees={attendees} onChange={setAttendees} />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Notes</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Agenda / notes (optional)"
-              rows={2}
-              className="w-full rounded-lg border border-neutral-200 px-3 py-1.5 text-[12.5px] text-neutral-700 placeholder:text-neutral-300 focus:outline-none focus:border-indigo-300 resize-y"
-            />
-          </div>
-
-          {err && <p className="text-[12px] text-rose-600">{err}</p>}
-
-          <div className="flex items-center gap-3 pt-1">
-            <button
-              onClick={send}
-              disabled={sending}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 text-white px-4 py-2 text-[13px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
-            >
-              <CalendarDaysIcon className="w-4 h-4" />{sending ? 'Sending…' : 'Approve & send invite'}
-            </button>
-            {onCancel && (
-              <button onClick={onCancel} className="text-[13px] font-medium text-neutral-500 hover:text-neutral-700">Cancel</button>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // PREPARED FORWARD — the S5 second concrete prepared-action type (the proof-of-agnosticism send-type).
@@ -729,7 +438,8 @@ function InvitePreviewCard({ kind, entityId, taskId, verdictLevel, onSent, onCan
 // 1:1 with the server router) instead of the composer: /api/items/prepare returns a GROUNDED forward
 // (the item's REAL email as read-only forwarded content + an editable To + note), the user reviews &
 // adds the recipient, then a single "Review & forward" click → /api/items/execute (type:'forward', the
-// ONLY place the forward fires). Mirrors InvitePreviewCard's shape/tokens exactly — the ONE new surface.
+// ONLY place the forward fires). It keeps the donor's field shape/tokens — its own card kind is the
+// next wave of THE CARD CONTRACT (doc_draft/email lead the queue).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 type PreparedForward = { type: 'forward'; to: string[]; subject: string; forwardedBody: string; note: string };
@@ -808,7 +518,7 @@ function ForwardPreviewCard({ kind, entityId, taskId, itemLevel, onSent, onCance
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ kind, entityId, taskId, action: { type: 'forward', to, note } }),
       });
-      if (res.ok) { setSent(true); onSent?.(); }
+      if (res.ok) { setSent(true); onSent?.(); announceDeed(); }
       else {
         const d = await res.json().catch(() => ({}));
         setErr(d.error || 'Could not forward the email.');
@@ -943,7 +653,209 @@ function StageOverlay({ title, onClose, children }: { title: React.ReactNode; on
   );
 }
 
-function DeepDiveShell({ children, rail, embedded = false }: { children: React.ReactNode; rail?: React.ReactNode; embedded?: boolean }) {
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE ITEM ROOM (threads Phase 3 · the Sep 7 owner walk — "the room isn't the same across items and
+// projects"). ONE grammar for every room in the product:
+//
+//     header (52px chrome) · the thread, full width · the SUMMONED stage · the Filed drawer
+//
+// This is the project room's anatomy (components/entities/entity-room.tsx) with different filed
+// contents — a loose room is a project room with less to file (the July law, now literal). What
+// changed for the loose door: the item's SOURCE MATERIAL (the mail thread, the meeting's insights,
+// the commitment's context) stopped being a DOCKED second pane and became the summoned stage, and
+// the item's own inventory moved off the stage into the drawer. Nothing in the engine moved.
+//
+// KIND VARIANCE IS DATA, NEVER A SECOND LAYOUT: every kind hands this frame the same four things —
+// a title + meta, the machine's word, its verbs, its drawer tabs. There is no per-kind branch here.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** A verb the room's ⋯ menu can fire — the item's own chrome verbs, one home. */
+type RoomVerb = { key: string; label: string; onClick: () => void; icon?: React.ReactNode; danger?: boolean };
+/** A drawer tab — the filed truth, summoned. Empty tabs are ABSENT, never scaffolded. */
+type RoomTab = { id: string; label: string; node: React.ReactNode };
+
+/** The chrome the item room wears. Assembled by each kind from what it already serves. */
+type RoomChrome = {
+  title: string;
+  /** The quiet fact line beside the title (who · when · due). Chrome, never prose. */
+  meta?: React.ReactNode;
+  /** THE MACHINE'S ONE WORD — the same vocabulary the deck and the deep-dive already speak. */
+  stateWord: string | null;
+  stateTone?: string;
+  faces: Array<{ id: string; name: string }>;
+  verbs: RoomVerb[];
+  tabs: RoomTab[];
+  /** The membership control (Add to project) — the item's filing affordance. */
+  membership?: React.ReactNode;
+  /** THE PROJECT DOOR, in the ONE chrome band (owner walk, Sep 10 — the rail's second name row
+   *  died and its door moved here rather than being lost). Rendered ONLY for a TRACKED entity: a
+   *  merely-recognized one has no room to open, and the filing chip beside it already names it
+   *  ("connects to X · Track"). A door with nowhere to go is the lying-door class. */
+  project?: { id: string; name: string; tracked?: boolean } | null;
+  /** Is the stage raised? Null stage at rest is the whole point (the summoned-stage law). */
+  stageOpen: boolean;
+  onLowerStage: () => void;
+  /** The plain door that raises the source material — a VISIBLE handle beside Filed, never a menu
+   *  row. (A summoned stage the reader cannot find is a docked pane with extra steps.)
+   *  OPTIONAL since Sep 9 (owner walk: "I see the thread button on top, not clear — maybe move it
+   *  to the component as the others"): a kind whose source material READS IN THE DRAWER (a mail
+   *  thread) hands the frame NO handle — its doors are the drawer's own Thread section and the
+   *  card's "Thread →". A kind whose source is a workspace (a meeting's notes, a commitment's
+   *  ask) still summons the stage. Kind variance is DATA: the frame branches on presence, never
+   *  on a kind name. */
+  onSummonStage?: () => void;
+  /** The word on that handle — what the source IS ("Notes", "Source", "The ask"). */
+  sourceLabel?: string;
+  /** A host's request to raise the drawer on a named section (the card's "Thread →"). Bumping `v`
+   *  re-fires — the stageSignal idiom, so a second click is never dead. */
+  drawerSignal?: { tab: string; v: number } | null;
+  /** What the raised stage IS, in the user's words ("this conversation", "this meeting"). */
+  stageLabel: string;
+};
+
+// A title clipped for the stage breadcrumb — THE EXCERPT-HONESTY LAW in chrome: cut at a word
+// boundary and declare the cut, or don't cut. (Local by construction: importing the entity room's
+// copy would make the two files circular — the room already mounts ItemDetail.)
+function clipTitle(text: string, max: number): string {
+  const t = String(text ?? '').trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const at = cut.lastIndexOf(' ');
+  return `${(at > max * 0.6 ? cut.slice(0, at) : cut).replace(/[\s,;:—-]+$/, '')}…`;
+}
+
+function ItemRoomFrame({ room, rail, stage }: { room: RoomChrome; rail: React.ReactNode; stage: React.ReactNode }) {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [menu, setMenu] = useState(false);
+  const tabs = room.tabs;
+
+  // THE CARD'S DOOR RAISES THE PANE; the pane lands on the named section itself (the drawer owns
+  // its own tab state now — ONE component, both doors).
+  const sigV = room.drawerSignal?.v ?? 0;
+  useEffect(() => {
+    if (!sigV) return;
+    setDrawerOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sigV]);
+
+  return (
+    <div className="w-full h-full min-h-0 flex flex-col bg-neutral-50">
+      {/* ══ THE HEADER — ONE quiet line of chrome: back · name · the machine's word · the faces ·
+          the filing chip · the handle that summons the filed truth · the item's verbs. NO PROSE
+          LIVES HERE (experience-spec law 1): the room's position is spoken exactly once, by the
+          pinned brief in the conversation below. ══ */}
+      <header className="flex-shrink-0 flex items-center gap-3 h-[52px] px-5 bg-white border-b border-neutral-200/80">
+        <BackLink fallback="/home" className="flex-shrink-0 text-neutral-300 hover:text-neutral-600 gap-0">
+          <span className="sr-only">Back</span>
+        </BackLink>
+        <h1 title={room.title}
+          className="min-w-0 max-w-[40%] truncate text-[15px] font-semibold tracking-tight text-neutral-900">{room.title}</h1>
+        {room.meta && <div className="min-w-0 max-w-[32%] truncate flex items-center gap-1.5 text-[12px] text-neutral-500">{room.meta}</div>}
+        {room.stateWord && (
+          // URGENCY IS A WORD, NEVER RED CHROME (the calm law) — the machine's own word, quiet.
+          <span className={`flex-shrink-0 text-[11px] font-semibold uppercase tracking-wide ${room.stateTone ?? 'text-neutral-400'}`}>
+            {room.stateWord}
+          </span>
+        )}
+        <div className="flex-1" />
+        {/* THE FACES NAME THEMSELVES AND POINT SOMEWHERE — the pile IS the door to where people
+            and inventory live: the drawer. Never an unlabeled row of pseudo-buttons. */}
+        {room.faces.length > 0 && (
+          <FacePile faces={room.faces} size={26} max={4} label="In this room" onClick={() => setDrawerOpen(true)} />
+        )}
+        {/* THE PROJECT DOOR — the word IS the deed (law 8). It sits in the ONE band beside the
+            filing chip; the rail no longer says the room's name a second line down. */}
+        {room.project && room.project.tracked !== false && (
+          <Link href={projectHref(room.project.id)} title={`Open ${room.project.name}`}
+            className="flex-shrink-0 max-w-[22%] truncate rounded-lg px-2 py-1 text-[12px] font-medium text-neutral-500 transition-colors hover:bg-neutral-50 hover:text-indigo-700">
+            {room.project.name}
+          </Link>
+        )}
+        {room.membership && <span className="flex-shrink-0">{room.membership}</span>}
+        {/* THE SOURCE HANDLE — for a kind whose source material is a WORKSPACE (a meeting's notes,
+            a commitment's ask), one tap away beside Filed. A kind whose source READS (a mail
+            thread) supplies none: its home is the drawer's own Thread section and the card's
+            "Thread →" (owner walk, Sep 9 — a bare word in the chrome read as unexplained). */}
+        {room.onSummonStage && room.sourceLabel && (
+          <button
+            onClick={room.stageOpen ? room.onLowerStage : room.onSummonStage}
+            aria-pressed={room.stageOpen}
+            className={`flex-shrink-0 inline-flex items-center rounded-lg h-8 px-3 text-[12px] font-medium transition-all duration-200 ${room.stageOpen ? 'text-indigo-700 bg-indigo-50' : 'text-neutral-500 hover:bg-neutral-50 hover:text-indigo-700'}`}
+            title={room.stageOpen ? 'Put it away' : `Open ${room.stageLabel}`}
+          >{room.sourceLabel}</button>
+        )}
+        {/* THE HANDLE — the one affordance that summons the filed truth. */}
+        <button
+          onClick={() => setDrawerOpen((v) => !v)}
+          aria-expanded={drawerOpen}
+          className={`flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg border h-8 px-3 text-[12px] font-medium transition-colors ${drawerOpen ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-neutral-200 bg-white text-neutral-600 hover:border-neutral-300'}`}
+          title="Everything filed under this work"
+        >
+          {/* ONE WORD FOR ONE PANE (owner, Sep 15: "Filed — weird label"). The name is imported, so
+              this door and the project room's can never say different things about the same drawer. */}
+          <FiledIcon />{FILED_LABEL}
+        </button>
+        {room.verbs.length > 0 && (
+          <div className="relative flex-shrink-0">
+            {/* The SAME three-dot idiom as the project room's header (one header grammar; the
+                one-room R8 gate outlaws a bare text glyph as a disposition affordance). */}
+            <button onClick={() => setMenu((v) => !v)} className="text-neutral-400 hover:text-neutral-600 transition-colors" title="What you can do with this">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden><circle cx="3.2" cy="8" r="1.2" fill="currentColor" /><circle cx="8" cy="8" r="1.2" fill="currentColor" /><circle cx="12.8" cy="8" r="1.2" fill="currentColor" /></svg>
+            </button>
+            {menu && (
+              <div className="absolute right-0 top-full mt-1 z-30 rounded-lg border border-neutral-200 bg-white shadow-lg py-1 min-w-[196px]" onMouseLeave={() => setMenu(false)}>
+                {room.verbs.map((v) => (
+                  <button key={v.key} onClick={() => { setMenu(false); v.onClick(); }}
+                    className={`flex items-center gap-2 w-full px-3 py-1.5 text-[12px] hover:bg-neutral-50 whitespace-nowrap ${v.danger ? 'text-neutral-600 hover:text-rose-600' : 'text-neutral-600'}`}>
+                    {v.icon}{v.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </header>
+
+      <div className="flex-1 min-h-0">
+        {/* ONE-ROOM R2 — THE INVERSION via THE ONE shared shell: the CONVERSATION is the room; the
+            work is the stage. NULL IS A REAL STATE — with nothing summoned the thread is the whole
+            room, exactly as the project room reads. */}
+        <RoomShell
+          conversation={rail}
+          stage={room.stageOpen ? (
+            <div className="flex-1 min-w-0 flex flex-col h-full min-h-0 overflow-hidden">
+              {/* Breadcrumb — you never left the room; one tap lowers the stage again. */}
+              <div className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2 border-b border-neutral-100">
+                <button onClick={room.onLowerStage} className="inline-flex items-center gap-1 text-[12.5px] font-medium text-neutral-500 hover:text-neutral-800 transition-colors">
+                  <ChevronLeftIcon className="w-3.5 h-3.5" />{clipTitle(room.title, 30)}
+                </button>
+                <span className="text-[12px] text-neutral-300">›</span>
+                <span className="text-[12px] text-neutral-400">{room.stageLabel}</span>
+              </div>
+              <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">{stage}</div>
+            </div>
+          ) : null}
+        />
+      </div>
+
+      {/* ══ THE FILED DRAWER — THE ONE COMPONENT (components/room/filed-drawer.tsx) ════════════════
+          The same pane the project door mounts: the overlay law, the three ways out, the
+          reduced-motion floor, and the reader's own draggable width, written ONCE (owner, Sep 14 —
+          the maintenance-work complaint: this door used to carry its own 420px lookalike). A loose
+          room simply files less: Thread · Related · Files · Prepared · History. It INVENTORIES and
+          never re-narrates; empty sections are ABSENT, not scaffolded. ══ */}
+      <FiledDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        title={room.title}
+        sections={tabs}
+        signal={room.drawerSignal ?? null}
+      />
+    </div>
+  );
+}
+
+function DeepDiveShell({ children, rail, embedded = false, room }: { children: React.ReactNode; rail?: React.ReactNode; embedded?: boolean; room?: RoomChrome | null }) {
   // EMBEDDED (Phase 4 R2 — the one shell): the ROOM provides the outer shell + THE rail; the artifact
   // renders bare inside the room's main card. One shell, the conversation persists.
   if (embedded) {
@@ -958,6 +870,9 @@ function DeepDiveShell({ children, rail, embedded = false }: { children: React.R
       </div>
     );
   }
+  // THE ONE ROOM GRAMMAR (Sep 7): the loose door mounts the same header · thread · summoned stage ·
+  // drawer the project door does. `room` is the kind's own data for that frame — never a layout.
+  if (room) return <ItemRoomFrame room={room} rail={rail} stage={children} />;
   // ONE-ROOM R2 — THE INVERSION (docs/one-room-plan.md): the CONVERSATION is the center of the
   // page; the work mounts on the STAGE beside it. Rendered by THE ONE shared shell — the project
   // room mounts the same component, so the anatomy can never fork again.
@@ -1004,26 +919,226 @@ function machineWordOf(view: ItemViewData | null): string | null {
   return m.word;
 }
 
+// ONE COLOR PER FACT: the machine's word wears a tone, never a badge — a state that WANTS the
+// person is amber, a state that has something ready is indigo, everything else is quiet neutral.
+// (The calm law: urgency is a word in a line, never chrome.)
+const MACHINE_TONE: Record<string, string> = {
+  awaiting_input: 'text-amber-600',
+  awaiting_decision: 'text-amber-600',
+  ready: 'text-indigo-500',
+  awaiting_approval: 'text-indigo-500',
+};
+const machineToneOf = (view: ItemViewData | null): string =>
+  MACHINE_TONE[view?.machineState?.state ?? ''] ?? 'text-neutral-400';
+
+// ── THE ROOM'S FACES — derived from what the view ALREADY serves (no second store, no new read):
+// the coworkers who prepared work here, then the human this work is with. Collect more than the
+// pile shows, so its "+N" is a truth and not a constant.
+function facesOf(view: ItemViewData | null, ...people: Array<string | null | undefined>): Array<{ id: string; name: string }> {
+  const out: Array<{ id: string; name: string }> = [];
+  const push = (raw: string | null | undefined) => {
+    const name = (raw ?? '').split('<')[0].trim();
+    if (!name || name.toLowerCase() === 'draft' || out.length >= 8) return;
+    if (out.some((f) => f.name.toLowerCase() === name.toLowerCase())) return;
+    out.push({ id: name.toLowerCase(), name });
+  };
+  for (const p of view?.prepared ?? []) push(p.by);
+  for (const p of people) push(p);
+  return out;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE ITEM'S ONE CONTEXT DRAWER (owner walk, Sep 9 — "the side panel just flags all items that
+// might be related… make this more meaningful… allow to see the threads… should be within the same
+// sidebar as the rest, just well organized and intuitively and simply").
+//
+// The drawer WAS a flat chip list: a folder line, three rows of pills, and a thread you had to
+// leave the drawer to read. It is now the item's whole filed context, in four plain sections:
+//
+//     Thread  — the conversation itself, through the SHARED <ThreadMessages/> (never a second
+//               thread renderer: one renderer, one look, in the inbox and here).
+//     Related — the sibling work as ROWS that say what they are and when (a chip says only a
+//               noun; a row says the fact — kind · who · when).
+//     Files   — everything this work holds, opening in THE ONE viewer (the lightbox).
+//     Prepared— what the staff already produced.
+//
+// A section with nothing behind it is ABSENT, never scaffolded, and nothing here asks for anything.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** One drawer row: what it is · what it says · when. Rows, never chips — a chip is a noun. */
+function DrawerRow({ icon, title, note, at, onClick }: {
+  icon: React.ReactNode; title: string; note?: string | null; at?: string | null; onClick?: () => void;
+}) {
+  const inner = (
+    <>
+      <span className="mt-0.5 flex-shrink-0 text-neutral-300">{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[12.5px] text-neutral-700 transition-colors group-hover:text-indigo-700">{title}</span>
+        {note && <span className="block truncate text-[11px] text-neutral-400">{note}</span>}
+      </span>
+      {at && <span className="flex-shrink-0 text-[11px] text-neutral-300 tabular-nums">{at}</span>}
+      {/* A ROW THAT OPENS SOMETHING SAYS SO (owner walk, Sep 10: "here action just open the email
+          clicked? or"). The chevron renders ONLY on a row that carries a handler — an inert row
+          never wears the mark of a door. */}
+      {onClick && <ChevronRightIcon className="mt-0.5 w-3.5 h-3.5 flex-shrink-0 text-neutral-300 transition-colors group-hover:text-indigo-500" />}
+    </>
+  );
+  return onClick ? (
+    <button onClick={onClick}
+      className="group w-full flex items-start gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-indigo-50/50">{inner}</button>
+  ) : (
+    <div className="w-full flex items-start gap-2.5 rounded-lg px-2 py-1.5">{inner}</div>
+  );
+}
+
+/** RELATED — the sibling work, as rows that carry their kind and their recency. */
+function RelatedRows({ view }: { view: RailView }) {
+  const router = useRouter();
+  const ent = view.entity;
+  const sib = view.siblings;
+  const threads = sib.threads.filter((t) => !t.current);
+  const empty = threads.length + sib.meetings.length + sib.commitments.length === 0;
+  return (
+    <div className="space-y-3">
+      {/* ONE ROW GRAMMAR (owner walk, Sep 10) — the project row was a lookalike of DrawerRow with
+          its own markup and no mark of a door. It IS a DrawerRow now, so it wears the same hover
+          and the same chevron as the work below it, and there is one place to change how a related
+          row reads. */}
+      {ent && (
+        <DrawerRow icon={<FolderIcon className="w-3.5 h-3.5" />} title={ent.name}
+          at={ent.tracked === false ? 'Connects to' : 'In this project'}
+          onClick={() => router.push(projectHref(ent.id))} />
+      )}
+      {threads.length > 0 && (
+        <div className="space-y-0.5">
+          {threads.map((t) => (
+            <DrawerRow key={t.id} icon={<EnvelopeIcon className="w-3.5 h-3.5" />} title={t.subject}
+              note={t.who ? `Email · ${t.who.split('<')[0].trim()}` : 'Email'}
+              at={t.at ? fmtMonthDay(t.at) : null}
+              onClick={() => router.push(`/item/${t.id}`)} />
+          ))}
+        </div>
+      )}
+      {sib.meetings.length > 0 && (
+        <div className="space-y-0.5">
+          {sib.meetings.map((m) => (
+            <DrawerRow key={m.id} icon={<CalendarDaysIcon className="w-3.5 h-3.5" />} title={m.title} note="Meeting"
+              at={m.at ? fmtMonthDay(m.at) : null}
+              onClick={() => router.push(`/item/${m.id}?kind=meeting`)} />
+          ))}
+        </div>
+      )}
+      {sib.commitments.length > 0 && (
+        <div className="space-y-0.5">
+          {sib.commitments.map((c) => (
+            <DrawerRow key={c.id} icon={<CheckCircleIcon className="w-3.5 h-3.5" />} title={c.description}
+              note={c.who ? `Commitment · ${c.who.split('<')[0].trim()}` : 'Commitment'}
+              onClick={() => router.push(`/item/${c.id}?kind=commitment`)} />
+          ))}
+        </div>
+      )}
+      {empty && !ent && <p className="text-[12.5px] text-neutral-300">Nothing else is connected to this yet.</p>}
+    </div>
+  );
+}
+
+/** FILES — what this work holds, opening in THE ONE viewer. Rows carry where they came from. */
+function FilesRows({ files }: { files: LightboxFile[] }) {
+  const [at, setAt] = useState<number | null>(null);
+  return (
+    <div className="space-y-0.5">
+      {at !== null && (
+        <AttachmentLightbox files={files} index={at} onIndex={setAt} onClose={() => setAt(null)} />
+      )}
+      {files.map((f, i) => (
+        <DrawerRow key={`${f.name}-${i}`} icon={<DocumentIcon className="w-3.5 h-3.5" />} title={f.name}
+          note={f.note ?? null} onClick={() => setAt(i)} />
+      ))}
+    </div>
+  );
+}
+
+// ── THE DRAWER'S SHARED SECTIONS — assembled from what the room already serves. `thread` and
+// `files` are handed in by the kind (only a kind that HAS a conversation or files supplies them);
+// Related and Prepared are derived here for every kind. One assembler, four kinds, no fork.
+function commonRoomTabs(
+  _kind: 'email' | 'followup' | 'commitment' | 'meeting',
+  _id: string,
+  view: ItemViewData | null,
+  railView: RailView | null,
+  extra?: { threadCount?: number; threadLabel?: string; thread?: React.ReactNode; files?: LightboxFile[];
+    /** THE RECORD'S SEAT (Sep 14): the conversation's own past, reported by the shared rail after
+     *  it stopped standing in the stream behind "earlier (N)". Same section, same renderer, same
+     *  drawer as the project door — one law, one implementation, both doors. */
+    history?: RoomHistoryLine[] },
+): RoomTab[] {
+  const tabs: RoomTab[] = [];
+  // THE SOURCE READS HERE (the owner's main ask): the conversation itself, first, in the same
+  // drawer as everything else — never a second renderer, never a screen-hop. The word is what the
+  // source IS ("Thread" for a mail conversation, "Source" for a meeting-extracted action item).
+  if (extra?.thread) {
+    const n = extra.threadCount ?? 0;
+    tabs.push({ id: 'thread', label: `${extra.threadLabel ?? 'Thread'}${n > 1 ? ` · ${n}` : ''}`, node: extra.thread });
+  }
+  const sib = railView?.siblings;
+  const related = sib ? (sib.threads.filter((t) => !t.current).length + sib.meetings.length + sib.commitments.length) : 0;
+  if (railView && (related > 0 || railView.entity)) {
+    tabs.push({ id: 'related', label: `Related${related ? ` · ${related}` : ''}`, node: <RelatedRows view={railView} /> });
+  }
+  // FILES — the item's own attachments, then the work's filed documents. Counted, never subtracted,
+  // and deduped by name so one document never wears two seats.
+  const files: LightboxFile[] = [];
+  const seen = new Set<string>();
+  const add = (f: LightboxFile) => { const k = f.name.toLowerCase(); if (!seen.has(k)) { seen.add(k); files.push(f); } };
+  for (const f of extra?.files ?? []) add(f);
+  for (const f of sib?.files ?? []) add({ name: f.filename, ref: { kind: 'kb', id: f.id }, note: 'Filed on this work' });
+  if (files.length > 0) {
+    tabs.push({ id: 'files', label: `Files · ${files.length}`, node: <FilesRows files={files} /> });
+  }
+  const preparedCount = (view?.prepared ?? []).filter((p) => p.kind === 'deliverable' && p.content && !p.decision).length;
+  if (preparedCount > 0) {
+    tabs.push({ id: 'prepared', label: `Prepared · ${preparedCount}`, node: <PreparedLead prepared={view?.prepared ?? null} /> });
+  }
+  // HISTORY — last, because it is the oldest thing here. Counted, and absent when the room has no
+  // past yet (an empty section is the drawer asking, and the drawer never asks).
+  const hist = extra?.history ?? [];
+  if (hist.length > 0) {
+    tabs.push({ id: 'record', label: `History · ${hist.length}`, node: <RoomHistorySection lines={hist} /> });
+  }
+  return tabs;
+}
+
 function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'awareness', id: string): { view: ItemViewData | null; refresh: () => void } {
   const key = `aug-item-view-${kind}-${id}`;
   // SSR-safe instant-load: state starts COLD (matching the server render exactly); the cache hydrates
   // in a layout effect (client-only, pre-paint) — the documented rule for any SSR'd route, or the
   // warm-cache first paint diverges from the server and React throws a hydration mismatch.
   const [view, setView] = useState<ItemViewData | null>(null);
+  // THE NO-MUTATION LAW (docs/threads-plan.md, lib/room/no-mutation.ts): a warm cache means the
+  // reader is already looking at this room's composed brief, prepared work and verdict chrome —
+  // the open's own fetch is written to the cache (the next open's first paint) but never swapped
+  // in underneath them. Cold → there is nothing to mutate and the fetch fills the skeleton.
+  // The FRESHNESS FLOOR keeps the pairing honest: a cache too old to trust isn't painted at all.
+  const paintedRef = useRef(false);
   useLayoutEffect(() => {
-    const cached = loadLS<ItemViewData>(key);
-    if (cached) setView((prev) => prev ?? cached);
+    const cached = loadLS<ItemViewData>(key, { maxAgeMs: ROOM_CACHE_MAX_AGE_MS });
+    if (cached) { paintedRef.current = true; setView((prev) => prev ?? cached); }
   }, [key]);
   const recheckedRef = useRef(false);
-  const refresh = useCallback(() => {
+  // `reason`: 'user' for a deed the reader just performed (the law's own exception), 'open' for the
+  // mount's own read — which yields to whatever the open already painted.
+  const refresh = useCallback((reason: ArrivalReason = 'user') => {
     fetch(`/api/items/view?kind=${kind}&id=${id}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!d || d.error) return;
-        setView(d); saveLS(key, d);
+        saveLS(key, d);
+        const paint = mayReplaceInPlace(reason, paintedRef.current);
+        if (paint) { paintedRef.current = true; setView(d); }
         // RECOGNIZE-ON-OPEN follow-up: no deal yet → the server just kicked a background recognition;
-        // re-check ONCE so the rail appears on this very open (not only the next one).
-        if (!d.entity && !recheckedRef.current) {
+        // re-check ONCE so the rail appears on this very open (not only the next one). This is a
+        // SKELETON FILL by construction — it only runs when nothing entity-shaped was ever painted.
+        if (paint && !d.entity && !recheckedRef.current) {
           recheckedRef.current = true;
           setTimeout(() => {
             fetch(`/api/items/view?kind=${kind}&id=${id}`)
@@ -1035,7 +1150,7 @@ function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'aw
       })
       .catch(() => {});
   }, [kind, id, key]);
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { refresh('open'); }, [refresh]);
   // Coherence (promise fix): a membership correction anywhere (the chip's move/detach/found)
   // refetches THIS view — the rail's room key, entity context and strip follow the change live.
   useEffect(() => {
@@ -1197,6 +1312,8 @@ type ThreadData = {
   projectId?: string | null;
   projectName?: string | null;
   initiative?: string | null;   // the AI best-guess project label (for the Add-to-project pre-suggestion)
+  /** What came with the conversation — the ONE viewer's file shape, served by the thread door. */
+  attachments?: LightboxFile[] | null;
 };
 
 // The header badge for the email deep-dive, from the item's REAL classification — never a hardcoded
@@ -1353,9 +1470,8 @@ function EmailActionPalette({
   );
 }
 
-// (ReplyDirections moved into the CONVERSATION — the exchange in startReplyExchange owns the
-// direction offers; the stage is purely read/edit/send. The /api/items/reply-directions route
-// serves the exchange.)
+// (ReplyDirections live ON THE EMAIL CARD (Sep 8) — the /api/items/reply-directions organ serves
+// the card's top-edge tabs, and the stage stays purely read/edit/send for the deep 20%.)
 
 function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, hideArtifactCards = false, onDecision, injectedDraft }: { id: string; angle?: string | null; embedded?: boolean; initialStage?: 'reply' | 'forward' | 'invite'; stageSignal?: number; hideArtifactCards?: boolean; onDecision?: (d: ReportedDecision | null) => void; injectedDraft?: { body: string; v: number } | null }) {
   const router = useRouter();
@@ -1511,15 +1627,12 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
       });
       if (res.ok) {
         setSent(true);
-        // J4 — the delivery reports back INTO the deal's conversation (not just activity): the
-        // room's rail shows "Sent — …" as a keyed turn the next time the deal is open.
-        try {
-          const entId = railView?.entity?.id;
-          if (entId) {
-            const { pushDealTurn } = await import('@/components/home/item-rail');
-            pushDealTurn(entId, `Sent — ${thread?.subject ? `"${String(thread.subject).slice(0, 60)}"` : 'the reply'} on its way.`, { key: `sent:${id}` });
-          }
-        } catch { /* non-fatal */ }
+        // THE DEED IS NARRATED ONCE, SERVER-SIDE (Sep 8). J4's client-side `pushDealTurn` lived
+        // here — but only this one send lane had it, only for a LINKED item, and it raced the
+        // server's own line on the same `sent:<id>` key. The send door now narrates the deed at the
+        // action seam (lib/entities/on-action.ts) for every send in the app; this surface only
+        // ECHOES, so the room around it re-reads at once.
+        announceDeed();
         // (The reply step in the cached plan flips to done SERVER-side in the send-reply route.)
         // Success state, then close back to the Home (its auto-refresh reflects the sent item).
         setTimeout(() => router.back(), 900);
@@ -1590,6 +1703,17 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     setInviteOpen(false);
   };
 
+  // THE STAGE IS SUMMONED, NEVER DOCKED (threads Phase 3): every raise here is a DEED the reader
+  // asked for (the card's Open, the reply exchange, the room's onStage). The old plain "show me
+  // the thread" flag is gone (Sep 9): reading the conversation is no longer a stage at all — the
+  // drawer's Thread section reads it, and the card's "Thread →" is its door.
+  const stageOpen = composerOpen || forwarding || inviteOpen;
+  const lowerStage = () => { setComposerOpen(false); setForwarding(false); setInviteOpen(false); };
+  // THE CARD'S DOOR — a bumped signal raises the drawer on its own section (re-fireable, so the
+  // second click is never dead; the stageSignal idiom).
+  const [drawerReq, setDrawerReq] = useState<{ tab: string; v: number } | null>(null);
+  const openDrawerAt = (tab: string) => setDrawerReq((r) => ({ tab, v: (r?.v ?? 0) + 1 }));
+
   // OPEN LANDS ON THE PREPARED THING (owner, Aug 7 — "clicked Open and I don't see anything
   // written by our system"): a host that focuses this item WITH a stage intent (the merged
   // action card, the room's onStage) gets the stage RAISED on arrival — the prepared work is
@@ -1597,44 +1721,27 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
   // raise is still user-initiated — their click carried the intent).
   // RE-FIREABLE (found live, Aug 7 — the rail button went dead on the SECOND click): the intent
   // rides a SIGNAL, not a mount — every bump re-raises, no remount, no refetch.
+  // ONE EDITOR, ONE PLACE (owner walk, Sep 14 — the double machine): `hideArtifactCards` means
+  // ANOTHER SURFACE ALREADY HOLDS THIS ITEM'S PREPARED WORK (the room's thread mounts its email
+  // card). This stage is then the DEEP READ — the thread — and it may not raise a second composer
+  // over it, whatever intent a host hands in. The walk saw both at once: the card's tab row
+  // ("As drafted | …") and a separate floating "Your reply" overlay, two editors for one draft.
   useEffect(() => {
-    if (!initialStage) return;
+    if (hideArtifactCards) return;
+    // NO INTENT MEANS STAGES DOWN: a plain focus is the deep read. Without this the pane kept
+    // whatever an earlier click had raised, and the same door showed two different views.
+    if (!initialStage) { lowerStage(); return; }
     if (initialStage === 'forward') { setForwarding(true); setComposerOpen(false); setInviteOpen(false); }
     else if (initialStage === 'invite') { setInviteOpen(true); setComposerOpen(false); setForwarding(false); }
     else { composerTouchedRef.current = true; setComposerOpen(true); setForwarding(false); setInviteOpen(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stageSignal]);
+  }, [stageSignal, hideArtifactCards]);
 
-  // THE REPLY EXCHANGE (Aug 4 — the room talks like a person): "Reply" opens a DIALOGUE, not a
-  // surface. The offer turn lands in the conversation with the grounded directions ("I'll put the
-  // reply together — which direction?"); a pick becomes the user's turn, the ack shows, the draft
-  // lands on the card. The offer is EPHEMERAL scaffolding (never persisted); the pick + result are
-  // the durable story. Typing instead of picking always works — the composer is the open option.
-  const startReplyExchange = async () => {
-    const roomKey = railView?.entity?.id ?? `inbox:${id}`;
-    const offerKey = `reply-offer:${id}`;
-    const offerText = draft
-      ? 'The draft is ready on the card — send it as is, or take it in a different direction (pick one, or just tell me):'
-      : "I'll put the reply together — which direction? Pick one, or just tell me:";
-    pushDealTurn(roomKey, offerText, { key: offerKey, ephemeral: true });
-    try {
-      const r = await fetch('/api/items/reply-directions', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: 'email', id }),
-      });
-      const d = await r.json().catch(() => ({}));
-      const dirs = (Array.isArray(d?.directions) ? d.directions : []).slice(0, 3) as Array<{ label: string; instruction: string }>;
-      if (dirs.length >= 2) {
-        pushDealTurn(roomKey, offerText, {
-          key: offerKey, ephemeral: true,
-          actions: dirs.map((x) => ({ label: x.label, act: 'direction' as const, instruction: x.instruction, itemKind: 'email' as const, itemId: id })),
-        });
-      } else {
-        // Nothing worth offering — the honest fallback is the stage itself (grounded-or-absent).
-        openComposer();
-      }
-    } catch { openComposer(); }
-  };
+  // THE REPLY EXCHANGE retired (Sep 8, THE EMAIL CARD): "Reply" used to open a DIALOGUE whose
+  // grounded direction chips lived in the conversation while the card beside them had none. The
+  // directions are now the card's own top-edge TABS — one selector, inside the card (THE CARD
+  // CONTRACT law 2) — so the verb does the one thing left to do: raise the deep stage.
+  const startReplyExchange = openComposer;
 
   // VERBS SPEAK LEFT (Aug 4): a resolution is a conversation event — the room narrates it
   // (durable, keyed) so the story reads "dismissed — undo in Activity", never a silent vanish.
@@ -1730,23 +1837,53 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
   const objectKind: 'email_thread' | 'meeting_action' = view?.itemSource === 'meeting' ? 'meeting_action' : 'email_thread';
   // ONE derivation of the prepared-artifact cards — the rail renders them at the stream's edge;
   // EMBEDDED (no own rail) renders the same cards in-stage (the "says prepared, isn't" bug, Aug 4).
-  const artifactList = itemDismissed ? [] : [
+  type StreamArtifact = { key: string; label: string; by?: string | null; onOpen: () => void; anchorKey?: string; node?: React.ReactNode };
+  const artifactList: StreamArtifact[] = itemDismissed ? [] : [
     ...(!sent && !!draft && verdict?.work !== 'decide' && objectKind === 'email_thread' ? [{
       key: 'reply', label: 'Reply drafted — ready to review',
       by: view?.prepared?.find((p) => p.kind === 'reply_draft')?.by ?? null,
       onOpen: openComposer, anchorKey: `prep:${id}`,
+      // THE CARD CONTRACT: the reply arrives AS its card, in the thread — filled, editable, its
+      // grounded direction-variants on its own top edge, one Send — instead of a row that has to
+      // be opened before anything can be read. `Thread →` RETURNED (Sep 9): the thread stopped
+      // being the pane beside it — it reads in the drawer — so the card owns its own door.
+      node: <EmailCard
+        item={{ id, ...(thread?.fromAddress ? { to: [thread.fromAddress] } : {}),
+          ...(thread?.subject ? { subject: /^re:/i.test(thread.subject) ? thread.subject : `Re: ${thread.subject}` } : {}) }}
+        // THE MATERIAL RIDES INTO THE EMAIL CONTEXT (owner walk, Sep 10: "wasn't considered in the
+        // email context… nor to open/see the document"). The room already holds the thread's
+        // attachments — the drawer's Files tab reads the SAME array — so the card shows them where
+        // the reply is written, opening through the one viewer. No second fetch, no second shape.
+        sourceFiles={thread?.attachments ?? null}
+        // THE DOOR LIVES ON THE COMPONENT (owner walk, Sep 9): the card carries "Thread →", and it
+        // raises the item's ONE context drawer on its Thread section — the header stopped wearing
+        // a bare unexplained word for the same job.
+        onOpenThread={() => openDrawerAt('thread')}
+        // The card prints its own receipt; the room leaves a beat later (never before the word
+        // lands, and never by yanking the card out from under it).
+        onSent={() => { setTimeout(() => router.back(), 900); }}
+      />,
     }] : []),
     ...((view?.inviteTaskId || verdict?.work === 'schedule') ? [{
       key: 'invite',
       // TRUTH BEFORE PRESENTATION: an invite without a grounded time never claims "prepared".
       label: view?.inviteHasTime === false ? 'Invite drafted — needs a time from you' : 'Calendar invite prepared — review & approve',
       onOpen: () => { setInviteOpen(true); setComposerOpen(false); setForwarding(false); },
+      // THE CARD CONTRACT: the invite arrives AS its card, in the thread — filled, editable, one
+      // commit — instead of a row that has to be opened before anything can be seen.
+      node: <InviteCard kind="email" entityId={id} taskId={view?.inviteTaskId ?? undefined}
+        verdictLevel={!view?.inviteTaskId} onSent={() => setInviteOpen(false)} />,
     }] : []),
     ...(verdict?.work === 'forward' ? [{
-      key: 'forward', label: 'Forward prepared — review & approve',
+      key: 'forward', label: 'Forward prepared — review & approve', by: null,
       onOpen: openForward, anchorKey: `prep:${id}`,
     }] : []),
   ];
+
+  // Is the reply's own CARD standing in THIS pane? (Embedded, with the artifact cards not
+  // suppressed, the `reply` artifact renders its EmailCard here.) The composer overlay yields to it.
+  const replyCardInStage = embedded && !hideArtifactCards
+    && artifactList.some((a) => a.key === 'reply' && !!a.node);
 
   // ── THE DECISION PAYLOAD, derived ONCE (the placement table: one component, one render). The
   // deep-dive hands it to its own rail below; EMBEDDED, it is REPORTED UP so the host room mounts
@@ -1784,6 +1921,58 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     return () => onDecisionRef.current?.(null);
   }, [decisionSig]);
 
+  // ── THE ROOM'S CHROME (the one grammar): the verbs that used to be a strip on the stage now
+  // live in the header's ⋯, because the OBJECT is the room — the verb-scope law is unchanged
+  // (verbs render only with their object; a meeting-extracted action item still has no Reply).
+  // EMBEDDED keeps the in-stage strip: inside a project room the stage IS the object.
+  // THE RECORD LEAVES THE STREAM (Sep 14) — the rail reports this room's past, the ONE drawer
+  // files it. Same seam, same renderer, same section id as the project door.
+  const [historyLines, setHistoryLines] = useState<RoomHistoryLine[]>([]);
+  const room: RoomChrome | null = embedded ? null : {
+    title: subject,
+    meta: (
+      <>
+        {senderLine && <span className="min-w-0 truncate">{senderLine}</span>}
+        {thread?.receivedAt && <span className="flex-shrink-0 text-neutral-400 tabular-nums">· {fmtDateTime(thread.receivedAt)}</span>}
+      </>
+    ),
+    stateWord: machineWordOf(view),
+    stateTone: machineToneOf(view),
+    faces: facesOf(view, thread?.fromName ?? thread?.fromAddress),
+    membership: <AddToProjectControl kind="inbox" id={id} projectId={thread?.projectId ?? null} projectName={thread?.projectName ?? null} suggestName={thread?.initiative ?? null} compact />,
+    // THE PROJECT DOOR rides the ONE band (the rail's second name row died with it).
+    project: railView?.entity ?? null,
+    verbs: itemDismissed ? [] : [
+      ...(objectKind === 'email_thread' ? [
+        { key: 'reply', label: 'Reply', onClick: startReplyExchange },
+        { key: 'forward', label: 'Forward', onClick: openForward },
+      ] : []),
+      { key: 'done', label: 'Already handled', onClick: markHandled },
+      { key: 'dismiss', label: 'Dismiss', onClick: dismissItem, danger: true },
+      { key: 'moot', label: 'No longer relevant', onClick: markNoLongerRelevant, danger: true },
+    ],
+    // THE ONE CONTEXT DRAWER: the conversation reads HERE (the shared renderer, full — the drawer
+    // is where you read, not a preview), beside what it connects to, what it holds, and what the
+    // staff prepared. A meeting-extracted action item has no conversation, so it gets no section.
+    tabs: commonRoomTabs('email', id, view, railView, {
+      history: historyLines,
+      threadCount: threadMessages?.length ?? 0,
+      threadLabel: objectKind === 'email_thread' ? 'Thread' : 'Source',
+      // GROUNDED OR ABSENT: the section exists when there is something to read — a meeting-extracted
+      // action item has no conversation and gets no seat, but it still reads its own stored source.
+      thread: (threadErr || (threadMessages?.length ?? 0) > 0 || thread?.body)
+        ? (threadErr
+          ? <p className="text-[12.5px] text-neutral-400">Could not load the conversation.</p>
+          : <ThreadMessages messages={threadMessages} fallback={fallback} attachments={thread?.attachments} />)
+        : null,
+      files: (thread?.attachments ?? []).map((f) => ({ ...f, note: 'Came with this email' })),
+    }),
+    stageOpen,
+    onLowerStage: lowerStage,
+    drawerSignal: drawerReq,
+    stageLabel: 'what you are sending',
+  };
+
   return (
     // ONE-ROOM R2: the CONVERSATION is the center; this component's children are the STAGE (the
     // message + composer workspace). The judged DECISION and the draft's ARTIFACT CARD render
@@ -1791,8 +1980,8 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     // THE FRAME IS STRUCTURAL (UX arc, user law): the two-pane room mounts IMMEDIATELY — the rail
     // is always present (a pending shell until the view lands), never a bare single-column card
     // that later morphs into the room. Structure must not flip on data arrival.
-    <DeepDiveShell embedded={embedded} rail={(
-      <ItemRail kind="email" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }}
+    <DeepDiveShell embedded={embedded} room={room} rail={(
+      <ItemRail kind="email" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }}
         decision={decisionPayload ? {
           ...decisionPayload,
           onChoose: async (label: string) => {
@@ -1828,12 +2017,16 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
         }}
       />
     )}>
-      {/* 1 — Header: subject + sender + date (fixed at top). T4 (work-surface): the posture badge
-          ("For awareness"/"Reply needed") is INTERNAL vocabulary — it drives behavior; the user
-          never reads it. No chip on email deep-dives. */}
+      {/* 1 — Header: subject + sender + date. T4 (work-surface): the posture badge ("For
+          awareness"/"Reply needed") is INTERNAL vocabulary — it drives behavior; the user never
+          reads it. No chip on email deep-dives.
+          ONE FACT, ONE HOME (Sep 7): on the loose door the ROOM header carries the title, the
+          fact line, the machine's word and the filing chip — this stage header would be the
+          second voice. It survives EMBEDDED, where the room header belongs to the project. */}
+      {embedded && (
       <DetailHeader
         chip={null}
-        action={embedded ? undefined : <AddToProjectControl kind="inbox" id={id} projectId={thread?.projectId ?? null} projectName={thread?.projectName ?? null} suggestName={thread?.initiative ?? null} compact />}
+        action={undefined}
         title={subject}
         meta={
           <>
@@ -1845,6 +2038,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
           </>
         }
       />
+      )}
 
       {/* 2 — The one scroll area, in the Scape order: message card → judged work → one Send. */}
       <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
@@ -1852,7 +2046,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
             on its stage — identical for loose items and items focused inside a project room.
             Clicking speaks on the LEFT (the exchange / a narrated event). Divider below separates
             the verbs from the thread. */}
-        {!itemDismissed && (
+        {embedded && !itemDismissed && (
           <div className="border-b border-neutral-100 pb-4">
             <EmailActionPalette
               relevance={relevance}
@@ -1873,7 +2067,10 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
             the room's rail already carries the merged action card for THIS item (owner, Aug 7:
             "isn't it redundant to have the same buttons in both panels?") — one deed, one object,
             across panes too. */}
-        {embedded && !hideArtifactCards && artifactList.map((art) => (
+        {embedded && !hideArtifactCards && artifactList.map((art) => art.node ? (
+          // ONE RENDERING PER KIND: embedded, the invite is the SAME kit card as in the rail.
+          <div key={art.key}>{art.node}</div>
+        ) : (
           <div key={art.key} className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-3 py-2.5 flex items-center gap-2.5">
             <span className="min-w-0 flex-1 text-[12.5px] text-neutral-800">
               <span className="font-medium">{art.label}</span>
@@ -1892,7 +2089,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
         {threadErr ? (
           <p className="text-[13px] text-neutral-400">Could not load the thread.</p>
         ) : (
-          <ThreadMessages messages={threadMessages} fallback={fallback} compact />
+          <ThreadMessages messages={threadMessages} fallback={fallback} attachments={thread?.attachments} compact />
         )}
 
         {/* THE COMPOSER moved to THE SUMMONED STAGE (Aug 3): an overlay raised by the artifact
@@ -1920,13 +2117,12 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
           </button>
         )}
         {embedded && inviteOpen && (view?.inviteTaskId || verdict?.work === 'schedule') && (
-          <InvitePreviewCard
+          <InviteCard
             kind="email"
             entityId={id}
             taskId={view?.inviteTaskId ?? undefined}
             verdictLevel={!view?.inviteTaskId}
             onSent={() => setInviteOpen(false)}
-            onCancel={() => setInviteOpen(false)}
           />
         )}
         {embedded && !itemDismissed && verdict?.work === 'forward' && !forwarding && (
@@ -1958,23 +2154,28 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
           />
         )}
 
-        {/* Coworker deliverables prepared on this item — work, so it sits with the work. */}
-        <PreparedLead prepared={view?.prepared ?? null} />
+        {/* Coworker deliverables prepared on this item. On the loose door they are INVENTORY and
+            live in the drawer's Prepared tab (the rail already announces them as cards); embedded
+            in a project room there is no drawer of this item's own, so they stay with the work. */}
+        {embedded && <PreparedLead prepared={view?.prepared ?? null} />}
 
         {/* THE REPLY (J2) — the judged work mounts INLINE beneath the message, prefilled from the
             pool. No bottom dock: message → work → one Send is the whole read. OPEN/COLLAPSED still
             follows the verdict (reply → open; awareness/action → absent, the palette's "Reply" is
             the single reveal). */}
-      {/* R3 — THE CONTEXT STRIP: what this connects to (project door, siblings, founding), spatial
-          not conversational. Hidden when embedded — the room IS the project context. */}
-      {!embedded && railView && <ContextStrip kind="email" id={id} view={railView} />}
+      {/* R3 — THE CONTEXT STRIP moved into THE DRAWER (Sep 7): what this connects to is FILED
+          TRUTH, and the drawer is where filed truth lives in every room. Embedded, the project
+          room IS the context, so it renders nowhere here either. */}
       </div>
 
       {/* ═══ THE SUMMONED STAGE (Aug 3 — the spec's stage seat, finally transient): the draft
           review raised OVER the room's truth pane, holding the ONE Send. Summoned by the artifact
           card / Reply; ✕ lowers it; a send closes it and the room narrates. Never auto-raised —
           a colleague hands you the letter when you reach for it. ═══ */}
-      {composerOpen && (
+      {/* ONE EDITOR, ONE PLACE (Sep 14): if this pane is already showing the reply's own CARD — which
+          holds the body, the direction tabs, the attachments and the ONE Send — the legacy composer
+          overlay does not render on top of it. Whichever surface owns the draft, it owns it alone. */}
+      {composerOpen && !replyCardInStage && (
         <StageOverlay
           onClose={() => { composerTouchedRef.current = true; setComposerOpen(false); }}
           title={<>
@@ -1988,8 +2189,8 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
                 <span className="font-medium text-neutral-700">Suggested angle:</span> {angle}
               </p>
             )}
-            {/* Direction chips moved to the CONVERSATION (Aug 4, the exchange) — the stage is
-                purely read/edit/send; the dialogue owns the steering. */}
+            {/* Direction variants live on THE EMAIL CARD (Sep 8) — the stage is purely
+                read/edit/send; the card owns the steering. */}
             {sent ? (
               <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
                 <CheckIcon className="w-4 h-4 text-emerald-600" />
@@ -2036,13 +2237,12 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
       {/* THE SUMMONED INVITE STAGE — the artifact card's Open raises the approve-gated review. */}
       {!embedded && inviteOpen && (view?.inviteTaskId || verdict?.work === 'schedule') && (
         <StageOverlay title="Review the invite" onClose={() => setInviteOpen(false)}>
-          <InvitePreviewCard
+          <InviteCard
             kind="email"
             entityId={id}
             taskId={view?.inviteTaskId ?? undefined}
             verdictLevel={!view?.inviteTaskId}
             onSent={() => setInviteOpen(false)}
-            onCancel={() => setInviteOpen(false)}
           />
         </StageOverlay>
       )}
@@ -2151,9 +2351,67 @@ function MeetingDetail({ id, embedded = false }: { id: string; embedded?: boolea
   const items = (data?.actionItems ?? []).filter(it => !cleared.has(it.id));
   const allCleared = !!data && (data.actionItems.length > 0) && items.length === 0;
 
+  // THE STAGE IS SUMMONED (threads Phase 3) — the meeting's own record (summary · decisions ·
+  // risks · action items) is the stage, down at rest; the ⋯ verbs and the composer raise it.
+  const [sourceOpen, setSourceOpen] = useState(false);
+  const [composeRaised, setComposeRaised] = useState(false);
+  const stageOpen = sourceOpen || composeRaised || inviteOpen;
+  const lowerStage = () => { setSourceOpen(false); setComposeRaised(false); setInviteOpen(false); };
+
+  // THE RECORD LEAVES THE STREAM (Sep 14) — the rail reports this room's past, the ONE drawer
+  // files it. Same seam, same renderer, same section id as the project door.
+  const [historyLines, setHistoryLines] = useState<RoomHistoryLine[]>([]);
+  const room: RoomChrome | null = embedded ? null : {
+    title,
+    meta: (
+      <>
+        {when && <span className="truncate">{fmtWeekdayDate(when)}</span>}
+        {tr?.durationMinutes ? <span className="flex-shrink-0 text-neutral-400">· {tr.durationMinutes} min</span> : null}
+      </>
+    ),
+    stateWord: machineWordOf(view),
+    stateTone: machineToneOf(view),
+    faces: facesOf(view),
+    membership: <AddToProjectControl kind="meeting" id={id} compact />,
+    // THE PROJECT DOOR rides the ONE band (the rail's second name row died with it).
+    project: railView?.entity ?? null,
+    verbs: [
+      { key: 'draft', label: 'Draft a follow-up', onClick: () => { setComposing(true); setComposeRaised(true); setInviteOpen(false); } },
+    ],
+    tabs: [
+      ...commonRoomTabs('meeting', id, view, railView, { history: historyLines }),
+      ...(items.length > 0 ? [{
+        id: 'actions',
+        label: `Action items · ${items.length}`,
+        node: (
+          <div className="space-y-1">
+            {items.map((it) => (
+              <div key={it.id} className="flex items-start gap-2.5 rounded-lg px-2 py-1.5 hover:bg-neutral-50/70 transition-colors">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[12.5px] text-neutral-700 leading-snug">{it.workTitle}</p>
+                  {it.whyMatters && <p className="text-[11px] text-neutral-400 mt-0.5 leading-snug">{it.whyMatters}</p>}
+                </div>
+                <button onClick={() => act(it.id, 'complete')} disabled={acting.has(it.id)} title="Mark done"
+                  className="flex-shrink-0 text-neutral-300 hover:text-emerald-600 transition-colors"><CheckIcon className="w-3.5 h-3.5" /></button>
+                <button onClick={() => act(it.id, 'dismiss')} disabled={acting.has(it.id)} title="Dismiss"
+                  className="flex-shrink-0 text-neutral-300 hover:text-rose-500 transition-colors"><XMarkIcon className="w-3.5 h-3.5" /></button>
+              </div>
+            ))}
+          </div>
+        ),
+      }] : []),
+    ],
+    stageOpen,
+    onLowerStage: lowerStage,
+    onSummonStage: () => setSourceOpen(true),
+    sourceLabel: 'Notes',
+    stageLabel: 'this meeting',
+  };
+
   return (
-    <DeepDiveShell embedded={embedded} rail={<ItemRail kind="meeting" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} />}>
-      {/* Header */}
+    <DeepDiveShell embedded={embedded} room={room} rail={<ItemRail kind="meeting" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} />}>
+      {/* Header — EMBEDDED only: on the loose door the ROOM header carries these facts once. */}
+      {embedded && (
       <DetailHeader
         chip={embedded ? null : <KindChip tone="violet" icon={CalendarDaysIcon} label="Meeting" />}
         action={embedded ? undefined : <AddToProjectControl kind="meeting" id={id} compact />}
@@ -2165,6 +2423,7 @@ function MeetingDetail({ id, embedded = false }: { id: string; embedded?: boolea
           </>
         }
       />
+      )}
 
       {/* Scrolling body — summary + decisions/risks/next step + action items (no docked composer). */}
       <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
@@ -2197,7 +2456,7 @@ function MeetingDetail({ id, embedded = false }: { id: string; embedded?: boolea
               </button>
             )}
             {inviteOpen && view?.inviteTaskId && (
-              <InvitePreviewCard kind="meeting" entityId={id} taskId={view.inviteTaskId} onSent={() => setInviteOpen(false)} onCancel={() => setInviteOpen(false)} />
+              <InviteCard kind="meeting" entityId={id} taskId={view.inviteTaskId} onSent={() => setInviteOpen(false)} />
             )}
 
             {/* Suggested next step — the one call-to-action, kept prominent up top (indigo accent). */}
@@ -2425,6 +2684,10 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
     try {
       await fetch(`/api/commitments/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
       setDone(status);
+      // THE RECEIPT REACHES EVERY PRESENTATION (Sep 7): the docked footer used to be the only place
+      // that said what happened, and on the loose door the stage may be down when the ⋯ fires the
+      // verb. A deed the reader just performed always speaks.
+      toast(status === 'done' ? 'Marked done.' : 'Dismissed.');
       setTimeout(() => router.back(), 800);
     } catch {
       setActing(false);
@@ -2454,9 +2717,60 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
     ? applyPanelPlan(view as RailView, panelPlan({ hasDecision: false, hasGatedDecision: isHandoff && handoffOpen }))
     : null;
 
+  // THE STAGE IS SUMMONED (threads Phase 3) — the commitment's source context and its writing
+  // surface are the stage, down at rest.
+  //
+  // THE ONE EXCEPTION, AND IT IS THE LAW'S OWN: a PARKED GATE (a handoff / an input station) is
+  // this room's whole move, and the placement table has already stripped the rail's CTA precisely
+  // because this card IS the decision. Leaving it behind a handle would be a room with nothing in
+  // it to do. So a live gate raises the stage the way a focused artifact raises the project room's
+  // — never a docked pane, always the room's one piece of work.
+  const [sourceOpen, setSourceOpen] = useState(false);
+  const gateStanding = isHandoff && handoffOpen;
+  // THE JUDGE SEEDS THE COMPOSER, IT NEVER RAISES THE STAGE (found on the Sep 7 walk): the verdict
+  // opens `composing` so the writing surface is READY the moment the reader reaches for it — but a
+  // stage that raises itself on a verdict is the docked pane again under another name. Only a
+  // person's own door (or a standing gate) summons.
+  const [composeRaised, setComposeRaised] = useState(false);
+  const stageOpen = sourceOpen || composeRaised || inviteOpen || gateStanding;
+  const lowerStage = () => { setSourceOpen(false); setComposeRaised(false); setInviteOpen(false); };
+
+  // THE RECORD LEAVES THE STREAM (Sep 14) — the rail reports this room's past, the ONE drawer
+  // files it. Same seam, same renderer, same section id as the project door.
+  const [historyLines, setHistoryLines] = useState<RoomHistoryLine[]>([]);
+  const room: RoomChrome | null = embedded ? null : {
+    title: data?.description || 'Commitment',
+    meta: (
+      <>
+        {data?.counterparty && <span className="truncate">{data.direction === 'awaiting' ? 'Waiting on' : 'You owe'} {data.counterparty.split('<')[0].trim()}</span>}
+        {data?.dueDate && <span className={`flex-shrink-0 ${overdue ? 'text-rose-500 font-medium' : 'text-neutral-400'}`}>· {overdue ? 'Overdue' : 'Due'} {fmtWeekdayDate(data.dueDate)}</span>}
+      </>
+    ),
+    stateWord: machineWordOf(view),
+    stateTone: machineToneOf(view),
+    faces: facesOf(view, data?.counterparty),
+    membership: <AddToProjectControl kind="commitment" id={id} compact />,
+    // THE PROJECT DOOR rides the ONE band (the rail's second name row died with it).
+    project: railView?.entity ?? null,
+    // THE VERB-SCOPE LAW: a handoff gate's only verbs are Approve / Hold back, and they live on
+    // its card — the generic commitment verbs are structurally absent (approving IS done).
+    verbs: isHandoff || done ? [] : [
+      { key: 'draft', label: data?.counterparty ? `Draft email → ${data.counterparty.replace(/<[^>]*>/g, '').trim()}` : 'Draft an email', onClick: () => { composingTouchedRef.current = true; setComposing(true); setComposeRaised(true); setInviteOpen(false); } },
+      { key: 'done', label: 'Mark done', onClick: () => act('done') },
+      { key: 'dismiss', label: 'Dismiss', onClick: () => act('dismissed'), danger: true },
+    ],
+    tabs: commonRoomTabs('commitment', id, view, railView, { history: historyLines }),
+    stageOpen,
+    onLowerStage: lowerStage,
+    onSummonStage: () => setSourceOpen(true),
+    sourceLabel: isHandoff ? 'The ask' : 'Source',
+    stageLabel: isHandoff ? 'what needs your call' : 'this commitment',
+  };
+
   return (
-    <DeepDiveShell embedded={embedded} rail={<ItemRail kind="commitment" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} />}>
-      {/* Header */}
+    <DeepDiveShell embedded={embedded} room={room} rail={<ItemRail kind="commitment" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} />}>
+      {/* Header — EMBEDDED only: on the loose door the ROOM header carries these facts once. */}
+      {embedded && (
       <DetailHeader
         chip={embedded ? null :
           <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600">
@@ -2475,6 +2789,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
           </>
         }
       />
+      )}
 
       {/* Scrolling body — source context */}
       <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
@@ -2510,12 +2825,16 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
             ) : (
             <>
             {/* One action bar — the compose panel is the only writing surface. When the judge says
-                chase/reply the composer MOUNTS on its own (below); the bar is then just the toggle. */}
+                chase/reply the composer MOUNTS on its own (below); the bar is then just the toggle.
+                EMBEDDED only: on the loose door the room's ⋯ carries the same one deed (two homes
+                for one verb is exactly what the Sep 7 walk called out). */}
+            {embedded && (
             <ActionBar
               primaryLabel={composing ? 'Hide draft' : (data.counterparty ? `Draft email → ${data.counterparty.replace(/<[^>]*>/g, '').trim()}` : 'Draft email →')}
               primaryActive={!composing}
-              onPrimary={() => { composingTouchedRef.current = true; setComposing((v) => !v); }}
+              onPrimary={() => { composingTouchedRef.current = true; setComposing((v) => !v); setComposeRaised(true); }}
             />
+            )}
             {composing && (
               <div>
                 {/* The judge's one-line reason — why this is the move (grounded, never generic). */}
@@ -2541,8 +2860,9 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
             </>
             )}
 
-            {/* Prepared work (coworker deliverables) + a contextual invite; the gap rides the rail. */}
-            <PreparedLead prepared={view?.prepared ?? null} />
+            {/* Prepared work (coworker deliverables) + a contextual invite; the gap rides the rail.
+                The prepared list is INVENTORY on the loose door — it lives in the drawer there. */}
+            {embedded && <PreparedLead prepared={view?.prepared ?? null} />}
             {!railView && <GapLine text={view?.gap} />}
             {view?.inviteTaskId && !inviteOpen && (
               <button
@@ -2553,14 +2873,14 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
               </button>
             )}
             {inviteOpen && view?.inviteTaskId && (
-              <InvitePreviewCard kind="commitment" entityId={id} taskId={view.inviteTaskId} onSent={() => setInviteOpen(false)} onCancel={() => setInviteOpen(false)} />
+              <InviteCard kind="commitment" entityId={id} taskId={view.inviteTaskId} onSent={() => setInviteOpen(false)} />
             )}
 
             {/* THE STEER INPUT — inline only when there's no rail (the rail's composer owns it). */}
             {!railView && <SteerRow kind="commitment" id={id} />}
 
-            {/* R3 — the context strip (spatial, never in the conversation). */}
-            {!embedded && railView && <ContextStrip kind="commitment" id={id} view={railView} />}
+            {/* R3 — the context strip moved into THE DRAWER (Sep 7): what this connects to is
+                filed truth, and the drawer is where filed truth lives in every room. */}
 
             {src ? (
               <section>
@@ -2596,8 +2916,9 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
       </div>
 
       {/* Docked action footer — Mark done / Dismiss. SUPPRESSED on a handoff gate: the decision
-          buttons above are the whole move (approving IS done; there is nothing else to mark). */}
-      {!isHandoff && (
+          buttons above are the whole move (approving IS done; there is nothing else to mark).
+          EMBEDDED only on the loose door: the room's ⋯ is the one home for these verbs. */}
+      {!isHandoff && embedded && (
       <div className="flex-shrink-0 border-t border-neutral-200 bg-neutral-50/80 backdrop-blur px-7 py-4">
         {done ? (
           <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3">
@@ -2996,9 +3317,45 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
 
   const hasMessages = !threadErr && (thread?.messages?.length ?? 0) > 0;
 
+  // THE STAGE IS SUMMONED (threads Phase 3) — raised only by a DEED (the artifact card's Open, the
+  // ⋯ verbs, the composer). Reading the conversation you are waiting on is the drawer's Thread
+  // section now (Sep 9), not a stage: a bare header word for "read this" was the unclear chrome.
+  const stageOpen = composerOpen || inviteOpen;
+  const lowerStage = () => { setComposerOpen(false); setInviteOpen(false); };
+
+  // THE RECORD LEAVES THE STREAM (Sep 14) — the rail reports this room's past, the ONE drawer
+  // files it. Same seam, same renderer, same section id as the project door.
+  const [historyLines, setHistoryLines] = useState<RoomHistoryLine[]>([]);
+  const room: RoomChrome | null = embedded ? null : {
+    title,
+    meta: who ? <span className="truncate">Waiting on {who.split('<')[0].trim()}</span> : undefined,
+    stateWord: machineWordOf(view),
+    stateTone: machineToneOf(view),
+    faces: facesOf(view, who),
+    membership: <AddToProjectControl kind="inbox" id={id} compact />,
+    // THE PROJECT DOOR rides the ONE band (the rail's second name row died with it).
+    project: railView?.entity ?? null,
+    verbs: sent ? [] : [
+      { key: 'nudge', label: 'Follow up', onClick: () => { setComposerOpen(true); setInviteOpen(false); } },
+    ],
+    tabs: commonRoomTabs('followup', id, view, railView, {
+      history: historyLines,
+      threadCount: threadMessages?.length ?? 0,
+      thread: threadErr
+        ? <p className="text-[12.5px] text-neutral-400">Could not load the conversation.</p>
+        : hasMessages
+          ? <ThreadMessages messages={threadMessages} fallback={null} attachments={thread?.attachments} />
+          : null,
+      files: thread?.attachments ?? [],
+    }),
+    stageOpen,
+    onLowerStage: lowerStage,
+    stageLabel: 'your follow-up',
+  };
+
   return (
-    <DeepDiveShell embedded={embedded} rail={
-      <ItemRail kind="followup" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onDraft={(d) => { setDraft(d); setDraftV((v) => v + 1); }}
+    <DeepDiveShell embedded={embedded} room={room} rail={
+      <ItemRail kind="followup" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} onDraft={(d) => { setDraft(d); setDraftV((v) => v + 1); }}
         artifacts={[
           ...(!sent && !!draft ? [{
             key: 'nudge', label: 'Follow-up drafted — ready to review',
@@ -3008,14 +3365,16 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
           ...(view?.inviteTaskId ? [{
             key: 'invite', label: 'Calendar invite prepared — review & approve',
             onOpen: () => { setInviteOpen(true); setComposerOpen(false); },
+            node: <InviteCard kind="followup" entityId={id} taskId={view.inviteTaskId} onSent={() => setInviteOpen(false)} />,
           }] : []),
         ]}
       />
     }>
-      {/* Header */}
+      {/* Header — EMBEDDED only: on the loose door the ROOM header carries these facts once. */}
+      {embedded && (
       <DetailHeader
-        chip={embedded ? null : <KindChip tone="amber" icon={ClockIcon} label="Ball in your court" />}
-        action={embedded ? undefined : <AddToProjectControl kind="inbox" id={id} compact />}
+        chip={null}
+        action={undefined}
         title={title}
         titleClass="text-[19px] leading-snug"
         meta={(who || machineWordOf(view)) ? (
@@ -3025,12 +3384,14 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
           </>
         ) : undefined}
       />
+      )}
 
       {/* The one scroll area, in the Scape order: message card → the follow-up composer. */}
       <div className="flex-1 min-h-0 overflow-y-auto px-7 py-6 space-y-6">
         {/* THE VERB STRIP (verb-scope law): an awaiting commitment's verb is FOLLOW UP — on the
-            stage, attached to the object. */}
-        {!sent && (
+            stage, attached to the object. EMBEDDED only: on the loose door the object owns the
+            ROOM, so its verbs live in the room's ⋯ (one home, one deed). */}
+        {embedded && !sent && (
           <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1">
             <button onClick={() => { setComposerOpen(true); setInviteOpen(false); }}
               className="inline-flex items-center gap-1 text-[12.5px] font-semibold text-indigo-600 hover:text-indigo-700 transition-colors">
@@ -3044,13 +3405,14 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
           ) : !hasMessages && thread ? (
             <p className="text-[13px] text-neutral-400 leading-relaxed">No linked email thread — write a follow-up below.</p>
           ) : (
-            <ThreadMessages messages={threadMessages} fallback={null} compact />
+            <ThreadMessages messages={threadMessages} fallback={null} attachments={thread?.attachments} compact />
           )}
         </div>
 
         {/* THE GAP LINE — in the rail when one exists; inline only for a rail-less item. */}
         {!railView && <GapLine text={view?.gap} />}
-        <PreparedLead prepared={view?.prepared ?? null} />
+        {/* Prepared deliverables are INVENTORY on the loose door — the drawer's Prepared tab. */}
+        {embedded && <PreparedLead prepared={view?.prepared ?? null} />}
 
         {/* Prepared INVITE moved to the RAIL's artifact card + the summoned stage (Aug 4);
             embedded keeps the in-stage affordance (no own rail). */}
@@ -3063,14 +3425,13 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
           </button>
         )}
         {embedded && inviteOpen && view?.inviteTaskId && (
-          <InvitePreviewCard kind="followup" entityId={id} taskId={view.inviteTaskId} onSent={() => setInviteOpen(false)} onCancel={() => setInviteOpen(false)} />
+          <InviteCard kind="followup" entityId={id} taskId={view.inviteTaskId} onSent={() => setInviteOpen(false)} />
         )}
 
       {/* The follow-up composer moved to THE SUMMONED STAGE (Aug 3) — rendered after the scroll
           area; raised by the artifact card / "Write the follow-up →". */}
 
-      {/* R3 — the context strip (spatial, never in the conversation). */}
-      {!embedded && railView && <ContextStrip kind="followup" id={id} view={railView} />}
+      {/* R3 — the context strip moved into THE DRAWER (Sep 7): filed truth lives in the drawer. */}
       </div>
 
       {/* ═══ THE SUMMONED STAGE — the follow-up review, raised over the truth pane, one Send. ═══ */}
@@ -3129,7 +3490,7 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
       {/* THE SUMMONED INVITE STAGE (follow-up door — same grammar as email). */}
       {!embedded && inviteOpen && view?.inviteTaskId && (
         <StageOverlay title="Review the invite" onClose={() => setInviteOpen(false)}>
-          <InvitePreviewCard kind="followup" entityId={id} taskId={view.inviteTaskId} onSent={() => setInviteOpen(false)} onCancel={() => setInviteOpen(false)} />
+          <InviteCard kind="followup" entityId={id} taskId={view.inviteTaskId} onSent={() => setInviteOpen(false)} />
         </StageOverlay>
       )}
 

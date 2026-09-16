@@ -16,6 +16,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { resolveFileUniversal, type UniversalCandidate } from '@/lib/knowledge/resolve';
+import { clip } from '@/lib/room/turns';
+import { clipForPrompt } from '@/lib/utils/clip-for-prompt';
+import { detectLanguage } from '@/lib/inbox/detect-language';
+import { GENERIC_WORK_WORDS } from '@/lib/entities/recognize';
+import type { WorkVerb } from '@/lib/work/surface-registry';
 
 export type RequirementResolution = {
   label: string;
@@ -225,6 +230,165 @@ async function attachableOnly(
   } catch { return requires; }
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE ASK SPEAKS CONSEQUENCE (experience-spec law 4 — owner walk, Sep 7: "how is this relevant or
+// actionable at all? we need quality" · "I don't want bolted deterministic fixes, I want this to be
+// reasoned and thought of, otherwise it's hardly replicable across users in different scenarios").
+//
+// The ask used to open with a CANNED preamble — "To finish this I need one thing I could not find,
+// attach it below or say where to look" — above a bare labelled row: exactly the "bare
+// labeled checklist" law 4 outlaws. It never said WHICH work the thing belongs to, and never said
+// WHAT HAPPENS the moment it lands — and a template can't say either across languages, verbs and
+// scenarios. So the speech is REASONED, in the house pattern:
+//
+//   MODEL COMPOSES  — ONE cheap pass (aiCall shape {output:'json'} → every tier's jsonFast /
+//                     classification slot, never a reasoning slot — the item-plan lesson) writes the
+//                     colleague's two sentences from the judged facts ONLY: the work's title, the
+//                     consequence of the judged verb, what is already in hand, how many things are
+//                     missing. The labels themselves render VERBATIM in the rows beneath, so the
+//                     speech talks AROUND them; the item's own language is mirrored.
+//   CODE VALIDATES  — the evidence-law idiom: the composed text must carry a DISTINCTIVE token of
+//                     the work title or a requirement label (it must be about THIS work, not a
+//                     pleasantry), be one paragraph, and fit the length cap.
+//   FLOOR           — `askPreamble`, the deterministic sentence, when the model errs, is unusable,
+//                     or the workspace has no AI to spend. Failure never blanks and never blocks:
+//                     the ask still speaks, just plainer. The floor is a FALLBACK, never the primary.
+//
+// COMPOSED ONCE, NOT PER RENDER: the turn's text is durable. A re-run whose ask covers the SAME
+// labels reuses the standing turn's words — the pass can run hourly and spends nothing.
+//
+// Authored at the ONE seam, so every reader inherits it: the room's lifted ask, the deck's whisper,
+// the brief's grounding and the converse transcript all read this same turn's text.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** What proceeds the MOMENT the missing thing lands — keyed by the judged verb, never guessed. */
+const CONSEQUENCE: Record<WorkVerb, string> = {
+  reply: 'finish the reply on',
+  send_file: 'send what was asked for on',
+  produce: 'finish the work on',
+  forward: 'forward this on',
+  schedule: 'get the invite out on',
+  chase: 'send the nudge on',
+  decide: 'put the decision to you on',
+  none: 'move this forward on',
+};
+
+/** A judged label, spoken inside a sentence: proper names/acronyms keep their case, everything else
+ *  drops to lowercase, and an article is added only when the label doesn't already open with one. */
+function spokenLabel(raw: string): string {
+  const s = clip(String(raw ?? '').replace(/\s+/g, ' ').trim(), 80);
+  if (!s) return 'one more thing';
+  const proper = /^[A-Z]{2,}/.test(s) || (s.match(/\b[A-Z][a-z]+/g) ?? []).length >= 2;
+  const body = proper ? s : s.charAt(0).toLowerCase() + s.slice(1);
+  return /^(the|a|an|your|our|their|his|her|its|one|two|three|\d)\b/i.test(body) ? body : `the ${body}`;
+}
+
+/**
+ * askPreamble — THE ONE ask sentence. Consequence first, inventory second; never a bare label.
+ * Deterministic: same facts in, same words out (no model, no keyword read of the item's text).
+ */
+export function askPreamble(args: {
+  /** The missing labels, as judged (verbatim — this only SPEAKS them). */
+  labels: string[];
+  /** The work this ask belongs to (the item/work title). */
+  itemTitle: string;
+  /** The judged verb — what proceeds once the gap closes. */
+  work?: WorkVerb | null;
+  /** Filenames already staged for this work, if any (the ask says what it DOES have first). */
+  haveFilenames?: string[];
+}): string {
+  const n = Math.max(1, args.labels.length);
+  const title = clip(String(args.itemTitle ?? '').replace(/\s+/g, ' ').trim(), 60);
+  const consequence = CONSEQUENCE[(args.work ?? 'none') as WorkVerb] ?? CONSEQUENCE.none;
+  // The consequence names its work; with no title at all it still says what happens next.
+  const toDo = title ? `${consequence} "${title}"` : consequence.replace(/\s+on$/, '');
+  const need = n === 1 ? `I need ${spokenLabel(args.labels[0])}` : `I need ${n} things`;
+  const have = args.haveFilenames?.length
+    ? `I have ${args.haveFilenames.map((f) => `"${f}"`).join(', ')} in hand. `
+    : '';
+  const holding = n === 1 ? "it's the only thing holding this" : "they're the only things holding this";
+  return `${have}${need} to ${toDo} — attach ${n === 1 ? 'it' : 'them'} or tell me where to look; ${holding}.`;
+}
+
+/** The composed speech's cap — two colleague sentences, never a paragraph of throat-clearing. */
+const ASK_SPEECH_MAX = 320;
+
+/**
+ * THE GROUNDING CHECK (the evidence-law idiom, code-side): the composed sentence must be ABOUT this
+ * work — it has to carry a distinctive token of the work title or of one of the missing labels.
+ * Generic work-words prove nothing (the recognition lesson: every engagement shares "report",
+ * "project"), so they are stripped first. When the facts hold NO distinctive token at all the check
+ * cannot discriminate — it abstains rather than rejecting every honest composition (namesOverlap's
+ * own doctrine: no signal → no veto), and the remaining floors still apply.
+ */
+function speechIsGrounded(say: string, sources: string[]): boolean {
+  const hay = say.toLowerCase();
+  let sawToken = false;
+  for (const s of sources) {
+    const toks = String(s ?? '').toLowerCase().split(/[^\p{L}\p{N}]+/u)
+      .filter((t) => t.length >= 4 && !GENERIC_WORK_WORDS.has(t));
+    if (toks.length) sawToken = true;
+    if (toks.some((t) => hay.includes(t))) return true;
+  }
+  return !sawToken;
+}
+
+/**
+ * composeAskSpeech — the REASONED ask (model composes · code validates · deterministic floor).
+ * Never throws, never returns empty: the floor is the worst case.
+ */
+export async function composeAskSpeech(
+  admin: SupabaseClient, userId: string,
+  facts: {
+    labels: string[];
+    itemTitle: string;
+    work?: WorkVerb | null;
+    haveFilenames?: string[];
+    /** The item's own words — used ONLY to mirror its language, never quoted into the speech. */
+    languageSample?: string | null;
+  },
+): Promise<string> {
+  const floor = askPreamble(facts);
+  try {
+    const title = clipForPrompt(String(facts.itemTitle ?? '').replace(/\s+/g, ' ').trim(), 140);
+    const consequence = CONSEQUENCE[(facts.work ?? 'none') as WorkVerb] ?? CONSEQUENCE.none;
+    const language = detectLanguage(facts.languageSample || facts.itemTitle || '');
+    const res = await aiCall<{ say?: string }>({
+      userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 220,
+      source: 'task_preparation',
+      prompt:
+        `You are the user's chief of staff, speaking to them in their work room. You prepared this work ` +
+        `and one thing is missing, so you are asking them for it — briefly, like a colleague, out loud.\n\n` +
+        `THE FACTS (these are ALL you know — never add any other fact, name, date, place or promise):\n` +
+        `- the work: "${title || 'this work'}"\n` +
+        `- what happens the moment you get it: you can ${consequence.replace(/\s+on$/, '')} this work\n` +
+        `- missing: ${facts.labels.length} thing(s); they are listed VERBATIM in rows directly beneath ` +
+        `your sentence, so do NOT list or re-name them\n` +
+        (facts.haveFilenames?.length
+          ? `- already in hand: ${facts.haveFilenames.slice(0, 3).map((f) => `"${clipForPrompt(f, 80)}"`).join(', ')}\n`
+          : '') +
+        `\nRULES:\n` +
+        `1. At most TWO sentences, one paragraph, no bullets, no headings, no greeting, no sign-off.\n` +
+        `2. Name the work and say what proceeds once you have what's missing — the consequence is the point.\n` +
+        `3. Say the person can attach it or tell you where to look. Never say you searched "everywhere".\n` +
+        `4. Invent NOTHING beyond the facts above — no deadlines, no people, no reasons, no file names.\n` +
+        `5. Write in ${language ?? "the same language the work's title is written in"}.\n` +
+        `6. Plain sentences. No markdown, no quotes around the whole answer, no emoji.\n\n` +
+        `JSON only: {"say":"<your sentence(s)>"}`,
+    });
+    const raw = String(res.json?.say ?? '').replace(/\s+/g, ' ').trim();
+    // CODE VALIDATES: shape, length, and that it is about THIS work.
+    const usable = raw
+      && raw.length >= 20
+      && raw.length <= ASK_SPEECH_MAX
+      && !/[•*#]|^\s*[-–]\s/.test(raw)
+      && speechIsGrounded(raw, [facts.itemTitle, ...facts.labels]);
+    return usable ? raw : floor;
+  } catch {
+    return floor; // AI outage / no budget — the ask still speaks (failure never blanks a surface)
+  }
+}
+
 export async function resolveRequirements(
   admin: SupabaseClient, userId: string,
   args: {
@@ -233,6 +397,8 @@ export async function resolveRequirements(
     itemTitle: string;
     entityId?: string | null;
     requires: Array<{ label: string }>;
+    /** The judged verb — the ask's CONSEQUENCE half (law 4). Absent → a neutral "move this forward". */
+    work?: WorkVerb | null;
   },
 ): Promise<RequirementsResult> {
   const empty: RequirementsResult = { resolutions: [], have: [], missing: [], artifactTruth: '' };
@@ -330,7 +496,7 @@ export async function resolveRequirements(
     // W3 LIFECYCLE — a PROCEEDED ask (the user's "go ahead with what's available") is a standing
     // decision: the ask is never re-posted (the turn stays in the room as the record), and the
     // caller proceeds around the gaps under the artifact truth.
-    const { data: priorAsk } = await admin.from('room_turns').select('id, component')
+    const { data: priorAsk } = await admin.from('room_turns').select('id, component, text')
       .eq('user_id', userId).eq('room_key', roomKey).eq('dedupe_key', dedupeKey).maybeSingle();
     const proceeded = !!((priorAsk?.component as { state?: { proceeded?: boolean } } | null)?.state?.proceeded);
     if (proceeded) {
@@ -375,11 +541,26 @@ export async function resolveRequirements(
       const suggestLine = suggestions.length
         ? ` I did find ${suggestions.slice(0, 2).map((s) => `"${s.filename}" (maybe the ${s.label.toLowerCase()})`).join(' and ')} — but I'm not sure enough to attach ${suggestions.length === 1 ? 'it' : 'them'} without you confirming.`
         : '';
+      // COMPOSED ONCE: a standing ask covering exactly these labels already carries its words —
+      // re-running the pass re-states them, it never re-buys them. Only a NEW gap composes.
+      const labels = uncovered.map((m2) => m2.label);
+      const priorItems = ((priorAsk?.component as { state?: { items?: unknown } } | null)?.state?.items ?? []) as unknown[];
+      const sameGap = Array.isArray(priorItems)
+        && priorItems.length === labels.length
+        && labels.every((l) => priorItems.some((p) => String(p) === l));
+      const priorText = typeof priorAsk?.text === 'string' ? priorAsk.text.trim() : '';
+      const speech = sameGap && priorText
+        ? priorText.replace(suggestLine, '') // the suggestion tail is re-appended below, never doubled
+        : await composeAskSpeech(admin, userId, {
+          labels,
+          itemTitle: args.itemTitle,
+          work: args.work ?? null,
+          haveFilenames: have.map((h) => h.file!.filename),
+          languageSample: emailExcerpt,
+        });
       await writeRoomTurn(admin, userId, roomKey, {
         role: 'system',
-        text: (have.length
-          ? `I have ${have.map((h) => `"${h.file!.filename}"`).join(', ')} ready for this, but I couldn't find ${uncovered.length === 1 ? 'one thing' : `${uncovered.length} things`} — attach below or tell me where to look.`
-          : `To finish this I need ${uncovered.length === 1 ? 'one thing' : `${uncovered.length} things`} I couldn't find anywhere — attach below or tell me where to look.`) + suggestLine,
+        text: speech + suggestLine,
         refs: [{ label: args.itemTitle.slice(0, 60), href: args.itemKind === 'commitment' ? `/item/${args.itemId}?kind=commitment` : `/item/${args.itemId}` }],
         component: { key: 'input_checklist', state: { items: uncovered.map((m2) => m2.label), taskId: null } },
         dedupeKey,

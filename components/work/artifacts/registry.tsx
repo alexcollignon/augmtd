@@ -6,7 +6,7 @@ import { LinkedInPostCard } from './linkedin-post-card';
 // in chat. This is the reusable display layer: type → component. New types register here.
 //
 // SCOPE (deliberate): these are VISUAL components only. The one interactive *action* (send)
-// lives in the separate EmailDraftCard path and is untouched. A per-type action contract
+// lives in the separate email-card path (the kit's `email` kind) and is untouched. A per-type action contract
 // (publish, save, …) is a later extension on ArtifactProps — not wired yet.
 
 export interface ArtifactCtx { threadId: string; agentId: string; messageId: string }

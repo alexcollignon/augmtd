@@ -8,9 +8,10 @@
 // of that into work_state and querying the wrong bucket. This helper reads the signals back out.
 
 import { getUnderstanding } from './item-understanding';
+import { isCampaignEcho } from './campaign-echo';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type SignalItem = { work_state?: string | null; source?: string | null; source_data?: any };
+export type SignalItem = { work_state?: string | null; source?: string | null; source_data?: any; user_id?: string | null; type_override?: string | null };
 
 // The decisive signal in practice: a real human sender. The classifier happily files
 // "no-reply@booking.com" / "do-not-reply@binance.com" as work_prepared, but you can't reply to
@@ -50,6 +51,13 @@ export function isNeedsReply(item: SignalItem): boolean {
   const from = fromAddress(item);
   const local = from.includes('@') ? from.split('@')[0] : from;
   if (AUTOMATED_SENDER.test(local) || s.isAutomatedSender || s.isNotification || s.isMechanicalConfirmation) return false;
+
+  // THE ECHO FLOOR (LAW 5 — proactive-reach), consulted exactly where the automated-sender gate is:
+  // a reply into the user's OWN outbound sequence is not a reply they owe. Derived per user from
+  // their own sent corpus — nothing here names a vendor, token or language. The user's own
+  // `type_override` short-circuits inside `isCampaignEcho` (authoritative beats the refiner), and
+  // with no signature derived the check is inert.
+  if (isCampaignEcho(item)) return false;
 
   // PRIMARY signal: the unified understanding. When present it is the decider for whether the reply
   // is yours — reasoned over the real recipients, so it correctly demotes a group "Dear Team" To (you

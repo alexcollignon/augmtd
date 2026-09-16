@@ -31,6 +31,10 @@
 //       `profiles_folder`, the profile manifest's item_plans key), so a rename carries its pointers
 //       with it or it silently unhooks live work. Proven end to end through the SAME function the
 //       route calls; a duplicate-name rename is refused exactly as creation is.
+//   K12 THE FILE CARRIES ITS BUCKET — a knowledge_files row records WHICH bucket its storage_path
+//       lives in (in the existing `origin` jsonb), written at every ingest seam and read by every
+//       byte-reader. The bug it retires: the preview signed one hardcoded bucket, so a PDF born
+//       from an email attachment failed the sign and silently served extracted TEXT instead.
 //
 // HONESTY NOTE — what is asserted live vs. by source floor: `buildKnowledgeOverview` /
 // `listKbFiles` are called for real against the probe host and against live accounts. The HTTP
@@ -48,6 +52,7 @@ import { resolveProbeUser } from './probe-user';
 import { buildKnowledgeOverview, listKbFiles, kindOfRow, KB_PAGE } from '../lib/knowledge/overview';
 import { renameKnowledgeFolder, FOLDER_CONFIG_KEYS } from '../lib/knowledge/rename-folder';
 import { PROFILE_MANIFEST_KIND } from '../lib/matching/manifest';
+import { bucketOfKbFile, signedUrlForKbFile, DEFAULT_KB_BUCKET } from '../lib/knowledge/file-bucket';
 
 let pass = 0, fail = 0;
 const ok = (name: string, cond: boolean, detail?: string) => {
@@ -269,9 +274,11 @@ async function main() {
     ok('a system folder cannot be DELETED (route guard)', /is_system[\s\S]{0,220}?status:\s*409/.test(folderRoute));
     ok('…nor RENAMED (the heal refuses before touching anything)',
       /is_system[\s\S]{0,160}?status:\s*409/.test(await read('lib/knowledge/rename-folder.ts')));
-    ok('the panel only offers delete on a zero-count folder', /f\.count\s*===\s*0\s*&&/.test(panel));
+    // W5 moved the folder deeds from accordion headers to the right-pane header, where the
+    // selected folder is `scopeFolder` — the law is identical, the variable moved.
+    ok('the panel only offers delete on a zero-count folder', /scopeFolder\.count\s*===\s*0\s*&&/.test(panel));
     ok('the panel\'s folder delete is two-step (confirm, then the deed)',
-      /confirmFolderDel/.test(panel) && /deleteFolder\(f\.id\)/.test(panel));
+      /confirmFolderDel/.test(panel) && /deleteFolder\(scopeFolder\.id\)/.test(panel));
     {
       const { count } = await admin.from('knowledge_files').select('id', { count: 'exact', head: true })
         .eq('user_id', probeId).eq('folder_id', folderA);
@@ -427,6 +434,97 @@ async function main() {
       const mixed = [...new Set((kinds ?? []).map((r: { user_id: string }) => r.user_id))].slice(0, 3);
       if (!mixed.length) note('no live account with transcripts found — the probe carries K10 alone');
       for (const u of mixed) await sumLaw(`live ${u.slice(0, 8)}`, u);
+    }
+
+    // ── K12 — THE FILE CARRIES ITS BUCKET ─────────────────────────────────────────────────────
+    // A knowledge_files row records `storage_path` but used to record NOTHING about which bucket
+    // that path lives in, so every reader signed one hardcoded bucket (`drive-uploads`). A row whose
+    // bytes sit in `email-attachments` (a mail attachment, a /work chat upload) or `work-artifacts`
+    // (a generated deliverable) failed the sign and fell back to EXTRACTED TEXT — the owner's
+    // "the PDF viewer shows text now" find. The bucket is provenance: it is written at every ingest
+    // seam into the existing `origin` jsonb and read by every byte-reader.
+    console.log('\nK12 — THE FILE CARRIES ITS BUCKET (a preview serves the real file):');
+    {
+      const ingestSrc = await read('lib/knowledge/ingest.ts');
+      const indexerSrc = await read('lib/knowledge/indexer.ts');
+      const previewSrc = await read('app/api/files/preview/route.ts');
+
+      ok('the preview signs against the ROW\u2019S OWN bucket — no hardcoded single-bucket sign survives in the kb lane',
+        /signedUrlForKbFile\(admin, f\)/.test(previewSrc)
+        && /select\('id, storage_path, origin,/.test(previewSrc)
+        && !/storage\.from\('drive-uploads'\)/.test(previewSrc));
+
+      ok('the reader defaults to the LEGACY bucket, never to nothing',
+        bucketOfKbFile({ origin: null }) === DEFAULT_KB_BUCKET
+        && bucketOfKbFile({ origin: { kind: 'email_attachment', ref: 'x', bucket: 'email-attachments' } }) === 'email-attachments');
+
+      ok('the ingest funnel PERSISTS the bucket it was handed (the param is no longer dropped)',
+        /function originCols\(/.test(ingestSrc) && /bucket: p\.bucket/.test(ingestSrc)
+        && /origin: originCols\(p\)/.test(ingestSrc));
+
+      ok('a later provenance stamp MERGES — it can never drop the bucket the indexer wrote',
+        /prevBucket/.test(ingestSrc) && /origin\.bucket \?\? \(typeof prevBucket === 'string'/.test(ingestSrc));
+
+      ok('both indexers stamp the bucket their caller uploaded into',
+        /const bucket = params\.bucket \|\| DEFAULT_KB_BUCKET/.test(indexerSrc)
+        && /stampFileBucket\(adminClient, fileId, bucket\)/.test(indexerSrc)
+        && /stampFileBucket\(adminClient, fileId, 'work-artifacts'\)/.test(indexerSrc));
+
+      // EVERY caller declares its bucket — a silent caller is exactly how the class was born.
+      const callers = [
+        'app/api/drive/upload/confirm/route.ts',
+        'app/api/work/threads/[id]/chat-attach/route.ts',
+        'app/api/work/threads/[id]/attach/confirm/route.ts',
+        'app/api/workflows/runs/[id]/supply-upload/route.ts',
+        'lib/workspace/seed-kb.ts',
+        'lib/tenders/write-profile-doc.ts',
+      ];
+      for (const c of callers) {
+        const src = await read(c);
+        ok(`${c.split('/').slice(-2).join('/')} declares its bucket`, /bucket:\s*(?:'[a-z-]+'|KB_BUCKET)/.test(src));
+      }
+
+      // LIVE — the real doors: an object really uploaded into email-attachments is signed from
+      // there, and a row that predates the law HEALS (its bucket is discovered and stamped).
+      const srcId = await ensureSource(admin, probeId);
+      const mailPath = `${probeId}/${TAG}-mail.txt`;
+      const artPath = `${probeId}/${TAG}-art.txt`;
+      const rowIds: string[] = [];
+      try {
+        await admin.storage.from('email-attachments').upload(mailPath, Buffer.from('mail bytes'), { contentType: 'text/plain', upsert: true });
+        await admin.storage.from('work-artifacts').upload(artPath, Buffer.from('artifact bytes'), { contentType: 'text/plain', upsert: true });
+
+        const mk = async (pfid: string, path: string, origin: unknown) => {
+          const { data } = await admin.from('knowledge_files').insert({
+            user_id: probeId, source_id: srcId, provider_file_id: `${TAG}/${pfid}`,
+            filename: `${pfid}.txt`, mime_type: 'text/plain', storage_path: path, origin,
+          }).select('id, storage_path, origin').single();
+          rowIds.push((data as { id: string }).id);
+          return data as { id: string; storage_path: string; origin: unknown };
+        };
+
+        const stamped = await mk('stamped', mailPath, { kind: 'email_attachment', ref: 'x', bucket: 'email-attachments' });
+        const signed = await signedUrlForKbFile(admin, stamped);
+        ok('a stamped mail-attachment row signs from email-attachments (the owner\u2019s contract PDF class)',
+          signed?.bucket === 'email-attachments' && !!signed?.url, String(signed?.bucket));
+
+        const legacy = await mk('legacy', artPath, { kind: 'generated', ref: 'y' }); // no bucket = pre-law
+        const healed = await signedUrlForKbFile(admin, legacy);
+        const { data: after } = await admin.from('knowledge_files').select('origin').eq('id', legacy.id).maybeSingle();
+        ok('a pre-law row is served correctly AND healed in place (the bucket is discovered, then stamped)',
+          healed?.bucket === 'work-artifacts'
+          && (after?.origin as { bucket?: string; kind?: string } | null)?.bucket === 'work-artifacts'
+          && (after?.origin as { kind?: string } | null)?.kind === 'generated',
+          JSON.stringify(after?.origin));
+
+        const gone = await mk('gone', `${probeId}/${TAG}-nowhere.txt`, null);
+        ok('bytes that exist nowhere resolve to null — the text fallback stays HONEST',
+          (await signedUrlForKbFile(admin, gone)) === null);
+      } finally {
+        if (rowIds.length) await admin.from('knowledge_files').delete().in('id', rowIds);
+        await admin.storage.from('email-attachments').remove([mailPath]).catch(() => {});
+        await admin.storage.from('work-artifacts').remove([artPath]).catch(() => {});
+      }
     }
 
   } finally {

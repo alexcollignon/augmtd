@@ -7,6 +7,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { extractTextFromAttachment } from '@/lib/attachments/text-extractor';
 import { listDriveContents, readDriveFile, getDriveFilesForIds, DriveItem } from './google-drive';
 import { listOneDriveContents, readOneDriveFile, getOneDriveFilesForIds, OneDriveItem } from './onedrive';
+import { stampFileBucket, DEFAULT_KB_BUCKET } from './file-bucket';
 
 const MAX_FILES_PER_SYNC = 300;
 
@@ -25,7 +26,8 @@ const OCR_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/
 const CHUNK_SIZE = 3200;
 const CHUNK_OVERLAP = 300;
 // Hard cap on chunks per file — prevents DB bloat for very large documents.
-const MAX_CHUNKS_PER_FILE = 200;
+// Exported (additively) so the retry door caps exactly where the first pass would have.
+export const MAX_CHUNKS_PER_FILE = 200;
 
 export interface KnowledgeFile {
   id: string;
@@ -82,8 +84,10 @@ export async function embedText(text: string, userId: string, supabase: Supabase
   return res.data[0].embedding;
 }
 
-/** Embed multiple texts in a single API call. Much faster than sequential calls. */
-async function embedTexts(texts: string[], userId: string, supabase: SupabaseClient): Promise<number[][]> {
+/** Embed multiple texts in a single API call. Much faster than sequential calls.
+ *  Exported (additively) so the RETRY door (`lib/knowledge/reindex.ts`) writes chunk vectors through
+ *  the same call the first pass would have made — a retried row must be indistinguishable. */
+export async function embedTexts(texts: string[], userId: string, supabase: SupabaseClient): Promise<number[][]> {
   if (texts.length === 0) return [];
   const { client, model, endpoint, tier } = await getAIClient(userId, 'embeddings', supabase);
   const res = await client.embeddings.create({
@@ -175,7 +179,9 @@ export function chunkText(text: string, _filename: string): Chunk[] {
   return chunks.length > 0 ? chunks : [{ heading: null, content: text.slice(0, CHUNK_SIZE) }];
 }
 
-function buildContextHeader(filename: string, heading: string | null, chunkIndex: number): string {
+/** Exported (additively) for the retry door — the stored `context_header` must be byte-identical
+ *  to what the first pass would have written. */
+export function buildContextHeader(filename: string, heading: string | null, chunkIndex: number): string {
   const section = heading ?? `part ${chunkIndex + 1}`;
   return `[Document: ${filename} | Section: ${section}]`;
 }
@@ -493,6 +499,10 @@ export interface IndexUploadParams {
   mimeType: string;
   userId: string;
   storagePathInBucket: string;
+  /** WHICH bucket `storagePathInBucket` points into (Sep 14 — THE FILE CARRIES ITS BUCKET). The
+   *  callers of this indexer upload into three different buckets; a reader that assumes one of them
+   *  serves the wrong file or none. Defaults to the legacy `drive-uploads` when a caller is silent. */
+  bucket?: string;
   folderId?: string;
   /** THE FILE DOOR'S SEAM (relay canvas W2 — the door matured from "a file was uploaded" to "a
    *  file's CONTENT is in hand"). Called ONCE, after the extracted text is durably written, with
@@ -510,6 +520,7 @@ export interface IndexUploadParams {
  */
 export async function indexUploadedFile(params: IndexUploadParams, adminClient: SupabaseClient): Promise<string> {
   const { buffer, filename, mimeType, userId, storagePathInBucket, folderId, onIndexed } = params;
+  const bucket = params.bucket || DEFAULT_KB_BUCKET;
 
   // The listener is best-effort at EVERY exit: a throwing listener must never fail the indexing
   // whose success it is reporting.
@@ -574,6 +585,9 @@ export async function indexUploadedFile(params: IndexUploadParams, adminClient: 
   }
 
   const fileId = fileRows[0].id;
+
+  // THE BYTES' PROVENANCE — merged into origin so a later stampFileMeta (kind/ref) can't drop it.
+  await stampFileBucket(adminClient, fileId, bucket);
 
   // EXTRACTION IS COMPLETE AND DURABLE HERE (the upsert above wrote `extracted_text`). The seam
   // sits before chunking on purpose: the content is already in hand, and a listener must not wait
@@ -712,6 +726,9 @@ export async function indexArtifact(params: IndexArtifactParams, adminClient: Su
     if (upsertError || !fileRows?.[0]) return;
 
     const fileId = fileRows[0].id;
+
+    // A generated deliverable's bytes live in work-artifacts, NOT the upload bucket — the row says so.
+    if (storagePath) await stampFileBucket(adminClient, fileId, 'work-artifacts');
 
     if (cleanText && cleanText.length > 10) {
       const allChunks = chunkText(cleanText, filename);

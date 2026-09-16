@@ -85,7 +85,23 @@ function relationshipCue(relationship?: string | null, momentum?: string | null,
 
 // H4/J1 — the ownership-keyed notice law + the strong automated-sender read live in ONE module
 // (lib/inbox/notice-demotion.ts) shared with judgeWork. Local aliases keep call sites unchanged.
-import { isAutomatedSenderStrong as isAutomatedSender, isActionWorthyAutomated, isNoMoveNotice, rawMailKindOf } from '@/lib/inbox/notice-demotion';
+import { isAutomatedSenderStrong as isAutomatedSender, isActionWorthyAutomated } from '@/lib/inbox/notice-demotion';
+// THE DECK FLOORS + THE SERVE-LABEL CHOKE — the two structures that replaced two site lists
+// (proactive-reach LAWS 3 · 5 · 6). The route composes lanes through the floors and serves through
+// the choke; `scripts/smoke-deck-truth.ts` asserts the world against the very same modules.
+import { rePromotesToDeck, noticeIsDemoted, readJudgedNone, DECK_POOL_LIMIT, ACTION_NOTICE_LIMIT, type DeckFloors } from '@/lib/home/deck-floors';
+import { guardDeckLabels } from '@/lib/home/serve-labels';
+import { getCampaignSignature, isCampaignEcho } from '@/lib/inbox/campaign-echo';
+// ── THE SERVED-WORDS LAW's serve guard (proactive-reach LAW 3, docs/proactive-reach-plan.md) ─────
+// The deck's whisper label is `understanding.ask` → `work_title` → subject, and all three are FROZEN
+// ingest snapshots. Every row written before the write-seam law — and every subject line, which is
+// the SENDER'S words and can never be rewritten at ingest — heals HERE, as it serves: deterministic,
+// zero-AI, never on a network path, never blocking (an unstrippable label serves unchanged). See
+// lib/inbox/deixis.ts for the one multilingual day-word table every seam in the house derives from.
+import { stripDeixis } from '@/lib/inbox/deixis';
+// THE LABEL FOLLOWS THE PRESENT (LAW 3's watermark half) — the ONE reader that decides whether a
+// stored understanding may still speak. See lib/inbox/refresh-understanding.ts.
+import { servedClaimOf } from '@/lib/inbox/refresh-understanding';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function attendeeEmails(ev: any): string[] {
@@ -148,14 +164,27 @@ export async function GET() {
     } catch { /* non-fatal */ }
   };
 
-  // SELF-HEAL (trust), THROTTLED: re-derive reply state from the actual threads and resolve any "reply
-  // needed" item the user has ALREADY answered. Correct but ~0.7s — so it runs at most every 10 min (a
-  // stamp in aux), not on every 90s poll. No cache-bust needed: a resolution changes the pending counts,
-  // which changes the brief's sig naturally.
+  // SELF-HEAL (trust), THROTTLED AND **BEHIND THE RESPONSE**: re-derive reply state from the actual
+  // threads and resolve any "reply needed" item the user has ALREADY answered.
+  //
+  // ⚠️ IT USED TO BE AWAITED HERE, AND IT WAS THE HOME'S SLOWNESS (owner, Sep 8 — "Home loads very
+  // slowly"). It is an unbounded serial per-thread walk with a reasoned fulfillment judgment inside
+  // it (its own header records 36–43s before the throttle); the throttle cut how OFTEN it ran, never
+  // what it cost, and its 10-minute period lands on exactly the load where the client's 15-minute
+  // stamped cache has also expired — so the one guaranteed-cold paint was also the one that paid.
+  //
+  // A SELF-HEAL IS NOT A READ (the general law): a heal only ever RESOLVES work the user already
+  // handled, so serving one stale row for one load costs nothing, while blocking the page on it
+  // costs every load. It now runs in after(); the resolution changes the pending counts, which
+  // changes the brief's sig, so the next load serves the corrected deck (and the client's
+  // freezeForOpen governs a row leaving on a background arrival). The stamp is written INSIDE the
+  // same after(), after the run — a crashed heal retries instead of marking itself done.
   const RECONCILE_EVERY_MS = 10 * 60_000;
   if (!aux.reconciledAt || now.getTime() - Date.parse(aux.reconciledAt) > RECONCILE_EVERY_MS) {
-    await reconcileRepliedItems(supabase, user.id, { bustBriefCache: async () => {} });
-    after(async () => { await mergeAux({ reconciledAt: now.toISOString() }); });
+    after(async () => {
+      try { await reconcileRepliedItems(supabase, user.id, { bustBriefCache: async () => {} }); } catch { /* non-fatal */ }
+      await mergeAux({ reconciledAt: new Date().toISOString() });
+    });
   }
   mark('reconcile');
 
@@ -238,8 +267,11 @@ export async function GET() {
       // last-activity and fell off the deck as fresher noise-lane mail arrived; every downstream
       // pool silently followed). A quiet thread is not a settled one — recency must never evict
       // an open obligation. High bound + a loud log when it saturates.
-      .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(250),
-    supabase.from('commitments').select('*').eq('user_id', user.id).eq('status', 'open'),
+      .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(DECK_POOL_LIMIT),
+    // NO SILENT CAPS, here too (perf walk, Sep 8): this read had no bound at all, so PostgREST's
+    // invisible 1000-row ceiling was the cap — the repo's oldest lesson. An explicit bound + the
+    // saturation log below makes the ceiling a fact we can see.
+    supabase.from('commitments').select('*').eq('user_id', user.id).eq('status', 'open').limit(500),
     supabase.from('calendar_events')
       .select('id, title, start_time, attendees, timezone, is_all_day')
       .eq('user_id', user.id).eq('status', 'confirmed')
@@ -269,7 +301,13 @@ export async function GET() {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const items = (itemsRes.data ?? []) as any[];
-  if (items.length >= 250) console.warn('[home/brief] actionable pool SATURATED the 250 cap — oldest obligations may be missing; raise the bound or tighten the actionable filter');
+  // The saturation log the bound's comment has promised since August and never actually written.
+  if (items.length >= DECK_POOL_LIMIT) console.warn(`[home/brief] deck pool SATURATED at ${DECK_POOL_LIMIT} — rows are being evicted by recency; raise the bound`);
+  if ((commitsRes.data ?? []).length >= 500) console.warn('[home/brief] open-commitments pool SATURATED the 500 cap — some obligations may be missing; raise the bound');
+  // (The old actionable-pool saturation line was DELETED Sep 13: the bound became
+  //  DECK_POOL_LIMIT 800 in the serving-truth wave and the log was left behind, so from 250 rows on
+  //  it warned about a cap nothing sets and claimed obligations "may be missing" when none were.
+  //  A SATURATION LOG MUST NAME ITS OWN BOUND — the line above it already does, off the constant.)
   // CROSS-TYPE DEDUP (P2): a commitment extracted from an email/meeting the deck ALSO shows as an
   // actionable row is the SAME obligation wearing two types — the item is the resolving surface, the
   // commitment folds (filtered here, so every lane, count, sig and synthesis input downstream agrees).
@@ -317,23 +355,26 @@ export async function GET() {
 
   // ── Email cards — via the SHARED classifier (rule-aware). needs_reply AND to_do (email tasks),
   // so the Home is as complete as the inbox, not just replies.
+  // THE ECHO FLOOR'S REACH (LAW 5, found live Sep 13): `classifyItem` consults `isCampaignEcho`,
+  // which reads the PROCESS registry — empty on a cold serverless process, so the floor was inert
+  // at exactly the seam that serves the deck. One day-cached await primes it before the classify
+  // pass, and the derived signature rides the deck floors explicitly below. Fails open.
+  let campaignSig: import('@/lib/inbox/campaign-echo').CampaignSignature | null = null;
+  try { campaignSig = await getCampaignSignature(supabase, user.id); } catch { /* the floor goes inert, never fabricates */ }
   const classifiedEmails = items
     .filter((it) => it.source !== 'meeting' && it.source !== 'commitment')
     .map((it) => ({ it, posture: classifyItem(it as never, userRules) }));
+  // THE DECK FLOORS (lib/home/deck-floors.ts) — the lane-entry law lives in ONE module the standing
+  // gate asserts the world against; the route no longer derives its own. `judgedNone` is filled
+  // below (it needs the candidate list) — the Set object is shared by reference, so the floors read
+  // the filled set at demotion time.
+  const judgedNoneIds = new Set<string>();
+  const deckFloors: DeckFloors = {
+    judgedNone: judgedNoneIds,
+    isEcho: (it) => isCampaignEcho(it as never, campaignSig),
+  };
   const emailCandidates = classifiedEmails
-    .filter((x) => {
-      if (x.posture === 'needs_reply' || x.posture === 'to_do') return true;
-      // RE-PROMOTE an item classifyItem demoted (usually to 'fyi' for being cc-only) when the UNDERSTANDING
-      // says it's genuinely addressed to the user with an action they OWE — role='addressed' / ownership=
-      // 'you_owe' / relevance='action' — AND the rules classified it actionable (needs_reply/to_do). The
-      // CONTENT signal (you are addressed, you owe) beats the header-based cc-only demotion, so a direct ask
-      // ("Alex, what access can they use?") is NEVER dropped. It flows to "Worth acting on" / "What needs
-      // you" in the loop below. (Same trust rule as the mustRespond gate: a false extra card ≪ a missed ask.)
-      const rt = String(x.it.rule_type || '');
-      if (rt !== 'needs_reply' && rt !== 'to_do') return false;
-      const u = getUnderstanding(x.it);
-      return !!u && (u.role === 'addressed' || u.ownership === 'you_owe' || u.relevance === 'action');
-    });
+    .filter((x) => rePromotesToDeck(x.it as never, x.posture, deckFloors));
   // Awareness candidates for the "keep an eye on" tier. Two sources:
   //  (a) cc'd-important items the SHARED classifier demoted to 'fyi' purely because the user is only
   //      cc'd (isCcOnlyBystander). We do NOT change classify-item.ts (the inbox depends on that blunt
@@ -433,18 +474,10 @@ export async function GET() {
   // every pool already filters by; un-judged items are untouched; the user's explicit
   // type_override stays authoritative (guarded below like every demotion). Dispositioned nones
   // (expired/answered) are handled harder by apply-verdict — this covers the plain ones. ──
-  const judgedNoneIds = new Set<string>();
-  try {
-    const candIds = emailCandidates.map((c) => `inbox:${c.it.id}`);
-    if (candIds.length) {
-      const { data: js } = await supabase.from('item_plans').select('entity_id, tasks')
-        .eq('user_id', user.id).eq('kind', 'judgment').in('entity_id', candIds.slice(0, 300));
-      for (const j of (js ?? []) as Array<{ entity_id: string; tasks: { verdict?: { work?: string; resolution?: string } } }>) {
-        const v = j.tasks?.verdict;
-        if (v?.work === 'none' && !v.resolution) judgedNoneIds.add(j.entity_id.replace(/^inbox:/, ''));
-      }
-    }
-  } catch { /* the judge consult is an enhancement — the notice law below still holds */ }
+  // NO SILENT CAP (found live: `.slice(0, 300)` on a 4,779-item account meant the judge's word
+  // never reached the tail). `readJudgedNone` chunks the filter list instead — same query, no guess
+  // about how many rows are worth asking about. Fills the Set the floors above already hold.
+  for (const id of await readJudgedNone(supabase, user.id, emailCandidates.map((c) => c.it.id))) judgedNoneIds.add(id);
   for (const { it, posture } of emailCandidates) {
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
     const tid = sd.thread_id as string | undefined;
@@ -470,15 +503,9 @@ export async function GET() {
     // list). Legacy items with NO understanding fall to the structural floor (automated sender +
     // not action-worthy). The user's explicit type_override is the only authoritative override
     // here — rule_type includes AI-rule guesses, which is exactly what this corrects.
-    const noticeSubj = ((sd.subject as string) || it.work_title || null);
-    // W6 — the PRECEDENCE CHAIN holds against the judgment too: a you_owe ACTION notice is never
-    // silently demoted by a judged-none (the sender floor rightly says "no EMAIL work" for an
-    // automated dunning notice — but "no email work" is not "no work"; the action lives outside
-    // the mailbox and the deck must still surface it). Same law as the eb510b1 deck-miss fix.
-    const youOweAction = !!u && u.ownership === 'you_owe' && u.relevance === 'action';
-    const noticeDemoted = it.type_override !== 'needs_reply' && it.type_override !== 'to_do'
-      && (isNoMoveNotice({ u, rawKind: rawMailKindOf(sd), fromEmail: fromEmailOf(sd), fromName: (sd.from_name as string) || null, subject: noticeSubj, workState: (it.work_state as string) || null })
-        || (judgedNoneIds.has(it.id) && !youOweAction)); // the ONE judgment said "nothing to do" — the deck listens, except where the notice law outranks
+    // W6's precedence chain, the echo floor and the judge's own word now live in ONE module
+    // (lib/home/deck-floors.ts `noticeIsDemoted`) that the standing gate asserts the world against.
+    const noticeDemoted = noticeIsDemoted(it as never, deckFloors);
     if (noticeDemoted) demotedNoticeIds.add(it.id); // filters EVERY downstream pool (priorities, keep-an-eye-on, …)
     if (u && u.relevance === 'action' && !noticeDemoted) {
       // An action-notice: its own section, never a reply card, never a needs-you priority. We DON'T push
@@ -488,8 +515,16 @@ export async function GET() {
       const snippet = ((sd.body as string) || '').replace(/\s+/g, ' ').trim();
       // VERB-FIRST (P4): lead with the understanding's imperative ask ("Fix the failing payment"),
       // never the raw subject ("Serif AI Subscription") — the deck reads as to-dos, not mail headers.
-      const summary = (typeof u.ask === 'string' && u.ask ? u.ask : '') || (subj || '').trim() || (snippet ? snippet.slice(0, 90) : 'Action needed');
-      actionNoticesRaw.push({ itemId: it.id, who, summary: summary.length > 120 ? summary.slice(0, 117) + '…' : summary, dueDate: (u.deadline as string) ?? null, initiative: clusterTag(u.initiative as string | null)?.initiative ?? (u.initiative as string | null) ?? null });
+      // THE SERVE GUARD wraps the ask→subject precedence (the precedence itself is unchanged).
+      // ── THE LABEL FOLLOWS THE PRESENT, serve half (LAW 3; lib/inbox/refresh-understanding.ts) ──
+      // `understanding.ask` is a claim about ONE message. When the item now carries a NEWER inbound
+      // than the one the claim was derived from, the arrival re-derivation was missed — and the ask
+      // AND its deadline are both a June sentence served in September (that stale deadline is what
+      // printed "overdue" under a finished obligation). The claim degrades TOGETHER: the row falls
+      // back to its neutral title and carries no date. Vague, never wrong. Zero AI, one reader.
+      const claim = servedClaimOf(sd, u, now);
+      const summary = stripDeixis(claim.ask || (subj || '').trim() || (snippet ? snippet.slice(0, 90) : 'Action needed'));
+      actionNoticesRaw.push({ itemId: it.id, who, summary: summary.length > 120 ? summary.slice(0, 117) + '…' : summary, dueDate: claim.deadline, initiative: clusterTag(u.initiative as string | null)?.initiative ?? (u.initiative as string | null) ?? null });
       actionNoticeIds.add(it.id);
       const threadMsgsA = tid ? threadMsgsById.get(tid) : undefined;
       const replyStateA = threadMsgsA && threadMsgsA.length
@@ -666,7 +701,8 @@ export async function GET() {
   for (let i = priorities.length - 1; i >= 0; i--) {
     if (priorities[i].itemId && demotedNoticeIds.has(priorities[i].itemId!)) priorities.splice(i, 1); // H4
   }
-  const cappedPriorities = priorities.slice(0, MAX_PRIORITIES);
+  // THE SERVE GUARD on the priority card's label (`work_title`-derived — a frozen snapshot).
+  const cappedPriorities = priorities.slice(0, MAX_PRIORITIES).map((p) => ({ ...p, title: stripDeixis(p.title) }));
 
   // ── FYI-by-topic: group the awareness emails by sender; the AI digests each group below. ──
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1040,7 +1076,8 @@ export async function GET() {
   const commitments = dedupByDescription(
     commitmentCands
       .filter((c) => placementOf(c) === 'on_your_plate')
-      .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty || c.sourceLabel, dueDate: c.dueDate, overdue: c.overdue, dueToday: c.dueToday, prepared: commitPrepared.get(c.id) ?? null, initiative: clusterTag(c.initiative)?.initiative ?? null, initiativeTotal: clusterTag(c.initiative)?.initiativeTotal ?? null })),
+      // THE SERVE GUARD on the commitment's served description (legacy rows heal as they serve).
+      .map((c) => ({ id: c.id, description: stripDeixis(c.description), counterparty: c.counterparty || c.sourceLabel, dueDate: c.dueDate, overdue: c.overdue, dueToday: c.dueToday, prepared: commitPrepared.get(c.id) ?? null, initiative: clusterTag(c.initiative)?.initiative ?? null, initiativeTotal: clusterTag(c.initiative)?.initiativeTotal ?? null })),
   )
     .sort((a, b) => {
       const rk = (x: typeof a) => (x.overdue ? 0 : x.dueToday ? 1 : x.dueDate ? 2 : 3);
@@ -1051,7 +1088,8 @@ export async function GET() {
   const waitingOn = dedupByDescription([
     ...commitmentCands
       .filter((c) => placementOf(c) === 'ball_in_court')
-      .map((c) => ({ id: c.id, description: c.description, counterparty: c.counterparty || c.sourceLabel, ageDays: c.ageDays, initiative: clusterTag(c.initiative)?.initiative ?? null, initiativeTotal: clusterTag(c.initiative)?.initiativeTotal ?? null })),
+      // THE SERVE GUARD on the commitment's served description (legacy rows heal as they serve).
+      .map((c) => ({ id: c.id, description: stripDeixis(c.description), counterparty: c.counterparty || c.sourceLabel, ageDays: c.ageDays, initiative: clusterTag(c.initiative)?.initiative ?? null, initiativeTotal: clusterTag(c.initiative)?.initiativeTotal ?? null })),
     ...outboundAwaiting.map((o) => ({ id: `outbound:${o.recipient}`, description: o.subject || `Reached out to ${o.who || 'someone'}`, counterparty: o.who, ageDays: o.ageDays, initiative: clusterTag(o.initiative)?.initiative ?? null, initiativeTotal: clusterTag(o.initiative)?.initiativeTotal ?? null })),
   ])
     .sort((a, b) => b.ageDays - a.ageDays);
@@ -1115,7 +1153,9 @@ export async function GET() {
   const mustRespondOut = mustRespond
     ? { ...mustRespond, items: mustRespond.items
         .filter((r) => !r.itemId || pendingItemIds.has(r.itemId))
-        .map((r) => ({ ...r, draft: draftByItem.get(r.itemId) ?? null, preparedBy: preparedByItem.get(r.itemId) ?? null })) }
+        // THE SERVE GUARD on the reply lane's whisper label AND the subject it falls back to — both
+        // reach the deck verbatim, and a cached tier can carry an ask composed days ago.
+        .map((r) => ({ ...r, ask: stripDeixis(r.ask), subject: r.subject ? stripDeixis(r.subject) : r.subject, draft: draftByItem.get(r.itemId) ?? null, preparedBy: preparedByItem.get(r.itemId) ?? null })) }
     : mustRespond;
   // "Keep an eye on" is awareness — no action buttons — but still drop items that are no longer
   // pending (dismissed elsewhere) so a stale cached tier can't show a gone item. Also enforce the
@@ -1197,7 +1237,11 @@ export async function GET() {
   // (never pushed to `priorities`), keep-an-eye and for-your-awareness (both gated on relevance !=
   // action). ONE relevance → ONE home; no overlap. Ordered freshest-first isn't tracked here (order of
   // discovery follows the last_activity_at ordering of `items`), which is already recency-first.
-  const actionNotices = actionNoticesRaw.filter((a) => pendingItemIds.has(a.itemId)).slice(0, 30); // high bound, not a functional gate — a real obligation must never be silently dropped
+  // NO SILENT CAPS: the bound is named once (lib/home/deck-floors) and it SPEAKS when it binds —
+  // found live Sep 13 holding 105 eligible obligations behind a cap of 30, silently.
+  const actionNoticesEligible = actionNoticesRaw.filter((a) => pendingItemIds.has(a.itemId));
+  if (actionNoticesEligible.length >= ACTION_NOTICE_LIMIT) console.warn(`[home/brief] action-notice lane SATURATED: ${actionNoticesEligible.length} eligible, serving ${ACTION_NOTICE_LIMIT}`);
+  const actionNotices = actionNoticesEligible.slice(0, ACTION_NOTICE_LIMIT);
 
   // ── "Day cleared" progress ring — the LIVE half. `cleared` = things the user handled TODAY.
   // Computed fresh here (NOT baked into the cached AI blob) via a cheap batch of head-count queries,
@@ -1563,10 +1607,7 @@ export async function GET() {
     }
   } catch { /* non-fatal */ }
 
-  // P0 perf watchdog: one line when the GET path itself (pre-after()) ran slow — names the phase.
   mark('assemble');
-  const totalMs = Date.now() - t0;
-  if (totalMs > 2500) console.log(`[home/brief] slow ${totalMs}ms — ${marks.map(([l, m]) => `${l}:${m}ms`).join(' · ')}`);
   // trackedProjects was loaded early (before clusterTag) — served for By-project grouping.
   // MAIL STATE (new-user honesty): the Home's empty state must distinguish "nothing connected" /
   // "first sync in flight" / "genuinely all clear" — one cheap query, no AI.
@@ -1645,5 +1686,17 @@ export async function GET() {
     } catch { /* the brief already served */ }
   });
 
-  return NextResponse.json({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => ({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null, machine: machineOf(n.itemId) })), mustRespond: taggedMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities.map((p) => ({ ...p, machine: p.itemId ? machineOf(p.itemId) : null })), commitments: commitments.map((c) => ({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null, machine: machineOf(c.id) })), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, projectByAtom, briefing: cachedBriefing, trackedProjects, mail });
+  // P0 perf watchdog: one line when the GET path itself (pre-after()) ran slow — names the phase.
+  // IT SITS AT THE DOOR, NOT MID-ROUTE (perf walk, Sep 8): it used to stamp before the connections
+  // read, the workspace features and workStatesFor, so the number it printed was never the number
+  // the reader waited for — a watchdog that under-reports is a watchdog that hides its own class.
+  mark('serve');
+  const totalMs = Date.now() - t0;
+  if (totalMs > 2500) console.log(`[home/brief] slow ${totalMs}ms — ${marks.map(([l, m]) => `${l}:${m}ms`).join(' · ')}`);
+
+  // THE SERVE-LABEL CHOKE (LAW 3) — the ONE point every deck label leaves the server. The four
+  // upstream `stripDeixis` seams stay where they are (they feed the SERVER-side agenda and the
+  // briefing composer's inputs, which never pass through here); this is the guarantee that no lane
+  // — present or future — can serve a word that has stopped being true.
+  return NextResponse.json(guardDeckLabels({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => ({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null, machine: machineOf(n.itemId) })), mustRespond: taggedMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities.map((p) => ({ ...p, machine: p.itemId ? machineOf(p.itemId) : null })), commitments: commitments.map((c) => ({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null, machine: machineOf(c.id) })), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, projectByAtom, briefing: cachedBriefing, trackedProjects, mail }));
 }

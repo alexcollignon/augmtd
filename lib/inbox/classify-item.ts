@@ -5,6 +5,7 @@
 
 import { isNeedsReply, isCcOnlyBystander, type SignalItem } from './needs-reply';
 import { isNoMoveNotice, rawMailKindOf } from './notice-demotion';
+import { isCampaignEcho } from './campaign-echo';
 import { getUnderstanding } from './item-understanding';
 import { DEFAULT_RULES } from './rules/defaults';
 import { evaluateDeterministic } from './rules/evaluate';
@@ -22,7 +23,7 @@ let cachedRules: InboxRule[] | null = null;
 export function setInboxRules(rules: InboxRule[] | null) { cachedRules = rules && rules.length ? rules : null; }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Item = SignalItem & { status?: string | null; work_state?: string | null; source?: string | null; type_override?: string | null; rule_type?: string | null };
+type Item = SignalItem & { status?: string | null; work_state?: string | null; source?: string | null; type_override?: string | null; rule_type?: string | null; user_id?: string | null };
 
 const OVERRIDABLE = new Set<ItemType>(['needs_reply', 'to_do', 'waiting_on', 'fyi']);
 
@@ -55,6 +56,8 @@ function noMoveConfirmed(item: Item): boolean {
       fromName: (sd.from_name as string) ?? null,
       subject: (sd.subject as string) ?? null,
       workState: item.work_state ?? null,
+      // THE ECHO FLOOR rides the ONE no-move law (LAW 5) — derivation here, law there.
+      campaignEcho: isCampaignEcho(item),
     });
   } catch { return true; } // law unavailable → keep the conservative demotion
 }
@@ -91,6 +94,23 @@ export function classifyItem(item: Item, rules?: InboxRule[] | null): ItemType {
       // Somebody owes a move — the noise-tier demotion doesn't apply; continue down the chain.
     }
   }
+
+  // THE ECHO FLOOR (LAW 5 — proactive-reach). The user's own outbound sequence coming back is not
+  // warm inbound business, whatever it looks like: a real address, a first name, a direct ask. It is
+  // POSTURED, not hidden — the awareness lane, visible on demand, so a real prospect answering a
+  // sequence is still findable in its place.
+  //
+  // THE PRECEDENCE CHAIN, exactly (authoritative → refine → fallback; a refiner, never an AND):
+  //   • ABOVE it: the user's own `type_override` (checked at the top of this function, and again
+  //     inside isCampaignEcho so every other consult point honors it), and the user's editable
+  //     DETERMINISTIC rules just above — both are human decisions.
+  //   • HERE: the floor, on evidence derived from the user's own sent corpus.
+  //   • BELOW it: the AI-match `rule_type` verdict and the whole heuristic chain — machine
+  //     judgment, which is precisely what this floor exists to correct. The census found these
+  //     echoes judged `bulk:false / customer / action / confidence 92`; seating the floor under
+  //     that judgment would make it a no-op.
+  // With no derived signature in hand the floor is inert (fail-open: evidence or nothing).
+  if (isCampaignEcho(item)) return 'fyi';
 
   // A custom AI-match rule's verdict (computed at process time) — after deterministic, before heuristics.
   if (item.rule_type && item.rule_type in LABEL_TO_TYPE) {

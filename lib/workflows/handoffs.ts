@@ -123,9 +123,9 @@ function currentHandoffStep(
 
 /** Best-effort coworker email to a teammate. The workflow's presenting coworker writes it, from
  *  the OWNER's account (the sending identity + cap belong to the person whose work this is).
- *  A workflow with NO presenter falls back to the OWNER'S PERSONAL ASSISTANT (owner call,
- *  Aug 20: a generic team@ sender is a stranger; "Clara · Alexandre's assistant" is the voice
- *  this email already speaks in) — only then to the generic team identity. */
+ *  A workflow with NO presenter falls back to the OWNER'S CHIEF OF STAFF (the `personal_assistant`
+ *  row — owner call, Aug 20: a generic team@ sender is a stranger; "Clara · Sam's assistant" is the
+ *  voice this email already speaks in) — only then to the generic team identity. */
 async function emailAssignee(
   admin: SupabaseClient, wf: HandoffWorkflow, assigneeUserId: string,
   mail: { subject: string; body: string },
@@ -560,10 +560,17 @@ export async function reassignHandoff(
         }).eq('id', old.id);
         const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
         const roomKey = await roomKeyForItem(admin, from.userId, 'commitment', String(old.id));
+        // TOLD ONCE, THEN FOLDS (proactive-reach W4 census, fix #10). This line is a courtesy, not
+        // a standing fact: the person it addresses owes nothing from the moment they read it, and
+        // a courtesy that never retires becomes furniture in a room whose work has left. It is a
+        // muted event line (role system, NO author — the one-narrator grammar), and its dedupe key
+        // now rides the `prep:` NARRATION CLASS, which the room's fold retires unconditionally
+        // (a narration with no artifact behind it is history) — instead of leaning on the generic
+        // age/brief expiry, which only fires once a brief or 48 hours happens to catch up with it.
         await writeRoomTurn(admin, from.userId, roomKey, {
           role: 'system',
           text: `This moved to ${newName} — nothing more needed from you.`,
-          dedupeKey: `handoff-reassigned-away:${runId}:r${rev}`,
+          dedupeKey: `prep:handoff-reassigned-away:${runId}:r${rev}`,
         });
       }
     } catch { /* the override already moved the gate */ }

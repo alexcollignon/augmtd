@@ -209,7 +209,7 @@ export async function POST(
     // Fire-and-forget KB indexing for all new attachments
     void Promise.all(
       buffersToIndex.map(({ buffer, filename, mimeType, storagePath }) =>
-        indexUploadedFile({ buffer, filename, mimeType, userId: user.id, storagePathInBucket: storagePath }, adminClient).catch(() => {})
+        indexUploadedFile({ buffer, filename, mimeType, userId: user.id, storagePathInBucket: storagePath, bucket: 'email-attachments' }, adminClient).catch(() => {})
       )
     );
 

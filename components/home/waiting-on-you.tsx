@@ -4,11 +4,17 @@
 // "NEEDS YOUR INPUT" (proactive-team W3) — the global ask surface. Work is BLOCKED on the user
 // somewhere; this block makes every open ask visible OUTSIDE its room, with the room's own grammar:
 // the ask line, the concrete missing items (the amber checklist idiom, mirrored from the rail), who
-// is asking, and the two honest moves — open the room (attach/answer there) or the never-blocks
-// "Go ahead with what's available". Renders inside the Home's ambient-bar section body.
+// is asking, and the honest moves — open the room (attach/answer there) and, WHERE PROCEEDING
+// STILL PRODUCES THE WORK, the never-blocking door. Renders inside the Home's ambient-bar body.
+//
+// THE GO-AHEAD IS NOT ALWAYS A DOOR (owner walk, Sep 14): an ask whose missing item IS the
+// deliverable ("send the bank details", with none) has nothing to proceed with — the door is absent and
+// the words — when it does render — name what is being skipped. ONE test, ONE label producer,
+// shared with the room's own ask seats (lib/room/go-ahead.ts) — never a second spelling of a law.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { useState } from 'react';
 import Link from 'next/link';
+import { askAllowsGoAhead, goAheadLabel } from '@/lib/room/go-ahead';
 
 export type OpenAsk = {
   id: string;
@@ -74,13 +80,15 @@ export default function WaitingOnYou({ asks, onProceeded }: {
                 Open{a.label ? ` “${a.label.slice(0, 32)}${a.label.length > 32 ? '…' : ''}”` : ''} →
               </Link>
             )}
-            <button
-              onClick={() => proceed(a)}
-              disabled={busy === a.id}
-              className="rounded-full border border-neutral-200 px-2.5 py-0.5 text-[11.5px] font-medium text-neutral-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors disabled:opacity-50"
-            >
-              {busy === a.id ? 'On it…' : "Go ahead with what's available →"}
-            </button>
+            {askAllowsGoAhead(a.items, [a.label, a.text]) && (
+              <button
+                onClick={() => proceed(a)}
+                disabled={busy === a.id}
+                className="rounded-full border border-neutral-200 px-2.5 py-0.5 text-[11.5px] font-medium text-neutral-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors disabled:opacity-50"
+              >
+                {busy === a.id ? 'On it…' : goAheadLabel(a.items)}
+              </button>
+            )}
           </div>
         </div>
       ))}

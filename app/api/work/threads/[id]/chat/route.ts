@@ -45,6 +45,11 @@ import {
   listSkillsDefinition, applySkillDefinition,
   executeListSkills, executeApplySkill,
 } from '@/lib/tools/worker-skills';
+// EVERY THREAD, EVERY PRODUCER (threads plan, Sep 8): the invite card's producer — ONE tool
+// contract + ONE execution body, shared with the chief's loop (lib/converse). It prepares and
+// never sends. ⚠️ The AgentOS (Python) runtime has no `prepare_calendar_invite` @tool yet — see the
+// note in lib/tools/prepare-calendar-invite.ts; a worker on that runtime prepares invites only here.
+import { prepareCalendarInviteDefinition, executePrepareCalendarInvite, inviteCardLine, type PreparedInviteCard } from '@/lib/tools/prepare-calendar-invite';
 import { checkRateLimit } from '@/lib/utils/rate-limit';
 import { isAgentOSEnabled, streamWorkerViaAgentOS } from '@/lib/work/agentos-bridge';
 
@@ -469,6 +474,7 @@ export async function POST(
             `[TASKS]\nA task is reusable structured work you set up once. It runs on a schedule OR on demand whenever asked (run_task) — so neither of you rebuilds it each time. Offer to set one up whenever work is repeatable, even without a schedule ("want me to save this as a task you can re-run anytime?").\n- list_tasks — see what's already running\n- create_task — set up something new from a plain description\n- get_task — read the full config of a task (steps, schedule, language, instructions)\n- update_task — edit any aspect: name, schedule, output language, task instructions, step prompts, status\n\nA task can also start on EVENTS, not just a schedule: pass trigger_doors on create_task (or add_trigger_doors / remove_trigger_doors on update_task) when the user says the work should begin when an email arrives, a file lands in Knowledge, a meeting is recorded, or another named task delivers — the door verbs are additive, so doors you don't mention are kept.\n\nA task can also PIN REFERENCE MATERIAL it reads every run — a policy, template, rubric or brand guide: pass input_doc_names on create_task (or add_input_docs / remove_input_docs on update_task) with the document's name as the user says it, and input_accept_material when the work is done on something handed over at run time ("when I upload a CV"). These verbs are additive too, and get_task shows the tray as "Inputs:".\n\nA task that starts on events also has a PACE — pass daily_run_limit (on create_task, or on update_task to change it) when the user says how many a day it should handle ("at most 3 a day", "let it run more"); extra events QUEUE and run the next day, nothing is dropped, and get_task shows it as "Daily event limit:".\n- duplicate_task — copy a task (useful for variants: same pipeline, different language or audience)\n- run_task — trigger a task right now\n- supply_run_input — a run can STOP and ask the user for something only they have; when they hand it over ("here are the numbers", "here's the JD"), pass it straight through — the run picks up where it stopped. An attached file lands in the user's Knowledge under its own filename, so supply it by name (kb_file_name), never by re-typing its contents.\n- delete_task — remove a task permanently\n- share_task — share a task with the team so teammates can copy it (or stop sharing)\n- list_team_tasks — see tasks shared by teammates\n- use_task — copy a shared team task to your own list\n\nWhen the user asks you to change, update, fix, or adjust a task — YOU MUST COMPLETE THE FULL TOOL SEQUENCE before saying anything. Do not say "Done" or "Updated" until the final action tool has returned a result.\n\nRequired sequences (complete every step, no skipping):\n- Change language / schedule / name / status → list_tasks (get ID) → update_task → say one sentence confirming\n- Change a step prompt → list_tasks (get ID) → get_task (read steps) → update_task with step_patch → confirm\n- Duplicate a task → list_tasks (get ID) → duplicate_task → confirm\n- Run a task → list_tasks (get ID) → run_task → confirm\n- Share a task → list_tasks (get ID) → share_task → confirm\n- Use a team task → list_team_tasks (get ID) → use_task → confirm\n\nNEVER report success after only calling list_tasks. list_tasks only finds the ID — the action hasn't happened yet. A colleague who said "Done, changed to Portuguese" without actually changing it would be fired. Don't be that colleague.`,
             `[YOUR DOCUMENTS]\nlist_worker_documents shows everything you've produced. get_worker_document retrieves the full content. When the user asks to see, revise, or reference something you made, call get_worker_document — don't say you can't retrieve it.`,
             `[TEAM]\nYou work alongside other coworkers. To build on a teammate's output (e.g. research another coworker did), use find_team_work to locate it (by topic, or by coworker name like "Max") and read_team_work to read it — then do your part. Don't ask the user to fetch a teammate's work; get it yourself. The user talks to whoever owns the result they want — so if they ask you for a deliverable that needs a colleague's input, pull it.`,
+            ...(features.meetings ? [`[MEETINGS]\nWhen the user asks to set up, schedule or book a meeting or call, call prepare_calendar_invite — it hands them a FILLED, editable invite card (attendees and time grounded in this conversation) that they review and send themselves. You NEVER send an invite and never say one was sent; keep your reply to one short line, because the card carries the detail.`] : []),
             `[EMAIL]\nYou can draft and send email as yourself (from your own address). When the user asks you to email someone, call compose_email with to/subject/body — it shows the user an EDITABLE draft to review and send. You NEVER send directly and NEVER say it's sent ("I've drafted it — review and hit Send"). Recipients can be anyone; for "me"/"us" use the user's own address from [YOUR EMAIL ADDRESSES]. The email is **FROM YOU** (the coworker, e.g. your @team.augmtd.ai address) — NOT from the user, so do NOT mimic the user's email style or sign off with the user's name (no "Best, {user}"). Write in your own voice; a signature with your name, role, and address is appended automatically, so **end the body with no sign-off**. If compose_email reports email is off, tell them to enable Email in your Tools tab.`,
             `[LINKEDIN POST]\nWhenever you write a LinkedIn post for the user, deliver it by calling present_linkedin_post (put the post text in the tool, 1–3 variants only if you genuinely drafted alternatives). It renders a real LinkedIn-style preview card — with the character count and the "see more" fold — instead of a wall of text. After calling it, keep your chat reply to a short intro line; don't also paste the full post into the chat.`,
             `[SKILLS]\nSkills are reusable instructions for how to handle a kind of work — a method, process, format, structure, or style. Any skill assigned to you is already in your context above — apply the matching one automatically. If the user asks you to follow an approach or named skill you don't see assigned, call list_skills to check the library, then apply_skill to pull and follow it. When creating or updating a task, pass skill_names to create_task/update_task to enforce specific skills on that task's output (omit to use your assigned skills); use list_skills first if you're unsure of the exact names.`,
@@ -677,7 +683,8 @@ export async function POST(
       try {
         const researchOut = await executeDeepResearch(
           { focus: content.trim(), queries: [content.trim()], model: 'fast' },
-          ''
+          '',
+          { userId: user.id, supabase }
         );
         const urlMatches = [...researchOut.matchAll(/https?:\/\/[^\s)\]]+/g)];
         preResearchCitations = [...new Set(urlMatches.map(m => m[0]))].slice(0, 10);
@@ -822,6 +829,11 @@ export async function POST(
       isWorker,
       isTemporary: !!(thread as any).is_temporary,
       features,
+      // THE THREAD ITSELF — what the invite preparer reads (FILLED FROM THE ONE GROUNDING). Same
+      // history the model sees, rendered plainly and tail-bounded.
+      conversation: rawHistory.slice(-10)
+        .map((m: { role: string; content: string }) => `[${m.role === 'user' ? 'user' : 'you'}] ${String(m.content ?? '').slice(0, 900)}`)
+        .join('\n'),
     };
 
     // ── Stream ────────────────────────────────────────────────────────────────
@@ -830,7 +842,10 @@ export async function POST(
     const allArtifactIds: string[] = [];
     const allArtifactMeta: Record<string, { title: string; type: string }> = {};
     const allWorkflowDrafts: Array<Record<string, unknown>> = [];
-          const allEmailDrafts: EmailDraft[] = [];
+    const allEmailDrafts: EmailDraft[] = [];
+    // THE INVITE CARD — the prepared invite rides the turn and persists on the message, so a
+    // reload finds the card standing (a deliverable that dies with the tab is not one).
+    const allInviteCards: PreparedInviteCard[] = [];
     const allArtifacts: Record<string, unknown>[] = [];
     // Accumulated across every streamed call this exchange makes (the tool loop can call the
     // model multiple times) — logged once at the end. Native-loop chat only; AgentOS-routed
@@ -868,7 +883,8 @@ export async function POST(
           try {
             const researchResult = await executeDeepResearch(
               { focus: content.trim(), model: 'fast' },
-              ''
+              '',
+              { userId: user.id, supabase }
             );
             // Parse source URLs from the result to show as citations
             const citationMatches = [...researchResult.matchAll(/https?:\/\/[^\s)\]]+/g)];
@@ -1053,12 +1069,13 @@ export async function POST(
                     calledTools.add(dedupeKey);
 
                     send({ type: 'tool_start', name: tc.function.name, id: tc.id, label: toolLabel(tc.function.name) });
-                    const { result, summary, artifact, citations, clarification, stopStream, emailDraft, cardArtifact, workflowDraft } = await executeChatTool(tc.function.name, toolInput, sources, runContext);
+                    const { result, summary, artifact, citations, clarification, stopStream, emailDraft, cardArtifact, workflowDraft, inviteCard } = await executeChatTool(tc.function.name, toolInput, sources, runContext);
                     send({ type: 'tool_result', name: tc.function.name, id: tc.id, summary, ...(citations?.length ? { citations } : {}) });
                     allToolCalls.push({ name: tc.function.name, summary, ...(citations?.length ? { citations } : {}) });
                     if (clarification) send({ type: 'clarification_request', ...(clarification as object) });
                     if (artifact?.id) { allArtifactIds.push(artifact.id); allArtifactMeta[artifact.id] = { title: artifact.title, type: artifact.type }; send({ type: 'artifact_ready', artifact: { id: artifact.id, type: artifact.type, title: artifact.title } }); }
                     if (emailDraft) { allEmailDrafts.push(emailDraft); send({ type: 'email_draft', draft: emailDraft }); }
+                    if (inviteCard) { allInviteCards.push(inviteCard); send({ type: 'invite_card', card: inviteCard }); }
                     if (workflowDraft) { allWorkflowDrafts.push(workflowDraft); send({ type: 'workflow_draft', draft: workflowDraft }); }
                     if (cardArtifact) { allArtifacts.push(cardArtifact); send({ type: 'artifact', artifact: cardArtifact }); }
                     toolResultMessages.push({ role: 'tool', tool_call_id: tc.id, content: result });
@@ -1137,7 +1154,7 @@ export async function POST(
 
                   send({ type: 'tool_start', name: tc.function.name, id: tc.id, label: toolLabel(tc.function.name) });
 
-                  const { result, summary, artifact, citations, clarification, stopStream, retryCorrection, emailDraft, cardArtifact, workflowDraft } = await executeChatTool(
+                  const { result, summary, artifact, citations, clarification, stopStream, retryCorrection, emailDraft, cardArtifact, workflowDraft, inviteCard } = await executeChatTool(
                     tc.function.name,
                     toolInput,
                     sources,
@@ -1173,6 +1190,7 @@ export async function POST(
                   }
 
                   if (emailDraft) { allEmailDrafts.push(emailDraft); send({ type: 'email_draft', draft: emailDraft }); }
+                  if (inviteCard) { allInviteCards.push(inviteCard); send({ type: 'invite_card', card: inviteCard }); }
                   if (workflowDraft) { allWorkflowDrafts.push(workflowDraft); send({ type: 'workflow_draft', draft: workflowDraft }); }
                   if (cardArtifact) { allArtifacts.push(cardArtifact); send({ type: 'artifact', artifact: cardArtifact }); }
 
@@ -1298,6 +1316,7 @@ export async function POST(
                 artifact_ids: allArtifactIds,
                 ...(Object.keys(allArtifactMeta).length > 0 ? { artifact_meta: allArtifactMeta } : {}),
                 ...(allEmailDrafts.length > 0 ? { email_drafts: allEmailDrafts } : {}),
+                ...(allInviteCards.length > 0 ? { invite_cards: allInviteCards } : {}),
                 ...(allWorkflowDrafts.length > 0 ? { workflow_drafts: allWorkflowDrafts } : {}),
                 ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
                 ...(clarificationCall?.clarification ? { clarification: clarificationCall.clarification } : {}),
@@ -1498,6 +1517,7 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
       slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition, slackListMembersDefinition,
       findTeamWorkDefinition, readTeamWorkDefinition,
       composeEmailDefinition,
+      prepareCalendarInviteDefinition,
       {
         name: 'present_linkedin_post',
         description: "Present a finished LinkedIn post to the user as a rich, reviewable card (faithful preview, character count, the \"see more\" fold). Call this whenever you've written a LinkedIn post for the user — put the post text HERE, not in your chat reply. Display-only (it does not publish). Provide 1–3 variants only if you genuinely drafted alternatives. After calling it, keep your chat reply to a short intro line.",
@@ -1559,6 +1579,7 @@ function toolLabel(name: string): string {
     list_worker_documents: 'Checking documents',
     get_worker_document: 'Retrieving document…',
     compose_email: 'Drafting email…',
+    prepare_calendar_invite: 'Putting the invite together…',
     present_linkedin_post: 'Preparing LinkedIn post…',
   };
   return labels[name] ?? name;
@@ -1586,6 +1607,9 @@ interface RunContext {
   isTemporary?: boolean;
   /** Workspace feature flags — drives graceful degradation of context tools */
   features: WorkspaceFeatures;
+  /** THE THREAD ITSELF, rendered — the invite preparer reads the conversation the ask was made in
+   *  (a card is FILLED FROM THE ONE GROUNDING; an item-local scrap is not a conversation). */
+  conversation?: string;
 }
 
 // ── Clarification validator ───────────────────────────────────────────────────
@@ -1620,8 +1644,27 @@ async function executeChatTool(
   input: Record<string, unknown>,
   sources: string[],
   ctx: RunContext
-): Promise<{ result: string; summary: string; artifact?: DocumentArtifact; citations?: string[]; clarification?: object; stopStream?: boolean; retryCorrection?: string; emailDraft?: EmailDraft; cardArtifact?: Record<string, unknown>; workflowDraft?: Record<string, unknown> }> {
+): Promise<{ result: string; summary: string; artifact?: DocumentArtifact; citations?: string[]; clarification?: object; stopStream?: boolean; retryCorrection?: string; emailDraft?: EmailDraft; cardArtifact?: Record<string, unknown>; workflowDraft?: Record<string, unknown>; inviteCard?: PreparedInviteCard }> {
   switch (name) {
+    case 'prepare_calendar_invite': {
+      // PREPARE ONLY — the card is handed to the user; the Send is their click, through the one
+      // commit door. Nothing here reaches a calendar.
+      const request = String(input.request ?? '').trim();
+      const card = await executePrepareCalendarInvite(ctx.supabase, ctx.userId, {
+        request, transcript: ctx.conversation ?? '',
+      });
+      if (!card) {
+        return { result: "Could not prepare the invite — ask the user for the time and who should be on it.", summary: 'Invite not prepared' };
+      }
+      return {
+        result: `Prepared a calendar invite card for the user to review and send: "${card.invite.title}"` +
+          `${card.invite.startISO ? ` at ${card.invite.startISO}` : ' (no time grounded — the card asks the user for one)'}` +
+          `${card.invite.attendees.length ? ` with ${card.invite.attendees.join(', ')}` : ' (no attendee grounded — the card asks)'}.` +
+          ` NOT sent. Reply with one short line, e.g. "${inviteCardLine(card.invite)}"`,
+        summary: 'Prepared a calendar invite',
+        inviteCard: card,
+      };
+    }
     case 'compose_email': {
       const { result, draft } = await executeComposeEmail(input, ctx.userId, ctx.agentId, ctx.adminClient);
       return { result, summary: draft ? 'Drafted an email' : 'Email is off', emailDraft: draft ?? undefined };
@@ -1827,7 +1870,8 @@ async function executeChatTool(
       }
       const result = await executeDeepResearch(
         { focus, queries: [focus], language: (input.language as string | undefined), model: 'fast' },
-        ''
+        '',
+        { userId: ctx.userId, supabase: ctx.supabase }
       );
       return { result, summary: `Research complete: ${focus.slice(0, 60)}` };
     }

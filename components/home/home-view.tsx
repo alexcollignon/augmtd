@@ -6,9 +6,13 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { showUndoToast } from '@/lib/activity/undo-toast';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+// THE NO-MUTATION LAW — the one mechanism a loader consults before replacing what is painted.
+import { mayReplaceInPlace, freezeRows, freezeMap, hasContent } from '@/lib/room/no-mutation';
 import { useLiveRefresh } from '@/hooks/use-live-refresh';
 import { MOMENTUM as MOMENTUM_TOKENS } from '@/lib/work-items/states';
-import { WorkRow as DoRow, useExit, useCommitmentAct, EffortDate, InitiativeTag, prefetchItem, fmtDue, exitCls, DO_META } from '@/components/work/work-row';
+import { WorkRow as DoRow, useExit, useCommitmentAct, useRowActions, ctaFor, RowControls, RowHoverRail, EffortDate, InitiativeTag, prefetchItem, fmtDue, exitCls, DO_META } from '@/components/work/work-row';
+// THE CALM HOME (docs/threads-plan.md) — the pick, the words, the receipts, all pure.
+import { pickWhispers, toWhisper, sortDoorRows, CALM_MAX_WHISPERS, type Whisper } from '@/lib/home/calm';
 import { createClient } from '@/lib/supabase/client';
 import {
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon, ClockIcon, UsersIcon, FolderIcon,
@@ -23,9 +27,10 @@ import { ExpandableRows } from '@/components/home/expandable-rows';
 import { type Briefing as ReasonedBriefing } from '@/components/briefing/briefing-view';
 import HomeAsk from '@/components/home/home-ask';
 import { WelcomeWizard } from '@/components/home/welcome-wizard';
+import { AliveMark } from '@/components/home/alive-mark';
 import { TeamReadyCard } from '@/components/home/team-ready-card';
 import { AllConversations } from '@/components/one/all-conversations';
-import { OneHomeHeader, OneDeck } from '@/components/one/one-home';
+import { OneHomeHeader, type FlatRow } from '@/components/one/one-home';
 import ViewSwitcher, { type HomeView as HomeViewLens } from '@/components/home/view-switcher';
 import {
   buildAgenda, coveredIds, type Agenda, type DoItem, type DoSource, type DeckEntry,
@@ -34,6 +39,8 @@ import {
 import { cleanTitle } from '@/lib/work-items/report';
 import TimelineGantt from '@/components/timeline/timeline-gantt';
 import PortfolioView from '@/components/entities/portfolio-view';
+// THE ADDRESS LAW — a project room is opened by its own address, never by a Home query param.
+import { projectHref } from '@/lib/room/project-href';
 import WorkflowsLedger from '@/components/workflows/workflows-ledger';
 
 // Priority / SlippingDeal / DoItem / DeckEntry / bundling / sorting now live in lib/home/agenda.ts —
@@ -763,6 +770,7 @@ function priorityToItem(p: Priority & { machine?: MachineHint | null }): DoItem 
     key: p.id, entityId: p.itemId ?? p.id, href: p.href,
     ask: cleanTitle(p.title),
     second: withMachineWord(p.context ?? (p.items?.length ? `${p.items.length} action item${p.items.length > 1 ? 's' : ''}` : null), machineWord(p.machine)),
+    stateWord: machineWord(p.machine),
     overdue: p.overdue, dueDate: p.dueDate ?? null, effort: p.effort ?? null,
     initiative: p.initiative ?? null, initiativeTotal: p.initiativeTotal ?? null,
   };
@@ -770,7 +778,7 @@ function priorityToItem(p: Priority & { machine?: MachineHint | null }): DoItem 
 function dealToItem(d: SlippingDeal): DoItem {
   return {
     // Opens the deal's ROOM directly (F1 dead-click fix — `/home?view=projects` landed on the grid).
-    source: 'deal', key: `deal-${d.key}`, entityId: d.key, href: `/home?view=projects&entity=${d.key}`,
+    source: 'deal', key: `deal-${d.key}`, entityId: d.key, href: projectHref(d.key),
     // GLANCE register: the reasoned next-move imperative when present, else the label. The summary
     // sentence stays in the room.
     ask: cleanTitle(d.label), second: d.nextMove?.title ?? null,
@@ -823,102 +831,10 @@ function brainRefHref(ref: string | null | undefined): string | null {
 // The ONE momentum vocabulary — lib/work-items/states.ts (same dot = same meaning on every surface).
 const MOMENTUM = MOMENTUM_TOKENS;
 
-// ── B3b (iterated July 24) — THIS WEEK: the calendar rides BESIDE the task list as the second
-// column — day-grouped, deal-chipped, deterministic (zero AI). The "To prep" card was REMOVED
-// (the prep pass still prepares; its briefs live in the deal rooms). Cache-read lives in the
-// effect (the SSR'd-route rule — never in a useState initializer). ──
-type HorizonRow = { id: string; title: string; start: string; attendees: number; entity: { id: string; name: string } | null; prepReady?: boolean };
-function ThisWeekCard() {
-  const [h, setH] = useState<{ thisWeek: HorizonRow[] } | null>(null);
-  useEffect(() => {
-    const cached = loadLS<{ thisWeek: HorizonRow[] }>('aug-home-horizon-v3', { maxAgeMs: 15 * 60_000 });
-    if (cached) setH(cached);
-    fetch('/api/home/horizon').then((r) => r.json())
-      .then((d) => { if (Array.isArray(d.thisWeek)) { setH({ thisWeek: d.thisWeek }); saveLS('aug-home-horizon-v3', { thisWeek: d.thisWeek }); } })
-      .catch(() => {});
-  }, []);
-  const router = useRouter();
-  const rows = h?.thisWeek ?? [];
-  if (!rows.length) return <div className="hidden lg:block" />; // keep the grid stable
-  const todayISO = new Date().toISOString().slice(0, 10);
-  const tomorrowISO = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
-  const dayLabel = (iso: string) => {
-    const day = iso.slice(0, 10);
-    if (day === todayISO) return 'Today';
-    if (day === tomorrowISO) return 'Tomorrow';
-    return new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { weekday: 'long' });
-  };
-  const time = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  // CALENDAR-WEEK SPLIT: the horizon is a rolling 7 days, but "this week" is a CLAIM — a Friday
-  // must not file next Monday under it. Split at Sunday midnight (weeks start Monday).
-  const eow = new Date();
-  eow.setDate(eow.getDate() + (6 - ((eow.getDay() + 6) % 7)));
-  eow.setHours(23, 59, 59, 999);
-  const buildDays = (list: HorizonRow[]) => {
-    const days: Array<{ label: string; rows: HorizonRow[] }> = [];
-    for (const r of list) {
-      const label = dayLabel(r.start);
-      const last = days[days.length - 1];
-      if (last && last.label === label) last.rows.push(r);
-      else days.push({ label, rows: [r] });
-    }
-    return days;
-  };
-  const sections = [
-    { title: 'This week', days: buildDays(rows.filter((r) => new Date(r.start) <= eow)) },
-    { title: 'Next week', days: buildDays(rows.filter((r) => new Date(r.start) > eow)) },
-  ].filter((sec) => sec.days.length > 0);
-  // A meeting row opens ITS OWN page — /meetings/<calendarEventId>, the same door the meetings
-  // surface uses for an upcoming event (prep view + chat context). Never the bare list.
-  const openRow = (r: HorizonRow) => router.push(`/meetings/${r.id}`);
-  return (
-    <RiseIn delay={100}>
-      {/* H5 (work-surface): a slim, calm agenda rail — matches the dense list's type scale. */}
-      <div className="rounded-xl border border-neutral-200/60 bg-white p-3.5 lg:sticky lg:top-4">
-        <div className="space-y-3">
-          {sections.map((sec, si) => (
-            <div key={sec.title}>
-              <div className={`flex items-center gap-1.5 mb-2.5 ${si > 0 ? 'pt-1 border-t border-neutral-100 mt-1' : ''}`}>
-                <CalendarDaysIcon className="w-3.5 h-3.5 text-neutral-400" />
-                <p className="text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400">{sec.title}</p>
-              </div>
-              <div className="space-y-2.5">
-                {sec.days.map((day) => (
-                  <div key={day.label}>
-                    <p className={`text-[10.5px] font-semibold uppercase tracking-wide mb-1 ${day.label === 'Today' ? 'text-indigo-500' : 'text-neutral-400'}`}>{day.label}</p>
-                    <div className="space-y-1">
-                      {day.rows.map((r) => (
-                        <button key={r.id} onClick={() => openRow(r)}
-                          className="w-full flex items-start gap-2 text-left rounded-md -mx-1 px-1 py-0.5 hover:bg-neutral-50 transition-colors cursor-pointer">
-                          <span className="flex-shrink-0 text-[10.5px] tabular-nums text-neutral-400 pt-[2px] w-[36px]">{time(r.start)}</span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-[12px] text-neutral-700 leading-snug line-clamp-2">{r.title}</span>
-                            {r.entity && <span className="block text-[10.5px] text-indigo-500 truncate">{r.entity.name}</span>}
-                          </span>
-                          {/* THE ANTICIPATION CHIP — the pass prepared this meeting's brief
-                              unprompted; the chip opens the room where the prep waits. */}
-                          {r.prepReady && r.entity && (
-                            <span
-                              role="button"
-                              onClick={(e) => { e.stopPropagation(); router.push(`/home?view=projects&entity=${r.entity!.id}`); }}
-                              className="flex-shrink-0 self-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors"
-                            >
-                              Prep ready
-                            </span>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </RiseIn>
-  );
-}
+// ── THE CALENDAR LEFT THE HOME (owner walk, Sep 8). The This-week rail — the day-grouped meeting
+// column that used to sit beside the legacy deck — is RETIRED from the Home: the meetings surface
+// is its home, and the CoS's one sentence already carries the day shape (“free until …”, read off
+// the served schedule). A fact with another home never earns a second seat here.
 
 // ── The FOCUS+PEEK DECK for "What needs you". One hero card (the full DoRow / BundleGroup / PriorityCard)
 // leads; the next few are compact PEEK rows you can glance and promote. Tapping a peek makes it the hero;
@@ -959,7 +875,7 @@ function peekHref(e: DeckEntry): string | null {
   if (e.kind === 'single') return e.item.href;
   if (e.kind === 'priority') return priorityHref(e.p);
   // A deal with no move-ref still opens SOMEWHERE — its room (the dead-click fix, F1).
-  if (e.kind === 'deal') return brainRefHref(e.deal.nextMove?.entityRef) ?? `/home?view=projects&entity=${e.deal.key}`;
+  if (e.kind === 'deal') return brainRefHref(e.deal.nextMove?.entityRef) ?? projectHref(e.deal.key);
   return null;
 }
 
@@ -1180,8 +1096,134 @@ function SideRow({ href, icon: Icon, iconClass, children }: { href: string; icon
   );
 }
 
-function SkeletonCard({ h = 'h-[72px]' }: { h?: string }) {
-  return <div className={`${h} rounded-2xl border border-neutral-200/60 bg-gradient-to-br from-neutral-100 to-neutral-50 animate-pulse`} />;
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE CALM HOME — the resting above-the-fold (docs/threads-plan.md, "The Home thread's seat";
+// the frozen board docs/design/threads/HomeCalm.dc.html). One speaker, everything else whispering:
+// the greeting stack (date · greeting · the CoS's ONE sentence wearing her face) · the composer as
+// the page's single focal point · at most FIVE whispered lines · one quiet door.
+//
+// THE DENSITY LAW is structural here: the resting page is date · greeting · composer · ≤5 whispers
+// (fed by `pickWhispers`, capped in lib/home/calm.ts) · one door. Everything else lives behind
+// `CalmDoor`. Urgency is a WORD (grey), never chrome — no red labels, no counts shouting, no
+// borders on the whispers.
+//
+// NO PROSE AT ALL (owner call, Sep 13 — "in home, this feels too much, remove"): the CoS's one
+// sentence, and her face beside it, are RETIRED. The greeting stops at the greeting; the work
+// speaks for itself in the whispers. Earned calm's inverse is enforced where the eye lands —
+// pickWhispers seats every fire first — instead of by a sentence claiming it does.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+// THE HEADER IS TWO COLUMNS (owner walk, Sep 15 — "orb column 2 rows height"): the mark stands in
+// its OWN column, vertically centred against the full height of the text column beside it (the date
+// row over the greeting row), instead of riding the date line like a bullet. The text column is
+// left-aligned to itself; the pair is centred as a group. The skeleton opens in this SAME shape, so
+// the load never reflows.
+function CalmGreeting({ name, greeting: hello }: { name: string | null; greeting: string }) {
+  return (
+    <div className="flex items-center justify-center gap-4">
+      {/* THE ALIVE MARK (owner walk, Sep 14, rebuilt Sep 15 as a neural mesh) — the one quiet sign
+          the machine is awake. Fixed-size and absolutely composed inside itself, so it can never
+          move the lines beside it; it sleeps on a hidden tab, sleeps out of view, and draws a
+          single static frame under reduced motion. */}
+      <AliveMark />
+      <div className="flex flex-col gap-1.5 text-left">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-neutral-400">
+          {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+        </p>
+        <h1 className="text-[24px] font-semibold tracking-[-0.02em] text-neutral-900 leading-tight">{hello}{name ? `, ${name}` : ''}</h1>
+      </div>
+    </div>
+  );
+}
+
+/** ONE WHISPERED LINE — the row's own sentence + its receipt, on the deck's OWN doors
+ *  (useRowActions/ctaFor from the row kit: same href, same ✓/✕ endpoints, same prefetch). */
+function WhisperLine({ w, handlers }: {
+  w: Whisper;
+  handlers: {
+    onDismissInbox?: (id: string) => void; onClearedCommitment?: (id: string) => void;
+    onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void;
+    onUndoCommitment?: (message: string, id: string) => void;
+    dismissOverride?: () => void;
+  };
+}) {
+  const { item } = w;
+  const { removed, exiting, busy, done, drop, open, prefetch } = useRowActions(item, handlers);
+  if (removed) return null;
+  const { Icon } = DO_META[item.source];
+  return (
+    <div
+      onMouseEnter={prefetch} onFocus={prefetch} onMouseDown={prefetch} onTouchStart={prefetch}
+      className={`group relative flex items-center gap-2.5 rounded-[10px] px-3 py-2 transition-all duration-200 ease-out hover:bg-white hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)] ${exitCls(exiting)}`}
+    >
+      <div role="button" tabIndex={0} onClick={open}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
+        className="min-w-0 flex-1 flex items-center gap-2.5 text-left cursor-pointer">
+        <Icon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-300 group-hover:text-neutral-400 transition-colors" />
+        <p className="min-w-0 flex-1 truncate text-[13px] text-neutral-500 group-hover:text-neutral-700 transition-colors">
+          {w.sentence}
+          {(w.urgency || w.receipt || w.note) && <span className="text-neutral-400"> — </span>}
+          {w.urgency && <span className="text-neutral-400">{w.urgency}</span>}
+          {w.urgency && (w.receipt || w.note) && <span className="text-neutral-400">, </span>}
+          {/* THE RECEIPT GRAMMAR: a done-ness word in quiet indigo; an honest state word in grey. */}
+          {w.receipt && <span className="font-medium text-indigo-600">{w.receipt}</span>}
+          {!w.receipt && w.note && <span className="text-neutral-400">{w.note}</span>}
+        </p>
+      </div>
+      {/* THE HOVER FLOOR (owner walk, Sep 7 — "the hover expand disappeared"): the whisper mounts
+          THE ROW KIT'S OWN cluster (RowControls — each control expands its label on its own hover,
+          the folder is the filing door), never a private pair of mute glyphs. The verb sits beside
+          it UNCONDITIONALLY: ctaFor is total, so every whisper, of every lane, offers at least one
+          worded deed on hover. The tap ships prepared work; it never starts a prompt.
+
+          THE CONTROLS OVERLAY, THEY NEVER PUSH (owner walk, Sep 14): the cluster rides the shared
+          RowHoverRail — absolutely positioned against the row's right edge, with the row's own
+          background fading the sentence beneath it. The whispered line keeps its full width while a
+          control expands its label, so no word re-truncates and no target moves mid-hover.
+
+          THE RAIL SPEAKS, WITHOUT COLLISION (owner walk, Sep 15): the controls now carry their
+          words permanently, on a SOLID backing with the gradient only as its leading edge — the
+          whisper's own sentence can no longer read through "Dismiss". */}
+      <RowHoverRail>
+        <RowControls item={item} busy={busy} done={done} drop={drop} />
+        <span className="text-[13px] font-medium text-indigo-600">{ctaFor(item)}</span>
+      </RowHoverRail>
+    </div>
+  );
+}
+
+/** THE ONE QUIET DOOR — "Everything else · N →", with the day's handled count resting beside it.
+ *  Nothing else on the Home shouts a count. */
+function CalmDoor({ remaining, handledToday, open, onToggle }: {
+  remaining: number; handledToday: number; open: boolean; onToggle: () => void;
+}) {
+  if (remaining <= 0 && handledToday <= 0) return null;
+  return (
+    <div className="flex items-center gap-3 px-3 py-2.5">
+      {remaining > 0 ? (
+        <button onClick={onToggle}
+          className="text-[12px] text-neutral-400 hover:text-indigo-600 transition-colors">
+          {open ? 'Show less' : `Everything else · ${remaining} →`}
+        </button>
+      ) : <span />}
+      <span className="flex-1" />
+      {handledToday > 0 && (
+        <span className="text-[12px] text-neutral-400">{handledToday} handled today</span>
+      )}
+    </div>
+  );
+}
+
+
+// THE SERVED-BRIEF CACHE — ONE writer, at the landing seam, holding the RAW payload. The hydrate
+// cache is the next open's opening truth, so it must be what the SERVER said, never what the
+// no-mutation freeze held on screen (a frozen composite written back here re-stamps its own
+// freshness, and the freeze becomes permanent — the Sep 13 serving-truth bug).
+function saveServedBrief(payload: Brief) {
+  saveLS('aug-home-brief-v1', payload);
+  // The save ANNOUNCES itself so ambient readers of this cache (the sidebar's needs-you badge)
+  // catch a cold load's first landing instead of waiting for a refocus (the cold-load seam).
+  try { window.dispatchEvent(new Event('aug:brief-updated')); } catch { /* SSR */ }
 }
 
 // ── MERGE-NOT-REPLACE — never downgrade already-shown content on a refetch. The optimistic-surfacing
@@ -1192,7 +1234,18 @@ function SkeletonCard({ h = 'h-[72px]' }: { h?: string }) {
 // shown with enriched fields and the incoming copy is basic (empty), KEEP the enriched fields. Only
 // genuinely NEW items (not in prev) render basic — they fill in on a later refetch once enriched. All
 // other brief fields (counts, dayProgress, priorities, schedule, …) swap wholesale as before.
-function mergeBrief(prev: Brief | null, next: Brief): Brief {
+//
+// ── THE NO-MUTATION LAW (docs/threads-plan.md · lib/room/no-mutation.ts) ────────────────────────
+// Merge-not-replace kept the ENRICHMENT climb honest; it did not stop a BACKGROUND arrival (the
+// 90s poll, a focus refresh, a realtime nudge) from rewriting a row the reader is reading, pulling
+// a row out from under them, or swapping the composed brief for a fresh compose. Nobody asked for
+// any of that. So on a background arrival the deck FREEZES for the open: composed prose keeps the
+// words it opened with, every rendered row keeps its text and its seat, rows the server has
+// dropped stay until the reader's own action or the next open — and genuinely NEW rows APPEND,
+// which is the one live behaviour a thread owes its reader. Ambient counters (the day ring,
+// status, handled, mail) still climb: they are the "is anything happening" chrome, not a claim
+// about a row. A foreground load (mount-cold, an Undo, an explicit action) replaces as before.
+function mergeBrief(prev: Brief | null, next: Brief, background = false): Brief {
   if (!prev) return next;
   // A field is "enriched" when the prev copy has non-empty text and the incoming copy is empty/basic.
   const keep = (prevVal?: string | null, nextVal?: string | null) =>
@@ -1228,12 +1281,65 @@ function mergeBrief(prev: Brief | null, next: Brief): Brief {
   // briefing:null until the compose lands. Preserve last-good so the prose never flashes out (the same
   // last-good discipline as mustRespond).
   const briefing = next.briefing ?? prev.briefing ?? null;
-  return { ...next, mustRespond, keepAnEyeOn, briefing };
+  const merged: Brief = { ...next, mustRespond, keepAnEyeOn, briefing };
+  return background ? freezeForOpen(prev, merged) : merged;
+}
+
+// freezeRows/freezeMap live in lib/room/no-mutation.ts — THE ONE MECHANISM (they were authored
+// here and lifted; a private copy is how the law dies, gate T2.16).
+function freezeForOpen(prev: Brief, next: Brief): Brief {
+  // Composed prose — the brief line, the authored briefing, the teasers, the digests: the version
+  // this open painted is the version this open keeps. A recompose is the NEXT open's opening.
+  const prose = <T,>(p: T | null | undefined, n: T | null | undefined): T | null => (p ?? n ?? null);
+  return {
+    ...next,
+    briefLine: prose(prev.briefLine, next.briefLine),
+    briefing: prose(prev.briefing, next.briefing),
+    tldr: prose(prev.tldr, next.tldr),
+    followups: prose(prev.followups, next.followups),
+    fyiDigest: prose(prev.fyiDigest, next.fyiDigest),
+    bundleNames: freezeMap(prev.bundleNames, next.bundleNames),
+    // The rendered lanes.
+    mustRespond: next.mustRespond
+      ? { teaser: prev.mustRespond?.teaser ?? next.mustRespond.teaser,
+          items: freezeRows(prev.mustRespond?.items, next.mustRespond.items, (m) => m.itemId) }
+      : prev.mustRespond ?? null,
+    keepAnEyeOn: next.keepAnEyeOn
+      ? { items: freezeRows(prev.keepAnEyeOn?.items, next.keepAnEyeOn.items, (k) => k.itemId) }
+      : prev.keepAnEyeOn ?? null,
+    forYourAwareness: freezeRows(prev.forYourAwareness, next.forYourAwareness, (a) => a.itemId),
+    actionNotices: freezeRows(prev.actionNotices, next.actionNotices, (a) => a.itemId),
+    priorities: freezeRows(prev.priorities, next.priorities, (p) => p.id),
+    commitments: freezeRows(prev.commitments, next.commitments, (c) => c.id),
+    waitingOn: freezeRows(prev.waitingOn, next.waitingOn, (w) => w.id),
+    schedule: freezeRows(prev.schedule, next.schedule, (s) => s.id),
+    slippingDeals: freezeRows(prev.slippingDeals, next.slippingDeals, (s) => s.key),
+    // Verdict-bearing chrome hanging off the rendered rows (the project tag, the person cue, the
+    // machine's one word's ordering, the room door, the bundling and its states).
+    bundles: freezeMap(prev.bundles, next.bundles),
+    bundleStates: freezeMap(prev.bundleStates, next.bundleStates),
+    personCues: freezeMap(prev.personCues, next.personCues),
+    itemWeights: freezeMap(prev.itemWeights, next.itemWeights),
+    projectByAtom: freezeMap(prev.projectByAtom, next.projectByAtom),
+    // The MovingTier contradiction-guard decides whether a PAINTED slipping card may stand — a
+    // fresh one would retract it mid-view, so it is frozen with the cards it governs.
+    deckEntityIds: prev.deckEntityIds ?? next.deckEntityIds,
+    // Everything else — status, dayProgress, handled, mail, trackedProjects — rides `next`:
+    // ambient counters and configuration, never a claim about a row on screen.
+  };
 }
 
 export function HomeView() {
   const [brief, setBrief] = useState<Brief | null>(null);
+  // THE NO-MUTATION LAW needs the SERVED deck synchronously (the merge decides what the reader
+  // keeps, and the cleared-id reconcile in the same tick must read the merged result, not the raw
+  // payload). This ref mirrors `brief` at every write — the three setBrief sites are here, the
+  // cached hydrate, the loader, and the honest blank.
+  const briefRef = useRef<Brief | null>(null);
   const [team, setTeam] = useState<{ messages: TeamMsg[]; needsReview: TeamReview[] } | null>(null);
+  // The ambient team lane no longer blocks the paint, so the EMPTY STATE has to know whether it has
+  // heard from it yet — "Nothing here" claimed before the answer lands is the show-then-retract class.
+  const [teamSettled, setTeamSettled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
   // (The global ask ledger's Home surfacing was user-rejected July 29 — see the note above the
@@ -1255,20 +1361,8 @@ export function HomeView() {
 
   const [dismissed, setDismissed] = useState<Set<string>>(new Set()); // itemIds acted this session → live count + list refill
   const [dismissedDeals, setDismissedDeals] = useState<Set<string>>(new Set());
-  // H2 — the deck's grouping lens (time = default; project mirrors the power-user view). Persisted;
-  // hydrated in an effect (the SSR'd-route rule).
-  const [doGroupMode, setDoGroupMode] = useState<'time' | 'project'>('time');
-  // Calm groups rest collapsed; hover previews, CLICK PINS (persisted; effect-hydrated — SSR rule).
-  const [pinnedGroups, setPinnedGroups] = useState<Set<string>>(new Set());
-  const [hoverGroup, setHoverGroup] = useState<string | null>(null);
-  useEffect(() => { try { const v = JSON.parse(localStorage.getItem('aug-do-pinned') || '[]'); if (Array.isArray(v)) setPinnedGroups(new Set(v)); } catch { /* ssr */ } }, []);
-  const togglePinnedGroup = (k: string) => setPinnedGroups((prev) => {
-    const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k);
-    try { localStorage.setItem('aug-do-pinned', JSON.stringify([...n])); } catch { /* ssr */ }
-    return n;
-  });
-  useEffect(() => { try { const v = localStorage.getItem('aug-do-group'); if (v === 'project') setDoGroupMode('project'); } catch { /* ssr */ } }, []);
-  useEffect(() => { try { localStorage.setItem('aug-do-group', doGroupMode); } catch { /* ssr */ } }, [doGroupMode]); // proactive slipping-deal keys dismissed ("not now") this session
+  // (H2's grouping lens + the calm-group hover/pin state died with the legacy deck — Sep 8. The
+  //  Home has ONE row grammar and ONE order now: the whisper, and the door's stated sort.)
   const dismissDeal = useCallback((key: string) => setDismissedDeals((prev) => new Set(prev).add(key)), []);
   // Ids of priority CARDS + commitments cleared this session (Done/Dismiss). Separate from `dismissed`
   // (which is keyed on must-respond reply itemIds) so we can decrement `needYou` for cards/commitments
@@ -1291,6 +1385,16 @@ export function HomeView() {
   }, []);
 
   const [activityOpen, setActivityOpen] = useState(false); // right-side Activity slide-over
+  // THE CALM HOME's one door: everything past the five whispers lives behind it. Per SESSION, not
+  // per account — the resting Home is calm again on the next visit (the fold is the default).
+  const [deckOpen, setDeckOpen] = useState(false);
+  useEffect(() => { try { if (sessionStorage.getItem('aug-home-deck-open') === '1') setDeckOpen(true); } catch { /* ssr */ } }, []);
+  const toggleDeck = useCallback(() => setDeckOpen((v) => {
+    try { sessionStorage.setItem('aug-home-deck-open', v ? '0' : '1'); } catch { /* ssr */ }
+    return !v;
+  }), []);
+  // (THE CoS SEAT is no longer read here — her face rode beside the retired sentence. The seat
+  //  hook keeps its one implementation and its other readers: the composer and the item rail.)
   // THE PAGE TAKEOVER: a live Home conversation owns the page (the deck steps aside; the floor's
   // thread fills). Driven by the panel's own state via one event — no prop drilling.
   const [chatActive, setChatActive] = useState(false);
@@ -1298,10 +1402,18 @@ export function HomeView() {
   // fades the deck out for a beat before it unmounts; leaving remounts instantly (returning
   // content never needs a wait). chatFading drives the opacity, chatActive the unmount.
   const [chatFading, setChatFading] = useState(false);
+  // THE DM IS A PANE, NOT THE HOME'S STICKY FLOOR (owner walk, Sep 7 — the DM "looks off"). The
+  // takeover event now carries its MODE: a coworker DM fills the content area top-to-bottom (the
+  // frozen board's geometry — header at the very top, one scroller, composer at the bottom), while
+  // the Home chat keeps EXACTLY the layout it had. `mt-auto`/`sticky` under a short DM thread was
+  // the dead zone above the header; the page scroller beside the shell's was the second scrollbar.
+  const [chatDm, setChatDm] = useState(false);
   const chatFadeTm = useRef<number | null>(null);
   useEffect(() => {
     const on = (e: Event) => {
-      const active = !!(e as CustomEvent).detail?.active;
+      const detail = (e as CustomEvent).detail as { active?: boolean; mode?: string } | undefined;
+      const active = !!detail?.active;
+      setChatDm(active && detail?.mode === 'dm');
       if (chatFadeTm.current) { window.clearTimeout(chatFadeTm.current); chatFadeTm.current = null; }
       if (active) {
         setChatFading(true);
@@ -1376,6 +1488,9 @@ export function HomeView() {
   // One brief request at a time — every trigger (mount/focus/poll/realtime) funnels through load(),
   // and load() drops the call when one is already in flight (P0: no more stacked concurrent GETs).
   const loadInFlightRef = useRef(false);
+  // THE OPEN IS AN OPEN: true until this mount's FIRST brief lands. The no-mutation freeze governs
+  // arrivals DURING an open — never the open's own first truth (see the merge call below).
+  const firstLandingRef = useRef(true);
   // Entity keys we've already fired a pre-gen POST for (dedup across the focus/interval polls, so we
   // warm each item's plan at most once per session — pre-gen must stay cheap + silent).
   const preGennedRef = useRef<Set<string>>(new Set());
@@ -1440,7 +1555,10 @@ export function HomeView() {
   const markActed = () => { lastActionRef.current = Date.now(); };
   // The background/foreground brief loader, lifted to component scope so an Undo can trigger an
   // immediate refresh (bringing a just-restored item back on screen without waiting for the poll).
-  const load = useCallback((background = false) => {
+  // `userCaused` marks the law's own exception: a refetch the reader's deed just triggered (an Undo,
+  // a restore, a membership move, a project they created) may land in place. Everything else that
+  // runs in the background — the poll, focus, realtime — freezes the painted deck and only appends.
+  const load = useCallback((background = false, userCaused = false) => {
     // IN-FLIGHT DEDUP (P0): mount + focus + visibility + 90s poll + realtime each call load() —
     // without this guard they STACK concurrent /api/home/brief requests (5+ seen in the logs), each
     // hitting the server before the previous finished. One request at a time; the next trigger
@@ -1449,16 +1567,49 @@ export function HomeView() {
     loadInFlightRef.current = true;
     if (!background) setLoading(true);
     else setSyncing(true); // drives the header "Syncing…" pulse (background refresh only)
-    Promise.all([
-      fetch('/api/home/brief').then(r => r.json()).catch(() => null),
-      fetch('/api/workers/home').then(r => r.json()).catch(() => null),
-    ]).then(([b, t]) => {
+    // THE PAINT WAITS ON THE BRIEF, AND ON NOTHING ELSE (owner, Sep 8 — "Home loads very slowly").
+    // /api/workers/home feeds the AMBIENT team rail; it used to ride a Promise.all beside the brief,
+    // so every paint cost max(brief, team) — a page held hostage by a lane it doesn't render above
+    // the fold. It now lands on its own and only ever ADDS (a late arrival can't blank anything:
+    // `nothing` waits for it explicitly below, so the empty state never claims-then-retracts).
+    fetch('/api/workers/home').then(r => r.json()).catch(() => null).then((t) => {
+      if (!aliveRef.current) return;
+      if (t) setTeam({ messages: t.messages ?? [], needsReview: t.needsReview ?? [] });
+      setTeamSettled(true);
+    });
+    fetch('/api/home/brief').then(r => r.json()).catch(() => null).then((b) => {
       loadInFlightRef.current = false;
       if (!aliveRef.current) return;
-      // Background refresh only SWAPS in fresh data — it never blanks the view.
-      if (b && !b.error) { setBrief((prev) => mergeBrief(prev, b)); preGenPlans(b); }
-      else if (!background) setBrief(null);
-      if (t) setTeam({ messages: t.messages ?? [], needsReview: t.needsReview ?? [] });
+      // Background refresh only SWAPS in fresh data — it never blanks the view. THE NO-MUTATION
+      // LAW: on a background arrival the merge freezes the painted deck and only APPENDS new rows
+      // (mergeBrief → freezeForOpen). The merged result is what the reader sees, so it — not the
+      // raw payload — is what the session-cleared reconcile below must reason about.
+      let served: Brief | null = briefRef.current;
+      if (b && !b.error) {
+        // ── THE OPEN IS AN OPEN (found live, Sep 13 — the serving-truth walk) ──────────────────
+        // THE NO-MUTATION LAW freezes a PAINTED row for the life of the reader's open. On a cold
+        // mount the painted rows are not this open's — they are the localStorage cache's, hydrated
+        // milliseconds earlier — and `load(true)` handed them to the freeze as `prev`. The frozen
+        // result was then saved BACK to that cache with a fresh timestamp, so the 15-minute
+        // freshness floor never expired and the freeze became PERMANENT: the server's corrected
+        // labels, its demotions and its dropped rows were discarded on every open, forever. The
+        // observed signature was exact — "56 handled today" climbed (ambient counters ride `next`)
+        // while five stale whispers stood unchanged across fresh tabs and hard reloads.
+        //
+        // So the freeze protects a LIVE open and never a cache: the first brief a mount receives
+        // REPLACES (it is this open's opening truth), and every arrival after it freezes as before.
+        const isFirstLanding = firstLandingRef.current;
+        firstLandingRef.current = false;
+        served = mergeBrief(briefRef.current, b, background && !userCaused && !isFirstLanding);
+        briefRef.current = served;
+        setBrief(served);
+        // THE CACHE HOLDS SERVER TRUTH, NEVER THE FROZEN RENDER (the belt to the law above). The
+        // hydrate cache is what the NEXT open opens with; persisting the frozen composite let one
+        // open's held rows become the next open's starting point, and freeze debt accumulated with
+        // nothing that could ever pay it off. The raw payload is what the server actually said.
+        saveServedBrief(b as Brief);
+        preGenPlans(b);
+      } else if (!background) { briefRef.current = null; setBrief(null); served = null; }
       // RESET the session filter sets on a settled refetch — the server data is authoritative
       // (dismissed/done items are already excluded server-side), so clearing dismissed/clearedIds is
       // safe AND makes a just-RESTORED item reappear on the next poll/focus even without the explicit
@@ -1471,13 +1622,16 @@ export function HomeView() {
         // yet; wholesale-resetting here flashed those items back. Drop ids the server has already excluded
         // (harmless — they're gone from the data anyway). A RESTORED item reappears because `onRestored`
         // removes its id from these sets (so it's no longer hidden) and the server now returns it.
+        // Read the SERVED deck, not the raw payload: a row the freeze holds on screen must keep
+        // its cleared id in the hiding sets, or the reconcile would un-hide it — a row the reader
+        // dismissed reappearing is the very mutation this law outlaws.
         const freshIds = new Set<string>();
-        for (const m of b?.mustRespond?.items ?? []) if (m.itemId) freshIds.add(m.itemId);
-        for (const a of b?.actionNotices ?? []) if (a.itemId) freshIds.add(a.itemId);
-        for (const c of b?.commitments ?? []) if (c.id) freshIds.add(c.id);
-        for (const p of b?.priorities ?? []) if (p.id) freshIds.add(p.id);
-        for (const w of b?.waitingOn ?? []) if (w.id) freshIds.add(w.id);
-        for (const k of b?.keepAnEyeOn?.items ?? []) if (k.itemId) freshIds.add(k.itemId);
+        for (const m of served?.mustRespond?.items ?? []) if (m.itemId) freshIds.add(m.itemId);
+        for (const a of served?.actionNotices ?? []) if (a.itemId) freshIds.add(a.itemId);
+        for (const c of served?.commitments ?? []) if (c.id) freshIds.add(c.id);
+        for (const p of served?.priorities ?? []) if (p.id) freshIds.add(p.id);
+        for (const w of served?.waitingOn ?? []) if (w.id) freshIds.add(w.id);
+        for (const k of served?.keepAnEyeOn?.items ?? []) if (k.itemId) freshIds.add(k.itemId);
         setDismissed((prev) => new Set([...prev].filter((id) => freshIds.has(id))));
         setClearedIds((prev) => new Set([...prev].filter((id) => freshIds.has(id))));
       }
@@ -1505,9 +1659,10 @@ export function HomeView() {
     // then retracted it). Too old to trust → the honest skeleton, never a stale claim.
     const cachedBrief = loadLS<Brief>('aug-home-brief-v1', { maxAgeMs: 15 * 60_000 });
     if (cachedBrief) {
+      briefRef.current = cachedBrief;
       setBrief(cachedBrief);
       const cachedTeam = loadLS<{ messages: TeamMsg[]; needsReview: TeamReview[] }>('aug-home-team-v1');
-      if (cachedTeam) setTeam(cachedTeam);
+      if (cachedTeam) { setTeam(cachedTeam); setTeamSettled(true); }
       setLoading(false);
       load(true);
     } else {
@@ -1517,18 +1672,18 @@ export function HomeView() {
     // interval while visible — so new mail / items / the ring update without a manual reload.
     // Instant sync when a project is created/attached/tracked anywhere (meetings sidebar, an item deep-dive,
     // another tab) — In-motion + the Projects lens reflect it without a manual reload.
-    const offProjects = onProjectsUpdated(() => load(true));
+    const offProjects = onProjectsUpdated(() => load(true, true));
     // A membership change (Add to project from a deck row / the room) must reflect on the Home
     // NOW — the server busts the brief; this refetch serves the row's new project tag immediately.
-    const onMembership = () => load(true);
+    const onMembership = () => load(true, true);
     window.addEventListener('aug:membership-changed', onMembership);
     return () => { aliveRef.current = false; offProjects(); window.removeEventListener('aug:membership-changed', onMembership); };
   }, [load]);
   // Focus + visibility + 90s-while-visible — the shared live-refresh idiom (hooks/use-live-refresh).
   useLiveRefresh(() => load(true));
 
-  // Persist brief + team to localStorage so the next reload hydrates instantly (see the mount effect above).
-  useEffect(() => { if (brief) saveLS('aug-home-brief-v1', brief); }, [brief]);
+  // (The brief cache is written at the landing seam by `saveServedBrief` — the RAW payload, never
+  //  the frozen render. Writing it from a `brief`-keyed effect is what persisted freeze debt.)
   useEffect(() => { if (team) saveLS('aug-home-team-v1', team); }, [team]);
   // Persist the acted ids on every change — so a hard reload keeps them hidden, and an Undo (which shrinks
   // the set) lets them reappear. The reconcile in load() drops an id once the server no longer returns it.
@@ -1586,29 +1741,43 @@ export function HomeView() {
     };
   }, [load]);
 
-  // Skeleton MIRRORS the real layout (header + two columns) so there's no reflow on load.
+  // THE LOAD IS THE ORB (owner walk, Sep 15 — "make the skeleton load to new layout (no more CoS
+  // line etc), or make the orb a bit bigger shapeshifting as load, and smooth animation to full
+  // home UI"). Both halves:
+  //   (a) THE SKELETON IS THE CURRENT LAYOUT. It wore a GHOST of a dead element — the circle+line
+  //       row standing in for the CoS's one sentence, which was retired Sep 13. A skeleton of a
+  //       thing that will never arrive is a lie the page tells about itself for one second. It is
+  //       gone: the cold Home is orb + date + greeting → composer ghost → whisper ghosts, exactly
+  //       the shape that lands.
+  //   (b) THE LOADING STATE LEANS ON THE MARK. `loading` is a PROP on the ONE mark (never a second
+  //       orb): while the brief loads it runs larger and more energetic, and when content lands it
+  //       EASES to rest — the energy is carried across this remount inside the component, so the
+  //       settle is continuous. The rows then arrive on the house motion (RiseIn), never a pop.
+  // The real date and greeting are FACTS THE CLIENT ALREADY HAS — a clock needs no fetch — so they
+  // paint immediately; only the claims (the rows) wait.
   if (loading) {
     return (
-      <div className="flex-1 min-w-0 h-full overflow-y-auto bg-neutral-50/40">
-        <div className="px-8 py-10">
-          {/* Header: orb-sized block + greeting + one summary line */}
-          <div className="flex items-start gap-5">
-            <div className="w-[72px] h-[72px] mt-1 rounded-full bg-neutral-100 animate-pulse flex-shrink-0" />
-            <div className="min-w-0 flex-1">
-              <div className="h-3 w-40 rounded bg-neutral-100 animate-pulse" />
-              <div className="h-8 w-64 rounded-lg bg-neutral-100 animate-pulse mt-2.5" />
-              <div className="h-4 w-[26rem] max-w-full rounded bg-neutral-100 animate-pulse mt-3" />
+      <div className="flex-1 min-w-0 h-full overflow-y-auto bg-[#fbfbfd]">
+        <div className="w-full max-w-[1120px] mx-auto px-8 md:px-10 py-8 xl:py-10 flex flex-col min-h-full justify-center">
+          <div className="mx-auto w-full max-w-[720px] flex items-center justify-center gap-4">
+            {/* The mark paints with the date — a clock and a heartbeat need no fetch, so the
+                skeleton and the landed page open in the SAME shape (no pop-in, no shift). */}
+            <AliveMark loading />
+            <div className="flex flex-col gap-1.5 text-left">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-neutral-400">
+                {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+              </p>
+              <h1 className="text-[24px] font-semibold tracking-[-0.02em] text-neutral-900 leading-tight">{greeting()}</h1>
             </div>
           </div>
-          {/* Mirror the two-zone shape: a main reading column + a ~320px right rail (stacks below lg). */}
-          <div className="mt-9 mx-auto max-w-[1100px] grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-x-10 gap-y-10 items-start">
-            <div className="min-w-0 space-y-6">
-              <div className="space-y-3"><div className="h-3 w-24 rounded bg-neutral-100 animate-pulse mb-1" />{[1, 2, 3].map(i => <SkeletonCard key={i} />)}</div>
-            </div>
-            <div className="min-w-0 space-y-3">
-              <div className="h-3 w-28 rounded bg-neutral-100 animate-pulse mb-1" />
-              {[1, 2].map(i => <SkeletonCard key={i} h="h-[56px]" />)}
-            </div>
+          <div className="mx-auto w-full max-w-[720px] mt-7 h-[52px] rounded-2xl border border-neutral-200/70 bg-white/60 animate-pulse" />
+          <div className="mx-auto w-full max-w-[720px] mt-7 flex flex-col gap-0.5">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <div key={i} className="flex items-center gap-2.5 px-3 py-2">
+                <span className="w-3.5 h-3.5 rounded bg-neutral-100 animate-pulse flex-shrink-0" />
+                <span className="h-3.5 rounded bg-neutral-100 animate-pulse" style={{ width: `${64 - i * 8}%` }} />
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -1649,7 +1818,7 @@ export function HomeView() {
       if (removed) setSessionCleared((c) => Math.max(0, c - removed));
       return n;
     });
-    load(true); // pull the restored item back on screen right away
+    load(true, true); // pull the restored item back on screen right away (the reader's own undo)
   };
   // Show the "…· Undo" toast after a reversible INBOX action. `entityId` = the inbox item restored;
   // `sessionKeys` = the keys to clear on undo (itemId + optionally the card's p.id).
@@ -1666,7 +1835,7 @@ export function HomeView() {
   // (best-effort, via the sender restore path) and background-refreshes so they reappear.
   const toastSenderMuted = (sender: string) => {
     markActed(); // mute UPDATEs inbox_items → suppress the self-action realtime refetch (same window)
-    showUndoToast({ message: `Muted ${sender}`, entityType: 'sender', entityId: sender, onUndo: () => load(true) });
+    showUndoToast({ message: `Muted ${sender}`, entityType: 'sender', entityId: sender, onUndo: () => load(true, true) });
   };
 
   // Called by the Activity-log Undo (which lives in a separate component tree and can't reach this
@@ -1685,7 +1854,7 @@ export function HomeView() {
       setSessionCleared((c) => Math.max(0, c - 1));
       return n;
     });
-    load(true); // pull the restored item back on screen right away (brief cache already busted)
+    load(true, true); // pull the restored item back on screen right away (brief cache already busted)
   };
   // Live view of Must-respond after this session's Done/Dismiss/Send: the count decrements AND the
   // collapsed list refills from the hidden pool (instead of leaving "1 item + Show N more").
@@ -1716,12 +1885,16 @@ export function HomeView() {
   const bodyLiveCount = bodyReplies.length + liveBodyCards.length;
   const hasBody = bodyReplies.length > 0 || bodyCards.length > 0;
 
-  const nothing = b && !b.priorities.length && !b.commitments.length && !b.waitingOn.length && !b.schedule.length && !(b.keepAnEyeOn?.items.length) && !(b.actionNotices?.length) && !(team?.messages.length || team?.needsReview.length) && !hasBody;
+  const nothing = b && !b.priorities.length && !b.commitments.length && !b.waitingOn.length && !b.schedule.length && !(b.keepAnEyeOn?.items.length) && !(b.actionNotices?.length) && (teamSettled || team !== null) && !(team?.messages.length || team?.needsReview.length) && !hasBody;
   // THE SOVEREIGN CENTERPIECE (owner, Aug 14): on an email-off workspace with an empty deck, the
   // conversation IS the front door — the team card + composer sit centered as one group (the
   // Claude empty-state idiom) instead of a floating card over a floor-docked composer. Pure
   // class/spacer toggles on the SAME mounts — the composer must never remount mid-conversation.
   const sovereignCenter = !!nothing && b?.mail?.emailFeature === false && view === 'dashboard' && !chatActive && !projectDetailOpen;
+  // THE DM PANE — the takeover's DM shape, armed only once the takeover itself has landed. Gating
+  // on `chatActive` (which lags the event by the fade beat) keeps the deck's fade-out and the
+  // pane's arrival on ONE timeline: the column must not go full-bleed while the deck is still up.
+  const dmPane = chatActive && chatDm;
 
   // ── THE AGENDA (Living-Home S1) — the ONE derivation of "what needs you" every surface projects
   // from: the deck renders `agenda.entries`, the ring shows `agenda.rows` (exactly what is visibly
@@ -1735,7 +1908,7 @@ export function HomeView() {
   // loose items open the item view directly. One rule, every lane.
   const door = (itemId: string, fallback: string) => {
     const eid = b?.projectByAtom?.[itemId];
-    return eid ? `/home?view=projects&entity=${eid}` : fallback;
+    return eid ? projectHref(eid) : fallback;
   };
   const agendaReplyItems: DoItem[] = bodyReplies.map((m) => ({
     source: 'reply', key: `r-${m.itemId}`, entityId: m.itemId, href: door(m.itemId, `/item/${m.itemId}${enc(m.angle)}`),
@@ -1745,6 +1918,7 @@ export function HomeView() {
     when: fmtWhen(m.receivedAt), effort: m.effort ?? null, dueDate: m.dueDate ?? null, initiative: m.initiative ?? null, initiativeTotal: m.initiativeTotal ?? null,
     relCue: b?.personCues?.[m.itemId] ?? null,
     prepared: oneClaimPrepared(m.preparedBy ?? (m.draft ? 'draft' : null), m.machine),
+    stateWord: machineWord(m.machine, m.preparedBy ?? (m.draft ? 'draft' : null)),
   }));
   const agendaNoticeItems: DoItem[] = (b?.actionNotices ?? []).filter((a) => !clearedIds.has(a.itemId) && !dismissed.has(a.itemId)).map((a) => ({
     source: 'notice', key: `n-${a.itemId}`, entityId: a.itemId, href: door(a.itemId, `/item/${a.itemId}?kind=email`),
@@ -1753,6 +1927,7 @@ export function HomeView() {
     dueDate: a.dueDate ?? null, overdue: !!a.dueDate && a.dueDate < todayISOStr,
     initiative: a.initiative ?? null,
     prepared: oneClaimPrepared(a.preparedBy ?? null, a.machine),
+    stateWord: machineWord(a.machine, a.preparedBy ?? null),
   }));
   const agendaCommitItems: DoItem[] = looseCommitments.map((c) => ({
     source: 'commitment', key: `c-${c.id}`, entityId: c.id, href: door(c.id, `/item/${c.id}?kind=commitment`),
@@ -1760,6 +1935,7 @@ export function HomeView() {
     second: withMachineWord(c.counterparty ? (/^from /i.test(c.counterparty) ? c.counterparty : `You owe ${c.counterparty}`) : null, machineWord(c.machine, c.prepared ?? null)),
     overdue: c.overdue, dueToday: c.dueToday, dueDate: c.dueDate ?? null, initiative: c.initiative ?? null, initiativeTotal: c.initiativeTotal ?? null,
     prepared: oneClaimPrepared(c.prepared ?? null, c.machine),
+    stateWord: machineWord(c.machine, c.prepared ?? null),
   }));
   const liveDeals = (b?.slippingDeals ?? []).filter((d) => !dismissedDeals.has(d.key));
   // THE BRIEF de-dup: items the brain SENTENCED live in the prose — they leave the deck (hero kept).
@@ -1773,6 +1949,37 @@ export function HomeView() {
     sentencedIds, weights: b?.itemWeights ?? {},
   });
 
+  // ── THE CALM HOME's derivation (docs/threads-plan.md, "THE CALM HOME") ───────────────────────
+  // The deck's own flattening, LIFTED OUT of the render: the whispered lines, the door's count and
+  // the CoS's sentence all read the very rows the deck renders, in the very order it renders them.
+  // One pick, never a second agenda — and nothing here re-judges anything.
+  // USER-CREATED ONLY: a row may only wear a TRACKED project's name as its chip (the P15 law).
+  const trackedLookup = new Map<string, string>();
+  for (const t of b?.trackedProjects ?? []) {
+    trackedLookup.set(t.name.toLowerCase(), t.name);
+    for (const a of t.aliases) trackedLookup.set(String(a).toLowerCase(), t.name);
+  }
+  const flatRows: FlatRow[] = [];
+  for (const e of agenda.entries) {
+    if (e.kind === 'bundle') for (const it of e.items) flatRows.push({ item: { ...it, initiative: it.initiative ?? trackedLookup.get(e.title.toLowerCase()) ?? null } });
+    else if (e.kind === 'single') flatRows.push({ item: e.item });
+    else if (e.kind === 'priority') flatRows.push({ item: priorityToItem(e.p) });
+    else flatRows.push({ item: dealToItem(e.deal), dealKey: e.deal.key });
+  }
+  // THE DENSITY LAW: at most CALM_MAX_WHISPERS rows above the fold; the rest is the door's business.
+  // A NAMED FIRE IS A SEATED FIRE — pickWhispers seats every overdue row first (lib/home/calm.ts).
+  const whisperItems = pickWhispers(flatRows.map((r) => r.item), CALM_MAX_WHISPERS);
+  const whisperKeys = new Set(whisperItems.map((i) => i.key));
+  const whispers: Whisper[] = whisperItems.map((i) => toWhisper(i));
+  const dealKeyOf = new Map(flatRows.filter((r) => r.dealKey).map((r) => [r.item.key, r.dealKey!]));
+  // THE DOOR EXPANDS IN PLACE, IN ORDER (owner, Sep 8): the remainder is sorted by the calm
+  // module's ONE stated order (fires · asks · due today · dated ahead · the deck's own order) and
+  // renders as the SAME whisper rows — never a second deck, never a second grammar.
+  const restRows = sortDoorRows(flatRows.filter((r) => !whisperKeys.has(r.item.key)), (r) => r.item);
+  // (THE DAY SHAPE + THE ONE SENTENCE retired here, Sep 13 — the "free until …" clause existed only
+  //  as the sentence's tail, and the calendar's own home is /meetings. The composed briefing still
+  //  powers ordering + de-dup via `sentencedIds`; it simply never speaks on this page.)
+
   // ── Per-section LIVE counts — same clearedIds/dismissed derivation, applied per lane so each section
   // header shows what's actually left after this session's clears, and a lane cleared to 0 can swap its
   // body for the shared "you cleared this" state.
@@ -1783,7 +1990,6 @@ export function HomeView() {
   // "For your awareness" clears via the same session set (dismiss → clearedIds), so its live count
   // decrements as the user dismisses a bystander thread.
   const awarenessLive = (b?.forYourAwareness ?? []).filter((a) => !clearedIds.has(a.itemId)).length;
-  const hadActionNotices = (b?.actionNotices ?? []).length > 0;
   const ringCleared = (b?.dayProgress?.cleared ?? 0) + sessionCleared;
   // Hide gracefully if counts are missing — and NEVER show "All clear" to a user whose mail isn't
   // connected or whose first sync is still in flight (a 0-of-0 green ring is a hollow claim).
@@ -1954,10 +2160,16 @@ export function HomeView() {
     // column. Opening the panel grows its width → the `flex-1` main genuinely shrinks/reflows left
     // (NOT an overlay). `h-full` fills the `(main)` layout's `flex h-screen` container.
     <div className="relative flex-1 min-w-0 h-full flex overflow-hidden bg-[#fbfbfd]">
-      <div className="flex-1 min-w-0 overflow-y-auto flex flex-col">
-      <div className={projectDetailOpen
+      {/* ONE SCROLLER IN DM MODE: the thread shell owns the kit's thin scroller, so the page's own
+          scroller stands down — two nested scrollers is what put a thick bar beside the timeline. */}
+      <div className={`flex-1 min-w-0 flex flex-col ${dmPane ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+      {/* THE CALM HOME rests VERTICALLY CENTERED (the board): greeting · composer · whispers as one
+          group in the middle of the page. Opening the door (or a live conversation) returns the
+          column to its normal top-aligned flow so the deck can grow. */}
+      <div className={projectDetailOpen || dmPane
         ? 'w-full flex flex-col flex-1 min-h-0'
-        : 'w-full max-w-[1120px] mx-auto px-8 md:px-10 py-8 xl:py-10 flex flex-col flex-1'}>
+        : `w-full max-w-[1120px] mx-auto px-8 md:px-10 py-8 xl:py-10 flex flex-col flex-1${
+          view === 'dashboard' && !chatActive && !sovereignCenter && !deckOpen ? ' justify-center' : ''}`}>
         {/* Header + narration + live status chips. HIDDEN when a project deep-dive is open — a project
             detail owns the screen (its own back-link + title header), like the item deep-dive, so the day
             greeting shouldn't sit above it. */}
@@ -1965,15 +2177,11 @@ export function HomeView() {
             for conversation"): a live conversation owns the WHOLE page, not just the deck rows. */}
         {!projectDetailOpen && !chatActive && view !== 'workflows' && view !== 'runs' && (
         <RiseIn>
-          {/* Living orb — abstract morphing glow in the brand spectrum, signalling the brief is
-              continuously alive. Sits left so the greeting + narrative use the full width. */}
+          {/* The living orb's keyframes lived HERE, orphaned, long after the header rewrite deleted
+              the markup that used them — six dead rules nothing mounted. The mark is a COMPONENT
+              now (components/home/alive-mark.tsx) carrying its own namespaced keyframes, so it can
+              never be orphaned by a header rewrite again. */}
           <style>{`
-            @keyframes augM1{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(9px,-5px) scale(1.4)}66%{transform:translate(4px,6px) scale(.7)}}
-            @keyframes augM2{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(-8px,6px) scale(.78)}66%{transform:translate(8px,-5px) scale(1.35)}}
-            @keyframes augM3{0%,100%{transform:translate(0,0) scale(.85)}50%{transform:translate(-7px,-6px) scale(1.3)}}
-            @keyframes augSpin{to{transform:rotate(360deg)}}
-            @keyframes augSpinR{to{transform:rotate(-360deg)}}
-            @keyframes augBreathe{0%,100%{opacity:.85;transform:scale(1)}50%{opacity:.45;transform:scale(1.12)}}
             @keyframes augMarquee{to{transform:translateX(-50%)}}
             @keyframes fadeIn{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}
             @keyframes augDeckIn{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:translateX(0)}}
@@ -1982,6 +2190,30 @@ export function HomeView() {
               components/one/one-home.tsx; this host supplies data + the stateful cluster.
               NO PROSE ON THE HOME (owner law, said twice): the deck IS the day; the composed
               briefing still powers ordering + de-dup (sentencedIds), it never re-speaks. */}
+          {/* THE CALM HOME owns the dashboard lens's opening: the greeting stack, centered —
+              date and greeting, nothing else (the CoS sentence retired Sep 13, owner call: "in
+              home, this feels too much"). The ring, the sync line and the ambient rail moved BEHIND
+              the door with the deck; Activity keeps a single quiet glyph so it stays reachable
+              from the resting page (one home for it, never two). The other lenses keep the
+              working header they were designed with. */}
+          {view === 'dashboard' ? (
+            <div className="relative w-full mb-7">
+              <button
+                onClick={() => setActivityOpen(true)}
+                title="Activity"
+                aria-label="Open activity"
+                className={`absolute right-0 top-0 inline-flex items-center justify-center rounded-full w-8 h-8 text-neutral-300 hover:bg-neutral-100 hover:text-indigo-600 transition-all duration-200 ${activityOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+              >
+                <ClockIcon className="w-4 h-4" />
+              </button>
+              <div className="mx-auto w-full max-w-[720px]">
+                <CalmGreeting
+                  name={b?.firstName ?? null}
+                  greeting={greeting()}
+                />
+              </div>
+            </div>
+          ) : (
           <OneHomeHeader
             name={b?.firstName ?? null}
             greeting={greeting()}
@@ -2002,6 +2234,7 @@ export function HomeView() {
               </button>
             </>}
           />
+          )}
         </RiseIn>
         )}
 
@@ -2086,96 +2319,11 @@ export function HomeView() {
           </RiseIn>
         )}
 
-        {!nothing && (
-          // SINGLE column: action content flows top→bottom (the Ask zone is above, always present).
-          // Ambient context now lives compactly under the greeting (AmbientStrip).
-          <div className="w-full flex-1 flex flex-col">
-
-            {/* ── ACTION content ─────────────────────────────────────────────────────────────── */}
-            <div className="min-w-0 gap-10 flex-1 flex flex-col">
-
-            {/* (W3's ask ledger does NOT render as a Home section — tried and REVERTED July 29,
-                user-rejected: the Home is ONE curated deck, and a stack of ask cards is a second
-                competing work-list whose items DUPLICATE deck rows (the show-twice class P3
-                forbids). The approved direction: an ask is a STATE OF ITS DECK ROW — a small
-                "needs your input" chip on the affected row, checklist in the room; the global
-                ledger (/api/room/asks + WaitingOnYou) stays as the data spine for that. */}
-
-            {/* 1 · WHAT NEEDS YOU — ONE prioritized list of everything you owe: email replies, action
-                notices, and commitments, all rendered by the same DoRow (a leading TYPE ICON tells them
-                apart — ✉ reply · ⚠ notice · ✓ commitment) instead of three differently-styled sections.
-                The top row is softly SUGGESTED ("Start here"). Priority cards ride along. Capped with the
-                shared Collapse expander. */}
-            {/* THE DECK — the CURATED working set (the brief pipeline's judged pool, ~18-20 items), as
-                hero + peeks with rich inline actions. The ledger (L1/L2) stays the substrate underneath;
-                the raw-inventory report presentation was tried and REVERTED (137 flat lines scared work
-                away — curation + cards ARE the product). */}
-
-            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-6 items-start">
-            <div className="min-w-0">
-            {(hasBody || hadActionNotices || (b?.commitments?.length ?? 0) > 0) && (() => {
-              const ordered = agenda.entries;
-              // ONE ROW SPECIES (the final Home simplification — user-locked): BUNDLES RETIRE from
-              // the deck. Grouping is the user's toggle (Tasks=time | By project) — one mechanism,
-              // never a card nested inside a group. Every entry FLATTENS to the one row anatomy;
-              // the project chip carries the deal; a bundle member inherits its bundle's name as
-              // its chip. Curation (the judged pool) and judged order within groups are unchanged.
-              type FlatRow = { item: DoItem; dealKey?: string };
-              // USER-CREATED ONLY: a row may only wear a TRACKED project's name as its chip
-              // (name or alias, case-insensitive). The server already gates the per-item tag;
-              // this same lookup gates the bundle-title fallback AND the By-project grouping —
-              // an untracked recognition label never surfaces as a project.
-              const trackedLookup = new Map<string, string>();
-              for (const t of brief?.trackedProjects ?? []) {
-                trackedLookup.set(t.name.toLowerCase(), t.name);
-                for (const a of t.aliases) trackedLookup.set(String(a).toLowerCase(), t.name);
-              }
-              const flat: FlatRow[] = [];
-              for (const e of ordered) {
-                if (e.kind === 'bundle') for (const it of e.items) flat.push({ item: { ...it, initiative: it.initiative ?? trackedLookup.get(e.title.toLowerCase()) ?? null } });
-                else if (e.kind === 'single') flat.push({ item: e.item });
-                else if (e.kind === 'priority') flat.push({ item: priorityToItem(e.p) });
-                else flat.push({ item: dealToItem(e.deal), dealKey: e.deal.key });
-              }
-              // THE CENTER EXTRACTION (Aug 6): the deck's COMPOSITION lives in one-home.tsx;
-              // this host only flattens the judged entries and hands over state + handlers.
-              return (
-              <RiseIn delay={60}>
-                <OneDeck
-                  flat={flat}
-                  groupMode={doGroupMode}
-                  onGroupMode={setDoGroupMode}
-                  projectLookup={trackedLookup}
-                  pinnedGroups={pinnedGroups}
-                  hoverGroup={hoverGroup}
-                  onHoverGroup={setHoverGroup}
-                  onTogglePin={togglePinnedGroup}
-                  handlers={{
-                    dismissDeal,
-                    onDismissInbox: onDismiss, onClearedCommitment: onCleared,
-                    onUndoInbox: toastInbox, onUndoCommitment: toastCommitment,
-                  }}
-                />
-              </RiseIn>
-              );
-            })()}
-            </div>
-            {/* Workbench (iterated): THIS WEEK rides BESIDE the list — two columns; the To-prep card
-                was removed (the prep pass still prepares; briefs live in the deal rooms). */}
-            <ThisWeekCard />
-            </div>
-
-            {/* ── MOVING · nothing needed — the calm reassurance tier. Initiatives that need you now surface
-                IN the deck above (as bundle cards carrying momentum + next move); this collapsed strip holds
-                only the ones that are progressing but need nothing from you, so the Home reads as ONE
-                initiative-aware list, not two competing rollups. Renders nothing until states populate. */}
-            {/* The MovingTier ("N moving · nothing needed") DIED (owner call, Aug 6): the deck IS
-                the day — an ambient reassurance line floating below it read as clutter. Momentum
-                lives in the sidebar's Projects + the portfolio. */}
-
-            </div>{/* ── end ACTION content ── */}
-          </div>
-        )}
+        {/* THE WHISPERED LINES + THE ONE DOOR live BELOW the composer (the board's order:
+            greeting → composer → whispers), so they render after the composer mount further down
+            this column. The composer is the page's single focal point; the work whispers under it.
+            (The old bordered deck, its "What needs you" heading, the day ring and the This-week
+            rail are RETIRED — the Home has one row grammar, and the door expands the rest in it.) */}
         </div>)}
 
         {/* ── THE COMPOSER IS THE FLOOR (the shell — Claude's anatomy): ALWAYS PRESENT on the
@@ -2186,21 +2334,78 @@ export function HomeView() {
           /* THE SOVEREIGN CENTERPIECE: same mount, class toggle only — undocked from the floor so
              the team card + composer read as ONE centered group; the sticky floor returns the
              moment the chat goes live or the deck has rows. */
-          <div className={sovereignCenter
+          <div className={dmPane
+            /* THE DM PANE: no padding, no sticky floor, no mt-auto push — the pane IS the column,
+               so its header lands on the top edge and its composer on the bottom one. */
+            ? 'flex flex-col flex-1 min-h-0'
+            : sovereignCenter
             ? 'pt-7 pb-4'
-            : 'sticky bottom-0 mt-auto pt-8 pb-5 bg-gradient-to-t from-[#fbfbfd] via-[#fbfbfd]/95 to-transparent'}>
+            /* THE CALM HOME: at rest the composer is the page's FOCAL POINT — centered in the
+               720px column, directly under the CoS's sentence. It docks back to the sticky floor
+               the moment the conversation goes live (the takeover keeps its anatomy). Same mount,
+               class toggle only — the composer must never remount mid-conversation. */
+            : chatActive
+              ? 'sticky bottom-0 mt-auto pt-8 pb-5 bg-gradient-to-t from-[#fbfbfd] via-[#fbfbfd]/95 to-transparent'
+              : 'mx-auto w-full max-w-[720px] pb-1'}>
             <HomeAsk
               suggestions={(() => {
                 // Sovereign day-one chips: only work that needs NO mail/calendar context —
                 // standalone drafts, attach-a-file, web research ("Plan my week" with no
                 // calendar and "summarize" with no mail are hollow on an empty corporate account).
                 if (sovereignCenter) return ['Draft a document…', 'Set up a weekly research brief', 'What can the team do?'];
-                const s: string[] = ['Add a task…', 'Plan my week', "What's slipping?"];
-                if ((b?.schedule?.length ?? 0) > 0) s.push('Prep my next meeting');
-                else s.push('What did I miss?');
-                return s;
+                // THE STANDING FOUR ARE RETIRED (owner call, Sep 13 — "lets also remove the
+                // chips"): "Add a task… · Plan my week · What's slipping? · What did I miss?"
+                // stood over the composer on every warm Home. A furnished account already has its
+                // day in the whispers; the chips were a menu for a page that isn't a menu.
+                // The SOVEREIGN day-one chips above are a DIFFERENT feature and survive: an empty
+                // corporate account has no work to whisper, so they are its only visible door.
+                return [];
               })()}
             />
+          </div>
+        )}
+        {/* ── THE WHISPERED LINES · THE ONE DOOR · EVERYTHING ELSE ─────────────────────────────
+            The top slice of the SERVED deck (≤5, THE DENSITY LAW), each line wearing its receipt.
+            The door opens the rest IN PLACE and IN ORDER, in the SAME grammar (lib/home/calm.ts
+            sortDoorRows) — the fold, never a graveyard and never a second surface. */}
+        {view === 'dashboard' && !chatActive && !projectDetailOpen && !nothing && (
+          <div className={`mx-auto w-full max-w-[720px] mt-7 transition-opacity duration-200 ease-out ${chatFading ? 'opacity-0' : 'opacity-100'}`}>
+            <RiseIn delay={60}>
+              <div className="flex flex-col gap-0.5">
+                {whispers.map((w) => (
+                  <WhisperLine key={w.item.key} w={w} handlers={{
+                    onDismissInbox: onDismiss, onClearedCommitment: onCleared,
+                    onUndoInbox: toastInbox, onUndoCommitment: toastCommitment,
+                    dismissOverride: dealKeyOf.has(w.item.key) ? () => dismissDeal(dealKeyOf.get(w.item.key)!) : undefined,
+                  }} />
+                ))}
+                <CalmDoor remaining={restRows.length} handledToday={ringCleared} open={deckOpen} onToggle={toggleDeck} />
+              </div>
+            </RiseIn>
+
+            {/* BEHIND THE FOLD — THE DOOR EXPANDS IN PLACE (owner walk, Sep 8: "this is awful,
+                looks bad and not aligned with the new design at all"). The legacy deck that used
+                to live down here — the "What needs you N" header, the Tasks/By-project toggle, the
+                boxed OVERDUE cards with their red badges, the day ring and the This-week rail — is
+                RETIRED from the Home. The Home has ONE row grammar now: the whisper. The door
+                simply shows the rest of the pile, sorted (lib/home/calm.ts sortDoorRows), in that
+                same grammar with the same hover deeds. Nothing that had another home was
+                restyled: the calendar lives on /meetings (and the CoS's sentence already carries
+                the day shape), and the ring's count already rests beside the door as
+                "N handled today" — a second seat for a fact is the wrong seat. */}
+            <div className={`grid transition-all duration-300 ease-out ${deckOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+              <div className="overflow-hidden min-h-0">
+                <div className="flex flex-col gap-0.5 pt-1">
+                  {restRows.map((r) => (
+                    <WhisperLine key={r.item.key} w={toWhisper(r.item)} handlers={{
+                      onDismissInbox: onDismiss, onClearedCommitment: onCleared,
+                      onUndoInbox: toastInbox, onUndoCommitment: toastCommitment,
+                      dismissOverride: r.dealKey ? () => dismissDeal(r.dealKey!) : undefined,
+                    }} />
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
         )}
         {sovereignCenter && <div className="flex-1" aria-hidden />}

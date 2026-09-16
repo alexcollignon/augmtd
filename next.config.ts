@@ -16,7 +16,9 @@ const securityHeaders = [
       "font-src 'self' data:",
       "media-src 'self' https://*.supabase.co",
       "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.openai.com https://api.anthropic.com https://api.fireworks.ai https://api.together.xyz https://graph.microsoft.com https://login.microsoftonline.com https://*.googleapis.com https://accounts.google.com https://api.tavily.com https://nango.augmtd.ai wss://nango.augmtd.ai",
-      "frame-src 'self' https://accounts.google.com https://docs.google.com https://drive.google.com https://nango.augmtd.ai",
+      // *.supabase.co: the attachment lightbox previews PDFs via <iframe> on short-lived signed
+      // storage URLs (the media-src grant's sibling); without it CSP blanks every PDF preview.
+      "frame-src 'self' https://accounts.google.com https://docs.google.com https://drive.google.com https://nango.augmtd.ai https://*.supabase.co",
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",

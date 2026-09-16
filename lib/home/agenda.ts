@@ -21,6 +21,10 @@ export type DoItem = {
   overdue?: boolean; dueToday?: boolean; initiative?: string | null; initiativeTotal?: number | null;
   relCue?: { label: string; tone: 'neutral' | 'amber' } | null; // ONE quiet Person-Brain cue
   prepared?: string | null;  // '✦' token: 'draft' (in-house) or a coworker's name — prepared work has arrived
+  /** THE MACHINE'S ONE WORD, unfolded (lib/work/machine.ts STATE_WORDS via the served MachineHint).
+   *  The deck folds it into `second`; THE CALM HOME needs it whole to word a whisper's receipt
+   *  (lib/home/calm.ts). Derived from the SAME machineWord() call — never a second vocabulary. */
+  stateWord?: string | null;
 };
 export type Priority = {
   id: string; source: 'email' | 'meeting'; posture: 'needs_reply' | 'to_do' | 'waiting_on';

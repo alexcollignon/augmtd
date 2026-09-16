@@ -105,8 +105,14 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       const v = await judgeWork(sb, PERSONAL, { kind: 'inbox', id: String(probe.id) });
       check('P2b live · a dunning notice NEVER judges reply/chase (the sender floor — a letter to a robot reaches no one)',
         v.work !== 'reply' && v.work !== 'chase', `${v.work} · "${v.reason.slice(0, 60)}"`);
+      // RE-POINTED (Sep 13, the deck-floors wave): the lane-entry law moved OUT of the route into
+      // the ONE module every surface now reads (`lib/home/deck-floors`). Same law, same strength —
+      // a judged-none demotes UNLESS the item is a you_owe action notice the sender floor distorts;
+      // the gate follows the law to its new home rather than asserting a dead line in the route.
       check('P2b · the deck demotion respects the notice law (a you_owe action notice outranks a judged-none)',
-        src('app/api/home/brief/route.ts').includes('judgedNoneIds.has(it.id) && !youOweAction'));
+        src('lib/home/deck-floors.ts').includes('floors.judgedNone.has(it.id) && !sheltered')
+        && src('lib/home/deck-floors.ts').includes("const youOweAction = !!u && u.ownership === 'you_owe' && u.relevance === 'action'")
+        && src('app/api/home/brief/route.ts').includes('noticeIsDemoted('));
       await sb.from('item_plans').delete().eq('user_id', PERSONAL).eq('entity_id', `inbox:${probe.id}`);
       await sb.from('inbox_items').delete().eq('id', probe.id);
     }
@@ -592,10 +598,16 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   check('P18 · ONE ask per item — the coworker\'s attempted-work ask SUPERSEDES the engine\'s provisional one (both directions)',
     src('lib/home/delegate.ts').includes('THE COWORKER SUPERSEDES') &&
     src('lib/prepare/requirements.ts').includes('THE COWORKER SUPERSEDES'));
-  check('P18 · an ask NEVER BLOCKS — the contract says work with what\'s available (delegation prompt + evaluator + a one-tap "go ahead" on the checklist)',
+  // RE-POINTED (Sep 14, the go-ahead law): the canned "go ahead with what's available" utterance
+  // died — the machine's instruction was placed in the user's mouth, and the chip offered itself
+  // even where the missing item WAS the deliverable. The never-blocks LAW is unchanged and now
+  // STRONGER: the go-ahead is person-speech ("go ahead without it"), gated by askAllowsGoAhead
+  // (lib/room/go-ahead.ts — no door where proceeding is impossible), one implementation.
+  check('P18 · an ask NEVER BLOCKS — the contract says work with what\'s available (delegation prompt + evaluator + a gated one-tap go-ahead)',
     src('lib/home/delegate.ts').includes('WORK WITH WHAT YOU HAVE') &&
     src('lib/prepare/evaluate.ts').includes('incompleteness with honest gaps is a deliverable, not an ask') &&
-    src('components/home/item-rail.tsx').includes("go ahead with what's available"));
+    src('components/home/item-rail.tsx').includes('go ahead without it') &&
+    src('components/home/item-rail.tsx').includes('askAllowsGoAhead('));
   check('P18 · the item chip hides in the item\'s OWN room (self-referential noise; deal rooms keep it)',
     src('components/home/item-rail.tsx').includes('inRoom || !r.href?.includes(`/item/${id}`)'));
   check('P18 · a meeting card opens the meeting\'s OWN room (never the meetings list)',
@@ -836,7 +848,12 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   check('P24 · the ask ledger + lifecycle are wired (global route · engine go-ahead in the rail · proceeded honored by the resolution + the envelope)',
     src('app/api/room/asks/route.ts').includes('input_checklist') &&
     src('app/api/room/asks/route.ts').includes("action:'proceed'") &&
-    src('components/home/item-rail.tsx').includes('!t.proceeded && !t.author?.name && t.turnId') &&
+    // Re-pointed Sep 7 (threads P2d/P4 — the rail rewrote around the kit; the LAW is unchanged:
+    // the ENGINE's go-ahead lives in the rail, keyed to the durable turnId, honoring proceeded):
+    src('components/home/item-rail.tsx').includes('proceedEngineAsk(') &&
+    // Re-pointed Sep 14 (the go-ahead law): the engine-ask predicate moved into the chip seats and
+    // the lifted ask's chip is additionally gated by askAllowsGoAhead — proceeded still suppresses.
+    src('components/home/item-rail.tsx').includes('liftedAsk.proceeded || !askAllowsGoAhead(') &&
     src('lib/prepare/requirements.ts').includes('proceeded: true') &&
     src('lib/prepare/pass.ts').includes('Do NOT ask for the missing inputs again') &&
     // A Home ASK SECTION was tried and USER-REJECTED (July 29): it duplicated deck rows — the
@@ -1213,7 +1230,9 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       src('lib/home/delegate.ts').includes("author: { kind: 'coworker', id: worker.id"));
     check('P29 · three grammars derived STRUCTURALLY in the rail (event lines for narration · bubbles for speech · components keep their affordances) + prep narration folds into the artifact card',
       src('components/home/item-rail.tsx').includes('three grammars, derived STRUCTURALLY') &&
-      src('components/home/item-rail.tsx').includes('/^(prep:|meeting-prep:)/.test(t.dkey)') &&
+      // RE-POINTED (Sep 8): the prep class now includes `anticipate:` — an anticipation narration
+      // stood outside every retirement rule and survived its own meeting by six days.
+      src('components/home/item-rail.tsx').includes('/^(prep:|meeting-prep:|anticipate:)/.test(t.dkey)') &&
       src('lib/room/turns.ts').includes('dedupe_key') && src('lib/room/turns.ts').includes('key: (r.dedupe_key'));
     // Aug 4 (a component is a turn): the card carries NO commit callback at all — Open summons the
     // stage, the stage holds the only Send. The card is seated at its anchor turn's moment.
@@ -1232,7 +1251,10 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       !/rail=\{railView \? \(/.test(src('components/home/item-detail.tsx')) &&
       src('components/home/item-detail.tsx').includes("seed?.title || 'Email'") &&
       src('components/work/work-row.tsx').includes('aug-item-seed-') &&
-      src('components/home/item-rail.tsx').includes("never a claim we can't back"));
+      // Re-pointed Sep 7: the anchoring comment died in the rail's kit port; the same truth law
+      // holds structurally — the rail's opening speaks ONLY the served brief (composed or the
+      // view's own), never a fabricated fallback.
+      src('components/home/item-rail.tsx').includes('ent?.brief ?? view.brief'));
     {
       const long = 'The ALP allocation sheet with participant scores included';
       const c = clip(long, 24);

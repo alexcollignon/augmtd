@@ -99,11 +99,15 @@ export async function POST(request: NextRequest) {
     }).eq('id', turn.id).eq('user_id', user.id);
 
     // 2. The go-ahead is a VISIBLE user turn in the room (a choice is never silent — P8).
+    // IT IS SPEECH THE USER WOULD ACTUALLY SAY (owner walk, Sep 14: the old sentence — "go ahead
+    // with what's available — work with what I've shared and note any gaps" — read like an engine
+    // instruction pasted into his own bubble; his word for it was meaningless). Clicks are words,
+    // so the words have to be a person's.
     const { writeRoomTurn } = await import('@/lib/room/turns');
     const first = (turn.author as { name?: string } | null)?.name?.split(' ')[0];
     await writeRoomTurn(supabase, user.id, turn.room_key as string, {
       role: 'user',
-      text: `${first ? `Have ${first} go` : 'Go'} ahead with what's available — work with what I've shared and note any gaps.`,
+      text: `${first ? `${first}, go` : 'Go'} ahead without it — use what you have and tell me what's missing.`,
       dedupeKey: `proceed:${turn.id}`,
     }).catch(() => {});
 

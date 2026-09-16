@@ -13,6 +13,7 @@
 
 import React from 'react';
 import { useRouter } from 'next/navigation';
+import { projectHref } from '@/lib/room/project-href';
 
 export type BriefingRef = {
   id: string; kind: 'action' | 'watch' | 'pulse' | 'group';
@@ -169,12 +170,15 @@ export function BriefingBlock({ briefing, clearedIds, onNavigate, flat = false, 
   );
 }
 
-/** The default ref navigation — items → their deep-dive; entities → the Portfolio lens. */
+/** The default ref navigation — items → their deep-dive; entities → their ROOM. */
 export function useBriefingNavigate(setView?: (v: string) => void) {
   const router = useRouter();
   return (r: BriefingRef) => {
     if (r.href) { router.push(r.href); return; }
     if (r.itemKind === 'entity') {
+      // THE ADDRESS LAW: a named project opens ITS room, not the grid with the reader left to
+      // find the row again. Only a ref with no id at all falls back to the lens.
+      if (r.itemId) { router.push(projectHref(r.itemId)); return; }
       if (setView) setView('projects');
       else router.push('/home?view=projects');
     }

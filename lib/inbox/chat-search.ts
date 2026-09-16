@@ -60,8 +60,8 @@ function extractEntities(message: string): ExtractedEntities {
   }
 
   // Extract capitalized proper noun pairs not at sentence starts.
-  // Push to keywords (not senderNames) — topic concepts like "Personal Assistant",
-  // "Marketing Director", "Job Application" should be searched in subject/snippet,
+  // Push to keywords (not senderNames) — topic concepts like "Marketing Director",
+  // "Purchase Order", "Job Application" should be searched in subject/snippet,
   // not in from_name/from_address where they'll never match.
   const properNouns = message.match(/(?<![.!?]\s)(?<!\n)\b([A-Z][a-z]{1,20}(?:\s+[A-Z][a-z]{1,20})+)\b/g)
   if (properNouns) {

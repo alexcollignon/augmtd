@@ -69,8 +69,18 @@ export function isNoMoveNotice(args: {
   rawKind?: string | null;
   fromEmail: string | null; fromName: string | null; subject: string | null;
   workState: string | null;
+  /** THE ECHO FLOOR (LAW 5 — proactive-reach), mirrored into the ownership-keyed notice law so the
+   *  demotion is ONE law with one shape wherever it is asked. The caller supplies the derived fact
+   *  (lib/inbox/campaign-echo `isCampaignEcho`) — this module owns "is there a move here?", never
+   *  the derivation. A reply into the user's OWN outbound sequence is a no-move notice: the user's
+   *  sequencer asked, a stranger answered the sequencer, nobody owes a personal move. Deliberately
+   *  NOT gated on the understanding's ownership key — the census found exactly these echoes judged
+   *  `bulk:false / customer / action / confidence 92`, so deferring to that judgment here would
+   *  make the floor a no-op. The human escape (type_override) is applied by the caller, above. */
+  campaignEcho?: boolean;
 }): boolean {
-  const { u, rawKind, fromEmail, fromName, subject, workState } = args;
+  const { u, rawKind, fromEmail, fromName, subject, workState, campaignEcho } = args;
+  if (campaignEcho === true) return true;
   const auto = isAutomatedSenderStrong(fromEmail, fromName, subject);
   const kind = (u?.mailKind ?? rawKind ?? '').toLowerCase();
   const noticeKind = kind === 'notification' || kind === 'calendar' || kind === 'receipt' || kind === 'newsletter';

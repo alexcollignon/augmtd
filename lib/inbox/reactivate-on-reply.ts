@@ -123,6 +123,17 @@ export async function reactivateResolvedThreadOnReply(params: ReactivateParams):
             source_data: { ...(item.source_data ?? {}), closure_note: `${String(storedEmail.received_at).slice(0, 10)}: ${String(res.json.reason ?? 'counterparty closed the loop').slice(0, 140)}` },
             last_activity_at: storedEmail.received_at ?? new Date().toISOString(),
           }).eq('id', item.id).eq('user_id', userId);
+          // ── LAW 4, THE ASYMMETRY AT THIS DOOR: settlement spreads, reactivation NEVER does. A
+          // reopen travels nowhere (a new arrival is this thread's news alone); only this door's
+          // SETTLE-shaped branch — the counterparty closing the loop — reaches siblings, and even
+          // then it may only NOMINATE them for the judge, never settle them itself. ──
+          try {
+            const { cascadeConversationSettlement } = await import('@/lib/inbox/conversation-identity');
+            await cascadeConversationSettlement(client, userId, {
+              threadId, settledAt: String(storedEmail.received_at ?? new Date().toISOString()),
+              via: 'the counterparty closed the loop', nominateOnly: true,
+            });
+          } catch { /* non-fatal */ }
           return false;
         }
       }
@@ -156,8 +167,11 @@ export async function reactivateResolvedThreadOnReply(params: ReactivateParams):
       .update({
         status: 'pending',
         work_state: restoreWs,
-        // Spread existingSd first (carries `understanding`), then the fresh envelope; the helper
-        // makes preservation explicit + validates the understanding so a rebuild can never drop it.
+        // Spread existingSd first (carries `understanding` + its freshness stamp), then the fresh
+        // envelope; the helper makes preservation explicit + validates the understanding so a
+        // rebuild can never drop it. The stamp rides along so the reopened row's claim stays
+        // PROVABLY behind its new inbound until the re-derivation below lands (LAW 3's asymmetry:
+        // a claim we cannot prove fresh degrades to the neutral title, it never speaks stale).
         source_data: withPreservedUnderstanding({ ...existingSd, ...newSourceData }, item),
         source_id: storedEmail.id,
         last_activity_at: storedEmail.received_at || reopenedAt,
@@ -171,6 +185,22 @@ export async function reactivateResolvedThreadOnReply(params: ReactivateParams):
     }
 
     console.log('    ♻️  Reopened resolved thread on new inbound reply');
+
+    // ── THE LABEL FOLLOWS THE PRESENT (proactive-reach LAW 3, lib/inbox/refresh-understanding.ts) ──
+    // A reopen is the sharpest case of the frozen-label class: the item comes BACK onto the deck
+    // speaking whatever it asked before it was ever resolved, while the message that resurrected it
+    // says something else entirely. Re-derive on THIS inbound, through the same one pass. The item
+    // is pending as of the update above, so the helper's own guards do the rest (idempotent by
+    // message id, never on the user's own reply, non-fatal).
+    try {
+      const { refreshUnderstandingForArrival } = await import('@/lib/inbox/refresh-understanding');
+      await refreshUnderstandingForArrival({
+        userId,
+        item: { id: item.id, status: 'pending', source_data: { ...existingSd, ...newSourceData } },
+        message: storedEmail,
+        client,
+      });
+    } catch { /* non-fatal */ }
 
     // P0 perf: no null-bust needed — reactivation flips the item back to pending + bumps
     // last_activity_at, both of which change the brief's sig naturally (the item resurfaces on the

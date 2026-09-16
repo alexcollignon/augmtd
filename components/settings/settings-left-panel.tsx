@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { UserIcon, BuildingOffice2Icon, Squares2X2Icon, EnvelopeIcon, FolderIcon, UserGroupIcon } from '@heroicons/react/24/outline';
+import { UserIcon, BuildingOffice2Icon, Squares2X2Icon, EnvelopeIcon, UserGroupIcon } from '@heroicons/react/24/outline';
 
 function BrainIcon({ className }: { className?: string }) {
   return (
@@ -23,10 +23,9 @@ const NAV_ITEMS = [
   { id: 'email', label: 'Email', Icon: EnvelopeIcon },
   { id: 'company', label: 'Company', Icon: BuildingOffice2Icon },
   { id: 'connections', label: 'Connections', Icon: Squares2X2Icon },
-  // THE DRIVE DEMOTION (Arc 3): Knowledge is a real SETTINGS SECTION (owner correction, Aug 6 —
-  // the door must stay GROUNDED in the Settings nav, never eject to a standalone page). The slim
-  // panel renders inside this shell; /drive survives only as a redirect here.
-  { id: 'knowledge', label: 'Knowledge', Icon: FolderIcon },
+  // ONE LIBRARY, ONE ADDRESS (owner, Sep 15 — docs/documents-library-plan.md): the library is its
+  // own page at /documents, so Settings carries no Knowledge seat. This REVISES the Aug 6 clause
+  // that grounded the panel in this nav; ?tab=knowledge survives only as a redirect.
   // THE FOLD's config door (Arc 3, grounded Aug 6): team CONFIG (roster · per-worker tools ·
   // skills) is a real Settings section — coworkers themselves are executors IN the work, talked
   // to from any conversation, never a destination.

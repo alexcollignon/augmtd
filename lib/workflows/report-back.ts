@@ -68,12 +68,32 @@ ${f.firstName ? `- You can address ${f.firstName} by name if it feels natural.` 
     const res = await aiCreate(client, {
       model,
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 200,
+      // THE REPORT ENDS AT A BOUNDARY (proactive-reach W4, census fix 7). The stored reports on the
+      // owner's account end mid-word — "…Next one runs Wednesday at 08:00. Let me " — two cuts, both
+      // now closed: the pre-Aug-10 `summary: reportText.slice(0, 280)` writer (dead with the feed
+      // that read it) and THIS budget, which a three-sentence DM on a current, more verbose model
+      // can genuinely exhaust (finish_reason 'length' = a sentence the model never got to finish).
+      // The budget is raised to a real ceiling AND a truncated completion is trimmed back to its
+      // last finished sentence — a receipt never ends mid-thought.
+      max_tokens: 400,
       temperature: 0.7,
     });
-    const text = res.choices[0]?.message?.content?.trim();
-    return text || fallbackReport(f);
+    const choice = res.choices[0];
+    const text = choice?.message?.content?.trim();
+    if (!text) return fallbackReport(f);
+    return choice?.finish_reason === 'length' ? endAtBoundary(text) : text;
   } catch {
     return fallbackReport(f);
   }
+}
+
+/** Trim a completion the model never finished back to its last complete sentence; with no sentence
+ *  end at all, cut at the last word break and MARK the cut (never mid-word, never a silent cut). */
+export function endAtBoundary(text: string): string {
+  const t = text.trim();
+  const end = Math.max(t.lastIndexOf('. '), t.lastIndexOf('! '), t.lastIndexOf('? '));
+  if (end > t.length * 0.4) return t.slice(0, end + 1).trim();
+  if (/[.!?]$/.test(t)) return t;
+  const space = t.lastIndexOf(' ');
+  return space > 0 ? `${t.slice(0, space).replace(/[\s,;:—-]+$/, '')}…` : t;
 }

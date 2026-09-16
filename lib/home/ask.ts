@@ -11,12 +11,14 @@ import { aiCall } from '@/lib/ai/call';
 import { resolveFileUniversal } from '@/lib/knowledge/resolve';
 import { getTodaySchedule, renderScheduleBlock } from '@/lib/calendar/today-schedule';
 import { GENERIC_WORK_WORDS } from '@/lib/entities/recognize';
+import { projectHref } from '@/lib/room/project-href';
+import { GROUND_EVIDENCE_RULE } from '@/lib/room/ground-evidence';
 
 export type AskRef = { id: string; kind: 'entity' | 'inbox_item' | 'commitment' | 'meeting' | 'file'; label: string; href: string | null };
 export type AskAnswer = { answer: string; refs: AskRef[] };
 export type AskTurn = { role: 'user' | 'assistant'; text: string };
 
-const entHref = (id: string) => `/home?view=projects&entity=${id}`;
+const entHref = (id: string) => projectHref(id);
 
 // ── THE FOCUS MATCH (one-surface § the one grounding, Aug 5): which registered entity does an
 // unscoped question NAME? Strict by design — ≥1 distinctive token of the entity's name/aliases
@@ -118,7 +120,11 @@ export async function buildBrainSnapshot(supabase: SupabaseClient, userId: strin
           `THE FOCUSED WORK — the question names "${focus.name}"${eTag ? ` (reference as [${eTag}])` : ' (reference as [E0])'}. ` +
           `This is its full current page — deeper and MORE CURRENT than its one-line summary above; ` +
           `prefer it for anything about this work:\n` +
-          g.text.replace(/\[(?:L|F)\d+\]\s?/g, '').slice(0, 3200),
+          g.text.replace(/\[(?:L|F)\d+\]\s?/g, '').slice(0, 3200) +
+          // ONE LAW, ONE COPY (Sep 8): the focused page can carry a GROUND EVIDENCE block, and a
+          // Home answer that ranked the board above the world would contradict the room's own
+          // brief — "status on X?" must be the same answer from both doors, settlements included.
+          `\n${GROUND_EVIDENCE_RULE}`,
         );
       }
     } catch { /* the focus is an enhancement — the plain snapshot still answers */ }

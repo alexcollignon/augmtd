@@ -9,7 +9,6 @@ import CompanyPending from '@/app/company/company-pending';
 import CompanyAIOperationsSection from '@/components/settings/company-ai-operations-section';
 import CompanyStrategySection from '@/components/settings/company-strategy-section';
 import MemorySection from '@/components/settings/memory-section';
-import KnowledgePanel from '@/components/knowledge/knowledge-panel';
 import TeamSection from '@/components/settings/team-section';
 import EmailSettings from '@/components/settings/email-settings';
 import IntegrationsSection from '@/components/settings/integrations-section';
@@ -33,6 +32,9 @@ export default async function SettingsPage({ searchParams }: Props) {
   const features = await getWorkspaceFeatures(user.id, supabase);
   const emailEnabled = features?.email !== false;
   if (tab === 'email' && !emailEnabled) redirect('/settings?tab=account');
+  // ONE LIBRARY, ONE ADDRESS (owner, Sep 15): the library left Settings for /documents; this tab
+  // survives only so old links keep landing on the real surface.
+  if (tab === 'knowledge') redirect('/documents');
   const section = rawSection ?? (tab === 'company' ? 'members' : 'connections');
 
   let members: any[] = [];
@@ -138,14 +140,6 @@ export default async function SettingsPage({ searchParams }: Props) {
 
             {tab === 'memory' && (
               <MemorySection />
-            )}
-
-            {/* THE SLIM KNOWLEDGE PANEL — a real Settings section (grounded in this nav, never a
-                standalone ejection); /drive redirects here. */}
-            {tab === 'knowledge' && (
-              <div className="flex-1 overflow-y-auto">
-                <KnowledgePanel />
-              </div>
             )}
 
             {/* SETTINGS → TEAM — the /workers kill list item 1: team CONFIG grounded here (the

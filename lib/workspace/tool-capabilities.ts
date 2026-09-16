@@ -21,6 +21,10 @@ export const TOOL_FEATURE: Record<string, FeatureKey | null> = {
   get_meeting_context: 'meetings',
   get_calendar: 'meetings',
   send_calendar_invite: 'meetings',
+  // The invite CARD's producer (chat, both surfaces). It prepares and never sends — but it is a
+  // calendar verb, so a workspace without meetings never sees it offered (the tier law: capability
+  // shapes content; a chip is a claim).
+  prepare_calendar_invite: 'meetings',
 
   // ── Drive / knowledge base ──
   search_knowledge_base: 'drive',

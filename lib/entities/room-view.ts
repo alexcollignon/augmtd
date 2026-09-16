@@ -46,6 +46,19 @@ export async function buildRoomView(
     .select('id, name, summary, state, next_move, tracked').eq('id', entityId).eq('user_id', userId).maybeSingle();
   if (!ent) return { entity: null, siblings };
 
+  // THE PAIR FLIES TOGETHER — the routing verdict and the stored room response are independent
+  // reads of the same entity; awaiting them in sequence inside the object literal was a pure
+  // waterfall (and the routing verdict can be an AI call on a cache miss).
+  //
+  // …AND THE READ PATH CARRIES NO AI (Sep 8): this builder gates the room's WHOLE conversation pane
+  // (`conversation={rail ? … : null}`), so a cache miss on the routing verdict held a blank page
+  // open for a model round-trip. `deferOnMiss` serves the honest absence and warms the sig-cache in
+  // the background — the chip arrives on the next open, the page arrives now.
+  const [routed, response] = await Promise.all([
+    suggestWorkerForMove(supabase, userId, entityId, { next_move: ent.next_move }, { deferOnMiss: true }),
+    import('@/lib/room/brief').then(({ readRoomResponse }) => readRoomResponse(supabase, userId, entityId)),
+  ]);
+
   const st = ((ent.state ?? {}) as { summary?: string; momentum?: string; whoOwes?: { you?: string[]; them?: string[] } });
   const nm = ((ent.next_move ?? null) as { title?: string; entityRef?: string | null } | null);
   const entity: RoomEntity = {
@@ -63,12 +76,11 @@ export async function buildRoomView(
     })(),
     whoOwesYou: Array.isArray(st.whoOwes?.you) ? st.whoOwes!.you!.slice(0, 3) : [],
     whoOwesThem: Array.isArray(st.whoOwes?.them) ? st.whoOwes!.them!.slice(0, 3) : [],
-    suggestedWorker: await suggestWorkerForMove(supabase, userId, entityId, { next_move: ent.next_move }),
-    ...(await (async () => {
-      const { readRoomResponse } = await import('@/lib/room/brief');
-      const r = await readRoomResponse(supabase, userId, entityId);
-      return { brief: r?.text ?? null, move: r?.move ?? null, offers: r?.offers ?? [], briefAt: r?.at ?? null };
-    })()),
+    suggestedWorker: routed,
+    brief: response?.text ?? null,
+    move: response?.move ?? null,
+    offers: response?.offers ?? [],
+    briefAt: response?.at ?? null,
   };
 
   // Everything else on this deal — the "this has 2 other threads" awareness.
@@ -153,6 +165,7 @@ const _suggestMemo = new Map<string, { at: number; ids: Set<string> }>();
 export async function suggestLooseForEntity(
   supabase: SupabaseClient, userId: string, peopleRaw: unknown,
   entity?: { id: string; name: string; summary: string | null },
+  opts?: { deferJudge?: boolean },
 ): Promise<MembershipSuggestion[]> {
   const people = (Array.isArray(peopleRaw) ? (peopleRaw as string[]) : []).map((p) => p.toLowerCase());
   if (!people.length) return [];
@@ -192,7 +205,12 @@ export async function suggestLooseForEntity(
   const sig = `${entity.id}|${shortlist.map((c) => c.id).join(',')}`;
   const memo = _suggestMemo.get(sig);
   if (memo && Date.now() - memo.at < 10 * 60 * 1000) return shortlist.filter((c) => memo.ids.has(c.id)).slice(0, 3);
-  try {
+  // THE READ PATH CARRIES NO AI (Sep 8): "Might belong here" is DRAWER inventory — a list nobody
+  // has opened yet — and it was holding the room's whole detail payload open for a model call on
+  // every memo miss (the memo is process-local, so a cold lambda misses every time). Deferred: the
+  // judge runs in the background and the SAME memo serves the next open. Grounded-or-absent already
+  // means [] is an honest answer here, so nothing is claimed that isn't judged.
+  const judge = async (): Promise<MembershipSuggestion[]> => {
     const { aiCall } = await import('@/lib/ai/call');
     const lines = shortlist.map((c, i) => `[${i + 1}] (${c.kind === 'inbox_item' ? 'email' : 'commitment'}) ${c.who ? `${c.who} · ` : ''}${c.label}`).join('\n');
     const res = await aiCall<{ belongs?: number[] }>({
@@ -207,5 +225,15 @@ export async function suggestLooseForEntity(
     const ids = new Set((res.json?.belongs ?? []).map((n) => shortlist[Number(n) - 1]?.id).filter(Boolean) as string[]);
     _suggestMemo.set(sig, { at: Date.now(), ids });
     return shortlist.filter((c) => ids.has(c.id)).slice(0, 3);
-  } catch { return []; }
+  };
+  if (opts?.deferJudge) { inBackground(() => judge().catch(() => [])); return []; }
+  try { return await judge(); } catch { return []; }
+}
+
+/** Run work off the response's critical path — `after()` inside a request, a floating promise
+ *  anywhere else (a script, a cron tick). Never throws into the caller. */
+function inBackground(fn: () => Promise<unknown>): void {
+  void import('next/server')
+    .then((m) => { try { m.after(fn); } catch { void fn().catch(() => {}); } })
+    .catch(() => { void fn().catch(() => {}); });
 }

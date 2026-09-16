@@ -6,6 +6,8 @@ import { buildVoiceBlock, buildMeetingFollowupContext } from '@/lib/context/voic
 import { renderBrainContext } from '@/lib/context/brain-context';
 import { detectLanguage } from '@/lib/inbox/detect-language';
 import { coerceUnderstanding, languageName } from '@/lib/inbox/item-understanding';
+import { readItemAttachments, renderAttachedDocumentsBlock } from '@/lib/inbox/attachment-context';
+import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
@@ -74,7 +76,7 @@ export async function generateReplyDraft(
         if (top && top.trim()) {
           earlierContext = body ? `
 --- EARLIER IN THE THREAD (context only — the reply answers the newest message above) ---
-${body.slice(0, 1200)}
+${clipForPrompt(body, 1200)}
 ` : '';
           body = top;
         }
@@ -129,11 +131,35 @@ ${body.slice(0, 1200)}
       planSteps.map((s) => `- ${s}`).join('\n') + '\n\n'
     : '';
 
+  // ── AN ITEM'S OWN DOCUMENT IS THE ITEM'S OWN CONTEXT (owner walk, Sep 10). The files that came
+  // WITH this email — fetched at sync, stored, extracted — reach the drafter as text. Without this
+  // the drafter saw a subject and a body only, and wrote "I did not receive the attachment, could
+  // you resend it?" about a debt notice sitting in our own storage, one click from being sent.
+  // Non-fatal: no attachments, or an unreadable one, leaves the block empty/honest. ──
+  const attachBlock = await readItemAttachments(client, userId, sourceData as Record<string, unknown>)
+    .then(renderAttachedDocumentsBlock)
+    .catch(() => '');
+
+  // ── LAW 7 · THE OUTCOME LOOP (proactive-reach): how much of our drafts this user actually
+  // rewrites before sending is MEASURED, and until now nobody read it. It arrives as a FACT about
+  // their habit — never an instruction to hedge, never a claim the ledger cannot support (edit
+  // share is recorded; length is not, so nothing here speaks about length). Silent under the
+  // N-floor: a ledger too thin to be a pattern says nothing at all. ──
+  const registerFact = await (async () => {
+    try {
+      const { readOutcomeFacts, outcomeRegisterFact } = await import('@/lib/prepare/outcome-facts');
+      const { userTimezone, localNow } = await import('@/lib/utils/user-time');
+      const day = localNow(await userTimezone(client, userId)).dateStr;
+      return outcomeRegisterFact(await readOutcomeFacts(client, userId, day));
+    } catch { return ''; }
+  })();
+
   const { client: ai, model } = await getAIClient(userId, 'conversation', client);
   const res = await aiCreate(ai, {
     model, max_tokens: 600, temperature: 0.6,
     messages: [{ role: 'user', content:
       `${voiceBlock ? voiceBlock + '\n\n' : ''}${meetingFollowup ? meetingFollowup + '\n\n' : ''}${brainBlock ? brainBlock + '\n\n' : ''}${assistantSkills ? assistantSkills + '\n\n' : ''}` +
+      `${registerFact ? registerFact + '\n' : ''}` +
       `${planBlock}` +
       `${instructions?.trim() ? `Follow this guidance for the reply: ${instructions.trim()}\n\n` : ''}` +
       // Anchor the perspective hard — the model otherwise mirrors the sender and signs with THEIR name.
@@ -147,7 +173,12 @@ ${body.slice(0, 1200)}
       `Return ONLY the reply body — no subject line, no preamble, no ` +
       `surrounding quotes. Keep it appropriately concise and ready to send.\n\n` +
       `--- EMAIL TO REPLY TO ---\n` +
-      `From: ${from}\nSubject: ${subject}\n\n${body.slice(0, 3000)}\n${earlierContext}\n` +
+      `From: ${from}\nSubject: ${subject}\n\n${clipForPrompt(body, 3000)}\n${earlierContext}\n` +
+      // The item's OWN documents, with their text — placed directly under the email they arrived
+      // with, so no reader can compose a claim about them without having read them.
+      `${attachBlock ? `\n${attachBlock}\n\n` : ''}` +
+      // EXCERPT-HONESTY: our own length clips declare themselves; the rule says they are ours.
+      `${EXCERPT_RULE}\n` +
       // LANGUAGE RULE — LAST, so it wins over the voice examples above (recency + explicit target).
       langRule }],
   });

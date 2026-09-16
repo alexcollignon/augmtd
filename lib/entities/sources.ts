@@ -9,6 +9,7 @@
 import type { RecogItem } from './recognize';
 import { resolveKind } from '@/lib/inbox/rules/write-back';
 import { isAutomatedSender } from '@/lib/inbox/automated';
+import { isCampaignEcho } from '@/lib/inbox/campaign-echo';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = Record<string, any>;
@@ -34,8 +35,13 @@ export function itemFromInbox(it: Row): RecogItem {
   // Promise fix #5 — the noise signal, via the ONE kind resolver + the automated-sender check:
   // noise mail may JOIN an existing entity, but never FOUNDS one (see recognize.ts).
   const k = resolveKind(sd as Record<string, unknown>, (it.rule_type as string) ?? null);
+  // THE ECHO FLOOR rides the SAME noise flag (LAW 5 — proactive-reach): the user's own outbound
+  // sequence coming back may join an existing body of work, never found one. This is the cheap
+  // synchronous mirror (durable stamp / primed signature); recognizeItem holds the authoritative
+  // async check, so a cold process still refuses the founding.
   const noise = k === 'receipt' || k === 'newsletter' || k === 'notification'
-    || isAutomatedSender(addr || null, name || null, subject);
+    || isAutomatedSender(addr || null, name || null, subject)
+    || isCampaignEcho(it as { user_id?: string | null; work_title?: string | null; source_data?: unknown });
   return {
     kind: 'inbox_item', id: String(it.id), title: subject,
     body: typeof sd.body === 'string' ? sd.body : null,

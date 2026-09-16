@@ -29,8 +29,13 @@ export const OVERDUE_TONE = { dot: 'bg-rose-500', text: 'text-rose-600', label: 
 // ── PROJECT momentum (judgment) — the entity brain's verdict. ──
 export type MomentumKey = 'active' | 'needs_you' | 'waiting' | 'gone_quiet' | 'stalled' | 'unknown';
 export const MOMENTUM: Record<MomentumKey, StateToken> = {
-  needs_you:  { dot: 'bg-rose-500',    text: 'text-rose-600',    label: 'Needs you' },
-  gone_quiet: { dot: 'bg-amber-500',   text: 'text-amber-600',   label: 'Gone quiet' },
+  // ONE COLOR PER FACT, EVERYWHERE (owner walk, Sep 7: the same project wore rose in the sidebar
+  // and amber in the room header — a per-surface downgrade map had forked the vocabulary). The
+  // threads calm law holds ACROSS surfaces now: needs-you is AMBER — urgency is a word, the dot
+  // reinforces, and rose/red chrome exists nowhere in state dots. Needs-you vs gone-quiet is
+  // carried by the LABEL (the dot never carries alone — July 29).
+  needs_you:  { dot: 'bg-amber-500',   text: 'text-amber-600',   label: 'Needs you' },
+  gone_quiet: { dot: 'bg-amber-400',   text: 'text-amber-600',   label: 'Gone quiet' },
   stalled:    { dot: 'bg-amber-500',   text: 'text-amber-600',   label: 'Stalled' },
   waiting:    { dot: 'bg-blue-400',    text: 'text-blue-600',    label: 'Waiting' },
   active:     { dot: 'bg-emerald-500', text: 'text-emerald-600', label: 'Active' },

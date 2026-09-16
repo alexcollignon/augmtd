@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
       try {
         await indexUploadedFile(
           {
-            buffer, filename, mimeType, userId: user.id, storagePathInBucket: path, folderId,
+            buffer, filename, mimeType, userId: user.id, storagePathInBucket: path, folderId, bucket: 'drive-uploads',
             onIndexed: async ({ fileId, extractedText }) => {
               const { checkSourceReactions } = await import('@/lib/workflows/reactions');
               const head = String(extractedText ?? '').replace(/\s+/g, ' ').trim();

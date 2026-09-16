@@ -1192,7 +1192,12 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
         agent_id: (workflow as Workflow & { agent_id?: string }).agent_id ?? null,
       };
       await syncStandingCommitment(admin, wfRow, worker?.name ?? null, { fromSuccessfulRun: true });
-      await narrateStandingRun(admin, wfRow, { ok: true, runId, threadId, workerName: worker?.name ?? 'Your coworker' });
+      // THE RUN'S NARRATION IS THE REPORT-BACK (proactive-reach W4): the report this tail already
+      // composed rides into the standing room instead of the old contentless template. ONE
+      // composition per run — nothing here calls the model again.
+      await narrateStandingRun(admin, { ...wfRow, output_config: workflow.output_config }, {
+        ok: true, runId, threadId, workerName: worker?.name ?? 'Your coworker', report: reportText,
+      });
     } catch { /* bookkeeping — never breaks a run */ }
 
     // ── A SETTLED SCORE STAYS SETTLED (Aug 25, found live on the frozen-prompt retest) ─────────

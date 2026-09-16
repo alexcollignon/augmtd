@@ -146,6 +146,116 @@ export async function archiveRoomTurns(client: SupabaseClient, userId: string, r
   } catch { /* non-fatal */ }
 }
 
+/**
+ * A NEW CHAT IS A NEW SESSION, NOT A NEW ROOM (owner walk, Sep 14: "new chat should maybe just
+ * reset the current project chat, instead of redirecting to home?").
+ *
+ * The project room's stream carries two different things under one roof: the AD-HOC EXCHANGE (the
+ * user's words and the replies to them) and the room's STANDING RECORD (engine narrations keyed to
+ * a piece of work, component cards, a coworker's attributed speech). Archiving the room wholesale —
+ * what `archiveRoomTurns` does for a chat room, where everything IS the exchange — would wipe the
+ * record with the chat, and the record is the work's own story.
+ *
+ * So the boundary is STRUCTURAL, never a guess: a SYSTEM turn belongs to the exchange exactly when
+ * it carries no durable handle — no dedupe key (an engine narration is always keyed to its work), no
+ * component (a card is a deed, not talk), no author (attributed speech is a colleague's record).
+ * Those turns archive as ONE session (the archived_at batch IS the session id, the same grouping
+ * `listRoomSessions` already reads); everything else stays exactly where it is.
+ *
+ * ⚠️ A USER TURN IS CHAT BY DEFINITION (orchestrator walk, Sep 15 — a live project room: New chat left
+ * the reader's own "Go ahead without it — use what you have…" bubble standing in an otherwise empty
+ * room, and because a user turn survived, the room never counted as fresh).
+ *
+ * The handle boundary above was written to protect ENGINE narrations, CARDS and COWORKER speech —
+ * three kinds of system-role record. It was never a statement about the reader. But the go-ahead is
+ * written server-side (app/api/room/asks) as `role: 'user'` with `dedupeKey: proceed:<turnId>`, and
+ * that key exists for IDEMPOTENCE — so a double-click cannot speak twice — not for durability. The
+ * filter could not tell the two apart, so one utterance became immortal: unarchivable by New chat,
+ * un-resumable by a saved session, standing over every future conversation in that room.
+ *
+ * THE LAW: role='user' turns are chat, unconditionally, whatever handles they carry. A user
+ * utterance is the reader talking; nothing about a key makes it part of the work's record.
+ *
+ * WHY TWO UPDATES AND NOT ONE `.or()`: PostgREST `or()` filters are known to ERROR on UPDATE in this
+ * codebase (the `connections` claim, 42703 — fine on SELECT, not on UPDATE), and this is the one
+ * seam where a silent failure means "your chat did not reset". Two sequential conditional updates
+ * SHARING ONE `archived_at` stamp are deterministic, and the shared stamp is what keeps them ONE
+ * session for `listRoomSessions` and for `restoreRoomSession`.
+ */
+export async function archiveRoomChat(client: SupabaseClient, userId: string, roomKey: string): Promise<number> {
+  try {
+    const at = new Date().toISOString();   // ONE stamp = ONE session, across both passes
+    let n = 0;
+    // 1 · EVERY word of the reader's, handles and all.
+    const { data: mine, error: mineErr } = await client.from('room_turns')
+      .update({ archived_at: at })
+      .eq('user_id', userId).eq('room_key', roomKey).is('archived_at', null)
+      .eq('role', 'user')
+      .select('id');
+    if (!mineErr) n += (mine ?? []).length;
+    // 2 · The system side of the exchange — the unhandled turns, exactly as before.
+    const { data: theirs, error: theirsErr } = await client.from('room_turns')
+      .update({ archived_at: at })
+      .eq('user_id', userId).eq('room_key', roomKey).is('archived_at', null)
+      .eq('role', 'system')
+      .is('dedupe_key', null).is('component', null).is('author', null)
+      .select('id');
+    if (!theirsErr) n += (theirs ?? []).length;
+    return n;
+  } catch { return 0; }
+}
+
+/**
+ * RESUME MEANS CONTINUE (owner walk, Sep 14: "shouldn't clicking on saved chats open the actual chat?
+ * and allow to resume from there?").
+ *
+ * A saved chat was read-only history. But a room holds ONE live chat session at a time, and "saved"
+ * was only ever a session boundary — nothing about those turns is less real than the ones on screen.
+ * So resuming SWAPS the live session for a saved one:
+ *
+ *   1. the current ad-hoc exchange is SAVED first, through the one door that owns that boundary
+ *      (`archiveRoomChat` — so the structural rule for what counts as chat is decided in exactly one
+ *      place, and the record, cards and attributed speech stay live regardless);
+ *   2. the named session's turns come back to live (`archived_at` cleared on that batch).
+ *
+ * SAVE-THEN-RESTORE, IN THAT ORDER, is the whole atomicity story: restoring first would hand the
+ * archive step its own just-restored turns to re-file. If step 2 fails, step 1 still stands — the
+ * user's current words are saved, nothing is lost, and the drawer lists both sessions.
+ *
+ * THE DURABLE HANDLES NEVER MOVE: a SYSTEM turn comes back only with no dedupe key, no component and
+ * no author — the same structural boundary `archiveRoomChat` archives by, mirrored exactly. A settled
+ * engine ask (which archives WITH its dedupe key) can never be resurrected by resuming a chat that sat
+ * beside it. And the mirror follows the Sep 15 law with it: every USER turn of that session comes back
+ * unconditionally, because that is precisely the set that left. ARCHIVE AND RESTORE MUST FILTER BY THE
+ * SAME RULE — two spellings of one boundary would resume half a conversation.
+ */
+export async function restoreRoomSession(
+  client: SupabaseClient, userId: string, roomKey: string, sessionId: string,
+): Promise<{ restored: number; saved: number }> {
+  let saved = 0;
+  try {
+    if (!sessionId) return { restored: 0, saved: 0 };
+    saved = await archiveRoomChat(client, userId, roomKey);
+    let restored = 0;
+    // 1 · the reader's own words, handles and all (the archive's mirror)
+    const { data: mine, error: mineErr } = await client.from('room_turns')
+      .update({ archived_at: null })
+      .eq('user_id', userId).eq('room_key', roomKey).eq('archived_at', sessionId)
+      .eq('role', 'user')
+      .select('id');
+    if (!mineErr) restored += (mine ?? []).length;
+    // 2 · the system side of the exchange — unhandled turns only
+    const { data: theirs, error: theirsErr } = await client.from('room_turns')
+      .update({ archived_at: null })
+      .eq('user_id', userId).eq('room_key', roomKey).eq('archived_at', sessionId)
+      .eq('role', 'system')
+      .is('dedupe_key', null).is('component', null).is('author', null)
+      .select('id');
+    if (!theirsErr) restored += (theirs ?? []).length;
+    return { restored, saved };
+  } catch { return { restored: 0, saved }; }
+}
+
 export type RoomSession = { at: string; count: number; firstText: string };
 
 /** The room's archived SESSIONS (History ⌄), newest first — turns sharing an archived_at batch. */

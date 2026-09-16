@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { EmailContent, DocumentArtifact } from '@/lib/types/inbox';
 import { sendGmailEmail, EmailAttachment } from '@/lib/google/gmail';
 import { sendOutlookEmail } from '@/lib/microsoft/outlook';
+import { noteItemAction } from '@/lib/entities/on-action';
 
 function getAdminClient() {
   return createAdminClient(
@@ -189,12 +190,24 @@ export async function POST(
     }).then(({ error }) => { if (error) console.error('[SendEmail] Signal log error:', error); });
 
     // 3. Mark linked inbox item completed (if any)
-    await adminClient
+    const { data: linkedItems } = await adminClient
       .from('inbox_items')
       .update({ execution_status: 'completed' })
       .eq('work_thread_id', threadId)
       .eq('user_id', user.id)
-      .then(({ error }) => { if (error) console.error('[SendEmail] Inbox update error:', error); });
+      .select('id');
+
+    // THE DEED MOVES THE BRIEF (Sep 8). This door stamps `execution_status`, not `status`, so the
+    // item stays on its room's board — nothing here used to move the pinned brief at all, and it
+    // kept claiming the email owed indefinitely. The action seam re-authors the room's opening and
+    // appends the deed line; the item's own row is untouched by this call.
+    const uid = user.id;
+    for (const li of ((linkedItems ?? []) as Array<{ id: string }>).slice(0, 3)) {
+      after(async () => {
+        await noteItemAction(adminClient, uid, { kind: 'inbox_item', id: li.id },
+          { said: `Email sent to ${String(resolvedTo).split('<')[0].trim()}.` }).catch(() => {});
+      });
+    }
 
     return NextResponse.json({ success: true, sentAt, sentTo: resolvedTo });
   } catch (error) {

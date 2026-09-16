@@ -8,6 +8,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
+import { GROUND_EVIDENCE_RULE } from '@/lib/room/ground-evidence';
 
 export type EntityAskRef = { id: string; kind: 'item' | 'file'; label: string; href: string | null };
 export type EntityAskTurn = { role: 'user' | 'assistant'; text: string };
@@ -40,6 +41,10 @@ export async function answerEntityQuestion(
     `- Answer ONLY from this context. If it doesn't cover the question, say so plainly — NEVER invent people, dates, or facts.\n` +
     `- Brief and specific, a couple of sentences; lead with the answer. Reference items/files by [L#]/[F#] inline.\n` +
     `- PLAIN PROSE ONLY: no markdown of any kind. Never place two refs back-to-back — connect with words.\n` +
+    // ONE LAW, ONE COPY (Sep 8): the room's brief settles a debt the world shows already done —
+    // an answer that ranked the board above the world would contradict the brief right beside it,
+    // which is the exact class the one grounding exists to kill.
+    `- ${GROUND_EVIDENCE_RULE}\n` +
     `Return ONLY JSON: {"answer":"<with [L#]/[F#] tags>","refs":["L1","F2",...]}`;
 
   const deep = /miss|summar|priorit|plan\b|why\b|should|think|advice|strategy|recommend|overview/i.test(question) || question.length > 120;

@@ -400,6 +400,16 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     tool: 'send_prepared_reply', built: true, kind: 'atomic', irreversible: true, feature: 'email',
     blurb: 'send the prepared reply ("send it") — fires only on the user\'s own explicit send word', exposure: ['chief_of_staff'],
   },
+  // EVERY THREAD, EVERY PRODUCER (threads plan, Sep 8): the invite card's producer, sayable. It
+  // PREPARES the same card the proactive pass prepares and returns it on the turn — the Send stays
+  // the user's click, through the commit door. Reversible by construction (nothing leaves), which
+  // is exactly why the sending capability (`send_calendar_invite`, irreversible) stays out of chat.
+  prepare_calendar_invite: {
+    intent: 'prepare a calendar invite from what the conversation says (never sends by itself)',
+    tool: 'prepare_calendar_invite', built: true, kind: 'atomic', irreversible: false, feature: 'meetings',
+    blurb: 'prepare a calendar invite CARD ("set up a meeting with Sam Thursday 11h") — the user reviews, picks the time and sends',
+    exposure: ['chief_of_staff'], conversational: true,
+  },
   prepare_forward: {
     intent: 'prepare forwarding the current email to someone for review & approval (never sends by itself)',
     tool: 'prepare_forward', built: true, kind: 'atomic', irreversible: false, feature: 'email',

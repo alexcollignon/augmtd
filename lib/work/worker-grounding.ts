@@ -17,6 +17,7 @@
 type DBClient = any;
 
 import { findEntityFocus } from '@/lib/home/ask';
+import { GROUND_EVIDENCE_RULE } from '@/lib/room/ground-evidence';
 
 export async function focusedProjectGrounding(
   client: DBClient,
@@ -44,7 +45,10 @@ export async function focusedProjectGrounding(
       `[THE PROJECT PAGE — the user's message names "${focus.name}". This is its full current ` +
       `state from the one brain (the same page the project's room reads). Ground every claim ` +
       `about this work HERE — never contradict it, never re-derive what it already states:]\n` +
-      g.text.replace(/\[(?:L|F)\d+\]\s?/g, '').slice(0, 3800)
+      g.text.replace(/\[(?:L|F)\d+\]\s?/g, '').slice(0, 3800) +
+      // ONE LAW, ONE COPY (Sep 8): a coworker answering off this page must rank the world above
+      // the board exactly as the room's own brief does — the whole point of them sharing it.
+      `\n${GROUND_EVIDENCE_RULE}`
     );
   } catch { return null; }
 }

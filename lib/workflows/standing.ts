@@ -23,11 +23,57 @@
 //     none structurally — its WORKFLOW produces it; the prepare pass must never delegate it.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { normalizeOutput } from './types';
+import { clip } from '@/lib/room/turns';
 
-type WfRow = {
+export type WfRow = {
   id: string; user_id: string; name: string; status: string;
   trigger: { type?: string } | null; next_run_at: string | null; agent_id?: string | null;
+  /** The run's DELIVERY HOME, read for the consequence lines below. Every live call site passes
+   *  the whole workflow row, so this is present in practice; when it is absent (a narrow probe
+   *  row) the phrase degrades to the honest generic instead of inventing a destination. */
+  output_config?: unknown;
 };
+
+// ── URGENCY IS A WORD, NEVER CASING (proactive-reach W4, census fix 8) ───────────────────────────
+// The asks used to SHOUT — "WAITING ON YOUR APPROVAL", "is HELD" — and then narrate process ("ran
+// as far as it can and needs something from you"). Both are chrome: caps are decoration standing in
+// for consequence, and process-narration tells the person about the machine instead of about their
+// own work. Every ask below says what HAPPENS the moment they act, derived from the workflow's own
+// delivery home (never invented, never a destination the config doesn't name).
+export function deliveryPhrase(wf: WfRow): string {
+  try {
+    const out = normalizeOutput((wf.output_config ?? null) as never);
+    if (out.home === 'email') {
+      const to = (out.emailTo ?? []).map((t) => String(t).trim()).filter(Boolean);
+      if (to.length === 1) return `emails it to ${to[0]}`;
+      if (to.length === 2) return `emails it to ${to[0]} and ${to[1]}`;
+      if (to.length > 2) return `emails it to ${to.length} recipients`;
+      return 'sends it by email';
+    }
+    if (out.home === 'slack') return `posts it to ${out.slackChannel ? String(out.slackChannel) : 'Slack'}`;
+    if (out.home === 'document') return 'files it in your Documents';
+    return 'delivers it';
+  } catch { return 'delivers it'; }
+}
+
+/** THE APPROVAL ASK — the consequence of the deed, not its state. "…is ready — your approval emails
+ *  it to ops@acme.test." The user's own gate instruction follows as its own sentence (their words,
+ *  never rephrased); with no instruction the line stops at the consequence. */
+export function approvalLine(wf: WfRow, instruction?: string | null): string {
+  const note = String(instruction ?? '').trim();
+  return `"${wf.name}" is ready — your approval ${deliveryPhrase(wf)}.${note ? ` ${note.replace(/\s+$/, '')}${/[.!?]$/.test(note) ? '' : '.'}` : ''}`;
+}
+
+/** THE GUARDRAIL HOLD — same grammar: the rule that stopped it, then what clearing it does. */
+export function holdLine(wf: WfRow, ruleLine: string): string {
+  return `"${wf.name}" is held by your delivery check — ${ruleLine}. Clear it and it ${deliveryPhrase(wf)}; until then nothing goes out.`;
+}
+
+/** The room narration's cap — a receipt is a message, not a document. `clip` is the house
+ *  word-boundary primitive (narration NEVER cuts mid-word; the pre-Aug-10 stored report summaries
+ *  were hard-cut at 280 chars and ended "…Let me "). */
+const NARRATION_MAX = 420;
 
 export async function syncStandingCommitment(
   admin: SupabaseClient, wf: WfRow, workerName?: string | null,
@@ -96,10 +142,25 @@ export async function syncStandingCommitment(
 /** ARC 2 stage 3 — THE RUN LANDS IN THE ROOM. The standing commitment IS the object and its room
  *  is the home (the deck's "Standing:" row already opens it): a successful run narrates there as
  *  the coworker's authored turn with the deliverable link; a FAILED run narrates honestly AND
- *  stamps the due_date to today — the promise came due and was not kept, so the debt shows. */
+ *  stamps the due_date to today — the promise came due and was not kept, so the debt shows.
+ *
+ *  THE RUN'S NARRATION *IS* THE REPORT-BACK (proactive-reach W4, census fixes 6+7). This line was a
+ *  contentless weekly template — "Max produced "X" — this run is ready to review.", 45 identical
+ *  turns on the owner's account — while the composed report-back ("just wrapped the briefing… you've
+ *  got Rhine water levels hitting transport costs, Infineon's record quarter…") lost its only
+ *  surface on Aug 10 when workflow_notifications died. The composer is unchanged and UNFORKED: the
+ *  run tail already composes exactly one report per run (`generateReportBack` over ReportFacts), and
+ *  hands THAT text here — zero extra AI spend, one voice, one composition. The template survives
+ *  only as the honest fallback when there is no composed report (an AI failure upstream, a caller
+ *  that has none), spoken plainly rather than dressed up. */
 export async function narrateStandingRun(
   admin: SupabaseClient, wf: WfRow,
-  run: { ok: boolean; runId: string; threadId: string | null; workerName: string; error?: string | null },
+  run: {
+    ok: boolean; runId: string; threadId: string | null; workerName: string; error?: string | null;
+    /** The report-back this run already composed (or, for a `message` home, the deliverable's own
+     *  words — the one text the person is about to read either way). Clipped at a word boundary. */
+    report?: string | null;
+  },
 ): Promise<void> {
   try {
     // THE OWNER'S ROOM (B2): the standing row lives with the accountability owner, not the creator.
@@ -112,9 +173,14 @@ export async function narrateStandingRun(
     const threadHref = run.threadId ? `/home?chat=worker:${run.threadId}:${wf.agent_id ?? ''}` : null;
     if (run.ok) {
       // ONE-NARRATOR LAW: third-person orchestration narration — the CoS voice, author absent.
+      // (The report-back is the COWORKER'S first-person message; when it is what we have, the turn
+      // carries their words and their face — first-person speech is exactly where the author is
+      // allowed to appear.)
+      const report = clip(String(run.report ?? ''), NARRATION_MAX);
       await writeRoomTurn(admin, c.userId, roomKey, {
         role: 'system',
-        text: `${first} produced "${wf.name}" — this run is ready to review.`,
+        ...(report ? { author: { kind: 'coworker' as const, id: wf.agent_id ?? undefined, name: run.workerName } } : {}),
+        text: report || `${first} produced "${wf.name}" — this run is ready to review.`,
         refs: threadHref ? [{ label: 'Open the deliverable', href: threadHref }] : undefined,
         dedupeKey: `run:${run.runId}`,
       });
@@ -122,7 +188,9 @@ export async function narrateStandingRun(
       await admin.from('commitments').update({ due_date: new Date().toISOString().slice(0, 10) }).eq('id', c.id);
       await writeRoomTurn(admin, c.userId, roomKey, {
         role: 'system',
-        text: `The "${wf.name}" run FAILED${run.error ? ` — ${String(run.error).slice(0, 140)}` : ''}. It stays owed until a run lands; it will retry on the next schedule.`,
+        // The failure template stands (a failure receipt is honest as it is) — only its shouted
+        // word is lowered: urgency is a word, never casing.
+        text: `The "${wf.name}" run failed${run.error ? ` — ${clip(String(run.error), 140)}` : ''}. It stays owed until a run lands; it will retry on the next schedule.`,
         refs: threadHref ? [{ label: 'See what happened', href: threadHref }] : undefined,
         dedupeKey: `run-fail:${run.runId}`,
       });
@@ -276,7 +344,9 @@ export async function narrateInputAsk(
 ): Promise<void> {
   await raiseRunDecisionAsk(admin, wf, {
     runId: ask.runId, instruction: ask.ask, preview: ask.preview, supply: ask.ask.slice(0, 120),
-    text: `"${wf.name}" ran as far as it can and needs something from you: ${ask.ask}`,
+    // QUIET CONSEQUENCE, NOT PROCESS: what LANDS when the input arrives, said in the station's own
+    // words. ("ran as far as it can and needs something from you" narrated the machine's state.)
+    text: `"${wf.name}" is waiting on one thing from you: ${ask.ask} — send it and the run finishes and ${deliveryPhrase(wf)}.`,
     // KEYED PER RUN **AND** PER STATION (Aug 25): a workflow that declares several inputs parks
     // several times in ONE run, and each park is a different question. A run-only key would fold
     // station 2's ask into station 1's line and the person would never see what is actually owed.
@@ -365,7 +435,7 @@ export async function narrateApprovalAsk(
     if (!c) {
       await raiseRunDecisionAsk(admin, wf, {
         runId: ask.runId, instruction: ask.instruction, preview: ask.preview,
-        text: `"${wf.name}" is ready and WAITING ON YOUR APPROVAL before it delivers${ask.instruction ? ` — ${ask.instruction}` : ''}.`,
+        text: approvalLine(wf, ask.instruction),
         dedupeKey: `approval:${ask.runId}`,
       });
       return;
@@ -375,7 +445,7 @@ export async function narrateApprovalAsk(
     const roomKey = await roomKeyForItem(admin, c.userId, 'commitment', String(c.id));
     await writeRoomTurn(admin, c.userId, roomKey, {
       role: 'system',
-      text: `"${wf.name}" is ready and WAITING ON YOUR APPROVAL before it delivers${ask.instruction ? ` — ${ask.instruction}` : ''}.`,
+      text: approvalLine(wf, ask.instruction),
       component: { key: 'approval', refId: ask.runId, state: { runId: ask.runId, workflowId: wf.id, name: wf.name, instruction: ask.instruction, preview: ask.preview } },
       dedupeKey: `approval:${ask.runId}`,
     });
@@ -399,7 +469,7 @@ export async function narrateGuardrailHold(
     if (!c) {
       await raiseRunDecisionAsk(admin, wf, {
         runId: ask.runId, instruction: ask.ruleLine, preview: ask.preview, held: true,
-        text: `"${wf.name}" is HELD by your delivery check — ${ask.ruleLine}. Review it before it goes anywhere.`,
+        text: holdLine(wf, ask.ruleLine),
         dedupeKey: `guardrail-hold:${ask.runId}`,
       });
       return;
@@ -409,7 +479,7 @@ export async function narrateGuardrailHold(
     const roomKey = await roomKeyForItem(admin, c.userId, 'commitment', String(c.id));
     await writeRoomTurn(admin, c.userId, roomKey, {
       role: 'system',
-      text: `"${wf.name}" is HELD by your delivery check — ${ask.ruleLine}. Review it before it goes anywhere.`,
+      text: holdLine(wf, ask.ruleLine),
       component: {
         key: 'approval', refId: ask.runId,
         state: { runId: ask.runId, workflowId: wf.id, name: wf.name, instruction: ask.ruleLine, preview: ask.preview, held: true },

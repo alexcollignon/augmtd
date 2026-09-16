@@ -1,0 +1,26 @@
+{
+  "artboards": [
+    { "file": "HomeThread.dc.html", "title": "Home — the CoS thread", "x": 0, "y": 0, "w": 1440, "h": 900 },
+    { "file": "Main.dc.html", "title": "Project thread", "x": 1560, "y": 0, "w": 1440, "h": 900 },
+    { "file": "Drawer.dc.html", "title": "The drawer — filed truth", "x": 3120, "y": 0, "w": 1440, "h": 900 },
+    { "file": "CoworkerDM.dc.html", "title": "Coworker DM", "x": 0, "y": 1100, "w": 1440, "h": 900 },
+    { "file": "Cards.dc.html", "title": "The message grammar", "x": 1560, "y": 1100, "w": 900, "h": 1560 },
+    { "file": "AvatarStates.dc.html", "title": "Avatar states", "x": 2580, "y": 1100, "w": 900, "h": 580 },
+    { "file": "HomeCalm.dc.html", "title": "Option — the calm Home", "x": 0, "y": 2200, "w": 1440, "h": 900 },
+    { "file": "InviteCard.dc.html", "title": "The invite card", "x": 0, "y": 3320, "w": 820, "h": 780 },
+    { "file": "EmailCard.dc.html", "title": "The email card", "x": 900, "y": 3320, "w": 820, "h": 760 },
+    { "file": "DocCard.dc.html", "title": "The document card", "x": 1800, "y": 3320, "w": 820, "h": 760 }
+  ],
+  "annotations": [
+    { "id": "vision", "x": -400, "y": 0, "w": 340, "text": "THE THREADS REVAMP\n\nEverything the system does arrives as a message in a thread, from a face.\n\nFive words the interface teaches: Team · Threads · Projects · Routines · Documents. Everything else stays beneath until the user has a reason to care.\n\nSpec: docs/threads-plan.md" },
+    { "id": "note-home", "x": 0, "y": -150, "w": 300, "text": "Home = the CoS's thread. The judged deck survives as her pinned attention card; the day arrives beneath as messages." },
+    { "id": "note-main", "x": 1560, "y": -150, "w": 300, "text": "The room, collapsed. ONE brief, pinned, spoken by a face. No right pane — the header's Filed button summons the drawer." },
+    { "id": "note-drawer", "x": 3120, "y": -150, "w": 300, "text": "The drawer: inventory only. Nothing here asks; empty sections are absent, not scaffolded." },
+    { "id": "note-dm", "x": 0, "y": 950, "w": 300, "text": "Coworker DM: scoped mind, global you. A cross-project answer always cites its room." },
+    { "id": "note-cards", "x": 1560, "y": 950, "w": 300, "text": "Every organ delivers as exactly one card. If a capability can't answer \"what am I as a message?\", it doesn't ship." },
+    { "id": "note-avatar", "x": 2580, "y": 950, "w": 300, "text": "The avatar IS the status system — replaces spinners, pulses and 'preparing…' chips." },
+    { "id": "note-homecalm", "x": 0, "y": 2040, "w": 360, "text": "OPTION (Sep 7) — THE CALM HOME, vs the HomeThread board above.\n\nOne speaker: Clara's single sentence. The composer is the focal point. The judged deck becomes 3–5 WHISPERED lines (grey, glyph, verb on hover — each one PREPARED work, not a prompt). One quiet door to everything else.\n\nDensity law: one sentence of prose · ≤5 rows · one composer above the fold. Urgency is a word, never chrome.\n\nPick this or the attention-card form — P4's Home brief inherits the choice." },
+    { "id": "note-cards-contract", "x": 0, "y": 3170, "w": 380, "text": "THE INTERACTIVE CARDS (Sep 7 night — 'the card IS the workspace').\n\nThree laws (THE CARD CONTRACT, threads-plan.md):\n1 · Filled from the ONE grounding — a card and the pinned brief cannot disagree.\n2 · Options are REASONED then code-validated: stated slots, real free calendar, direction-variants over tone-tabs. Nothing renders that its source can't back.\n3 · The intro line is COMPOSED speech; missing facts ASK, never render empty; every Send is the one commit door.\n\nOld InvitePreviewCard / EmailDraftCard donate mechanics and retire.\n\nFreeze these three, then build: invite → email → doc." }
+  ],
+  "launch": { "view": "canvas" }
+}

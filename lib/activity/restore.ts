@@ -10,6 +10,7 @@ export const REVERSIBLE_TYPE_ENTITY: Record<string, 'inbox_item' | 'commitment' 
   marked_done: 'inbox_item',
   commitment_done: 'commitment',
   commitment_dismissed: 'commitment',
+  commitment_expired: 'commitment', // LAW 2 · THE EXPIRY LAW — a machine closure the user can always reverse
   sender_muted: 'sender',
   initiative_muted: 'initiative', // un-mute → the initiative reappears in In-motion + Projects
   membership_move: 'membership',  // undo = move the item back where it was (metadata.from)

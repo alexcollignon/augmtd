@@ -22,10 +22,11 @@ import { aiCall } from '@/lib/ai/call';
 import { dateStatedInText } from '@/lib/utils/user-time';
 import { topMessageOf } from '@/lib/inbox/top-message';
 import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { openAgeDays } from '@/lib/commitments/expiry';
 
 // Bump on ANY change to the judging prompt/facts/scoping — a cached verdict from an older law
 // must never satisfy the current one (the prompt-version-in-cache-sig law, learned twice now).
-export const FULFILLMENT_LAW_VERSION = 3; // 3: excerpt-honesty (clips declare themselves; a marker is never source truncation)
+export const FULFILLMENT_LAW_VERSION = 4; // 4: the open-age fact rides (Law 2 — an undated obligation ages into the judges' facts)
 
 export type FulfillmentVerdict = {
   verdict: 'delivered' | 'promised' | 'unclear';
@@ -42,7 +43,7 @@ export type FulfillmentVerdict = {
 export async function judgeCommitmentFulfillment(
   client: SupabaseClient,
   userId: string,
-  commitment: { id?: string; description: string; due_date?: string | null },
+  commitment: { id?: string; description: string; due_date?: string | null; created_at?: string | null },
   message: { id?: string | null; body: string; attachmentCount?: number | null },
   fulfillerIsUser: boolean,
 ): Promise<FulfillmentVerdict> {
@@ -64,6 +65,7 @@ export async function judgeCommitmentFulfillment(
     } catch { /* cache is best-effort */ }
   }
   const who = fulfillerIsUser ? 'the user (who owes it)' : 'the counterparty (who owes it)';
+  const ageDays = openAgeDays(commitment.created_at);
   try {
     const res = await aiCall<{ verdict?: string; new_due?: string | null; reason?: string }>({
       userId, supabase: client, shape: { output: 'json' }, temperature: 0, maxTokens: 160,
@@ -75,6 +77,10 @@ export async function judgeCommitmentFulfillment(
         // TRUE FACTS OR NO FACTS: a count the code cannot verify is passed as UNKNOWN, never as a
         // confident zero (sent-mail metadata may predate attachment capture).
         `FACT: ${typeof message.attachmentCount === 'number' ? `the message carries ${message.attachmentCount} attachment(s)` : 'the attachment count is UNKNOWN (metadata unavailable — do not treat as zero; judge from the words)'} . Today is ${todayStr}.\n` +
+        // LAW 2's undated clause: an obligation with no stated date can never be nominated for
+        // expiry — it AGES into the judges' facts instead (the open-ask-age fact the item judge
+        // already carries). Age is context for reading the message, never a reason to close.
+        `${ageDays !== null ? `FACT: this obligation has been open ${ageDays} day(s) (age is context, never evidence of delivery).\n` : ''}` +
         `${EXCERPT_RULE}\n` +
         `The law: "delivered" ONLY if the thing owed is actually handed over in/with this message — ` +
         `the substantive answer given, the document attached or linked, the action stated as ALREADY done. ` +
@@ -124,7 +130,26 @@ export async function applyFulfillmentVerdict(
   verdict: FulfillmentVerdict,
   close: () => Promise<boolean>,
 ): Promise<boolean> {
-  if (verdict.verdict === 'delivered') return close();
+  if (verdict.verdict === 'delivered') {
+    const closed = await close();
+    // ── LAW 4 · ONE CONVERSATION, ONE OBLIGATION: a delivery settles the obligation, and the same
+    // exchange may be standing on a second thread of the user's other mailbox. The scan is bounded,
+    // best-effort and fires only on a REAL close (a promise or an unclear verdict spreads nothing). ──
+    if (closed) {
+      try {
+        const { data: row } = await client.from('commitments').select('thread_id')
+          .eq('id', commitment.id).eq('user_id', userId).maybeSingle();
+        const threadId = (row?.thread_id as string | null) ?? null;
+        if (threadId) {
+          const { cascadeConversationSettlement } = await import('@/lib/inbox/conversation-identity');
+          await cascadeConversationSettlement(client, userId, {
+            threadId, settledAt: new Date().toISOString(), via: 'the deliverable was judged delivered',
+          });
+        }
+      } catch { /* the cascade is an enhancement — this commitment is closed regardless */ }
+    }
+    return closed;
+  }
   if (verdict.verdict === 'promised' && verdict.newDue && verdict.newDue !== commitment.due_date) {
     const nowIso = new Date().toISOString();
     await client.from('commitments')

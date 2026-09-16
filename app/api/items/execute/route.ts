@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { executeSendCalendarInvite } from '@/lib/tools/send-calendar-invite';
@@ -6,6 +6,7 @@ import { executeForwardEmail } from '@/lib/tools/forward-email';
 import { claimCommit, recordCommitResult, releaseCommitClaim } from '@/lib/work/commit-door';
 import { logPreparedOutcome } from '@/lib/prepare/outcome';
 import { logActivity } from '@/lib/activity/log';
+import { noteItemAction } from '@/lib/entities/on-action';
 import type { ItemPlanKind, ItemPlanTask } from '@/lib/home/item-plan';
 
 export const maxDuration = 60;
@@ -152,6 +153,17 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // THE DEED MOVES THE BRIEF (Sep 8) — the commit door is an action the brain hears: the
+      // room's opening is re-authored and the deed lands as one appended event line, so the
+      // pinned brief can never keep asking for a send the reader just made.
+      if (kind === 'email' || kind === 'awareness' || kind === 'followup') {
+        const uid = user.id; const eid = entityId;
+        after(async () => {
+          await noteItemAction(supabase, uid, { kind: 'inbox_item', id: eid },
+            { said: `Forwarded to ${to[0].split('<')[0].trim()}${to.length > 1 ? ` +${to.length - 1}` : ''}.` }).catch(() => {});
+        });
+      }
+
       await logActivity(supabase, user.id, {
         type: 'message_sent',
         title: `Forwarded to ${to[0]}${to.length > 1 ? ` +${to.length - 1}` : ''}`,
@@ -221,6 +233,16 @@ export async function POST(request: NextRequest) {
       } catch (e) {
         console.error('[items/execute] mark-done failed (non-fatal):', e);
       }
+    }
+
+    // THE DEED MOVES THE BRIEF (Sep 8) — same seam as the forward branch above.
+    if (kind === 'email' || kind === 'awareness' || kind === 'followup') {
+      const uid = user.id; const eid = entityId;
+      const guests = attendees.map((a) => a.split('@')[0]).slice(0, 2).join(', ');
+      after(async () => {
+        await noteItemAction(supabase, uid, { kind: 'inbox_item', id: eid },
+          { said: `Invite sent${guests ? ` to ${guests}` : ''}${attendees.length > 2 ? ` +${attendees.length - 2}` : ''}.` }).catch(() => {});
+      });
     }
 
     // ── Activity log (non-fatal) — surfaces in the Activity panel. Not undoable (a real send).

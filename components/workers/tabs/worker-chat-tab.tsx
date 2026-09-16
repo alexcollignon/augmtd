@@ -5,22 +5,11 @@ import { PlusIcon } from '@heroicons/react/24/outline';
 import { IconButton } from '@/components/ui';
 import { ArtifactPanel } from '@/components/workers/artifact-panel';
 import type { DocumentArtifact } from '@/lib/types/inbox';
+import { ROLE_LABELS } from '@/lib/workers/roles';
 
-const ROLE_AVATARS: Record<string, string> = {
-  personal_assistant: '/workers/clara.png',
-  content_manager:    '/workers/sofia.png',
-  branding_expert:    '/workers/luca.png',
-  linkedin_drafter:   '/workers/luca.png', // legacy role key
-  research_analyst:   '/workers/max.png',
-};
-
-const ROLE_LABELS: Record<string, string> = {
-  personal_assistant: 'Personal Assistant',
-  content_manager:    'Content Strategist',
-  branding_expert:    'LinkedIn Expert',
-  linkedin_drafter:   'LinkedIn Expert', // legacy role key
-  research_analyst:   'Research Analyst',
-};
+// The headshot is no longer resolved here: the kit's AvatarStatus wraps THE ONE FACE
+// (components/work/worker-face.tsx), so the DM header and every coworker bubble share it.
+// Labels come from the ONE map (lib/workers/roles.ts) — a private copy is how a rename half-lands.
 // ─── Resize handle ───────────────────────────────────────────────────────────
 
 function ResizeHandle({ panelRef, onResizeEnd, disabled }: {
@@ -80,12 +69,18 @@ function SidebarToggle({ open, onToggle }: { open: boolean; onToggle: () => void
 
 import { ChatMessageBubble, StreamingMessage, ToolStatus } from '@/components/work/chat-message';
 import type { ChatMessage } from '@/components/work/chat-message';
+import { ThreadShell, ThreadHeaderButton } from '@/components/thread';
+import type { ThreadCard, ThreadItem } from '@/components/thread';
 import { WorkerThreadList } from '@/components/workers/worker-thread-list';
 import { toast } from 'sonner';
 import { WorkerMentionInput, type WorkerMention } from '@/components/workers/worker-mention-input';
 import type { AttachmentChip } from '@/components/work/chat-input-bar';
-import { EmailDraftCard, type EmailDraftData } from '@/components/workers/email-draft-card';
+import { EmailCard, type CoworkerEmailDraft } from '@/components/home/email-card';
 import { WorkflowDraftCard, type WorkflowDraft } from '@/components/workflows/workflow-draft-card';
+// ONE RENDERING PER KIND (threads plan — THE CARD CONTRACT): the coworker's prepared invite is the
+// SAME card the Home thread and the item rooms mount, with the chat lane's commit door.
+import { InviteCard } from '@/components/home/invite-card';
+import type { PreparedInviteLike } from '@/lib/prepare/invite-card';
 import { ArtifactRenderer, type WorkArtifact } from '@/components/work/artifacts/registry';
 import { WorkerHomeView } from '@/components/workers/worker-home-view';
 import type { Worker, WorkerThread } from '@/app/workers/workers-page-client';
@@ -402,8 +397,9 @@ function ActiveWorkerChat({
     return map;
   }, [threadArtifacts]);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // THE SHELL OWNS THE SCROLLER (the port's one DOM reach): the thread column is the kit's, so
+  // "scroll to newest" finds the shell's own overflow container instead of a sentinel div.
+  const shellRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef(true);
   const streamAbortRef = useRef<AbortController | null>(null);
   const hasSentPending = useRef(false);
@@ -508,25 +504,14 @@ function ActiveWorkerChat({
 
   function handleNewVersion(title: string) {
     setOpenArtifact(null);
-    const prefix = `Revise "${title}": `;
-    setInputValue(prefix);
-    setTimeout(() => {
-      textareaRef.current?.focus();
-      const el = textareaRef.current;
-      if (el) { el.selectionStart = el.selectionEnd = el.value.length; }
-    }, 50);
+    // The composer's own `prefill` door places the text AND takes focus (it owns its textarea).
+    setInputValue(`Revise "${title}": `);
   }
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const sc = shellRef.current?.querySelector<HTMLElement>('.overflow-y-auto');
+    if (sc) sc.scrollTo({ top: sc.scrollHeight, behavior: 'smooth' });
   }, [messages, streamingText, streamingTools]);
-
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
-  }, [inputValue]);
 
   useEffect(() => {
     if (!pendingMessage || isLoading || isStreaming || hasSentPending.current) return;
@@ -535,15 +520,11 @@ function ActiveWorkerChat({
     handleSubmit(pendingMessage, pendingMentions, pendingFiles);
   }, [pendingMessage, isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Consume prefill from "New version" button in documents tab
+  // Consume prefill from "New version" button in documents tab (the composer focuses itself).
   useEffect(() => {
     if (!initialInputValue) return;
     setInputValue(initialInputValue);
     onInitialInputConsumed?.();
-    setTimeout(() => {
-      const el = textareaRef.current;
-      if (el) { el.focus(); el.selectionStart = el.selectionEnd = el.value.length; }
-    }, 50);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSubmit = useCallback(async (message: string, mentions?: WorkerMention[], homeFiles?: File[]) => {
@@ -607,8 +588,9 @@ function ActiveWorkerChat({
       let accArtifactIds: string[] = [];
       // Extra metadata for artifact chips that came via get_worker_document
       const accArtifactMeta: Map<string, { title: string; versionLabel: string; type?: string }> = new Map();
-      let accEmailDrafts: EmailDraftData[] = [];
+      let accEmailDrafts: CoworkerEmailDraft[] = [];
       let accWorkflowDrafts: WorkflowDraft[] = [];
+      let accInviteCards: Array<{ id: string; invite: PreparedInviteLike }> = [];
       let accArtifacts: WorkArtifact[] = [];
       let lineBuffer = '';
 
@@ -662,7 +644,11 @@ function ActiveWorkerChat({
 
             } else if (event.type === 'email_draft') {
               // Coworker drafted an email — render an editable card for the user to send.
-              if (event.draft) accEmailDrafts = [...accEmailDrafts, event.draft as EmailDraftData];
+              if (event.draft) accEmailDrafts = [...accEmailDrafts, event.draft as CoworkerEmailDraft];
+
+            } else if (event.type === 'invite_card') {
+              // The coworker prepared an invite — it renders as the card, editable, unsent.
+              if (event.card) accInviteCards = [...accInviteCards, event.card as { id: string; invite: PreparedInviteLike }];
 
             } else if (event.type === 'workflow_draft') {
               // THE ONE CREATION CARD — the drafted task reviews inline; Confirm creates.
@@ -722,6 +708,7 @@ function ActiveWorkerChat({
                   } : {}),
                   ...(accEmailDrafts.length > 0 ? { email_drafts: accEmailDrafts } : {}),
                   ...(accWorkflowDrafts.length > 0 ? { workflow_drafts: accWorkflowDrafts } : {}),
+                  ...(accInviteCards.length > 0 ? { invite_cards: accInviteCards } : {}),
                   ...(accArtifacts.length > 0 ? { artifacts: accArtifacts } : {}),
                 },
               };
@@ -805,112 +792,162 @@ function ActiveWorkerChat({
     }
   }, [thread.id]);
 
-  const avatarSrc = worker.worker_role ? (ROLE_AVATARS[worker.worker_role] ?? null) : null;
   const roleLabel = worker.worker_role ? (ROLE_LABELS[worker.worker_role] ?? null) : null;
+
+  // ── THE TIMELINE, DERIVED (Phase 2b — docs/threads-plan.md) ───────────────────────────────────
+  // THE ONE THREAD COMPONENT renders this DM: the message store maps to ThreadItem[] and the kit
+  // owns order, the three grammars and THE SLACK GROUPING (consecutive coworker turns share one
+  // face+name header — this surface used to have no attribution at all). Every rich render the
+  // chat already had — the assistant body with its tool chips, markdown, artifact + frame cards
+  // and citations; the editable email draft; the workflow draft; typed artifacts — is MOUNTED
+  // WHOLE through the `custom` card slot. A port is a mount, never a rewrite.
+  const items = useMemo<ThreadItem[]>(() => {
+    const out: ThreadItem[] = [];
+
+    // The just-sent message shows immediately — it never waits on the history load.
+    if (isLoading && pendingMessage) {
+      out.push({ type: 'user_bubble', id: 'pending-optimistic', text: pendingMessage });
+    }
+
+    if (!isLoading) {
+      const lastAssistantIdx = messages.map((m, i) => (m.role === 'assistant' ? i : -1)).filter(i => i >= 0).at(-1);
+      messages.forEach((msg, idx) => {
+        if (msg.role === 'user') {
+          out.push({ type: 'user_bubble', id: msg.id, text: msg.content });
+          return;
+        }
+        const isLastAssistant = !isStreaming && idx === lastAssistantIdx;
+        const drafts = (msg.metadata as { email_drafts?: CoworkerEmailDraft[] } | undefined)?.email_drafts ?? [];
+        const wfDrafts = (msg.metadata as { workflow_drafts?: WorkflowDraft[] } | undefined)?.workflow_drafts ?? [];
+        const inviteCards = (msg.metadata as { invite_cards?: Array<{ id: string; invite: PreparedInviteLike }> } | undefined)?.invite_cards ?? [];
+        const artifacts = (msg.metadata as { artifacts?: WorkArtifact[] } | undefined)?.artifacts ?? [];
+        const cards: ThreadCard[] = [{
+          kind: 'custom',
+          id: `${msg.id}-body`,
+          node: (
+            <ChatMessageBubble
+              message={msg}
+              isLastAssistantMessage={isLastAssistant}
+              onViewArtifact={handleViewArtifact}
+              artifactVersionMap={artifactVersionMap}
+            />
+          ),
+        }];
+        // THE EMAIL CARD — the SAME component the item rooms and the Home thread mount (one
+        // rendering per kind); its Send is the coworker door, unchanged.
+        drafts.forEach((d, i) => cards.push({
+          kind: 'custom', id: `${msg.id}-email-${i}`,
+          node: <EmailCard coworker={{ threadId: thread.id, agentId: worker.id, draft: d }} />,
+        }));
+        wfDrafts.forEach((wd, i) => cards.push({
+          kind: 'custom', id: `${msg.id}-wf-${i}`, node: <WorkflowDraftCard draft={wd} />,
+        }));
+        inviteCards.forEach((iv, i) => cards.push({
+          kind: 'custom', id: `${msg.id}-invite-${i}`,
+          node: <InviteCard chat={{ inviteId: iv.id, invite: iv.invite }} />,
+        }));
+        artifacts.forEach((a, i) => cards.push({
+          kind: 'custom', id: `${msg.id}-art-${i}`,
+          node: <ArtifactRenderer artifact={a} ctx={{ threadId: thread.id, agentId: worker.id, messageId: msg.id }} />,
+        }));
+        out.push({
+          type: 'actor_bubble',
+          id: msg.id,
+          actorId: worker.id,
+          actorName: worker.name,
+          actorRoleLabel: roleLabel ?? undefined,
+          cards,
+        });
+      });
+    }
+
+    // THE ANSWER STREAMS INTO THE VISIBLE BUBBLE — the same in-flight renderer (thinking panel,
+    // live tool chips, cursor), now wearing the coworker's own working face.
+    if (isStreaming) {
+      out.push({
+        type: 'actor_bubble',
+        id: 'streaming',
+        actorId: worker.id,
+        actorName: worker.name,
+        actorRoleLabel: roleLabel ?? undefined,
+        status: 'working',
+        statusHint: `${worker.name.split(' ')[0]} is replying`,
+        cards: [{
+          kind: 'custom',
+          id: 'streaming-body',
+          node: (
+            <StreamingMessage
+              text={streamingText}
+              tools={streamingTools}
+              thinking={streamingThinking || undefined}
+              thinkingDone={thinkingDone}
+            />
+          ),
+        }],
+      });
+    }
+
+    return out;
+  }, [messages, isLoading, pendingMessage, isStreaming, streamingText, streamingTools, streamingThinking,
+      thinkingDone, artifactVersionMap, thread.id, worker.id, worker.name, roleLabel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const beforeTimeline =
+    isLoading && !pendingMessage ? (
+      <div className="animate-pulse pb-4">
+        <div className="flex gap-3">
+          <div className="mt-0.5 h-5 w-5 flex-shrink-0 rounded-full bg-neutral-100" />
+          <div className="flex-1 space-y-2 pt-0.5">
+            <div className="h-3 w-3/4 rounded-full bg-neutral-100" />
+            <div className="h-3 w-1/2 rounded-full bg-neutral-100" />
+          </div>
+        </div>
+      </div>
+    ) : !isLoading && messages.length === 0 && !isStreaming ? (
+      <div className="flex h-24 items-center justify-center">
+        <p className="text-[13px] text-neutral-400">Start the conversation below</p>
+      </div>
+    ) : null;
 
   return (
     <div className="flex flex-1 overflow-hidden">
-      {/* Chat column */}
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        {/* Chat header */}
-        <div className="flex-shrink-0 flex items-center gap-2.5 px-3 py-3 border-b border-neutral-100">
-          <SidebarToggle open={sidebarOpen} onToggle={onToggleSidebar} />
-          <button
-            onClick={onGoHome}
-            className="flex items-center gap-2 min-w-0 hover:opacity-70 transition-opacity"
-            title="Back to home"
-          >
-            {avatarSrc ? (
-              <img src={avatarSrc} alt={worker.name} className="w-7 h-7 rounded-lg object-cover object-top flex-shrink-0" />
-            ) : null}
-            <div className="min-w-0 text-left">
-              <p className="text-[13px] font-semibold text-neutral-800 leading-tight">{worker.name}</p>
-              {roleLabel && <p className="text-[10.5px] text-neutral-400 leading-tight">{roleLabel}</p>}
-            </div>
-          </button>
-        </div>
-
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="max-w-[660px] mx-auto px-6 py-8 space-y-6">
-            {/* Show pending message immediately — don't wait for history load */}
-            {isLoading && pendingMessage && (
-              <ChatMessageBubble
-                message={{ id: 'pending-optimistic', role: 'user', content: pendingMessage, created_at: new Date().toISOString() }}
-                isLastAssistantMessage={false}
+      {/* Chat column — THE ONE THREAD COMPONENT, in its DM configuration */}
+      <div ref={shellRef} className="flex min-w-0 flex-1 overflow-hidden">
+        <ThreadShell
+          kind="dm"
+          className="overflow-hidden"
+          header={{
+            title: worker.name,
+            leadFace: { id: worker.id, name: worker.name },
+            subtitle: roleLabel ?? undefined,
+            actions: (
+              <span className="flex items-center gap-2">
+                <SidebarToggle open={sidebarOpen} onToggle={onToggleSidebar} />
+                {onGoHome && <ThreadHeaderButton label="Overview" onClick={onGoHome} />}
+              </span>
+            ),
+          }}
+          items={items}
+          beforeTimeline={beforeTimeline}
+          // THE COMPOSER STAYS: worker-mention-input is the ONE composer this DM shares with the
+          // home box (picker · attach · drag-and-drop · the send contract). It takes the seat whole.
+          composerNode={
+            <div>
+              <WorkerMentionInput
+                onSubmit={(text, mentions) => handleSubmit(text, mentions)}
+                disabled={isStreaming}
+                placeholder={`Message ${worker.name}…  (@ to mention a coworker, task, or document)`}
+                prefill={inputValue || null}
+                onPrefillConsumed={() => setInputValue('')}
+                onAttach={handleAttach}
+                attachments={chatAttachments}
+                onRemoveAttachment={handleRemoveAttachment}
               />
-            )}
-
-            {isLoading && !pendingMessage && (
-              <div className="space-y-6 animate-pulse">
-                <div className="flex gap-3">
-                  <div className="w-5 h-5 rounded-full bg-neutral-100 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1 space-y-2 pt-0.5">
-                    <div className="h-3 bg-neutral-100 rounded-full w-3/4" />
-                    <div className="h-3 bg-neutral-100 rounded-full w-1/2" />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {!isLoading && messages.length === 0 && !isStreaming && (
-              <div className="flex items-center justify-center h-24">
-                <p className="text-[13px] text-neutral-400">Start the conversation below</p>
-              </div>
-            )}
-
-            {!isLoading && messages.map((msg, idx, arr) => {
-              const isLastAssistant = msg.role === 'assistant' && !isStreaming &&
-                idx === arr.map((m, i) => m.role === 'assistant' ? i : -1).filter(i => i >= 0).at(-1);
-              const drafts = (msg.metadata as { email_drafts?: EmailDraftData[] } | undefined)?.email_drafts ?? [];
-              const wfDrafts = (msg.metadata as { workflow_drafts?: WorkflowDraft[] } | undefined)?.workflow_drafts ?? [];
-              const artifacts = (msg.metadata as { artifacts?: WorkArtifact[] } | undefined)?.artifacts ?? [];
-              return (
-                <div key={msg.id}>
-                  <ChatMessageBubble
-                    message={msg}
-                    isLastAssistantMessage={isLastAssistant}
-                    onViewArtifact={handleViewArtifact}
-                    artifactVersionMap={artifactVersionMap}
-                  />
-                  {drafts.map((d, i) => (
-                    <EmailDraftCard key={`${msg.id}-email-${i}`} draft={d} threadId={thread.id} agentId={worker.id} />
-                  ))}
-                  {wfDrafts.map((wd, i) => (
-                    <div key={`${msg.id}-wf-${i}`} className="mt-2">
-                      <WorkflowDraftCard draft={wd} />
-                    </div>
-                  ))}
-                  {artifacts.map((a, i) => (
-                    <ArtifactRenderer key={`${msg.id}-art-${i}`} artifact={a} ctx={{ threadId: thread.id, agentId: worker.id, messageId: msg.id }} />
-                  ))}
-                </div>
-              );
-            })}
-
-            {isStreaming && <StreamingMessage text={streamingText} tools={streamingTools} thinking={streamingThinking || undefined} thinkingDone={thinkingDone} />}
-            <div ref={messagesEndRef} />
-          </div>
-        </div>
-
-        {/* Input */}
-        <div className="flex-shrink-0 px-4 pb-4 pt-2">
-          <div className="max-w-[660px] mx-auto">
-            <WorkerMentionInput
-              onSubmit={(text, mentions) => handleSubmit(text, mentions)}
-              disabled={isStreaming}
-              placeholder={`Message ${worker.name}…  (@ to mention a coworker, task, or document)`}
-              prefill={inputValue || null}
-              onPrefillConsumed={() => setInputValue('')}
-              onAttach={handleAttach}
-              attachments={chatAttachments}
-              onRemoveAttachment={handleRemoveAttachment}
-            />
-            <p className="mt-1.5 text-center text-[11px] text-neutral-400">
-              Enter to send · Shift+Enter for new line · @ to mention
-            </p>
-          </div>
-        </div>
+              <p className="mt-1.5 text-center text-[11px] text-neutral-400">
+                Enter to send · Shift+Enter for new line · @ to mention
+              </p>
+            </div>
+          }
+        />
       </div>
 
       {/* Artifact panel resize handle */}

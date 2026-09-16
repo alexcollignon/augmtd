@@ -14,6 +14,8 @@ const KINDS = new Set(['all', 'meeting', 'attachment', 'upload', 'generated']);
 //   ?kind=             the active source tab     ?q=             filename search (server-side —
 //   ?ids=a,b,c         an explicit set (how the panel folds the SEMANTIC search hits in beside
 //                      the name matches, since /api/drive/search returns ids only)
+//   ?pending=1         ONLY the not-yet-indexed rows — the door behind the "N processing" chip,
+//                      so a count nobody could open becomes a list with names and dates
 //   ?offset= &limit=
 export async function GET(request: NextRequest) {
   try {
@@ -31,6 +33,7 @@ export async function GET(request: NextRequest) {
       kind: (KINDS.has(rawKind) ? rawKind : 'all') as KindFilter,
       q: sp.get('q') ?? undefined,
       ...(ids.length ? { ids } : {}),
+      ...(sp.get('pending') === '1' ? { pending: true } : {}),
       offset: Number(sp.get('offset') ?? 0) || 0,
       limit: Number(sp.get('limit') ?? KB_PAGE) || KB_PAGE,
     });

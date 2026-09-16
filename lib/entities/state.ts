@@ -17,7 +17,7 @@ import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 // VOICE (P5a): bump whenever the synthesis prompt/voice changes — threaded into the stored sig so every
 // cached state regenerates through the existing sig-gated paths (the alignment-cache lesson: a
 // prompt-driven cache must invalidate on the prompt itself, not only on the data).
-export const STATE_PROMPT_VERSION = 8; // 8: THE ONE-CLAIM LAW — the judge's standing verdicts are FACTS the prose must not contradict ("no reply needed yet" stood for days under a headline saying "confirm or propose" — two caches, one page, neither able to invalidate the other; found live). 7: THE EXCERPT-HONESTY LAW — clipped gists declare themselves; a clip marker is never source truncation. 6: LAW 6 — settled ledger lines speak history-grammar, never open-debt grammar. 5: THE DEIXIS LAW — no relative day-words in cached prose; pre-today ledger events are the past. 4: the reasoned `scope` verdict.
+export const STATE_PROMPT_VERSION = 9; // 9: THE SETTLED LINE IS HISTORY — a (handled)/DONE line, or one whose NOW clause says THE USER spoke last, may not appear in whoOwes.you, blocking OR next_move (found live: the synthesis ran after the resolutions, read both signals, demanded the settled deed anyway, and froze on a matching sig); rides with THE WATERMARK SURVIVES THE CLIP, which changes the ledger TEXT — so every stale state re-synthesizes lawfully through the existing sig gate. 8: THE ONE-CLAIM LAW — the judge's standing verdicts are FACTS the prose must not contradict ("no reply needed yet" stood for days under a headline saying "confirm or propose" — two caches, one page, neither able to invalidate the other; found live). 7: THE EXCERPT-HONESTY LAW — clipped gists declare themselves; a clip marker is never source truncation. 6: LAW 6 — settled ledger lines speak history-grammar, never open-debt grammar. 5: THE DEIXIS LAW — no relative day-words in cached prose; pre-today ledger events are the past. 4: the reasoned `scope` verdict.
 
 // The BANNED machinery register — the system describing its own bookkeeping instead of the matter.
 // ONE definition: the synthesis self-checks against it (with a corrective retry) and the voice smoke
@@ -50,6 +50,46 @@ export type EntityPriority = { weight: number; reason: string };
 export type LedgerLine = { at: string; kind: string; who: string | null; text: string; ref: string };
 
 const daysBetween = (a: string, b: number) => Math.floor((b - new Date(a).getTime()) / 86400000);
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// A SETTLED LINE CANNOT FOUND A DEMAND — the code half (owner walk, Sep 8; proven necessary by the
+// fidelity run, where the strengthened PROMPT alone still re-issued the settled deed).
+//
+// The doctrine this repo learned three times over: a prompt is a hope, the law is code. So the
+// model proposes and a DETERMINISTIC arbiter disposes (the two-key idiom): every whoOwes.you item,
+// the blocking phrase and the next_move are matched — by the house distinctive-token test — against
+// the ledger lines themselves. A claim that belongs to a SETTLED line (marked handled/dismissed/
+// DONE, or whose watermark says THE USER spoke last) more than to any OPEN line is a settled deed
+// restated, and it is dropped. Nothing is invented and nothing open is ever silenced: a claim that
+// matches an open line at least as well always survives.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** A line whose obligation has left the user's hands — the two settlement signals, read structurally. */
+export function isSettledLedgerLine(text: string): boolean {
+  return /\(handled\)|\(dismissed[^)]*\)|^DONE — /.test(text)
+    || /— NOW \([^)]*\bthe user spoke last\)/.test(text);
+}
+
+/** Share of the CLAIM's distinctive tokens present in a line (the offerEchoesMove idiom). */
+function claimShare(claimTokens: string[], line: string): number {
+  if (!claimTokens.length) return 0;
+  const hay = line.toLowerCase();
+  return claimTokens.filter((t) => hay.includes(t)).length / claimTokens.length;
+}
+
+/** The arbiter. Returns true when `claim` restates a settled line and no open line owns it better. */
+export function restatesSettledWork(claim: string, ledger: LedgerLine[], generic: Set<string>): boolean {
+  const toks = [...new Set(String(claim ?? '').toLowerCase().split(/[^\p{L}\p{N}]+/u)
+    .filter((t) => t.length >= 4 && !generic.has(t)))];
+  if (toks.length < 2) return false; // too little signal to accuse anything — keep the claim
+  let settledBest = 0, openBest = 0;
+  for (const l of ledger) {
+    const s = claimShare(toks, l.text);
+    if (isSettledLedgerLine(l.text)) settledBest = Math.max(settledBest, s);
+    else openBest = Math.max(openBest, s);
+  }
+  return settledBest >= 0.5 && settledBest > openBest;
+}
 
 // The user's own name (so the synthesis says "you") — same memo pattern as the brains.
 const nameMemo = new Map<string, { at: number; name: string | null }>();
@@ -91,30 +131,12 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
     // used to feed the synthesis its day-one ask forever. ONE batched query: the newest message
     // per member thread; when it's newer than the founding email, a NOW clause rides the line
     // (and, being part of the ledger text, it moves the sig — the state re-synthesizes).
-    const nowByThread = new Map<string, { who: string; at: string; gist: string; fromUser: boolean }>();
-    try {
-      const tids = [...new Set(((data ?? []) as Array<Record<string, any>>)
-        .map((it) => (it.source_data?.thread_id as string) || null).filter(Boolean))] as string[];
-      if (tids.length) {
-        const { data: latest } = await supabase.from('emails')
-          .select('thread_id, from_name, from_address, received_at, is_from_user, body')
-          .eq('user_id', userId).in('thread_id', tids.slice(0, 60))
-          .order('received_at', { ascending: false }).limit(300);
-        const { topMessageOf } = await import('@/lib/inbox/top-message');
-        for (const m of (latest ?? []) as Array<Record<string, any>>) {
-          const t = String(m.thread_id);
-          if (nowByThread.has(t)) continue; // desc order — first seen is the newest
-          nowByThread.set(t, {
-            who: m.is_from_user ? 'the user' : String(m.from_name || m.from_address || 'them'),
-            at: String(m.received_at || '').slice(0, 10),
-            // EXCERPT-HONESTY (Aug 4): quoted gists declare their clipping — a hard cut read as
-            // "the email is truncated" by the synthesis (found live on a normal email).
-            gist: clipForPrompt(topMessageOf(String(m.body || '')).replace(/\s+/g, ' ').trim(), 110),
-            fromUser: !!m.is_from_user,
-          });
-        }
-      }
-    } catch { /* the founding line still stands */ }
+    // ONE IMPLEMENTATION (Sep 8): the read moved to lib/inbox/thread-now.ts so the ROOM's composer
+    // reads the same watermark this ledger does. A fork of this one fact is how a room ends up
+    // demanding a reply the user already sent — the very class the owner walked into.
+    const { latestByThread, nowClause } = await import('@/lib/inbox/thread-now');
+    const nowByThread = await latestByThread(supabase, userId, ((data ?? []) as Array<Record<string, any>>)
+      .map((it) => (it.source_data?.thread_id as string) || '').filter(Boolean));
     for (const it of (data ?? []) as Array<Record<string, any>>) {
       const sd = it.source_data ?? {};
       // Resolution status rides the line (L2): a handled/dismissed item must read as SETTLED — so the
@@ -135,7 +157,8 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
       const nowLine = (() => {
         const n = sd.thread_id ? nowByThread.get(String(sd.thread_id)) : null;
         if (!n || !n.at || n.at <= String(sd.received_at ?? it.created_at ?? '').slice(0, 10)) return '';
-        return ` — NOW (${n.at}, ${n.who} spoke last): "${n.gist}"`;
+        // ONE AUTHOR for the clause (Sep 8) — the clippers locate it by the same marker.
+        return nowClause(n);
       })();
       ledger.push({
         at: sd.received_at ?? it.created_at ?? '', kind: 'email', who: sd.from_name ?? sd.from_address ?? null,
@@ -153,7 +176,9 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
   if (cIds.length) {
     const { data } = await supabase.from('commitments').select('id, description, counterparty, direction, due_date, created_at, status, resolved_reason').in('id', cIds.slice(0, 60));
     // D2: a HUMAN resolved_reason (not one of the machine stamps) is the user's own context — surface it.
-    const MACHINE_REASONS = new Set(['user_marked', 'user_dismissed', 'replied', 'chat', 'consolidated', 'completed', 'dismissed']);
+    // 'fulfilled' + 'expired' added Sep 13 (THE PROACTIVE REACH ARC): both are machine stamps —
+    // rendering either as `— user: "expired"` quoted a stamp as the user's own words.
+    const MACHINE_REASONS = new Set(['user_marked', 'user_dismissed', 'replied', 'chat', 'consolidated', 'completed', 'dismissed', 'fulfilled', 'expired', 'workflow_deleted']);
     for (const c of (data ?? []) as Array<Record<string, any>>) {
       const owes = String(c.direction || 'you_owe') === 'awaiting' ? 'they owe' : 'you owe';
       if (c.counterparty) humanCounterparty = true;
@@ -278,7 +303,10 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
     if (!opts.force && ent.sig === sig) return; // unchanged ledger + verdicts + no event boundary → no AI
 
     const userName = await getUserName(supabase, userId);
-    const lines = ledger.map((l, i) => `[#${i + 1}] ${(l.at || '').slice(0, 10)} · ${l.kind}${l.who ? ` · ${l.who}` : ''}: ${l.text.slice(0, 200)}`).join('\n');
+    // THE WATERMARK SURVIVES THE CLIP (Sep 8): a plain 200-char cut removed the trailing NOW clause
+    // from exactly the longest lines — the synthesis then re-argued a settled thread as open.
+    const { clipLedgerLine } = await import('@/lib/inbox/thread-now');
+    const lines = ledger.map((l, i) => `[#${i + 1}] ${(l.at || '').slice(0, 10)} · ${l.kind}${l.who ? ` · ${l.who}` : ''}: ${clipLedgerLine(l.text, 200)}`).join('\n');
     const prompt =
       `You are the user's chief of staff, keeping the live picture of ONE body of work — it can be anything ` +
       `bounded: a deal, a program, a hire, an operation, a personal matter. No funnel assumptions. From its ` +
@@ -289,7 +317,14 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
       `TODAY is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}. This text will be read for DAYS — never write relative day-words ("tomorrow", "next week", "later today"): name absolute dates ("Jul 28"). Anything in the ledger dated BEFORE today already HAPPENED — describe it as past ("they met Jul 28"), never as upcoming.\n` +
       // EXCERPT-HONESTY (Aug 4): the ledger's quoted gists are clipped by US for length.
       `${EXCERPT_RULE} Never describe a message or document as truncated/cut-off/incomplete based on a clipped quote.\n` +
-      `A ledger line marked DONE / (handled) / (dismissed) is HISTORY — the obligation is settled; NEVER present it as owed, due, or pending, whatever its original due date says. If everything is settled, say so plainly (the calm is earned).\n` +
+      // THE SETTLED LINE IS HISTORY (Sep 8, found live — root cause C1 of the room that kept
+      // asking): this pass ran AFTER the resolutions, read "(handled)" and a NOW clause naming the
+      // user as the last speaker, and STILL wrote whoOwes.you / blocking / next_move demanding the
+      // very deed that had just been done — then froze, because the sig matched from then on. The
+      // rule was here; it named only the marker and only the word "owed", so the model routed the
+      // demand through the OTHER three fields. Now it names the fields, and the watermark.
+      `A ledger line marked DONE / (handled) / (dismissed) — or whose "${'— NOW ('}…)" clause says THE USER spoke last on that thread — is HISTORY: the obligation is settled and has left the user's hands. NEVER present it as owed, due, or pending, whatever its original due date says, and it may NOT appear in "whoOwes.you", in "blocking", or as the "next_move" — not in other words, not as a follow-up on the same deed.\n` +
+      `BEFORE you write each whoOwes.you item, each blocking phrase and the next_move, find the ledger line it comes from and check that line: if it is settled by the test above, DROP the candidate. A thread where the user spoke last is not a debt you may restate — even when their own message only promised the thing, it has left their hands and you cannot see what they did outside this ledger. Anything you still claim as owed must come from an UNSETTLED line — a line where the counterparty spoke last, or an open commitment — and you must speak that line's own matter. If everything is settled, say so plainly, put nothing in whoOwes.you, and return next_move kind "none" (the calm is earned).\n` +
       (verdictFacts.length
         ? `THE JUDGE'S STANDING VERDICTS (authoritative for what's owed — your prose must NEVER contradict them: never write "no reply needed", "you're all set", "nothing owed" while a verdict below says work is owed; describe the position, leave the obligation claim to the verdict):\n${verdictFacts.join('\n')}\n`
         : '') +
@@ -356,6 +391,37 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
       });
       if (retry.json?.summary) p = retry.json;
     }
+    // THE SUMMARY OBEYS THE SAME ARBITER (fidelity run, Sep 8: the demand fields came out clean and
+    // the prose still trailed "Awaiting meeting link send"). A sentence cannot be surgically edited
+    // by code without mangling it, so the deed here is the file's OWN corrective-retry idiom: name
+    // the offending clause and ask for the whole JSON again. One extra call ONLY on a violation.
+    const { GENERIC_WORK_WORDS } = await import('@/lib/entities/recognize');
+    const settledDemand = (claim: string) => restatesSettledWork(claim, ledger, GENERIC_WORK_WORDS);
+    // ONE SPLIT for both halves (detect + strip): the boundaries keep their own punctuation, so a
+    // removed clause leaves readable prose behind.
+    const CLAUSES = /(?<=[.,;:])\s+|\s+—\s+/;
+    const settledClause = (s: string): string | null =>
+      String(s ?? '').split(CLAUSES).find((c) => settledDemand(c)) ?? null;
+    const badClause = settledClause(String(p.summary ?? ''));
+    if (badClause) {
+      const retry = await aiCall<StateJson>({
+        userId, supabase, shape: { output: 'json' }, temperature: 0.3, maxTokens: 900, source: 'brain_synthesis',
+        prompt: prompt + `\n\nYOUR PREVIOUS DRAFT wrote "${badClause}" — that work belongs to a SETTLED ledger line (marked handled/dismissed/DONE, or one where THE USER spoke last). Rewrite the WHOLE JSON without it: describe the position as it stands now, and claim as owed only what an UNSETTLED line supports.`,
+      });
+      if (retry.json?.summary && !settledClause(String(retry.json.summary))) p = retry.json;
+      else if (p.summary) {
+        // THE LAST WORD IS CODE'S (proven necessary on the live room: the retry re-issued the same
+        // trailing claim). A clause is separable — the split points ARE sentence boundaries — so the
+        // offending clause is REMOVED and the rest of the position stands. Never blanks a summary:
+        // if nothing would survive, the model's prose is kept (a room without a position is worse
+        // than a room with a stale sentence, and the demand fields below are already clean).
+        const kept = String(p.summary).split(CLAUSES).filter((c) => !settledDemand(c));
+        if (kept.length) {
+          const mended = kept.join(' ').replace(/\s+/g, ' ').replace(/[\s,;:]+$/, '').trim();
+          if (mended) p = { ...p, summary: /[.!?]$/.test(mended) ? mended : `${mended}.` };
+        }
+      }
+    }
 
     const mo = ['active', 'needs_you', 'waiting', 'gone_quiet', 'stalled'].includes(p.momentum as string) ? p.momentum : 'active';
     // Category is owned by the GROUNDED classifier (scripts/backfill-entity-category.ts — domain-aware),
@@ -372,17 +438,22 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
     if (scope === 'project' && !facts.humanCounterparty && facts.totalEmails > 0 && facts.automatedEmails >= facts.totalEmails) {
       scope = 'errand';
     }
+    // A SETTLED LINE CANNOT FOUND A DEMAND — the code half. Runs on the model's own output, over
+    // the same ledger it read: a demand belonging to a settled line is dropped before it is stored.
+    const owedYou = (p.whoOwes?.you ?? []).slice(0, 5).map(String).filter((c) => !settledDemand(c));
+    const blockingRaw = p.blocking ? String(p.blocking).slice(0, 120) : null;
     const state: EntityState = {
       summary: String(p.summary).slice(0, 200), momentum: mo as EntityState['momentum'],
       category: priorCategory,
       scope,
-      whoOwes: { you: (p.whoOwes?.you ?? []).slice(0, 5).map(String), them: (p.whoOwes?.them ?? []).slice(0, 5).map(String) },
+      whoOwes: { you: owedYou, them: (p.whoOwes?.them ?? []).slice(0, 5).map(String) },
       stage: p.stage ? String(p.stage).slice(0, 40) : null,
-      blocking: p.blocking ? String(p.blocking).slice(0, 120) : null,
+      blocking: blockingRaw && !settledDemand(blockingRaw) ? blockingRaw : null,
     };
     let nextMove: EntityNextMove | null = null;
     const nm = p.next_move;
-    if (nm?.kind && ['reply', 'send', 'followup'].includes(nm.kind) && nm.title) {
+    // …and the MOVE obeys the same arbiter: the one action a room pins may never be a settled deed.
+    if (nm?.kind && ['reply', 'send', 'followup'].includes(nm.kind) && nm.title && !settledDemand(String(nm.title))) {
       const latestInbound = ledger.find((l) => l.kind === 'email')?.ref ?? null;
       // covers: "#N" citations → ledger refs. Only refs that actually exist survive (grounded-or-absent).
       const covers = (Array.isArray((nm as { covers?: unknown }).covers) ? ((nm as { covers?: unknown[] }).covers ?? []) : [])

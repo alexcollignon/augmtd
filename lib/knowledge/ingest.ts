@@ -13,9 +13,12 @@
 import { createHash } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { embedText, fileEmbedText, rawChunkEmbedText, chunkText, extractTextFromFile, getOrCreateUploadSource } from './indexer';
+import { stampFileBucket } from './file-bucket';
 
 export type FileOriginKind = 'email_attachment' | 'chat' | 'coworker' | 'upload' | 'transcript' | 'generated' | 'gdrive' | 'dropbox';
-export type FileOrigin = { kind: FileOriginKind; ref: string };
+/** `bucket` is THE BYTES' PROVENANCE (Sep 14, lib/knowledge/file-bucket.ts): which storage bucket
+ *  `storage_path` points into. Written here, read by every byte-reader — never assumed. */
+export type FileOrigin = { kind: FileOriginKind; ref: string; bucket?: string };
 
 export type IngestParams = {
   userId: string;
@@ -34,6 +37,12 @@ export type IngestParams = {
 };
 
 const MAX_CHUNKS = 24; // Tier-1 cap — deep coverage is Tier-2's job
+
+/** The origin jsonb this ingest writes — provenance of the SOURCE (kind/ref) and of the BYTES
+ *  (bucket). One producer, so the two writers below can never disagree. */
+function originCols(p: IngestParams): { kind: FileOriginKind; ref: string; bucket?: string } {
+  return { kind: p.origin.kind, ref: p.origin.ref, ...(p.bucket ? { bucket: p.bucket } : {}) };
+}
 
 /** Batch-embed raw chunks (no summaries — Tier 1): context header + content, the ONE derivation. */
 async function embedChunksRaw(items: Array<{ header: string; content: string }>, userId: string, admin: SupabaseClient): Promise<number[][]> {
@@ -55,8 +64,11 @@ export async function ingestFile(admin: SupabaseClient, p: IngestParams): Promis
   const entityId = p.via ? await resolveEntity(admin, p.userId, p.via) : null;
   if (existing?.id) {
     await admin.from('knowledge_files')
-      .update({ ...(entityId ? { entity_id: entityId } : {}), origin: { kind: p.origin.kind, ref: p.origin.ref } })
+      .update({ ...(entityId ? { entity_id: entityId } : {}), origin: originCols(p) })
       .eq('id', existing.id).is('entity_id', null).then(() => {}, () => {}); // non-fatal pre-migration
+    // The bucket rides UNCONDITIONALLY (the update above is entity-gated): a deduped row that
+    // already belongs to a body of work must still learn where its bytes live.
+    if (p.bucket) await stampFileBucket(admin, existing.id as string, p.bucket);
     return { fileId: existing.id as string, deduped: true };
   }
 
@@ -89,7 +101,7 @@ export async function ingestFile(admin: SupabaseClient, p: IngestParams): Promis
   };
   // Try WITH origin/entity (post-migration); fall back without (pre-migration).
   let fileId: string | null = null;
-  const withCols = { ...base, origin: { kind: p.origin.kind, ref: p.origin.ref }, ...(entityId ? { entity_id: entityId } : {}) };
+  const withCols = { ...base, origin: originCols(p), ...(entityId ? { entity_id: entityId } : {}) };
   const r1 = await admin.from('knowledge_files').upsert(withCols, { onConflict: 'user_id,provider_file_id' }).select('id').maybeSingle();
   if (r1.data?.id) fileId = r1.data.id as string;
   else if (r1.error && /origin|entity_id|column/i.test(r1.error.message)) {
@@ -178,7 +190,15 @@ export async function stampFileMeta(
   via?: { itemKind: 'inbox_item' | 'meeting' | 'commitment'; itemId: string } | null,
 ): Promise<void> {
   try {
-    const entityId = via ? await resolveEntity(admin, (await admin.from('knowledge_files').select('user_id').eq('id', fileId).maybeSingle()).data?.user_id as string, via) : null;
-    await admin.from('knowledge_files').update({ origin: { kind: origin.kind, ref: origin.ref }, ...(entityId ? { entity_id: entityId } : {}) }).eq('id', fileId);
+    const { data: row } = await admin.from('knowledge_files').select('user_id, origin').eq('id', fileId).maybeSingle();
+    const entityId = via ? await resolveEntity(admin, row?.user_id as string, via) : null;
+    // MERGE, never replace: the indexer stamped the BYTES' bucket on this row before we got here —
+    // overwriting origin wholesale would drop it and re-open the wrong-bucket preview.
+    const prevBucket = (row?.origin as { bucket?: unknown } | null)?.bucket;
+    const bucket = origin.bucket ?? (typeof prevBucket === 'string' ? prevBucket : undefined);
+    await admin.from('knowledge_files').update({
+      origin: { kind: origin.kind, ref: origin.ref, ...(bucket ? { bucket } : {}) },
+      ...(entityId ? { entity_id: entityId } : {}),
+    }).eq('id', fileId);
   } catch { /* non-fatal */ }
 }
