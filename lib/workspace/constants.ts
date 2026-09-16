@@ -8,6 +8,9 @@ import type { FeatureKey } from './types';
 export const ROUTE_FEATURE_MAP: Array<{ prefix: string; feature: FeatureKey }> = [
   { prefix: '/inbox',    feature: 'email' },
   { prefix: '/meetings', feature: 'meetings' },
+  // ONE LIBRARY, ONE ADDRESS (Sep 15): /documents is the page; /drive stays a redirect seat, and
+  // both are gated by the same feature.
+  { prefix: '/documents', feature: 'drive' },
   { prefix: '/drive',    feature: 'drive' },
 ];
 

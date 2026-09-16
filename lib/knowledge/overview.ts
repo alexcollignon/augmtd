@@ -20,6 +20,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { FOLDER_CONFIG_KEYS } from '@/lib/knowledge/rename-folder';
 
 export type KbKind = 'meeting' | 'attachment' | 'upload' | 'generated';
 export type KindFilter = 'all' | KbKind;
@@ -36,9 +37,18 @@ export type KbFile = {
   folderId: string | null;
   folder: string | null;
   deletable: boolean;
+  /** Meeting rows only — the transcript id, which IS the note's address (`/meetings/<id>`: the ONE
+   *  note address is `calendarEventId ?? id`, and the note view's ad-hoc branch has always resolved
+   *  a transcript id). It turns the row's lock from a shrug into a door. */
+  meetingId?: string;
 };
 
-export type KbFolder = { id: string; name: string; count: number; isSystem: boolean };
+export type KbFolder = {
+  id: string; name: string; count: number; isSystem: boolean;
+  /** The workflows bound to this folder BY NAME — present only when there is at least one.
+   *  `count` is the true total; `names` is capped for display (see FOLDER_NAMES_SHOWN). */
+  workflows?: { count: number; names: string[] };
+};
 
 export type KnowledgeOverview = {
   counts: {
@@ -144,8 +154,14 @@ function toFiles(rows: Row[], augmtdSourceIds: string[], folderNames: Map<string
       project: r.entity_id ? entityNames.get(r.entity_id) ?? null : null,
       folderId: r.folder_id ?? null,
       folder: r.folder_id ? folderNames.get(r.folder_id) ?? null : null,
-      // A meeting note lives with its meeting — it leaves the KB from there, never here.
+      // A meeting note lives with its meeting — it leaves the KB from there, never here. And the
+      // row can SAY where "there" is at zero extra cost: the id is already in provider_file_id.
+      // Every KB meeting row is the reader's OWN meeting — a transcript indexes only into its
+      // owner's library, and a note shared TO someone never creates a knowledge_files row for them.
       deletable: kind !== 'meeting',
+      ...(kind === 'meeting'
+        ? { meetingId: String(r.provider_file_id ?? '').slice('transcript::'.length) }
+        : {}),
     };
   });
 }
@@ -160,6 +176,54 @@ async function decorate(sb: SupabaseClient, userId: string, rows: Row[], folderN
   return toFiles(rows, augmtdSourceIds, folderNames, entityNames);
 }
 
+/** How many bound workflow names a folder row carries. The chip says "feeds N workflows" from the
+ *  true count; the names are the tooltip's evidence, not the number. */
+const FOLDER_NAMES_SHOWN = 5;
+
+// ── WHAT DEPENDS ON THIS FOLDER — the READ-SIDE TWIN OF THE RENAME HEAL ──────────────────────────
+// A folder is bound BY NAME, so the only way to know what feeds on it is to walk every workflow's
+// steps with `FOLDER_CONFIG_KEYS` — THE one table, imported, never copied: a folder-taking tool
+// added there is answered by both the heal and this chip in the same edit.
+//
+// The matching semantics are the heal's, exactly: a step whose `tool` is in the table, whose
+// `config[key]` is a string, trimmed and case-folded EQUAL to the folder's name. Deliberately not
+// the fuzzy token ladder `read_kb_folder` resolves with at run time — the chip must promise only
+// what the heal would actually re-point, or the two surfaces disagree about the same fact.
+//
+// The workflow query mirrors `renameKnowledgeFolder`'s: scoped by `user_id` alone, with NO status
+// filter. The heal re-points a paused workflow too (its steps would otherwise be left aiming at a
+// name that no longer exists), so the chip must count it. The heal's set IS the authority here.
+type BindingStep = { tool?: string; config?: Record<string, unknown> };
+
+async function folderWorkflowBindings(
+  sb: SupabaseClient, userId: string,
+): Promise<Map<string, string[]>> {
+  const byFolder = new Map<string, string[]>();
+  const { data, error } = await sb.from('workflows')
+    .select('id, name, steps').eq('user_id', userId);
+  if (error) throw new Error(error.message);
+
+  for (const w of (data ?? []) as Array<{ id: string; name: string | null; steps: unknown }>) {
+    const steps = Array.isArray(w.steps) ? (w.steps as BindingStep[]) : [];
+    // DISTINCT per folder: a workflow reading the same folder in three steps feeds it ONCE.
+    const named = new Set<string>();
+    for (const s of steps) {
+      const key = s?.tool ? FOLDER_CONFIG_KEYS[s.tool] : undefined;
+      if (!key) continue;
+      const cur = s.config?.[key];
+      if (typeof cur !== 'string') continue;
+      const folded = cur.trim().toLowerCase();
+      if (folded) named.add(folded);
+    }
+    const label = (w.name ?? '').trim() || 'Untitled workflow';
+    for (const folded of named) {
+      const list = byFolder.get(folded);
+      if (list) list.push(label); else byFolder.set(folded, [label]);
+    }
+  }
+  return byFolder;
+}
+
 export async function buildKnowledgeOverview(
   sb: SupabaseClient, userId: string, opts?: { kind?: KindFilter },
 ): Promise<KnowledgeOverview> {
@@ -169,7 +233,7 @@ export async function buildKnowledgeOverview(
   // EVERY tab count is its own COUNT under the SAME predicate the folder counts use. `upload` was
   // derived by subtraction (total − the other three), which turned one overlap between two
   // predicates into a tab that disagreed with the rows underneath it — the sum law, broken.
-  const [total, meeting, attachment, generated, upload, indexed, foldersRes, mailRes] = await Promise.all([
+  const [total, meeting, attachment, generated, upload, indexed, foldersRes, mailRes, bindings] = await Promise.all([
     countFiles(sb, userId, (q) => q),
     countFiles(sb, userId, (q) => applyKind(q, 'meeting', augmtdSourceIds)),
     countFiles(sb, userId, (q) => applyKind(q, 'attachment', augmtdSourceIds)),
@@ -187,6 +251,12 @@ export async function buildKnowledgeOverview(
       .order('name', { ascending: true }),
     sb.from('connections').select('provider, metadata').eq('user_id', userId)
       .eq('status', 'active').in('provider', ['gmail', 'outlook']),
+    // BEST-EFFORT: the chip is legibility, never a dependency. A failure here leaves every folder
+    // without the field — the library must not fail, or wait, for something no number depends on.
+    folderWorkflowBindings(sb, userId).catch((e) => {
+      console.error('[knowledge/overview] folder workflow bindings', e);
+      return new Map<string, string[]>();
+    }),
   ]);
 
   const folderRows = (foldersRes.data ?? []) as Array<{ id: string; name: string; is_system: boolean }>;
@@ -210,18 +280,43 @@ export async function buildKnowledgeOverview(
   return {
     counts: { total, meeting, attachment, generated, upload, indexed, pending: Math.max(0, total - indexed) },
     // An EMPTY folder still renders — a seeded folder nobody has filled yet must not be invisible.
-    folders: folderRows.map((f, i) => ({ id: f.id, name: f.name, count: folderCounts[i], isSystem: !!f.is_system })),
+    folders: folderRows.map((f, i) => {
+      const bound = bindings.get(f.name.trim().toLowerCase()) ?? [];
+      return {
+        id: f.id, name: f.name, count: folderCounts[i], isSystem: !!f.is_system,
+        // An UNBOUND folder carries no field at all — absence says "nothing feeds on this", which
+        // a zero would have to be read as anyway.
+        ...(bound.length
+          ? { workflows: { count: bound.length, names: bound.slice(0, FOLDER_NAMES_SHOWN) } }
+          : {}),
+      };
+    }),
     loose: { count: looseCount, files: loose, hasMore: looseCount > loose.length },
     mail: ((mailRes.data ?? []) as Array<{ provider: string; metadata: { email?: string } | null }>)
       .map((c) => ({ provider: c.provider, email: c.metadata?.email ?? '' })),
   };
 }
 
-/** One page of files — a folder section on expand, "Show all N", a name search, or an explicit id
- *  set (how the panel folds the semantic search hits in beside the name matches). */
+// ── THE PENDING READ — the rows behind the "N processing" chip ───────────────────────────────────
+// A count nobody can open is a rumour: a file stuck since August and a file uploaded a minute ago
+// are the same "9 processing" until the rows themselves are visible. `pending` is the EXACT inverse
+// of the overview's `indexed` semi-join (`knowledge_chunks!inner`), so it is written as the
+// left-join-null it is — PostgREST's null filtering on an embedded resource. Two forms that look
+// right and silently return nothing, both observed live on the account the chip was found on
+// (total 1,089 · indexed 1,080 · pending 9):
+//   · the default `knowledge_chunks(count)` AGGREGATE embed DEFEATS the null filter — 0 rows;
+//   · a head count whose select omits the embed returns a null count, not an error.
+// So the pending shape carries its own select on BOTH queries. Verified: 9 rows, head count 9,
+// equal to `total − indexed` — the chip's number and its rows are the same fact.
+const PENDING_COLS = FILE_COLS.replace('knowledge_chunks(count)', 'knowledge_chunks!left(id)');
+const PENDING_COUNT_COLS = 'id, knowledge_chunks!left(id)';
+
+/** One page of files — a folder section on expand, "Show all N", a name search, an explicit id
+ *  set (how the panel folds the semantic search hits in beside the name matches), or the
+ *  not-yet-indexed rows behind the processing chip (`pending`). */
 export async function listKbFiles(
   sb: SupabaseClient, userId: string,
-  opts: { folderId?: string | null; kind?: KindFilter; q?: string; ids?: string[]; offset?: number; limit?: number },
+  opts: { folderId?: string | null; kind?: KindFilter; q?: string; ids?: string[]; offset?: number; limit?: number; pending?: boolean },
 ): Promise<{ files: KbFile[]; count: number; hasMore: boolean }> {
   const kind = opts.kind ?? 'all';
   const limit = Math.min(200, Math.max(1, opts.limit ?? KB_PAGE));
@@ -234,15 +329,18 @@ export async function listKbFiles(
     const needle = opts.q?.trim() ?? '';
     if (needle.length >= 2) cur = cur.ilike('filename', `%${needle.replace(/[%_\\]/g, '')}%`);
     if (opts.ids?.length) cur = cur.in('id', opts.ids.slice(0, 200));
+    if (opts.pending) cur = cur.is('knowledge_chunks', null);
     return applyKind(cur, kind, augmtdSourceIds);
   };
 
   const { count } = await shape(
-    sb.from('knowledge_files').select('id', { count: 'exact', head: true }).eq('user_id', userId),
+    sb.from('knowledge_files')
+      .select(opts.pending ? PENDING_COUNT_COLS : 'id', { count: 'exact', head: true })
+      .eq('user_id', userId),
   );
 
   const { data, error } = await shape(
-    sb.from('knowledge_files').select(FILE_COLS).eq('user_id', userId),
+    sb.from('knowledge_files').select(opts.pending ? PENDING_COLS : FILE_COLS).eq('user_id', userId),
   ).order('indexed_at', { ascending: false }).range(offset, offset + limit - 1);
   if (error) throw new Error(error.message);
 

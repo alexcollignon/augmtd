@@ -584,14 +584,22 @@ const fileExists = (p: string) => { try { readFileSync(p, 'utf8'); return true; 
     src('components/home/item-rail.tsx').includes('const send = async (raw: string)') &&
     src('components/home/item-rail.tsx').includes('for (const f of files) await attach(f)'));
 
-  check('KN1: THE SLIM KNOWLEDGE PANEL — /drive survives as the Settings→Knowledge door but the folder grid is DELETED (drive-client gone); the page is the sovereignty/audit surface: one overview read (kind derives STRUCTURALLY from provider_file_id/source — meeting·attachment·upload·generated), indexing status honest (chunks>0), files name their project (entity_id), name+content search, explicit two-step remove, meeting notes managed from Meetings (never deletable here)',
+  check('KN1: THE SLIM KNOWLEDGE PANEL — ONE LIBRARY, ONE ADDRESS (owner, Sep 15): /documents is the page, /drive + the retired Settings→Knowledge tab are redirect seats and Settings carries no Knowledge nav seat; the folder grid era is DELETED (drive-client gone); the page is the sovereignty/audit surface: one overview read (kind derives STRUCTURALLY from provider_file_id/source — meeting·attachment·upload·generated), indexing status honest (chunks>0), files name their project (entity_id), name+content search, explicit two-step remove, meeting notes managed from Meetings (never deletable here)',
     !existsSync('app/drive/drive-client.tsx') &&
-    src('app/(main)/drive/page.tsx').includes("redirect('/settings?tab=knowledge')") &&
-    src('app/(main)/settings/page.tsx').includes("tab === 'knowledge'") &&
-    src('app/(main)/settings/page.tsx').includes('<KnowledgePanel />') &&
+    src('app/(main)/documents/page.tsx').includes('<KnowledgePanel />') &&
+    src('app/(main)/drive/page.tsx').includes("redirect('/documents')") &&
+    src('app/knowledge/page.tsx').includes("redirect('/documents')") &&
+    src('app/(main)/settings/page.tsx').includes("if (tab === 'knowledge') redirect('/documents')") &&
+    !src('app/(main)/settings/page.tsx').includes('<KnowledgePanel />') &&
+    !src('components/settings/settings-left-panel.tsx').includes("id: 'knowledge'") &&
     !src('components/settings/settings-left-panel.tsx').includes("href: '/drive'") &&
-    src('app/api/knowledge/overview/route.ts').includes("p.startsWith('transcript::')") &&
-    src('app/api/knowledge/overview/route.ts').includes("deletable: kind !== 'meeting'") &&
+    // RE-POINTED (Sep 13): the overview READ was extracted out of the route into
+    // `lib/knowledge/overview.ts` by the AHK knowledge-folders arc (Sep 1–2) so the folders surface
+    // and the panel share ONE reader; the route is now a thin door over `buildKnowledgeOverview`.
+    // The two structural laws are asserted where they now live.
+    src('app/api/knowledge/overview/route.ts').includes('buildKnowledgeOverview') &&
+    src('lib/knowledge/overview.ts').includes("p.startsWith('transcript::')") &&
+    src('lib/knowledge/overview.ts').includes("deletable: kind !== 'meeting'") &&
     src('components/knowledge/knowledge-panel.tsx').includes('/api/knowledge/overview') &&
     src('components/knowledge/knowledge-panel.tsx').includes('/api/drive/search') &&
     src('components/knowledge/knowledge-panel.tsx').includes('confirmDel === f.id') &&

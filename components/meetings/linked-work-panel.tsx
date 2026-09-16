@@ -70,7 +70,7 @@ export default function LinkedWorkPanel({ calendarEventId }: LinkedWorkPanelProp
               {data.files.map((f) => (
                 <LinkedItem
                   key={f.id}
-                  href={`/drive`}
+                  href="/documents"
                   title={f.filename}
                   score={f.score}
                 />

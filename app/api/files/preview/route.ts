@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdmin } from '@supabase/supabase-js';
+import { signedUrlForKbFile } from '@/lib/knowledge/file-bucket';
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,11 +17,15 @@ export async function POST(request: NextRequest) {
 
     if (ref.kind === 'kb' && ref.id) {
       const { data: f } = await supabase.from('knowledge_files')
-        .select('storage_path, mime_type, extracted_text, filename').eq('id', ref.id).eq('user_id', user.id).maybeSingle();
+        .select('id, storage_path, origin, mime_type, extracted_text, filename').eq('id', ref.id).eq('user_id', user.id).maybeSingle();
       if (!f) return NextResponse.json({ error: 'not found' }, { status: 404 });
+      // THE ROW'S OWN BUCKET (Sep 14 — owner-found: a PDF born from an email attachment previewed
+      // as TEXT). Signing one hardcoded bucket failed for every row whose bytes live elsewhere and
+      // the extracted-text fallback silently took over. The text fallback now means exactly what it
+      // says: there are no bytes to show.
       if (f.storage_path) {
-        const { data: signed } = await admin.storage.from('drive-uploads').createSignedUrl(f.storage_path as string, 600);
-        if (signed?.signedUrl) return NextResponse.json({ url: signed.signedUrl, mime: f.mime_type ?? null, name: f.filename });
+        const signed = await signedUrlForKbFile(admin, f);
+        if (signed) return NextResponse.json({ url: signed.url, mime: f.mime_type ?? null, name: f.filename });
       }
       return NextResponse.json({ text: String(f.extracted_text ?? '').slice(0, 20000) || null, name: f.filename });
     }
