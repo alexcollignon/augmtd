@@ -26,7 +26,7 @@ queries in `app/api/home/brief/route.ts` into one function returning a unified, 
   calendar meeting (−10d…+21d) → dropped from must-respond. (Extend: match meeting_transcripts too.)
 - **Reply/commitment resolution** — generalize the answered-set: a meeting held after the email, or a
   sent email / fulfilled commitment, resolves the loop (commitment cross-source already exists — unify).
-- **Entity grouping** — collapse N fragments about one person (the 3 Jean-Marie items) into one state.
+- **Entity grouping** — collapse N fragments about one person (the 3 Jordan items) into one state.
 - **Relative-time expiry** — "6 PM tomorrow" whose day passed → stale/drop.
 
 **Layer 3 — synthesis (ONE grounded AI pass over the reconciled context, PA voice).** Because it sees

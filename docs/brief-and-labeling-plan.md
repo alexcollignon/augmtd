@@ -33,11 +33,11 @@ without waiting for the cron. Smoke-test read-only against a fresh item.
 ## DIRECTION (corrected July 2) — general system, not per-case patches
 
 The reconciliation drifted into **bandaids**: a scheduling-email **regex** (supersession) and a
-**name-token matcher** (entity resolution) — each patching one observed case (Jean-Marie), brittle, and
+**name-token matcher** (entity resolution) — each patching one observed case (Jordan), brittle, and
 validated on one inbox's screenshots. Correct the approach:
 
 1. **Identity, not fuzzy strings.** Resolve people by **email**, carried through the pipeline. The real
-   fix for "Jean-Marie won't merge" is **commitments (and every derived record) storing the counterparty
+   fix for "Jordan won't merge" is **commitments (and every derived record) storing the counterparty
    email at extraction time** — then resolution is exact, for everyone. Retire the name-token matcher
    once emails are carried. Do NOT grow name heuristics.
 2. **Minimal deterministic Layer 2** — only true data ops (dedup/group **by email**). No per-pattern rules.
@@ -71,7 +71,7 @@ Foundation shipped: `lib/home/brief-context.ts` (`buildBriefContext` v1 = meetin
 ### B2 — Reconciliation rules (Layer 2, deterministic)
 1. **Entity grouping** *(next visible win)* — in `app/api/home/brief/route.ts`, collapse
    priorities/followups/commitments about the **same counterparty** into one unit ("where things stand
-   with Jean-Marie: met on X; you owe the task list (2d); he owes the review"). Render one grouped card
+   with Jordan: met on X; you owe the task list (2d); he owes the review"). Render one grouped card
    instead of 3 fragments.
 2. **Generalized resolution** — a needs_reply/commitment is resolved if a **meeting was held after** the
    email arrived, or the **commitment was fulfilled** (sent email / later meeting). Unify with the

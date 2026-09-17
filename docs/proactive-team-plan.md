@@ -308,7 +308,7 @@ the PROMISE on served accounts, never plumbing, never weakened.
 
 - **July 28 (night) — T-CLASS (the clock) + R-CLASS (the client map) SHIPPED, promise 116/116.**
   Born from two live screenshots: a "be at the meeting room at 12:30 PM tomorrow" item still on the
-  plate at 20:34 the day OF (time frozen at write-time), and an "STC Bahrain" email filed under
+  plate at 20:34 the day OF (time frozen at write-time), and an "TelcoCo" email filed under
   "Arcapita AI Assessment" (the same Emeritus partner people broker both engagements).
   - **T-class — THE BRAIN HAS A CLOCK** (`lib/utils/user-time.ts` — user tz from their own calendar,
     the brief's law shared): the judge reasons at the USER'S local day+hour (**JUDGE_VERSION 12**);
@@ -320,7 +320,7 @@ the PROMISE on served accounts, never plumbing, never weakened.
     rewrite scrubber `resolveDeixisInDescriptions`; `receivedAt` threaded through sync); entity-state
     prose bans day-words + treats pre-today ledger events as past (STATE_PROMPT_VERSION 5) + its sig
     gains the passed-calendar-events count. Backfill `scripts/sweep-deictic-titles.ts` (ran for
-    Alex: 9 titles fixed incl. the Galp one).
+    Alex: 9 titles fixed incl. the Volta one).
   - **R-class — THE BRAIN HAS A CLIENT MAP**: same people ≠ same deal (the channel-contact law).
     The recognition judge extracts `named_engagement`; the **NAMED-SUBJECT VETO** (code-side
     distinctive-token check against the entity's IDENTITY — name+aliases, deliberately NEVER its
@@ -329,7 +329,7 @@ the PROMISE on served accounts, never plumbing, never weakened.
     GUARD** applies the same law at the zero-AI structural door (deterministic fast path; one cheap
     read only when the item never mentions its inherited entity). Suggestion plausibility floor in
     `pickArtifacts` (a "maybe this?" must itself be plausible or stay silent). Repair
-    `scripts/sweep-recognition-subjects.ts`; the live STC item now correctly founds "STC Bahrain"
+    `scripts/sweep-recognition-subjects.ts`; the live TelcoCo item now correctly founds "TelcoCo"
     with the full veto reasoning in the link record.
   - **Gates**: P27 (past-time same-day expires · ahead-time never · deixis rewrite code-checked) +
     P28 (partner-people/different-client founds, same-client still attaches, distinctive-token

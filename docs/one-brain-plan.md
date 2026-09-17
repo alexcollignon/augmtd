@@ -1,7 +1,7 @@
 # THE ONE BRAIN — entity memory + reasoned recognition (the core rebuild)
 
 **North star.** The system reasons like a human: it has MEMORY of the things in your working life (deals,
-programs, people, projects), it RECOGNIZES new input against that memory ("ah — this is the Jean-Marie pilot
+programs, people, projects), it RECOGNIZES new input against that memory ("ah — this is the Jordan pilot
 we discussed Tuesday"), and everything else — Home, coworkers, chat, drafting — READS that one memory. Built
 once, properly, as the core of the product. No legacy label layer left behind, no bandaid patching, no
 fake-reasoning heuristics.

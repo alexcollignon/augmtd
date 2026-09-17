@@ -255,10 +255,18 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   {
     const { judgeWork } = await import('../lib/work/judge');
     const past = new Date(Date.now() - 10 * 86_400_000);
-    const pastStr = past.toISOString().slice(0, 10);
+    // "tomorrow" in the body, resolved FORWARD from the item's own date (the law), = past + 1 day —
+    // the parenthetical absolute date must corroborate that resolution exactly.
+    const pastStr = new Date(past.getTime() + 86_400_000).toISOString().slice(0, 10);
     const mk = async (subject: string, body: string, ownership: string) => {
       const { data } = await sb.from('inbox_items').insert({
         user_id: PERSONAL, source: 'email', status: 'pending', work_state: 'work_prepared', work_title: subject,
+        // The row's OWN date must match its story: the judge speaks the item's date from
+        // last_activity_at || created_at, and an unset created_at defaults to NOW — which made the
+        // prompt say "today" while the body said a 10-day-old "tomorrow", a self-contradictory
+        // fixture the model could read either way (the 144↔142 flap; found by the Sep 17
+        // adjudication). A fixture's clock is part of the fixture.
+        created_at: past.toISOString(), last_activity_at: past.toISOString(),
         source_data: {
           subject, body, from_name: 'Sam Vendor', from_address: 'sam@acme-example.com', received_at: past.toISOString(),
           understanding: { mailKind: 'customer', ownership, relevance: 'reply', role: 'primary' },
@@ -1413,8 +1421,8 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       delivered.verdict === 'delivered', `verdict=${delivered.verdict} · ${delivered.reason.slice(0, 60)}`);
   }
 
-  // ═══ P30 · THE MOUTH HAS EARS AND THE WHOLE BRAIN (converse arc — the Omantel lesson, found
-  // live: the engine proposed "bring in 'Omantel AI Bootcamp' (46 items)?", the user typed "only
+  // ═══ P30 · THE MOUTH HAS EARS AND THE WHOLE BRAIN (converse arc — the bootcamp lesson, found
+  // live: the engine proposed "bring in 'ZZ AI Bootcamp' (46 items)?", the user typed "only
   // for the bootcamp", and the conversation core — blind to the room's turns AND to the registry —
   // answered "I don't see any bootcamp-related work"). The core now reads the dialogue, executes
   // prose answers to standing interactions through the SAME doors as the buttons, and resolves
@@ -1429,7 +1437,7 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   {
     const { converse } = await import('../lib/converse');
     const { writeRoomTurn } = await import('../lib/room/turns');
-    // 1 — THE OMANTEL REPLAY: a standing founding proposal + the exact prose answer → the adoption
+    // 1 — THE BOOTCAMP REPLAY: a standing founding proposal + the exact prose answer → the adoption
     // EXECUTES (same door as the button), and the reply never claims ignorance.
     const { data: B } = await sb.from('work_entities').insert({
       user_id: PERSONAL, kind: 'initiative', name: 'ZZ Padel Program', aliases: [], tracked: true, status: 'active',
@@ -1447,7 +1455,7 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       });
       const t = await converse(sb, PERSONAL, { kind: 'entity', entityId: String(B.id) }, 'only for the bootcamp');
       const { data: aAfter } = await sb.from('work_entities').select('id').eq('id', String(A2.id)).maybeSingle();
-      check('P30 live · THE OMANTEL REPLAY: "only for the bootcamp" EXECUTES the standing adoption (absorbed through the one door; never "I don\'t see")',
+      check('P30 live · THE BOOTCAMP REPLAY: "only for the bootcamp" EXECUTES the standing adoption (absorbed through the one door; never "I don\'t see")',
         !aAfter && !/don't see|do not see|couldn't find|no .*bootcamp/i.test(t.say) && (t.applied?.some((a) => a.tool === 'adopt_entity') ?? false),
         `say="${t.say.slice(0, 70)}" · absorbed=${!aAfter}`);
       await sb.from('room_turns').delete().eq('user_id', PERSONAL).eq('room_key', String(B.id));

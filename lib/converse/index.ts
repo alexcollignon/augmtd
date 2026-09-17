@@ -166,9 +166,9 @@ const linkKindOf = (s: Extract<ConverseScope, { kind: 'item' }>): 'inbox_item' |
   s.itemKind === 'commitment' || s.itemKind === 'followup' ? 'commitment' : s.itemKind === 'meeting' ? 'meeting' : 'inbox_item';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// THE DIALOGUE READ (converse arc — the Omantel lesson): the room RENDERS as a conversation, so
+// THE DIALOGUE READ (converse arc — the bootcamp lesson): the room RENDERS as a conversation, so
 // the responder must SEE the conversation. Found live: the founding engine proposed "bring in
-// 'Omantel AI Bootcamp' (46 items)?", the user typed "only for the bootcamp", and this core —
+// 'ZZ AI Bootcamp' (46 items)?", the user typed "only for the bootcamp", and this core —
 // blind to the room's turns — answered "I don't see any bootcamp-related work". Two laws fix the
 // class, not the case:
 //   1. The core reads the room's recent turns (transcript) and its STANDING INTERACTIONS (a
@@ -1211,7 +1211,7 @@ async function converseInner(
   // standing interactions, and every path that could answer a button with a question.
   const isTransition = scope.kind === 'item' && text.startsWith('DECISION MADE — ');
 
-  // 0 — A STANDING INTERACTION is pending: first decide whether this note ANSWERS it (the Omantel
+  // 0 — A STANDING INTERACTION is pending: first decide whether this note ANSWERS it (the bootcamp
   // law — a person replying under a question is answering the question until proven otherwise).
   // A yes executes through the SAME door as the button; ambiguity gets ONE clarifier ANCHORED on
   // the pending thing; a no falls through to the normal flow (which now sees the transcript).
@@ -1328,7 +1328,7 @@ async function converseInner(
   // 3 — QUESTION: grounded answer from the scope's memory — the whole brain (global), the deal's
   // memory (entity / linked item), or the item's own context. ONE core; the graders stay
   // single-source. The DIALOGUE + registry MEMORY MATCHES ride the grounding, with the honesty
-  // floor: never assert the absence of something they name (the Omantel "I don't see any
+  // floor: never assert the absence of something they name (the bootcamp "I don't see any
   // bootcamp-related work" class — one turn after the engine itself named 46 items of it).
   if (verdict.question) {
     const scopeEntity = scope.kind === 'entity' ? scope.entityId : null;

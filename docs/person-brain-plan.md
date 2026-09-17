@@ -21,7 +21,7 @@ reasoning tiers burn the budget → empty (the documented trap). Strip ```json f
 - **`lib/projects/identity.ts`** — `canonicalPerson(s)`, `sameAttendee(a,b)`, `nameTokens`, `emailDenotesName`, `emailLocalpart`, `norm`. Alias-aware person matching — the keying + ledger-filtering primitive.
 - **`lib/contacts/extract-contacts.ts` `upsertContacts`** — already maintains `relationship_graph` (`contact_email`, `contact_name`, `interaction_frequency`, `last_interaction`), written from `sync-emails` (~1834) + `meeting-processor`. This is the **seed set of people** + the frequency signal.
 - **`lib/inbox/automated.ts` `isAutomatedSender`** — skip no-reply/notifier addresses (a Notion/Canvas notifier is not a person).
-- **`corporateDomains(supabase, userId)`** (pattern in `lib/inbox/initiative-candidates.ts`) — the user's non-free-provider domains → the `is_internal` flag (the Galp/internal-colleague guard, reused as a *flag*, not an exclusion — an internal colleague IS a person, just weighted differently later).
+- **`corporateDomains(supabase, userId)`** (pattern in `lib/inbox/initiative-candidates.ts`) — the user's non-free-provider domains → the `is_internal` flag (the Volta/internal-colleague guard, reused as a *flag*, not an exclusion — an internal colleague IS a person, just weighted differently later).
 - **`lib/context/entity-context.ts`** — the dossier assembler; in Step 2 it becomes the READER over `person_state` + `initiative_state`. Not touched in Step 1 beyond an optional read.
 - **`components/home/relationship-context.tsx` (`RelationshipContext`)** — already on the deep-dive; S1c upgrades it to render `person_state`.
 

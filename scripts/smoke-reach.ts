@@ -856,6 +856,10 @@ console.log('\nR10 · the receipt grammar — one clock, clean silence, deltas n
   ok('a second resolution REPLACES the first line rather than adding one', first !== second && !second.includes('"a"'));
   ok('a settled item\'s own narrations ARCHIVE with it', /archiveItemNarrations\(client, userId, input, roomKey\)/.test(v));
   ok('   …by key, at the resolution seam', /`prep:\$\{input\.kind\}:\$\{input\.id\}`/.test(v) && /`revisit:\$\{input\.kind\}:\$\{input\.id\}`/.test(v));
+  // THE SPELLING GAP (Sep 17 retro-sweep census): the prep WRITER keys on the work-spine id, whose
+  // commitment segment is `commit:` — the archiver must honour BOTH spellings, or a commitment's
+  // prep narration structurally outlives its settled deed.
+  ok('   …including the writer\'s spine spelling for commitments', /`prep:commit:\$\{input\.id\}`/.test(v));
   ok('   …archiving, never deleting (pre-migration degrades)', /archived_at: new Date\(\)\.toISOString\(\)/.test(v) && /if \(error\) \{\s*await client\.from\('room_turns'\)\.delete\(\)/.test(v));
 
   // R10d — THE REASON NEVER PIPES RAW.

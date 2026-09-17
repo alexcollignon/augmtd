@@ -3,7 +3,7 @@
 ## The pivot
 Everything so far made the *understanding* correct (an email lands on the right initiative). This is the pivot from
 **organizing → doing**. The unit of work is not the email — it's the **initiative**. Nobody thinks
-"process item #47"; they think *"where's Soboplac and what do I do next."* The Initiative Brain is the durable
+"process item #47"; they think *"where's Acme and what do I do next."* The Initiative Brain is the durable
 per-initiative context + synthesized state + **one prepared next move**, and it serves BOTH halves of the goal:
 a filtered *"where each initiative stands"* view (what's happening around your work) AND grounded execution (the how).
 
@@ -56,8 +56,8 @@ DERIVES it from atoms (reuse the entity-context corpus). "Live" = it re-derives 
 - **Who's who** — a per-initiative people graph derived from participants + `relationship_graph` + coworker
   attribution: external counterparties (+ inferred role), the internal team, which coworker did what. The
   internal-colleague guard we just shipped keeps this clean.
-- **Who did what** — every event is attributed (you sent / they replied / Clara drafted / Jean-Marie decided),
-  so the state can say "you sent the offer Tue; Léa hasn't replied (3 days)" — not just "there's an email."
+- **Who did what** — every event is attributed (you sent / they replied / Clara drafted / Jordan decided),
+  so the state can say "you sent the offer Tue; Sam hasn't replied (3 days)" — not just "there's an email."
 
 ## What it holds (three layers)
 1. **Context** (the neighborhood — we already assemble this: `lib/context/entity-context.ts`): the people
@@ -100,7 +100,7 @@ Alternative considered: store on `projects.settings` (jsonb) — rejected, becau
 initiatives, and the "what's happening" view needs those too.
 
 ## The synthesized STATE (fields, all reasoned — never keyword)
-- `summary` — 1 line: where it stands ("Pricing offer sent; awaiting Léa's confirmation").
+- `summary` — 1 line: where it stands ("Pricing offer sent; awaiting Sam's confirmation").
 - `momentum` — `active | needs_you | waiting | gone_quiet | stalled` + `quietDays` (from last inbound/outbound).
   This is the proactive signal the current reactive to-do list lacks.
 - `whoOwes` — you owe [..] · they owe [..] (from commitments + read-time reply state, already computed).
@@ -149,7 +149,7 @@ delegation reuses the existing prepare-and-report guardrail.
 ## Slices (build order)
 - **S1 — the ledger + state, read-only.** `buildInitiativeBrain(initiativeKey)` = derive the initiative's **event ledger**
   (who did what, when — from the atoms) → one grounded synthesis → `{summary, momentum, whoOwes, stage,
-  people}`. Verify read-only across users on real initiatives (Soboplac, Genpact, Emirates): does the ledger read
+  people}`. Verify read-only across users on real initiatives (Acme, Globex, Skyline): does the ledger read
   true (right people, right who-did-what) and does the state read true? No surface yet.
 - **S2 — the next-move selector.** Add `next_move` (reuse capability map + proposeOwner). Verify it picks the
   RIGHT one move per initiative (draft reply / prepare send / nudge / prep) across users. Still no commit.
@@ -182,5 +182,5 @@ system will sometimes create two projects the USER considers one. The complement
 safety valve, and it TEACHES: pick two projects → choose the surviving label → remap the loser's atoms
 (inbox/commitments/meetings/calendar `project_id`) → record the absorbed label as an **alias** so future
 labeling + clustering consolidate automatically. Fits the model (conservative auto; a human decision outranks
-the machine and sticks — `project_locked`-style). Safer than any blind auto-merge (the Galp lesson). Not built
+the machine and sticks — `project_locked`-style). Safer than any blind auto-merge (the Volta lesson). Not built
 yet; noted so it isn't lost.

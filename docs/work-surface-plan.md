@@ -67,7 +67,7 @@ in the deep-dive header.
 
 ## G — ONE OBLIGATION = ONE TASK (granularity)
 
-The SOBOPLAC case: one email → four sibling commitments ("send pricing", "send deck", "clarify
+The ACME case: one email → four sibling commitments ("send pricing", "send deck", "clarify
 integrations", "identify use case") that are ONE motion with four steps.
 
 - **G1 · extraction judges at the obligation level.** The extractor prompt reframes: ONE

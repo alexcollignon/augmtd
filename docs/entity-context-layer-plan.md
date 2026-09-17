@@ -2,7 +2,7 @@
 
 ## The idea
 Today the pipeline reads each email in a vacuum. A human reads it inside a web of relationships:
-*"this is Léa from the Soboplac deal, we met Jean-Marie last week, I owe them a pricing offer."* That
+*"this is Sam from the Acme deal, we met Jordan last week, I owe them a pricing offer."* That
 recognition IS the context, and it's what makes the judgment correct. We give the pipeline (and the user)
 that same relationship context.
 
@@ -45,7 +45,7 @@ keyword hardcoding we rejected.
 - `lib/projects/identity.ts` — alias/name-token person unification.
 - `lib/inbox/initiative-candidates.ts` `getInitiativeCandidates` — the grounded canonical initiative.
 - `lib/projects/initiative-resolver.ts` — the corpus-pass pattern + the **corporate-domain / internal-colleague
-  guard** (so context never bleeds across unrelated people on a shared domain — the Galp 47-meetings lesson).
+  guard** (so context never bleeds across unrelated people on a shared domain — the Volta 47-meetings lesson).
 - Tables already present: `inbox_items`/`emails`, `commitments` (counterparty), `meeting_transcripts` (past),
   `calendar_events` (future), `relationship_graph`, `projects`.
 
@@ -67,7 +67,7 @@ exists. Each synced batch:
 **The gap:** ALL rich context — calendar/meetings, thread history, and the entity context — lives in **Phase 2**,
 i.e. AFTER Gates A/B already decided. The gates that actually pick the label are **context-blind** (own text only).
 So a deal email that reads routine is routed `fyi_only` at Gate A and never reaches `computeUnderstanding`. This is
-why the Soboplac emails are `NULL`, and why **a backfill is a band-aid** (it re-runs Phase 2 on those rows but leaves
+why the Acme emails are `NULL`, and why **a backfill is a band-aid** (it re-runs Phase 2 on those rows but leaves
 the blind gate that keeps dropping future deal mail).
 
 **Best practice = retrieval-augmented classification: enrich the input BEFORE the classifier decides, not after.**
@@ -84,7 +84,7 @@ not context → the last stage.
   for the per-batch share, still to add). Deterministic assembly; two-hop deal awareness (person → initiative →
   the deal's commitments/meetings); assembled over ALL participants (from+to+cc), since the label often lives with
   a cc'd colleague.
-- **Verified (read-only, cross-user):** the Soboplac email assembles {Soboplac AI Agent System, the Jean-Marie
+- **Verified (read-only, cross-user):** the Acme email assembles {Acme AI Agent System, the Jordan
   meeting 2026-06-23, 3 open commitments, the other threads}; across 4 users 17/60 person-emails grounded a deal,
   sparse accounts correctly empty (no hallucination); ~115–380 tok/email (avg ~230).
 
@@ -93,13 +93,13 @@ Slice 1 is NOT just "inject into `computeUnderstanding`" — that's only the las
 leverage:
 - **1a — `computeUnderstanding` context (DONE).** Injects the entity context over all participants; the initiative
   grounding rides the richer all-participants label. A `useEntityContext` seam enabled the A/B. **A/B proved better
-  AND cheaper on the cheap tier:** deals consolidate to the canonical label instead of inventing synonyms (Soboplac,
-  GALP, Genpact), confidence rises (4/5 up), controls (newsletters) unchanged. This fixes reasoning *when it runs* —
+  AND cheaper on the cheap tier:** deals consolidate to the canonical label instead of inventing synonyms (Acme,
+  VOLTA, Globex), confidence rises (4/5 up), controls (newsletters) unchanged. This fixes reasoning *when it runs* —
   but it's downstream of the gate, so insufficient alone.
 - **1b — enrich the `EmailEnvelope` + feed Gate A & Gate B (the load-bearing part).** Build ONE `buildEntityContextMap`
   per sync batch; add a compact `relationship` signal to the envelope (deal label + open-commitment count + last/next
   meeting). Pass it to `batchClassifyEmails` (so a live-deal contact is never `noise`/`fyi_only`) and `batchMatchRules`
-  (relationship-aware matching). This is where the Soboplac email stops being dropped at the door — by construction.
+  (relationship-aware matching). This is where the Acme email stops being dropped at the door — by construction.
 - **1c — backfill the already-orphaned rows** (secondary, symptomatic): recompute `computeUnderstanding` on existing
   `understanding: NULL` person-mail so the current deal emails get rescued too. Reuse the `rebackfill-understanding`
   pattern. Do AFTER 1b so it isn't re-orphaned.

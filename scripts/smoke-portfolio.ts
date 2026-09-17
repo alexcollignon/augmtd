@@ -1,7 +1,9 @@
 // ONE BRAIN — PORTFOLIO + TIMELINE + LIFECYCLE smoke (cross-user). Verifies the shared read layer's data
 // (entities, events for the axis, closure candidates, weight ordering), the fallback signal for
 // non-memory users, and the FULL lifecycle verb set round-tripped on a synthetic entity (track → rename
-// learns an alias → mute → reopen → done → forget deletes entity+links, never items).
+// learns an alias → mute → reopen → done), plus THE ONE DELETE DOOR: `forget` (a partial delete
+// reachable from nowhere, which left the room's whole mind behind) is RETIRED — deletion happens only
+// through DELETE /api/entities/[id], whose inventory takes the context with the project.
 import { config } from 'dotenv'; config({ path: '.env.local' });
 import { createClient } from '@supabase/supabase-js';
 import { resolveProbeUser } from './probe-user';
@@ -60,14 +62,31 @@ const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
     await sb.from('work_entities').update({ status: 'done' }).eq('id', id);
     const { data: e2 } = await sb.from('work_entities').select('name, aliases, status, tracked').eq('id', id).single();
     check('lifecycle: track+rename(alias)+mute+reopen+done', (e2 as any).tracked === true && (e2 as any).status === 'done' && (e2 as any).name === 'Renamed Probe' && ((e2 as any).aliases ?? []).includes('Smoke Lifecycle Probe'));
-    // forget: entity + links die; nothing else touched
+    // THE ONE DELETE DOOR (the route's exact inventory): the room's conversation, the rows this
+    // project keys, its reflections — all go; the FILE only unfiles; the links die so items go
+    // LOOSE, never gone; then the row itself.
+    await sb.from('room_turns').delete().eq('user_id', uid).eq('room_key', id);
+    await sb.from('item_plans').delete().eq('user_id', uid).eq('entity_id', id);
+    await sb.from('entity_reflections').delete().eq('user_id', uid).like('pair_key', `%${id}%`);
+    await sb.from('knowledge_files').update({ entity_id: null }).eq('user_id', uid).eq('entity_id', id);
     await sb.from('entity_links').delete().eq('user_id', uid).eq('entity_id', id);
     await sb.from('work_entities').delete().eq('id', id);
     const [{ data: gone }, { data: linkGone }] = await Promise.all([
       sb.from('work_entities').select('id').eq('id', id).maybeSingle() as any,
       sb.from('entity_links').select('item_id').eq('user_id', uid).eq('item_id', 'probe-lifecycle-item').maybeSingle() as any,
     ]);
-    check('lifecycle: forget removes entity+links only', gone === null && linkGone === null);
+    check('lifecycle: the delete door removes entity+links, never the items', gone === null && linkGone === null);
+  }
+  // ── 3b. THE RETIREMENT IS A LAW (source-level, zero AI): `forget` is not a lifecycle action at the
+  // route, and no surface offers it. Deletion has exactly ONE door — the DELETE handler. ──
+  {
+    const { readFileSync } = await import('fs');
+    const route = readFileSync('app/api/entities/[id]/route.ts', 'utf8');
+    const actions = /const ACTIONS = \[([^\]]*)\]/.exec(route)?.[1] ?? '';
+    check('retired: `forget` is not a PATCH lifecycle action', !actions.includes('forget') && !/action === 'forget'/.test(route), actions.trim().slice(0, 120));
+    check('retired: the DELETE door still stands as the one deletion path', /export async function DELETE\(/.test(route) && route.includes("type: 'entity_deleted'"));
+    const portfolio = readFileSync('components/entities/portfolio-view.tsx', 'utf8');
+    check('retired: no surface offers Forget', !/'forget'/.test(portfolio) && !/>Forget</.test(portfolio));
   }
   // ── 4. Timeline axis data: events within the -21d..+14d window exist. ──
   {

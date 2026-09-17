@@ -297,7 +297,7 @@ RoomShell) MOUNTED into it, never rewritten. Order:
    SH1–SH3 (65/65); build green.
 0.7 **SHELL S3 (Aug 6, owner-corrected) — THE OPENER IS ONE PARAGRAPH; THE COMPOSER IS THE
    FLOOR.** The full four-block prose brief re-made July's mistake (it DUPLICATED the deck
-   sitting under it — Rene/TECNICLIMA/Fidelidade listed twice); the Home now opens with the
+   sitting under it — Rene/TECNICLIMA/Meridian listed twice); the Home now opens with the
    briefing's LEAD ONLY (BriefingBlock `leadOnly` — one short serif paragraph of the day's
    shape, refs live) and the deck carries the inventory. The composer moved to the shell's
    FLOOR (sticky bottom, mt-auto, gradient hood — Claude's anatomy) with the conversation
@@ -861,7 +861,7 @@ AH. **THE TRICHOTOMY LAW (Aug 12 evening — the prepared promise; gate TR1 — 
    judge-vs-floor coherence nit; the coverage gate on real accounts (smoke-promise)
    as the standing scan.
 AG. **THE DUAL-LOGO COVER + MULTI-DELIVERABLE (Aug 12 afternoon; gate DL1 — 135/135;
-   both E2Es pass live).** The last STC-benchmark gaps, riding the door. DUAL-LOGO:
+   both E2Es pass live).** The last TelcoCo-benchmark gaps, riding the door. DUAL-LOGO:
    DocTheme grows `logo2` (author × client); TWO logos attached with a branding word
    co-brand THE MOMENT THEME (`logoFromBuffer` for the second mark — accent still from
    the first); the docx header seats mark one LEFT and mark two RIGHT (right tab stop),
@@ -976,7 +976,7 @@ AD. **THE DOCUMENT HANDS — slice 6: THE DOCUMENT COMPILER (Aug 11 night; gate 
    delegation run stored a 74KB docx with a 41KB chart PNG on the thread. STILL OPEN
    (DH6+): multi-deliverable asks, revision-in-place, dual-logo covers, template-by-
    example (DH5b), the native tool loop.
-AC. **THE DATA LANE HARDENED BY THE STC BENCHMARK (Aug 11 evening — the owner's second
+AC. **THE DATA LANE HARDENED BY THE TelcoCo BENCHMARK (Aug 11 evening — the owner's second
    Claude session added the recalibration dimension; 3/3 exact on the final loop).** The
    multi-turn recalibration test ("we use these bands — adjust everything") found TWO
    silent-wrongness classes inside the data-facts pass: (1) a generated script read 150
@@ -988,12 +988,12 @@ AC. **THE DATA LANE HARDENED BY THE STC BENCHMARK (Aug 11 evening — the owner'
    DISCLOSED in a Note line — the same judgment-surfacing Claude did with the
    80%-and-80% axis rule). Plus request coverage (counts asked → counts printed). A
    pass that is still wrong after one repair returns NULL — wrong facts are worse than
-   none. STILL-OPEN test dimensions from the STC session (recorded, not built): dual-
+   none. STILL-OPEN test dimensions from the TelcoCo session (recorded, not built): dual-
    logo co-branded covers (author + client), cover-page meta tables (tier-1 renderer has
    no cover layout), and revision-in-place of a prior artifact (each turn currently
    produces a new one).
 AB. **THE DOCUMENT HANDS — slice 5: THE DATA-BY-CODE LANE (Aug 11 late; gate DH5 —
-   131/131, build green; the 150-row credibility E2E passes end-to-end).** The EG Bank
+   131/131, build green; the 150-row credibility E2E passes end-to-end).** The NorthBank
    benchmark's spine: every statistic in a deliverable is a COMPUTED fact. THE DATA-FACTS
    PASS at the delegation door: tabular chat material → codegen (THE DATA PREVIEW: real
    header+rows) → the sandbox (inline data → /job/inputs/data.txt) → COMPUTED FACTS ride
@@ -1451,7 +1451,7 @@ Z. **THE LEDGER REWORK — DONE (Aug 9, owner screenshot review; gate PA5b — 1
    text); (3) row verbs VISIBLE + worded "Edit method" (a hidden door is no door);
    (4) THE GALLERY (the Gemini-activities pattern): category chips + outcome-worded
    template cards seeding describe→draft→review (never instant-live), TOP SUGGESTIONS
-   BRAIN-AWARE from the user's tracked projects ("Weekly status report on EG Bank" —
+   BRAIN-AWARE from the user's tracked projects ("Weekly status report on NorthBank" —
    the edge a recipe catalogue can't copy). Plus THE ONE STANDING HAND-OFF THREAD:
    delegations append to one "Handed to <Name>" thread per worker (a thread per
    delegation flooded the coworker chat list — 72 legacy threads archived by
@@ -1600,16 +1600,16 @@ R4. **THE ROW MENU + THE CONVERSATIONS PAGE REWORK (Aug 8, owner; SH1/UX2 re-poi
    Rename inline · Delete with the Undo toast; one portaled menu (the overlay law); rows became
    divs (no nested buttons). (2) ALL CONVERSATIONS rebuilt on the Claude Recents anatomy: TIME
    BUCKETS (Today · Yesterday · This week · Earlier) over a divided list — glyph · title · sub
-   ("with Clara" / "in EG Bank" / kind · project) · short date · hover manage verbs. The chip
+   ("with Clara" / "in NorthBank" / kind · project) · short date · hover manage verbs. The chip
    pills DIED (glyph + sub carry the kind); search covers subs too; the two-step delete confirm
    became direct + Undo (the toast IS the safety, consistent with the sidebar).
 R3. **THE HOVER EXPAND (Aug 8, owner: "a smooth expand with the name of the project or
    worker?"; SH1 extended — 93/93).** Recent rows smoothly reveal a second line on hover —
-   "with Clara" (DMs) · "in EG Bank" (filed chats) · the concrete kind word (rooms:
+   "with Clara" (DMs) · "in NorthBank" (filed chats) · the concrete kind word (rooms:
    project/email/task/meeting); plain unfiled chats stay quiet (nothing worth expanding —
    the owner's own read). Server serves `sub` per row; max-h/opacity transition, glyph-aligned.
    ITERATED (owner screenshot: "missing something"): an ITEM room's line carries its PROJECT
-   NAME too — "email · in EG Bank" (entity_links joined, TRACKED-only per the P15 chip law);
+   NAME too — "email · in NorthBank" (entity_links joined, TRACKED-only per the P15 chip law);
    an entity room's title IS the project, so just the word.
 R2. **THE LOOP CLOSES IN PLACE + THE KIND GLYPH (Aug 8, owner batch — 93/93).** (1) The flagged
    dispatcher gap FIXED: runDelegation is synchronous — the work EXISTS when the turn speaks;
@@ -1679,7 +1679,7 @@ O. **THE WORKERS READ THE ONE GROUNDING — DONE (Aug 8, production-floor step 1
    stripped) on BOTH runtimes: the native loop's context parts and the AgentOS bridge's
    user_context (both chat-stream and workflow-step call sites; bridge parity lands with the
    flag's runtime — no box redeploy needed, the block rides per-run context). **THE
-   ADDRESSED-NAME STRIP** (found live: "Clara, report on EG Bank" matched the entity "Madalena
+   ADDRESSED-NAME STRIP** (found live: "Clara, report on NorthBank" matched the entity "Madalena
    Clara" — a coworker's name colliding with a person-named project): the address is the
    envelope, never the subject — the worker's first name strips before matching; a GENUINE
    person-named subject still matches on its remaining tokens (verified). Delegation was
@@ -1773,11 +1773,11 @@ L5. **THE SCOPE BINDING v2 — LINK, NOT MOVE (Aug 7, owner: "any conversation c
    DMs stay unscoped (addressed, not filed) — their work lands via the thread; item/entity
    rooms have homes by construction.
 L4. **THE RECOGNITION NUDGE — DONE (Aug 7, gate RN1 — 82/82, matcher live-verified: "any
-   update on soboplac?" → SOBOPLAC on the real 83-entity account).** The answer to "will it
+   update on acme?" → ACME on the real 83-entity account).** The answer to "will it
    suggest the project room?": an unscoped Home ask that NAMES a registered project carries
    the deterministic focus match back (`focus` on both ask response paths — the SAME matcher
    the grounding already uses, zero new AI, 200-entity recency-ordered read); the scope chip
-   becomes an OFFER — "About EG Bank? · File it" + a dismiss ✕. One click runs the adoption
+   becomes an OFFER — "About NorthBank? · File it" + a dismiss ✕. One click runs the adoption
    cascade (the conversation moves into the room, the chip becomes the door); never an
    auto-file (chat is cheap, objects are deliberate). The full ladder story now: grounded
    answer immediately → refs are doors → the brain OFFERS filing → filing homes the
@@ -1950,7 +1950,7 @@ flat toolkit; proven by run_compute: one registry row lit up chat + workflows + 
 1. The workflow ↔ PROJECT edge is first-class (creation from a room pre-links; describe
    recognizes a named project via the same focus matcher; the ledger's project column).
 2. **Grounded drafting**: generate-config reads the ROOM'S PAGE (goals/rules/people/actual
-   sources) — "the EG Bank weekly report" drafts steps naming EG Bank's real material; the
+   sources) — "the NorthBank weekly report" drafts steps naming NorthBank's real material; the
    pipeline author is just another reasoner behind the one grounding.
 3. **Scope-inherited runtime**: a project-linked workflow's retrieval steps default to the
    entity's scope (its files, threads, ledger) — like a filed conversation grounds on its room.
@@ -1958,7 +1958,7 @@ flat toolkit; proven by run_compute: one registry row lit up chat + workflows + 
    section of the room grounding + the brain snapshot — "what's automated here?" answers from
    the same truth the Workflows page shows; the responder can SAY "Monday's report failed".
 5. **Duplicate-awareness at creation**: the brain knows existing automations → the spec card
-   catches "you already have a weekly EG Bank report — extend or replace?" (the covers-merge
+   catches "you already have a weekly NorthBank report — extend or replace?" (the covers-merge
    class; never two standing promises for one job).
 
 **Sequencing**: after workers-read-the-one-grounding + the dispatcher (shared foundation: "make
