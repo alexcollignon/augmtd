@@ -28,6 +28,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import { readFileSync } from 'fs';
+import { randomUUID } from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 import { resolveProbeUser } from './probe-user';
 import { getScheduleWindow, renderCalendarWindow, userTimezone, weekdayOf } from '../lib/calendar/schedule-window';
@@ -37,6 +38,7 @@ import { enforceWeekdayDatePairs } from '../lib/utils/weekday-floor';
 import { executeCheckCalendar } from '../lib/tools/check-calendar';
 import { linkifyReport } from '../lib/workflows/report-back';
 import { converse } from '../lib/converse';
+import { REACH_SENTINEL, needsReach, sayInsteadOfSentinel } from '../lib/converse/reach';
 
 let pass = 0, fail = 0;
 const ok = (name: string, cond: boolean, detail = '') => {
@@ -75,6 +77,13 @@ async function main() {
   const E1_TITLE = `${PREFIX} — Acme review`;
   const E2_TITLE = `${PREFIX} — Sam sync`;
   const CANCELLED_TITLE = `${PREFIX} — cancelled slot`;
+  // THE FAR DAY (section R) — a business day ~35 days out, FAR beyond the 14-day snapshot window the
+  // toolless question path is handed. Answering it truthfully is impossible from context alone: the
+  // lane must REACH. Its title carries a distinctive token nothing else in the account says.
+  let FAR = addDays(today, 35);
+  for (let i = 0; i < 7 && ![1, 2, 3, 4, 5].includes(new Date(`${FAR}T12:00:00Z`).getUTCDay()); i++) FAR = addDays(FAR, 1);
+  const FAR_TOKEN = 'Northwind';
+  const FAR_TITLE = `${PREFIX} — ${FAR_TOKEN} board review`;
 
   const rows = [
     // (b) THE FOUR-DAY ALL-DAY BLOCK — the shape that produced two of the three bad slots: its
@@ -93,7 +102,56 @@ async function main() {
     { event_id: `${PREFIX}-cancel`, title: CANCELLED_TITLE, is_all_day: false, status: 'cancelled',
       start_time: new Date(zonedTimeToUtc(D(9), '10:00', TZ)).toISOString(),
       end_time: new Date(zonedTimeToUtc(D(9), '11:00', TZ)).toISOString() },
+    // (e) THE FAR EVENT — beyond every window this suite's non-live gates query; section R only.
+    { event_id: `${PREFIX}-far`, title: FAR_TITLE, is_all_day: false, status: 'confirmed',
+      start_time: new Date(zonedTimeToUtc(FAR, '10:00', TZ)).toISOString(),
+      end_time: new Date(zonedTimeToUtc(FAR, '12:00', TZ)).toISOString() },
   ].map((r) => ({ ...r, user_id: uid, calendar_id: 'primary', provider: 'gmail', timezone: TZ }));
+
+  // ── THE MEETINGS FEATURE IS PART OF THE FIXTURE (found live by the R3 gate) ────────────────────
+  // check_calendar is gated behind the `meetings` feature at EVERY lane (TOOL_FEATURE) — and the probe
+  // user belongs to NO workspace, so `getWorkspaceFeatures` fell back to DEFAULT_FEATURES, where
+  // meetings is false. The agent loop therefore had no calendar verb to reach WITH: the valve opened,
+  // the escalation arrived tool-less, and the answer confessed a second time. The gate was right; the
+  // HOST was unconfigured. So the workspace is fixture too — provisioned with meetings on, torn down
+  // in the finally (idempotent: any leftover probe workspace from a killed run is swept first).
+  // ⚠️ If the probe ever gains a REAL workspace, this leaves it completely alone and only flips the
+  // flag, restoring the original map on the way out.
+  const WS_NAME = `${PREFIX} probe workspace`;
+  const sweepProbeWorkspace = async () => {
+    const { data: stale } = await sb.from('companies').select('id').eq('name', WS_NAME);
+    for (const c of (stale ?? []) as { id: string }[]) {
+      await sb.from('company_members').delete().eq('company_id', c.id);
+      await sb.from('companies').delete().eq('id', c.id);
+    }
+  };
+  const { data: memberRow } = await sb.from('company_members').select('company_id').eq('user_id', uid).eq('status', 'active').maybeSingle();
+  let ownedCompanyId: string | null = null;              // ours to delete
+  let borrowedCompanyId: string | null = null;           // theirs — only the flag is touched
+  let originalFeatures: Record<string, unknown> | null = null;
+  if ((memberRow as { company_id?: string } | null)?.company_id) {
+    borrowedCompanyId = (memberRow as { company_id: string }).company_id;
+    const { data: companyRow } = await sb.from('companies').select('features').eq('id', borrowedCompanyId).maybeSingle();
+    originalFeatures = ((companyRow as { features?: Record<string, unknown> } | null)?.features ?? null);
+    if (originalFeatures && originalFeatures.meetings !== true) {
+      await sb.from('companies').update({ features: { ...originalFeatures, meetings: true } }).eq('id', borrowedCompanyId);
+    }
+  } else {
+    await sweepProbeWorkspace();
+    const { data: made } = await sb.from('companies').insert({
+      name: WS_NAME, slug: `smkcal-probe-${Date.now()}`, join_code: `SMKCAL${Date.now()}`.slice(0, 16),
+      features: { email: true, meetings: true, drive: true, agents: true, studio: true, home: true },
+    }).select('id').maybeSingle();
+    ownedCompanyId = (made as { id?: string } | null)?.id ?? null;
+    if (ownedCompanyId) await sb.from('company_members').insert({ company_id: ownedCompanyId, user_id: uid, role: 'owner', status: 'active' });
+  }
+  const restoreWorkspace = async () => {
+    if (borrowedCompanyId && originalFeatures) await sb.from('companies').update({ features: originalFeatures }).eq('id', borrowedCompanyId);
+    if (ownedCompanyId) {
+      await sb.from('company_members').delete().eq('company_id', ownedCompanyId);
+      await sb.from('companies').delete().eq('id', ownedCompanyId);
+    }
+  };
 
   const wipe = () => sb.from('calendar_events').delete().eq('user_id', uid).like('title', `${PREFIX}%`);
   await wipe();
@@ -113,7 +171,7 @@ async function main() {
   const collides = (startMs: number, endMs: number) => FIXTURE_BUSY.some((b) => b.s < endMs && b.e > startMs);
 
   try {
-    console.log(`\nFIXTURE — probe ${uid}, ${TZ}, block ${D(0)}→${D(3)}, window ${FROM}→${TO}`);
+    console.log(`\nFIXTURE — probe ${uid}, ${TZ}, block ${D(0)}→${D(3)}, window ${FROM}→${TO}, far day ${FAR} (${trueWeekday(FAR)})`);
 
     // ── G1 — WINDOW TRUTH ────────────────────────────────────────────────────────────────────────
     console.log('\nG1 — WINDOW TRUTH (the overlap law: an in-progress block is busy; a cancelled one never is):');
@@ -286,7 +344,13 @@ async function main() {
     // which is honest behaviour, not a broken law.
     console.log('\nG9 — LIVE (the served answer, over the incident\'s own fixture shape):');
     let retries = 1;
-    const askChat = async (q: string) => (await converse(sb, uid, { kind: 'global' }, q)).say ?? '';
+    /** Every live answer the suite ever served — swept once at the end by R6. */
+    const liveAnswers: string[] = [];
+    const askChat = async (q: string) => {
+      const say = (await converse(sb, uid, { kind: 'global' }, q)).say ?? '';
+      liveAnswers.push(say);
+      return say;
+    };
     const clipq = (s: string) => s.replace(/\s+/g, ' ').slice(0, 260);
     const monthLong = new Intl.DateTimeFormat('en-GB', { month: 'long', timeZone: 'UTC' }).format(new Date(`${D(1)}T12:00:00Z`));
     const askedDay = `${Number(D(1).slice(8, 10))} ${monthLong}`;
@@ -337,8 +401,198 @@ async function main() {
     ok('T3 — THE INCIDENT\'S OWN SENTENCE is not served: the offered two weeks are never called free',
       !!a3 && !claimsSpanFree(a3), clipq(a3));
     ok('T3 — …and the four-day away block is SEEN, not silently skipped', seesTheBlock(a3), clipq(a3));
+
+    // ── R — THE REACH GATES ──────────────────────────────────────────────────────────────────────
+    // THE DEAD END Wave 1 left standing: a `question` verdict routes to a TOOLLESS completion, so a
+    // question whose answer lives outside the handed context could only ever be refused honestly —
+    // confinement wearing good manners. THE REACH VALVE is the fix, and its law is that THE MODEL
+    // decides: one contract clause in every question prompt, one sentinel token, and code that does
+    // nothing but recognise the token it agreed to. R1 guards the shape (no keyword routing sneaking
+    // back in), R2 the pure recogniser, R3/R4 the served behaviour, R5 the DM seams, R6 the hygiene.
+    console.log('\nR — THE REACH GATES (no lane answers from confinement; the sentinel never serves):');
+    const reachSrc = readFileSync('lib/converse/reach.ts', 'utf8');
+    const entAsk = readFileSync('lib/entities/ask.ts', 'utf8');
+
+    // R1 — SOURCE SHAPE
+    ok('R1 — reach.ts exports the four members of the contract',
+      ['REACH_SENTINEL', 'REACH_CONTRACT', 'needsReach', 'sayInsteadOfSentinel']
+        .every((n) => new RegExp(`export (const|function) ${n}\\b`).test(reachSrc)), '');
+    ok('R1 — ONE contract, imported by the Home ask AND the entity ask (a copied clause is a clause that drifts)',
+      /import \{[^}]*REACH_CONTRACT[^}]*\} from '@\/lib\/converse\/reach'/.test(ask)
+      && /import \{[^}]*REACH_CONTRACT[^}]*\} from '@\/lib\/converse\/reach'/.test(entAsk), '');
+    ok('R1 — …and it rides converse\'s own item sub-path prompt too (all three toolless doors)',
+      /\$\{REACH_CONTRACT\}\s*\\n\s*Return ONLY JSON/.test(conv), '');
+    ok('R1 — THE SENTINEL NEVER SERVES: the outermost answer door applies sayInsteadOfSentinel',
+      /turn\.say = sayInsteadOfSentinel\(turn\.say\)/.test(conv), '');
+    {
+      // THE MODEL DECIDES: no vocabulary list, no topic regex, nothing in the classifier's prompt.
+      const i = conv.indexOf('async function classifyTurn');
+      const rest = conv.slice(i + 10);
+      const j = rest.search(/\n(async function|function|const [A-Za-z_]+ = async)/);
+      const classifyBody = j < 0 ? rest : rest.slice(0, j);
+      ok('R1 — classifyTurn carries NO reach routing: the sentinel is absent from its prompt',
+        i > 0 && !classifyBody.includes(REACH_SENTINEL), `${classifyBody.length} chars scanned`);
+      const escalations = conv.split('\n').map((l, n) => ({ l, n })).filter((r) => /escalateToReach = true/.test(r.l));
+      ok('R1 — every escalation is driven by needsReach() alone (no code reads the user\'s words)',
+        escalations.length >= 3 && escalations.every((r) => /if \(needsReach\(/.test(r.l)),
+        escalations.map((r) => `${r.n + 1}:${r.l.trim()}`).join(' | '));
+    }
+
+    // R2 — THE PURE RECOGNISER
+    ok('R2 — the bare token is a reach request', needsReach(REACH_SENTINEL) === true, '');
+    ok('R2 — …and so is the token with punctuation after it ("NEEDS_REACH." / " — ")',
+      needsReach(`${REACH_SENTINEL}.`) && needsReach(` ${REACH_SENTINEL} — `) === true, '');
+    ok('R2 — the token followed by a REAL sentence is an answer, not a request',
+      needsReach(`${REACH_SENTINEL} you are free on Tuesday.`) === false, '');
+    ok('R2 — empty / null is never a reach request',
+      !needsReach('') && !needsReach(null) && !needsReach(undefined), '');
+    ok('R2 — a bare sentinel becomes an honest line, and the token NEVER survives into it',
+      sayInsteadOfSentinel(REACH_SENTINEL) !== REACH_SENTINEL
+      && !sayInsteadOfSentinel(REACH_SENTINEL).includes(REACH_SENTINEL)
+      && sayInsteadOfSentinel(REACH_SENTINEL).length > 10, sayInsteadOfSentinel(REACH_SENTINEL));
+    ok('R2 — token + content keeps the CONTENT and drops only the plumbing',
+      sayInsteadOfSentinel(`${REACH_SENTINEL} — you are free on Tuesday.`) === 'you are free on Tuesday.',
+      sayInsteadOfSentinel(`${REACH_SENTINEL} — you are free on Tuesday.`));
+    ok('R2 — IDEMPOTENT on clean text (the guard touches nothing it did not put there)',
+      sayInsteadOfSentinel('You have two meetings on Thursday.') === 'You have two meetings on Thursday.'
+      && sayInsteadOfSentinel(sayInsteadOfSentinel(REACH_SENTINEL)) === sayInsteadOfSentinel(REACH_SENTINEL), '');
+
+    // R3 — LIVE, THE DECISIVE ONE: a question about a day the handed context CANNOT contain.
+    const farMonth = new Intl.DateTimeFormat('en-GB', { month: 'long', timeZone: 'UTC' }).format(new Date(`${FAR}T12:00:00Z`));
+    const farAsked = `${Number(FAR.slice(8, 10))} ${farMonth}`;
+    const farQ = `Am I free on ${farAsked}? Just checking before I confirm something.`;
+    const knowsFar = (t: string) => t.includes(FAR_TOKEN) || t.includes(PREFIX)
+      || /\b(busy|not free|aren'?t free|are not free|booked|blocked|conflict|meeting|unavailable|taken)\b/i.test(t);
+    // A CONFESSION IS NOT AN ANSWER — the whole point of the valve is that the lane WENT AND LOOKED.
+    // The last three alternatives were added after the first run served exactly that shape ("I don't
+    // have visibility to 23 October — that's beyond the 14-day window I can see… I can check if you
+    // like"): the gate names every dialect of the confinement it exists to outlaw.
+    const confines = (t: string) => /can(?:no|')t see|not visible|beyond (?:my|the) (?:window|reach)|(?:don'?t|do not) have visibility|beyond the \d+-day window|(?:can|could|shall) I check (?:it|that|the full calendar)/i.test(t);
+    let r3 = await askChat(farQ);
+    let reachRetries = 1;
+    if ((!knowsFar(r3) || confines(r3)) && reachRetries > 0) { reachRetries--; r3 = await askChat(farQ); }
+    console.log(`    R3 » ${clipq(r3)}`);
+    ok('R3 — the served answer carries ZERO wrong weekday↔date pairs (hard)',
+      !!r3 && enforceWeekdayDatePairs(r3) === r3, clipq(r3));
+    ok('R3 — THE SENTINEL NEVER SERVES: no contract token in the served words (hard)',
+      !!r3 && !r3.includes(REACH_SENTINEL), clipq(r3));
+    ok('R3 — a day 35 days out — far beyond the snapshot — is NOT reported free: the lane REACHED',
+      knowsFar(r3), clipq(r3));
+    ok('R3 — …and it did not CONFESS its edge instead of crossing it',
+      !!r3 && !confines(r3), clipq(r3));
+
+    // R4 — LIVE: the valve must not have made the fast path escalate everything. A question the
+    // handed context DOES cover still answers from it, correctly.
+    const nearQ = `Am I free on ${askedDay}? Just checking before I confirm something.`;
+    let r4 = await askChat(nearQ);
+    if (!notFree(r4) && reachRetries > 0) { reachRetries--; r4 = await askChat(nearQ); }
+    console.log(`    R4 » ${clipq(r4)}`);
+    ok('R4 — a WITHIN-WINDOW question still carries zero wrong weekday↔date pairs (hard)',
+      !!r4 && enforceWeekdayDatePairs(r4) === r4, clipq(r4));
+    ok('R4 — …and still tells the truth: the away-block day is not reported free', notFree(r4), clipq(r4));
+
+    // R5 — THE DM SEAMS (the seven-point lesson: a verb missing one registration point does not exist)
+    const bridge = readFileSync('lib/work/agentos-bridge.ts', 'utf8');
+    const dmRoute = readFileSync('app/api/work/threads/[id]/chat/route.ts', 'utf8');
+    const agentosTools = readFileSync('app/api/internal/agentos/tools/route.ts', 'utf8');
+    const pyTools = readFileSync('infra/agentos/tools_data.py', 'utf8');
+    ok('R5 — the AgentOS bridge applies the weekday floor to the PERSISTED message',
+      /enforceWeekdayDatePairs\(fullText\)/.test(bridge) && /from '@\/lib\/utils\/weekday-floor'/.test(bridge), '');
+    ok('R5 — the native DM route does the same at its own persist seam',
+      /enforceWeekdayDatePairs\(fullAssistantText\)/.test(dmRoute), '');
+    ok('R5 — buildChatTools hands the coworker lane checkCalendarDefinition',
+      /buildChatTools\(/.test(dmRoute) && /neutral\.push\(checkCalendarDefinition\)/.test(dmRoute), '');
+    ok('R5 — …and the DM dispatch has a branch to run it', /case 'check_calendar':/.test(dmRoute), '');
+    ok('R5 — the internal AgentOS tools route dispatches check_calendar', /case 'check_calendar':/.test(agentosTools), '');
+    ok('R5 — the Python tool is registered in DATA_TOOLS (dormant until the box redeploy)',
+      /def check_calendar\(/.test(pyTools) && /DATA_TOOLS[\s\S]{0,400}?check_calendar/.test(pyTools), '');
+    // THE VALVE NEEDS A VERB ON THE OTHER SIDE: an escalation into a loop whose toolset was filtered
+    // empty is a valve that opens onto nothing — the failure is silent (the answer just confesses
+    // again, and worse, OFFERS to check something it structurally cannot). Name the dependency.
+    {
+      const { getWorkspaceFeatures } = await import('../lib/workspace/features');
+      const feats = await getWorkspaceFeatures(uid, sb) as unknown as Record<string, boolean>;
+      ok('R5 — the RUN-TIME workspace really exposes the calendar verb (meetings on ⇒ the loop holds check_calendar)',
+        feats?.meetings === true, JSON.stringify(feats));
+    }
+    ok('R5 — CAPABILITY_MAP exposes check_calendar to BOTH the chief and the coworker lane',
+      /check_calendar: \{[\s\S]{0,400}?exposure: \['chief_of_staff', 'coworker'\]/.test(reg), '');
+
+    // R6 — SENTINEL HYGIENE ACROSS THE BOARD: every live answer this suite ever served.
+    const leaked = liveAnswers.filter((a) => a.includes(REACH_SENTINEL));
+    ok(`R6 — zero contract tokens across ALL ${liveAnswers.length} live answers the suite served`,
+      leaked.length === 0, leaked.map(clipq).join(' || '));
+
+    // ── E — THE EMPTY-CALENDAR TRUTH + THE PHANTOM OFFER ─────────────────────────────────────────
+    // AN EMPTY TABLE IS NOT AN EMPTY DIARY. The reach gates exposed the pair: a never-synced account
+    // rendered a fortnight of "free" lines (an availability claim manufactured from nothing), and the
+    // escalated loop on a calendar-less workspace offered a check it structurally could not perform.
+    // Both are the same class — CAPABILITY SHAPES VOCABULARY: what we cannot know we call unknown,
+    // and what we cannot do we never offer. E5 is the discriminator that keeps the fix honest in the
+    // other direction: a genuinely clear fortnight on a REAL calendar must still read free.
+    console.log('\nE — THE EMPTY-CALENDAR TRUTH (an empty table is not an empty diary; no phantom offers):');
+    const NOBODY = randomUUID();   // a user with no rows anywhere — the service-role read just returns nothing
+
+    // E1 — the never-synced account renders UNKNOWN, with no day lines at all.
+    const emptyWin = await getScheduleWindow(sb, NOBODY, { fromDayStr: FROM, toDayStr: TO, tz });
+    const emptyRender = renderCalendarWindow(emptyWin, { tz });
+    console.log(`    E1 » ${emptyRender.replace(/\s+/g, ' ').slice(0, 260)}`);
+    ok('E1 — a user with ZERO calendar rows reports hasCalendar false', emptyWin.hasCalendar === false, '');
+    ok('E1 — …and the block says NO CALENDAR IS SYNCED', /NO CALENDAR IS SYNCED/.test(emptyRender), emptyRender.slice(0, 120));
+    ok('E1 — …and states the two prohibitions (never free/busy, never offer a check)',
+      /never describe any day or time as free or busy/i.test(emptyRender) && /do not offer to check/i.test(emptyRender), '');
+    ok('E1 — …and renders NOT ONE "— free" day line (the fortnight of invented freedom is gone)',
+      !/— free/.test(emptyRender), emptyRender.split('\n').filter((l) => /— free/.test(l)).join(' | '));
+    ok('E1 — …and no busy day line either: the block is the header ALONE',
+      !/BUSY/.test(emptyRender) && emptyRender.split('\n').filter(Boolean).length === 1,
+      `${emptyRender.split('\n').filter(Boolean).length} lines`);
+
+    // E2 — THE FLAG NEVER DEGRADES A REAL CALENDAR: the seeded probe renders exactly as G2 expects.
+    ok('E2 — the SEEDED probe reports hasCalendar true', win.hasCalendar === true, '');
+    ok('E2 — …and its render is the full day-by-day block, never the UNKNOWN header',
+      !/NO CALENDAR IS SYNCED/.test(rendered) && rendered.split('\n').filter(Boolean).length === 12,
+      `${rendered.split('\n').filter(Boolean).length} lines`);
+    ok('E2 — …with every G2 fact intact (busy block, real clock window, free cancelled day)',
+      /BUSY all day \(/.test(lineFor(D(1))) && lineFor(D(7)).includes('09:00–11:00') && lineFor(D(9)).endsWith('— free'), '');
+
+    // E3 — a proposal over an empty busy set would offer EVERY slot; it is refused instead.
+    const emptySlots = await executeCheckCalendar({ from_date: FROM, to_date: TO, propose_slots: true, count: 3 }, NOBODY, sb);
+    console.log(`    E3 » ${emptySlots.replace(/\s+/g, ' ').slice(0, 260)}`);
+    ok('E3 — propose_slots on a calendar-less account REFUSES plainly, naming the reason',
+      /no calendar is synced/i.test(emptySlots) && /none can be proposed/i.test(emptySlots), emptySlots.slice(0, 160));
+    ok('E3 — …and not a single "- <Weekday> …" proposal line is printed',
+      !/^- [A-Z][a-z]+ \d{1,2} /m.test(emptySlots), emptySlots.split('\n').filter((l) => /^- /.test(l)).join(' | '));
+    ok('E3 — …while the SEEDED account still gets its three real proposals (the refusal is scoped)',
+      [...outSlots.matchAll(/^- [A-Z][a-z]+ /gm)].length === 3, '');
+
+    // E4 — SOURCE: the note matches the tools the loop will actually hold.
+    const convNow = readFileSync('lib/converse/index.ts', 'utf8');
+    const askNow = readFileSync('lib/home/ask.ts', 'utf8');
+    ok('E4 — the escalation note CONSULTS the feature map before promising a lookup',
+      /reachCalendarHeld[\s\S]{0,400}?getWorkspaceFeatures/.test(convNow), '');
+    ok('E4 — …and carries BOTH branches: call check_calendar where the verb exists…',
+      /reachCalendarHeld\s*\n?\s*\?[\s\S]{0,300}?calling check_calendar/.test(convNow), '');
+    ok('E4 — …and plain honesty where it does not (never guess, never offer to check)',
+      /calendar access isn't set up here[\s\S]{0,120}?never/.test(convNow) && /never offer to check it/.test(convNow), '');
+    ok('E4 — the Home ask handles a NO CALENDAR IS SYNCED block in its own calendar rule',
+      /NO CALENDAR IS SYNCED/.test(askNow) && /never call a day free or busy/.test(askNow), '');
+
+    // E5 — THE DISCRIMINATOR: a real calendar whose asked fortnight happens to be empty. The
+    // existence probe is the whole point — without it this window would be indistinguishable from
+    // E1's, and a clear diary would be slandered as "no calendar".
+    const CLEAR_FROM = addDays(FAR, 3), CLEAR_TO = addDays(FAR, 6);
+    const clearWin = await getScheduleWindow(sb, uid, { fromDayStr: CLEAR_FROM, toDayStr: CLEAR_TO, tz });
+    const clearRender = renderCalendarWindow(clearWin, { tz });
+    ok('E5 — a window with NO events but a real calendar behind it still reports hasCalendar true (the existence probe)',
+      clearWin.hasCalendar === true && clearWin.days.every((d) => d.busy.length === 0),
+      `${clearWin.hasCalendar} / busy days ${clearWin.days.filter((d) => d.busy.length).map((d) => d.dayStr).join(',')}`);
+    ok('E5 — …so its days read "free", NOT "no calendar" — a clear diary is not an absent one',
+      !/NO CALENDAR IS SYNCED/.test(clearRender)
+      && clearWin.days.every((d) => clearRender.split('\n').some((l) => l.startsWith(`${trueWeekday(d.dayStr).slice(0, 3)} ${shortLabel(d.dayStr)} `) && l.endsWith('— free'))),
+      clearRender.replace(/\s+/g, ' ').slice(0, 200));
   } finally {
     await wipe();
+    await restoreWorkspace();
   }
 
   console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed`);

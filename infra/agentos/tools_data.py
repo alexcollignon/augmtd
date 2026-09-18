@@ -101,6 +101,34 @@ def get_meeting_context(
 
 
 @tool
+def check_calendar(
+    run_context: RunContext,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    propose_slots: bool = False,
+    duration_minutes: int = 30,
+    count: int = 3,
+) -> str:
+    """Read the user's calendar for a date range — busy/free per day, and optionally propose
+    genuinely free slots. ALWAYS use this before any claim about availability, free time, or
+    scheduling. Never state availability from memory.
+
+    Args:
+        from_date: First day, YYYY-MM-DD. Default: today.
+        to_date: Last day, YYYY-MM-DD. Default: 14 days after from_date. Window is capped at 60 days.
+        propose_slots: Also propose free working-hour slots inside the window.
+        duration_minutes: Length of a proposed slot in minutes. Default 30.
+        count: How many slots to propose. Default 3, max 5.
+    """
+    config: dict = {"propose_slots": propose_slots, "duration_minutes": duration_minutes, "count": count}
+    if from_date:
+        config["from_date"] = from_date
+    if to_date:
+        config["to_date"] = to_date
+    return _call("check_calendar", run_context, config)
+
+
+@tool
 def search_knowledge_base(run_context: RunContext, query: str) -> str:
     """Search the user's indexed files and Drive documents for relevant content.
 
@@ -230,7 +258,7 @@ def read_team_work(run_context: RunContext, id: str) -> str:
 
 # Data + web tools — assigned to every worker (matches all_tools in native loop).
 DATA_TOOLS = [
-    get_emails, get_meeting_context, search_knowledge_base,
+    get_emails, get_meeting_context, check_calendar, search_knowledge_base,
     web_search, fetch_url, deep_research, generate_document,
     run_compute, find_team_work, read_team_work,
 ]

@@ -13,6 +13,7 @@ import { getTodaySchedule, renderScheduleBlock } from '@/lib/calendar/today-sche
 import { GENERIC_WORK_WORDS } from '@/lib/entities/recognize';
 import { projectHref } from '@/lib/room/project-href';
 import { GROUND_EVIDENCE_RULE } from '@/lib/room/ground-evidence';
+import { REACH_CONTRACT } from '@/lib/converse/reach';
 
 export type AskRef = { id: string; kind: 'entity' | 'inbox_item' | 'commitment' | 'meeting' | 'file'; label: string; href: string | null };
 export type AskAnswer = { answer: string; refs: AskRef[] };
@@ -179,14 +180,27 @@ export async function answerHomeQuestion(
     `the replies they owe — and their calendar for TODAY AND THE NEXT 14 DAYS ONLY. Answer like a sharp, ` +
     `calm colleague who already knows their world, GROUNDED STRICTLY in that context.\n\n` +
     `THE CALENDAR RULE: availability, free time and scheduling come ONLY from the calendar block below — ` +
-    `never from memory, never from what sounds likely. Beyond those 14 days you cannot see the calendar: ` +
-    `say so plainly and offer to check, and NEVER state or imply someone is free on a day you cannot see. ` +
+    `never from memory, never from what sounds likely. NEVER state or imply someone is free or busy on a ` +
+    // THE REACH VALVE OUTRANKS THE CONFESSION (Sep 18, found by the R3 gate): this sentence used to
+    // read "beyond those 14 days you cannot see the calendar: say so plainly and offer to check" —
+    // Wave 1's honesty fix, written when confessing WAS the best this toolless lane could do. With the
+    // valve mounted that instruction became the thing BLOCKING it: asked about a day 35 days out the
+    // model dutifully offered to check instead of emitting the token that would have gone and checked.
+    // An honest edge is a floor, never a ceiling — a question beyond the window IS the REACH case.
+    `day you cannot see. A question about a day BEYOND this window is exactly the REACH case below: ` +
+    `do not answer it from here and do not offer to check — emit the token and the lookup happens. ` +
+    `If the calendar block itself says NO CALENDAR IS SYNCED, availability is unknowable here: say ` +
+    `plainly that no calendar is connected, never call a day free or busy, and never offer a check. ` +
     `Weekday names are already computed in the context — use them verbatim and never work one out yourself.\n\n` +
     `THEIR CONTEXT:\n${snapshot}${fileBlock}\n\n` +
     (priorTurns ? `EARLIER IN THIS CHAT:\n${priorTurns}\n\n` : '') +
     `THEIR QUESTION: ${question}\n\n` +
     `Rules:\n` +
-    `- Answer ONLY from the context. If it doesn't cover the question, say so plainly ("I don't have anything on that yet") — NEVER invent people, dates, or facts.\n` +
+    // FIRST, NOT LAST (Sep 18, the R3 gate): the reach clause sat at the BOTTOM of this list, behind
+    // "say so plainly" — and the model obeyed the rule it read first. A clause that loses to the rule
+    // it is meant to outrank is not mounted; prominence is part of the contract.
+    `- ${REACH_CONTRACT}\n` +
+    `- Answer ONLY from the context (after the REACH rule above has been considered). If it doesn't cover the question AND no lookup could, say so plainly ("I don't have anything on that yet") — NEVER invent people, dates, or facts.\n` +
     `- HARD LIMITS (exceeding them is a failed answer): a simple question = 1-3 sentences. A summary question ("what did I miss", "plan my week") = at most 3 short paragraphs and 100 words TOTAL, separated by blank lines. Pick the 3-4 things that matter MOST and STOP — never inventory; the deck below the chat already lists everything. End a summary with the one thing you'd do first.\n` +
     `- PLAIN PROSE ONLY: no markdown (no **bold**, no headers, no tables, no bullet lists). Whenever the answer runs past two sentences, break it into short paragraphs separated by a BLANK LINE — never one solid block. Never place two refs back-to-back — connect them with words.\n` +
     `- HARD LIMIT: at most 5 tags total, ONE id per bracket ([E7] — NEVER [E7, E8]), placed immediately AFTER the thing it names (\"the Soboplac pilot [E10]\"), never dangling at a sentence end. The app turns each into a link.\n` +

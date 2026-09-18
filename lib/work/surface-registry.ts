@@ -174,20 +174,21 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     tool: 'get_calendar', built: true, kind: 'atomic', irreversible: false, feature: 'meetings',
     blurb: 'read the calendar (upcoming meetings / availability)',
   },
-  get_meeting_context: {
-    intent: 'read a meeting / transcript we recorded',
-    tool: 'get_meeting_context', built: true, kind: 'atomic', irreversible: false, feature: 'meetings', exposure: ['chief_of_staff', 'coworker', 'workflow'],
-    blurb: 'read a meeting / transcript we recorded',
-  },
   // THE READ-SIDE CALENDAR VERB (Wave 1, Sep 18): the chief could prepare an invite but could not
   // LOOK at the calendar — so it answered availability questions from a today-only context and called
-  // two booked weeks free. Chief-lane only for now, and `conversational` so it never enters the
+  // two booked weeks free. Exposed to the chief AND the coworker lane (a coworker asked to schedule
+  // needs the same verb, and the DM route registers it), and `conversational` so it never enters the
   // item-plan classifier: it has no workflow assembler path, and a step graded to it would dead-end.
   check_calendar: {
     intent: "read the user's calendar for a date range / check availability / find free slots",
     tool: 'check_calendar', built: true, kind: 'atomic', irreversible: false, feature: 'meetings',
-    exposure: ['chief_of_staff'], conversational: true,
+    exposure: ['chief_of_staff', 'coworker'], conversational: true,
     blurb: "read the calendar for a date range (busy/free per day, optional free-slot proposals) — ALWAYS before any availability claim",
+  },
+  get_meeting_context: {
+    intent: 'read a meeting / transcript we recorded',
+    tool: 'get_meeting_context', built: true, kind: 'atomic', irreversible: false, feature: 'meetings', exposure: ['chief_of_staff', 'coworker', 'workflow'],
+    blurb: 'read a meeting / transcript we recorded',
   },
   web_search: {
     intent: 'search the web / fetch a public web page',

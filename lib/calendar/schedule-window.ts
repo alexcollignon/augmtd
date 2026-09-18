@@ -39,6 +39,10 @@ export type ScheduleWindow = {
    *  prompt block shows (one read, one truth: a proposal can never collide with a line we printed). */
   busyBlocks: BusyBlock[];
   tz: string;
+  /** THE EMPTY-CALENDAR TRUTH: an account with NO calendar rows at all (never synced, or the read
+   *  failed) must render as UNKNOWN, never as a fortnight of "free" lines — an empty table is not
+   *  an empty diary. True when the user has ANY calendar event on record, in-window or not. */
+  hasCalendar: boolean;
 };
 
 /** The user's home timezone = the mode of their events' zones. THE ONE DERIVATION — today-schedule
@@ -95,6 +99,7 @@ export async function getScheduleWindow(
 
   const busyBlocks: BusyBlock[] = [];
   const events: Array<{ startMs: number; endMs: number; title: string; allDay: boolean }> = [];
+  let hasCalendar = false;
   try {
     const { data } = await supabase.from('calendar_events')
       // EXPLICIT select (the silent-column law: a bad column returns data:null and no error).
@@ -116,7 +121,14 @@ export async function getScheduleWindow(
       events.push({ startMs: s, endMs: en, title: clipTitle(String(e.title || '')), allDay: e.is_all_day === true });
       busyBlocks.push({ startMs: s, endMs: en });
     }
-  } catch { /* an unreadable calendar is an empty one — the block still declares its reach */ }
+    // In-window events prove a calendar; an empty window needs the cheap existence probe — a user
+    // whose fortnight is genuinely clear (but who HAS a calendar) may honestly read "free".
+    if (events.length > 0) hasCalendar = true;
+    else {
+      const { data: any1 } = await supabase.from('calendar_events').select('id').eq('user_id', userId).limit(1);
+      hasCalendar = (any1 ?? []).length > 0;
+    }
+  } catch { /* an unreadable calendar is an UNKNOWN one — hasCalendar stays false and the render says so */ }
 
   const days: WindowDay[] = [];
   let day = from;
@@ -137,7 +149,7 @@ export async function getScheduleWindow(
     if (day === to) break;
     day = addDays(day, 1);
   }
-  return { days, busyBlocks, tz };
+  return { days, busyBlocks, tz, hasCalendar };
 }
 
 /**
@@ -147,6 +159,17 @@ export async function getScheduleWindow(
  */
 export function renderCalendarWindow(win: ScheduleWindow, opts: { tz: string }): string {
   const first = win.days[0], last = win.days[win.days.length - 1];
+  // THE EMPTY-CALENDAR TRUTH (found by the reach gates, Sep 18): a user with NO calendar synced
+  // used to render as day after day of "free" — an availability claim manufactured from an empty
+  // table. Unknown renders as UNKNOWN, and the model is told what it may and may not say.
+  if (!win.hasCalendar) {
+    return (
+      `THE CALENDAR — NO CALENDAR IS SYNCED for this account (asked window: ` +
+      `${first ? `${first.weekday} ${dayLabel(first.dayStr)}` : '—'} through ${last ? `${last.weekday} ${dayLabel(last.dayStr)}` : '—'}). ` +
+      `Availability is UNKNOWN: never describe any day or time as free or busy; say plainly that no ` +
+      `calendar is connected here, and do not offer to check it.`
+    );
+  }
   const lines: string[] = [
     `THE CALENDAR — ${first ? `${first.weekday} ${dayLabel(first.dayStr)}` : '—'} through ` +
     `${last ? `${last.weekday} ${dayLabel(last.dayStr)}` : '—'} (times in ${opts.tz || win.tz}). ` +

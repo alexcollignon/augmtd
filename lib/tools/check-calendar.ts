@@ -93,7 +93,12 @@ export async function executeCheckCalendar(
   const parts = [renderCalendarWindow(win, { tz })];
   if (clamped) parts.push(`(I read the first ${MAX_WINDOW_DAYS} days of the range you asked for — ask again for the rest.)`);
 
-  if (config.propose_slots === true) {
+  // THE EMPTY-CALENDAR TRUTH: with no calendar synced, every "free slot" would be an invention —
+  // the picker over an empty busy set proposes everything. The block above already says UNKNOWN;
+  // proposals are refused for the same reason, plainly.
+  if (config.propose_slots === true && !win.hasCalendar) {
+    parts.push('FREE SLOTS: none can be proposed — no calendar is synced for this account, so nothing can be verified free.');
+  } else if (config.propose_slots === true) {
     const minutes = typeof config.duration_minutes === 'number' && config.duration_minutes > 0 ? Math.min(480, Math.round(config.duration_minutes)) : 30;
     const count = typeof config.count === 'number' && config.count > 0 ? Math.min(5, Math.round(config.count)) : 3;
     // THE SAME BUSY SET the block above printed — the picker is pure, so the proposal and the

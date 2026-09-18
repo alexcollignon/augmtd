@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import {
-  executeGetEmails, executeGetMeetingContext,
+  executeGetEmails, executeGetMeetingContext, executeCheckCalendar,
   executeWebSearch, executeFetchUrl, executeDeepResearch,
   executeSlackListChannels, executeSlackPostMessage, executeSlackReadMessages, executeSlackListMembers,
   executeFindTeamWork, executeReadTeamWork,
@@ -144,6 +144,14 @@ export async function POST(request: NextRequest) {
       case 'get_meeting_context':
         if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });
         result = await executeGetMeetingContext(config, user_id, sb);
+        break;
+
+      // THE COWORKER LANE REACHES THE CALENDAR (Sep 18) — the AgentOS mirror of the native case.
+      // get_meeting_context reads meetings we RECORDED; this reads the CALENDAR for a date range,
+      // and every busy/free line, weekday label and proposed slot in the block is code's output.
+      case 'check_calendar':
+        if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });
+        result = await executeCheckCalendar(config, user_id, sb);
         break;
 
       case 'search_knowledge_base': {
