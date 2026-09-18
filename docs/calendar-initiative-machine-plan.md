@@ -7,7 +7,7 @@ Projects is the object). Calendar becomes a first-class initiative signal so unr
 
 ## The core idea
 
-**An initiative is a people/org + topic cluster, not a text string.** The label ("Galp X Zero to 100") is
+**An initiative is a people/org + topic cluster, not a text string.** The label ("Volta X Zero to 100") is
 its display name. Identity is anchored on **topic** (so distinct deals never merge) and **people** (so an
 atom with no/weak label can still be placed) — but *topic is authoritative*; people only place orphans.
 

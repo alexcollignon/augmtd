@@ -91,7 +91,7 @@ executors) → report (ledger + activity + report-back) → the brain re-synthes
   never disagree about what the item needs.
 - **After approve:** the existing executors fire (send-reply / compose send / invite execute /
   coworker email); `resolved_at` stamps; the label reconciles; the LEDGER hears it; the entity
-  re-synthesizes; the report-back lands in the room's conversation ("Sent — Jean-Marie has the
+  re-synthesizes; the report-back lands in the room's conversation ("Sent — Jordan has the
   pricing"), not just the coworker thread.
 - **Gates:** live end-to-end on a fixture: prepare → ready → open (component prefilled, zero AI) →
   approve → the send fires through the existing gate → ledger + activity + state refresh carry it.

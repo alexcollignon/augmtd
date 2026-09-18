@@ -18,7 +18,7 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import {
   ChevronRightIcon, CheckIcon, XMarkIcon, ArrowRightIcon, StarIcon,
-  ArchiveBoxIcon, PencilIcon, TrashIcon, ArrowUturnLeftIcon, BellSlashIcon, MagnifyingGlassIcon, PlusIcon, ArrowsPointingInIcon,
+  ArchiveBoxIcon, PencilIcon, ArrowUturnLeftIcon, BellSlashIcon, MagnifyingGlassIcon, PlusIcon, ArrowsPointingInIcon,
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon,
 } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
@@ -174,6 +174,9 @@ function Row({ e, onAction, onOpen, others = [] }: { e: Entity; onAction: (id: s
               ) : (
                 <button onClick={() => onAction(e.id, 'reopen')} className={verb}><ArrowUturnLeftIcon className="w-3.5 h-3.5" />Reopen</button>
               )}
+              {/* NO LYING DOORS — every item behind ⋯ is active-only, so a concluded/muted row's
+                  ⋯ would open an empty box. It renders only where it has something to say. */}
+              {e.status === 'active' && (
               <div className="relative">
                 <button onClick={() => setMore((v) => !v)} className={verb} title="More">⋯</button>
                 {more && (
@@ -206,12 +209,16 @@ function Row({ e, onAction, onOpen, others = [] }: { e: Entity; onAction: (id: s
                         ))}
                           </>
                         )}
-                        <button onClick={() => { setMore(false); onAction(e.id, 'forget'); }} className="flex items-center gap-2 w-full px-3 py-1.5 text-[12px] text-rose-500 hover:bg-rose-50"><TrashIcon className="w-3.5 h-3.5" />Forget</button>
+                        {/* Deleting a project is NOT a row verb here (the `forget` action retired
+                            Sep 17 — a partial delete that left the room's whole mind behind). The
+                            one delete door is the project room's own ⋯ → "Delete project…", which
+                            settles the context with its dialog. */}
                       </>
                     )}
                   </div>
                 )}
               </div>
+              )}
             </div>
           </div>
         </div>

@@ -17,7 +17,7 @@ pages is what "just works" feels like.
 **Locked design rules (from this arc's lessons):**
 - The plan engine SURVIVES as substrate (preparation/coworkers run on it) but users never see steps.
 - DEPENDENCY HONESTY: a send/commit step can never be "ready" while a producing step before it is open.
-- A visible-step misfire ("Note Léa → Upload a file") is a grader bug — file-request grading only for
+- A visible-step misfire ("Note Sam → Upload a file") is a grader bug — file-request grading only for
   steps that genuinely consume a document.
 - Attribution everywhere prepared work appears ("✦ Sofia") — the staff feeling. Management stays /workers.
 - The steer input is the correction channel: text → regenerate the outcome + write the fact into the
@@ -97,7 +97,7 @@ every AI-dependent route (item plan 30s, resolve-file 28s) crawled too.
   2. **The steer input** — "Add context or corrections…" → POST /api/items/[id]/steer: regenerates the
      draft with the user's text AND writes durable facts to the entity memory (+ optional summon:
      "have Max research X" routes a delegation).
-  3. **Provenance** — "from: Tuesday's meeting · 📁 Soboplac" (already built, keeps its place).
+  3. **Provenance** — "from: Tuesday's meeting · 📁 Acme" (already built, keeps its place).
 - **One action bar**: Send · Edit · Dismiss (Send only when a draft exists; approve-gate unchanged).
   The five-button bar and every panel-duplicated CTA die.
 - **The engine goes dark but honest**: `item_plans` keeps powering preparation; add the DEPENDENCY rule
@@ -113,7 +113,7 @@ every AI-dependent route (item plan 30s, resolve-file 28s) crawled too.
 NEW people from the same company — fragmented into 3 entities, with Friday's meeting invisible.**
 Four structural gaps found + fixed (all agnostic — per-user derivation, no literals):
 - **Identity tokens** (`recognize.ts`): a person is EVERY form they arrive in — diacritic-FOLDED name
-  ("Léa"→"lea", was mangled to "la"), full email, and "@domain" company token (free providers
+  ("Sam"→"lea", was mangled to "la"), full email, and "@domain" company token (free providers
   excluded). `personKey` makes matching era-proof across normalizations. Rarity-weighting makes an
   internal everywhere-domain non-distinctive automatically; a rare external domain force-recalls the
   deal for a NEW teammate. Judge prompt learned the same-company principle. Sources carry
@@ -231,7 +231,7 @@ fires without approve; no real names in code/prompts.**
   grounding path; `answerEntityQuestion` gained `opts.viewing`); ledger email lines carry a content
   gist + attachment note (states regenerated, voice/arbiter gates 20/20); [L#] markers stripped from
   displayed prose; commitment chips near-dup folded. `smoke-grounding.ts` 5/5 — and the ORIGINAL
-  failure re-asked live now answers: "Yes — Léa sent the catalog... 'vous trouverez en pièce jointe
+  failure re-asked live now answers: "Yes — Sam sent the catalog... 'vous trouverez en pièce jointe
   notre catalogue avec les tarifs'... though the attachment itself isn't visible." Outlook
   attachment-capture gap NOTED as its own follow-up (real data loss).
 - **P7b** — `lib/work-items/states.ts` owns both vocabularies (ITEM facts: todo/waiting/in_progress/

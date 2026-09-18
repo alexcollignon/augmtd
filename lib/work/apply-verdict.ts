@@ -310,6 +310,10 @@ async function archiveItemNarrations(
   try {
     const keys = [
       `prep:${input.kind}:${input.id}`,
+      // The prep WRITER (lib/prepare/pass.ts) keys on the work-spine id, whose commitment segment
+      // is `commit:` — not the judge-input kind `commitment:`. Both spellings must archive, or a
+      // commitment's prep line outlives its settled deed (found by the Sep 17 retro-sweep census).
+      ...(input.kind === 'commitment' ? [`prep:commit:${input.id}`] : []),
       `revisit:${input.kind}:${input.id}`,
       `verdict-resolve:${input.kind}:${input.id}`, // the pre-coalesce per-item line
     ];

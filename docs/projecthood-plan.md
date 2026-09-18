@@ -97,7 +97,7 @@ affordances don't. Two wires, per the one-truth law:
    `move_item_to_project` (wraps the existing `/api/items/entity` PATCH logic — locked, cascading,
    reconciled), `mark_project_done` / `archive_project` (wraps entity lifecycle PATCH),
    `merge_projects` (wraps the reflection merge executor, conservative — same trust bar).
-   Exposure: `chief_of_staff`. → "this isn't part of Soboplac", "merge these two", "mark the pilot
+   Exposure: `chief_of_staff`. → "this isn't part of Acme", "merge these two", "mark the pilot
    done" work in EVERY chat surface (rail, room, Home) with zero surface code.
 2. **Direct affordances** (for the click-first user):
    - The item deep-dive rail header: the current project chip gains **Move to… / Not part of this**
@@ -302,7 +302,7 @@ a status — is best practice; the FEEL is ours (calm, one tap deep, no config s
 FUNCTIONAL CORE (task = writable: create/edit/complete/date), refuse the chrome.
 
 **THE OWNER RESOLUTION (user course-correction, load-bearing):** a task's OWNER is a HUMAN of the
-deal — You, or the counterparty by name ("Waiting on Jean-Marie") — never AUGMTD/a coworker. The AI
+deal — You, or the counterparty by name ("Waiting on Jordan") — never AUGMTD/a coworker. The AI
 is not a participant; it is the PREPARATION LAYER under YOUR tasks. Two different things were being
 collapsed: who OWES the work (the human — the task list's truth) vs who does the MECHANICS (you /
 the system / a coworker — the cognitive-cost ladder). AI involvement stays in its existing,
@@ -436,7 +436,7 @@ traffic — every visual evaluation is degraded until this arc ships.
    heart of the room shows), content column widens (max-w 860 → 1000), and on wide screens the
    next-move card and Goals & Rules sit side-by-side. No new sections — better assembly.
 7. **Home today-strip (small, last)**: one slim line under the greeting from the EXISTING schedule
-   read (`b.schedule`) — "15:00 Fidelidade x Z100 · 2 more" → opens the day list. No new data path.
+   read (`b.schedule`) — "15:00 Meridian x Z100 · 2 more" → opens the day list. No new data path.
    (The fuller Home revamp stays parked per the user.)
 - **Recorded decision**: NO per-room timeline — the global Timeline lens already clusters this deal's
   SAME spine items; if a per-deal dated view earns its way back it's a filtered lane there, never a

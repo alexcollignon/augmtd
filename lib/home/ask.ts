@@ -13,6 +13,7 @@ import { getTodaySchedule, renderScheduleBlock } from '@/lib/calendar/today-sche
 import { GENERIC_WORK_WORDS } from '@/lib/entities/recognize';
 import { projectHref } from '@/lib/room/project-href';
 import { GROUND_EVIDENCE_RULE } from '@/lib/room/ground-evidence';
+import { REACH_CONTRACT } from '@/lib/converse/reach';
 
 export type AskRef = { id: string; kind: 'entity' | 'inbox_item' | 'commitment' | 'meeting' | 'file'; label: string; href: string | null };
 export type AskAnswer = { answer: string; refs: AskRef[] };
@@ -96,6 +97,22 @@ export async function buildBrainSnapshot(supabase: SupabaseClient, userId: strin
   const sched = await getTodaySchedule(supabase, userId);
   parts.push(renderScheduleBlock(sched));
 
+  // THE CALENDAR WINDOW (Wave 1, Sep 18) — today + the next 14 days, read ONCE and rendered by code.
+  // Found live on a pilot account: asked to "check my calendar", the chat answered "you're free both
+  // weeks" over twelve confirmed events and a four-day all-day block, because the only calendar in
+  // its context was TODAY. The snapshot is also converse's grounding for global-scope open turns, so
+  // this one block reaches both chat paths. Non-fatal: an unreadable calendar simply adds no block —
+  // and the prompt's reach sentence below then keeps the answer honest about not seeing it.
+  try {
+    const { getScheduleWindow, renderCalendarWindow } = await import('@/lib/calendar/schedule-window');
+    const win = await getScheduleWindow(supabase, userId, {
+      fromDayStr: sched.dayStr,
+      toDayStr: new Date(Date.parse(`${sched.dayStr}T00:00:00Z`) + 14 * 86_400_000).toISOString().slice(0, 10),
+      tz: sched.userTz,
+    });
+    parts.push(renderCalendarWindow(win, { tz: sched.userTz }));
+  } catch { /* the window is an enhancement — the today block still anchors the day */ }
+
   // Recent replies owed.
   const { data: items } = await supabase.from('inbox_items')
     .select('id, work_title, source_data, rule_type, status').eq('user_id', userId).eq('source', 'email').order('created_at', { ascending: false }).limit(60);
@@ -153,14 +170,37 @@ export async function answerHomeQuestion(
   } catch { /* no file lane */ }
   const priorTurns = history.slice(-6).map((t) => `${t.role === 'user' ? 'THEM' : 'YOU'}: ${t.text}`).join('\n');
   const prompt =
-    `You are the user's assistant inside their work app — you hold their whole working context (emails, ` +
-    `meetings, projects, calendar, commitments, people) and answer like a sharp, calm colleague who already ` +
-    `knows their world. Answer their question GROUNDED STRICTLY in the context below.\n\n` +
+    // THE PROMPT STOPS OVERCLAIMING (Wave 1, Sep 18): this sentence used to promise "their whole
+    // working context … calendar", and the snapshot held only TODAY — so when the user asked about
+    // two future weeks the model, told it holds the calendar, answered from nothing and said "free".
+    // A prompt that overstates its context is an instruction to confabulate. It now enumerates
+    // exactly what the snapshot carries, and states the calendar's reach and its EDGE.
+    `You are the user's assistant inside their work app. The context below is what you hold: their ` +
+    `active bodies of work, the people needing attention, their open commitments, today's schedule, ` +
+    `the replies they owe — and their calendar for TODAY AND THE NEXT 14 DAYS ONLY. Answer like a sharp, ` +
+    `calm colleague who already knows their world, GROUNDED STRICTLY in that context.\n\n` +
+    `THE CALENDAR RULE: availability, free time and scheduling come ONLY from the calendar block below — ` +
+    `never from memory, never from what sounds likely. NEVER state or imply someone is free or busy on a ` +
+    // THE REACH VALVE OUTRANKS THE CONFESSION (Sep 18, found by the R3 gate): this sentence used to
+    // read "beyond those 14 days you cannot see the calendar: say so plainly and offer to check" —
+    // Wave 1's honesty fix, written when confessing WAS the best this toolless lane could do. With the
+    // valve mounted that instruction became the thing BLOCKING it: asked about a day 35 days out the
+    // model dutifully offered to check instead of emitting the token that would have gone and checked.
+    // An honest edge is a floor, never a ceiling — a question beyond the window IS the REACH case.
+    `day you cannot see. A question about a day BEYOND this window is exactly the REACH case below: ` +
+    `do not answer it from here and do not offer to check — emit the token and the lookup happens. ` +
+    `If the calendar block itself says NO CALENDAR IS SYNCED, availability is unknowable here: say ` +
+    `plainly that no calendar is connected, never call a day free or busy, and never offer a check. ` +
+    `Weekday names are already computed in the context — use them verbatim and never work one out yourself.\n\n` +
     `THEIR CONTEXT:\n${snapshot}${fileBlock}\n\n` +
     (priorTurns ? `EARLIER IN THIS CHAT:\n${priorTurns}\n\n` : '') +
     `THEIR QUESTION: ${question}\n\n` +
     `Rules:\n` +
-    `- Answer ONLY from the context. If it doesn't cover the question, say so plainly ("I don't have anything on that yet") — NEVER invent people, dates, or facts.\n` +
+    // FIRST, NOT LAST (Sep 18, the R3 gate): the reach clause sat at the BOTTOM of this list, behind
+    // "say so plainly" — and the model obeyed the rule it read first. A clause that loses to the rule
+    // it is meant to outrank is not mounted; prominence is part of the contract.
+    `- ${REACH_CONTRACT}\n` +
+    `- Answer ONLY from the context (after the REACH rule above has been considered). If it doesn't cover the question AND no lookup could, say so plainly ("I don't have anything on that yet") — NEVER invent people, dates, or facts.\n` +
     `- HARD LIMITS (exceeding them is a failed answer): a simple question = 1-3 sentences. A summary question ("what did I miss", "plan my week") = at most 3 short paragraphs and 100 words TOTAL, separated by blank lines. Pick the 3-4 things that matter MOST and STOP — never inventory; the deck below the chat already lists everything. End a summary with the one thing you'd do first.\n` +
     `- PLAIN PROSE ONLY: no markdown (no **bold**, no headers, no tables, no bullet lists). Whenever the answer runs past two sentences, break it into short paragraphs separated by a BLANK LINE — never one solid block. Never place two refs back-to-back — connect them with words.\n` +
     `- HARD LIMIT: at most 5 tags total, ONE id per bracket ([E7] — NEVER [E7, E8]), placed immediately AFTER the thing it names (\"the Soboplac pilot [E10]\"), never dangling at a sentence end. The app turns each into a link.\n` +

@@ -44,7 +44,7 @@ export const WORK_COMPONENTS: ReadonlyArray<{
   { key: 'reply_composer', gate: 'send', surface: 'stage', capability: 'send_email', when: 'a real person awaits a reply FROM the user' },
   { key: 'decision', gate: null, surface: 'inline', capability: null, when: 'the real move is a CHOICE between a few concrete routes (accept/decline/redirect)' },
   { key: 'document', gate: null, surface: 'stage', capability: 'generate_document', when: 'a produced deliverable exists to review (research, a brief, a deck draft)' },
-  { key: 'send_file', gate: 'send', surface: 'stage', capability: 'send_email', when: 'an EXISTING document must be sent/shared to someone' },
+  { key: 'send_file', gate: 'send', surface: 'stage', capability: 'send_email', when: 'an EXISTING document must be sent/shared to someone WHO ASKED THE USER FOR IT (the requester is the recipient); passing a thread/document ON to a NAMED THIRD PARTY is forward, never this' },
   { key: 'invite', gate: 'book', surface: 'inline', capability: 'send_calendar_invite', when: 'the move is scheduling a real meeting/call' },
   { key: 'forward', gate: 'send', surface: 'inline', capability: 'forward_email', when: 'the thread should go to a NAMED third party (the item names who it must reach)' },
   { key: 'chase', gate: 'send', surface: 'stage', capability: 'send_email', when: 'someone ELSE owes the user and a nudge is the move' },
@@ -76,7 +76,7 @@ export const renderComponentOptions = (): string =>
   WORK_COMPONENTS.map((c) => `- "${c.key}": ${c.when}`).join('\n');
 
 /** Bump when the verdict schema/prompt changes — cached verdicts self-invalidate. */
-export const JUDGE_VERSION = 17; // 17: the wait-until clamp — ALREADY-BOOKED needs the calendar block and never converts a reconnect-after item into answered (those are none+revisit; P25 caught the dilution). 16: THE BOOKED-CALENDAR FACT — the judge sees the user's real bookings with the item's sender; a schedule verdict on an already-booked meeting judges none/answered (found live: the lane floor stripped the duplicate invite but the verdict persisted). 15: THE ASK-DIRECTION FLOOR — an open engine ask is OUR ask to the USER, never the counterparty's debt (ask-journey D8, found live: the judge flipped produce→chase and the pass drafted a nudge asking the counterparty to send the deliverable WE owed HER). 14: ATTACHABLE-REQUIRES — a require is a THING (document/file/link), never a confirmation/decision/answer (the "attach a confirmation of the time" ask, found live). 13: THE EXCERPT-HONESTY LAW — clips end at boundaries + declare themselves; the prompt rules a clip marker is OUR cutting, never source truncation (a normal email read as "cut off mid-sentence" — found live). 12: THE USER'S CLOCK — local day/hour, same-day expiry with a code-verified stated time, event-boundary sig. 11: the sender floor. 10: expired requires a STATED date. 9: `revisit` + open-ask fact. 8: `forward` + failure honesty.
+export const JUDGE_VERSION = 18; // 18: THE SEND-FILE/FORWARD BOUNDARY — send_file's `when` was a strict superset of the forward case, and on the bedrock tier the judge preferred it (verdict said send_file while its own reason spoke forwarding → a reply-shaped draft addressed to NOBODY; P21 live, tier-scoped — standard-tier models drew the line unprompted). The boundary now lives in the component's own `when`: the requester is send_file's recipient; a NAMED THIRD PARTY is forward's. 17: the wait-until clamp — ALREADY-BOOKED needs the calendar block and never converts a reconnect-after item into answered (those are none+revisit; P25 caught the dilution). 16: THE BOOKED-CALENDAR FACT — the judge sees the user's real bookings with the item's sender; a schedule verdict on an already-booked meeting judges none/answered (found live: the lane floor stripped the duplicate invite but the verdict persisted). 15: THE ASK-DIRECTION FLOOR — an open engine ask is OUR ask to the USER, never the counterparty's debt (ask-journey D8, found live: the judge flipped produce→chase and the pass drafted a nudge asking the counterparty to send the deliverable WE owed HER). 14: ATTACHABLE-REQUIRES — a require is a THING (document/file/link), never a confirmation/decision/answer (the "attach a confirmation of the time" ask, found live). 13: THE EXCERPT-HONESTY LAW — clips end at boundaries + declare themselves; the prompt rules a clip marker is OUR cutting, never source truncation (a normal email read as "cut off mid-sentence" — found live). 12: THE USER'S CLOCK — local day/hour, same-day expiry with a code-verified stated time, event-boundary sig. 11: the sender floor. 10: expired requires a STATED date. 9: `revisit` + open-ask fact. 8: `forward` + failure honesty.
 
 // ── registryParity — the W1 structural law, stated mechanically for the P21 gate: every verb maps
 // to a component; every gated component binds a BUILT capability whose irreversible flag agrees
@@ -173,6 +173,17 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     intent: 'read the calendar / check availability of upcoming meetings',
     tool: 'get_calendar', built: true, kind: 'atomic', irreversible: false, feature: 'meetings',
     blurb: 'read the calendar (upcoming meetings / availability)',
+  },
+  // THE READ-SIDE CALENDAR VERB (Wave 1, Sep 18): the chief could prepare an invite but could not
+  // LOOK at the calendar — so it answered availability questions from a today-only context and called
+  // two booked weeks free. Exposed to the chief AND the coworker lane (a coworker asked to schedule
+  // needs the same verb, and the DM route registers it), and `conversational` so it never enters the
+  // item-plan classifier: it has no workflow assembler path, and a step graded to it would dead-end.
+  check_calendar: {
+    intent: "read the user's calendar for a date range / check availability / find free slots",
+    tool: 'check_calendar', built: true, kind: 'atomic', irreversible: false, feature: 'meetings',
+    exposure: ['chief_of_staff', 'coworker'], conversational: true,
+    blurb: "read the calendar for a date range (busy/free per day, optional free-slot proposals) — ALWAYS before any availability claim",
   },
   get_meeting_context: {
     intent: 'read a meeting / transcript we recorded',

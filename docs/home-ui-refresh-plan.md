@@ -30,7 +30,7 @@ Ordering: overdue/dated first, then the synthesis order. The ✦ "start here" ac
      Apekey.ai sales outreach
  ─────────────────────────────────────────────────────────────────────────
  ◎  Process the refund & share the details with Madalena    OVERDUE   ✓ ✕ →
-     You owe Youssef · ↳ Jean-Marie pilot
+     You owe Yann · ↳ Jordan pilot
  ─────────────────────────────────────────────────────────────────────────
  ⚠  Verify your account — a payment failed                   Jul 7    ✓ ✕ →
      from Stripe · action needed
@@ -43,13 +43,13 @@ Replace the pill marquee with a horizontal row of small **project tiles** built 
 ```
  YOUR PROJECTS                                                          21 ▸
  ┌────────────────────────┐ ┌────────────────────────┐ ┌───────────────────┐
- │ ● Jean-Marie pilot     │ │ ● Fidelidade        📁 │ │ ● Zero to 100     │
+ │ ● Jordan pilot     │ │ ● Meridian        📁 │ │ ● Zero to 100     │
  │   Needs attention · 4  │ │   Active · 2           │ │   Active · 3      │
  │   Next: reply to Jaden │ │   Next: send the deck  │ │   Next: —         │
  └────────────────────────┘ └────────────────────────┘ └───────────────────┘
    (● state colour · 📁 = tracked project · count = open items · Next = top action)
 ```
-(vs today: `● Jean-Marie pilot 4   ● Enterprise Tech… 1   ● Fidelidade 1 …` rounded pills.)
+(vs today: `● Jordan pilot 4   ● Enterprise Tech… 1   ● Meridian 1 …` rounded pills.)
 Horizontal scroll stays (measured-overflow marquee we just fixed); the chip-expand actions (Track / Not relevant / Open in Projects) move onto the tile's hover/expand — same behavior, better home.
 
 ### P3 — Plain-language labels

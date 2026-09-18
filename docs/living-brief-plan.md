@@ -51,7 +51,7 @@ brief to read. So:
    "noise" thread often makes it active/needs-you again); and confirm every inbound message
    creates/updates an item. Diagnosis that motivated this: alex's *"Calling For An Urgent Meeting"* is
    stored as a `06-22` `noise` item despite a reply **today at 10:17** — the reply never re-surfaced it; and
-   the *"Follow up | Fidelidade" (12:19 today)* isn't in the DB at all. The unified context is *complete*
+   the *"Follow up | Meridian" (12:19 today)* isn't in the DB at all. The unified context is *complete*
    but points at **stale thread state** — that's the real bug behind "the Home feels not updated."
 2. **#2 — Synthesis owns assembly + ordering** (stop label-bucketing; AI writes brief + order).
 3. **#3 — Executable inline actions** (grounded), including **hand-to-coworker**.

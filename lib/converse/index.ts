@@ -26,7 +26,11 @@ import {
   executeResolveInboxItem, executeResolveCommitment, executeFindFile, executeRememberFact,
   resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition,
 } from '@/lib/tools/item-actions';
-import { getEmailsDefinition, executeGetEmails, getMeetingContextDefinition, executeGetMeetingContext, readActionHistoryDefinition, executeReadActionHistory, type ActionHistoryConfig, runComputeDefinition, executeRunCompute, type ComputeConfig } from '@/lib/tools';
+import { getEmailsDefinition, executeGetEmails, getMeetingContextDefinition, executeGetMeetingContext, checkCalendarDefinition, executeCheckCalendar, readActionHistoryDefinition, executeReadActionHistory, type ActionHistoryConfig, runComputeDefinition, executeRunCompute, type ComputeConfig } from '@/lib/tools';
+// THE WEEKDAY FLOOR (Wave 1) — deterministic, applied at the one outermost answer seam below.
+import { enforceWeekdayDatePairs } from '@/lib/utils/weekday-floor';
+// THE REACH VALVE (Sep 18) — the model's own judgment that a question needs a lookup.
+import { REACH_CONTRACT, needsReach, sayInsteadOfSentinel } from '@/lib/converse/reach';
 import { proposeStandingTaskDefinition } from '@/lib/work/standing-spec';
 // EVERY THREAD, EVERY PRODUCER (threads plan, Sep 8): the invite card's producer is ONE tool
 // contract + ONE execution body, shared with the coworker DM. It prepares and never sends — and
@@ -110,6 +114,7 @@ const TOOL_PROGRESS: Record<string, string> = {
   search_knowledge_base: 'Searching the knowledge base…',
   get_emails: 'Reading recent mail…',
   get_meeting_context: 'Pulling the meeting notes…',
+  check_calendar: 'Checking your calendar…',
   read_action_history: 'Checking what was sent and done…',
   run_compute: 'Running the numbers…',
   resolve_inbox_item: 'Updating the item…',
@@ -127,6 +132,11 @@ const TOOL_PROGRESS: Record<string, string> = {
   steer_standing_task: 'Adjusting how that task runs…',
 };
 const progressLabelFor = (tool: string) => TOOL_PROGRESS[tool] ?? 'Working on it…';
+
+/** Reads whose output is a CONTEXT BLOCK written for the model, not a reply written for the person.
+ *  They never take the command fast-path (whose result is served straight as `say`) — they go
+ *  through the agent loop, which reads the block as a tool result and composes an answer from it. */
+const RAW_CONTEXT_READS = new Set(['search_knowledge_base', 'check_calendar', 'get_emails', 'get_meeting_context']);
 
 export type ConverseTurn = {
   say: string;
@@ -166,9 +176,9 @@ const linkKindOf = (s: Extract<ConverseScope, { kind: 'item' }>): 'inbox_item' |
   s.itemKind === 'commitment' || s.itemKind === 'followup' ? 'commitment' : s.itemKind === 'meeting' ? 'meeting' : 'inbox_item';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// THE DIALOGUE READ (converse arc — the Omantel lesson): the room RENDERS as a conversation, so
+// THE DIALOGUE READ (converse arc — the bootcamp lesson): the room RENDERS as a conversation, so
 // the responder must SEE the conversation. Found live: the founding engine proposed "bring in
-// 'Omantel AI Bootcamp' (46 items)?", the user typed "only for the bootcamp", and this core —
+// 'ZZ AI Bootcamp' (46 items)?", the user typed "only for the bootcamp", and this core —
 // blind to the room's turns — answered "I don't see any bootcamp-related work". Two laws fix the
 // class, not the case:
 //   1. The core reads the room's recent turns (transcript) and its STANDING INTERACTIONS (a
@@ -716,6 +726,15 @@ async function dispatchCommand(
     const text = await executeGetMeetingContext({ since: args.since ?? '30d', include: args.include ?? 'summaries', filter: args.filter }, userId, client).catch(() => '');
     return { say: text.slice(0, 3000) || 'No matching meetings found.', refs: [] };
   }
+  // THE READ-SIDE CALENDAR VERB (Wave 1): every line it returns — busy/free, weekdays, clock times,
+  // proposed slots — is CODE's, so the loop relays truth instead of composing availability from memory.
+  if (tool === 'check_calendar') {
+    const text = await executeCheckCalendar({
+      from_date: args.from_date, to_date: args.to_date,
+      propose_slots: args.propose_slots, duration_minutes: args.duration_minutes, count: args.count,
+    }, userId, client).catch(() => '');
+    return { say: text.slice(0, 3000) || "I couldn't read the calendar just now.", refs: [] };
+  }
   if (tool === 'search_knowledge_base') {
     try {
       const { buildKBContext } = await import('@/lib/knowledge/build-kb-context');
@@ -880,7 +899,7 @@ async function runCoworkerDelegation(
 }
 
 // ── The bounded AGENT LOOP (the 20%) — function-calling over the chief-of-staff toolset. ──
-const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, prepareForwardDefinition, prepareCalendarInviteDefinition, readActionHistoryDefinition, proposeStandingTaskDefinition, steerStandingTaskDefinition, runComputeDefinition, assignToCoworkerDefinition, offerChoicesDefinition];
+const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, checkCalendarDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, prepareForwardDefinition, prepareCalendarInviteDefinition, readActionHistoryDefinition, proposeStandingTaskDefinition, steerStandingTaskDefinition, runComputeDefinition, assignToCoworkerDefinition, offerChoicesDefinition];
 
 async function agentLoop(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string, grounding: string,
@@ -904,11 +923,30 @@ async function agentLoop(
       return !req || feats?.[req] !== false;
     });
   } catch { /* features unreadable → full set (fail open; the executors keep their own gates) */ }
+  // ── THE CLOCK REACHES THE CHAT LANE (Wave 1, Sep 18) — the loop ran DATELESS while every other
+  // lane carried the date (lib/workflows/execute-step.ts's dateLine is the idiom). A dateless model
+  // coin-flips weekday↔date pairs and reasons about "next week" from nothing. The line is computed
+  // in the USER'S zone (the one derivation, shared with the windowed calendar read). ──
+  let dateLine = '';
+  try {
+    const { userTimezone } = await import('@/lib/calendar/schedule-window');
+    const tz = await userTimezone(client, userId);
+    const now = new Date();
+    const dayStr = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(now);
+    const label = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${dayStr}T12:00:00Z`));
+    const clock = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: tz }).format(now);
+    dateLine =
+      `TODAY is ${label} — it is ${clock} in the user's local time (${tz}). Reason about "today", "this week" ` +
+      `and "next week" from THAT date. Weekday names for dates come from your tools/context — if a date's ` +
+      `weekday is not stated there, do not guess it. For anything about availability, free time or ` +
+      `scheduling, call check_calendar first: never state availability from memory.\n\n`;
+  } catch { /* the clock is an enhancement — an unreadable zone must never break the turn */ }
   const applied: ConverseTurn['applied'] = [];
   const files: NonNullable<ConverseTurn['files']> = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const messages: any[] = [
     { role: 'system', content:
+      dateLine +
       `You are the user's chief of staff inside their work platform. You hold a SMALL set of reversible tools ` +
       `(resolving items, finding files, remembering facts, reading the action ledger of what was sent/done) — ` +
       `use them when the user asks. You never CREATE ` +
@@ -1153,7 +1191,17 @@ export async function converse(
     return { say: '', refs: [], draft: body };
   }
   const turn = await converseInner(client, userId, scope, text, opts);
-  if (turn?.say) turn.say = turn.say.replace(GROUNDING_TAG_RE, '');
+  // THE WEEKDAY FLOOR at THE ONE ANSWER DOOR (Wave 1, Sep 18): every path — the agent loop's final
+  // answer, the question paths (Home ask / entity ask / item ask), the command replies and the
+  // exhaustion hand-off — returns THROUGH here, so one application covers the lane. A weekday is
+  // arithmetic over a date; code corrects the pairing the model invented (the pilot chat got all
+  // three of its proposed weekday↔date pairs wrong). Only unambiguous pairs are touched.
+  // THE SENTINEL NEVER SERVES (Sep 18, the reach valve): NEEDS_REACH is a contract token between our
+  // prompts and our code. If one ever survives to here — the loop was unavailable, a call errored —
+  // it is replaced with an honest one-liner. Sitting at the one answer door makes that structural
+  // rather than a list of guarded returns.
+  if (turn?.say) turn.say = enforceWeekdayDatePairs(turn.say.replace(GROUNDING_TAG_RE, ''));
+  if (turn?.say) turn.say = sayInsteadOfSentinel(turn.say);
   return turn;
 }
 
@@ -1211,7 +1259,7 @@ async function converseInner(
   // standing interactions, and every path that could answer a button with a question.
   const isTransition = scope.kind === 'item' && text.startsWith('DECISION MADE — ');
 
-  // 0 — A STANDING INTERACTION is pending: first decide whether this note ANSWERS it (the Omantel
+  // 0 — A STANDING INTERACTION is pending: first decide whether this note ANSWERS it (the bootcamp
   // law — a person replying under a question is answering the question until proven otherwise).
   // A yes executes through the SAME door as the button; ambiguity gets ONE clarifier ANCHORED on
   // the pending thing; a no falls through to the normal flow (which now sees the transcript).
@@ -1313,7 +1361,13 @@ async function converseInner(
   // EXCEPT raw-context reads (found via P30's flake): search_knowledge_base returns the RAW KB
   // block — served straight as `say` it reads as a context dump, not an answer. Reads that need
   // COMPOSITION go through the agent loop, which reads the block as a tool result and answers.
-  if (verdict.command && verdict.command.tool !== 'search_knowledge_base') {
+  // check_calendar joined the list the day it shipped (found by its own gate, Sep 18): its block is
+  // written FOR THE MODEL — "use these labels verbatim", "BEYOND THIS WINDOW THE CALENDAR IS NOT
+  // VISIBLE TO YOU: say so plainly" — so the fast path handed the user a page of instructions
+  // addressed to someone else instead of an answer to their question. get_emails and
+  // get_meeting_context are the same shape ("## Recent meetings (3)…" is a source dump, not a
+  // sentence) — the whole class rides the set, not a per-tool exception.
+  if (verdict.command && !RAW_CONTEXT_READS.has(verdict.command.tool)) {
     opts.onProgress?.(progressLabelFor(verdict.command.tool));
     const out = await dispatchCommand(client, userId, scope, verdict.command.tool, verdict.command.args, text, { transcript, roomKey: dlg.roomKey });
     if (out) return out;
@@ -1328,8 +1382,17 @@ async function converseInner(
   // 3 — QUESTION: grounded answer from the scope's memory — the whole brain (global), the deal's
   // memory (entity / linked item), or the item's own context. ONE core; the graders stay
   // single-source. The DIALOGUE + registry MEMORY MATCHES ride the grounding, with the honesty
-  // floor: never assert the absence of something they name (the Omantel "I don't see any
+  // floor: never assert the absence of something they name (the bootcamp "I don't see any
   // bootcamp-related work" class — one turn after the engine itself named 46 items of it).
+  //
+  // THE REACH VALVE (Sep 18): these sub-paths are TOOLLESS, so a question needing a lookup could only
+  // ever end in an honest refusal — confinement, not service. Each prompt now carries ONE contract
+  // clause (lib/converse/reach.ts): when answering well needs something outside the context it was
+  // handed, the mind replies with the sentinel alone. Code recognises only that token and escalates
+  // to the tool-bearing agent loop below — ONE escalation, whose turn is final. THE MODEL decides it
+  // needs reach; no code ever reads the user's words to route them. The sentinel check runs BEFORE
+  // honestyFloor so the floor never spends a call on — or mutates — a contract token.
+  let escalateToReach = false;
   if (verdict.question) {
     const scopeEntity = scope.kind === 'entity' ? scope.entityId : null;
     const matches = await registryMatches(client, userId, text, scopeEntity);
@@ -1341,30 +1404,36 @@ async function converseInner(
       opts.onProgress?.('Looking across your work…');
       const { answerHomeQuestion } = await import('@/lib/home/ask');
       const { answer, refs } = await answerHomeQuestion(client, userId, text, opts.history ?? []);
-      return { say: await honestyFloor(client, userId, answer, text, null), refs };
+      if (needsReach(answer)) escalateToReach = true;
+      else return { say: sayInsteadOfSentinel(await honestyFloor(client, userId, answer, text, null)), refs };
     }
-    const entityId = await entityOfScope(client, userId, scope);
-    if (entityId) {
-      const { answerEntityQuestion } = await import('@/lib/entities/ask');
-      const { answer, refs } = await answerEntityQuestion(client, userId, entityId, text, opts.history ?? [],
-        { viewing: [dialogueBlock, viewing].filter(Boolean).join('\n\n') });
-      return { say: await honestyFloor(client, userId, answer, text, scopeEntity), refs };
+    if (!escalateToReach) {
+      const entityId = await entityOfScope(client, userId, scope);
+      if (entityId) {
+        const { answerEntityQuestion } = await import('@/lib/entities/ask');
+        const { answer, refs } = await answerEntityQuestion(client, userId, entityId, text, opts.history ?? [],
+          { viewing: [dialogueBlock, viewing].filter(Boolean).join('\n\n') });
+        if (needsReach(answer)) escalateToReach = true;
+        else return { say: sayInsteadOfSentinel(await honestyFloor(client, userId, answer, text, scopeEntity)), refs };
+      } else if (scope.kind === 'item') {
+        const { buildItemContext } = await import('@/lib/home/item-context');
+        const ctx = await buildItemContext(client, userId, scope.itemKind, scope.itemId);
+        const { aiCall } = await import('@/lib/ai/call');
+        const res = await aiCall<{ answer?: string }>({
+          userId, supabase: client, shape: { output: 'json' }, maxTokens: 300, temperature: 0.2, source: 'brain_synthesis',
+          prompt: `Answer STRICTLY from this context — plainly, a couple of sentences; if it doesn't cover the question, say so. PLAIN PROSE.\n${dialogueBlock ? `${dialogueBlock}\n` : ''}${viewing ? `${viewing}\n` : ''}--- CONTEXT ---\n${(ctx?.text || '').slice(0, 3000)}\n--- QUESTION ---\n${text}\n${REACH_CONTRACT}\nReturn ONLY JSON: {"answer":"..."}`,
+        });
+        const answer = String(res.json?.answer || "I don't have enough on that here.");
+        if (needsReach(answer)) escalateToReach = true;
+        else return { say: sayInsteadOfSentinel(await honestyFloor(client, userId, answer, text, null)), refs: [] };
+      }
     }
-    if (scope.kind === 'item') {
-      const { buildItemContext } = await import('@/lib/home/item-context');
-      const ctx = await buildItemContext(client, userId, scope.itemKind, scope.itemId);
-      const { aiCall } = await import('@/lib/ai/call');
-      const res = await aiCall<{ answer?: string }>({
-        userId, supabase: client, shape: { output: 'json' }, maxTokens: 300, temperature: 0.2, source: 'brain_synthesis',
-        prompt: `Answer STRICTLY from this context — plainly, a couple of sentences; if it doesn't cover the question, say so. PLAIN PROSE.\n${dialogueBlock ? `${dialogueBlock}\n` : ''}${viewing ? `${viewing}\n` : ''}--- CONTEXT ---\n${(ctx?.text || '').slice(0, 3000)}\n--- QUESTION ---\n${text}\nReturn ONLY JSON: {"answer":"..."}`,
-      });
-      const answer = String(res.json?.answer || "I don't have enough on that here.");
-      return { say: await honestyFloor(client, userId, answer, text, null), refs: [] };
-    }
+    if (escalateToReach) opts.onProgress?.('Looking that up…');
   }
 
   // 4 — CORRECTION with durable facts (item scope): remember + rework the draft.
-  if (scope.kind === 'item' && !verdict.open) {
+  // An escalated question is NOT a correction: it falls through to the loop, never to this door.
+  if (scope.kind === 'item' && !verdict.open && !escalateToReach) {
     const turn: ConverseTurn = { say: '', refs: [] };
     if (verdict.facts.length) {
       for (const f of verdict.facts) {
@@ -1414,8 +1483,39 @@ async function converseInner(
   // The agent loop sees the conversation + registry matches too (one law, every path), under the
   // same honesty floor.
   const matches = await registryMatches(client, userId, text, scope.kind === 'entity' ? scope.entityId : null);
+  // THE ESCALATION CARRIES ITS REASON (Sep 18, found live by the R3 gate): escalating silently put
+  // the loop in front of the SAME confined context the answering pass had just judged insufficient —
+  // and told to "ground every claim in the CONTEXT below; when it doesn't cover something, say so
+  // plainly", it dutifully confessed a second time. The valve opened and nothing came through. The
+  // note is a FACT THE MODEL ITSELF PRODUCED one call earlier (it asked for reach), not a reading of
+  // the user's words — the law holds: the system reasons, code only carries what it decided.
+  // THE PHANTOM OFFER dies here (found by the reach gates, Sep 18): on a workspace whose feature
+  // map withholds the calendar verb, the escalated loop's toolset is filtered — an instruction to
+  // "call check_calendar" would make it promise a check it structurally cannot perform. The note
+  // matches the tools the loop will actually hold: reach where the verb exists, plain honesty
+  // where it doesn't (the sovereign copy law: capability shapes vocabulary).
+  let reachCalendarHeld = true;
+  if (escalateToReach) {
+    try {
+      const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
+      const feats = await getWorkspaceFeatures(userId, client) as unknown as Record<string, boolean>;
+      reachCalendarHeld = feats?.meetings !== false;
+    } catch { /* unreadable features → assume held (the loop's own filter still governs) */ }
+  }
+  const reachNote = escalateToReach
+    ? `A LOOKUP WAS ALREADY REQUESTED FOR THIS TURN: the answering pass judged that the context below ` +
+      `does NOT cover this question. USE YOUR TOOLS to go and get what it needs before you answer — ` +
+      (reachCalendarHeld
+        ? `for anything about the calendar, availability or free time that means calling check_calendar ` +
+          `for the dates in question, even when they fall outside any window the context states. `
+        : `note that this workspace has NO calendar access, so for anything about the calendar, ` +
+          `availability or free time, say plainly that calendar access isn't set up here — never ` +
+          `guess, and never offer to check it. `) +
+      `Do NOT answer from the context alone, do NOT say you cannot see something a tool can fetch, ` +
+      `and do NOT offer to check: checking is what you are doing.`
+    : '';
   const preamble = [
-    ANSWER_HONESTY_RULE,
+    ANSWER_HONESTY_RULE, reachNote,
     dlg.transcript, matches, viewing,
   ].filter(Boolean).join('\n\n');
   // The PANEL conversation rides as REAL messages (not a squeezed grounding block) — a follow-up

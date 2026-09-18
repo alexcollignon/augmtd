@@ -20,7 +20,10 @@ export type ExtractedCheck =
 export type ClaimMismatch = { quote: string; expected: string; stated: string };
 
 // Weekday names across the languages drafts actually mirror (EN/PT/DE/FR) → JS getUTCDay index.
-const WEEKDAYS: Record<string, number> = {
+// EXPORTED (Wave 1, Sep 18): the chat lane's weekday floor (lib/utils/weekday-floor.ts) recognises
+// weekdays from this SAME table — one table, so a language the document lane understands is never a
+// language the chat lane silently ignores.
+export const WEEKDAYS: Record<string, number> = {
   sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
   domingo: 0, 'segunda-feira': 1, segunda: 1, 'terça-feira': 2, terça: 2, terca: 2, 'quarta-feira': 3, quarta: 3,
   'quinta-feira': 4, quinta: 4, 'sexta-feira': 5, sexta: 5, sábado: 6, sabado: 6,

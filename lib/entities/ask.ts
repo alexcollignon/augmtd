@@ -9,6 +9,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { GROUND_EVIDENCE_RULE } from '@/lib/room/ground-evidence';
+import { REACH_CONTRACT } from '@/lib/converse/reach';
 
 export type EntityAskRef = { id: string; kind: 'item' | 'file'; label: string; href: string | null };
 export type EntityAskTurn = { role: 'user' | 'assistant'; text: string };
@@ -45,6 +46,10 @@ export async function answerEntityQuestion(
     // an answer that ranked the board above the world would contradict the brief right beside it,
     // which is the exact class the one grounding exists to kill.
     `- ${GROUND_EVIDENCE_RULE}\n` +
+    // THE REACH VALVE (Sep 18): this path is toolless. When the deal's memory doesn't hold what the
+    // question needs, the mind says so in ONE token and converse escalates to the tool-bearing loop —
+    // the model judges its own reach; no code reads the user's words. See lib/converse/reach.ts.
+    `- ${REACH_CONTRACT}\n` +
     `Return ONLY JSON: {"answer":"<with [L#]/[F#] tags>","refs":["L1","F2",...]}`;
 
   const deep = /miss|summar|priorit|plan\b|why\b|should|think|advice|strategy|recommend|overview/i.test(question) || question.length > 120;

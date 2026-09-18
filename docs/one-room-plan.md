@@ -91,13 +91,13 @@ variant. ZERO new pages, zero per-surface reasoning. That is "scalable the right
 │                                            │                           │
 │  THE CONVERSATION (a rich stream)          │  STAGE (when open):       │
 │                                            │   the workspace — reply/  │
-│  CoS: "Jean-Marie is asking you to send    │   chase composer (draft + │
+│  CoS: "Jordan is asking you to send    │   chase composer (draft + │
 │   pricing for 7–8 seats." [ask quote]      │   attachment chip + Send),│
 │  CoS: [Draft ready — Clara · open · Send]  │   document review, full   │
 │  CoS: [decision card: 1/2/3, decline last] │   thread. Opened FROM an  │
 │  you: "make it firmer on timeline"         │   inline card; hot-swaps  │
 │  CoS: "Reworked — v2." [Draft v2 · Send]   │   on rework.              │
-│  CoS: "Sent. Logged on Soboplac."          │  CONTEXT STRIP (else):    │
+│  CoS: "Sent. Logged on Acme."          │  CONTEXT STRIP (else):    │
 │  [ Ask, correct, or hand off…      📎 ➤ ]  │   per-anchor (below)      │
 └────────────────────────────────────────────┴───────────────────────────┘
 ```
@@ -470,7 +470,7 @@ mechanism gates passed while a password reset carried a drafted reply.
    mounts).
 4. **Correction is first-class.** The untracked "connects to X" chip gains ✕ (a LOCKED refusal —
    recognition honors it, live-proven); the picker gains "Start a new project…" (create+attach in
-   one motion — the "this is actually EG Bank" flow); chat paths already existed.
+   one motion — the "this is actually NorthBank" flow); chat paths already existed.
 5. **Registry hygiene + one project definition.** Recognition NEVER founds from noise (kind-aware
    via the ONE resolver — receipt/newsletter/notification/automated may join, never found);
    `scripts/archive-noise-entities.ts` archived 20 noise entities for user A (dry-run for others —

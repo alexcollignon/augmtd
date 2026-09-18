@@ -66,7 +66,7 @@ type-buckets (that makes one meeting feel like four unrelated tasks).
 - A source with *only* "others owe you" → a calmer `waiting_on` card.
 
 **Card shape:** `{ id, source, sourceLabel, title, posture, verb, href, items: [{type, text, due}] }`
-— e.g. *"Meeting with Jean-Marie · 4 follow-ups, 1 due today"* with the items nested.
+— e.g. *"Meeting with Jordan · 4 follow-ups, 1 due today"* with the items nested.
 
 **Areas** (a card lands in exactly one, by posture — sources never fragment across them):
 1. **Needs you** — source cards that need your action (`needs_reply` / `to_do`), urgency-ordered,

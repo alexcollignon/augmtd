@@ -11,23 +11,24 @@ import { logActivity } from '@/lib/activity/log';
 //   mute            — stop showing (revives only on genuinely new activity — recognition still links)
 //   reopen          — back to active
 //   rename          — new display name; the old one becomes an alias (the memory learns your words)
-//   forget          — delete the ENTITY + its links; underlying items are NEVER touched (the invariant)
+// Deletion is NOT a PATCH action — it lives at the DELETE door below (the retired `forget` action was
+// a partial delete reachable from nowhere; the door supersedes it).
 // Every action logs to activity_events (undoable trail) + learning_signals (curation trains the brain),
 // and busts the Home brief cache (entity status feeds deck weights — the established invariant).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-const ACTIONS = ['track', 'untrack', 'done', 'archive', 'mute', 'reopen', 'rename', 'forget', 'intent', 'merge', 'category'] as const;
+const ACTIONS = ['track', 'untrack', 'done', 'archive', 'mute', 'reopen', 'rename', 'intent', 'merge', 'category'] as const;
 type Action = (typeof ACTIONS)[number];
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // DELETE /api/entities/[id] — THE DELETE DOOR (owner walk, Sep 15: "maybe include a delete which
 // would delete context and chats about the project across DB for that user?").
 //
-// `forget` (the PATCH action above) already removed the row and its links, but it was reachable
-// from nowhere and it left the project's whole MIND behind: the room's conversation, its composed
-// brief, its cached judgments, its read marker, its title — all keyed to an id that no longer
-// existed, none of it ever read again, none of it ever collected. This door deletes the project's
-// context, not just its name.
+// This door REPLACED a PATCH action (`forget`, retired Sep 17) that removed the row and its links
+// but was reachable from nowhere and left the project's whole MIND behind: the room's conversation,
+// its composed brief, its cached judgments, its read marker, its title — all keyed to an id that no
+// longer existed, none of it ever read again, none of it ever collected. This door deletes the
+// project's context, not just its name, and it is the ONLY way a project dies.
 //
 // THE INVENTORY IS DELIBERATELY CONSERVATIVE — ONE USER, ONE PROJECT, AND NEVER THE WORK ITSELF:
 //   · work_entities      — the project row (this user's only).
@@ -151,10 +152,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       import('@/lib/home/bust-brief').then(({ softBustBrief }) => softBustBrief(supabase, user.id)).catch(() => {});
       return NextResponse.json({ ok: true, keptId: targetId, keptName: r.primaryName ?? target.name });
     }
-    if (action === 'forget') {
-      await supabase.from('entity_links').delete().eq('user_id', user.id).eq('entity_id', id);
-      await supabase.from('work_entities').delete().eq('id', id).eq('user_id', user.id);
-    } else if (action === 'rename') {
+    if (action === 'rename') {
       const name = String(body.name ?? '').trim().slice(0, 80);
       if (!name) return NextResponse.json({ error: 'name required' }, { status: 400 });
       const aliases = [...new Set([...(Array.isArray(ent.aliases) ? (ent.aliases as string[]) : []), ent.name as string])].slice(0, 12);

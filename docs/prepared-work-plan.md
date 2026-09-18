@@ -3,7 +3,7 @@
 **THE END GOAL (never lose this):** the user opens AUGMTD and the work is *already done or prepared* —
 drafts written, files found and attached, proposals produced by the right AI coworker with the deal's
 memory, everything waiting behind one approve. Not a chatbot, not a dashboard: **a staff.** The jaws-drop
-is *attribution + arrival* — "✦ Sofia drafted the Galp proposal — review" — with provenance you can click.
+is *attribution + arrival* — "✦ Sofia drafted the Volta proposal — review" — with provenance you can click.
 Not groundbreaking tech; the feeling people didn't realize was doable: **things just get done.**
 
 Everything below serves that. The file/KB work (Phases A–B) is a *step* — the substrate preparations stand

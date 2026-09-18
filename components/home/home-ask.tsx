@@ -141,11 +141,10 @@ function Answer({ text, refs, onOpen }: { text: string; refs: Ref[]; onOpen: (r:
   );
 }
 
-// A long paste must never render as an endless wall (Aug 10 — the pilot's questionnaire filled
-// the whole viewport): past ~700 chars the user bubble shows its head with an explicit expand.
-// The FULL text still went to the brain — this is presentation only. The bubble itself is the
-// kit's now; the clamp survives as the text we hand it plus this one toggle, mounted as a card.
-const LONG_PASTE = 700;
+// A long paste must never render as an endless wall — but the collapse is the thread KIT's law
+// now (thread-timeline's UserBubbleText), so this host hands the FULL text over and mounts no
+// toggle of its own. Two owners rendered two nested "Show all" buttons with different counts
+// (the pilot's 1k-vs-3k report): one law, one home.
 
 // THE CoS SEAT (docs/threads-plan.md — the identity law): the Home thread's answers wear the
 // seat-holder's face, name and the constant "chief of staff" label. Read through the ONE client
@@ -210,7 +209,6 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // next visit — the face of the voice is not something that may change under a reader mid-answer).
   const cosSeat = useCosSeat();
   // Which long pastes the reader chose to open (keyed by the turn's own key).
-  const [openPastes, setOpenPastes] = useState<Record<string, boolean>>({});
   // Rehydrate the current chat room on mount (last-known conversation, the ChatGPT-parity habit) +
   // the SHELL'S WIRES: the sidebar's Home resets this panel (and lands the caret in the composer);
   // opening a past conversation from the sidebar / All-conversations view loads it here.
@@ -1222,8 +1220,6 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       }
 
       if (t.role === 'user') {
-        const long = t.text.length > LONG_PASTE;
-        const opened = !!openPastes[key];
         const cards: ThreadCard[] = [];
         if (t.chips?.length) {
           cards.push({
@@ -1237,22 +1233,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             ),
           });
         }
-        if (long) {
-          cards.push({
-            kind: 'custom', id: `${key}-expand`,
-            node: (
-              <span className="flex justify-end">
-                <button onClick={() => setOpenPastes((p) => ({ ...p, [key]: !p[key] }))}
-                  className="text-[12px] font-medium text-indigo-600 hover:text-indigo-700">
-                  {opened ? 'Show less' : `Show all (${Math.round(t.text.length / 1000)}k characters)`}
-                </button>
-              </span>
-            ),
-          });
-        }
         out.push({
           type: 'user_bubble', id: key,
-          text: long && !opened ? `${t.text.slice(0, LONG_PASTE)}…` : t.text,
+          text: t.text,
           ...(cards.length ? { cards } : {}),
         });
         return;
@@ -1345,7 +1328,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turns, busy, stage, liveText, animateIdx, openPastes, cosSeat]);
+  }, [turns, busy, stage, liveText, animateIdx, cosSeat]);
 
   const hasThread = turns.length > 0;
   // THE DM'S HEADER, TAKEN FROM WHAT WE ALREADY KNOW: face · name · role. Recomputed only when the

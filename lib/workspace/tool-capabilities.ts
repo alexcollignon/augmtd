@@ -19,6 +19,10 @@ export const TOOL_FEATURE: Record<string, FeatureKey | null> = {
 
   // ── Meetings / calendar ──
   get_meeting_context: 'meetings',
+  // The chief's read-side availability verb (Wave 1) — it only READS the calendar, but a workspace
+  // without meetings has no calendar to read, and a tool that could speak "you're free Thursday"
+  // there would be a claim the account cannot deliver.
+  check_calendar: 'meetings',
   get_calendar: 'meetings',
   send_calendar_invite: 'meetings',
   // The invite CARD's producer (chat, both surfaces). It prepares and never sends — but it is a

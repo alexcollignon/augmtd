@@ -24,6 +24,7 @@ import {
   webSearchDefinition, fetchUrlDefinition, executeWebSearch, executeFetchUrl,
   getEmailsDefinition, executeGetEmails,
   getMeetingContextDefinition, executeGetMeetingContext,
+  checkCalendarDefinition, executeCheckCalendar,
   deepResearchDefinition, executeDeepResearch,
   slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition, slackListMembersDefinition,
   executeSlackListChannels, executeSlackPostMessage, executeSlackReadMessages, executeSlackListMembers,
@@ -32,6 +33,8 @@ import {
   runComputeDefinition, executeRunCompute, type ComputeConfig,
 } from '@/lib/tools';
 import { buildConnectedIntegrationsBlock } from '@/lib/integrations/connection';
+// THE WEEKDAY FLOOR (Wave 1) — deterministic, applied at the assistant-message persist seam below.
+import { enforceWeekdayDatePairs } from '@/lib/utils/weekday-floor';
 import {
   listTasksDefinition, createTaskDefinition, getTaskDefinition, updateTaskDefinition, duplicateTaskDefinition, deleteTaskDefinition, runTaskDefinition,
   shareTaskDefinition, listTeamTasksDefinition, useTaskDefinition,
@@ -470,7 +473,7 @@ export async function POST(
               ? `[USER CONTEXT — personal preferences set by this user]\n${(agent as typeof agent & { user_preferences?: string | null }).user_preferences!.trim()}`
               : '',
             routinesBrief || '',
-            `[TOOLS YOU HAVE RIGHT NOW — use them, never claim otherwise]\n- web_search: search the live web for any news, data, or information. Call it immediately when the user asks about anything current.\n- fetch_url: read the full content of any URL.\n- deep_research: multi-source research synthesis for complex topics.${features.email ? "\n- get_emails: read the user's inbox." : ''}${features.meetings ? '\n- get_meeting_context: read their calendar and meetings.' : ''}\nNEVER say you cannot access the web, live data, news sources, or current information. You can. Call web_search and do it.`,
+            `[TOOLS YOU HAVE RIGHT NOW — use them, never claim otherwise]\n- web_search: search the live web for any news, data, or information. Call it immediately when the user asks about anything current.\n- fetch_url: read the full content of any URL.\n- deep_research: multi-source research synthesis for complex topics.${features.email ? "\n- get_emails: read the user's inbox." : ''}${features.meetings ? '\n- get_meeting_context: read their calendar and meetings.' : ''}${features.meetings ? '\n- check_calendar: read the calendar for a date range (busy/free per day, optional free-slot proposals) — ALWAYS call it before any claim about availability, free time or scheduling; never state availability from memory.' : ''}\nNEVER say you cannot access the web, live data, news sources, or current information. You can. Call web_search and do it.`,
             `[TASKS]\nA task is reusable structured work you set up once. It runs on a schedule OR on demand whenever asked (run_task) — so neither of you rebuilds it each time. Offer to set one up whenever work is repeatable, even without a schedule ("want me to save this as a task you can re-run anytime?").\n- list_tasks — see what's already running\n- create_task — set up something new from a plain description\n- get_task — read the full config of a task (steps, schedule, language, instructions)\n- update_task — edit any aspect: name, schedule, output language, task instructions, step prompts, status\n\nA task can also start on EVENTS, not just a schedule: pass trigger_doors on create_task (or add_trigger_doors / remove_trigger_doors on update_task) when the user says the work should begin when an email arrives, a file lands in Knowledge, a meeting is recorded, or another named task delivers — the door verbs are additive, so doors you don't mention are kept.\n\nA task can also PIN REFERENCE MATERIAL it reads every run — a policy, template, rubric or brand guide: pass input_doc_names on create_task (or add_input_docs / remove_input_docs on update_task) with the document's name as the user says it, and input_accept_material when the work is done on something handed over at run time ("when I upload a CV"). These verbs are additive too, and get_task shows the tray as "Inputs:".\n\nA task that starts on events also has a PACE — pass daily_run_limit (on create_task, or on update_task to change it) when the user says how many a day it should handle ("at most 3 a day", "let it run more"); extra events QUEUE and run the next day, nothing is dropped, and get_task shows it as "Daily event limit:".\n- duplicate_task — copy a task (useful for variants: same pipeline, different language or audience)\n- run_task — trigger a task right now\n- supply_run_input — a run can STOP and ask the user for something only they have; when they hand it over ("here are the numbers", "here's the JD"), pass it straight through — the run picks up where it stopped. An attached file lands in the user's Knowledge under its own filename, so supply it by name (kb_file_name), never by re-typing its contents.\n- delete_task — remove a task permanently\n- share_task — share a task with the team so teammates can copy it (or stop sharing)\n- list_team_tasks — see tasks shared by teammates\n- use_task — copy a shared team task to your own list\n\nWhen the user asks you to change, update, fix, or adjust a task — YOU MUST COMPLETE THE FULL TOOL SEQUENCE before saying anything. Do not say "Done" or "Updated" until the final action tool has returned a result.\n\nRequired sequences (complete every step, no skipping):\n- Change language / schedule / name / status → list_tasks (get ID) → update_task → say one sentence confirming\n- Change a step prompt → list_tasks (get ID) → get_task (read steps) → update_task with step_patch → confirm\n- Duplicate a task → list_tasks (get ID) → duplicate_task → confirm\n- Run a task → list_tasks (get ID) → run_task → confirm\n- Share a task → list_tasks (get ID) → share_task → confirm\n- Use a team task → list_team_tasks (get ID) → use_task → confirm\n\nNEVER report success after only calling list_tasks. list_tasks only finds the ID — the action hasn't happened yet. A colleague who said "Done, changed to Portuguese" without actually changing it would be fired. Don't be that colleague.`,
             `[YOUR DOCUMENTS]\nlist_worker_documents shows everything you've produced. get_worker_document retrieves the full content. When the user asks to see, revise, or reference something you made, call get_worker_document — don't say you can't retrieve it.`,
             `[TEAM]\nYou work alongside other coworkers. To build on a teammate's output (e.g. research another coworker did), use find_team_work to locate it (by topic, or by coworker name like "Max") and read_team_work to read it — then do your part. Don't ask the user to fetch a teammate's work; get it yourself. The user talks to whoever owns the result they want — so if they ask you for a deliverable that needs a colleague's input, pull it.`,
@@ -1307,10 +1310,17 @@ export async function POST(
           // Save complete assistant message
           try {
             const clarificationCall = allToolCalls.find(t => t.name === 'request_clarification');
+            // THE WEEKDAY FLOOR AT THE DM SEAM (Sep 18) — the same law converse mounts at its one
+            // answer door, on the lane that actually shipped the failure: a coworker narrated a
+            // FUTURE event in the PAST TENSE with a fabricated weekday, inside a publish-ready
+            // draft. A weekday is arithmetic over a date, so code owns it; only unambiguous pairs
+            // are touched and the pass is idempotent. The PERSISTED turn is the record (streamed
+            // partials stay raw). Documents are NOT touched here — verify-claims owns those.
+            const persistedAssistantText = enforceWeekdayDatePairs(fullAssistantText);
             await adminClient.from('work_messages').insert({
               thread_id: threadId,
               role: 'assistant',
-              content: fullAssistantText,
+              content: persistedAssistantText,
               metadata: {
                 tool_calls: allToolCalls,
                 artifact_ids: allArtifactIds,
@@ -1431,6 +1441,13 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
 
   if (sources.includes('calendar')) {
     neutral.push(getMeetingContextDefinition);
+    // THE COWORKER LANE REACHES THE CALENDAR (Sep 18): get_meeting_context reads meetings we
+    // RECORDED and a 7-day upcoming ceiling — it is not a calendar read. Without check_calendar a
+    // coworker asked about a date answered from the only calendar in its prompt, which is how a
+    // publish-ready post narrated the NEXT day's event in the past tense. The verb the chief of
+    // staff got in Wave 1 is the same verb this lane needed. (The features filter below keeps it
+    // behind `meetings`, exactly as its neighbour.)
+    neutral.push(checkCalendarDefinition);
   }
 
   // deep_research is executed directly before the AI loop (not as a model-invoked tool)
@@ -1562,6 +1579,7 @@ function toolLabel(name: string): string {
     get_emails: 'Checking emails',
     get_email_body: 'Reading email',
     get_meeting_context: 'Checking meetings & calendar',
+    check_calendar: 'Checking the calendar',
     deep_research: 'Researching…',
     web_search: 'Searching the web',
     fetch_url: 'Reading page',
@@ -1861,6 +1879,19 @@ async function executeChatTool(
       const result = await executeGetMeetingContext(meetingConfig, ctx.userId, ctx.supabase);
       const summary = result.startsWith('No processed') ? 'No meetings found' : 'Meeting context retrieved';
       return { result, summary };
+    }
+
+    case 'check_calendar': {
+      if (!ctx.features.meetings) {
+        return {
+          result: 'Calendar and meetings access is not enabled for this workspace.',
+          summary: 'Meetings module disabled',
+        };
+      }
+      // EVERYTHING IN THIS BLOCK IS CODE'S OUTPUT — busy/free lines, weekday labels, clock times and
+      // proposed slots. The coworker relays it; it never derives a weekday or invents a slot.
+      const result = await executeCheckCalendar(input, ctx.userId, ctx.supabase);
+      return { result, summary: 'Calendar checked' };
     }
 
     case 'deep_research': {

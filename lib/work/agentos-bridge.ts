@@ -16,6 +16,7 @@ import { extractAgentMemory } from '@/lib/agents/extract-memory'
 import { buildSkillsBlock } from '@/lib/work/worker-skills-context'
 import { buildConnectedIntegrationsBlock } from '@/lib/integrations/connection'
 import { logAIUsage } from '@/lib/ai/log-usage'
+import { enforceWeekdayDatePairs } from '@/lib/utils/weekday-floor'
 
 // AgentOS is hardcoded to mirror the bedrock_optimised tier (infra/agentos/models.py) — every
 // AgentOS-routed call by construction uses that tier's models, so cost logging can log
@@ -478,10 +479,16 @@ export async function streamWorkerViaAgentOS({
       } finally {
         clearInterval(heartbeat)
         try {
+          // THE WEEKDAY FLOOR AT THE DM SEAM (Sep 18) — the same law converse mounts at its one
+          // answer door, on the lane that actually shipped the failure: a coworker narrated a
+          // FUTURE event in the PAST TENSE with a fabricated weekday, inside a publish-ready draft.
+          // A weekday is arithmetic over a date, so code owns it; only unambiguous pairs are touched
+          // and the pass is idempotent. The PERSISTED turn is the record (streamed partials stay raw).
+          const persistedText = enforceWeekdayDatePairs(fullText)
           await adminClient.from('work_messages').insert({
             thread_id: threadId,
             role: 'assistant',
-            content: fullText,
+            content: persistedText,
             metadata: {
               source: 'agentos',
               ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
