@@ -96,6 +96,22 @@ export async function buildBrainSnapshot(supabase: SupabaseClient, userId: strin
   const sched = await getTodaySchedule(supabase, userId);
   parts.push(renderScheduleBlock(sched));
 
+  // THE CALENDAR WINDOW (Wave 1, Sep 18) — today + the next 14 days, read ONCE and rendered by code.
+  // Found live on a pilot account: asked to "check my calendar", the chat answered "you're free both
+  // weeks" over twelve confirmed events and a four-day all-day block, because the only calendar in
+  // its context was TODAY. The snapshot is also converse's grounding for global-scope open turns, so
+  // this one block reaches both chat paths. Non-fatal: an unreadable calendar simply adds no block —
+  // and the prompt's reach sentence below then keeps the answer honest about not seeing it.
+  try {
+    const { getScheduleWindow, renderCalendarWindow } = await import('@/lib/calendar/schedule-window');
+    const win = await getScheduleWindow(supabase, userId, {
+      fromDayStr: sched.dayStr,
+      toDayStr: new Date(Date.parse(`${sched.dayStr}T00:00:00Z`) + 14 * 86_400_000).toISOString().slice(0, 10),
+      tz: sched.userTz,
+    });
+    parts.push(renderCalendarWindow(win, { tz: sched.userTz }));
+  } catch { /* the window is an enhancement — the today block still anchors the day */ }
+
   // Recent replies owed.
   const { data: items } = await supabase.from('inbox_items')
     .select('id, work_title, source_data, rule_type, status').eq('user_id', userId).eq('source', 'email').order('created_at', { ascending: false }).limit(60);
@@ -153,9 +169,19 @@ export async function answerHomeQuestion(
   } catch { /* no file lane */ }
   const priorTurns = history.slice(-6).map((t) => `${t.role === 'user' ? 'THEM' : 'YOU'}: ${t.text}`).join('\n');
   const prompt =
-    `You are the user's assistant inside their work app — you hold their whole working context (emails, ` +
-    `meetings, projects, calendar, commitments, people) and answer like a sharp, calm colleague who already ` +
-    `knows their world. Answer their question GROUNDED STRICTLY in the context below.\n\n` +
+    // THE PROMPT STOPS OVERCLAIMING (Wave 1, Sep 18): this sentence used to promise "their whole
+    // working context … calendar", and the snapshot held only TODAY — so when the user asked about
+    // two future weeks the model, told it holds the calendar, answered from nothing and said "free".
+    // A prompt that overstates its context is an instruction to confabulate. It now enumerates
+    // exactly what the snapshot carries, and states the calendar's reach and its EDGE.
+    `You are the user's assistant inside their work app. The context below is what you hold: their ` +
+    `active bodies of work, the people needing attention, their open commitments, today's schedule, ` +
+    `the replies they owe — and their calendar for TODAY AND THE NEXT 14 DAYS ONLY. Answer like a sharp, ` +
+    `calm colleague who already knows their world, GROUNDED STRICTLY in that context.\n\n` +
+    `THE CALENDAR RULE: availability, free time and scheduling come ONLY from the calendar block below — ` +
+    `never from memory, never from what sounds likely. Beyond those 14 days you cannot see the calendar: ` +
+    `say so plainly and offer to check, and NEVER state or imply someone is free on a day you cannot see. ` +
+    `Weekday names are already computed in the context — use them verbatim and never work one out yourself.\n\n` +
     `THEIR CONTEXT:\n${snapshot}${fileBlock}\n\n` +
     (priorTurns ? `EARLIER IN THIS CHAT:\n${priorTurns}\n\n` : '') +
     `THEIR QUESTION: ${question}\n\n` +

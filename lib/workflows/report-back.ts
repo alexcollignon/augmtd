@@ -34,6 +34,17 @@ function didLine(f: ReportFacts): string {
   }
 }
 
+/** THE LINK IS A DOOR, NOT A STRING (pilot census): report-backs pasted the raw deliverable URL
+ *  into prose and it rendered dead on most surfaces. Every composed report funnels through this
+ *  sweep — a bare occurrence of the link becomes a markdown link (the DM surface renders
+ *  MarkdownText); one already sitting inside [](…) is left alone, so the sweep is idempotent.
+ *  Deterministic by design: a formatting instruction in the prompt coin-flips. */
+export function linkifyReport(text: string, link?: string | null): string {
+  if (!link || !text.includes(link)) return text;
+  const esc = link.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return text.replace(new RegExp(`(?<!\\]\\()${esc}(?!\\))`, 'g'), `[Open it](${link})`);
+}
+
 /** Plain factual fallback if the model call fails — never block a run on the report. */
 export function fallbackReport(f: ReportFacts): string {
   const who = f.firstName ? `${f.firstName}, ` : '';
@@ -43,7 +54,7 @@ export function fallbackReport(f: ReportFacts): string {
     f.home === 'slack'    ? `posted to ${f.channel ?? 'Slack'}` :
     f.home === 'email'    ? `emailed${f.channel ? ` to ${f.channel}` : ''}` :
     `here it is`;
-  return `${who}done with "${f.taskName}" — ${where}.${f.gateNote ? ` ${f.gateNote}` : ''}${f.alsoNote ? ` ${f.alsoNote}.` : ''}`;
+  return linkifyReport(`${who}done with "${f.taskName}" — ${where}.${f.gateNote ? ` ${f.gateNote}` : ''}${f.alsoNote ? ` ${f.alsoNote}.` : ''}`, f.link);
 }
 
 export async function generateReportBack(client: OpenAI, model: string, f: ReportFacts): Promise<string> {
@@ -81,7 +92,7 @@ ${f.firstName ? `- You can address ${f.firstName} by name if it feels natural.` 
     const choice = res.choices[0];
     const text = choice?.message?.content?.trim();
     if (!text) return fallbackReport(f);
-    return choice?.finish_reason === 'length' ? endAtBoundary(text) : text;
+    return linkifyReport(choice?.finish_reason === 'length' ? endAtBoundary(text) : text, f.link);
   } catch {
     return fallbackReport(f);
   }

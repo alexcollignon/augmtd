@@ -19,6 +19,9 @@ export { getEmailsDefinition, executeGetEmails } from './get-emails';
 export type { GetEmailsConfig } from './get-emails';
 export { getMeetingContextDefinition, executeGetMeetingContext } from './get-meeting-context';
 export type { GetMeetingContextConfig } from './get-meeting-context';
+// The read-side calendar verb (Wave 1): availability is LOOKED UP, never remembered.
+export { checkCalendarDefinition, executeCheckCalendar } from './check-calendar';
+export type { CheckCalendarConfig } from './check-calendar';
 export { sendCalendarInviteDefinition, executeSendCalendarInvite } from './send-calendar-invite';
 export type { SendCalendarInviteConfig } from './send-calendar-invite';
 export { forwardEmailDefinition, executeForwardEmail } from './forward-email';

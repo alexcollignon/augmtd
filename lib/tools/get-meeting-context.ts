@@ -3,6 +3,7 @@
 // items, and notes — gives workflows a personal context signal.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { userTimezone } from '@/lib/calendar/schedule-window';
 
 export interface GetMeetingContextConfig {
   /** Lookback window. Default: '30d' */
@@ -13,7 +14,7 @@ export interface GetMeetingContextConfig {
   with_person?: string;
   /** Max meetings to return. Default 10, max 30 */
   limit?: number;
-  /** Include upcoming/future meetings from calendar. Default: false */
+  /** Include upcoming/future meetings from calendar. Default: true (the schema's own promise). */
   include_upcoming?: boolean;
 }
 
@@ -50,7 +51,13 @@ export async function executeGetMeetingContext(
   const include        = (config.include as string) || 'summaries';
   const withPerson     = typeof config.with_person === 'string' ? config.with_person.toLowerCase().trim() : null;
   const limit          = Math.min(Math.max(typeof config.limit === 'number' ? config.limit : 10, 1), 30);
-  const includeUpcoming = config.include_upcoming === true;
+  // THE LYING DEFAULT (Wave 1, Sep 18): the schema told the model "Default: true" while the code
+  // read `=== true` — so every call that trusted the documented default silently got NO upcoming
+  // meetings. The schema is the promise; the code keeps it.
+  const includeUpcoming = config.include_upcoming !== false;
+  // Dates render in the USER'S zone, not the server's — a meeting at 23:30 Lisbon was printing as
+  // the following day for anyone reading a UTC box (the same class as every other weekday miss).
+  const tz = await userTimezone(supabase, userId);
 
   const parts: string[] = [];
 
@@ -96,7 +103,7 @@ export async function executeGetMeetingContext(
     parts.push(`## Recent meetings (${meetings.length})\n`);
 
     for (const m of meetings) {
-      const date = new Date(m.start_time).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+      const date = new Date(m.start_time).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: tz });
       const dur  = m.duration_minutes ? ` · ${m.duration_minutes} min` : '';
       const attendeeNames = (m.attendees ?? [])
         .map(a => a.name ? `${a.name} (${a.email})` : a.email)
@@ -146,8 +153,8 @@ export async function executeGetMeetingContext(
     if (upcoming && upcoming.length > 0) {
       parts.push(`\n## Upcoming meetings (next 7 days)\n`);
       for (const ev of upcoming as Array<{ title: string; start_time: string; end_time: string; attendees?: Array<{ email: string; displayName?: string }> }>) {
-        const date = new Date(ev.start_time).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
-        const time = new Date(ev.start_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        const date = new Date(ev.start_time).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: tz });
+        const time = new Date(ev.start_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: tz });
         const attendeeNames = (ev.attendees ?? [])
           .map(a => a.displayName ?? a.email)
           .filter(n => n)

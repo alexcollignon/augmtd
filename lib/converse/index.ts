@@ -26,8 +26,10 @@ import {
   executeResolveInboxItem, executeResolveCommitment, executeFindFile, executeRememberFact,
   resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition,
 } from '@/lib/tools/item-actions';
-import { getEmailsDefinition, executeGetEmails, getMeetingContextDefinition, executeGetMeetingContext, readActionHistoryDefinition, executeReadActionHistory, type ActionHistoryConfig, runComputeDefinition, executeRunCompute, type ComputeConfig } from '@/lib/tools';
+import { getEmailsDefinition, executeGetEmails, getMeetingContextDefinition, executeGetMeetingContext, checkCalendarDefinition, executeCheckCalendar, readActionHistoryDefinition, executeReadActionHistory, type ActionHistoryConfig, runComputeDefinition, executeRunCompute, type ComputeConfig } from '@/lib/tools';
 import { proposeStandingTaskDefinition } from '@/lib/work/standing-spec';
+// THE WEEKDAY FLOOR (Wave 1) — deterministic, applied at the one outermost answer seam below.
+import { enforceWeekdayDatePairs } from '@/lib/utils/weekday-floor';
 // EVERY THREAD, EVERY PRODUCER (threads plan, Sep 8): the invite card's producer is ONE tool
 // contract + ONE execution body, shared with the coworker DM. It prepares and never sends — and
 // the executor that DOES send is in no chat slice at all.
@@ -110,6 +112,7 @@ const TOOL_PROGRESS: Record<string, string> = {
   search_knowledge_base: 'Searching the knowledge base…',
   get_emails: 'Reading recent mail…',
   get_meeting_context: 'Pulling the meeting notes…',
+  check_calendar: 'Checking your calendar…',
   read_action_history: 'Checking what was sent and done…',
   run_compute: 'Running the numbers…',
   resolve_inbox_item: 'Updating the item…',
@@ -127,6 +130,11 @@ const TOOL_PROGRESS: Record<string, string> = {
   steer_standing_task: 'Adjusting how that task runs…',
 };
 const progressLabelFor = (tool: string) => TOOL_PROGRESS[tool] ?? 'Working on it…';
+
+/** Reads whose output is a CONTEXT BLOCK written for the model, not a reply written for the person.
+ *  They never take the command fast-path (whose result is served straight as `say`) — they go
+ *  through the agent loop, which reads the block as a tool result and composes an answer from it. */
+const RAW_CONTEXT_READS = new Set(['search_knowledge_base', 'check_calendar', 'get_emails', 'get_meeting_context']);
 
 export type ConverseTurn = {
   say: string;
@@ -716,6 +724,15 @@ async function dispatchCommand(
     const text = await executeGetMeetingContext({ since: args.since ?? '30d', include: args.include ?? 'summaries', filter: args.filter }, userId, client).catch(() => '');
     return { say: text.slice(0, 3000) || 'No matching meetings found.', refs: [] };
   }
+  // THE READ-SIDE CALENDAR VERB (Wave 1): every line it returns — busy/free, weekdays, clock times,
+  // proposed slots — is CODE's, so the loop relays truth instead of composing availability from memory.
+  if (tool === 'check_calendar') {
+    const text = await executeCheckCalendar({
+      from_date: args.from_date, to_date: args.to_date,
+      propose_slots: args.propose_slots, duration_minutes: args.duration_minutes, count: args.count,
+    }, userId, client).catch(() => '');
+    return { say: text.slice(0, 3000) || "I couldn't read the calendar just now.", refs: [] };
+  }
   if (tool === 'search_knowledge_base') {
     try {
       const { buildKBContext } = await import('@/lib/knowledge/build-kb-context');
@@ -880,7 +897,7 @@ async function runCoworkerDelegation(
 }
 
 // ── The bounded AGENT LOOP (the 20%) — function-calling over the chief-of-staff toolset. ──
-const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, prepareForwardDefinition, prepareCalendarInviteDefinition, readActionHistoryDefinition, proposeStandingTaskDefinition, steerStandingTaskDefinition, runComputeDefinition, assignToCoworkerDefinition, offerChoicesDefinition];
+const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, checkCalendarDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, prepareForwardDefinition, prepareCalendarInviteDefinition, readActionHistoryDefinition, proposeStandingTaskDefinition, steerStandingTaskDefinition, runComputeDefinition, assignToCoworkerDefinition, offerChoicesDefinition];
 
 async function agentLoop(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string, grounding: string,
@@ -904,11 +921,30 @@ async function agentLoop(
       return !req || feats?.[req] !== false;
     });
   } catch { /* features unreadable → full set (fail open; the executors keep their own gates) */ }
+  // ── THE CLOCK REACHES THE CHAT LANE (Wave 1, Sep 18) — the loop ran DATELESS while every other
+  // lane carried the date (lib/workflows/execute-step.ts's dateLine is the idiom). A dateless model
+  // coin-flips weekday↔date pairs and reasons about "next week" from nothing. The line is computed
+  // in the USER'S zone (the one derivation, shared with the windowed calendar read). ──
+  let dateLine = '';
+  try {
+    const { userTimezone } = await import('@/lib/calendar/schedule-window');
+    const tz = await userTimezone(client, userId);
+    const now = new Date();
+    const dayStr = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(now);
+    const label = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${dayStr}T12:00:00Z`));
+    const clock = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: tz }).format(now);
+    dateLine =
+      `TODAY is ${label} — it is ${clock} in the user's local time (${tz}). Reason about "today", "this week" ` +
+      `and "next week" from THAT date. Weekday names for dates come from your tools/context — if a date's ` +
+      `weekday is not stated there, do not guess it. For anything about availability, free time or ` +
+      `scheduling, call check_calendar first: never state availability from memory.\n\n`;
+  } catch { /* the clock is an enhancement — an unreadable zone must never break the turn */ }
   const applied: ConverseTurn['applied'] = [];
   const files: NonNullable<ConverseTurn['files']> = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const messages: any[] = [
     { role: 'system', content:
+      dateLine +
       `You are the user's chief of staff inside their work platform. You hold a SMALL set of reversible tools ` +
       `(resolving items, finding files, remembering facts, reading the action ledger of what was sent/done) — ` +
       `use them when the user asks. You never CREATE ` +
@@ -1153,7 +1189,12 @@ export async function converse(
     return { say: '', refs: [], draft: body };
   }
   const turn = await converseInner(client, userId, scope, text, opts);
-  if (turn?.say) turn.say = turn.say.replace(GROUNDING_TAG_RE, '');
+  // THE WEEKDAY FLOOR at THE ONE ANSWER DOOR (Wave 1, Sep 18): every path — the agent loop's final
+  // answer, the question paths (Home ask / entity ask / item ask), the command replies and the
+  // exhaustion hand-off — returns THROUGH here, so one application covers the lane. A weekday is
+  // arithmetic over a date; code corrects the pairing the model invented (the pilot chat got all
+  // three of its proposed weekday↔date pairs wrong). Only unambiguous pairs are touched.
+  if (turn?.say) turn.say = enforceWeekdayDatePairs(turn.say.replace(GROUNDING_TAG_RE, ''));
   return turn;
 }
 
@@ -1313,7 +1354,13 @@ async function converseInner(
   // EXCEPT raw-context reads (found via P30's flake): search_knowledge_base returns the RAW KB
   // block — served straight as `say` it reads as a context dump, not an answer. Reads that need
   // COMPOSITION go through the agent loop, which reads the block as a tool result and answers.
-  if (verdict.command && verdict.command.tool !== 'search_knowledge_base') {
+  // check_calendar joined the list the day it shipped (found by its own gate, Sep 18): its block is
+  // written FOR THE MODEL — "use these labels verbatim", "BEYOND THIS WINDOW THE CALENDAR IS NOT
+  // VISIBLE TO YOU: say so plainly" — so the fast path handed the user a page of instructions
+  // addressed to someone else instead of an answer to their question. get_emails and
+  // get_meeting_context are the same shape ("## Recent meetings (3)…" is a source dump, not a
+  // sentence) — the whole class rides the set, not a per-tool exception.
+  if (verdict.command && !RAW_CONTEXT_READS.has(verdict.command.tool)) {
     opts.onProgress?.(progressLabelFor(verdict.command.tool));
     const out = await dispatchCommand(client, userId, scope, verdict.command.tool, verdict.command.args, text, { transcript, roomKey: dlg.roomKey });
     if (out) return out;

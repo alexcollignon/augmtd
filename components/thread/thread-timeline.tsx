@@ -39,7 +39,7 @@ function UserBubbleText({ text }: { text: string }) {
       {long && (
         <button type="button" onClick={() => setOpen((v) => !v)}
           className="aug-focus mt-1 block text-[12px] font-medium text-indigo-600 hover:text-indigo-700">
-          {open ? 'Show less' : `Show all (${Math.round(text.length / 1000)}k characters)`}
+          {open ? 'Show less' : 'Show more'}
         </button>
       )}
     </>
