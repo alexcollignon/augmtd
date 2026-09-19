@@ -151,6 +151,11 @@ export async function POST(request: NextRequest) {
         const tid = id(r.tid), inviteId = id(r.inviteId);
         return tid && inviteId ? { kind: 'invite', tid, inviteId } : null;
       },
+      // a previewed bulk deed → the `bulk_deed` row its own commit door reads by id (attention A7)
+      bulk_deed: (r) => {
+        const tid = id(r.tid), deedId = id(r.deedId);
+        return tid && deedId ? { kind: 'bulk_deed', tid, deedId } : null;
+      },
     };
     const items = body.component?.key === 'worker_cards' && Array.isArray(body.component.state?.items)
       ? (body.component.state.items as unknown[]).slice(0, 8)

@@ -30,6 +30,7 @@ import { projectHref } from '@/lib/room/project-href';
 // the FacePile, the Filed handle, the summoned drawer. Same parts, same file, never a lookalike.
 import { FacePile } from '@/components/thread/avatar-status';
 import { FiledIcon } from '@/components/room/filed-icon';
+import { PastePackCard } from '@/components/prepared/paste-pack-card';
 import { BackLink, AttachmentLightbox, type LightboxFile } from '@/components/ui';
 // THE ONE FILED DRAWER — the same pane the project door mounts (owner, Sep 14: one component, not
 // one per door), plus the record's new seat inside it.
@@ -50,6 +51,7 @@ import { InviteCard } from '@/components/home/invite-card';
 import { EmailCard } from '@/components/home/email-card';
 import { PeopleSuggestInput } from '@/components/home/people-chips';
 import { panelPlan, applyPanelPlan } from '@/lib/room/render-plan';
+import { resolveDecisionObject, type DecisionObject } from '@/lib/room/decision-object';
 import dynamic from 'next/dynamic';
 
 // THE RUN'S RECEIPTS — REUSED, never forked (the record drawer is the one read-only story of a
@@ -883,10 +885,12 @@ function DeepDiveShell({ children, rail, embedded = false, room }: { children: R
 // Instant-load from localStorage, background refresh — no AI, no step data ever reaches the client.
 type ItemViewData = {
   prepared: Array<{
-    id: string; kind: 'reply_draft' | 'nudge_draft' | 'deliverable' | 'invite' | 'forward';
+    id: string; kind: 'reply_draft' | 'nudge_draft' | 'deliverable' | 'invite' | 'forward' | 'paste_pack';
     title: string | null; content: string; by: string | null; at: string | null;
     attachment: { fileId: string; filename: string; source?: string } | null;
     provenance: Record<string, string> | null;
+    /** Q8 · THE PASTE PACK: where these words go (served, never composed here). */
+    note?: string | null;
     decision?: { options: Array<{ label: string; tradeoff?: string | null }>; recommendation: string | null; why: string | null } | null;
   }>;
   gap: string | null;
@@ -1095,7 +1099,9 @@ function commonRoomTabs(
   if (files.length > 0) {
     tabs.push({ id: 'files', label: `Files · ${files.length}`, node: <FilesRows files={files} /> });
   }
-  const preparedCount = (view?.prepared ?? []).filter((p) => p.kind === 'deliverable' && p.content && !p.decision).length;
+  // Q8 · a paste pack is prepared work too — it is counted here so the tab can never say "Prepared
+  // · 0" over a staged pack (the one-claim law).
+  const preparedCount = (view?.prepared ?? []).filter((p) => (p.kind === 'deliverable' || p.kind === 'paste_pack') && p.content && !p.decision).length;
   if (preparedCount > 0) {
     tabs.push({ id: 'prepared', label: `Prepared · ${preparedCount}`, node: <PreparedLead prepared={view?.prepared ?? null} /> });
   }
@@ -1263,6 +1269,11 @@ export type ReportedDecision = {
   title: string | null;
   options: Array<{ label: string; tradeoff?: string | null }>;
   recommendation: { label: string; why?: string | null } | null;
+  /** Q5 · A DECISION SHOWS ITS OBJECT — the thing being decided, resolved from THIS door's own
+   *  prepared artifacts (lib/room/decision-object) and carried UP with the decision, so the room's
+   *  rail mounts the ask and its object together on every door. Serializable by design: the
+   *  payload travels through a JSON sig, so the object is facts, never a node. */
+  object: DecisionObject | null;
 };
 
 // (fmtWhen/fmtDate → the shared short-date grammar in lib/utils/format-date.)
@@ -1900,6 +1911,10 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
         recommendation: decisionBrief?.decision?.recommendation
           ? { label: decisionBrief.decision.recommendation, why: decisionBrief.decision.why }
           : null,
+        // Q5 · THE OBJECT: resolved from the SAME `prepared` array every other card on this door
+        // reads (the one prepared reader — source_data lanes + the deliverable pool). The card
+        // renders it, or says plainly that nothing is attached and recommends nothing.
+        object: resolveDecisionObject(view?.prepared ?? null),
       }
       : null;
   // Report the decision upward (embedded doors). Keyed on the payload's VALUE — the object is
@@ -1984,6 +1999,9 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
       <ItemRail kind="email" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }}
         decision={decisionPayload ? {
           ...decisionPayload,
+          // Q5 · the object's ONE deed is REVIEW, and it reads where every prepared thing on this
+          // door reads — the drawer's own Prepared section (no second renderer, no screen-hop).
+          ...(decisionPayload.object ? { onOpenObject: () => openDrawerAt('prepared') } : {}),
           onChoose: async (label: string) => {
             // The word is the deed — AND THE DEED IS VISIBLE (promise fix #3): the choice lands as
             // a user turn, the steer's answer as the response turn. Silence after a click is a bug.
@@ -3542,9 +3560,17 @@ function PreparedLead({ prepared }: { prepared: ItemViewData['prepared'] | null 
   const [openId, setOpenId] = useState<string | null>(null);
   // Coworker deliverables only — the composer owns reply/nudge drafts (showing them twice duplicates).
   const items = (prepared ?? []).filter((p) => p.kind === 'deliverable' && p.content && !p.decision);
-  if (!items.length) return null;
+  // Q8 · THE PASTE PACK leads, in its own card: it is the only prepared artifact here whose deed is
+  // the user's own copy-and-paste, and the card carries that one affordance and no other.
+  const packs = (prepared ?? []).filter((p) => p.kind === 'paste_pack' && p.content);
+  if (!items.length && !packs.length) return null;
   return (
     <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50/40 px-4 py-3">
+      {packs.slice(0, 2).map((p) => (
+        <div key={p.id} className="mb-2 last:mb-0">
+          <PastePackCard title={p.title} body={p.content} note={p.note ?? null} by={p.by} />
+        </div>
+      ))}
       {items.slice(0, 3).map((d) => {
         const prov = d.provenance ?? null;
         const open = openId === d.id;

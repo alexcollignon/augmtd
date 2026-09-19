@@ -18,12 +18,16 @@ import { EmailCard, type CoworkerEmailDraft } from '@/components/home/email-card
 import { WorkflowDraftCard, type WorkflowDraft } from '@/components/workflows/workflow-draft-card';
 import { ThreadArtifactsPanel } from '@/components/work/chat-artifact-panel';
 import { InviteCard } from '@/components/home/invite-card';
+import BulkDeedCard from '@/components/home/bulk-deed-card';
+import type { BulkDeed as BulkDeedLike } from '@/lib/deeds/words';
 import type { PreparedInviteLike } from '@/lib/prepare/invite-card';
 import { ThreadShell } from '@/components/thread';
 import type { ThreadCard, ThreadItem } from '@/components/thread';
 import { useFeatures } from '@/context/workspace-context';
 import { useCosSeat } from '@/hooks/use-cos-seat';
 import type { DocumentArtifact } from '@/lib/types/inbox';
+// THE DOC CARD'S TWO FACTS, from the ONE resolver (client-safe: types + the version chain).
+import { docCardTypeOf, resolveDocVersion, type DocCardType } from '@/lib/documents/doc-card';
 import { projectHref } from '@/lib/room/project-href';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { ROLE_LABELS } from '@/lib/workers/roles';
@@ -55,7 +59,13 @@ type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
   /** Deliverables the coworker produced in THIS exchange (brick 3 — the one surface owns its
    *  outputs): a DOCUMENT card opens the artifact panel HERE (art), a registry render still
    *  points at its page (href); an EMAIL DRAFT mounts the editable send card INLINE. */
-  cards?: Array<{ label: string; sub?: string; href?: string; art?: { tid: string; id: string } }>;
+  cards?: Array<{
+    label: string; sub?: string; href?: string; art?: { tid: string; id: string };
+    /** THE REVIEW-FIRST DOC CARD (attention-plan D): a produced DOCUMENT is a handle, not a link —
+     *  its facts (glyph family, type word, owner, version) ride here and the card renders as the
+     *  grammar's `doc` kind. Absent → the card stays the generic deliverable pointer. */
+    doc?: { type: DocCardType; typeLabel: string; owner?: string; versionLabel?: string; groupId?: string };
+  }>;
   drafts?: Array<{ draft: CoworkerEmailDraft; tid: string; agentId: string }>;
   /** THE CARDS SURVIVE THE RELOAD: every card an addressed coworker produced comes back as a
    *  POINTER at its own home — never a frozen payload, because each kind's state MOVES (a draft
@@ -68,6 +78,9 @@ type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
   /** THE INVITE CARD (threads plan — EVERY THREAD, EVERY PRODUCER): a prepared invite born from a
    *  plain prompt. Durable — it rides the turn's component, so a reload finds it standing. */
   invites?: Array<{ inviteId: string; invite: PreparedInviteLike }>;
+  /** THE BULK DEED (attention-plan A7) — a previewed deed over a held-quiet class. The payload
+   *  is for the FIRST paint only; the card re-reads the stored row, which is the deed's truth. */
+  bulkDeeds?: Array<{ deedId: string; deed?: BulkDeedLike }>;
   /** THE SENSIBLE ASK: one consequential decision as tappable options — a tap SPEAKS its `say`
    *  through the composer. Ephemeral scaffolding (never persisted); consumed on tap. */
   options?: Array<{ label: string; say: string }>;
@@ -76,6 +89,56 @@ type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
    *  model, owner, Aug 13): time is the only separator, so a date divider renders where two
    *  consecutive dated turns fall on different days. */
   at?: string };
+
+// ── NEVER A TWIN (docs/attention-plan.md, law D2: "the new version lands on the SAME card") ─────
+// A revision is a NEW artifact id on the SAME chain, so a thread that has revised twice would
+// otherwise carry three cards for one document. This fold is the law in code, and it reads the
+// STORED chain (lib/documents/doc-card → the one version-utils implementation), never client
+// memory: for each chain, exactly ONE card survives — the LAST one spoken, repointed at the
+// chain's current version and wearing its version word. Pure and idempotent: running it twice on
+// the same artifacts changes nothing, so a mid-stream re-render can never resurrect a twin.
+function foldDocCards(turns: Turn[], tid: string, artifacts: DocumentArtifact[]): Turn[] {
+  const groupOf = new Map<string, string>();   // artifact id → its chain key
+  const latest = new Map<string, ReturnType<typeof resolveDocVersion>>();
+  for (const a of artifacts) {
+    if (!a?.id) continue;
+    const v = resolveDocVersion(artifacts, a.id);
+    if (!v) continue;
+    groupOf.set(a.id, v.groupIds[0] ?? a.id);
+    latest.set(v.groupIds[0] ?? a.id, v);
+  }
+  // Walk BACKWARDS: the last card of a chain is the survivor, so the document sits where its
+  // newest version was spoken about.
+  const seen = new Set<string>();
+  const out = [...turns];
+  for (let i = out.length - 1; i >= 0; i--) {
+    const t = out[i];
+    if (!t.cards?.length) continue;
+    const kept = [...t.cards].reverse().filter((c) => {
+      if (!c.doc || c.art?.tid !== tid) return true;
+      const g = groupOf.get(c.art.id);
+      if (!g) return true;                       // an id the chain doesn't know stays as it is
+      if (seen.has(g)) return false;             // an earlier-spoken sibling: the twin goes
+      seen.add(g);
+      return true;
+    }).reverse().map((c) => {
+      if (!c.doc || c.art?.tid !== tid) return c;
+      const g = groupOf.get(c.art.id);
+      const v = g ? latest.get(g) : null;
+      if (!v) return c;
+      const kind = docCardTypeOf(v.type, v.storagePath);
+      return {
+        ...c, label: v.title, art: { tid, id: v.id },
+        doc: {
+          ...c.doc, type: kind.type, typeLabel: kind.label, groupId: g,
+          ...(v.versionLabel ? { versionLabel: v.versionLabel } : { versionLabel: undefined }),
+        },
+      };
+    });
+    if (kept.length !== t.cards.length || kept.some((c, j) => c !== t.cards![j])) out[i] = { ...t, cards: kept };
+  }
+  return out;
+}
 
 // ONE CONTINUOUS THREAD (owner, Aug 13 — the Slack model): a DM is never cut into sessions, so
 // the DAY is the only separator. Both helpers read the user's LOCAL day (a timestamp is a moment;
@@ -205,6 +268,13 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // `dmLoading` is the honest cold path: a skeleton in the thread's own shape, never a blank pane.
   const [dmActor, setDmActor] = useState<{ id: string; name: string } | null>(null);
   const [dmLoading, setDmLoading] = useState(false);
+  // THE CHAT OPENS INSTANTLY — the DM's law, one lane over (found live: clicking a past conversation
+  // in the sidebar sat on the deck until /api/room/turns landed, and a failed or EMPTY room sat there
+  // forever). `chatRoom` is the chat lane's `dmActor`: render state set the moment the key is known,
+  // so the pane takes the page at CLICK time. `chatLoading` is its honest cold path — the same
+  // thread-shaped skeleton the DM waits under, never a blank pane and never a dead click.
+  const [chatRoom, setChatRoom] = useState<string | null>(null);
+  const [chatLoading, setChatLoading] = useState(false);
   // The seat, hydrated from the ageless cache and refreshed once per mount (a reseat lands on the
   // next visit — the face of the voice is not something that may change under a reader mid-answer).
   const cosSeat = useCosSeat();
@@ -274,9 +344,13 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     // because its one caller (the room's New-chat door) happened to drop the key first. The deed
     // now lives in the handler: whoever fires `aug:new-chat`, the next turn persists to a NEW room
     // and the old one stays durable.
-    const onNew = () => { try { localStorage.removeItem(CHAT_KEY_LS); } catch { /* no LS */ } setTurns([]); setTemp(false); setScope(null); setScopeHint(null); workerRoomRef.current = null; setDmActor(null); setDmLoading(false); setOpen(true); setTimeout(() => focusComposer(), 60); };
+    const onNew = () => { try { localStorage.removeItem(CHAT_KEY_LS); } catch { /* no LS */ } setTurns([]); setTemp(false); setScope(null); setScopeHint(null); workerRoomRef.current = null; setDmActor(null); setDmLoading(false); setChatRoom(null); setChatLoading(false); setOpen(true); setTimeout(() => focusComposer(), 60); };
     const onOpen = (e: Event) => {
       const key = (e as CustomEvent).detail?.key as string | undefined;
+      // THE FRESH FLOOR's rider: the cross-page intent flag is a ONE-SHOT for the case where this
+      // panel isn't mounted yet. A SAME-PAGE open must eat it too — a flag left standing makes the
+      // next cold /home load auto-restore this conversation, which is exactly what the floor forbids.
+      try { sessionStorage.removeItem('aug-open-chat-intent'); } catch { /* no storage */ }
       if (key?.startsWith('chat:')) { loadRoom(key); setOpen(true); }
       else if (key?.startsWith('worker:')) { void loadWorkerRoom(key); setOpen(true); }
     };
@@ -292,6 +366,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       setOpen(false);
       setTurns([]); setTemp(false); setScope(null); setScopeHint(null);
       workerRoomRef.current = null; setDmActor(null); setDmLoading(false);
+      setChatRoom(null); setChatLoading(false);
       try { localStorage.removeItem(CHAT_KEY_LS); } catch { /* no LS */ }
       // HOME IS THE CHAT DOOR: the reset above is unchanged (the deck stays the default) — the
       // caret simply lands in the composer so the door is ready to type into. It waits for the
@@ -309,6 +384,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       const d = (e as CustomEvent).detail as { agentId?: string; name?: string } | undefined;
       if (!d?.agentId || !d?.name) return;
       const w = { id: d.agentId, name: d.name };
+      // Same one-shot, same law (the facepile leaves the flag too): a same-page DM open consumes it.
+      try { sessionStorage.removeItem('aug-open-chat-intent'); } catch { /* no storage */ }
       setOpen(true);
       workerRoomRef.current = w; setDmActor(w); setDmLoading(true);
       const known = cachedDmThread(w.id);
@@ -346,6 +423,11 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       ...(t.component?.key === 'invite_card' && t.component.refId
         ? { invites: [{ inviteId: t.component.refId, invite: (t.component.state?.invite ?? {}) as PreparedInviteLike }] }
         : {}),
+      // …and so does a bulk deed. Only the REF survives here by design: the deed's committed state
+      // lives on its own row, so a reloaded card can never show "pending" on a deed already run.
+      ...(t.component?.key === 'bulk_deed_card' && t.component.refId
+        ? { bulkDeeds: [{ deedId: t.component.refId }] }
+        : {}),
       // …and so does every card an addressed COWORKER produced — as POINTERS at their own homes
       // (hydrateCardRefs below re-reads them). Nothing about a card's mutable state is copied
       // here: send the draft, revise the document or confirm the task in the DM, and this room
@@ -356,6 +438,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     }));
   const loadRoom = (key: string) => {
     workerRoomRef.current = null; setDmActor(null); setDmLoading(false); // a chief chat room leaves worker mode
+    // The pane is taken NOW, off the key alone (the DM door's shape): the conversation exists, the
+    // reader asked for it, and the wait belongs INSIDE the room — not in front of it.
+    setChatRoom(key); setChatLoading(true); setTurns([]);
     if (key.startsWith('chat:')) {
       setScope(null); setScopeHint(null);
       // Scope is SERVER TRUTH (the binding) — per-conversation, survives devices; never a
@@ -365,12 +450,22 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         .catch(() => {});
     }
     fetch(`/api/room/turns?key=${encodeURIComponent(key)}`)
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('turns'))))
       .then((d) => {
-        if (!Array.isArray(d?.turns)) return;
+        if (!Array.isArray(d?.turns)) throw new Error('turns');
+        setChatLoading(false);
+        // AN EMPTY ROOM IS AN OPEN ROOM: `turns: []` is served truth, so the pane stands with its
+        // composer and simply has nothing to say yet — a skeleton that never resolves would be
+        // the deterministic forever-nothing this door was built to end.
         setTurns(mapServerTurns(d.turns));
         try { localStorage.setItem(CHAT_KEY_LS, key); } catch { /* no LS */ }
-      }).catch(() => {});
+      }).catch(() => {
+        // THE FAILURE SPEAKS (openArtifact's idiom): a door that dies silently is a dead click the
+        // reader can only fix by guessing. The key is deliberately NOT stored — a conversation we
+        // could not read is not a room the next turn should append to.
+        setChatLoading(false);
+        setTurns([{ role: 'assistant', text: "Couldn't open that conversation — try again." }]);
+      });
   };
   // ── THE CARD CONTRACT, THE SECOND HALF: the pointers are filled from the coworker thread ──────
   // ONE SOURCE OF TRUTH PER KIND, and it is never here: the email draft (with the `sent_at`
@@ -409,9 +504,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             (m.metadata?.invite_cards ?? []).forEach((x) => { if (x?.id) invites.set(x.id, x.invite); });
             (m.metadata?.workflow_drafts ?? []).forEach((x) => { if (x?.token) wf.set(x.token, x); });
           });
+          const artifacts = ((d.thread as { artifacts?: DocumentArtifact[] } | null)?.artifacts ?? []);
           const docs = new Map<string, { title?: string; type?: string }>();
-          ((d.thread as { artifacts?: Array<{ id?: string; title?: string; type?: string }> } | null)?.artifacts ?? [])
-            .forEach((a) => { if (a?.id) docs.set(a.id, { title: a.title, type: a.type }); });
+          artifacts.forEach((a) => { if (a?.id) docs.set(a.id, { title: a.title, type: a.type }); });
           setTurns((prev) => prev.map((t) => {
             const refs = (t.cardRefs ?? []).filter((r) => r.tid === tid);
             if (!refs.length) return t;
@@ -425,15 +520,30 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                 next.workflowDrafts = [...(next.workflowDrafts ?? []), wf.get(r.token)!];
               } else if (r.kind === 'document' && docs.has(r.artifactId)) {
                 const a = docs.get(r.artifactId)!;
+                // THE CARD POINTS AT THE CHAIN'S PRESENT (D2): a pointer at v1 resolves, through
+                // the stored version chain, to the document as it stands now — a rehydrated card
+                // can never show a version a revision has already replaced.
+                const v = a.type === 'frame' ? null : resolveDocVersion(artifacts, r.artifactId);
+                const kind = v ? docCardTypeOf(v.type, v.storagePath) : null;
                 next.cards = [...(next.cards ?? []), {
-                  label: a.title ?? 'Document',
+                  label: v?.title ?? a.title ?? 'Document',
                   sub: `${a.type === 'frame' ? 'frame' : 'document'}${t.author ? ` · by ${t.author}` : ''}`,
-                  art: { tid, id: r.artifactId },
+                  art: { tid, id: v?.id ?? r.artifactId },
+                  ...(v && kind ? {
+                    doc: {
+                      type: kind.type, typeLabel: kind.label, groupId: v.groupIds[0],
+                      ...(t.author ? { owner: t.author } : {}),
+                      ...(v.versionLabel ? { versionLabel: v.versionLabel } : {}),
+                    },
+                  } : {}),
                 }];
               }
             });
             return next;
           }));
+          // NEVER A TWIN (D2): with the whole artifact list in hand, every card in the thread
+          // that points at ANY member of one chain folds to ONE card on the current version.
+          setTurns((prev) => foldDocCards(prev, tid, artifacts));
         }).catch(() => {});
     });
   }, [turns]);
@@ -490,6 +600,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   const loadWorkerRoom = async (key: string) => {
     const [, tid, agentId] = key.split(':');
     if (!tid || !agentId) return;
+    setChatRoom(null); setChatLoading(false); // a coworker DM leaves the chief-chat lane
     setDmLoading(true);
     // INSTANT PAINT (the instant-load doctrine, reaching the DM): the last conversation this
     // coworker painted goes up NOW, before the request is even sent. The load below then lands
@@ -650,6 +761,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       const th = d?.thread as { id: string; title?: string; artifacts?: DocumentArtifact[] } | null;
       if (!th) throw new Error();
       setArtifactPanel({ thread: { id: th.id, title: th.title ?? 'Work', artifacts: th.artifacts ?? [] }, initialId: artifactId });
+      // ONE FLIGHT, TWO USES: the same artifact list the panel opens on settles the thread's doc
+      // cards — a revision folds onto the card that already stood, wearing its new version word.
+      setTurns((prev) => foldDocCards(prev, tid, th.artifacts ?? []));
     } catch {
       setTurns((prev) => [...prev, { role: 'assistant', text: "Couldn't open that document just now — try again." }]);
     }
@@ -957,7 +1071,15 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
               // The word matches the kind ONLY when the stream states it — never guessed
               // (frames plan law 1: a frame is a deliverable KIND). The card's door is the same
               // artifact panel, which renders a frame through the ONE renderer.
-              cards.push({ label: event.artifact.title, sub: `${event.artifact.type === 'frame' ? 'frame' : 'document'} · by ${first}`, art: { tid, id: event.artifact.id } });
+              // A DOCUMENT arrives as THE HANDLE (attention-plan D) — glyph, type word, owner —
+              // and its deed is Review. A frame is a different deliverable kind and keeps its own
+              // pointer (never a doc handle over a rendered thing).
+              const docKind = event.artifact.type === 'frame' ? null : docCardTypeOf(event.artifact.type, null);
+              cards.push({
+                label: event.artifact.title, sub: `${event.artifact.type === 'frame' ? 'frame' : 'document'} · by ${first}`,
+                art: { tid, id: event.artifact.id },
+                ...(docKind ? { doc: { type: docKind.type, typeLabel: docKind.label, owner: first } } : {}),
+              });
               refs.push({ kind: 'document', tid, artifactId: event.artifact.id }); setCards();
               void openArtifact(tid, event.artifact.id);
             }
@@ -1147,7 +1269,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // STREAMING ASK (Aug 6): SSE — `progress` events narrate the core's live stage (the busy
       // line speaks them), `done` carries the answer. A non-SSE response (error JSON) falls back.
       const res = await fetch('/api/home/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(sentRoomKey ? { roomKey: sentRoomKey } : {}), ...(attachments.length ? { attachments } : {}), ...(scope ? { entityId: scope.id } : {}) }) });
-      let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike } } = {};
+      let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike }; bulkDeed?: { id: string; deed: BulkDeedLike } } = {};
       if (res.body && res.headers.get('content-type')?.includes('text/event-stream')) {
         const reader = res.body.getReader();
         const dec = new TextDecoder();
@@ -1161,7 +1283,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             const line = f.split('\n').find((l) => l.startsWith('data: '));
             if (!line) continue;
             try {
-              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike } };
+              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike }; bulkDeed?: { id: string; deed: BulkDeedLike } };
               if (ev.type === 'progress' && ev.label) setStage(ev.label);
               else if (ev.type === 'token' && (ev as unknown as { t?: string }).t) { liveTextRef.current += (ev as unknown as { t: string }).t; setLiveText(liveTextRef.current); }
               else if (ev.type === 'token_reset') { liveTextRef.current = ''; setLiveText(''); }
@@ -1176,10 +1298,20 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // the viewer opens HERE — the conversation that asked holds the work.
       const artList = d.artifacts?.length ? d.artifacts : d.artifact ? [d.artifact] : [];
       const artCard = artList.length
-        ? { cards: artList.map((a) => ({ label: a.title, sub: `document · by ${a.agentName.split(' ')[0]}`, art: { tid: a.threadId, id: a.id } })) }
+        ? { cards: artList.map((a) => {
+            // The delegation lane ships through the ONE production door's document tier — the
+            // kind word this line has always spoken. The glyph follows the same word, never a
+            // guess of its own; `openArtifact` refines both from the stored artifact.
+            const k = docCardTypeOf('document', null);
+            return {
+              label: a.title, sub: `document · by ${a.agentName.split(' ')[0]}`,
+              art: { tid: a.threadId, id: a.id },
+              doc: { type: k.type, typeLabel: k.label, owner: a.agentName.split(' ')[0] },
+            };
+          }) }
         : {};
       // A token-streamed answer already revealed itself — the typewriter must not re-type it.
-      setTurns((prev) => { pendingAnimate.current = liveTextRef.current ? -1 : prev.length; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...(d.invite ? { invites: [{ inviteId: d.invite.id, invite: d.invite.invite }] } : {}), ...artCard }]; });
+      setTurns((prev) => { pendingAnimate.current = liveTextRef.current ? -1 : prev.length; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...(d.invite ? { invites: [{ inviteId: d.invite.id, invite: d.invite.invite }] } : {}), ...(d.bulkDeed ? { bulkDeeds: [{ deedId: d.bulkDeed.id, deed: d.bulkDeed.deed }] } : {}), ...artCard }]; });
       if (d.artifact) void openArtifact(d.artifact.threadId, d.artifact.id);
       if (d.answer && !sentRoomKey) persistTurn('system', d.answer, d.refs ?? []);
       if (d.focus && !scope && !temp) setScopeHint(d.focus);
@@ -1250,11 +1382,24 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       }
       // A produced document speaks the grammar's own card — a DOCUMENT opens the artifact panel
       // HERE (brick 3); a registry render still points at its page.
-      (t.cards ?? []).forEach((c, j) => cards.push({
-        kind: 'deliverable', id: `${key}-doc-${j}`, title: c.label, meta: c.sub, icon: 'document',
-        openLabel: 'Open →',
-        onOpen: () => { if (c.art) void openArtifact(c.art.tid, c.art.id); else if (c.href) router.push(c.href); },
-      }));
+      (t.cards ?? []).forEach((c, j) => cards.push(
+        // THE REVIEW-FIRST DOC CARD (attention-plan D): a produced DOCUMENT is a handle whose one
+        // deed is Review — and Review raises THE ONE artifact panel (the player), right here.
+        // The document itself never enters the thread. Everything else keeps the generic pointer.
+        c.doc && c.art
+          ? {
+              kind: 'doc', id: `${key}-doc-${j}`, title: c.label,
+              docType: c.doc.type, typeLabel: c.doc.typeLabel,
+              ...(c.doc.owner ? { owner: c.doc.owner } : {}),
+              ...(c.doc.versionLabel ? { versionLabel: c.doc.versionLabel } : {}),
+              onReview: () => void openArtifact(c.art!.tid, c.art!.id),
+            }
+          : {
+              kind: 'deliverable', id: `${key}-doc-${j}`, title: c.label, meta: c.sub, icon: 'document',
+              openLabel: 'Open →',
+              onOpen: () => { if (c.art) void openArtifact(c.art.tid, c.art.id); else if (c.href) router.push(c.href); },
+            },
+      ));
       // THE EMAIL CARD — one rendering per kind: the Home thread mounts the SAME component the
       // coworker DM and the item rooms mount, and its Send is the same coworker door.
       (t.drafts ?? []).forEach((d, j) => cards.push({
@@ -1270,6 +1415,12 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       (t.invites ?? []).forEach((iv, j) => cards.push({
         kind: 'custom', id: `${key}-invite-${j}`,
         node: <InviteCard chat={iv} onSuggestAnother={focusComposer} />,
+      }));
+      // THE BULK DEED — the same host the ledger's verb rows will mount (one rendering per kind);
+      // its one button is the one commit door.
+      (t.bulkDeeds ?? []).forEach((bd, j) => cards.push({
+        kind: 'custom', id: `${key}-bulk-${j}`,
+        node: <BulkDeedCard deedId={bd.deedId} deed={bd.deed} />,
       }));
       // THE SENSIBLE ASK — a tap SPEAKS its message through the composer (clicks are utterances);
       // the chips consume on tap (ephemeral scaffolding).
@@ -1344,7 +1495,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // THE COLD PATH WEARS THE THREAD'S OWN SHAPE (owner walk, Sep 7): a DM that has nothing cached
   // waits under three bubble-shaped placeholders, not a blank pane. It never shows once ANY turn
   // is painted — a skeleton beside real content is a second claim about the same thread.
-  const dmSkeleton = dmLoading && !hasThread ? (
+  // ONE SKELETON, BOTH LANES (Sep 18): the chat door waits under exactly this shape too — a second
+  // placeholder for the same wait would be a second claim about the same pane.
+  const openingSkeleton = (dmLoading || chatLoading) && !hasThread ? (
     <div className="space-y-5 py-2" aria-hidden>
       {[0, 1, 2].map((i) => (
         <div key={i} className={`flex gap-2.5 ${i === 1 ? 'justify-end' : ''}`}>
@@ -1362,7 +1515,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // A DM TAKES THE PAGE THE MOMENT IT IS ADDRESSED — not when its first turn lands. Waiting for
   // turns is what made a cold DM read as a dead click: the pane, the face and the name are known
   // at click time, so they paint at click time and the skeleton holds the timeline's place.
-  const showThread = open && (hasThread || !!dmActor);
+  // …and a CHAT takes it the moment its key is known (`chatRoom`) — the same law, the same instant.
+  const showThread = open && (hasThread || !!dmActor || !!chatRoom);
   // THE DM IS A FULL PANE, THE HOME CHAT IS A COLUMN (owner walk, Sep 7 — the DM "looks off"). The
   // frozen board puts the DM's header at the TOP EDGE of the content area with the timeline
   // directly beneath and the composer at the bottom: one pane, one scroller. That geometry needs
@@ -1507,7 +1661,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             kind={dmActor ? 'dm' : 'home'}
             className={dmPane ? 'min-h-0 flex-1' : '!bg-transparent max-h-[calc(100vh-200px)] min-h-[46vh]'}
             header={dmHeader}
-            beforeTimeline={dmSkeleton}
+            beforeTimeline={openingSkeleton}
             items={items}
             composerNode={composerBlock}
           />

@@ -7,7 +7,9 @@ import ReplyEditor from '@/components/inbox/reply-editor';
 // ONE CHIP GRAMMAR, ONE VIEWER (T25.9c) — the chip lives with the lightbox and is never redrawn
 // per surface. The kit mounts the shared chip; the HOST owns the viewer it raises.
 import { AttachmentChip } from '@/components/ui/attachment-lightbox';
-import type { EmailCard, InviteCard, ThreadCard, ThreadCardIcon, ThreadCardOption } from './types';
+// THE ONE OBJECT CARD — the source half of the grammar, in its own file (one component, one law).
+import { SourceObjectCard } from './source-object-card';
+import type { BulkCard, DocCard, EmailCard, InviteCard, ThreadCard, ThreadCardIcon, ThreadCardOption } from './types';
 
 /**
  * ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -615,6 +617,199 @@ function ToneMenu({ options, onPick, disabled }: { options: Array<{ id: string; 
   );
 }
 
+/**
+ * THE BULK-DEED CARD (docs/attention-plan.md, law A7) — the third interactive kind.
+ *
+ *   the intro      what will happen, to how many ("Archive 31 messages from Notices.")
+ *   the breakdown  one muted line per real lane; THE HONEST UNSUBSCRIBE SUBSET lives here
+ *   the tail       the needs-a-click messages, NAMED with their subjects — never a bare count
+ *   the undo note  the quietest line, honest per verb (an unsubscribe says it cannot be undone)
+ *   the commit row ONE primary door · a quiet way out · the receipt at the right edge
+ *
+ * Every word arrives composed from the stored deed (`lib/deeds/bulk.ts`). The `done` state carries
+ * NO commit door — a deed that has run cannot be run again, and a card must never wear a button its
+ * engine would refuse.
+ */
+function BulkCardView({ card }: { card: BulkCard }) {
+  const done = card.state === 'done';
+  const busy = card.busy || card.state === 'committing';
+
+  return (
+    <div className={cn(SHELL, MAX_W, 'flex flex-col overflow-hidden')}>
+      <div className={cn('flex flex-col gap-2 px-4 py-3.5', workingClass(busy))}>
+        <div className="text-[13px] font-semibold text-neutral-900">{card.intro}</div>
+
+        {/* WHAT WILL HAPPEN, TO HOW MANY — one line per lane that actually has members. */}
+        {(card.lines?.length ?? 0) > 0 && (
+          <ul className="flex flex-col gap-1">
+            {card.lines!.map((l, i) => (
+              <li key={i} className="flex gap-2 text-[12px] leading-[1.5] text-neutral-500">
+                <span aria-hidden className="mt-[7px] h-[3px] w-[3px] flex-shrink-0 rounded-full bg-neutral-300" />
+                <span>{l}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {/* THE HONEST SUBSET, NAMED. These are the ones we refuse to fire; a count with no way to
+            reach them would be a dead end wearing a number. A row with no door is plain text. */}
+        {(card.needsClick?.length ?? 0) > 0 && (
+          <div className="flex flex-col gap-1 border-l-2 border-neutral-200/80 pl-2.5">
+            <span className="text-[11px] text-neutral-400">{card.needsClickLabel ?? 'These need a click from you'}</span>
+            {card.needsClick!.map((n, i) => (
+              n.url || n.onOpen ? (
+                <a key={i} href={n.url} target="_blank" rel="noreferrer noopener"
+                  onClick={n.onOpen ? (e) => { e.preventDefault(); n.onOpen!(); } : undefined}
+                  className="aug-focus truncate rounded text-[12px] text-indigo-600 hover:text-indigo-700">
+                  {n.subject}
+                </a>
+              ) : (
+                <span key={i} className="truncate text-[12px] text-neutral-500">{n.subject}</span>
+              )
+            ))}
+          </div>
+        )}
+
+        {/* THE UNDO NOTE — the quietest line on the card, and never a promise the verb cannot keep. */}
+        {card.undoNote && <div className="text-[11px] leading-[1.5] text-neutral-300">{card.undoNote}</div>}
+      </div>
+
+      {card.error && <div className="border-t border-neutral-200/55 px-4 py-2 text-[12px] text-rose-600">{card.error}</div>}
+
+      {/* THE POSTURE TAIL (A8) — offered only where a standing version is actually keepable; the
+          host decides that, and with no handler the tail does not render (never a lying offer).
+          Once answered, the offer is replaced IN PLACE by what was understood, or by the honest
+          refusal — the word is the deed, read back where it was said. */}
+      {done && card.postureNote && (
+        <div className="border-t border-neutral-200/55 px-4 py-2.5 text-[12px] text-neutral-500">{card.postureNote}</div>
+      )}
+      {done && !card.postureNote && card.postureAsk && card.onKeepDoingThis && (
+        <div className="flex items-center gap-2.5 border-t border-neutral-200/55 px-4 py-2.5">
+          <span className="text-[12px] text-neutral-500">{card.postureAsk}</span>
+          <CardButton label="Keep doing this" onClick={card.onKeepDoingThis} tone="secondary" />
+        </div>
+      )}
+
+      {/* THE COMMIT ROW — always the card's bottom edge. ONE door; the way out stays quiet; a deed
+          that has run keeps only its receipt. */}
+      {(!done || card.receipt) && (
+        <div className="flex items-center gap-2.5 border-t border-neutral-200/70 bg-neutral-50 px-4 py-2.5">
+          {!done && card.onCommit && (
+            <button type="button" onClick={card.onCommit} disabled={busy}
+              className="aug-focus rounded-lg bg-indigo-600 px-3.5 py-[7px] text-[12.5px] font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-default disabled:opacity-60">
+              {card.commitLabel ?? 'Do it'}
+            </button>
+          )}
+          {!done && card.onCancel && (
+            <CardButton label={card.cancelLabel ?? 'Not now'} onClick={busy ? undefined : card.onCancel} tone="quiet" />
+          )}
+          <span className="flex-grow" />
+          {card.receipt && <span className="text-[11px] font-medium text-indigo-600">{card.receipt}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * THE DOC GLYPHS — one shape per file family, in the house stroke style (16-box, 1.4 stroke, the
+ * icon-tile grammar every other card wears). No emoji, no vendor marks: the glyph says WHAT KIND
+ * OF FILE, never whose product made it.
+ */
+const DOC_GLYPHS: Record<DocCard['docType'], React.ReactNode> = {
+  // the page with a folded corner + the PDF's own double rule
+  pdf: (
+    <>
+      <path d="M9.4 1.8H4.4A1.4 1.4 0 0 0 3 3.2v9.6a1.4 1.4 0 0 0 1.4 1.4h7.2a1.4 1.4 0 0 0 1.4-1.4V5.4L9.4 1.8Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M9.4 1.8v3.6H13" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M5.4 9.4h5.2M5.4 11.4h3.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </>
+  ),
+  // the written page — full text lines
+  word: (
+    <>
+      <path d="M9.4 1.8H4.4A1.4 1.4 0 0 0 3 3.2v9.6a1.4 1.4 0 0 0 1.4 1.4h7.2a1.4 1.4 0 0 0 1.4-1.4V5.4L9.4 1.8Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M5.4 6.4h4M5.4 8.8h5.2M5.4 11.2h3.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </>
+  ),
+  // the projected frame on its stand
+  slides: (
+    <>
+      <rect x="2.4" y="2.8" width="11.2" height="7.6" rx="1.4" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M8 10.4v2.8M5.6 13.2h4.8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </>
+  ),
+  // the grid
+  sheet: (
+    <>
+      <rect x="2.4" y="2.8" width="11.2" height="10.4" rx="1.4" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M2.4 6.2h11.2M6.6 6.2v7M2.4 9.7h11.2" stroke="currentColor" strokeWidth="1.4" />
+    </>
+  ),
+  // the honest generic — a page, and no claim about its kind
+  doc: (
+    <>
+      <path d="M9.4 1.8H4.4A1.4 1.4 0 0 0 3 3.2v9.6a1.4 1.4 0 0 0 1.4 1.4h7.2a1.4 1.4 0 0 0 1.4-1.4V5.4L9.4 1.8Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M9.4 1.8v3.6H13" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    </>
+  ),
+};
+
+/**
+ * THE DOC CARD (docs/attention-plan.md, law D) — the handle, never the document.
+ *
+ *   the intro     the mind's composed line (host-authored, or absent)
+ *   the handle    glyph · title · the meta line, joined from the facts that are actually known
+ *   the doors     Review → (primary, the side panel) · a commit ONLY where a send-deed exists
+ *
+ * There is nothing else here by design: no first-page excerpt, no embedded body, no editor. The
+ * document is read in the player, and the conversation continues beside it.
+ */
+function DocCardView({ card }: { card: DocCard }) {
+  // THE META LINE IS JOINED, NEVER COMPOSED: every part is a stored fact, and an unknown fact is
+  // simply absent (pages are "when known" — a card that has rendered nothing says nothing).
+  const meta = [
+    card.typeLabel,
+    typeof card.pages === 'number' && card.pages > 0 ? `${card.pages} page${card.pages === 1 ? '' : 's'}` : null,
+    card.versionLabel || null,
+    card.owner ? `by ${card.owner}` : null,
+  ].filter(Boolean).join(' · ');
+
+  return (
+    <div className={cn(SHELL, MAX_W, 'flex flex-col overflow-hidden')}>
+      {card.intro && (
+        <div className="px-3.5 pt-3 text-[13px] leading-[1.5] text-neutral-700">{card.intro}</div>
+      )}
+      <div className="flex items-center gap-3 px-3.5 py-3">
+        <span className="flex h-[34px] w-[34px] flex-shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">{DOC_GLYPHS[card.docType]}</svg>
+        </span>
+        <span className="flex min-w-0 flex-grow flex-col gap-0.5">
+          <span className="truncate text-[13px] font-semibold text-neutral-900">{card.title}</span>
+          {meta && <span className="truncate text-[12px] text-neutral-500">{meta}</span>}
+        </span>
+        <OpenLink label={card.reviewLabel ?? 'Review →'} onClick={card.onReview} />
+      </div>
+
+      {card.error && <div className="border-t border-neutral-200/55 px-4 py-2 text-[12px] text-rose-600">{card.error}</div>}
+
+      {/* THE COMMIT ROW — present only where a send-deed for THIS document was handed in. */}
+      {(card.onSend || card.receipt) && (
+        <div className="flex items-center gap-2.5 border-t border-neutral-200/70 bg-neutral-50 px-4 py-2.5">
+          {card.onSend && (
+            <button type="button" onClick={card.onSend} disabled={card.sendDisabled}
+              className="aug-focus rounded-lg bg-indigo-600 px-3.5 py-[7px] text-[12.5px] font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-default disabled:opacity-60">
+              {card.sendLabel ?? 'Send it'}
+            </button>
+          )}
+          <span className="flex-grow" />
+          {card.receipt && <span className="text-[11px] font-medium text-indigo-600">{card.receipt}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── the card renders ────────────────────────────────────────────────────────────────────────────
 
 export function ThreadCardView({ card }: { card: ThreadCard }) {
@@ -730,6 +925,21 @@ export function ThreadCardView({ card }: { card: ThreadCard }) {
     // raw thread behind its door, refinements in the selector, one Send at the bottom edge.
     case 'email':
       return <EmailCardView card={card} />;
+
+    // 11 · THE BULK DEED — a ledger class's natural verb: what will happen, to how many, the undo
+    // note, ONE commit door. The preview it prints is a stored fact, not client state.
+    case 'bulk':
+      return <BulkCardView card={card} />;
+
+    // 12 · THE DOC — the review-first handle (attention-plan D): glyph · title · the known facts,
+    // and ONE deed. The document itself is never in the thread; Review raises the ONE panel.
+    case 'doc':
+      return <DocCardView card={card} />;
+
+    // 13 · THE ONE OBJECT CARD — the SOURCE half of the contract (THE OPENING CONTRACT, clause 1):
+    // what the ask, the decision or the brief is ABOUT, in one rendering on every surface.
+    case 'source':
+      return <SourceObjectCard card={card} />;
 
     // THE CARD SLOT — a host's own rich component, mounted whole.
     case 'custom':

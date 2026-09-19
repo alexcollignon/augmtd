@@ -36,6 +36,7 @@ import { proposeStandingTaskDefinition } from '@/lib/work/standing-spec';
 // contract + ONE execution body, shared with the coworker DM. It prepares and never sends — and
 // the executor that DOES send is in no chat slice at all.
 import { prepareCalendarInviteDefinition, executePrepareCalendarInvite, inviteCardLine } from '@/lib/tools/prepare-calendar-invite';
+import { prepareBulkDeedDefinition, executePrepareBulkDeed } from '@/lib/tools/prepare-bulk-deed';
 import { steerStandingTaskDefinition } from '@/lib/workflows/standing';
 import { downloadKbFile } from '@/lib/knowledge/file-bucket';
 import {
@@ -128,6 +129,7 @@ const TOOL_PROGRESS: Record<string, string> = {
   send_prepared_reply: 'Checking the prepared reply…',
   prepare_forward: 'Preparing the forward…',
   prepare_calendar_invite: 'Putting the invite together…',
+  prepare_bulk_deed: 'Working out exactly what that would do…',
   propose_standing_task: 'Drafting the standing task…',
   steer_standing_task: 'Adjusting how that task runs…',
 };
@@ -156,6 +158,11 @@ export type ConverseTurn = {
    *  INLINE by the same kit card every other producer lands. `id` is its stored payload's ref —
    *  the Send door reads THAT row, never these fields. Nothing is sent until the user clicks. */
   invite?: { id: string; invite: Record<string, unknown> } | null;
+  /** THE BULK DEED (attention-plan A7): a chat-born deed over a held-quiet class, rendered INLINE
+   *  by the kit's `bulk` card. `id` is the stored deed row's ref — the commit door reads THAT row
+   *  and nothing else, so the model can never widen what it previewed. Nothing acts until the
+   *  user clicks. */
+  bulkDeed?: { id: string; deed: Record<string, unknown> } | null;
   /** A verb whose review lives on a stage — the client summons it (forward/invite/reply). */
   openStage?: { stage: 'forward' | 'invite' | 'reply'; itemId: string } | null;
   /** THE SENSIBLE ASK (Aug 8): ONE consequential decision as tappable options — each tap SPEAKS
@@ -386,7 +393,9 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
     `create_task_item {"text":"Chase the signed NDA","due_date":"<that Friday>"}; "send it" / "send the reply" → ` +
     `send_prepared_reply {}; "forward this to Rita" → prepare_forward {"to":"Rita"}; "set up a meeting with Sam ` +
     `Thursday 11h" / "book a call with them next week" → prepare_calendar_invite {"request":"<their words>"} — ` +
-    `it prepares the card, it never sends). Ambiguous / multi-step → null.\n` +
+    `it prepares the card, it never sends); "archive all the notices" / "unsubscribe from the newsletters" → ` +
+    `prepare_bulk_deed {"verb":"archive","group":"notices"} — it prepares the card, it never acts). ` +
+    `Ambiguous / multi-step → null.\n` +
     `- "question" = the note primarily ASKS (status/info/advice). A correction/instruction is NOT a question.\n` +
     `- "facts" = durable constraints/preferences/numbers to remember; a one-off phrasing tweak is NOT one.\n` +
     `- "delegate" when a named coworker/assistant is explicitly asked — AND for PRODUCED work ` +
@@ -505,6 +514,23 @@ async function dispatchCommand(
     return {
       say: inviteCardLine(card.invite), refs: [],
       invite: { id: card.id, invite: card.invite as unknown as Record<string, unknown> },
+    };
+  }
+  // ── THE BULK DEED (attention-plan A7's parity clause): the spoken half of the ledger's verb
+  // buttons. It routes through the SAME `prepareBulkDeed`, so a said deed and a clicked deed are
+  // the same stored row. It PREVIEWS ONLY — `commitBulkDeed` is unreachable from this path.
+  if (tool === 'prepare_bulk_deed') {
+    const out = await executePrepareBulkDeed(client, userId, {
+      verb: String(args.verb ?? ''),
+      group: typeof args.group === 'string' ? args.group : null,
+      // The self-address is only the calendar fact's self-skip; this lane has no user row in hand,
+      // and its absence narrows nothing the deed acts on (the class derivation is the same).
+      selfEmail: null,
+    });
+    if (!out.ok) return { say: out.line, refs: [] };
+    return {
+      say: out.line, refs: [],
+      bulkDeed: { id: out.card.id, deed: out.card.deed as unknown as Record<string, unknown> },
     };
   }
   if (tool === 'prepare_forward') {
@@ -899,7 +925,7 @@ async function runCoworkerDelegation(
 }
 
 // ── The bounded AGENT LOOP (the 20%) — function-calling over the chief-of-staff toolset. ──
-const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, checkCalendarDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, prepareForwardDefinition, prepareCalendarInviteDefinition, readActionHistoryDefinition, proposeStandingTaskDefinition, steerStandingTaskDefinition, runComputeDefinition, assignToCoworkerDefinition, offerChoicesDefinition];
+const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, checkCalendarDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, prepareForwardDefinition, prepareCalendarInviteDefinition, prepareBulkDeedDefinition, readActionHistoryDefinition, proposeStandingTaskDefinition, steerStandingTaskDefinition, runComputeDefinition, assignToCoworkerDefinition, offerChoicesDefinition];
 
 async function agentLoop(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string, grounding: string,
@@ -954,6 +980,8 @@ async function agentLoop(
       `the user's own words explicitly say send; prepare_forward and prepare_calendar_invite only PREPARE — they ` +
       `hand the user a card to review, and the approve stays with them. When they ask to set up, schedule or book ` +
       `a meeting, call prepare_calendar_invite and keep your line to ONE sentence: the card carries the detail. ` +
+      `When they ask to clear, archive, unsubscribe from or bin a WHOLE GROUP you are holding quiet, call ` +
+      `prepare_bulk_deed — it only previews; the card states what would happen and their click is the commit. ` +
       `Ground every claim in the ` +
       `CONTEXT below; when it doesn't cover something, say so plainly. PLAIN PROSE, no markdown, 1-4 sentences.\n\n` +
       `THE TEAM (assign production work with assign_to_coworker): Clara — chief of staff: ops, admin, inbox, ` +
@@ -1035,7 +1063,7 @@ async function agentLoop(
       if (out?.files) files.push(...out.files);
       // A commit/stage/options/delegation signal ends the loop — the client (or the coworker)
       // owns the next step; the loop never talks past its own hand-off.
-      if (out?.commit || out?.openStage || out?.options || out?.delegated || out?.invite) return { ...out, applied: applied.length ? applied : out.applied };
+      if (out?.commit || out?.openStage || out?.options || out?.delegated || out?.invite || out?.bulkDeed) return { ...out, applied: applied.length ? applied : out.applied };
       messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(out ?? { error: 'tool unavailable in this context' }).slice(0, 1500) });
     }
   }

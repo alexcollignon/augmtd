@@ -422,7 +422,10 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     !src('components/one/one-sidebar.tsx').includes("href=\"/workers\"") &&
     !src('components/one/one-sidebar.tsx').includes("href=\"/work\"") &&
     !src('components/one/one-sidebar.tsx').includes("href=\"/drive\"") &&
-    src('components/settings/settings-left-panel.tsx').includes("id: 'knowledge', label: 'Knowledge'") &&
+    // Re-pointed Sep 17: THE DOCUMENTS LIBRARY (243f7fa) made /documents the knowledge door — a
+    // first-class sidebar address, not a Settings tab. The law ("the fold has a config door for
+    // knowledge") holds at the stronger seat; Team stays a Settings door.
+    src('components/one/one-sidebar.tsx').includes('href="/documents"') &&
     src('components/settings/settings-left-panel.tsx').includes("id: 'team', label: 'Team'"));
   check('D3: THE CONVERSATION FRAME — the sidebar is owned by conversations (New chat · Pinned · Recent · All conversations · Sources), consuming the MERGED list; the ladder laws hold at the endpoint (tracked pins · conversed-in only · pinned excluded)',
     !existsSync('components/home/conversations-strip.tsx') &&
@@ -474,7 +477,9 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     // shows for a live DM too (`dmActor`) — the law ("a live conversation is a PAGE") is wider, not
     // weaker. The reading column and the viewport fill now come from the ONE thread component
     // (components/thread — ThreadShell); home-ask owns the seat, not the bubbles.
-    src('components/home/home-ask.tsx').includes('const showThread = open && (hasThread || !!dmActor);') &&
+    // RE-POINTED (Sep 18, THE CHAT OPENS INSTANTLY): the chat lane joins the clause — a past
+    // conversation takes the page at CLICK time, exactly as a DM does. Same law, one lane wider.
+    src('components/home/home-ask.tsx').includes('const showThread = open && (hasThread || !!dmActor || !!chatRoom);') &&
     !src('components/home/home-ask.tsx').includes('onMouseLeave={() => setHovered(false)}') &&
     src('components/home/home-ask.tsx').includes('max-w-3xl mx-auto') &&
     src('components/home/home-ask.tsx').includes('max-h-[calc(100vh-200px)]') && // the column grew with the thread kit (Sep 13)
@@ -1617,7 +1622,9 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('components/home/item-detail.tsx').includes('decision: {') &&
     src('components/home/item-detail.tsx').includes('tradeoff: decisionBrief?.decision?.options.find') &&
     src('lib/converse/index.ts').includes('GROUNDING_TAG_RE') &&
-    src('lib/converse/index.ts').includes('turn.say = turn.say.replace(GROUNDING_TAG_RE') &&
+    // RE-POINTED (Sep 18): the chat-lane clock wave wrapped the one-exit strip in
+    // enforceWeekdayDatePairs — same site, same strip, one more floor on the way out.
+    src('lib/converse/index.ts').includes('turn.say = enforceWeekdayDatePairs(turn.say.replace(GROUNDING_TAG_RE') &&
     src('lib/converse/index.ts').includes('async function converseInner') &&
     src('lib/room/brief.ts').includes('THE SAY IS EXECUTABLE') &&
     src('lib/room/turns.ts').includes('FORWARD-MOTION LAW #5') &&
@@ -1797,8 +1804,13 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     // middle"): the "earlier (N)" fold sits at the TOP of the room and expands as a muted
     // transcript ABOVE the opening (chronology reads down into the present); the mid-stream
     // fold button is dead; live components never fold, so history is pure record.
-    src('components/home/item-rail.tsx').includes('THE HISTORY DRAWER') &&
-    src('components/home/item-rail.tsx').includes('historyTurns.length > 0') &&
+    // Re-pointed Sep 17: the threads arc (88c8a7e, owner walk "the 'earlier' thing looks odd")
+    // moved the folded past's SEAT from a mid-stream "earlier (N)" handle to the Details drawer
+    // (RoomHistorySection via onHistory) — the fold RULES that decide what is history are
+    // unchanged (asserted below); only the address moved. Past above present became past in the
+    // drawer; the mid-stream handle is dead.
+    src('components/home/item-rail.tsx').includes('THE STREAM SHOWS THE PRESENT') &&
+    src('components/home/item-rail.tsx').includes('onHistory') &&
     src('components/home/item-rail.tsx').includes('const visibleTail = fresh.slice(-3)') &&
     !src('components/home/item-rail.tsx').includes('earlier ({earlier})') &&
     // (7) THE NARRATION FOLLOWS ITS ARTIFACT — UNGATED (the ghost's true root: the draft died
@@ -1838,6 +1850,56 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     // EXPERT (label + instructions + starters on both runtimes; key unchanged; existing rows
     // via the insert-only-seed sweep). The gate follows the CURRENT label.
     src('lib/workers/roles.ts').includes("'LinkedIn Expert'"));
+
+  check('SP1: THE DONE SIDE CAN NEVER EVICT THE LIVE SIDE (Sep 18, found live on the owner\'s account). The spine\'s inbox read was ONE `.or(pending-actionable, recently-resolved)` query with a single `.limit(800)` and NO `.order()` — the two sides competed for one unordered page. The morning the graduation lane filed ~1,570 old items (each stamped `resolved_at = now`, all inside the 7-day done window), ~2,000 rows matched, the page took 800 in whatever order Postgres returned, and a LIVE `pending`/`work_prepared` row carrying a real draft fell off the spine entirely: the project board lost its row, the in-thread prepared-reply card vanished, and the room\'s MOVE fell through to a legacy stage. A corpse evicted a living obligation because nothing said which one mattered. Now: FOUR lanes (inbox live · inbox resolved · commitments open · commitments resolved), each its OWN query with its OWN ordered page and its OWN cap, merged by id — nothing the history window does can cost a pending row its seat. The unordered OR-of-live-and-done is gone from the file',
+    src('lib/work-items/model.ts').includes('THE DONE SIDE CAN NEVER EVICT THE LIVE SIDE') &&
+    // the live lane: its own query, ordered newest-activity first, its own cap
+    src('lib/work-items/model.ts').includes("eq('status', 'pending')") &&
+    src('lib/work-items/model.ts').includes("order('last_activity_at', { ascending: false, nullsFirst: false })") &&
+    src('lib/work-items/model.ts').includes('PENDING_CAP') &&
+    // the done lane: its own query, ordered by recency of RESOLUTION, its own cap
+    src('lib/work-items/model.ts').includes("in('status', ['completed', 'dismissed'])") &&
+    src('lib/work-items/model.ts').includes("order('source_data->>resolved_at', { ascending: false })") &&
+    src('lib/work-items/model.ts').includes('RESOLVED_CAP') &&
+    // commitments split the same way — live work wins its own page there too
+    src('lib/work-items/model.ts').includes('COMMIT_OPEN_CAP') &&
+    src('lib/work-items/model.ts').includes('COMMIT_DONE_CAP') &&
+    src('lib/work-items/model.ts').includes("order('resolved_at', { ascending: false })") &&
+    // THE OLD SHAPE IS GONE: no OR mixing a live status with the resolved window, and no bare 800
+    !/\.or\(`and\(status\.eq\.pending[\s\S]*?status\.in\.\(completed,dismissed\)/.test(src('lib/work-items/model.ts')) &&
+    !src('lib/work-items/model.ts').includes('.limit(800)') &&
+    // every lane is merged defensively by id (a row that flips status mid-flight never doubles)
+    src('lib/work-items/model.ts').includes('mergeById'));
+
+  check('SP2: NO SILENT CAPS ON THE SPINE (the deck-pool law, Sep 18 — "limit 250 + a loud saturation warning"; a quiet thread is not a settled one). A cap that bites must SAY SO: `warnIfSaturated` console.warns the lane, the row count, the cap and the user whenever a side comes back full, so the next eviction of live work is visible in a log instead of discovered by an owner walking a broken room. All four lanes are checked, and the check is skipped on a SCOPED read (where the cap is the chunk size by construction, not a budget)',
+    src('lib/work-items/model.ts').includes('function warnIfSaturated') &&
+    src('lib/work-items/model.ts').includes('CAP SATURATED') &&
+    src('lib/work-items/model.ts').includes('console.warn') &&
+    src('lib/work-items/model.ts').includes("warnIfSaturated('inbox/pending'") &&
+    src('lib/work-items/model.ts').includes("warnIfSaturated('inbox/resolved'") &&
+    src('lib/work-items/model.ts').includes("warnIfSaturated('commitments/open'") &&
+    src('lib/work-items/model.ts').includes("warnIfSaturated('commitments/resolved'"));
+
+  check('SP3: A GRADUATED CORPSE IS NOT THIS WEEK\'S ACTIVITY (Sep 18). The graduation lane files ancient quiet items through the ordinary undoable dismiss door, so every one of them carries TODAY\'s `resolved_at` while being, in truth, a months-old row nobody touched — 1,568 of 1,683 rows in the owner\'s 7-day done window on the morning this was found. Machine backfill is not a human deed: the spine\'s resolved lane excludes `source_data.resolution_reason = \'graduated\'` at the QUERY (so the cap is spent on real deeds, never on corpses). The filter carries `is.null` beside `neq` because SQL\'s `!=` drops NULLs — a resolved row with no stated reason is a human deed and must survive. The reason string is the graduation lane\'s own exported constant, so the two can never drift',
+    src('lib/work-items/model.ts').includes("source_data->>resolution_reason.is.null,source_data->>resolution_reason.neq.graduated") &&
+    src('lib/work-items/model.ts').includes('THE GRADUATED CORPSE IS NOT THIS WEEK') &&
+    src('lib/work/graduation.ts').includes("GRADUATION_REASON = 'graduated'"));
+
+  check('SP4: THE SCOPED SPINE (Sep 18 — measured: the project room paid a ~850-item / ~2.4s WHOLE-ACCOUNT ledger build to paint one board it then filtered down to a few dozen rows). `buildWorkItems` takes an optional `onlyItemIds`; the entity detail route already holds its member links from stage 1 and now HANDS THEM TO THE FETCH instead of using them only as a post-filter. Still ONE shared derivation — same function, same shape, so board/Gantt/Timeline cannot drift. The scoped read chunks its `.in()` (the PostgREST cap class) and skips the coworker-deliverable pool outright, which keys on threads and can never contribute a member. Unscoped callers are byte-unchanged',
+    src('lib/work-items/model.ts').includes('onlyItemIds') &&
+    src('lib/work-items/model.ts').includes('ID_CHUNK') &&
+    src('app/api/entities/[id]/detail/route.ts').includes('onlyItemIds: [...memberIds]'));
+
+  check('SP5: THE DEDUPE BASIS IS ALWAYS THE WHOLE ACCOUNT (Sep 18 — the parity trap inside SP4, caught by diffing the scoped board against the unscoped one on a live room). The cross-type fold (P2: an open commitment whose obligation ALREADY stands as a pending inbox row folds behind that row) is a property of the LEDGER, not of the slice being painted — and a commitment\'s duplicate inbox row is frequently NOT a member of the room being scoped. Scoping the basis therefore un-folds commitments the Timeline folds, and the room grows a row the Timeline does not have (measured: exactly one, on the reference project). So the scoped path pays ONE extra read to ask the same question — and it is a SLIM read, pulling only the columns the visibility predicate and the fold keys touch, with the three source_data values as jsonb ALIASES instead of dragging every email body through (317 rows in ~325ms live). It rides the main flight, never a sequential round-trip, and not one of its rows becomes a WorkItem. Proven live: scoped board == unscoped board, 0 row diffs, 0 field mismatches',
+    src('lib/work-items/model.ts').includes('THE DEDUPE BASIS IS ALWAYS THE WHOLE ACCOUNT') &&
+    src('lib/work-items/model.ts').includes('dedupeBasis') &&
+    src('lib/work-items/model.ts').includes('subject:source_data->>subject') &&
+    src('lib/work-items/model.ts').includes('from_address:source_data->>from_address') &&
+    // it flies with the lanes — the basis read sits INSIDE the one Promise.all, never awaited alone
+    !/=\s*await supabase\.from\('inbox_items'\)[\s\S]{0,200}source_data->>subject/.test(src('lib/work-items/model.ts')) &&
+    src('lib/work-items/model.ts').includes('{ data: basisRows }') &&
+    // the fold still asks the ONE shared predicate, never a local re-derivation
+    src('lib/work-items/model.ts').includes('visibleObligationsFromItems(dedupeBasis)'));
 
   // ── Report ──
   let pass = 0;

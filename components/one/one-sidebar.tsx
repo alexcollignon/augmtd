@@ -201,8 +201,24 @@ export default function OneSidebar({
   // listens; only this nav item is gone.
   // Opening a past chat: set the key, open the panel (same-page via the event; cross-page via
   // the intent flag — a click must never load turns into a CLOSED card).
+  // THE CLICK ANSWERS AT ONCE: the row it opened wears the active seat immediately (the panel's
+  // own pane paints on the same click — see home-ask's chat lane). It clears whenever the chat
+  // lane does: Home hands the dashboard back, and a new chat leaves no past conversation open.
+  const [openConvKey, setOpenConvKey] = useState<string | null>(null);
+  useEffect(() => {
+    const clear = () => setOpenConvKey(null);
+    window.addEventListener('augmtd:home-reset', clear);
+    window.addEventListener('aug:new-chat', clear);
+    window.addEventListener('aug:dm-worker', clear);
+    return () => {
+      window.removeEventListener('augmtd:home-reset', clear);
+      window.removeEventListener('aug:new-chat', clear);
+      window.removeEventListener('aug:dm-worker', clear);
+    };
+  }, []);
   const openChat = (key: string) => {
     try { localStorage.setItem('aug-home-chat-key', key); sessionStorage.setItem('aug-open-chat-intent', '1'); } catch { /* no LS */ }
+    setOpenConvKey(key);
     window.dispatchEvent(new CustomEvent('aug:open-chat', { detail: { key } }));
     if (pathname !== '/home') router.push('/home');
   };
@@ -453,7 +469,7 @@ export default function OneSidebar({
                   )}
                 </>
               );
-              const rowCls = `${item(false)} group/conv w-full text-left !flex-col !items-stretch !gap-0 cursor-pointer`;
+              const rowCls = `${item(onHome && openConvKey === c.key)} group/conv w-full text-left !flex-col !items-stretch !gap-0 cursor-pointer`;
               return manageable ? (
                 <div key={c.key} role="button" tabIndex={0} onClick={() => { if (convRenaming !== c.key) openChat(c.key); }} className={rowCls}>{inner}</div>
               ) : (

@@ -16,7 +16,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { coerceUnderstanding, type ItemUnderstanding } from '@/lib/inbox/item-understanding';
+import { isBystanderSeat } from '@/lib/inbox/recipient-role';
 import { isNoMoveNotice, isAutomatedSenderStrong, rawMailKindOf } from '@/lib/inbox/notice-demotion';
+import { isOwnCoworkerSender, ownCoworkerLocals, SELF_ECHO_REASON } from '@/lib/inbox/self-echo';
 import { computeThreadReplyState, type ThreadMessage } from '@/lib/inbox/thread-resolution';
 import { getPrepared, type PreparedArtifact } from '@/lib/prepare/read';
 import { loadRoster, type RosterEntry } from '@/lib/prepare/route-suggestion';
@@ -25,6 +27,7 @@ import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 import { anchorPassedFact } from '@/lib/work/judgment-nominator';
 import { readOutcomeFacts, outcomeHistoryFact, outcomeSigPart, type CounterpartyClass } from '@/lib/prepare/outcome-facts';
 import { readSiblingNomination, siblingSettledFact } from '@/lib/inbox/conversation-identity';
+import { readProofOfLifeAsk, proofOfLifeFact, proofOfLifeSigPart } from '@/lib/work/proof-of-life';
 
 // Word-boundary label clip (UI text, no excerpt marker — labels aren't prompts).
 function clipLabel(text: string, max: number): string {
@@ -53,8 +56,15 @@ export type WorkVerdict = {
    *  comes LATER (a stated get-back date, "after the board meeting on X"). work='none' + revisit
    *  parks it: the deck demotes it (a plain none), the cache serves it WITHOUT AI until the date,
    *  and on/after the date the daily re-judgment is forced fresh so it comes back live. Judged,
-   *  never a snooze timer; only with a concrete basis in the item. */
-  revisit?: { after: string; reason?: string } | null;
+   *  never a snooze timer; only with a concrete basis in the item.
+   *
+   *  `by` NAMES THE AUTHOR OF THE PARK (Q9 · THE TRIAGE DECK). The deck's ← LATER is the SAME
+   *  record, driven by a person instead of the judge — there is no second snooze store anywhere,
+   *  because a second store is a second truth about when a thing comes back. Absent = the judge's
+   *  own (every park written before Q9). The one behavioural difference lives at the parked serve:
+   *  A USER'S WORD OUTRANKS THE JUDGE, so a park the PERSON set holds until its date whatever else
+   *  moved on the item, while the judge's own park still yields the moment the item's facts change. */
+  revisit?: { after: string; reason?: string; by?: 'judge' | 'user' } | null;
   /** THE DELIVERABLE INVENTORY (the "what does it take" half of the judgment): the concrete
    *  attachable artifacts this work must INCLUDE, in the item's own words ("could you share the
    *  org report, individual report and ALP sheet" → 3 entries). ONLY what the item explicitly
@@ -204,6 +214,65 @@ async function writeCache(client: SupabaseClient, userId: string, input: JudgeIn
   }, { onConflict: 'user_id,kind,entity_id' }).then(() => {}, () => {});
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// Q9 · ← LATER — THE PERSON'S OWN PARK (docs/attention-plan.md PART III, THE TRIAGE DECK).
+//
+// "← LATER — one-keystroke when (tomorrow / next week / date) → THE REVISIT PARK → returns ON that
+// date as a deck candidate."
+//
+// THE REVISIT PARK, not a snooze store beside it. There is exactly ONE mechanism in this house for
+// "come back on a date", and it is the judgment's own `revisit` — the deck demotes on it, the cache
+// serves it without AI until the date, `applyVerdictConsequences` narrates it into the item's room
+// and stamps `work_parked` on the activity ledger, and the date's arrival forces a fresh judgment.
+// A parallel table would be a second answer to "when does this come back", and the first time the
+// two disagreed the item would either vanish or nag.
+//
+// So the deck writes THE SAME RECORD the judge writes, in the same place, in the same shape — with
+// `by: 'user'` on it, which is the only thing that differs and the only thing that needs to: the
+// judge's park is an inference (it yields when the item's facts move), the person's is an
+// instruction (it holds). The caller then runs the verdict through the ONE consequence module, so a
+// hand-parked item gets the identical room line and the identical undoable ledger entry a judged
+// park has always got.
+//
+// THE SIG IS THE ITEM'S OWN, WHERE THERE IS ONE. Re-stamping today's park under the judgment row's
+// existing signature means a same-day re-read serves it as a cache hit rather than re-judging; a
+// never-judged item gets a marker sig, which the `by: 'user'` clause above makes harmless.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** The reason stored on a hand-parked verdict. Deterministic — the person gave a date, not prose. */
+export const USER_PARK_REASON = 'you asked to see this later';
+
+export type ParkResult =
+  | { ok: true; verdict: WorkVerdict; after: string }
+  | { ok: false; reason: string };
+
+export async function parkItem(
+  client: SupabaseClient, userId: string, input: JudgeInput, args: { after: string },
+): Promise<ParkResult> {
+  const after = String(args.after ?? '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(after)) return { ok: false, reason: 'that is not a date I can hold it to' };
+  // THE USER'S CLOCK decides what "later" means — their day boundary, never the server's.
+  const todayStr = localNow(await userTimezone(client, userId)).dateStr;
+  if (after <= todayStr) return { ok: false, reason: 'later has to be a day that has not happened yet' };
+  // LATER ALWAYS RECORDS A DATE, and never further out than the park is meant to reach: a year is
+  // a decision to never see something again, which is what ↓ is for.
+  const horizon = new Date(`${todayStr}T00:00:00Z`);
+  horizon.setUTCFullYear(horizon.getUTCFullYear() + 1);
+  if (after > horizon.toISOString().slice(0, 10)) return { ok: false, reason: 'that is further out than I can honestly hold it' };
+
+  const { data } = await client.from('item_plans').select('tasks')
+    .eq('user_id', userId).eq('kind', 'judgment').eq('entity_id', `${input.kind}:${input.id}`).maybeSingle();
+  const priorSig = String(((data?.tasks ?? null) as { sig?: string } | null)?.sig ?? '');
+  const sig = priorSig.split(':')[0] === String(JUDGE_VERSION) ? priorSig : `${JUDGE_VERSION}:${todayStr}:user-park`;
+
+  const verdict: WorkVerdict = {
+    ...fallbackVerdict(USER_PARK_REASON),
+    revisit: { after, by: 'user' },
+  };
+  await writeCache(client, userId, input, sig, verdict);
+  return { ok: true, verdict, after };
+}
+
 export async function judgeWork(client: SupabaseClient, userId: string, input: JudgeInput): Promise<WorkVerdict> {
   try {
     // ── Load the item + its brain neighborhood. ──
@@ -216,6 +285,11 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     // but with the DIRECTION stated — a document the counterparty sent us can never be judged as
     // something we owe them back. Facts ride the day-keyed sig, so no JUDGE_VERSION bump is needed.
     let attachFacts = '';
+    // THE SEAT LAW (threads-plan · THE OPENING CONTRACT clause 4): WHO WAS ADDRESSED is a fact, and
+    // the judge has been framing third-party requests as the user's debt without it. Code states the
+    // seat (stamped at sync since July 8); the judge applies the rule with the body in view — the
+    // naming exception is a reading of the text, not an arithmetic.
+    let seatBlock = '';
     if (input.kind === 'inbox') {
       const { data: it } = await client.from('inbox_items')
         .select('id, work_title, work_state, status, last_activity_at, created_at, source_data')
@@ -237,6 +311,10 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         const { readItemAttachments, attachmentFactBlock } = await import('@/lib/inbox/attachment-context');
         attachFacts = attachmentFactBlock(await readItemAttachments(client, userId, sd, String(it.id)), who);
       } catch { /* the attachment fact is an enhancement */ }
+      if (isBystanderSeat({ isCcOnly: sd.is_cc_only as boolean | null | undefined })) {
+        const toList = (Array.isArray(sd.to) ? (sd.to as string[]) : []).filter(Boolean).slice(0, 3).join(', ');
+        seatBlock = `THE USER'S SEAT ON THIS EMAIL: CC ONLY — it is addressed To: ${toList || 'someone else'}, not to the user.\n`;
+      }
       activityAt = String(it.last_activity_at || it.created_at || '');
       const tid = (sd.thread_id as string) || null;
       if (tid) {
@@ -320,17 +398,28 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     // history that shifted re-judges today instead of waiting for tomorrow — and when nothing is
     // speakable the sig is byte-identical to the pre-LAW-7 sig, which is why this is a FACTS
     // addition and needs no JUDGE_VERSION bump (the attachment/anchor/sibling-fact precedent).
+    // Q7 · PROOF OF LIFE: when the sweep's lane has ASKED whether this long-silent item is still
+    // live, its stamp rides the sig (so today's cached verdict cannot swallow the question) and its
+    // fact rides the prompt. A fact, never a disposition — the judge decides, under its own time law.
+    const proofAsk = await readProofOfLifeAsk(client, userId, `${input.kind}:${input.id}`);
     const outcomeFacts = await readOutcomeFacts(client, userId, todayStr).catch(() => null);
     const outcomeKlass: CounterpartyClass = input.kind !== 'inbox' ? 'unknown'
       : (isAutomatedSenderStrong(whoEmail, who, title) ? 'automated' : 'human');
-    const sig = `${JUDGE_VERSION}:${todayStr}:${activityAt}:${pool.length}:${pool[0]?.at ?? ''}${eventPassed ? ':past' : ''}${siblingNom ? `:sib${siblingNom.at}` : ''}${outcomeSigPart(outcomeFacts)}`;
+    const sig = `${JUDGE_VERSION}:${todayStr}:${activityAt}:${pool.length}:${pool[0]?.at ?? ''}${eventPassed ? ':past' : ''}${siblingNom ? `:sib${siblingNom.at}` : ''}${proofOfLifeSigPart(proofAsk)}${outcomeSigPart(outcomeFacts)}`;
     const { hit: cached, prior, priorSig } = await readCache(client, userId, input, sig);
     if (cached) return cached;
     // W4 PARKED SERVE — a revisit verdict holds WITHOUT AI until its date: same item facts (only
     // the day moved) + the revisit date still ahead → re-serve the parked verdict under today's
     // sig. Parking an item costs one judgment, not one per day.
+    //
+    // Q9 · A USER'S WORD OUTRANKS THE JUDGE. When the PERSON set the date (the triage deck's ←
+    // LATER), the park holds until that date REGARDLESS of the non-day sig — they said "not this
+    // week", and a fresh pool artifact or a re-run pass is not a reason to put it back in front of
+    // them. The judge's OWN park keeps its original contract (it is an inference from the item's
+    // words, so it yields the moment those facts move). On/after the date BOTH fall through and are
+    // judged fresh, exactly as they always were: the park expires, it never self-renews.
     if (prior?.revisit?.after && prior.revisit.after > todayStr
-      && priorSig && nonDaySig(priorSig) === nonDaySig(sig)) {
+      && (prior.revisit.by === 'user' || (priorSig && nonDaySig(priorSig) === nonDaySig(sig)))) {
       await writeCache(client, userId, input, sig, prior);
       return prior;
     }
@@ -343,6 +432,21 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         await writeCache(client, userId, input, sig, v);
         return v;
       }
+    }
+    // THE SELF-RECOGNITION FLOOR (Q1, attention-plan PART III) — BEFORE the notice law, because it
+    // is the stronger statement: our own coworker's mail is not merely a notice nobody owes a move
+    // on, it is a POINTER to work that already stands on its own surface. Judged `none` with no
+    // disposition: the pointer is not "expired" and it is not "answered" — nothing about it is
+    // settled, it simply was never a counterparty ask. (Audit, Sep 17: the reference deck's top
+    // rows were our own reminder mail; ONE shortlist ask stood FOUR times.) Deterministic, zero AI,
+    // registry-derived — the same predicate the demotion and the extractor consult.
+    // (The cheap registry read decides first, so the roster narrowing — one query — is paid only on
+    // the mail that is actually ours, never on every judgment.)
+    if (input.kind === 'inbox' && isOwnCoworkerSender(whoEmail)
+      && isOwnCoworkerSender(whoEmail, await ownCoworkerLocals(client, userId))) {
+      const v = fallbackVerdict(SELF_ECHO_REASON);
+      await writeCache(client, userId, input, sig, v);
+      return v;
     }
     if (input.kind === 'inbox' && isNoMoveNotice({ u, rawKind, fromEmail: whoEmail, fromName: who, subject: title, workState })) {
       const v = fallbackVerdict('an automated notice nobody owes a move on');
@@ -430,8 +534,13 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         // invoice is still owed). Rides the day-keyed sig, so no JUDGE_VERSION bump is needed.
         anchorPassedFact(dueDate, todayStr) +
         siblingSettledFact(siblingNom) +
+        // Q7 — the silence, stated in code. Empty string when the lane has not asked.
+        proofOfLifeFact(proofAsk) +
         // LAW 7 — the user's own verdicts on our preparations. A fact; the judge decides.
         outcomeHistoryFact(outcomeFacts, { klass: outcomeKlass }) +
+        // THE SEAT LAW — stated before the deal/person colour, because it decides whether any of
+        // this is the user's work at all.
+        seatBlock +
         dealBlock + personBlock + poolBlock + calBlock + attachFacts +
         (u ? `UNDERSTANDING: relevance=${u.relevance} ownership=${u.ownership ?? '?'} kind=${u.mailKind ?? '?'}${u.ask ? ` ask="${u.ask}"` : ''}${u.deadline ? ` deadline=${u.deadline}` : ''}\n` : '') +
         `THE ITEM${who ? ` (from ${who})` : ''}: ${title.slice(0, 140)}\n${body ? `${body}\n` : ''}` +
@@ -446,6 +555,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         `- "forward" ONLY when the item explicitly asks the user to PASS this thread/document on to a NAMED third party ("please forward this to…", "can you share this with finance/legal/<person>") — the passing-on IS the work. A reply that merely mentions someone else is still "reply".\n` +
         `- "schedule" when the real move is putting a meeting/call on the calendar (a proposed time to confirm, an ask to set up a call). A negotiation about WHICH time is still "reply"; "schedule" is for when the invite itself is the deliverable.\n` +
         `- COHERENCE: your work must MATCH your reason. If your reason says something is still owed, live, or "requires a response", work CANNOT be "none" — name the work that does it (a proposed call/times → "schedule" or "reply"; a stated either-way choice → "decide" with its options; an open question → "reply"). "none" is only for items where your reason says nothing is owed by anyone.\n` +
+        `- THE SEAT LAW: when the seat fact above says the user is CC ONLY, the request is addressed to SOMEONE ELSE and is THAT person's to do — it is not the user's debt. Do not judge it "reply"/"chase"/"send_file"/"produce", never frame it as something the user owes or is owed, and never list a "requires" for it: work="none" (the user is watching, not owing), UNLESS the body names the user directly and asks THEM for something (a second ask aimed at the CC'd reader), or the item's own words hand the user a distinct move. Being copied on someone else's ask is awareness.\n` +
         `- A commitment with direction "awaiting" means the COUNTERPARTY owes the user — the natural work is "chase" (nudge what you're owed) unless it's moot or the item clearly says otherwise.\n` +
         `- ALREADY BOOKED: when the item's work is scheduling/confirming a meeting and the calendar above ALREADY shows that meeting booked with this sender (same encounter — the time fits what the thread converged on), the scheduling work is DONE: work="none" with resolution="answered" (the calendar is the settled fact; a second invite would double-book). This rule applies ONLY when a calendar block appears above — never from the thread alone. A calendar entry does NOT settle a reply the sender still awaits — only the scheduling half. And a WAIT-UNTIL item ("reconnect after X", "circle back once Y lands", "not before <date>") is NEVER "answered" — nothing is settled, the moment is simply later: that is work="none" WITH "revisit" carrying the stated date.\n` +
         `- TIME: if the thing this asks about has ALREADY HAPPENED or its window has passed such that acting now is pointless (a meeting that took place, access for a past event, a "tomorrow" that has gone), work="none" with resolution="expired". Resolve RELATIVE deadlines ("by Thursday", "tomorrow", "end of week") FORWARD from the item's OWN date (its last-activity date above): "by Thursday" in a message from Monday July 27 means Thursday July 30 — a FUTURE date, still live. resolution="expired" requires CERTAINTY that the window truly passed: it needs a SPECIFIC time/date STATED IN THE ITEM whose passing you can point to — name it as "expired_on" (the stated date, resolved to an absolute YYYY-MM-DD, in the past) and, when the window passed EARLIER TODAY (a meeting/call/slot whose stated clock time is already behind the user's RIGHT NOW above), ALSO name "expired_time" (that stated time as HH:MM 24h — e.g. a 12:30 meeting when it is now 20:34: expired_on=today, expired_time="12:30"). An UNDATED request can NEVER be expired (there is no window to have passed; an open ask with no deadline is simply live work) — no expired_on, no expiry. A deadline that is TODAY or LATER is never expired, and when you are not sure of the dates, judge the work normally (wrongly resolving live work costs trust; judging it costs nothing). resolution="answered" is ONLY for items that ARE closures: the message itself announces settlement (a confirmation, "all set", a done-deal notice) and asks nothing of anyone anymore. If the item still ASKS the user for anything not yet given — a reply, a time, a decision, a document — it is NOT answered, it IS the live work ("not yet confirmed/settled" describes work to do, never a reason to file it). And "answered" never means the user merely HAS what's needed to act: an unfulfilled request ("please forward this", "please send X") still owes the doing. NOT every passed date is expired — an unpaid invoice or an unanswered substantive ask still needs the work; when acting late still has value, judge the work normally.\n` +

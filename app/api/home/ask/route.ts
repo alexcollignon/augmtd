@@ -45,6 +45,10 @@ export async function POST(request: NextRequest) {
           // state, so it rides the turn as a component and survives the reload that used to eat
           // it. The payload here is for RENDERING; the send door reads the stored row by id.
           ...(turn.invite ? { component: { key: 'invite_card', refId: turn.invite.id, state: { invite: turn.invite.invite } } } : {}),
+          // …and a BULK DEED rides as a POINTER only (attention-plan A7): the deed row carries its
+          // own committed state, so a reloaded card reads the truth rather than a frozen preview
+          // that could offer a commit door on a deed that already ran.
+          ...(!turn.invite && turn.bulkDeed ? { component: { key: 'bulk_deed_card', refId: turn.bulkDeed.id } } : {}),
         });
       } catch { /* durability is best-effort — the answer itself still returns */ }
     };
@@ -119,6 +123,8 @@ export async function POST(request: NextRequest) {
       ...(turn.workflowDraft ? { workflowDraft: turn.workflowDraft } : {}),
       // THE INVITE CARD: the prepared invite rides the answer and mounts inline (nothing sent).
       ...(turn.invite ? { invite: turn.invite } : {}),
+      // THE BULK DEED CARD: the previewed deed rides the answer and mounts inline (nothing acted).
+      ...(turn.bulkDeed ? { bulkDeed: turn.bulkDeed } : {}),
       // The filing nudge never decorates a failed/empty answer (found live: a wrong "File it"
       // chip beside a dead reply compounds the miss).
       ...(focus && turn.say?.trim() ? { focus } : {}),

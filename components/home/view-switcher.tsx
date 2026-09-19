@@ -10,7 +10,10 @@ import { Squares2X2Icon, CalendarDaysIcon, BoltIcon, QueueListIcon } from '@hero
 // 'conversations' is sidebar-reached (never a pill). 'runs' = the Workflows lens's activity
 // side — a CONTEXTUAL island pill that appears while you're in Workflows (owner, Aug 9:
 // "leverage the island buttons instead of tabs").
-export type HomeView = 'dashboard' | 'timeline' | 'projects' | 'conversations' | 'workflows' | 'runs';
+// 'held' is THE HELD-QUIET LEDGER (docs/attention-plan.md A3) — reached ONLY from the calm Home's
+// one door and it owns the whole column while open. It is deliberately absent from CONTEXTS below:
+// a lens with no sibling shows no island, and the ledger's own back line is its way out.
+export type HomeView = 'dashboard' | 'timeline' | 'projects' | 'conversations' | 'workflows' | 'runs' | 'held';
 
 // THE ISLAND IS LOCAL (owner, Aug 9 — "the island should be a navigation of the page it's in";
 // the Spinnable rule): the SIDEBAR moves you between places; the island shows VIEWS OF HERE.

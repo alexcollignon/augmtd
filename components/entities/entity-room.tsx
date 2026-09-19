@@ -1114,6 +1114,10 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
         <ItemRail kind="entity" id={entityId} view={rail}
           // HISTORY LEAVES THE STREAM (Sep 14) — the rail reports the record, the drawer files it.
           onHistory={setHistoryLines}
+          // THE OPENING CONTRACT (clause 2): the room's ask/decision shows WHAT IT IS ABOUT. The
+          // focused mail is the object when there is one; with nothing focused the rail falls back
+          // to its own mail MOVE's target. No new payload — both facts are already on this page.
+          sourceItemId={focused?.kind === 'email' ? focused.id : null}
           // THE DECISION, HOSTED WHERE IT BELONGS: the focused item reported it (the placement
           // table — conversation pane, every door). Same contract as the deep-dive's own rail: the
           // choice travels WITH its option/tradeoff/why (THE FORWARD-MOTION LAW), lands as a user

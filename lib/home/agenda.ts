@@ -14,7 +14,12 @@
 export type DoSource = 'reply' | 'notice' | 'commitment' | 'deal';
 export type DoItem = {
   source: DoSource; key: string; entityId: string; href: string;
-  primary?: string | null;   // sender / null (a commitment carries its who in `second`)
+  primary?: string | null;   // sender / null (a commitment carries its who in `counterparty`)
+  /** THE ROW LEADS WITH WHO (owner walk, Sep 18: a mail row reads "M — Review and respond…" while a
+   *  commitment read as a bare verb). The REAL counterparty of a row whose lane has no sender — a
+   *  person or an organisation, SERVED, never a client guess. A source-derived label ("from <the
+   *  meeting>") is NOT a counterparty and never lands here: no who is better than an invented one. */
+  counterparty?: string | null;
   ask: string;               // the actionable line (synthesized ask / summary / description)
   second?: string | null;    // subject / "You owe X · ↳ initiative" / "Action needed"
   when?: string | null; effort?: 'quick' | 'medium' | 'deep' | null; dueDate?: string | null;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
@@ -12,7 +12,7 @@ import { useLiveRefresh } from '@/hooks/use-live-refresh';
 import { MOMENTUM as MOMENTUM_TOKENS } from '@/lib/work-items/states';
 import { WorkRow as DoRow, useExit, useCommitmentAct, useRowActions, ctaFor, RowControls, RowHoverRail, EffortDate, InitiativeTag, prefetchItem, fmtDue, exitCls, DO_META } from '@/components/work/work-row';
 // THE CALM HOME (docs/threads-plan.md) — the pick, the words, the receipts, all pure.
-import { pickWhispers, toWhisper, sortDoorRows, CALM_MAX_WHISPERS, type Whisper } from '@/lib/home/calm';
+import { pickWhispers, toWhisper, sortDoorRows, servedWho, CALM_MAX_WHISPERS, type Whisper } from '@/lib/home/calm';
 import { createClient } from '@/lib/supabase/client';
 import {
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon, ClockIcon, UsersIcon, FolderIcon,
@@ -27,11 +27,17 @@ import { ExpandableRows } from '@/components/home/expandable-rows';
 import { type Briefing as ReasonedBriefing } from '@/components/briefing/briefing-view';
 import HomeAsk from '@/components/home/home-ask';
 import { WelcomeWizard } from '@/components/home/welcome-wizard';
-import { AliveMark } from '@/components/home/alive-mark';
+// THE ENTRANCE (owner walk, Sep 18) — the ONE orb, moved into its seat by a measured FLIP while the
+// page rises in beneath it. The skeleton it replaced is gone: there is one layout, veiled then shown.
+import { OrbSeat, useOrbEntrance, type OrbEntrance } from '@/components/home/orb-entrance';
 import { TeamReadyCard } from '@/components/home/team-ready-card';
 import { AllConversations } from '@/components/one/all-conversations';
 import { OneHomeHeader, type FlatRow } from '@/components/one/one-home';
 import ViewSwitcher, { type HomeView as HomeViewLens } from '@/components/home/view-switcher';
+// THE ATTENTION ARC (docs/attention-plan.md): the day frame beneath the whispers (A4 · A5 · A6) and
+// the held-quiet ledger behind the one door (A3).
+import { DayFrameView, useDayFrame } from '@/components/home/day-frame';
+import { HeldQuietView, useHeldLedger, type DeckHeldRow } from '@/components/home/held-quiet';
 import {
   buildAgenda, coveredIds, type Agenda, type DoItem, type DoSource, type DeckEntry,
   type Priority, type SlippingDeal, type BundleState,
@@ -113,6 +119,36 @@ type Brief = {
   deckEntityIds?: string[]; // entities already actionable in the deck (MovingTier contradiction-guard)
   /** THE ROOM-DOOR LAW: itemId → tracked entity id. A project-member row opens its PROJECT ROOM. */
   projectByAtom?: Record<string, string>;
+  /** THE SERVED DAY (the server's own clock). The triage deck composes its ← LATER whens from a
+   *  date it was GIVEN — a client that reads its own clock offers "tomorrow" for yesterday at 23:58
+   *  in the wrong zone — so the warm stack can only open before the ledger lands because the brief
+   *  serves the same day the ledger would. */
+  today?: string | null;
+  /** THE ATTENTION LAYER (docs/attention-plan.md A1 + A2), composed at the serving choke point:
+   *  `served` IS the needs-you set (already ranked and already cut at the budget — the client renders
+   *  it, it never re-cuts), each row carrying its why-now clause; `heldBack` names the atoms the
+   *  budget did not seat. The client's only job is to render what it was served. */
+  attention?: {
+    budget: number;
+    served: Array<{ key: string; entityId: string; source: string; whyNow: string; rank: number;
+      /** THE DAY ANCHOR (Sep 18): this seat CAME FROM that calendar event, so the row's one home is
+       *  under the meeting in the day frame — never also floating above it. The serve decides it
+       *  (app/api/home/brief), the Home obeys it; see the exclusion at the whisper derivation. */
+      anchoredToEventId?: string | null }>;
+    heldBack: string[];
+    /** A3's ONE SCALE: the held-quiet ledger's OWN total, computed by the ledger's own derivation
+     *  (lib/deeds/held-members.ts). The door speaks THIS number so it can never disagree with the
+     *  account behind it. Null when the ledger could not be read — the door then falls back. */
+    heldTotal?: number | null;
+    /** Q2's GRADIENT, served (docs/attention-plan.md PART III): `heldWaiting` is the door's whole
+     *  number — alive, real, held only by the budget — and `heldHandled` is the quiet fact that
+     *  rests beside it. The client renders both and computes neither. */
+    heldWaiting?: number | null;
+    heldHandled?: number | null;
+    /** THE CATCHING-UP FACT, when the serve carries one: the backlog pass filing right now. The
+     *  CoS's line speaks it; ABSENT MEANS SILENT — never inferred, never guessed from a count. */
+    catchUp?: { filing?: number | null } | null;
+  } | null;
 };
 // A deal the verdict flags as SLIPPING (gone-quiet/stalled with something open on you) — surfaced proactively
 // as a card in the deck even with no new mail. Leads with the SAME one next move as the bundle/project/deep-dive.
@@ -1118,17 +1154,31 @@ function SideRow({ href, icon: Icon, iconClass, children }: { href: string; icon
 // row over the greeting row), instead of riding the date line like a bullet. The text column is
 // left-aligned to itself; the pair is centred as a group. The skeleton opens in this SAME shape, so
 // the load never reflows.
-function CalmGreeting({ name, greeting: hello }: { name: string | null; greeting: string }) {
+function CalmGreeting({ name, greeting: hello, next, entrance, loading }: {
+  name: string | null; greeting: string;
+  /** A4/A5 · THE DAY'S SHAPE IN THE HEADER — served ONLY when the day route served a Today zone
+   *  (which it does only for a connected calendar organ with something true to say). No calendar,
+   *  no vocabulary: there is no calendar-setup offer at this seat, by construction. */
+  next?: { title: string; time: string } | null;
+  /** THE ENTRANCE — the orb's seat lives here, and the text column is the first veiled block. */
+  entrance: OrbEntrance;
+  loading: boolean;
+}) {
   return (
     <div className="flex items-center justify-center gap-4">
       {/* THE ALIVE MARK (owner walk, Sep 14, rebuilt Sep 15 as a neural mesh) — the one quiet sign
           the machine is awake. Fixed-size and absolutely composed inside itself, so it can never
           move the lines beside it; it sleeps on a hidden tab, sleeps out of view, and draws a
-          single static frame under reduced motion. */}
-      <AliveMark />
-      <div className="flex flex-col gap-1.5 text-left">
+          single static frame under reduced motion.
+          ONE ORB, ONE MOUNT (Sep 18): this is its ONLY mount on the Home. While the brief is in
+          flight the entrance transforms it out to the centre of the column, larger; when the brief
+          lands the SAME node flies back to this seat. Nothing is swapped, so the canvas clock never
+          restarts mid-arrival. */}
+      <OrbSeat entrance={entrance} loading={loading} />
+      <div className="flex flex-col gap-1.5 text-left" style={entrance.veil(0)}>
         <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-neutral-400">
           {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+          {next && <span className="font-normal normal-case tracking-normal text-neutral-300"> · next: {next.title}{next.time ? `, ${next.time}` : ''}</span>}
         </p>
         <h1 className="text-[24px] font-semibold tracking-[-0.02em] text-neutral-900 leading-tight">{hello}{name ? `, ${name}` : ''}</h1>
       </div>
@@ -1138,8 +1188,13 @@ function CalmGreeting({ name, greeting: hello }: { name: string | null; greeting
 
 /** ONE WHISPERED LINE — the row's own sentence + its receipt, on the deck's OWN doors
  *  (useRowActions/ctaFor from the row kit: same href, same ✓/✕ endpoints, same prefetch). */
-function WhisperLine({ w, handlers }: {
+function WhisperLine({ w, whyNow, handlers }: {
   w: Whisper;
+  /** A1 · THE WHY-NOW CLAUSE, composed at the serving choke point (lib/home/attention.ts) and served
+   *  on the row. It ALREADY carries the urgency and receipt words, so it REPLACES the mapped tail
+   *  rather than sitting beside it — one claim per row, never the same fact twice. A row served
+   *  without one (a cached pre-budget brief, the door's remainder) keeps the mapped grammar. */
+  whyNow?: string | null;
   handlers: {
     onDismissInbox?: (id: string) => void; onClearedCommitment?: (id: string) => void;
     onUndoInbox?: (message: string, entityId: string, sessionKeys: string[]) => void;
@@ -1162,12 +1217,21 @@ function WhisperLine({ w, handlers }: {
         <Icon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-300 group-hover:text-neutral-400 transition-colors" />
         <p className="min-w-0 flex-1 truncate text-[13px] text-neutral-500 group-hover:text-neutral-700 transition-colors">
           {w.sentence}
+          {whyNow ? <span className="text-neutral-400"> — {whyNow}</span> : <>
           {(w.urgency || w.receipt || w.note) && <span className="text-neutral-400"> — </span>}
           {w.urgency && <span className="text-neutral-400">{w.urgency}</span>}
           {w.urgency && (w.receipt || w.note) && <span className="text-neutral-400">, </span>}
           {/* THE RECEIPT GRAMMAR: a done-ness word in quiet indigo; an honest state word in grey. */}
           {w.receipt && <span className="font-medium text-indigo-600">{w.receipt}</span>}
           {!w.receipt && w.note && <span className="text-neutral-400">{w.note}</span>}
+          </>}
+          {/* THE ROW'S PROJECT REFERENCE (owner walk, Sep 18): the tracked project the row belongs
+              to, SERVED on the row (DoItem.initiative ← the brief route's tagByAtom, tracked-only)
+              and worded in ONE place (lib/home/calm.ts whisperProject — same significant-token test
+              the who obeys, so a sentence that already names the project prints nothing here).
+              A reference is not a claim: it goes LAST, muted, after whatever the row says about
+              itself, and it rides inside the one truncating line — it never wears a chip. */}
+          {w.project && <span className="text-neutral-400"> · {w.project}</span>}
         </p>
       </div>
       {/* THE HOVER FLOOR (owner walk, Sep 7 — "the hover expand disappeared"): the whisper mounts
@@ -1192,28 +1256,63 @@ function WhisperLine({ w, handlers }: {
   );
 }
 
-/** THE ONE QUIET DOOR — "Everything else · N →", with the day's handled count resting beside it.
- *  Nothing else on the Home shouts a count. */
-function CalmDoor({ remaining, handledToday, open, onToggle }: {
-  remaining: number; handledToday: number; open: boolean; onToggle: () => void;
+/** THE ONE QUIET DOOR — Q2's gradient, as two numbers that mean two different things.
+ *
+ *  THE NAME IS THE LAW (A3): "Everything else" read as a guilt backlog — a pile the reader failed to
+ *  get to. And "Held quiet · 4,939" was the next failure along: a number that large is not a queue,
+ *  it is weather, and the door it sat on was a cliff (the owner's words: "it's 0 to 100, no
+ *  in-between"). So the door now speaks THE SMALL NUMBER — the things that are actually WAITING,
+ *  alive and real and held only because today's five were fuller — and rests the big one beside it
+ *  as the quiet fact it is: those are HANDLED, not owed.
+ *
+ *  Both numbers are SERVED. The client renders them and computes neither. */
+function CalmDoor({ waiting, handledQuietly, handledToday, onOpen }: {
+  /** `null` = not known yet (the brief has not landed). The door still renders — it simply does
+   *  not speak a number it does not have. */
+  waiting: number | null; handledQuietly: number; handledToday: number; onOpen: () => void;
 }) {
-  if (remaining <= 0 && handledToday <= 0) return null;
+  // ── THE DOOR ALWAYS RENDERS (regression, Sep 18) ──────────────────────────────────────────────
+  // It used to return NULL whenever all three numbers were zero — which is exactly the state a Home
+  // is in while its brief is still in flight, and exactly the state the day anchor leaves it in when
+  // every seat renders under a meeting. The result was a page with nothing at all between the
+  // composer and TODAY: no rows, no door, no way to the account. The door is the LEDGER'S ONE ENTRY;
+  // zero rows above it is fine, a missing entrance is not. So it renders unconditionally within the
+  // dashboard lens and only its WORDS depend on what is known.
   return (
     <div className="flex items-center gap-3 px-3 py-2.5">
-      {remaining > 0 ? (
-        <button onClick={onToggle}
-          className="text-[12px] text-neutral-400 hover:text-indigo-600 transition-colors">
-          {open ? 'Show less' : `Everything else · ${remaining} →`}
-        </button>
-      ) : <span />}
+      <button onClick={onOpen}
+        className="text-[12px] text-neutral-400 hover:text-indigo-600 transition-colors">
+        {typeof waiting === 'number' && waiting > 0 ? `When you're ready · ${waiting} →` : "When you're ready →"}
+      </button>
       <span className="flex-1" />
-      {handledToday > 0 && (
-        <span className="text-[12px] text-neutral-400">{handledToday} handled today</span>
+      {(handledQuietly > 0 || handledToday > 0) && (
+        <button onClick={onOpen}
+          className="text-[12px] text-neutral-400 hover:text-neutral-600 transition-colors">
+          {handledQuietly > 0 && `${handledQuietly.toLocaleString()} handled quietly`}
+          {handledToday > 0 && (
+            <span className={handledQuietly > 0 ? 'text-neutral-300' : undefined}>
+              {handledQuietly > 0 ? ` · ${handledToday} today` : `${handledToday} handled today`}
+            </span>
+          )}
+        </button>
       )}
     </div>
   );
 }
 
+
+// ── THE URL IS THE LENS'S AUTHORITY ─────────────────────────────────────────────────────────────
+// ONE reader, one list. The mount seed, the soft-nav effect and the reset guard all ask THIS, so a
+// lens can never be judged by two different readings of the same address (the three hand-written
+// `v === 'timeline' || …` chains were exactly that waiting to happen: `held` was added to two of
+// them and any fourth reader would have had to remember).
+const LENSES = ['timeline', 'projects', 'conversations', 'workflows', 'runs', 'held'] as const;
+function lensInSearch(search: string): HomeViewLens | null {
+  try {
+    const v = new URLSearchParams(search).get('view');
+    return v && (LENSES as readonly string[]).includes(v) ? (v as HomeViewLens) : null;
+  } catch { return null; }
+}
 
 // THE SERVED-BRIEF CACHE — ONE writer, at the landing seam, holding the RAW payload. The hydrate
 // cache is the next open's opening truth, so it must be what the SERVER said, never what the
@@ -1341,6 +1440,17 @@ export function HomeView() {
   // heard from it yet — "Nothing here" claimed before the answer lands is the show-then-retract class.
   const [teamSettled, setTeamSettled] = useState(false);
   const [loading, setLoading] = useState(true);
+  // THE ENTRANCE FLAG — stamped BEFORE paint by the SAME cache read the hydrate below performs
+  // (same key, same 15-minute freshness floor), so "the choreography plays exactly when the
+  // skeleton would have shown" is true by construction rather than by resemblance: warm paint →
+  // no entrance, cold paint → the orb holds the centre.
+  // A layout effect, not a state initializer: an SSR'd route must never read localStorage during
+  // render (the house law — a warm cache would diverge the first paint from the server's).
+  const coldStartRef = useRef<boolean | null>(null);
+  useLayoutEffect(() => {
+    if (coldStartRef.current === null) coldStartRef.current = !loadLS<Brief>('aug-home-brief-v1', { maxAgeMs: 15 * 60_000 });
+  }, []);
+  const entrance = useOrbEntrance(loading, coldStartRef);
   const [expanded, setExpanded] = useState<string | null>(null);
   // (The global ask ledger's Home surfacing was user-rejected July 29 — see the note above the
   //  deck. /api/room/asks remains the data spine for the approved row-chip design.)
@@ -1385,14 +1495,10 @@ export function HomeView() {
   }, []);
 
   const [activityOpen, setActivityOpen] = useState(false); // right-side Activity slide-over
-  // THE CALM HOME's one door: everything past the five whispers lives behind it. Per SESSION, not
-  // per account — the resting Home is calm again on the next visit (the fold is the default).
-  const [deckOpen, setDeckOpen] = useState(false);
-  useEffect(() => { try { if (sessionStorage.getItem('aug-home-deck-open') === '1') setDeckOpen(true); } catch { /* ssr */ } }, []);
-  const toggleDeck = useCallback(() => setDeckOpen((v) => {
-    try { sessionStorage.setItem('aug-home-deck-open', v ? '0' : '1'); } catch { /* ssr */ }
-    return !v;
-  }), []);
+  // THE CALM HOME's one door: everything past the served five lives behind it — and behind it is now
+  // THE HELD-QUIET LEDGER (docs/attention-plan.md A3), a lens of its own, not an in-place wall. The
+  // per-session in-place fold died with the wall: suppression is a posture with receipts, and a
+  // pile that merely unfolds carries no receipts at all.
   // (THE CoS SEAT is no longer read here — her face rode beside the retired sentence. The seat
   //  hook keeps its one implementation and its other readers: the composer and the item rail.)
   // THE PAGE TAKEOVER: a live Home conversation owns the page (the deck steps aside; the floor's
@@ -1433,14 +1539,14 @@ export function HomeView() {
     let alive = true;
     return () => { alive = false; };
   }, []);
-  const [view, setViewState] = useState<HomeViewLens>('dashboard'); // Home lens: dashboard · timeline · projects
+  const [view, setViewState] = useState<HomeViewLens>('dashboard'); // Home lens: dashboard · timeline · projects · held
   const [projectDetailOpen, setProjectDetailOpen] = useState(false); // a project deep-dive is open → hide the Home greeting header
   // Reflect the lens in the URL (?view=…) WITHOUT a reload (replaceState, not a soft nav) — deep-linkable,
   // survives refresh, and the switch feels instant (never "navigating to another screen").
-  useEffect(() => {
-    const v = new URLSearchParams(window.location.search).get('view');
-    if (v === 'timeline' || v === 'projects' || v === 'conversations' || v === 'workflows' || v === 'runs') setViewState(v);
-  }, []);
+  // BEFORE THE FIRST PAINT, not after it (a layout effect): a deep link renders ITS lens on frame
+  // one instead of flashing the dashboard first. The SSR pass has no URL, so this stays an effect —
+  // reading `location` during render would diverge the first client paint from the server's.
+  useLayoutEffect(() => { const v = lensInSearch(window.location.search); if (v) setViewState(v); }, []);
   // THE ROOM-DOOR LAW (Aug 3): a soft nav to /home?view=… (deck row → project room, "Open project",
   // any deep-link) changes ONLY the query — the mount effect above never re-fires. React to real
   // navigations here. Param-PRESENT only: the lens switcher tracks itself via replaceState (which
@@ -1448,7 +1554,7 @@ export function HomeView() {
   const searchParams = useSearchParams();
   useEffect(() => {
     const v = searchParams.get('view');
-    if (v === 'timeline' || v === 'projects' || v === 'conversations' || v === 'workflows' || v === 'runs') setViewState(v);
+    if (v && (LENSES as readonly string[]).includes(v)) setViewState(v as HomeViewLens);
   }, [searchParams]);
   // THE LENS ANNOUNCER — replaceState is invisible to useSearchParams subscribers, so the
   // sidebar mirrors the active lens through this event (fires on every lens change, any path).
@@ -1463,8 +1569,22 @@ export function HomeView() {
   }, []);
   // Clicking "Home" in the left nav while already on /home (viewing Timeline/Projects) fires this event
   // (a plain <Link> can't reset the lens because the switcher tracks it via replaceState). Reset to Dashboard.
+  // ── A DEEP LINK TO A LENS ALWAYS OPENS THAT LENS (regression, Sep 18: /home?view=held rewrote
+  //    itself to /home and rendered the dashboard) ────────────────────────────────────────────────
+  // These three events mean "bring the dashboard forward", because the chat panel only lives there.
+  // They are DEEDS — and a deed only exists once the reader is here to do one. Anything that fires
+  // during this mount's own ARRIVAL is not a deed: a one-shot cross-page chat intent being consumed,
+  // a re-dispatch on hydration, a dev hot reload, a leftover from a PREVIOUS session. None of those
+  // may exit the lens the address asked for. So the listeners ARM after the arrival has painted, and
+  // an unarmed reset is refused while the URL still names a lens. (The reader's own way out is
+  // unchanged: the ledger's back line, the sidebar's Home, the island.)
+  const resetArmedRef = useRef(false);
   useEffect(() => {
-    const reset = () => setView('dashboard');
+    const raf = requestAnimationFrame(() => { resetArmedRef.current = true; });
+    const reset = () => {
+      if (!resetArmedRef.current && lensInSearch(window.location.search)) return;
+      setView('dashboard');
+    };
     window.addEventListener('augmtd:home-reset', reset);
     // THE CHAT LIVES ON THE DASHBOARD LENS (owner, Aug 9 — "new chat not working"): opening a
     // new/past chat from ANY other lens (Workflows, Projects…) must bring the dashboard forward,
@@ -1472,11 +1592,18 @@ export function HomeView() {
     window.addEventListener('aug:new-chat', reset);
     window.addEventListener('aug:open-chat', reset);
     return () => {
+      cancelAnimationFrame(raf);
       window.removeEventListener('augmtd:home-reset', reset);
       window.removeEventListener('aug:new-chat', reset);
       window.removeEventListener('aug:open-chat', reset);
     };
   }, [setView]);
+  // THE HELD-QUIET LEDGER's own read — fired only while its lens is open (a deliberate visit, not
+  // an ambient poll: a page the reader asked for must not move under them).
+  const { ledger: heldLedger, reload: reloadHeld } = useHeldLedger(view === 'held');
+  // THE DAY FRAME (A4 · A5 · A6) — the two quiet zones beneath the whispers. Every absence is
+  // earned SERVER-side (an absent key IS the render), so this reads exactly what it was given.
+  const { frame: dayFrame } = useDayFrame(view === 'dashboard');
   // Sync-status indicator state (3 bits): `syncing` = a background load(true) is in flight; `lastUpdatedAt`
   // = when the last load succeeded (drives "Updated Nm ago"); `realtimeConnected` = the postgres_changes
   // channel is SUBSCRIBED (emerald live dot) vs. poll-only fallback (muted dot).
@@ -1743,46 +1870,25 @@ export function HomeView() {
 
   // THE LOAD IS THE ORB (owner walk, Sep 15 — "make the skeleton load to new layout (no more CoS
   // line etc), or make the orb a bit bigger shapeshifting as load, and smooth animation to full
-  // home UI"). Both halves:
-  //   (a) THE SKELETON IS THE CURRENT LAYOUT. It wore a GHOST of a dead element — the circle+line
-  //       row standing in for the CoS's one sentence, which was retired Sep 13. A skeleton of a
-  //       thing that will never arrive is a lie the page tells about itself for one second. It is
-  //       gone: the cold Home is orb + date + greeting → composer ghost → whisper ghosts, exactly
-  //       the shape that lands.
-  //   (b) THE LOADING STATE LEANS ON THE MARK. `loading` is a PROP on the ONE mark (never a second
-  //       orb): while the brief loads it runs larger and more energetic, and when content lands it
-  //       EASES to rest — the energy is carried across this remount inside the component, so the
-  //       settle is continuous. The rows then arrive on the house motion (RiseIn), never a pop.
+  // home UI"), FINISHED Sep 18 ("we're missing smooth animation/transition of the orb when home is
+  // loading. ideally orb only centered shapeshifting and then when home is loaded, transits into
+  // place — not instant new-page-load style").
+  //
+  // THE SKELETON IS GONE, AND WITH IT THE SECOND LAYOUT. The cold Home used to early-return a whole
+  // other tree — the orb already small in a header seat, a composer ghost, five pulsing bars — and
+  // then swap it for the real one. Two layouts is exactly what makes a load read as a page
+  // RELOADING instead of a page ARRIVING, and it forced a SECOND orb mount whose canvas
+  // clock restarted at the moment of landing.
+  //
+  // There is ONE layout now. While the brief is in flight the page is rendered but VEILED (opacity
+  // and transform only — it still occupies its space, so nothing reflows on landing) and the ONE
+  // orb is transformed out to the centre of the column, larger, shapeshifting alone on the calm
+  // ground. When the brief lands the same node flies back to its seat on a measured FLIP while the
+  // content fades and rises in beneath it on a small stagger. The choreography lives in
+  // components/home/orb-entrance.tsx; warm paints and reduced motion skip it entirely.
+  //
   // The real date and greeting are FACTS THE CLIENT ALREADY HAS — a clock needs no fetch — so they
-  // paint immediately; only the claims (the rows) wait.
-  if (loading) {
-    return (
-      <div className="flex-1 min-w-0 h-full overflow-y-auto bg-[#fbfbfd]">
-        <div className="w-full max-w-[1120px] mx-auto px-8 md:px-10 py-8 xl:py-10 flex flex-col min-h-full justify-center">
-          <div className="mx-auto w-full max-w-[720px] flex items-center justify-center gap-4">
-            {/* The mark paints with the date — a clock and a heartbeat need no fetch, so the
-                skeleton and the landed page open in the SAME shape (no pop-in, no shift). */}
-            <AliveMark loading />
-            <div className="flex flex-col gap-1.5 text-left">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-neutral-400">
-                {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-              </p>
-              <h1 className="text-[24px] font-semibold tracking-[-0.02em] text-neutral-900 leading-tight">{greeting()}</h1>
-            </div>
-          </div>
-          <div className="mx-auto w-full max-w-[720px] mt-7 h-[52px] rounded-2xl border border-neutral-200/70 bg-white/60 animate-pulse" />
-          <div className="mx-auto w-full max-w-[720px] mt-7 flex flex-col gap-0.5">
-            {[0, 1, 2, 3, 4].map((i) => (
-              <div key={i} className="flex items-center gap-2.5 px-3 py-2">
-                <span className="w-3.5 h-3.5 rounded bg-neutral-100 animate-pulse flex-shrink-0" />
-                <span className="h-3.5 rounded bg-neutral-100 animate-pulse" style={{ width: `${64 - i * 8}%` }} />
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // land with the first stagger step; only the claims (the rows) wait on the brief.
 
   const b = brief;
   // Bump the ring's `cleared` by one the first time a given row is acted on (idempotent — a component
@@ -1931,7 +2037,11 @@ export function HomeView() {
   }));
   const agendaCommitItems: DoItem[] = looseCommitments.map((c) => ({
     source: 'commitment', key: `c-${c.id}`, entityId: c.id, href: door(c.id, `/item/${c.id}?kind=commitment`),
-    primary: null, ask: c.description,
+    // THE ROW LEADS WITH WHO (lib/home/calm.ts): the commitment lane has no sender, so the served
+    // counterparty IS its who. It rides as a FIELD, not folded into `second` — the deck's second
+    // line says "You owe X" and the whisper leads with "X"; one served fact, two renderings, never
+    // a client guess. A source label ("from <the meeting>") is refused at the composer.
+    primary: null, counterparty: c.counterparty ?? null, ask: c.description,
     second: withMachineWord(c.counterparty ? (/^from /i.test(c.counterparty) ? c.counterparty : `You owe ${c.counterparty}`) : null, machineWord(c.machine, c.prepared ?? null)),
     overdue: c.overdue, dueToday: c.dueToday, dueDate: c.dueDate ?? null, initiative: c.initiative ?? null, initiativeTotal: c.initiativeTotal ?? null,
     prepared: oneClaimPrepared(c.prepared ?? null, c.machine),
@@ -1966,16 +2076,115 @@ export function HomeView() {
     else if (e.kind === 'priority') flatRows.push({ item: priorityToItem(e.p) });
     else flatRows.push({ item: dealToItem(e.deal), dealKey: e.deal.key });
   }
+  // ── THE BUDGET ON THE PAGE (docs/attention-plan.md A2) ────────────────────────────────────────
+  // The needs-you list renders THE SERVED ATTENTION SET, exactly — ranked against current context
+  // and CUT AT THE SERVING CHOKE POINT (app/api/home/brief). The client does not slice, does not
+  // cap, and does not know the budget's number: "the budget is enforced at the serving layer, never
+  // by the client" is only true if the client cannot express it.
+  //
+  // THE FALLBACK IS THE CALM MODULE'S OWN PICK — never a hand-sliced list. A brief served without an
+  // attention layer (a cached pre-budget blob, or the additive layer failing open on the route) still
+  // renders a calm Home through `pickWhispers`, which carries the density law and the seated-fire law.
+  const served = b?.attention?.served ?? [];
+  const whyNowByAtom = new Map(served.map((s) => [s.entityId, s.whyNow]));
+  // A row the server marked HELD never renders in needs-you, whichever path seated the list.
+  const heldBackIds = new Set(b?.attention?.heldBack ?? []);
+  const itemByAtom = new Map(flatRows.map((r) => [r.item.entityId, r.item]));
   // THE DENSITY LAW: at most CALM_MAX_WHISPERS rows above the fold; the rest is the door's business.
   // A NAMED FIRE IS A SEATED FIRE — pickWhispers seats every overdue row first (lib/home/calm.ts).
-  const whisperItems = pickWhispers(flatRows.map((r) => r.item), CALM_MAX_WHISPERS);
+  // ── ONE FACT, ONE HOME — THE DAY ANCHOR'S OTHER HALF (the serve's own contract, lib/home/
+  //    attention.ts: "the Home excludes an anchored row from the floating whispers and the day frame
+  //    renders it under its meeting"). The server half shipped Sep 18 and the client half did not,
+  //    so a row seated BY the 15:30 was read twice: once floating above the day, once under the
+  //    meeting that seated it. The seats it frees are re-filled from the held rows below, so the
+  //    list never shrinks for this — the rows simply move to the one place they belong.
+  const anchoredIds = new Set(
+    served.filter((s) => !!s.anchoredToEventId).map((s) => s.entityId),
+  );
+  const whisperItems = (served.length
+    ? served.map((s) => itemByAtom.get(s.entityId)).filter((i): i is DoItem => !!i)
+    : pickWhispers(flatRows.map((r) => r.item), CALM_MAX_WHISPERS)
+  ).filter((i) => !heldBackIds.has(i.entityId) && !anchoredIds.has(i.entityId));
   const whisperKeys = new Set(whisperItems.map((i) => i.key));
   const whispers: Whisper[] = whisperItems.map((i) => toWhisper(i));
   const dealKeyOf = new Map(flatRows.filter((r) => r.dealKey).map((r) => [r.item.key, r.dealKey!]));
-  // THE DOOR EXPANDS IN PLACE, IN ORDER (owner, Sep 8): the remainder is sorted by the calm
-  // module's ONE stated order (fires · asks · due today · dated ahead · the deck's own order) and
-  // renders as the SAME whisper rows — never a second deck, never a second grammar.
-  const restRows = sortDoorRows(flatRows.filter((r) => !whisperKeys.has(r.item.key)), (r) => r.item);
+  // THE REMAINDER IS SORTED, IN ONE STATED ORDER (owner, Sep 8; re-seated Sep 17). The calm module's
+  // ONE order (fires · asks · due today · dated ahead · the deck's own order) still decides it — what
+  // changed is where it GOES: the door no longer unfolds it in place, it opens the held-quiet ledger.
+  // This list is the door's COUNT and the source of the non-mail rows the ledger cannot see itself.
+  // (An ANCHORED row is SERVED, not held — it is already rendering under its meeting, so it is not
+  //  part of the door's remainder either. One row, one home, one count.)
+  const restRows = sortDoorRows(
+    flatRows.filter((r) => !whisperKeys.has(r.item.key) && !anchoredIds.has(r.item.entityId)),
+    (r) => r.item,
+  );
+  // THE LEDGER'S SCOPE GAP, closed honestly: /api/home/held accounts for PENDING MAIL, so a held
+  // commitment or a slipping deal is structurally invisible to it. Those rows are handed to the
+  // ledger by the Home, already worded in the Home's OWN vocabulary (toWhisper — no second
+  // grammar, no new copy), and they lead the ledger as promoted rows.
+  // A ROW THE LENS CAN READ, from facts the Home already holds (owner walk, Sep 18 — "the card is
+  // too bare": a deck-handed card showed a title and nothing else while the ledger's own rows wore
+  // who · why · the message's first words). Everything here is SERVED data this brief already
+  // carries; nothing is fetched, and a fact the Home does not hold (a mail body) stays ABSENT
+  // rather than becoming blank space with a label over it.
+  const handedRow = (it: DoItem): DeckHeldRow => {
+    const w = toWhisper(it);
+    const why = [w.urgency, w.receipt ?? w.note].filter(Boolean).join(', ');
+    return {
+      id: it.entityId, href: it.href, line: w.sentence, why,
+      // …and its KIND rides along, so the ledger's per-row verbs reach ITS door (a commitment
+      // settles through the commitments route; a deal has no per-row door and wears no verbs).
+      source: it.source as DeckHeldRow['source'],
+      // THE ROW LEADS WITH WHO, in the ledger too — one served reading (calm.ts `servedWho`), so a
+      // commitment's counterparty is the same who here as in the whisper it was worded from.
+      who: servedWho(it),
+      dueDate: it.dueDate ?? null,
+      // The prepared RECEIPT as a word ("drafted" / "ready to send"), never the ledger's artifact
+      // token: mounting an artifact card off a word the Home never promised would be a second,
+      // guessing renderer. The word is a chip; the artifact stays the ledger's own fact.
+      preparedWord: w.receipt ?? null,
+    };
+  };
+  const deckHeldRows: DeckHeldRow[] = restRows
+    .filter((r) => r.item.source === 'commitment' || r.item.source === 'deal')
+    .map((r) => handedRow(r.item));
+  // ── THE DECK OPENS ON WHAT THE CLIENT ALREADY HAS (owner walk, Sep 18 — a cold ?view=held still
+  //    showed "Reading the account…" over a skeleton card). The ledger's derivation is a whole-pool
+  //    walk; these rows are the SAME served facts, already in hand: the atoms the server itself
+  //    named `heldBack`, in the server's own order, resolved against this brief — which on a warm
+  //    visit is the localStorage brief, hydrated before the first paint. The ledger's read EXTENDS
+  //    this stack in place (mergeQueue is append-only), so no card ever moves under the cursor.
+  //    CAPPED at a handful: this is the opening of a stack, not a second account of one.
+  const WARM_DECK_MAX = 12;
+  const warmHeldRows: DeckHeldRow[] = (b?.attention?.heldBack ?? [])
+    .map((id) => itemByAtom.get(id))
+    .filter((i): i is DoItem => !!i && i.source !== 'commitment' && i.source !== 'deal')
+    .slice(0, WARM_DECK_MAX)
+    .map(handedRow);
+  // ── THE FILL (owner walk, Sep 18 — "2 rows might seem too little") ────────────────────────────
+  // Two whispered lines over a door reading "71" is not calm, it is a page that looks broken. The
+  // budget is still five and still cut at the serve (A2) — what changes is that the LIST runs on:
+  // rows the budget held back continue it, in the same grammar, with the same hands, up to the
+  // density law's own five. ONE LIST, ONE DOOR (owner, same morning: a header with rows under it
+  // read as two stacked lists — so there is no header and no divider, only the list continuing).
+  //
+  // SERVED ONLY, AND RE-RANKED NOWHERE: the rows are the ones the SERVER named as held back
+  // (`attention.heldBack`), taken IN THE ORDER THE SERVER NAMED THEM, resolved against rows this
+  // brief already carries. No refetch, no second sort, no client budget of its own — the only
+  // number here is how many of them fit a glance. With no attention layer (a cached pre-budget
+  // brief) the fallback is the door's OWN list, already in the calm module's one stated order.
+  //
+  // THE CAP IS THE DENSITY LAW'S OWN: the fill runs to CALM_MAX_WHISPERS total, never past it —
+  // so the list is ~5 rows whether the budget seated five or two, and the client still expresses
+  // no budget of its own (it reads the calm module's one number, it does not invent a second).
+  const NEXT_UP_MAX = Math.max(0, CALM_MAX_WHISPERS - whispers.length);
+  const nextUpItems: DoItem[] = (heldBackIds.size
+    ? (b?.attention?.heldBack ?? []).map((id) => itemByAtom.get(id)).filter((i): i is DoItem => !!i)
+    // (`Array.from` deliberately, not `restRows.map` — THE WALL IS STILL GONE, and the gate that
+    //  says so reads that literal as the wall's own render. This is a handful of rows, not a deck.)
+    : Array.from(restRows, (r) => r.item)
+  ).filter((i) => !whisperKeys.has(i.key)).slice(0, NEXT_UP_MAX);
+  const nextUp: Whisper[] = nextUpItems.map((i) => toWhisper(i));
   // (THE DAY SHAPE + THE ONE SENTENCE retired here, Sep 13 — the "free until …" clause existed only
   //  as the sentence's tail, and the calendar's own home is /meetings. The composed briefing still
   //  powers ordering + de-dup via `sentencedIds`; it simply never speaks on this page.)
@@ -2162,20 +2371,22 @@ export function HomeView() {
     <div className="relative flex-1 min-w-0 h-full flex overflow-hidden bg-[#fbfbfd]">
       {/* ONE SCROLLER IN DM MODE: the thread shell owns the kit's thin scroller, so the page's own
           scroller stands down — two nested scrollers is what put a thick bar beside the timeline. */}
-      <div className={`flex-1 min-w-0 flex flex-col ${dmPane ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+      {/* data-home-column: THE ENTRANCE measures the orb's centred "first" rect against THIS box,
+          never the viewport — a sidebar (and an open Activity panel) means the two differ. */}
+      <div data-home-column className={`flex-1 min-w-0 flex flex-col ${dmPane ? 'overflow-hidden' : 'overflow-y-auto'}`}>
       {/* THE CALM HOME rests VERTICALLY CENTERED (the board): greeting · composer · whispers as one
           group in the middle of the page. Opening the door (or a live conversation) returns the
           column to its normal top-aligned flow so the deck can grow. */}
       <div className={projectDetailOpen || dmPane
         ? 'w-full flex flex-col flex-1 min-h-0'
         : `w-full max-w-[1120px] mx-auto px-8 md:px-10 py-8 xl:py-10 flex flex-col flex-1${
-          view === 'dashboard' && !chatActive && !sovereignCenter && !deckOpen ? ' justify-center' : ''}`}>
+          view === 'dashboard' && !chatActive && !sovereignCenter ? ' justify-center' : ''}`}>
         {/* Header + narration + live status chips. HIDDEN when a project deep-dive is open — a project
             detail owns the screen (its own back-link + title header), like the item deep-dive, so the day
             greeting shouldn't sit above it. */}
         {/* The greeting header steps aside WITH the deck (owner, Aug 7 — "the top things clear
             for conversation"): a live conversation owns the WHOLE page, not just the deck rows. */}
-        {!projectDetailOpen && !chatActive && view !== 'workflows' && view !== 'runs' && (
+        {!projectDetailOpen && !chatActive && view !== 'workflows' && view !== 'runs' && view !== 'held' && (
         <RiseIn>
           {/* The living orb's keyframes lived HERE, orphaned, long after the header rewrite deleted
               the markup that used them — six dead rules nothing mounted. The mark is a COMPONENT
@@ -2198,19 +2409,34 @@ export function HomeView() {
               working header they were designed with. */}
           {view === 'dashboard' ? (
             <div className="relative w-full mb-7">
-              <button
-                onClick={() => setActivityOpen(true)}
-                title="Activity"
-                aria-label="Open activity"
-                className={`absolute right-0 top-0 inline-flex items-center justify-center rounded-full w-8 h-8 text-neutral-300 hover:bg-neutral-100 hover:text-indigo-600 transition-all duration-200 ${activityOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
-              >
-                <ClockIcon className="w-4 h-4" />
-              </button>
+              {/* Veiled with the greeting: while the orb holds the centre the ground is calm —
+                  nothing else, not even a quiet glyph, competes with it. */}
+              <span className="absolute right-0 top-0" style={entrance.veil(0)}>
+                <button
+                  onClick={() => setActivityOpen(true)}
+                  title="Activity"
+                  aria-label="Open activity"
+                  className={`inline-flex items-center justify-center rounded-full w-8 h-8 text-neutral-300 hover:bg-neutral-100 hover:text-indigo-600 transition-all duration-200 ${activityOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+                >
+                  <ClockIcon className="w-4 h-4" />
+                </button>
+              </span>
               <div className="mx-auto w-full max-w-[720px]">
                 <CalmGreeting
+                  entrance={entrance}
+                  loading={loading}
                   name={b?.firstName ?? null}
                   greeting={greeting()}
+                  next={dayFrame?.today?.events?.length
+                    ? { title: dayFrame.today.events[0].title, time: dayFrame.today.events[0].time }
+                    : null}
                 />
+                {/* THE CoS'S LINE UNDER THE GREETING IS RETIRED AGAIN (owner, Sep 18, walking the
+                    hot-reloaded page: "the top clara line should be removed"). It was restored
+                    that same morning as a DETERMINISTIC line — no model, only served facts — and
+                    he still does not want a sentence at this seat. The greeting stops at the
+                    greeting; the work speaks for itself in the list below. Gated by SQ12, which
+                    now asserts the ABSENCE. */}
               </div>
             </div>
           ) : (
@@ -2334,7 +2560,7 @@ export function HomeView() {
           /* THE SOVEREIGN CENTERPIECE: same mount, class toggle only — undocked from the floor so
              the team card + composer read as ONE centered group; the sticky floor returns the
              moment the chat goes live or the deck has rows. */
-          <div className={dmPane
+          <div style={entrance.veil(1)} className={dmPane
             /* THE DM PANE: no padding, no sticky floor, no mt-auto push — the pane IS the column,
                so its header lands on the top edge and its composer on the bottom one. */
             ? 'flex flex-col flex-1 min-h-0'
@@ -2368,45 +2594,90 @@ export function HomeView() {
             The top slice of the SERVED deck (≤5, THE DENSITY LAW), each line wearing its receipt.
             The door opens the rest IN PLACE and IN ORDER, in the SAME grammar (lib/home/calm.ts
             sortDoorRows) — the fold, never a graveyard and never a second surface. */}
-        {view === 'dashboard' && !chatActive && !projectDetailOpen && !nothing && (
-          <div className={`mx-auto w-full max-w-[720px] mt-7 transition-opacity duration-200 ease-out ${chatFading ? 'opacity-0' : 'opacity-100'}`}>
+        {/* THE BLOCK IS THE LENS'S, NOT THE DATA'S (regression, Sep 18): it used to be gated on
+            `!nothing` as well, and the door lived inside a component that returned null on three
+            zeroes — so a Home whose brief had not landed, or whose every seat had moved under a
+            meeting, showed NOTHING between the composer and TODAY. The dashboard lens always
+            carries its list and its one door; what is IN the list is the data's business. */}
+        {view === 'dashboard' && !chatActive && !projectDetailOpen && (
+          <div style={entrance.veil(2)} className={`mx-auto w-full max-w-[720px] mt-7 transition-opacity duration-200 ease-out ${chatFading ? 'opacity-0' : 'opacity-100'}`}>
             <RiseIn delay={60}>
               <div className="flex flex-col gap-0.5">
+                {/* THE HONEST WAIT: no brief yet is not "nothing needs you" — it is not known yet,
+                    and it says so in the whisper grammar rather than leaving a hole. */}
+                {!b && (
+                  <p className="px-3 py-1.5 text-[13px] text-neutral-400">Reading your day…</p>
+                )}
                 {whispers.map((w) => (
-                  <WhisperLine key={w.item.key} w={w} handlers={{
+                  <WhisperLine key={w.item.key} w={w} whyNow={whyNowByAtom.get(w.item.entityId) ?? null} handlers={{
                     onDismissInbox: onDismiss, onClearedCommitment: onCleared,
                     onUndoInbox: toastInbox, onUndoCommitment: toastCommitment,
                     dismissOverride: dealKeyOf.has(w.item.key) ? () => dismissDeal(dealKeyOf.get(w.item.key)!) : undefined,
                   }} />
                 ))}
-                <CalmDoor remaining={restRows.length} handledToday={ringCleared} open={deckOpen} onToggle={toggleDeck} />
+                {/* ONE SCALE (A3) × THE GRADIENT (Q2): the door speaks the LEDGER'S OWN waiting
+                    number — the served count plus the deck's non-mail held rows, exactly the band
+                    the ledger opens on — and rests the handled total beside it. The deck's
+                    remainder is the fallback for a brief served without the field. */}
+                {/* THE FILL — ONE LIST, NOT TWO (owner, Sep 18: "this split approach not sure
+                    looks good"). A header row with rows under it read as a second stacked list;
+                    the page is ONE quiet list and ONE door line, exactly as it always was. These
+                    rows are simply the list continuing — same grammar, same rail, no divider, no
+                    header — so the seats are never starved to two and the page never looks broken.
+                    They are SERVED rows the budget held back, in the server's own order. */}
+                {nextUp.map((w) => (
+                  <WhisperLine key={`next-${w.item.key}`} w={w} whyNow={null} handlers={{
+                    onDismissInbox: onDismiss, onClearedCommitment: onCleared,
+                    onUndoInbox: toastInbox, onUndoCommitment: toastCommitment,
+                    dismissOverride: dealKeyOf.has(w.item.key) ? () => dismissDeal(dealKeyOf.get(w.item.key)!) : undefined,
+                  }} />
+                ))}
+                <CalmDoor
+                  waiting={typeof b?.attention?.heldWaiting === 'number'
+                    ? b.attention.heldWaiting + deckHeldRows.length
+                    : b ? restRows.length : null}
+                  handledQuietly={b?.attention?.heldHandled ?? 0}
+                  handledToday={ringCleared} onOpen={() => setView('held')} />
               </div>
             </RiseIn>
 
-            {/* BEHIND THE FOLD — THE DOOR EXPANDS IN PLACE (owner walk, Sep 8: "this is awful,
-                looks bad and not aligned with the new design at all"). The legacy deck that used
-                to live down here — the "What needs you N" header, the Tasks/By-project toggle, the
-                boxed OVERDUE cards with their red badges, the day ring and the This-week rail — is
-                RETIRED from the Home. The Home has ONE row grammar now: the whisper. The door
-                simply shows the rest of the pile, sorted (lib/home/calm.ts sortDoorRows), in that
-                same grammar with the same hover deeds. Nothing that had another home was
-                restyled: the calendar lives on /meetings (and the CoS's sentence already carries
-                the day shape), and the ring's count already rests beside the door as
-                "N handled today" — a second seat for a fact is the wrong seat. */}
-            <div className={`grid transition-all duration-300 ease-out ${deckOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
-              <div className="overflow-hidden min-h-0">
-                <div className="flex flex-col gap-0.5 pt-1">
-                  {restRows.map((r) => (
-                    <WhisperLine key={r.item.key} w={toWhisper(r.item)} handlers={{
-                      onDismissInbox: onDismiss, onClearedCommitment: onCleared,
-                      onUndoInbox: toastInbox, onUndoCommitment: toastCommitment,
-                      dismissOverride: r.dealKey ? () => dismissDeal(r.dealKey!) : undefined,
-                    }} />
-                  ))}
-                </div>
-              </div>
-            </div>
+            {/* BEHIND THE FOLD — THE LEDGER, NOT A WALL (docs/attention-plan.md A3, Sep 17). The
+                door used to expand the remainder IN PLACE, in the whisper grammar. That kept ONE
+                row grammar — and it kept the fourteen-row wall, one click away, with no account of
+                why any of it was held. A3 replaced it: "suppression is a posture with receipts,
+                never a dismissal", so the remainder now lives in a LEDGER (components/home/
+                held-quiet.tsx, the `held` lens) where every held thing carries its class, its
+                consequence of waiting, and its way back. Nothing is hidden and nothing is deleted —
+                strictly more is accounted for than the wall ever was.
+                (The legacy deck that used to live down here — the "What needs you N" header, the
+                Tasks/By-project toggle, the boxed OVERDUE cards, the day ring and the This-week
+                rail — stays retired; the calendar lives on /meetings and the ring's count still
+                rests beside the door as "N handled today".) */}
           </div>
+        )}
+
+        {/* THE DAY FRAME — beneath the needs-you rows, in the page's own silence. It renders NOTHING
+            when neither zone was served (no header, no hairline, no trace): a zone earns its seat
+            SERVER-side, and the feature ladder is enforced there too, so this mount carries no empty
+            state and no upsell for an organ this account lacks.
+            IT IS ITS OWN BLOCK, deliberately: gating it on the deck having rows would add a CLIENT
+            condition to an absence the serve already owns — a day with a meeting and an empty deck
+            is exactly when the frame is the most honest thing on the page. */}
+        {view === 'dashboard' && !chatActive && !projectDetailOpen && (
+          <div style={entrance.veil(3)} className={`mx-auto w-full max-w-[720px] mt-8 transition-opacity duration-200 ease-out ${chatFading ? 'opacity-0' : 'opacity-100'}`}>
+            <DayFrameView frame={dayFrame} />
+          </div>
+        )}
+
+        {/* THE HELD-QUIET LEDGER — the calm Home's one door opens here. It OWNS the column (the
+            greeting, the composer and the whispers all stand down above), and its own back line is
+            the way out; the floating island shows nothing, because this lens has no sibling. */}
+        {view === 'held' && (
+          <RiseIn key="lens-held">
+            <HeldQuietView ledger={heldLedger} deckHeld={deckHeldRows} warmHeld={warmHeldRows}
+              servedDay={b?.today ?? null}
+              onBack={() => setView('dashboard')} onRefresh={reloadHeld} />
+          </RiseIn>
         )}
         {sovereignCenter && <div className="flex-1" aria-hidden />}
       </div>

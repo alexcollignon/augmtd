@@ -240,8 +240,13 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('lib/work-items/model.ts').includes('/item/') && src('lib/work/judge.ts').includes('readCache'));
 
   // Live matrix + inventory per user. Rene resolved at runtime (never hardcode his id).
-  const { data: uidRows } = await sb.from('work_entities').select('user_id').limit(2000);
-  const rene = [...new Set(((uidRows ?? []) as Array<{ user_id: string }>).map((r) => r.user_id))].find((u) => u.startsWith('ae306f38')) ?? null;
+  // RE-POINTED (Sep 19): the old scan (`select user_id limit 2000`) silently served PostgREST's
+  // 1000-row server page once the table outgrew it — the repo's oldest cap class, inside the gate
+  // itself (and `like` can't match a uuid column). Resolve the id from the auth listing instead.
+  const rene = await (async () => {
+    const { data: us } = await sb.auth.admin.listUsers({ perPage: 1000 });
+    return us?.users.find((u) => u.id.startsWith('ae306f38'))?.id ?? null;
+  })();
   const USERS: Array<[string, string]> = [[A, 'user A'], [B, 'user B'], ...(rene ? [[rene, 'user C'] as [string, string]] : []), [PERSONAL, 'personal']];
   if (!probe.error) {
     for (const [uid, label] of USERS) {
@@ -429,7 +434,9 @@ const src = (p: string) => readFileSync(p, 'utf8');
       src('lib/commitments/fulfillment.ts').includes('clipForPrompt') &&
       src('lib/inbox/reactivate-on-reply.ts').includes('clipForPrompt') &&
       src('app/api/items/reply-directions/route.ts').includes('clipForPrompt') &&
-      /JUDGE_VERSION = 1[3-9]/.test(src('lib/work/surface-registry.ts')) && // ≥13 (the law landed at 13)
+      // RE-POINTED (Sep 19): a range pin breaks on every bump (the documented pin trap) — assert
+      // the FLOOR: the law landed at 13, so any two-digit version ≥13 satisfies it.
+      (() => { const m = src('lib/work/surface-registry.ts').match(/JUDGE_VERSION = (\d+)/); return !!m && Number(m[1]) >= 13; })() &&
       /STATE_PROMPT_VERSION = [7-9]/.test(src('lib/entities/state.ts')) && // ≥7 (the law landed at 7; 8 = the one-claim law)
       // Re-pointed Sep 13 (THE PROACTIVE REACH ARC): exact `= 3` pin → floor ≥3 — the version-pin
       // trap ("exact VERSION = N pins break on every bump", CLAUDE.md) bit here when the expiry
@@ -616,8 +623,13 @@ const src = (p: string) => readFileSync(p, 'utf8');
       /move\.ref\.startsWith\('inbox:'\)/.test(b) && /if \(n\?\.noise\) move = null;/.test(b));
     check('R14: the noise verdict rides the sig (an un-marked row re-composes, never stands on a dead floor)',
       /\$\{present\.noise \? 'noise' : ''\}/.test(b));
+    // RE-POINTED (Sep 17, Q1): an EXACT version pin breaks on every later bump — the repo's own
+    // "use a floor + the version-log string" lesson, which this line had stopped obeying. The LAW
+    // is unchanged: R14's prompt change must still be recorded in the version log, and the number
+    // must be at or above the release that carried it.
     check('R14: the prompt changed, so the version did (every cached opening re-authors once)',
-      /ROOM_BRIEF_VERSION = 11;/.test(b) && /NOISE OWES NOTHING \+ A DISMISSAL IS A DECISION/.test(b));
+      Number((/ROOM_BRIEF_VERSION = (\d+);/.exec(b) ?? [])[1] ?? 0) >= 11
+      && /NOISE OWES NOTHING \+ A DISMISSAL IS A DECISION/.test(b));
     // LIVE — a real campaign-echo room composes a position with NO move. Read-only except the
     // room_brief cache the composer owns.
     const { getCampaignSignature } = await import('../lib/inbox/campaign-echo');

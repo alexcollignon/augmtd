@@ -5,7 +5,9 @@
 //   1. ensureWorkers        — the team exists before anything wants to delegate or brief
 //   2. bootstrapMemory ×N   — recognize the fresh corpus into entity memory (idempotent, capped)
 //   3. runPreparationPass   — judge + prepare the top of the deck (the jaws-drop moment)
-//   4. bust home_brief      — the next Home load serves the prepared state
+//   4. runCatchUp           — the attention lanes (judgment sweep + graduation), so a NEW account
+//                             never accumulates the backlog the catch-up kick exists to drain
+//   5. bust home_brief      — the next Home load serves the prepared state
 //
 // ONCE per connection, atomically claimed: the UPDATE only matches while metadata.first_look is
 // absent, so concurrent syncs (the connect-page trigger + the callback's server-side sync racing)
@@ -51,7 +53,19 @@ export async function runFirstLookBootstrap(
       await runPreparationPass(admin, userId);
     } catch { /* non-fatal */ }
 
-    // 4 — the next Home load composes fresh over the prepared state.
+    // 4 — THE LANES, ONCE, HERE (instant catch-up, Sep 18): a new account must never ACCUMULATE the
+    // backlog the catch-up kick exists to drain. The judgment sweep reaches every actionable item
+    // the prep pass could not, the graduation lane files the quiet classes it already holds — both
+    // through the ONE implementation (`runCatchUp`), which is the same code the kick and the manual
+    // runner drive. Bounded and non-fatal: a bootstrap that runs out of clock leaves an account the
+    // cron already knows how to keep clean.
+    try {
+      const { runCatchUp } = await import('@/lib/work/catch-up');
+      const r = await runCatchUp(admin, userId, { budgetMs: 120_000 });
+      console.log(`[first-look] lanes for ${userId.slice(0, 8)}: filed ${r.filed} · judged ${r.judged}`);
+    } catch { /* non-fatal */ }
+
+    // 5 — the next Home load composes fresh over the prepared state.
     await admin.from('profiles').update({ home_brief: null }).eq('id', userId).then(() => {}, () => {});
     console.log(`[first-look] done for user ${userId.slice(0, 8)}`);
     return { ran: true };

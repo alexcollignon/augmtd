@@ -7,6 +7,11 @@
 // `enacting` is deliberately absent from derivation: it is the client-transient between firing
 // a transition and its consequence landing (seconds, shown locally), never a stored state.
 //
+// THE VOCABULARY LIVES HERE (Sep 18): every word a surface speaks about a piece of work is
+// declared in this module — `STATE_WORDS` for the lifecycle, and `SEAT_WORDS`/`NEEDS_SHAPING_WORD`
+// for Q4's seat contract (a row that earned one of the day's five with nothing staged on it). A new
+// word is a SPEC CHANGE: it is added here with its rationale, never typed into a surface.
+//
 // TWO READERS, ONE LADDER (machine adoption, Aug 14): `workStateOf` derives one item with its
 // own queries (deep-dive scale); `workStatesFor` derives a whole deck's worth from BATCHED
 // prefetched rows (4 queries total, no per-item fan-out). Both call the SAME pure `deriveState`
@@ -49,6 +54,27 @@ export const STATE_WORDS: Record<WorkLifecycle, string | null> = {
   settled: null,
 };
 
+// ─── THE SEAT WORD (Q4 · THE SEAT CONTRACT, docs/attention-plan.md PART III — Sep 18) ──────────
+// A NEW WORD IS A SPEC CHANGE, so it is declared here, beside the lifecycle words, and nowhere
+// else: every surface that says it reads THIS constant (the STATE_WORDS discipline — one grammar,
+// no per-surface paraphrase, no client literal).
+//
+// WHY IT IS NOT A LIFECYCLE STATE: the machine's ladder derives what IS TRUE OF THE WORK (a
+// verdict, an artifact, an ask, a sent stamp). "Needs shaping" is true of the WORK'S SEAT — the
+// attention budget's verdict that a row earned one of the day's five with nothing staged on it yet.
+// Adding it to `WorkLifecycle` would put a state in the ladder that `deriveState` can never emit,
+// which is exactly the kind of standing lie the ladder exists to refuse. So it lives beside the
+// table, in the machine's own vocabulary, and the seat contract (lib/home/attention.ts) is its one
+// consumer.
+//
+// WHAT IT PROMISES, in the CoS's mouth: nothing is prepared on this yet, and I will shape it if you
+// say the word (Q6 — the row's CTA becomes the offer, never a to-do in button costume).
+export const NEEDS_SHAPING_WORD = 'needs shaping';
+
+/** The seat contract's words, as a table — so a gate asserts a mapping and not a string literal
+ *  scattered across surfaces (the same property `STATE_WORDS` holds for the lifecycle). */
+export const SEAT_WORDS: Record<'needs_shaping', string> = { needs_shaping: NEEDS_SHAPING_WORD };
+
 type Verdict = { work?: string; resolution?: string; revisit?: { after?: string }; options?: unknown[] } | null;
 
 export type DeriveInputs = {
@@ -83,7 +109,10 @@ export function deriveState(input: DeriveInputs): WorkMachineState {
   const sendShaped = live.find((p) => SEND_KINDS.includes(p.kind) && p.sendReady !== false);
   const sendBlocked = live.find((p) => SEND_KINDS.includes(p.kind) && p.sendReady === false);
   const decisionBrief = live.find((p) => p.decision && p.decision.options.length >= 2);
-  const document = live.find((p) => p.kind === 'deliverable' && !p.decision);
+  // Q8 · THE PASTE PACK is finished work to READ, not to send: it joins the review lane so a staged
+  // pack can never leave the machine saying "preparing" while the words sit there (the standing-lie
+  // class). It is deliberately absent from SEND_KINDS — nothing here could fire.
+  const document = live.find((p) => (p.kind === 'deliverable' || p.kind === 'paste_pack') && !p.decision);
   const superseded = input.prepared.some((p) => p.stale);
   // René sweep: the deep-dive's decision card falls back to the VERDICT's own validated options —
   // the machine must see the same material, or door and machine disagree (6 of 6 decide items on

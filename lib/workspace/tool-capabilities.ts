@@ -19,16 +19,23 @@ export const TOOL_FEATURE: Record<string, FeatureKey | null> = {
 
   // ── Meetings / calendar ──
   get_meeting_context: 'meetings',
+  get_calendar: 'meetings',
   // The chief's read-side availability verb (Wave 1) — it only READS the calendar, but a workspace
   // without meetings has no calendar to read, and a tool that could speak "you're free Thursday"
   // there would be a claim the account cannot deliver.
   check_calendar: 'meetings',
-  get_calendar: 'meetings',
   send_calendar_invite: 'meetings',
   // The invite CARD's producer (chat, both surfaces). It prepares and never sends — but it is a
   // calendar verb, so a workspace without meetings never sees it offered (the tier law: capability
   // shapes content; a chip is a claim).
   prepare_calendar_invite: 'meetings',
+
+  // ── Bulk deeds over the held-quiet ledger (attention-plan A7) ──
+  // The deed PREVIEWS and never acts; the commit is the user's click. Gated on `email` because
+  // every class it acts on is built from mail — on an email-off workspace the ledger holds nothing
+  // for it to name, and a tool that could speak "archive the newsletters" there would be a claim
+  // the account cannot deliver (the sovereign copy law: capability shapes vocabulary).
+  prepare_bulk_deed: 'email',
 
   // ── Drive / knowledge base ──
   search_knowledge_base: 'drive',

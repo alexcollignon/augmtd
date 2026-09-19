@@ -362,7 +362,7 @@ console.log('\nT3 · THE ONE THREAD COMPONENT — one kit, three kinds, presenta
   // avatar state + one quiet line — the constitution's grammar table; a card form rendered a
   // doubled face inside its own bubble, caught by the browser walk).
   {
-    const GRAMMAR = ['deliverable', 'approval', 'input', 'routine', 'frame', 'proposal', 'invite', 'custom'];
+    const GRAMMAR = ['deliverable', 'approval', 'input', 'routine', 'frame', 'proposal', 'invite', 'bulk', 'doc', 'custom'];
     const missingType = GRAMMAR.filter((k) => !types || !new RegExp(`kind: '${k}'`).test(types));
     const missingRender = GRAMMAR.filter((k) => !cards || !new RegExp(`case '${k}':`).test(cards));
     gate('T3.3 the type surface declares the FULL card grammar', missingType.length === 0, missingType.join(', '));
@@ -762,7 +762,9 @@ console.log('\nT6 · THE ROOM’S CONVERSATION — the rail, through the ONE kit
     const timeline = read('components/thread/thread-timeline.tsx');
     gate('T6.17 event lines carry refs as words (kit renders them; the rail passes them through go())',
       !!types && /refs\?: Array<\{ label: string; onClick\?: \(\) => void \}>/.test(types)
-      && !!timeline && /item\.refs\?\.map/.test(timeline)
+      // RE-POINTED (Sep 19, clause 5): the renderer drops blank-labelled refs BEFORE it joins their
+      // separators — the dangling " ·" class. The gate asserts the filter, never just a map.
+      && !!timeline && /item\.refs\?\.filter\(\(r\) => !!r\.label\?\.trim\(\)\)\.map/.test(timeline)
       && !!rail && /lineRefs/.test(rail) && /onClick: \(\) => go\(r\.href as string\)/.test(rail));
   }
 }
@@ -1049,10 +1051,33 @@ console.log('\nT8 · THE CALM HOME — one sentence, five whispers, one door');
     && !/whispers\.slice\([^)]*\)\.map\(\(w\) => \(\s*<WhisperLine/.test(home)
     // one composer, one mount (the class toggles; it never remounts)
     && (home.match(/<HomeAsk\b/g) || []).length === 1);
-  gate('T8.3 everything else is a DOOR (CalmDoor carries the remainder + the handled count)',
-    !!home && /<CalmDoor remaining=\{restRows\.length\} handledToday=\{ringCleared\} open=\{deckOpen\} onToggle=\{toggleDeck\} \/>/.test(home)
-    && /Everything else · \$\{remaining\} →/.test(home)
-    && /\{handledToday\} handled today/.test(home));
+  // RE-POINTED Sep 17 (docs/attention-plan.md A3 — THE LEDGER LAW). The door's WORDS changed and so
+  // did what it opens: "Everything else" read as a guilt backlog (a pile the reader failed to get
+  // to), and it unfolded a wall with no account of why anything was held. "Held quiet" states the
+  // AGENT'S OWN ACT, and it opens the LEDGER, where every held thing carries its class, its
+  // consequence of waiting and its way back. The law the gate held — ONE door, carrying the
+  // remainder and resting beside the handled count — is unchanged and still asserted here.
+  // RE-POINTED Sep 17 (never weakened): the door's NUMBER moved to A3's one scale — it now speaks
+  // the ledger's OWN held total plus the deck's non-mail held rows (exactly the sum the ledger's
+  // intro states), with the deck's remainder surviving as the fallback for a brief served without
+  // the field. The door itself — one door, the handled count beside it, opening the lens — is
+  // asserted exactly as before, and the two-scales bug this replaced would now fail here.
+  // RE-POINTED Sep 17, THIRD TIME AND STRICTLY STRONGER (PART III, Q2 — HELD ≠ HANDLED). One
+  // number of 4,939 is a cliff, not a door ("it's 0 to 100, no in-between"). The door now speaks the
+  // WAITING band — alive, real, held only by the budget — and rests the handled total beside it as
+  // the fact it is. ONE DOOR, one fallback, one lens: unchanged, and now it cannot overstate what is
+  // owed either.
+  gate('T8.3 the remainder is ONE door — "When you\'re ready · N →" beside what was handled',
+    // RE-POINTED Sep 18, STRICTER (the live regression): the door used to RETURN NULL when all three
+    // numbers were zero — the exact state of a Home whose brief has not landed, and of one whose
+    // every seat moved under a meeting. It now always renders and only its WORDS depend on what is
+    // known, which is what the second clause below asserts. One door, still one door.
+    !!home && /<CalmDoor\n\s+waiting=\{typeof b\?\.attention\?\.heldWaiting === 'number'\n\s+\? b\.attention\.heldWaiting \+ deckHeldRows\.length\n\s+: b \? restRows\.length : null\}\n\s+handledQuietly=\{b\?\.attention\?\.heldHandled \?\? 0\}\n\s+handledToday=\{ringCleared\} onOpen=\{\(\) => setView\('held'\)\} \/>/.test(home)
+    && /typeof waiting === 'number' && waiting > 0 \? `When you're ready · \$\{waiting\} →`/.test(home)
+    && !/if \(waiting <= 0 && handledQuietly <= 0 && handledToday <= 0\) return null;/.test(home)
+    && /handled quietly/.test(home)
+    // …and the guilt-backlog wording is gone from the surface, not merely unused
+    && !/Everything else ·/.test(home));
 
   // T8.4 / T8.5 / T8.5b / T8.6 RETIRED Sep 13 (OWNER CALL: "in home, this feels too much, remove").
   // They gated the CoS sentence — its source ladder (briefing lead → derived), the fire leading its
@@ -1206,13 +1231,20 @@ console.log('\nT8 · THE CALM HOME — one sentence, five whispers, one door');
         // decorative only — never a control, never a claim
         && /aria-hidden="true"/.test(mark);
     })());
-  gate('T8.17a the mark is mounted beside the date, and the orphaned orb keyframes are gone',
-    !!home && /<AliveMark \/>/.test(home)
-    && /import \{ AliveMark \} from '@\/components\/home\/alive-mark';/.test(home)
-    // it paints with the date in BOTH shapes (skeleton + landed) so the load never pops or shifts —
-    // the skeleton's copy wears the loading modifier (RE-POINTED Sep 15: one orb, two moments)
-    && (home.match(/<AliveMark \/>/g) || []).length === 1
-    && (home.match(/<AliveMark loading \/>/g) || []).length === 1
+  // RE-POINTED Sep 18 (THE ENTRANCE): the Home no longer names the mark at all — it mounts the
+  // ENTRANCE'S SEAT, and the seat mounts the one mark. That is strictly stronger than the Sep 15
+  // reading ("one orb, two moments"): there are no longer two moments to keep in agreement, because
+  // there is no second tree. The skeleton that held the second copy is gone with it.
+  gate('T8.17a the mark is mounted beside the date, through ONE seat, and the orphaned orb keyframes are gone',
+    !!home && /<OrbSeat entrance=\{entrance\} loading=\{loading\} \/>/.test(home)
+    && /import \{ OrbSeat, useOrbEntrance, type OrbEntrance \} from '@\/components\/home\/orb-entrance';/.test(home)
+    && (home.match(/<OrbSeat\b/g) || []).length === 1
+    && !/<AliveMark\b/.test(home)
+    && (() => {
+      const seat = read('components/home/orb-entrance.tsx');
+      return !!seat && /import \{ AliveMark \} from '@\/components\/home\/alive-mark';/.test(seat)
+        && (seat.match(/<AliveMark\b/g) || []).length === 1;
+    })()
     // the dead keyframes the header rewrite left behind are swept
     && !/@keyframes augM1\{/.test(home) && !/@keyframes augBreathe\{/.test(home)
     && !/@keyframes augSpin\{/.test(home));
@@ -1227,14 +1259,45 @@ console.log('\nT8 · THE CALM HOME — one sentence, five whispers, one door');
     && !!read('components/home/home-view.tsx')?.includes('ctaFor')
     && (row.match(/'Review & send →'/g) || []).length === 1);
 
-  // THE FOLD IS NOT A GRAVEYARD, AND IT IS NOT A SECOND HOME (owner walk, Sep 8 — re-pointed):
-  // the door EXPANDS IN PLACE, in the whisper grammar. The legacy deck below the fold is retired.
-  gate('T8.12 the door expands IN PLACE in the whisper grammar (one row grammar on the whole Home)',
-    !!home && /\$\{deckOpen \? 'grid-rows-\[1fr\] opacity-100' : 'grid-rows-\[0fr\] opacity-0'\}/.test(home)
+  // THE FOLD IS NOT A GRAVEYARD, AND IT IS NOT A SECOND HOME (owner walk, Sep 8).
+  // RE-POINTED Sep 17 (docs/attention-plan.md A3): the in-place unfold WAS the fourteen-row wall,
+  // one click away, with no account of why any of it was held. A3 replaced it with a LEDGER —
+  // "suppression is a posture with receipts, never a dismissal" — so the remainder now lives at its
+  // own lens, where every held thing carries its class, its consequence of waiting and its way back.
+  // STRICTLY MORE is accounted for than the unfold ever accounted for; nothing is hidden and nothing
+  // is deleted. The gate follows the law up: no wall survives behind the fold, the ledger exists,
+  // and the deck's own held remainder (commitments, deals — rows the mail ledger structurally cannot
+  // see) is handed to it rather than dropped.
+  gate('T8.12 the door opens THE LEDGER, not a wall — receipts for every held thing (A3)',
+    !!home
+    // the wall is gone: no restRows deck re-rendered behind the fold, no per-session fold state
+    && !/restRows\.map\(/.test(home) && !/deckOpen|toggleDeck|aug-home-deck-open/.test(home)
+    // the lens mounts the ledger, and the ledger's read fires only while it is open
+    // (Sep 17: the mount gained `onRefresh` — a committed bulk deed re-reads the account, so an
+    //  archived member leaves the list rather than standing as a row the ledger no longer holds.)
+    // (Sep 18: the mount gained the WARM stack and the served day — the rows the Home already holds,
+    //  so the deck opens on them while the account is read. Same one lens, same one read.)
+    && /<HeldQuietView ledger=\{heldLedger\} deckHeld=\{deckHeldRows\} warmHeld=\{warmHeldRows\}\n\s+servedDay=\{b\?\.today \?\? null\}\n\s+onBack=\{\(\) => setView\('dashboard'\)\} onRefresh=\{reloadHeld\} \/>/.test(home)
+    && /useHeldLedger\(view === 'held'\)/.test(home)
+    // nothing the deck held is dropped on the floor: the non-mail remainder rides along, worded by
+    // the Home's OWN vocabulary (toWhisper), never a second grammar invented at the ledger
+    && /const deckHeldRows: DeckHeldRow\[\] = restRows/.test(home)
     && (() => {
-      const start = home.indexOf('BEHIND THE FOLD');
-      const seg = home.slice(start, start + 1600);
-      return /restRows\.map\(\(r\) => \(\s*\n?\s*<WhisperLine key=\{r\.item\.key\} w=\{toWhisper\(r\.item\)\}/.test(seg);
+      const held = read('components/home/held-quiet.tsx');
+      return !!held
+        // every class states its consequence of waiting, and every member its own why-held
+        && /\{c\.consequence\}/.test(held) && /\{m\.why\}/.test(held)
+        // …and every held thing has a way back
+        && (held.match(/Bring forward/g) || []).length >= 2
+        // the page's own sentences are DETERMINISTIC, composed from the served counts — never a
+        // model. (Sep 17, Q2: they moved to `lib/home/held-words.ts` — pure and client-safe, so a
+        // CLI gate can assert the WORDS and not just their existence — and the surface re-exports
+        // them. Both halves are asserted here; same law, one home.)
+        && /heldIntro, heldReceipts/.test(held)
+        && (() => { const w = read('lib/home/held-words.ts');
+          return !!w && /export function heldIntro\(/.test(w) && /export function heldReceipts\(/.test(w)
+            && !/getAIClient|aiCall\(|aiCreate/.test(w); })()
+        && !/getAIClient|aiCall\(|aiCreate/.test(held);
     })());
   gate('T8.12a the LEGACY DECK is gone from the Home (no second deck, no ring twin, no calendar rail)',
     !!home && !/<OneDeck/.test(home) && !/<ThisWeekCard/.test(home)
@@ -1243,11 +1306,15 @@ console.log('\nT8 · THE CALM HOME — one sentence, five whispers, one door');
     && (home.match(/<DayClearedRing/g) || []).length === 1
     // …and the component itself is retired at its own address, so nothing can mount it again
     && (() => { const one = read('components/one/one-home.tsx'); return !!one && !/export function OneDeck/.test(one) && /export type FlatRow/.test(one); })()
-    // the handled count keeps its ONE home: beside the door
-    && /\{handledToday\} handled today/.test(home));
+    // the handled count keeps its ONE home: beside the door (Q2 — it now reads
+    // "N handled quietly · M today", the same one seat, two honest scales)
+    && /handledToday=\{ringCleared\}/.test(home)
+    && (home.match(/handled quietly/g) || []).length === 1);
   gate('T8.13 the whispers derive from the SERVED deck — one agenda, one order (no re-judging)',
     !!home && /for \(const e of agenda\.entries\) \{/.test(home)
-    && /const restRows = sortDoorRows\(flatRows\.filter\(\(r\) => !whisperKeys\.has\(r\.item\.key\)\), \(r\) => r\.item\);/.test(home)
+    // (RE-POINTED Sep 18: the remainder also drops DAY-ANCHORED rows — they are SERVED and already
+    //  rendering under their meeting, so counting them again would be one row in two homes.)
+    && /const restRows = sortDoorRows\(\n\s+flatRows\.filter\(\(r\) => !whisperKeys\.has\(r\.item\.key\) && !anchoredIds\.has\(r\.item\.entityId\)\),\n\s+\(r\) => r\.item,\n\s+\);/.test(home)
     && !!calm && !/fetch\(|supabase|aiCall/.test(calm));
   // T8.13a RETIRED Sep 13 — THE ONE DERIVATION existed so the SENTENCE's counts could never
   // disagree with the surface. With no sentence there is no second derivation to keep honest: the
@@ -1263,9 +1330,15 @@ console.log('\nT8 · THE CALM HOME — one sentence, five whispers, one door');
     && /<TeamReadyCard onTour=/.test(home)
     && /sovereignCenter\s*\n?\s*\? 'pt-7 pb-4'/.test(home)
     && /\{sovereignCenter && <div className="flex-1" aria-hidden \/>\}/.test(home));
+  // RE-POINTED Sep 18 (the live regression): the WHISPER LIST is still silent on an empty deck —
+  // that is the `nothing` empty state's job and it is asserted here. What no longer hangs off the
+  // data is the BLOCK ITSELF: it belongs to the dashboard lens, because the ledger's one entrance
+  // must render even when there is nothing above it (a Home with no rows AND no door is a Home with
+  // no way to its own account). So: the empty state still speaks, the door still stands.
   gate('T8.15 an empty deck whispers NOTHING (the honest empty states keep the page)',
-    !!home && /view === 'dashboard' && !chatActive && !projectDetailOpen && !nothing && \(/.test(home)
-    && /\{nothing && \(/.test(home));
+    !!home && /\{nothing && \(/.test(home)
+    && /view === 'dashboard' && !chatActive && !projectDetailOpen && \(/.test(home)
+    && /\{whispers\.map\(\(w\) => \(/.test(home));
 }
 
 // ── T10 · ONE AGENDA PER ROOM (owner walk, Sep 7) ───────────────────────────────────────────────
@@ -1322,10 +1395,16 @@ console.log('\nT10 · ONE AGENDA PER ROOM — the brief speaks it, or it dies');
   gate('T10.8 the grounding reads live asks off THEIR OWN query, not the transcript window',
     !!ground && /from\('room_turns'\)[\s\S]{0,220}not\('component', 'is', null\)/.test(ground)
     && /const asks: RoomGrounding\['asks'\] = await \(async \(\) => \{/.test(ground));
+  // RE-POINTED (Sep 18, Q1's source half): the attribution moved OUT of the template and into
+  // `askAttribution(who, speaker)` — the page now collapses the SPEAKER'S OWN ask to first person
+  // at the source, so every consumer inherits it. The law is unchanged and stricter: an ask still
+  // carries WHO asks, and a coworker who is not the reader is still named.
   gate('T10.9 an ask carries WHO asks (a coworker’s checklist is their own speech)',
     !!ground && /who: t\.author\?\.name \? String\(t\.author\.name\) : null/.test(ground)
     && /who: string \| null/.test(ground)
-    && /a\.who \? `\$\{a\.who\} asks` : 'the team asks'/.test(ground));
+    && /export function askAttribution/.test(ground)
+    && /`\$\{who\} asks`/.test(ground)
+    && /askAttribution\(a\.who, speaker\)/.test(ground));
   gate('T10.10 the brief SIG carries the ask digest (who + answered), so a new ask recomposes',
     !!brief && /const askDigest = g\.asks\.map\(\(a\) => `\$\{a\.who \?\? '-'\}:\$\{a\.proceeded \? 'ok' : 'open'\}/.test(brief)
     && /askDigest/.test(brief));
@@ -1600,7 +1679,10 @@ console.log('\nT12 · THE COWORKER DM — the board’s pane, opening at once');
     && /dmPane\s*\?\s*'min-h-0 flex-1'\s*:\s*'!bg-transparent max-h-\[calc\(100vh-200px\)\] min-h-\[46vh\]'/.test(ask));
   gate('T12.3 the HOST stops docking the DM to the Home’s sticky floor (that mt-auto push WAS the dead zone)',
     !!home && /const dmPane = chatActive && chatDm;/.test(home)
-    && /<div className=\{dmPane\n/.test(home)
+    // RE-POINTED Sep 18 (the entrance): the same div now carries the entrance veil before its
+    // className, because the composer is the second block to rise in. The clause is unchanged —
+    // the dmPane branch is still what decides the docking.
+    && /<div style=\{entrance\.veil\(1\)\} className=\{dmPane\n/.test(home)
     && /\{projectDetailOpen \|\| dmPane/.test(home)
     // …and the Home chat's own floor is untouched.
     && /sticky bottom-0 mt-auto pt-8 pb-5/.test(home));
@@ -1634,9 +1716,51 @@ console.log('\nT12 · THE COWORKER DM — the board’s pane, opening at once');
     && /const rosterFlight = useRef<Promise<Array<\{ id: string; name: string \}>> \| null>\(null\);/.test(ask)
     && /if \(rosterFlight\.current\) return rosterFlight\.current;/.test(ask));
   gate('T12.10 the pane takes the page ON ADDRESS, and the cold path wears a SKELETON in the thread’s shape',
-    !!ask && /const showThread = open && \(hasThread \|\| !!dmActor\);/.test(ask)
-    && /const dmSkeleton = dmLoading && !hasThread \?/.test(ask)
-    && /beforeTimeline=\{dmSkeleton\}/.test(ask));
+    // RE-POINTED (Sep 18, THE CHAT OPENS INSTANTLY): the takeover clause gained the chat lane and
+    // the skeleton serves BOTH lanes — the law ("the pane paints at click time") is wider, not
+    // weaker, and there is still exactly ONE placeholder for the one wait.
+    !!ask && /const showThread = open && \(hasThread \|\| !!dmActor \|\| !!chatRoom\);/.test(ask)
+    && /const openingSkeleton = \(dmLoading \|\| chatLoading\) && !hasThread \?/.test(ask)
+    && /beforeTimeline=\{openingSkeleton\}/.test(ask)
+    && !/const dmSkeleton =/.test(ask)); // no second skeleton anywhere
+
+  // ── T12.11–13 · THE CHAT LANE OPENS THE SAME WAY (Sep 18) — clicking a past conversation in the
+  //    sidebar used to sit on the deck until /api/room/turns landed; a failed fetch died silently
+  //    forever, and an EMPTY room was deterministic forever-nothing. The DM door's three laws now
+  //    hold one lane over: paint on the click, speak on failure, and open an empty room honestly.
+  gate('T12.11 THE CHAT OPENS INSTANTLY — `chatRoom` is render state set synchronously in loadRoom, before the flight',
+    !!ask && /const \[chatRoom, setChatRoom\] = useState<string \| null>\(null\);/.test(ask)
+    && /const \[chatLoading, setChatLoading\] = useState\(false\);/.test(ask)
+    // set from the key alone INSIDE loadRoom and BEFORE the flight — nothing is awaited first
+    && (() => {
+      const i = ask!.indexOf('const loadRoom = (key: string) => {');
+      if (i < 0) return false;
+      const seg = ask!.slice(i, i + 2000);
+      const set = seg.indexOf('setChatRoom(key); setChatLoading(true);');
+      const flight = seg.indexOf('fetch(`/api/room/turns?key=');
+      return set > 0 && flight > set;
+    })()
+    // …and the lane clears wherever the DM lane clears (new chat · Home reset · a DM taking over)
+    && (ask.match(/setChatRoom\(null\); setChatLoading\(false\);/g) ?? []).length >= 3);
+  gate('T12.12 THE FAILURE SPEAKS — no silent catch on the turns fetch; a dead read says so in the pane and does NOT claim the room',
+    (() => {
+      if (!ask) return false;
+      const i = ask.indexOf('fetch(`/api/room/turns?key=');
+      const seg = ask.slice(i, i + 1400);
+      return /Promise\.reject\(new Error\('turns'\)\)/.test(seg)
+        && /\.catch\(\(\) => \{[\s\S]{0,400}Couldn't open that conversation — try again\./.test(seg)
+        && !/\.catch\(\(\) => \{\}\)/.test(seg)
+        // the key is stored on the SUCCESS path only — a conversation we could not read is not a
+        // room the next turn may append to
+        && seg.indexOf('localStorage.setItem(CHAT_KEY_LS, key)') < seg.indexOf('.catch(');
+    })());
+  gate('T12.13 AN EMPTY ROOM IS AN OPEN ROOM — `turns: []` paints the room (no skeleton left hanging), and the cross-page intent flag is consumed on a SAME-PAGE open (THE FRESH FLOOR)',
+    !!ask && /setChatLoading\(false\);\s*\n[\s\S]{0,400}setTurns\(mapServerTurns\(d\.turns\)\);/.test(ask)
+    && !/if \(!Array\.isArray\(d\?\.turns\)\) return;/.test(ask)
+    && (() => {
+      const i = ask!.indexOf('const onOpen = (e: Event) => {');
+      return i > 0 && /sessionStorage\.removeItem\('aug-open-chat-intent'\)/.test(ask!.slice(i, i + 800));
+    })());
 }
 
 // ── T14 · CROSS-PROJECT NAVIGATION IS WARM (owner walk, Sep 7 — "clicking across projects takes
@@ -1773,9 +1897,26 @@ console.log('\nT14 · CROSS-PROJECT NAV — warm before the click, a frame after
   }
   {
     const rv = read('lib/entities/room-view.ts');
-    gate('T14.9 buildRoomView’s PAIR flies together — the routing verdict and the stored response, never one after the other',
-      !!rv && /const \[routed, response\] = await Promise\.all\(\[\s*\n\s*suggestWorkerForMove\(/.test(rv)
-      && /readRoomResponse\(supabase, userId, entityId\)\),\s*\n\s*\]\);/.test(rv)
+    // RE-POINTED Sep 18 (widened, never weakened): this gate used to pin ONE literal pair
+    // (`const [routed, response] = await Promise.all([…])`). That shape was a snapshot of the
+    // waterfall as it stood, not the law — and it made the law un-improvable: buildRoomView still
+    // ran FOUR sequential waves, three of which never needed the wave above them (the stored room
+    // response, the membership links, the entity's knowledge files and the near-dup helper all key
+    // on ids the caller already handed in). The law it was protecting is the one asserted here now,
+    // and it is strictly stronger: NOTHING in this builder is a solo waterfall. Every await is a
+    // Promise.all batch, so a read may only sit in a later wave when it genuinely consumes an
+    // earlier one — which, in this builder, is true of exactly two things (the routing verdict needs
+    // `ent.next_move`; the sibling row reads need the link ids).
+    const rvBody = rv ? rv.slice(rv.indexOf('export async function buildRoomView')).split('\n// ──')[0] : '';
+    gate('T14.9 buildRoomView is ALL BATCHES — no read waits on a wave it does not consume (the routing verdict and the stored response still fly, never one after the other)',
+      !!rv
+      // no bare single-query waterfall anywhere in the builder
+      && !/=\s*await supabase\.from\(/.test(rvBody)
+      // …and no lone awaited helper either: every await in the builder is a Promise.all
+      && (rvBody.match(/\bawait\b/g) ?? []).length === (rvBody.match(/await Promise\.all\(\[/g) ?? []).length
+      // both halves of the original pair are still batched (neither may regress to a solo await)
+      && /await Promise\.all\(\[[\s\S]*?readRoomResponse\(supabase, userId, entityId\)/.test(rvBody)
+      && /await Promise\.all\(\[[\s\S]*?suggestWorkerForMove\(/.test(rvBody)
       && !/suggestedWorker: await suggestWorkerForMove\(/.test(rv));
   }
 
@@ -2028,7 +2169,9 @@ console.log('\nT16 · THE INVITE CARD — filled, selectable in-card, committed 
 
   // ── the kit kind
   gate('T16.1 the kit owns an `invite` card kind, in the grammar and in the enumeration',
-    !!types && /kind: 'invite'/.test(types) && /'proposal', 'invite', 'email', 'custom'/.test(types)
+    // RE-POINTED (Sep 19): the enumeration grew a `source` kind, so the gate asserts MEMBERSHIP in
+    // THREAD_CARD_KINDS rather than pinning the neighbours a new kind may legitimately move.
+    !!types && /kind: 'invite'/.test(types) && /THREAD_CARD_KINDS[\s\S]{0,400}'invite'/.test(types)
     && /ThreadCardKind =[\s\S]{0,180}'invite'/.test(types));
   gate('T16.2 it renders through the ONE switch (a kind without a render is a lying type)',
     !!cards && /case 'invite':/.test(cards) && /function InviteCardView/.test(cards));
@@ -2264,7 +2407,7 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
 
   // ── the kit kind
   gate('T18.1 the kit owns an `email` card kind, in the grammar and in the enumeration',
-    !!types && /kind: 'email';/.test(types) && /'proposal', 'invite', 'email', 'custom'/.test(types)
+    !!types && /kind: 'email';/.test(types) && /THREAD_CARD_KINDS[\s\S]{0,400}'email'/.test(types)
     && /ThreadCardKind =[\s\S]{0,200}'email'/.test(types)
     && !!cards && /case 'email':/.test(cards) && /function EmailCardView/.test(cards));
   // The email card's own body — every structural assertion below reads THIS slice, so a match
@@ -2776,18 +2919,23 @@ console.log('\nT21 · THE HOME PAINTS FIRST — the read path carries only the r
       const r = route.lastIndexOf('return NextResponse.json(guardDeckLabels({ firstName');
       return w > 0 && r > w && (r - w) < 700;
     })());
-  gate('T21.7 THE SKELETON STANDS IN THE PAGE’S OWN SHAPE (the calm stack, not the retired deck)',
-    !!home && /if \(loading\) \{/.test(home)
+  // RE-POINTED Sep 18 (THE ENTRANCE, owner walk: "not instant new-page-load style"). This gate's
+  // law was "the cold Home stands in the page's own shape, never a retired deck's". It is now met
+  // in the strongest possible way: there is no second shape at all. The skeleton tree is deleted;
+  // the cold Home IS the page, rendered and VEILED (so the layout is already final and nothing
+  // reflows on landing), with the one orb holding the centre until the brief arrives.
+  gate('T21.7 THE COLD HOME IS THE PAGE ITSELF (one layout, veiled — never a second tree to swap in)',
+    !!home
+    && !/if \(loading\) \{\s*\n\s*return \(/.test(home)
     && !/lg:grid-cols-\[minmax\(0,1fr\)_320px\]/.test(home)
     && !/SkeletonCard/.test(home)
-    && (() => {
-      const i = home.indexOf('if (loading) {');
-      const seg = home.slice(i, i + 2200);
-      // the facts the client already holds paint at once; only the claims wait
-      return /toLocaleDateString\('en-US', \{ weekday: 'long', month: 'long', day: 'numeric' \}\)/.test(seg)
-        && /\{greeting\(\)\}/.test(seg)
-        && /\[0, 1, 2, 3, 4\]\.map/.test(seg);
-    })());
+    // the ghosts the skeleton painted are gone with it
+    && !/\[0, 1, 2, 3, 4\]\.map/.test(home)
+    && !/h-\[52px\] rounded-2xl border border-neutral-200\/70 bg-white\/60 animate-pulse/.test(home)
+    // the facts the client already holds still paint with the first stagger step; only claims wait
+    && /toLocaleDateString\('en-US', \{ weekday: 'long', month: 'long', day: 'numeric' \}\)/.test(home)
+    && /\{greeting\(\)\}/.test(home)
+    && /entrance\.veil\(0\)/.test(home));
 }
 
 // ── T22 · THE GROUND EVIDENCE + ONE AGENDA AT THE RENDER ────────────────────────────────────────
@@ -2914,13 +3062,16 @@ console.log('\nT22 · THE GROUND EVIDENCE + ONE AGENDA AT THE RENDER — the roo
   // showing exactly the double this law exists to kill. The test is now whether the pinned seat
   // SPEAKS AT ALL, which is the fact that decides whether a second agenda would exist.
   gate('T22.10 ONE AGENDA, EVERY DOOR: while the pinned seat speaks, the live ask does not stand beside it',
-    !!rail && /const pinnedSpeaks = !!\(composed \|\| openingText \|\| pinnedActions\.length > 0\);/.test(rail)
+    // RE-POINTED (Sep 18, Q6): the pinned seat gained one more way of speaking — the CoS's OFFER
+    // line, which stands where an unstaged move's button used to. The test is unchanged: DOES THE
+    // PINNED SEAT SPEAK? An offer speaks, so the ask folds behind it exactly as a CTA made it.
+    !!rail && /const pinnedSpeaks = !!\(composed \|\| openingText \|\| pinnedActions\.length > 0[^)]*\);/.test(rail)
     && /const foldedAsk = pinnedSpeaks && liftedAsk\?\.checklist\?\.length \? liftedAsk : null;/.test(rail)
     && /if \(liftedAsk && !foldedAsk\) \{/.test(rail)
     // …and the fold no longer loses the ask's own sentence where no brief names the gap
     && /\{foldedAsk && !composed && foldedAsk\.text && \(/.test(rail));
   gate('T22.11 …it folds INTO the pinned card (one delivery, one primary CTA)',
-    !!rail && /\|\| mergedArt \|\| foldedAsk\) \? \(/.test(rail)
+    !!rail && /\|\| mergedArt \|\| foldedAsk[^)]*\) \? \(/.test(rail)
     && /\{foldedAsk && checklistBlock\(/.test(rail));
   gate('T22.12 THE DEED IS MOVED, NEVER ORPHANED — the same block and the same handlers answer it in its new seat',
     !!rail && (() => {
@@ -3231,7 +3382,10 @@ console.log('\nT24 · THE CARD EDITOR — content-truth, live controls, one comp
   gate('T24.9 the invite card wears the SAME working state, from the same helper',
     !!cards && /className=\{cn\('flex flex-col gap-2\.5 px-4 py-3\.5', workingClass\(card\.busy\)\)\}/.test(cards)
     && !!invite && /busy: sending,/.test(invite)
-    && !!types && (types.match(/busy\?: boolean;/g) ?? []).length === 2);
+    // THE INTERACTIVE KINDS DECLARE THE WORKING STATE AND NOBODY ELSE DOES. Three of them since
+    // the attention arc's bulk deed (A7) joined the invite and the email — the count moves with the
+    // grammar, honestly, rather than the law being loosened to a >= .
+    && !!types && (types.match(/busy\?: boolean;/g) ?? []).length === 3);
   // ── (e) THE DOOR BELONGS TO THE CARD ──
   gate('T24.10 THE THREAD DOOR RENDERS WHEREVER A HOST HANDS ONE — even on a sent card, never gated on liveness',
     // ⚠️ RE-POINTED (Sep 14): the door stopped depending on a host remembering the prop — on the
@@ -3854,10 +4008,31 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     !!room && !/<EmailCard[\s\S]{0,200}onSent=/.test(room)
     && /window\.addEventListener\(DEED_EVENT, onPrepared\)/.test(room)
     && (() => { const card = read('components/home/email-card.tsx') ?? ''; return /announceDeed\(\);/.test(card); })());
-  gate('T28.4e A MOVE WITHOUT A VALIDATED REF STILL REACHES ITS ONE CARD (never inert, never the stage) — and code never guesses between two',
+  // ⚠️ WIDENED (Sep 18, a live data eviction): the one-card fallback answered a move with NO ref and
+  // stopped there — a VALIDATED ref whose row had been evicted from the board fell straight past it
+  // onto the stage rungs below. Same law, the second way in: with exactly one card of the move's own
+  // kind mounted there is nothing to guess.
+  gate('T28.4e A MOVE WHOSE CARD THE BOARD CANNOT NAME STILL REACHES ITS ONE CARD (never inert, never the stage) — and code never guesses between two',
     !!rail && /const mountedCards = \(artifacts \?\? \[\]\)\.filter\(\(a\) => !!a\.node\);/.test(rail)
     && /return mountedCards\.length === 1 \? mountedCards\[0\] : null;/.test(rail)
+    // the validated-ref branch falls through to the SAME rule instead of dying at a missed match
+    && /const ofKind = mountedCards\.filter\(\(a\) => \(stageOfArtifactKey\(a\.key\) === 'reply'\) === moveIsMail\);/.test(rail)
+    && /return ofKind\.length === 1 \? ofKind\[0\] : null;/.test(rail)
     && /const live = \(cardForMove \|\| moveHref \|\| selfTarget \|\| mergedArt\) && moveClick;/.test(rail));
+  gate('T28.4j THE FALLBACK NEVER RAISES A REPLY COMPOSER — a mail move with no card goes to the THREAD or SAYS SO; it never asks for a reply stage',
+    !!rail && /const moveIsMail = \(respMove\?\.ref \?\? ''\)\.startsWith\('inbox:'\);/.test(rail)
+    && (() => {
+      const i = rail!.indexOf('const moveClick = resp?.move');
+      const seg = rail!.slice(i, i + 2600);
+      // the mail branch stands BEFORE the two rungs that end in a stage…
+      return seg.indexOf("onStage?.('reply', id)") > 0
+        && seg.indexOf('if (moveIsMail) {') < seg.indexOf("onStage?.('reply', id)")
+        // …it goes no deeper than the thread…
+        && /if \(moveHref && !selfTarget\) \{ go\(moveHref\); return; \}/.test(seg)
+        // …and with nowhere to go it speaks, in the room's own ephemeral idiom (never persisted)
+        && /pushDealTurn\(roomKey,\s*\n\s*"That prepared work isn't on the board right now/.test(seg)
+        && /\{ key: 'move-without-card', ephemeral: true \}\);/.test(seg);
+    })());
   gate('T28.4f ONE EDITOR, ONE PLACE — a stage whose item is edited elsewhere raises NO composer, and the card and the overlay can never both stand',
     (() => {
       const det = read('components/home/item-detail.tsx') ?? '';
@@ -4299,21 +4474,68 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
   const home15 = read('components/home/home-view.tsx') ?? '';
   const row15 = read('components/work/work-row.tsx') ?? '';
 
-  // 1 · THE ORB IS A NEURAL MESH ("I'd like it to be more of a moving neural network thing"). What
-  // makes it that, structurally: a lat/long MESH sampled once, an undulation field deforming it, a
-  // rotation, depth-bucketed strokes, nodes and orbiting particles — and a frame path that
-  // allocates nothing (the tables and the gradient are built ONCE, at module/effect scope).
-  gate('T29.9 THE ORB IS A NEURAL MESH, NOT A PLASMA BALL — sampled once, undulated, depth-read',
-    /const RINGS = /.test(mark15) && /const SEG = /.test(mark15)
-    && /const EDGES = new Int16Array\(SEGS\);/.test(mark15)
-    // the per-frame scratch is preallocated at module scope — zero allocation in the loop
-    && /const PX = new Float32Array\(NV\);/.test(mark15)
-    && /const BUCKET_ALPHA = /.test(mark15)
-    // the surface actually deforms, and the gradient is built once outside the frame path
-    && /THE UNDULATION/.test(mark15) && /createLinearGradient/.test(mark15)
-    && mark15.indexOf('createLinearGradient') < mark15.indexOf('const draw = ')
-    // the plasma ball it replaced is gone — no conic swirls, no mix-blend cores
+  // 1 · THE ORB IS ALIVE, NOT A DISCO BALL.
+  //
+  // RE-POINTED Sep 18 (owner walk: "feels like a disco ball… I just want something that feels or
+  // conveys 'it's alive'"). The Sep 15 reading held "a neural MESH, not a plasma ball" — and a
+  // lat/long wireframe with a scatter of glinting dots turned out to be the third thing: a mirror
+  // ball. The law underneath it never changed and is asserted UNWEAKENED below (the morph is the
+  // motion, the frame path allocates nothing, every gradient is built once outside it); what moved
+  // is WHICH FORM satisfies it. v4 is a soft-bodied luminous form — a noise-displaced silhouette
+  // under layered, additively-composited light — and it is the DEFAULT. v3 survives whole, behind
+  // an explicit variant, because a reverted owner call should cost one word.
+  const v4 = mark15.slice(mark15.indexOf('export function makeSoftBodyDraw('), mark15.indexOf('v3 · THE MESH SPHERE'));
+  gate('T29.9 THE ORB IS ALIVE, NOT A DISCO BALL — a morphing soft body, layered light, zero-alloc',
+    v4.length > 500
+    // THE MORPH IS THE MOTION — the silhouette is displaced by the noise field, sampled on the
+    // circle (seamless at the wrap), on THREE octaves. Nothing rotates: there is no rotation term.
+    && /const SAMPLES = /.test(mark15) && /const SIL_C = new Float32Array\(SAMPLES\);/.test(mark15)
+    && (v4.match(/vnoise\(/g) || []).length >= 4
+    && !/\brot\b|Math\.cos\(rot\)/.test(v4)
+    // …and the per-frame scratch is preallocated at module scope — zero allocation in the loop
+    && /const SIL_X = new Float32Array\(SAMPLES\);/.test(mark15)
+    // THE LIGHT IS LAYERED — a feathered body, aurora fields and a core, composited ADDITIVELY,
+    // with every gradient built ONCE, outside the frame path (the drift is a transform, not a
+    // new gradient).
+    && /createRadialGradient/.test(v4)
+    && v4.lastIndexOf('createRadialGradient') < v4.indexOf('return function drawSoftBody(')
+    && /globalCompositeOperation = 'lighter'/.test(v4)
+    && /ctx\.setTransform\(dpr, 0, 0, dpr, x \* dpr, y \* dpr\)/.test(v4)
+    // IT BREATHES, and the edge FEATHERS (no rim to catch a highlight on)
+    && /BREATH_PERIOD/.test(mark15) && /const breath = Math\.sin\(/.test(v4)
+    && /const BLUR_BODY = /.test(v4) && /ctx\.filter = BLUR_BODY;/.test(v4)
+    // the plasma ball the mesh replaced is still gone, and so is the mesh's own disco
     && !/conic-gradient/.test(mark15) && !/mix-blend-screen/.test(mark15));
+
+  // 1b · THE DISCO IS UNREACHABLE WITHOUT ASKING FOR IT. Nothing lat/long, nothing dot-gridded, no
+  // stroked wireframe survives in the v4 path — the geometry is not toned down, it is absent — and
+  // the product seat never names the old variant.
+  gate('T29.9a v4 IS THE DEFAULT AND CARRIES NO DISCO — no mesh, no nodes, no halo specks, no strokes',
+    /variant = 'v4'/.test(mark15)
+    && /variant === 'v3' \? makeMeshDraw\(ctx, size\) : makeSoftBodyDraw\(ctx, size, dpr\)/.test(mark15)
+    // the v4 painter touches NONE of the mesh's tables and strokes nothing
+    && !/RINGS|EDGES|NODE_IDX|BUCKET_ALPHA|NODE_ALPHA|HALO_ALPHA|TILT_C/.test(v4)
+    && !/ctx\.stroke\(\)|strokeStyle|lineWidth/.test(v4)
+    // …and no product surface asks for v3 (the dev harness is the only place both are mounted)
+    && !/variant="v3"|variant: 'v3'/.test(read('components/home/orb-entrance.tsx') ?? '')
+    && !/variant="v3"/.test(home15)
+    && (() => {
+      const dev = read('app/(main)/dev/thread-preview/preview-client.tsx') ?? '';
+      return /import \{ AliveMark \} from '@\/components\/home\/alive-mark';/.test(dev)
+        && /v: 'v4' as const/.test(dev) && /v: 'v3' as const/.test(dev)
+        && /<AliveMark size=\{44\} variant=\{v\} \/>/.test(dev);
+    })());
+
+  // 1c · THE PERF CLAIM IS A MEASURED NUMBER, NOT A HOPE. The file's own budget comment carries the
+  // figure and the method, so the next renderer is argued against a number rather than a feeling.
+  gate('T29.9b THE LOOP BUDGET IS STATED AND MEASURED — draw calls, ms/frame, and how it was timed',
+    /THE LOOP BUDGET/.test(mark15)
+    // A NUMBER, not a feeling — and the method beside it, so it can be re-measured. The digits are
+    // evidence, never the law, so the gate demands a stated measurement rather than one value.
+    && /MEASURED JS COST: 0\.\d+ ms\/frame/.test(mark15)
+    && /MEASURED 0\.\d+ ms\/frame/.test(mark15)
+    && /recording stub/.test(mark15) && /scripts\/tmp-mark-perf\.ts/.test(mark15)
+    && /TEN draw calls per frame/.test(mark15));
 
   // 2 · TWO ROWS TALL, ONE COLUMN OF ITS OWN ("orb column 2 rows height") — in BOTH shapes, so the
   // load never reflows into a different header.
@@ -4326,35 +4548,51 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     && (() => {
       const seg = home15.slice(home15.indexOf('function CalmGreeting('), home15.indexOf('/** ONE WHISPERED LINE'));
       // orb column beside a text column holding date OVER greeting, left-aligned to itself
+      // RE-POINTED Sep 18 (THE ENTRANCE): the mark's column is now the entrance's SEAT — a
+      // fixed-size box the mark never leaves, which is what keeps the two-column geometry honest
+      // while the wrapper inside it is transformed out to the centre and back.
       return /flex items-center justify-center gap-4/.test(seg)
-        && /<AliveMark \/>\s*\n\s*<div className="flex flex-col gap-1\.5 text-left">/.test(seg)
+        && /<OrbSeat entrance=\{entrance\} loading=\{loading\} \/>\s*\n\s*<div className="flex flex-col gap-1\.5 text-left" style=\{entrance\.veil\(0\)\}>/.test(seg)
         && seg.indexOf('toLocaleDateString') < seg.indexOf('<h1')
         // the old stacked "mark rides the date line" shape is gone
         && !/flex flex-col items-center gap-3\.5 text-center/.test(seg);
     })()
-    // the skeleton opens in the SAME shape
-    && /<AliveMark loading \/>\s*\n\s*<div className="flex flex-col gap-1\.5 text-left">/.test(home15));
+    // …and the SEAT itself is a pinned box of the mark's own size, so nothing it does reflows the
+    // header (the skeleton's second copy of this shape is gone — there is only one shape now)
+    && (() => {
+      const seat = read('components/home/orb-entrance.tsx') ?? '';
+      return /export function OrbSeat\(/.test(seat)
+        && /style=\{\{ width: size, height: size \}\}/.test(seat)
+        && /size = 70/.test(seat);
+    })());
 
-  // 3 · THE LOAD IS THE ORB ("make the skeleton load to new layout (no more CoS line etc), or make
-  // the orb a bit bigger shapeshifting as load, and smooth animation to full home UI") — BOTH
-  // halves. The CoS sentence died Sep 13; its skeleton ghost outlived it by two days, which is a
-  // page lying about what is coming. And the loading state is a PROP on the one mark, never a
-  // second orb, with the energy carried across the remount so the landing SETTLES.
-  gate('T29.11 THE LOAD IS THE ORB — no ghost of a retired element, one orb easing to rest',
+  // 3 · THE LOAD IS THE ORB — FINISHED Sep 18 ("we're missing smooth animation/transition of the
+  // orb when home is loading. ideally orb only centered shapeshifting and then when home is loaded,
+  // transits into place — not instant new-page-load style").
+  //
+  // RE-POINTED from the skeleton it used to assert. The Sep 15 reading held "one orb, two moments,
+  // no ghost of a retired element"; the second moment was a SECOND TREE, and swapping trees is the
+  // cut the owner then named. The law is now the stronger one it was always reaching for: ONE ORB,
+  // ONE MOUNT, ONE LAYOUT — the cold Home is the page itself, veiled, with the mark transformed out
+  // to the centre of its own column and flown back by a measured FLIP when the brief lands. The
+  // mark's own energy easing survives untouched: it still runs energetic while `loading` and lerps
+  // to rest on landing, which is what makes the arrival settle rather than stop.
+  gate('T29.11 THE LOAD IS THE ORB — it holds the centre, then flies home; one node, one layout',
     (() => {
-      const i = home15.indexOf('  if (loading) {');
-      const seg = home15.slice(i, home15.indexOf('const b = brief;', i));
-      return i > 0
-        // the CoS sentence's ghost (avatar circle + line) is gone from the skeleton
-        && !/w-5 h-5 rounded-full bg-neutral-200 animate-pulse/.test(seg)
-        && !/The one sentence is a CLAIM/.test(seg)
-        // …and the skeleton is the CURRENT shape: orb+date+greeting → composer → whisper ghosts
-        && /<AliveMark loading \/>/.test(seg)
-        && /h-\[52px\] rounded-2xl/.test(seg)
-        && seg.indexOf('h-[52px] rounded-2xl') < seg.indexOf('[0, 1, 2, 3, 4].map');
+      const orb = read('components/home/orb-entrance.tsx') ?? '';
+      return /export function useOrbEntrance\(/.test(orb)
+        // the centre it holds is LARGER, and it is a transform on the one node — never a resize
+        && /const CENTER_SCALE = /.test(orb)
+        && /fly\.style\.transform = `translate3d\(/.test(orb)
+        // …and the flight is a real FLIP: measured seat rect, animated to identity
+        && /seat\.getBoundingClientRect\(\)/.test(orb)
+        && /transition = `transform \$\{FLIGHT_MS\}ms \$\{EASE\}`/.test(orb)
+        && /fly\.style\.transform = 'translate3d\(0px, 0px, 0\) scale\(1\)';/.test(orb)
+        // the skeleton's ghosts (and its whole tree) are gone from the Home
+        && !/w-5 h-5 rounded-full bg-neutral-200 animate-pulse/.test(home15)
+        && !/if \(loading\) \{\s*\n\s*return \(/.test(home15);
     })()
-    // ONE orb: the loading state is a prop, and it EASES (a lerp toward a target), carried across
-    // the skeleton→page remount so the settle is continuous rather than a cut
+    // ONE orb: the loading state is a prop on the one mark, and it EASES (a lerp toward a target)
     && /loading = false/.test(mark15) && /loadingRef/.test(mark15)
     && /let carriedEnergy = 0;/.test(mark15)
     && /energy \+= \(target - energy\)/.test(mark15)
@@ -4429,6 +4667,38 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
       const i = rail30.indexOf('const openerText =');
       const seg = rail30.slice(i, rail30.indexOf('const openerRef'));
       return i > 0 && !/fetch\(/.test(seg) && !/await /.test(seg);
+    })());
+  gate('T30.3b A ROOM WITH A RECORD IS NEVER GREETED AS A NEW ONE — "Fresh start" is reserved for a room with no past at all',
+    !!rail30 && (() => {
+      const i = rail30.indexOf('const openerText =');
+      const seg = rail30.slice(i, rail30.indexOf('const openerRef'));
+      return i > 0
+        // the record is DERIVED from what the room already holds — no second fetch, no new fact
+        && /const hasRecord = !!pinned \|\| !!\(ent\?\.briefAt \?\? view\.briefAt\) \|\| !!sum \|\| turns\.length > 0;/.test(seg)
+        // …both branches exist, and the fresh one is the ELSE
+        && /Picking \$\{name\} back up — what do you want to look at\?/.test(seg)
+        && /Fresh start on \$\{name\}\. What do you want to pick up\?/.test(seg)
+        // …the fresh wording is the ELSE of the record test, not the default
+        && /const invite = hasRecord\s*\n\s*\? \(name \? `Picking/.test(seg)
+        // one wording, one seat: the no-brief return goes through the derived invite
+        // (RE-POINTED Sep 19 — THE OPENING CONTRACT clause 5 moved the PINNED branch off `invite`
+        // entirely; see T30.3c below. The record law this gate exists for is unchanged.)
+        && /return name \? invite : null;/.test(seg)
+        && !/return name \? `Fresh start/.test(seg);
+    })());
+  // THE OPENING CONTRACT, clause 5 (owner walk, Sep 19): "Fresh start on X" / "Picking X back up"
+  // standing under a pinned brief is the room naming its own subject twice, in two bubbles.
+  gate('T30.3c THE OPENER NEVER STANDS AS A SECOND GREETER — with a brief pinned it is PURELY the invitation, and under a brief that already asks something it does not render at all',
+    !!rail30 && (() => {
+      const i = rail30.indexOf('const openerText =');
+      const seg = rail30.slice(i, rail30.indexOf('const openerRef'));
+      return i > 0
+        // the pinned branch carries NO preamble and NO subject — just the forward question
+        && /if \(pinned\) return \/\\\?\\s\*\$\/\.test\(pinned\.trim\(\)\) \? null : 'What do you want to pick up\?';/.test(seg)
+        // …and it is still derived, with no second composed voice behind it
+        && !/fetch\(/.test(seg) && !/await /.test(seg)
+        // the preamble wordings survive ONLY for the no-brief case they were written for
+        && /Picking \$\{name\} back up/.test(seg) && /Fresh start on \$\{name\}/.test(seg);
     })());
   gate('T30.4 THE OPENER IS EPHEMERAL UNTIL ANSWERED — it is written exactly once, by the reply that answers it, so N resets can never stack N greetings',
     !!rail30 && /const openerRef = useRef<string \| null>\(null\);/.test(rail30)
@@ -4576,6 +4846,297 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
         // …and the rail's freshness test is the reader's own words, so clearing them opens the room
         && /if \(turns\.some\(\(t\) => t\.role === 'user'\)\) return null;/.test(rail30b);
     })());
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// T31 — THE REVIEW-FIRST DOC CARD (docs/attention-plan.md law D, completing the card contract).
+//
+// Four laws, gated where each is structural:
+//   D1 THE DEED IS REVIEW — the card is a HANDLE and the document is NEVER embedded in a thread.
+//   D2 REVIEW OPENS THE SIDE PANEL — the ONE panel, with its version chain; a revision lands on
+//      the SAME card (the chain is the truth, never client memory).
+//   D3 THE EDIT LADDER, HONEST PER TYPE — no editor over rendered pixels, anywhere.
+//   D4 ANY TYPE, ONE ANATOMY — one glyph table, one player, and the universal preview rides the
+//      compute sandbox's LibreOffice → PDF lane, cached per version, degrading honestly.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+{
+  const types31 = read('components/thread/types.ts') ?? '';
+  const kit31 = read('components/thread/thread-cards.tsx') ?? '';
+  const resolver31 = read('lib/documents/doc-card.ts') ?? '';
+  const panel31 = read('components/work/chat-artifact-panel.tsx') ?? '';
+  const route31 = read('app/api/work/threads/[id]/artifacts/[artifactId]/preview/route.ts') ?? '';
+  const host31 = read('components/home/home-ask.tsx') ?? '';
+  const bubble31 = read('components/work/chat-message.tsx') ?? '';
+
+  // ── D1 · THE HANDLE ──
+  gate('T31.1 the `doc` card joins the grammar (contract · renderer · kind list)',
+    /kind: 'doc';/.test(types31) && /THREAD_CARD_KINDS[\s\S]{0,400}'doc'/.test(types31)
+    && /case 'doc':/.test(kit31) && /function DocCardView\(/.test(kit31));
+
+  gate('T31.2 THE DOCUMENT IS NEVER EMBEDDED — the doc card has no body/preview/excerpt field, and its view renders none',
+    (() => {
+      const i = types31.indexOf('export interface DocCard extends CardBase');
+      if (i < 0) return false;
+      const seg = types31.slice(i, types31.indexOf('export type ThreadCard =', i));
+      // no content-carrying field may exist on the contract at all — a host cannot pass what the
+      // type does not have, so "docs can get big" is solved by construction, not by discipline
+      if (/\b(body|preview|excerpt|content|html|firstPage)\??:/.test(seg)) return false;
+      const v = kit31.slice(kit31.indexOf('function DocCardView('), kit31.indexOf('// ── the card renders'));
+      return !/dangerouslySetInnerHTML/.test(v) && !/card\.(body|preview|content|excerpt)/.test(v);
+    })());
+
+  gate('T31.3 THE META LINE IS JOINED FROM KNOWN FACTS — pages only when known, and a lone version word is the chain\'s own',
+    /card\.typeLabel,/.test(kit31)
+    && /typeof card\.pages === 'number' && card\.pages > 0/.test(kit31)
+    && /card\.versionLabel \|\| null/.test(kit31)
+    && /\.filter\(Boolean\)\.join\(' · '\)/.test(kit31)
+    // the glyph is a house SVG per family — no emoji, no vendor mark
+    && /const DOC_GLYPHS: Record<DocCard\['docType'\], React\.ReactNode>/.test(kit31)
+    && ['pdf', 'word', 'slides', 'sheet', 'doc'].every((k) => new RegExp(`\\n  ${k}: \\(`).test(kit31))
+    && !/[\u{1F300}-\u{1FAFF}]/u.test(kit31.slice(kit31.indexOf('const DOC_GLYPHS'), kit31.indexOf('function DocCardView('))));
+
+  gate('T31.4 THE COMMIT DOOR ONLY WHERE A SEND-DEED EXISTS — no handler, no button (the kit\'s standing law, one kind over)',
+    (() => {
+      const v = kit31.slice(kit31.indexOf('function DocCardView('), kit31.indexOf('// ── the card renders'));
+      return /\{\(card\.onSend \|\| card\.receipt\) && \(/.test(v) && /\{card\.onSend && \(/.test(v)
+        // …and no host in the repo wires a doc send it does not have: the Home mounts Review only
+        && /kind: 'doc', id: `\$\{key\}-doc-\$\{j\}`/.test(host31) && !/kind: 'doc'[\s\S]{0,400}onSend:/.test(host31);
+    })());
+
+  // ── D2 · REVIEW OPENS THE ONE PANEL ──
+  gate('T31.5 REVIEW RAISES THE ONE PANEL — the host\'s only doc deed is openArtifact, and the kit itself raises nothing',
+    /onReview: \(\) => void openArtifact\(c\.art!\.tid, c\.art!\.id\)/.test(host31)
+    && /<ThreadArtifactsPanel/.test(host31)
+    // presentational purity holds for the new kind too
+    && !/fetch\(/.test(kit31) && !/useRouter/.test(kit31));
+
+  gate('T31.6 ONE PLAYER, ONE FILE — every panel MOUNTS DocumentPlayer; nobody defines a second one',
+    (() => {
+      const files = sourceFiles('components').concat(sourceFiles('app'));
+      const definers = files.filter((f) => /function DocumentPlayer\(/.test(read(f) ?? ''));
+      const mounts = files.filter((f) => /<DocumentPlayer\b/.test(read(f) ?? ''));
+      return definers.length === 1 && definers[0].replace(/\\/g, '/') === 'components/work/chat-artifact-panel.tsx'
+        && mounts.length >= 2;
+    })());
+
+  gate('T31.7 A REVISION LANDS ON THE SAME CARD — the fold reads the STORED chain (one version-utils), keeps ONE card per chain, and repoints it at the current version',
+    /export function resolveDocVersion\(/.test(resolver31)
+    && /computeVersionedArtifacts/.test(resolver31)
+    && /function foldDocCards\(turns: Turn\[\], tid: string, artifacts: DocumentArtifact\[\]\): Turn\[\]/.test(host31)
+    && /if \(seen\.has\(g\)\) return false;/.test(host31)
+    && /art: \{ tid, id: v\.id \}/.test(host31)
+    // it runs on BOTH lanes — the rehydrate and the live open
+    && (host31.match(/foldDocCards\(prev, tid, /g) ?? []).length >= 2);
+
+  gate('T31.8 ONE RENDERING PER KIND — the coworker DM\'s document chip is the SAME kit card (the email artifact, a different kind, keeps its own)',
+    /import \{ ThreadCardView \} from '@\/components\/thread'/.test(bubble31)
+    && /kind: 'doc', title: meta\?\.title \?\? 'Document'/.test(bubble31)
+    && /meta\?\.type !== 'email'/.test(bubble31));
+
+  // ── D3 · THE EDIT LADDER ──
+  gate('T31.9 NEVER AN EDITOR OVER PIXELS — no contentEditable/editable surface anywhere in the doc card or the player',
+    (() => {
+      const v = kit31.slice(kit31.indexOf('function DocCardView('), kit31.indexOf('// ── the card renders'));
+      const p = panel31.slice(panel31.indexOf('export function DocumentPlayer('), panel31.indexOf('// ── QA report panel'));
+      return !/contentEditable/i.test(v) && !/<textarea|<input/.test(v)
+        && !/contentEditable/i.test(p) && !/<textarea|<input/.test(p)
+        && /sandbox|iframe/.test(p);
+    })());
+
+  // ── D4 · ONE ANATOMY, THE UNIVERSAL PREVIEW ──
+  gate('T31.10 THE PREVIEW CONVERTS SERVER-SIDE, IN THE LOCKED ROOM — the compute sandbox\'s LibreOffice lane, with the profile/HOME the sandbox requires',
+    /runComputeForOutputs/.test(route31)
+    && /soffice/.test(route31) && /-env:UserInstallation=file:\/\/\/tmp\/lo_profile/.test(route31)
+    && /HOME="\/tmp"/.test(route31)
+    // the client asks a route; it never converts, and never reaches a converter itself
+    && !/soffice/.test(panel31) && /fetch\(`\/api\/work\/threads\/\$\{threadId\}\/artifacts\/\$\{artifactId\}\/preview`\)/.test(panel31));
+
+  gate('T31.11 ONE CONVERSION PER VERSION — the preview path derives from the version\'s OWN storage path, is served from cache thereafter, and is written with cacheControl 0',
+    route31.includes("const previewPath = `${path.replace(/\\.[^.]+$/, '')}.preview.pdf`")
+    && /const cached = await admin\.storage\.from\(BUCKET\)\.createSignedUrl\(previewPath, 600\);/.test(route31)
+    // the cache is consulted BEFORE any conversion is attempted (the call site, not the import)
+    && route31.indexOf('const cached =') < route31.indexOf('await runComputeForOutputs({')
+    && /cacheControl: '0'/.test(route31));
+
+  gate('T31.12 THE HONEST DEGRADE — an unconfigured or failed converter answers with a REASON, and the player shows it beside Download (never a spinner that never ends)',
+    /if \(!process\.env\.COMPUTE_SERVICE_URL \|\| !process\.env\.COMPUTE_SECRET\)/.test(route31)
+    && /return unavailable\('the document converter is not available on this deployment'\)/.test(route31)
+    && /return unavailable\('this document could not be rendered for preview'\)/.test(route31)
+    && /function unavailable\(reason: string\)/.test(route31)
+    && /available: false, reason/.test(route31)
+    && /Preview unavailable — \{state\.reason\}/.test(panel31)
+    && /\/download\?artifactId=\$\{artifactId\}/.test(panel31));
+
+  gate('T31.13 THE PAGE COUNT IS A PRINTED FACT — read from the converter\'s own output, never estimated',
+    /function pagesOf\(stdout\?: string \| null\): number \| null/.test(route31)
+    && /PAGES:/.test(route31) && /Number\.isFinite\(n\) && n > 0 \? n : null/.test(route31));
+
+  gate('T31.14 THE PREVIEW DOOR IS OWNER-SCOPED — both lookups filter by the reader\'s own user_id',
+    (() => {
+      const i = route31.indexOf("from('work_threads')");
+      const seg = route31.slice(i, i + 700);
+      return (seg.match(/\.eq\('user_id', user\.id\)/g) ?? []).length === 2
+        && /if \(!user\) return NextResponse\.json\(\{ error: 'Unauthorized' \}, \{ status: 401 \}\);/.test(route31);
+    })());
+
+  gate('T31.15 THE TWO FACTS COME FROM ONE RESOLVER — the type is read from the FILE\'S OWN extension first, and hosts never hand-map a glyph',
+    /export function docCardTypeOf\(/.test(resolver31)
+    && /const ext = String\(pathOrName \?\? ''\)\.split\('\.'\)\.pop\(\)/.test(resolver31)
+    && resolver31.indexOf('BY_EXT[ext]') < resolver31.indexOf("case 'presentation':")
+    && (host31.match(/docCardTypeOf\(/g) ?? []).length >= 3
+    && /docCardTypeOf\(/.test(bubble31));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// T32 — THE ONE OBJECT CARD + KIT RENDER DISCIPLINE
+// (docs/threads-plan.md "THE OPENING CONTRACT — SPEAK · SHOW · OFFER", clauses 1, 2 and 5;
+//  the owner's Sep-19 walk of six screenshots.)
+//
+// What the walk found, three times in one evening: a decision card asking to approve a thing that
+// was nowhere on screen; a room opening with an ask and no reminder of what was asked; and, in the
+// chrome, one speaker announcing themself twice in a row above a bubble that mixed three type
+// treatments. The owner's constraints are the gates' shape:
+//   1  ONE RENDERING PER OBJECT KIND, on every surface — a host mounts the kit card or shows
+//      nothing, and never authors excerpt markup of its own.
+//   2  NO ASK, DECISION OR BRIEF SERVES WITHOUT ITS OBJECT IN REACH — and "ask me to pull it
+//      together" is dead copy, because the machine pulls it.
+//   5  KIT-SIDE RENDER DISCIPLINE — one face+name header per RUN, one type scale per bubble, and
+//      punctuation that belongs to a word.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+console.log('\nT32 · THE ONE OBJECT CARD — the ask and the thing asked about, on one surface');
+{
+  const types32 = read('components/thread/types.ts') ?? '';
+  const kit32 = read('components/thread/thread-cards.tsx') ?? '';
+  const card32 = read('components/thread/source-object-card.tsx') ?? '';
+  const door32 = read('lib/inbox/thread-door.ts') ?? '';
+  const mount32 = read('components/room/source-object.tsx') ?? '';
+  const deck32 = read('components/triage/triage-deck.tsx') ?? '';
+  const rail32 = read('components/home/item-rail.tsx') ?? '';
+  const dcard32 = read('components/work/decision-card.tsx') ?? '';
+  const room32 = read('components/entities/entity-room.tsx') ?? '';
+  const timeline32 = read('components/thread/thread-timeline.tsx') ?? '';
+
+  // ── clause 1 · THE CARD ──
+  gate('T32.1 the `source` card joins the grammar (contract · enumeration · its own component · the ONE switch)',
+    /kind: 'source';/.test(types32) && /THREAD_CARD_KINDS[\s\S]{0,400}'source'/.test(types32)
+    && /source: 'email' \| 'meeting' \| 'document';/.test(types32)
+    && !!card32 && /export function SourceObjectCard/.test(card32)
+    && /case 'source':/.test(kit32) && /<SourceObjectCard card=\{card\} \/>/.test(kit32));
+
+  gate('T32.2 THE KIT INVENTS NOTHING — the card clips no text, reads no clock and formats no size; it mounts the ONE shared chip',
+    !!card32 && !/clipForPrompt|topMessageOf|slice\(0,/.test(card32)
+    && !/toLocaleDateString|new Date\(/.test(card32)
+    && !/fmtBytes/.test(card32)
+    && /import \{ AttachmentChip \} from '@\/components\/ui\/attachment-lightbox'/.test(card32)
+    // …and it is presentational like the rest of the kit (T3.12's law, asserted at this file too)
+    && !/\bfetch\(/.test(card32) && !/useRouter|supabase/i.test(card32));
+
+  gate('T32.3 NO LYING DOORS ON THE OBJECT — the door and each chip render only with a handler',
+    !!card32 && /card\.onOpen && \(/.test(card32) && /f\.onOpen\s*\n?\s*\?/.test(card32)
+    // TRUTH BEFORE PRESENTATION: nothing to show is no card, never an empty labelled frame
+    && /if \(!messages\.length && !card\.excerpt && !files\.length && !card\.title\) return null;/.test(card32));
+
+  // ── clause 1 · ONE READ OF THE THREAD DOOR ──
+  gate('T32.4 THE DECK AND THE KIT SHARE ONE THREAD-TAIL IMPLEMENTATION — the loader lives in lib/inbox/thread-door.ts and the deck\'s inline copy is GONE',
+    !!door32 && /export function loadThreadDoor/.test(door32) && /export function loadThreadTail/.test(door32)
+    && /_flight/.test(door32) && /_cache\.set\(itemId, data\)/.test(door32)
+    && /import \{ threadTail, type TriageMessage \} from '@\/lib\/triage\/words'/.test(door32)
+    // the deck imports it and keeps NO cache, NO flight map and NO fetch of the thread door
+    && /import \{ loadThreadTail, peekThreadDoor \} from '@\/lib\/inbox\/thread-door'/.test(deck32)
+    && !/_tailCache|_tailFlight/.test(deck32)
+    && !/fetch\(`\/api\/inbox\/\$\{itemId\}\/thread`\)/.test(deck32));
+
+  gate('T32.5 THE EXCERPT LANE HAS ONE ENTRANCE — no component imports the tail clipper directly; they mount the card or read the door',
+    sourceFiles('components').every((f) => !/threadTail/.test(read(f) ?? '')));
+
+  gate('T32.6 THE HOST OWNS THE READ AND THE VIEWER (the kit owns neither) — one door read, THE ONE lightbox, no second previewer',
+    !!mount32 && /from '@\/lib\/inbox\/thread-door'/.test(mount32)
+    && /<ThreadCardView card=\{\{\s*\n?\s*kind: 'source'/.test(mount32)
+    && /<AttachmentLightbox files=\{files\}/.test(mount32)
+    // the in-flight rule: what is served paints at once (the deck's warm is this mount's first paint)
+    && /peekThreadDoor\(itemId\)/.test(mount32));
+
+  // ── clause 2 · THE THREE SEATS ──
+  gate('T32.7 THE DECISION SHOWS ITS SOURCE — the card takes an objectNode and renders it where the honest line used to stand',
+    /objectNode\?: ReactNode;/.test(dcard32)
+    && /\) : objectNode \? \(/.test(dcard32)
+    && /<div className="mx-3 mb-2 mt-1">\{objectNode\}<\/div>/.test(dcard32)
+    // …and a SOURCE never makes anything recommendable: the structural test still reads `object`
+    && /const recommends = mayRecommend\(object\)/.test(dcard32));
+
+  gate('T32.8 "ask me to pull it together" IS DEAD COPY — the string survives nowhere in components/ or lib/',
+    sourceFiles('components').concat(sourceFiles('lib')).concat(sourceFiles('app'))
+      .every((f) => !/pull it together/i.test(read(f) ?? '')));
+
+  gate('T32.9 THE ROOM MOUNTS THE OBJECT AT ITS THREE SEATS — the decision, the opening, the ask — through the ONE mount',
+    /import \{ SourceObjectMount \} from '@\/components\/room\/source-object'/.test(rail32)
+    && /<SourceObjectMount itemId=\{objectItemId\}/.test(rail32)
+    && /objectNode: objectCard/.test(rail32)          // the decision seat
+    && /pinnedSeatsObject && <div className="pt-0.5">\{objectCard\}<\/div>/.test(rail32)  // the opening
+    && /askSeatsObject \? \[\{ kind: 'custom' as const, id: 'lifted-ask-object', node: objectCard \}\]/.test(rail32));
+
+  gate('T32.10 NEVER TWO EXCERPTS OF ONE THREAD — only a card that RENDERS THE INBOUND\'S WORDS suppresses the object, and exactly ONE seat takes it',
+    // RE-POINTED Sep 19 (THE OPENING CONTRACT, the owner walk): the test used to be "is any card
+    // mounted", which hid the inbound on the commonest door of all — an item with a prepared reply.
+    /const objectAlreadyMounted = !!objectItemId\s*\n?\s*&& mountedCards\.some\(\(a\) => !!a\.showsSource/.test(rail32)
+    && /const decisionSeatsObject = !!objectCard && decisionIsPrimary && !decision\?\.object;/.test(rail32)
+    && /const askSeatsObject = !!objectCard && !decisionSeatsObject/.test(rail32)
+    && /const pinnedSeatsObject = !!objectCard && !decisionSeatsObject && !askSeatsObject;/.test(rail32));
+
+  gate('T32.10b THE INBOUND, THEN THE ANSWER — the EmailCard is the REPLY (it never shows the message being answered), so the object card mounts ABOVE it instead of standing down',
+    // the declaration exists and is opt-IN (default false ⇒ the object mounts)
+    /showsSource\?: boolean/.test(rail32)
+    // …and no artifact author claims it today — the reply card and the invite card show neither
+    && ['components/home/item-detail.tsx', 'components/entities/entity-room.tsx']
+      .every((f) => !/showsSource:\s*true/.test(read(f) ?? ''))
+    // …the object's seat is the PINNED bubble, which renders above the stream's cards
+    && /pinnedSeatsObject && <div className="pt-0.5">\{objectCard\}<\/div>/.test(rail32)
+    // …and the EmailCard really is outbound-only: it builds the kit's `email` card (the reply being
+    // written), never a `source` card, and it reads no thread tail of its own.
+    && (() => {
+      const ec = read('components/home/email-card.tsx') ?? '';
+      return /kind: 'email',/.test(ec) && !/kind: 'source'/.test(ec)
+        && !/SourceObjectMount|loadThreadDoor|topMessageOf/.test(ec);
+    })());
+
+  gate('T32.10c THE ASK LINE SPEAKS THE COUNTERPARTY\'S OWN ASK — our disposition ("decide…") is attributed to us, the claim renders or is not made, and the name lands once',
+    // OUR framing is detected and never put in their mouth
+    /const machineFramed = !!askText/.test(rail32)
+    && /\/\^\(decide\|choose\|determine\|assess\|evaluate\|weigh\|consider\|review\|triage\|judge\)\\b\//.test(rail32)
+    && /\? `From \$\{who\} — this needs you to \$\{askText\}\$\{tail\}\.`/.test(rail32)
+    // "drafted a reply below" only while that card is in THIS stream
+    && /const replyMounted = mountedCards\.some\(\(c\) => c\.key === 'reply'\);/.test(rail32)
+    && /a\?\.prepared && replyMounted/.test(rail32)
+    // the two speech laws are IMPORTED, never re-written here
+    && /import \{ collapseSelfVoice \} from '@\/lib\/room\/self-voice'/.test(rail32)
+    && /import \{ nameOncePerSentence \} from '@\/lib\/room\/opening-discipline'/.test(rail32)
+    && /return line \? nameOncePerSentence\(line, \[who\]\) : null;/.test(rail32)
+    // …and the drafter's name can NEVER reach the page un-collapsed: the only construction of that
+    // sentence in the file is the argument of collapseSelfVoice.
+    && /collapseSelfVoice\(\s*\n\s*a\.prepared === 'draft' \? 'I drafted a reply below' : `\$\{a\.prepared\.split\(' '\)\[0\]\} drafted a reply below`,/.test(rail32)
+    && (rail32.match(/a\.prepared\.split\(' '\)/g) ?? []).length === 1);
+
+  gate('T32.11 EVERY DOOR, NO NEW PLUMBING — the loose item door is its own object, the project room hands over its focused mail, and a mail MOVE is the fallback',
+    /const objectItemId = kind === 'email' \? id : \(sourceItemId \|\| \(moveIsMail \? respMoveTargetId : null\)\);/.test(rail32)
+    && /sourceItemId=\{focused\?\.kind === 'email' \? focused\.id : null\}/.test(room32));
+
+  // ── clause 5 · KIT-SIDE RENDER DISCIPLINE ──
+  gate('T32.12 ONE FACE PER RUN — the pinned opening is part of its speaker\'s run, so the bubble under it never re-announces the same face',
+    /prev\.type === 'actor_bubble' \|\| prev\.type === 'pinned'/.test(timeline32)
+    && /prevActorId === item\.actorId/.test(timeline32));
+
+  gate('T32.13 ONE TYPE SCALE PER BUBBLE — the pinned opening speaks at one size in one muted tone (hierarchy by spacing and weight)',
+    (() => {
+      const i = rail32.indexOf('const pinnedNode =');
+      if (i < 0) return false;
+      const seg = rail32.slice(i, rail32.indexOf('// ── THE ARTIFACT CARDS', i));
+      // no second body size, and no per-paragraph colour ladder inside the one bubble
+      return !/text-\[12\.5px\]/.test(seg) && !/text-neutral-800">\{/.test(seg)
+        && (seg.match(/text-\[13px\] leading-\[1\.5\] text-neutral-500/g) ?? []).length >= 4;
+    })());
+
+  gate('T32.14 A SEPARATOR BELONGS TO A WORD — a blank-labelled ref never renders its own " ·"',
+    /item\.refs\?\.filter\(\(r\) => !!r\.label\?\.trim\(\)\)/.test(timeline32));
 }
 
 // ── THE ID-UNIQUENESS GUARD (Sep 14) ────────────────────────────────────────────────────────────

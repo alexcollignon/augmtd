@@ -11,6 +11,7 @@ import {
   Squares2X2Icon,
 } from '@heroicons/react/24/outline';
 import { FrameCard } from '@/components/frames/frame-card';
+import { DocumentPlayer } from '@/components/work/chat-artifact-panel';
 import type {
   ArtifactContent,
   DocContent,
@@ -145,17 +146,20 @@ export function ArtifactPanel({ artifactId, threadId, onClose }: ArtifactPanelPr
           </div>
         )}
 
-        {!isLoading && meta && meta.type !== 'frame' && (
+        {/* THE ONE PLAYER (attention-plan D), mounted — not a second one. A stored file with no
+            structured content used to end at "Preview not available"; it now plays through the
+            same door the thread panel uses (PDF direct · office converted once per version). */}
+        {!isLoading && meta && meta.type !== 'frame' && !meta.content && meta.has_file && (
+          <div className="h-full min-h-0">
+            <DocumentPlayer threadId={meta.thread_id ?? threadId} artifactId={artifactId} title={meta.title} />
+          </div>
+        )}
+
+        {!isLoading && meta && meta.type !== 'frame' && !(!meta.content && meta.has_file) && (
           <div className="px-5 py-6">
             {meta.generated_at && (
               <p className="text-[10.5px] text-neutral-400 mb-5">
                 Generated {relativeTime(meta.generated_at)}
-              </p>
-            )}
-
-            {!meta.content && meta.has_file && (
-              <p className="text-[13px] text-neutral-500 italic">
-                Preview not available — use Download to open.
               </p>
             )}
 

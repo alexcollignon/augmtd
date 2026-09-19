@@ -16,6 +16,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import { isNearDuplicate } from '@/lib/commitments/extract';
+import { itemIsSelfEcho } from '@/lib/inbox/self-echo';
 
 export type VisibleObligation = {
   title: string;                 // the row's work title / subject / action-item text
@@ -85,6 +86,13 @@ export function foldDuplicateCommitments<T extends CommitmentRow>(
 export function isVisibleObligationRow(it: any): boolean {
   const or = String(it.type_override || '');
   if (or === 'needs_reply' || or === 'to_do' || or === 'waiting_on') return true;
+  // THE SELF-RECOGNITION FLOOR (Q1 — attention-plan PART III). Our own coworker's mail is a POINTER,
+  // never an obligation row: it must not occupy a seat AND it must not be the surface a real
+  // commitment folds behind (a pointer covering the thing it points at would take both off the
+  // page). Below the user's own re-type, which outranks every floor. The deck's own eligibility
+  // path reaches the same verdict through `isNoMoveNotice`; this is the SAME law at the counting
+  // seam, where P3 asks "how many rows does this obligation own?".
+  if (itemIsSelfEcho(it)) return false;
   const rt = String(it.rule_type || '');
   if (rt === 'fyi' || rt === 'notifications' || rt === 'marketing' || rt === 'done') return false;
   const ws = String(it.work_state || '');

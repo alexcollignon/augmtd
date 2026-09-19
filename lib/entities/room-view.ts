@@ -22,7 +22,9 @@ export type RoomEntity = {
    *  last-good, recomposed in after() when the sig (incl. the board digest) moves. Null until
    *  first compose — the rail falls back to the stitched fields. */
   brief?: string | null;
-  move?: { label: string; ref: string | null } | null;
+  /** Q6 · `offer` marks a move whose object is not staged — the room speaks it as the CoS's
+   *  offer, never a primary button (lib/room/cta-law; floored at composition). */
+  move?: { label: string; ref: string | null; offer?: boolean; offerText?: string } | null;
   offers?: Array<{ label: string; say: string }>;
   /** THE GROUND LAW — when the served brief was composed: engine narration older than this folds
    *  under "earlier (N)" in the rail (the brief is the digest of that history). */
@@ -42,21 +44,46 @@ export async function buildRoomView(
   supabase: SupabaseClient, userId: string, entityId: string, currentItemId: string | null,
 ): Promise<{ entity: RoomEntity | null; siblings: RoomSiblings }> {
   const siblings = emptySiblings();
-  const { data: ent } = await supabase.from('work_entities')
-    .select('id, name, summary, state, next_move, tracked').eq('id', entityId).eq('user_id', userId).maybeSingle();
+
+  // ── WAVE 1 — everything that keys on (user, entityId) ALONE ──────────────────────────────────────
+  // This builder used to be four sequential waves, and three of them never needed the wave above:
+  // the stored room response, the membership links, the entity's knowledge files and the near-dup
+  // helper all key on the ids the caller already handed us. Only the routing verdict (needs
+  // `ent.next_move`) and the sibling row reads (need the link ids) genuinely depend on a predecessor,
+  // so those two are wave 2. The 404 guard still belongs to the entity read — a miss simply lets the
+  // handful of cheap reads beside it fall on the floor.
+  const [{ data: ent }, response, { data: allLinks }, fileRes, { isNearDuplicate }] = await Promise.all([
+    supabase.from('work_entities')
+      .select('id, name, summary, state, next_move, tracked').eq('id', entityId).eq('user_id', userId).maybeSingle(),
+    import('@/lib/room/brief').then(({ readRoomResponse }) => readRoomResponse(supabase, userId, entityId)),
+    // Everything else on this deal — the "this has 2 other threads" awareness.
+    supabase.from('entity_links').select('item_kind, item_id')
+      .eq('user_id', userId).eq('entity_id', entityId).neq('item_kind', 'email_thread').limit(60),
+    supabase.from('knowledge_files').select('id, filename').eq('user_id', userId).eq('entity_id', entityId).order('indexed_at', { ascending: false }).limit(5),
+    // Near-dup fold: the same obligation extracted from two meetings must not be two chips.
+    import('@/lib/commitments/extract'),
+  ]);
   if (!ent) return { entity: null, siblings };
 
-  // THE PAIR FLIES TOGETHER — the routing verdict and the stored room response are independent
-  // reads of the same entity; awaiting them in sequence inside the object literal was a pure
-  // waterfall (and the routing verdict can be an AI call on a cache miss).
-  //
-  // …AND THE READ PATH CARRIES NO AI (Sep 8): this builder gates the room's WHOLE conversation pane
+  const lrows = (allLinks ?? []) as Array<{ item_kind: string; item_id: string }>;
+  const idsOf = (k: string) => lrows.filter((l) => l.item_kind === k).map((l) => l.item_id);
+
+  // ── WAVE 2 — the two reads that genuinely consume wave 1 ────────────────────────────────────────
+  // THE READ PATH CARRIES NO AI (Sep 8): this builder gates the room's WHOLE conversation pane
   // (`conversation={rail ? … : null}`), so a cache miss on the routing verdict held a blank page
   // open for a model round-trip. `deferOnMiss` serves the honest absence and warms the sig-cache in
   // the background — the chip arrives on the next open, the page arrives now.
-  const [routed, response] = await Promise.all([
+  const [routed, thrRes, mtgRes, comRes] = await Promise.all([
     suggestWorkerForMove(supabase, userId, entityId, { next_move: ent.next_move }, { deferOnMiss: true }),
-    import('@/lib/room/brief').then(({ readRoomResponse }) => readRoomResponse(supabase, userId, entityId)),
+    idsOf('inbox_item').length
+      ? supabase.from('inbox_items').select('id, status, source_data, last_activity_at, created_at').in('id', idsOf('inbox_item').slice(0, 20))
+      : Promise.resolve({ data: [] }),
+    idsOf('meeting').length
+      ? supabase.from('meeting_transcripts').select('id, title, start_time, created_at').in('id', idsOf('meeting').slice(0, 6))
+      : Promise.resolve({ data: [] }),
+    idsOf('commitment').length
+      ? supabase.from('commitments').select('id, description, counterparty, status').in('id', idsOf('commitment').slice(0, 12))
+      : Promise.resolve({ data: [] }),
   ]);
 
   const st = ((ent.state ?? {}) as { summary?: string; momentum?: string; whoOwes?: { you?: string[]; them?: string[] } });
@@ -82,24 +109,6 @@ export async function buildRoomView(
     offers: response?.offers ?? [],
     briefAt: response?.at ?? null,
   };
-
-  // Everything else on this deal — the "this has 2 other threads" awareness.
-  const { data: allLinks } = await supabase.from('entity_links').select('item_kind, item_id')
-    .eq('user_id', userId).eq('entity_id', entityId).neq('item_kind', 'email_thread').limit(60);
-  const lrows = (allLinks ?? []) as Array<{ item_kind: string; item_id: string }>;
-  const idsOf = (k: string) => lrows.filter((l) => l.item_kind === k).map((l) => l.item_id);
-  const [thrRes, mtgRes, comRes, fileRes] = await Promise.all([
-    idsOf('inbox_item').length
-      ? supabase.from('inbox_items').select('id, status, source_data, last_activity_at, created_at').in('id', idsOf('inbox_item').slice(0, 20))
-      : Promise.resolve({ data: [] }),
-    idsOf('meeting').length
-      ? supabase.from('meeting_transcripts').select('id, title, start_time, created_at').in('id', idsOf('meeting').slice(0, 6))
-      : Promise.resolve({ data: [] }),
-    idsOf('commitment').length
-      ? supabase.from('commitments').select('id, description, counterparty, status').in('id', idsOf('commitment').slice(0, 12))
-      : Promise.resolve({ data: [] }),
-    supabase.from('knowledge_files').select('id, filename').eq('user_id', userId).eq('entity_id', entityId).order('indexed_at', { ascending: false }).limit(5),
-  ]);
 
   // CURATED (P5b): sibling chips are the deal's MEANINGFUL conversations — calendar acceptances,
   // invite-system mail and automated senders are membership (the ledger keeps them) but not context
@@ -130,8 +139,6 @@ export async function buildRoomView(
   const openCommits = ((comRes.data ?? []) as any[])
     .filter((c) => c.status === 'open')
     .map((c) => ({ id: String(c.id), description: String(c.description).slice(0, 110), who: (c.counterparty as string) || null }));
-  // Near-dup fold: the same obligation extracted from two meetings must not be two chips.
-  const { isNearDuplicate } = await import('@/lib/commitments/extract');
   siblings.commitments = openCommits
     .filter((c, i) => !openCommits.slice(0, i).some((prev) => isNearDuplicate(prev.description, c.description, 0.5)))
     .slice(0, 5);

@@ -194,7 +194,12 @@ export async function generateNudgeDraft(
   opts: { counterparty: string | null; description: string; ageDays?: number; instructions?: string | null;
     /** The counterparty's OWN latest message text — the CONCRETE language signal (promise fix:
      *  mirror the correspondent's actual words, never the user's voice-block language). */
-    mirrorText?: string | null },
+    mirrorText?: string | null;
+    /** WHO OWES (Q8, the paste pack): 'them' (default — the historical nudge: we are waiting on
+     *  them) or 'you' (the user owes this, and a message about their own obligation must never be
+     *  written as a chase). One drafter, told the truth about the direction; every existing caller
+     *  keeps its exact behaviour by omitting it. */
+    direction?: 'them' | 'you' },
   client: DBClient,
 ): Promise<string> {
   const recipientEmail = (opts.counterparty || '').match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || null;
@@ -219,10 +224,15 @@ export async function generateNudgeDraft(
     model, max_tokens: 400, temperature: 0.6,
     messages: [{ role: 'user', content:
       `${voiceBlock ? voiceBlock + '\n\n' : ''}${brainBlock ? brainBlock + '\n\n' : ''}${assistantSkills ? assistantSkills + '\n\n' : ''}` +
-      `You are ${userName}. Write a brief, friendly NUDGE from ${userName} to ${who}, following up on ` +
-      `something ${userName} is waiting on them for: "${opts.description}".${aged} Keep it warm, low-pressure, ` +
-      `and short — a gentle check-in, not a demand. Address ${who} and sign as ${userName} — NEVER sign as ` +
-      `the recipient. ` +
+      (opts.direction === 'you'
+        ? `You are ${userName}. Write a brief, friendly message from ${userName} to ${who} about something ` +
+          `${userName} OWES THEM: "${opts.description}". ${userName} is the one on the hook here — write it as ` +
+          `an update/hand-over from ${userName}, never as a chase and never as a request for something from ` +
+          `${who}. Keep it warm and short. Address ${who} and sign as ${userName} — NEVER sign as the recipient. `
+        : `You are ${userName}. Write a brief, friendly NUDGE from ${userName} to ${who}, following up on ` +
+          `something ${userName} is waiting on them for: "${opts.description}".${aged} Keep it warm, low-pressure, ` +
+          `and short — a gentle check-in, not a demand. Address ${who} and sign as ${userName} — NEVER sign as ` +
+          `the recipient. `) +
       // THE LANGUAGE MIRROR (same precedence as the reply drafter): detect on the counterparty's
       // CONCRETE words first; only when there is no text signal, infer — and never let the voice
       // block's language leak in.

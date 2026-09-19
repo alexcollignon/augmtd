@@ -97,7 +97,43 @@ export type BuildOpts = {
   includeOutbound?: boolean;     // add cold outreach you're awaiting a reply to as 'followup' items (Timeline)
   skipReconcile?: boolean;       // skip the read-time reply reconcile (a purely-visual read path — e.g. the
                                  // Gantt — where the Home/board already heals; trims 2 queries + any writes)
+  /** THE SCOPED SPINE (Sep 18) — restrict the inbox/commitment reads to these RAW row ids. A surface
+   *  that paints ONE body of work (the project room's board + Gantt) never needed the whole account's
+   *  ledger to find its own members; it fetched ~850 items and threw away all but a few dozen. When
+   *  set, the spine reads only these rows (chunked), and the coworker-deliverable pool is skipped —
+   *  it keys on threads, not on item ids, so it can never contribute a member. Unset = unchanged
+   *  whole-account behaviour for every other caller. */
+  onlyItemIds?: string[];
 };
+
+// ── THE CAPS ARE PER-SIDE, AND THEY SPEAK (Sep 18) ────────────────────────────────────────────────
+// This read used to be ONE `.or(live, done)` query with a single limit of 800 and NO `.order()` —
+// so the two sides competed for the same page in whatever order Postgres felt like returning them.
+// The morning the graduation lane filed ~1,570 old items (each stamped `resolved_at = now`, all of
+// them inside the 7-day done window), ~2,000 rows matched the filter, the unordered page took 800 of
+// them, and LIVE PREPARED WORK fell off the spine: a pending `work_prepared` row carrying a real
+// draft vanished from the board, from the room, and from the CTA that should have offered its send.
+// A corpse evicted a living obligation because nothing said which one mattered.
+//
+// Two laws, both structural:
+//   1 · THE DONE SIDE CAN NEVER EVICT THE LIVE SIDE. They are separate queries with separate budgets.
+//       Nothing the history window does can cost a pending row its seat.
+//   2 · EVERY CAP IS ORDERED, AND A SATURATED CAP IS LOUD. Each side orders by its own recency, so a
+//       cap that does bite drops the LEAST relevant rows — and says so (the deck-pool precedent: no
+//       silent caps; a quiet thread is not a settled one).
+const PENDING_CAP = 2000;   // live work — generous by design; this side is the product
+const RESOLVED_CAP = 400;   // the history window's own budget, spent newest-resolved first
+const COMMIT_OPEN_CAP = 1000;
+const COMMIT_DONE_CAP = 300;
+const ID_CHUNK = 200;       // PostgREST `.in()` chunk when the read is scoped to member ids
+
+/** A cap that bites must SAY SO — never a silent truncation (the deck-pool law). */
+function warnIfSaturated(lane: string, rows: unknown[] | null | undefined, cap: number, userId: string): void {
+  const n = (rows ?? []).length;
+  if (n >= cap) {
+    console.warn(`[spine] CAP SATURATED — ${lane}: ${n}/${cap} rows for user ${userId}; older rows on this side were dropped. Raise the cap or narrow the window.`);
+  }
+}
 
 // ganttDateOf lives in ./gantt-date (pure, client-safe) so the client Gantts can import it without
 // dragging this server-only module's graph into the browser bundle. Re-exported here for server callers.
@@ -123,38 +159,128 @@ export async function buildWorkItems(
   // Skipped on purely-visual read paths (the Gantt) where the Home/board already heals — keeps them fast.
   if (!opts.skipReconcile) await reconcileRepliedItems(supabase, userId);
 
-  // ── Commitments (you_owe → todo · awaiting → waiting) ─────────────────────────────────────────────
-  const [{ data: commits }, { data: inbox }, { data: threads }] = await Promise.all([
-    supabase.from('commitments')
-      // Active commitments use status 'open' (some legacy 'pending'; B4 adds the human-set
-      // 'in_progress'); resolved = done/dismissed. 'suggested' (B2) is excluded by construction.
-      .select('id, description, counterparty, direction, source, source_id, thread_id, due_date, status, resolved_at, created_at, resolved_reason, project_id, initiative')
-      .eq('user_id', userId)
-      .or(`status.in.(open,pending,in_progress),and(status.in.(done,dismissed),resolved_at.gte.${doneSince})`)
-      .limit(500),
-    supabase.from('inbox_items')
-      .select('id, work_title, work_state, rule_type, type_override, source, source_id, source_meeting_transcript_id, source_data, status, created_at, last_activity_at, project_id')
-      .eq('user_id', userId)
-      .or(`and(status.eq.pending,or(work_state.in.(work_prepared,decision_required,action_required),rule_type.in.(needs_reply,to_do,waiting_on),source.eq.meeting)),and(status.in.(completed,dismissed),source_data->>resolved_at.gte.${doneSince})`)
-      .limit(800),
+  // ── Commitments (you_owe → todo · awaiting → waiting) + inbox, EACH SIDE ITS OWN ORDERED PAGE ────
+  const scope = opts.onlyItemIds ? [...new Set(opts.onlyItemIds)] : null;
+  const scopeChunks: Array<string[] | null> = scope
+    ? (scope.length ? Array.from({ length: Math.ceil(scope.length / ID_CHUNK) }, (_, i) => scope.slice(i * ID_CHUNK, (i + 1) * ID_CHUNK)) : [])
+    : [null];
+
+  const INBOX_COLS = 'id, work_title, work_state, rule_type, type_override, source, source_id, source_meeting_transcript_id, source_data, status, created_at, last_activity_at, project_id';
+  const COMMIT_COLS = 'id, description, counterparty, direction, source, source_id, thread_id, due_date, status, resolved_at, created_at, resolved_reason, project_id, initiative';
+
+  // The four lanes, spelled out so each one's filter is readable next to its own order + cap. The
+  // UNION of the two inbox lanes is byte-identical to the old OR (pending-actionable ∪ recently-
+  // resolved) minus the graduated corpses below; same for the two commitment lanes.
+  const runLane = async <T,>(
+    build: (ids: string[] | null) => PromiseLike<{ data: T[] | null }>,
+  ): Promise<T[]> => {
+    if (!scopeChunks.length) return [];
+    const res = await Promise.all(scopeChunks.map((ids) => build(ids)));
+    return res.flatMap((r) => (r.data ?? []) as T[]);
+  };
+  type Row = Record<string, unknown>;
+  // The scope filter is applied mid-chain; typing it generically explodes PostgREST's builder type
+  // (TS2589), so it stays deliberately loose — the lanes below carry the real shapes.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const withIds = (q: any, ids: string[] | null): any => (ids ? q.in('id', ids) : q);
+
+  const [inboxPending, inboxResolved, commitsOpen, commitsDone, { data: threads }, { data: basisRows }] = await Promise.all([
+    // LIVE — the product. Ordered newest-activity first so a cap that ever bites drops the quietest
+    // rows, never the ones a person is looking at today.
+    runLane<Row>((ids) => withIds(supabase.from('inbox_items').select(INBOX_COLS)
+      .eq('user_id', userId).eq('status', 'pending')
+      .or('work_state.in.(work_prepared,decision_required,action_required),rule_type.in.(needs_reply,to_do,waiting_on),source.eq.meeting'), ids)
+      .order('last_activity_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(scope ? ID_CHUNK : PENDING_CAP)),
+    // DONE — the short history window, newest-RESOLVED first (PostgREST orders the jsonb path fine;
+    // verified live against the real column). THE GRADUATED CORPSE IS NOT THIS WEEK'S ACTIVITY: the
+    // graduation lane files ancient quiet items through the ordinary dismiss door, so they all carry
+    // today's `resolved_at` while being, in truth, months-old rows nobody touched. Counting them as
+    // recent history buries the real deeds and (before the split) ate the whole page. `is.null`
+    // rides the filter because SQL's `!=` drops NULLs — a row with no reason is a human deed.
+    runLane<Row>((ids) => withIds(supabase.from('inbox_items').select(INBOX_COLS)
+      .eq('user_id', userId).in('status', ['completed', 'dismissed'])
+      .gte('source_data->>resolved_at', doneSince)
+      .or('source_data->>resolution_reason.is.null,source_data->>resolution_reason.neq.graduated'), ids)
+      .order('source_data->>resolved_at', { ascending: false })
+      .limit(scope ? ID_CHUNK : RESOLVED_CAP)),
+    // Active commitments use status 'open' (some legacy 'pending'; B4 adds the human-set
+    // 'in_progress'); resolved = done/dismissed. 'suggested' (B2) is excluded by construction.
+    runLane<Row>((ids) => withIds(supabase.from('commitments').select(COMMIT_COLS)
+      .eq('user_id', userId).in('status', ['open', 'pending', 'in_progress']), ids)
+      .order('created_at', { ascending: false })
+      .limit(scope ? ID_CHUNK : COMMIT_OPEN_CAP)),
+    runLane<Row>((ids) => withIds(supabase.from('commitments').select(COMMIT_COLS)
+      .eq('user_id', userId).in('status', ['done', 'dismissed'])
+      .gte('resolved_at', doneSince), ids)
+      .order('resolved_at', { ascending: false })
+      .limit(scope ? ID_CHUNK : COMMIT_DONE_CAP)),
     // Coworker deliverables — recent worker-thread artifacts (the "ready for you" pool), team-authored.
-    supabase.from('work_threads')
-      .select('id, agent_id, artifacts, updated_at, project_id, custom_agents!inner(id, name, is_worker)')
-      .eq('user_id', userId)
-      .eq('custom_agents.is_worker', true)
-      .not('artifacts', 'is', null)
-      .gte('updated_at', doneSince)
-      .order('updated_at', { ascending: false })
-      .limit(60),
+    // Keyed on threads, never on item ids: a scoped read can never draw a member from here, so it is
+    // skipped outright rather than fetched and discarded.
+    scope
+      ? Promise.resolve({ data: [] as Row[] })
+      : supabase.from('work_threads')
+        .select('id, agent_id, artifacts, updated_at, project_id, custom_agents!inner(id, name, is_worker)')
+        .eq('user_id', userId)
+        .eq('custom_agents.is_worker', true)
+        .not('artifacts', 'is', null)
+        .gte('updated_at', doneSince)
+        .order('updated_at', { ascending: false })
+        .limit(60),
+    // THE DEDUPE BASIS (scoped reads only — see the fold below). It keys on the user alone, so it
+    // flies with the lanes rather than costing the scoped path a sequential round-trip.
+    scope
+      ? supabase.from('inbox_items')
+        .select('id, work_title, work_state, rule_type, type_override, source_id, source_meeting_transcript_id, subject:source_data->>subject, thread_id:source_data->>thread_id, from_address:source_data->>from_address, from_alt:source_data->>from')
+        .eq('user_id', userId).eq('status', 'pending')
+        .or('work_state.in.(work_prepared,decision_required,action_required),rule_type.in.(needs_reply,to_do,waiting_on),source.eq.meeting')
+        .order('last_activity_at', { ascending: false, nullsFirst: false })
+        .limit(PENDING_CAP)
+      : Promise.resolve({ data: null }),
   ]);
+
+  if (!scope) {
+    warnIfSaturated('inbox/pending', inboxPending, PENDING_CAP, userId);
+    warnIfSaturated('inbox/resolved', inboxResolved, RESOLVED_CAP, userId);
+    warnIfSaturated('commitments/open', commitsOpen, COMMIT_OPEN_CAP, userId);
+    warnIfSaturated('commitments/resolved', commitsDone, COMMIT_DONE_CAP, userId);
+  }
+
+  // Merge each side back into the ONE list its loop below already expects. Dedupe by id defensively:
+  // the lanes are disjoint by status, but a row that flips status mid-flight must never double.
+  const mergeById = (...lanes: Row[][]): Row[] => {
+    const by = new Map<string, Row>();
+    for (const lane of lanes) for (const r of lane) if (r?.id) by.set(String(r.id), r);
+    return [...by.values()];
+  };
+  const inbox = mergeById(inboxPending, inboxResolved);
+  const commits = mergeById(commitsOpen, commitsDone);
 
   // CROSS-TYPE DEDUP (P2): an OPEN commitment extracted from an email/meeting that the ledger ALSO
   // carries as a pending actionable item is the same obligation twice — the item is the resolving
   // surface, the commitment folds (same rule as the Home deck, so the Timeline agrees with it).
-  const pendingVisible = visibleObligationsFromItems(
-    ((inbox ?? []) as Array<Record<string, unknown>>).filter((it) => String(it.status || 'pending') === 'pending'),
-  );
-  const dedupedCommits = ((commits ?? []) as Array<Record<string, unknown>>).filter((c) => {
+  //
+  // THE DEDUPE BASIS IS ALWAYS THE WHOLE ACCOUNT. A scoped build sees only its own members, and a
+  // commitment's duplicate inbox row is frequently NOT one of them — so scoping the basis would
+  // silently un-fold commitments that the unscoped build folds, and the scoped surface would grow a
+  // row the Timeline does not have (measured: exactly one such row on the reference project). The
+  // fold is a property of the LEDGER, not of the slice being painted, so the scoped path pays one
+  // extra read to ask the same question. It is a SLIM read — only the columns the visibility
+  // predicate and the fold keys actually touch, with the three source_data values pulled as jsonb
+  // aliases instead of dragging every email body through (317 rows in ~325ms on the reference
+  // account). These rows are the dedupe basis only; not one of them becomes a WorkItem.
+  // Re-nest the aliased values so the shared predicates read the shape they expect — ONE place knows
+  // that read is slim, and it is this one.
+  const dedupeBasis: Row[] = scope
+    ? ((basisRows ?? []) as Row[]).map((r) => ({
+      ...r,
+      source_data: { subject: r.subject, thread_id: r.thread_id, from_address: r.from_address, from: r.from_alt },
+    }))
+    : inbox.filter((it) => String(it.status || 'pending') === 'pending');
+  const pendingVisible = visibleObligationsFromItems(dedupeBasis);
+  const dedupedCommits = commits.filter((c) => {
     const open = ['open', 'pending'].includes(String(c.status || 'pending'));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return !open || !isDupOfVisible(c as any, pendingVisible);
@@ -182,7 +308,7 @@ export async function buildWorkItems(
   }
 
   // Inbox actionable items → work items (reply / action / followup / meeting).
-  for (const it of (inbox ?? []) as Array<Record<string, unknown>>) {
+  for (const it of inbox) {
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
     const status = String(it.status || 'pending');
     const ws = String(it.work_state || '');

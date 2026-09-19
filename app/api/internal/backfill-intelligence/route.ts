@@ -36,9 +36,14 @@ export async function POST(request: NextRequest) {
 
   // 2. Commitments from existing emails (sent + received)
   const { data: emails } = await sb.from('emails')
-    .select('id, subject, body, html_body, is_from_user, from_address, to_addresses, thread_id')
+    .select('id, subject, body, html_body, is_from_user, from_address, to_addresses, cc_addresses, thread_id')
     .eq('user_id', userId).gte('received_at', since)
     .order('received_at', { ascending: false }).limit(emailLimit);
+  // THE SEAT LAW (threads-plan clause 4): the backfill door reads the same To/CC facts the sync
+  // stamps, so a re-run can never re-mint a CC-only third party's debt as the user's.
+  const { userAddresses } = await import('@/lib/inbox/ensure-mail-kind');
+  const myAddrs = await userAddresses(sb, userId);
+  const { data: myProfile } = await sb.from('profiles').select('full_name').eq('id', userId).maybeSingle();
   let emailCommits = 0, emailsScanned = 0;
   for (const e of emails ?? []) {
     emailsScanned++;
@@ -46,7 +51,12 @@ export async function POST(request: NextRequest) {
     const n = await extractEmailCommitments({
       userId, subject: e.subject || '', body, isFromUser: !!e.is_from_user, userName: null,
       counterparty: e.is_from_user ? ((e.to_addresses as string[] | null)?.[0] || null) : (e.from_address || null),
-      sourceId: e.id, threadId: e.thread_id || null, client: sb,
+      sourceId: e.id, threadId: e.thread_id || null,
+      seat: {
+        to: (e.to_addresses as string[] | null) ?? [], cc: (e.cc_addresses as string[] | null) ?? [],
+        userAddresses: myAddrs, userName: (myProfile?.full_name as string | null) ?? null,
+      },
+      client: sb,
     }).catch(() => 0);
     emailCommits += n;
   }
