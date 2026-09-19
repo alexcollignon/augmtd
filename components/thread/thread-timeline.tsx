@@ -153,11 +153,16 @@ export function ThreadTimeline({ items, className }: ThreadTimelineProps) {
 
           // An event line has no author and no affordance — it is a delta, spoken once. Its refs
           // are quiet inline WORDS (law 8), never buttons; a handler-less ref is plain text.
+          // THE SEPARATOR BELONGS TO A WORD (owner walk, Sep 19): an event line was rendering
+          // "…Undo from Activity. ·" — a ref whose LABEL was empty still joined its " · ". A
+          // separator is punctuation BETWEEN two things; with nothing after it, it is a typo the
+          // machine typed. Blank-labelled refs are dropped here, in the ONE renderer, so no host
+          // can produce the artifact by handing over a label it never had.
           case 'event_line':
             return (
               <div key={item.id} className="px-1 text-[12px] leading-[1.5] text-neutral-400">
                 {item.text}
-                {item.refs?.map((r, ri) => (
+                {item.refs?.filter((r) => !!r.label?.trim()).map((r, ri) => (
                   <span key={ri}>
                     {' · '}
                     {r.onClick
@@ -181,8 +186,17 @@ export function ThreadTimeline({ items, className }: ThreadTimelineProps) {
           case 'actor_bubble': {
             // THE SLACK GROUPING RULE — the header renders only on a change of speaker, computed
             // over what is actually VISIBLE (a collapsed fold must not orphan a run's header).
+            //
+            // ⚠️ THE PINNED OPENING IS PART OF ITS SPEAKER'S RUN (owner walk, Sep 19: consecutive
+            // bubbles from the same face each wearing their own face+name header). The opening
+            // stopped being a widget on Sep 14 — it renders in the actor-bubble grammar, from the
+            // CoS's own face — so the bubble under it was the SAME speaker announcing themself a
+            // second time, twice in a row, at the top of every room. A run is a run whichever item
+            // type opened it: the rule reads the previous item's actor, not its label.
             const prev = visible[i - 1];
-            const showHeader = !(prev && prev.type === 'actor_bubble' && prev.actorId === item.actorId);
+            const prevActorId = prev && (prev.type === 'actor_bubble' || prev.type === 'pinned') ? prev.actorId : null;
+            const showHeader = !((prev && prev.type === 'actor_bubble' && prev.actorId === item.actorId)
+              || prevActorId === item.actorId);
             return <ActorBubble key={item.id} item={item} showHeader={showHeader} />;
           }
 

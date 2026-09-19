@@ -8,6 +8,7 @@ import {
 } from '@heroicons/react/24/outline';
 import ConnectionCard from './connection-card';
 import SyncAllButton from './sync-all-button';
+import PosturesSection from './postures-section';
 
 export type EmailSection = 'connections' | 'rules' | 'drafting' | 'todo';
 
@@ -161,6 +162,10 @@ export default function EmailSettings({ connections, section = 'connections' }: 
     setEditing(null);
   };
 
+  // THE ADVANCED DISCLOSURE — the old field-by-field rule editor is demoted, never deleted: the
+  // sentence covers what people actually correct, and the tail keeps its door.
+  const [advanced, setAdvanced] = useState(false);
+
   const [rerunning, setRerunning] = useState(false);
   const [rerunMsg, setRerunMsg] = useState<string | null>(null);
   const [windowDays, setWindowDays] = useState(7);
@@ -238,9 +243,39 @@ export default function EmailSettings({ connections, section = 'connections' }: 
             ))}
           </div>
         )}
+        {/* THE POSTURE REGISTRY — the primary face. One plain sentence per posture. */}
+        <SectionHead
+          title="How I handle your mail"
+          desc="Each line is one thing I hold to. Say a new one, re-say one to change it, or switch it off."
+        />
+
+        {/* THE LABEL MIRROR AS A CHOICE — the kill-switch already existed; it stops being silent.
+            Reads and writes the SAME email_settings.auto_label, no new flag, no behaviour change. */}
+        {settings && (
+          <div className="mb-4 rounded-xl border border-neutral-200 px-4">
+            <SettingRow
+              title="Mirror my triage into Gmail / Outlook labels"
+              desc="Namespaced AUGMTD labels in your mailbox — never touches your own labels."
+              on={settings.auto_label}
+              onToggle={() => setSetting('auto_label', !settings.auto_label)}
+            />
+          </div>
+        )}
+
+        <PosturesSection connectionId={activeConnId} />
+
+        {/* The old rule editor, demoted — for the tail a sentence can't reach. */}
+        <button
+          onClick={() => setAdvanced(a => !a)}
+          className="mt-6 text-[12px] text-neutral-400 hover:text-neutral-700 transition-colors"
+        >
+          {advanced ? '− Hide the rule editor' : '+ Advanced: the underlying rules'}
+        </button>
+
+        {advanced && (<div className="mt-4 border-t border-neutral-100 pt-6">
         <SectionHead
           title="Triage rules"
-          desc="Evaluated top to bottom — the first match wins. Deterministic rules run before AI ones."
+          desc="The same rules, field by field. Evaluated top to bottom — the first match wins. Deterministic rules run before AI ones."
           action={
             <div className="flex items-center gap-2.5">
               <select
@@ -313,16 +348,18 @@ export default function EmailSettings({ connections, section = 'connections' }: 
           })}
         </div>
         )}
+        </div>)}
       </section>
       )}
 
       {/* Drafting */}
       {section === 'drafting' && settings && (
         <section className="px-8 py-7">
-          <SectionHead title="Drafting & labels" desc="How AUGMTD drafts replies and mirrors triage labels into your inbox." />
+          {/* ONE FACT ONE HOME: the label mirror is a triage choice and now lives on the Rules
+              page, beside the postures it mirrors — not duplicated here. */}
+          <SectionHead title="Drafting" desc="How AUGMTD drafts replies for you." />
           <div className="rounded-xl border border-neutral-200 divide-y divide-neutral-100 px-4">
             <SettingRow title="Automatically draft replies" desc="Draft replies in your voice, ready to review." on={settings.auto_draft} onToggle={() => setSetting('auto_draft', !settings.auto_draft)} />
-            <SettingRow title="Label emails in Gmail / Outlook" desc="Mirror the triage labels in your inbox (namespaced, never touches your own labels)." on={settings.auto_label} onToggle={() => setSetting('auto_label', !settings.auto_label)} />
           </div>
         </section>
       )}

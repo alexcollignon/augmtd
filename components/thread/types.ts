@@ -48,12 +48,20 @@ export interface ThreadAction {
  *   routine     → scheduled workflow delivery, owned by a face
  *   frame       → the living deliverable, previewed inline
  *   proposal    → standing-task proposal (saying prepares, committing stays explicit)
+ *   bulk        → THE BULK DEED (attention-plan A7): a ledger class's natural verb, previewed with
+ *                 its honest breakdown and committed through ONE door. The preview is a STORED
+ *                 fact, so what the card counted is what the commit does.
+ *   doc         → THE REVIEW-FIRST DOC CARD (attention-plan D): a produced document arrives as a
+ *                 HANDLE — glyph · title · type · pages · version · owner — and NEVER as the
+ *                 document. "Docs can get big" is solved by never putting the doc in the thread:
+ *                 the deed is REVIEW, and Review raises the side panel (the player).
  *   custom      → THE CARD SLOT: a host mounts its own already-built rich component (email draft
  *                 card, decision card, frame card) through `node`, rather than the kit rebuilding
  *                 it. The escape hatch exists so ports are mounts, not rewrites.
  */
 export type ThreadCardKind =
-  | 'deliverable' | 'approval' | 'input' | 'routine' | 'frame' | 'proposal' | 'invite' | 'email' | 'custom';
+  | 'deliverable' | 'approval' | 'input' | 'routine' | 'frame' | 'proposal' | 'invite' | 'email' | 'bulk' | 'doc'
+  | 'source' | 'custom';
 
 /** The icon tile on the compact card kinds — a shape, never a claim about a module. */
 export type ThreadCardIcon = 'mail' | 'document' | 'file' | 'calendar';
@@ -133,6 +141,48 @@ export interface ProposalCard extends CardBase {
 export interface CustomCard extends CardBase {
   kind: 'custom';
   node: ReactNode;
+}
+
+/**
+ * THE ONE OBJECT CARD — the SOURCE half of the card contract (docs/threads-plan.md, THE OPENING
+ * CONTRACT clause 1, owner walk Sep 19).
+ *
+ * The deliverable kinds above answer "what did we make". This one answers the question the walk
+ * found unanswered on three surfaces: WHAT IS THIS ABOUT. A decision card asked for approval of a
+ * thing that was nowhere on screen; a room opened with an ask and never showed what was asked. The
+ * owner's constraint is the shape: ONE rendering per object kind, on EVERY surface — a host mounts
+ * this card or shows nothing, and never authors excerpt markup of its own.
+ *
+ *   email    → sender + date, the thread's TAIL (each message's own words, clipped by THE ONE
+ *              CLIPPER with its honest marker — the kit never clips), attachment chips that open
+ *              through the host's mount of THE ONE VIEWER
+ *   meeting  → title + when + the served excerpt
+ *   document → the handle idiom (title · meta · one door), never the document inlined (law D1)
+ *
+ * Every string here is SERVED or composed by the host. The kit prints what it is handed: it reads
+ * no clock (`when` is a rendered label), computes no size (`meta` is a composed word), and a fact
+ * the host does not have simply has no line.
+ */
+export interface SourceCard extends CardBase {
+  kind: 'source';
+  /** The object's own kind — the one thing that keys the render. */
+  source: 'email' | 'meeting' | 'document';
+  /** "Sam Rivera" · the meeting's host · the document's owner. Absent = no byline. */
+  who?: string | null;
+  /** A rendered date label, never a raw timestamp (THE CLOCK stays at the host). */
+  when?: string | null;
+  title?: string | null;
+  /** The tail: each message's OWN words, already clipped. Oldest→newest, as the door served them. */
+  messages?: Array<{ id: string; author: string; body: string }>;
+  /** The single excerpt lane (a meeting's summary, a served first-words line). */
+  excerpt?: string | null;
+  /** What came with it, in the EmailCard's own `contextFiles` shape — ONE CHIP GRAMMAR, ONE VIEWER
+   *  (T25.9c): the kit mounts the shared AttachmentChip and the HOST raises the lightbox. Without
+   *  an `onOpen` a chip is a fact rather than a door (no lying doors). */
+  files?: Array<{ name: string; size?: number | null; onOpen?: () => void }>;
+  /** The one door — "Thread →" · "Open →". A door with no handler does not render. */
+  openLabel?: string;
+  onOpen?: () => void;
 }
 
 /**
@@ -301,13 +351,108 @@ export interface EmailCard extends CardBase {
   busy?: boolean;
 }
 
+/**
+ * THE BULK-DEED CARD — the confirmation surface of docs/attention-plan.md's law A7.
+ *
+ * "The confirmation is a bulk-deed card in the thread (a member of the message grammar): WHAT WILL
+ * HAPPEN, TO HOW MANY, THE UNDO NOTE, ONE COMMIT DOOR."
+ *
+ * Every string on it is composed deterministically by `lib/deeds/bulk.ts` from the STORED deed —
+ * the kit prints what it is handed and, like every other kind here, invents nothing. Three states,
+ * and the `done` one is measured from real per-item outcomes, never from the preview's hopes:
+ *   pending    → intro · breakdown lines · the needs-a-click tail · undo note · commit + cancel
+ *   committing → `busy`: the content stands down and the commit row disables (the working idiom)
+ *   done       → no commit door at all, one receipt line ("Archived 31 · undo in Activity");
+ *                a partial run says so in the SAME line rather than wearing a success word.
+ */
+export interface BulkCard extends CardBase {
+  kind: 'bulk';
+  state: 'pending' | 'committing' | 'done';
+  /** "Archive 31 messages from Notices." — composed by `composeIntro`, never by a model. */
+  intro: string;
+  /** "9 senders unsubscribe automatically (one-click)" — `breakdownLines`. A zero lane has no line. */
+  lines?: string[];
+  /** THE HONEST SUBSET, named: the messages we will NOT act on, each with its own subject and link.
+   *  Listing them is the whole point — "3 need a click" with no way to find them is a dead end. */
+  needsClick?: Array<{ subject: string; url?: string; onOpen?: () => void }>;
+  needsClickLabel?: string;
+  /** The quietest line on the card. Honest per verb — an unsubscribe's note says it CANNOT be undone. */
+  undoNote?: string;
+  commitLabel?: string;
+  onCommit?: () => void;
+  /** Quiet by design: the way out never competes with the deed. */
+  cancelLabel?: string;
+  onCancel?: () => void;
+  /** The done state's one line. */
+  receipt?: string;
+  error?: string;
+  busy?: boolean;
+  /**
+   * THE POSTURE TAIL (A7's last sentence: "Every bulk deed may end with 'keep doing this?' → a
+   * posture (A8)"), WIRED. The card carries the seat; `lib/postures/from-deed.ts` decides whether
+   * the offer is keepable at all and the registry owns what it writes. A host that has no keepable
+   * posture passes neither, and the tail simply is not there — never a lying offer.
+   */
+  postureAsk?: string;
+  onKeepDoingThis?: () => void;
+  /** After the answer: the show-back line ("Kept: …") or the honest refusal, in place of the ask.
+   *  The word is the deed — what was understood is read back where the offer stood. */
+  postureNote?: string;
+}
+
+/**
+ * THE DOC CARD — the review-first handle (docs/attention-plan.md, law D).
+ *
+ * FOUR LAWS, all structural here:
+ *  1. THE DEED IS REVIEW. The card carries glyph · title · the meta facts · a composed intro ·
+ *     ONE primary door (Review →). There is no `preview`, no `body`, no `excerpt` field: the
+ *     document is never embedded in the thread, so no host can put it there.
+ *  2. REVIEW OPENS THE SIDE PANEL. `onReview` is the host's mount of THE ONE artifact panel —
+ *     the kit never renders a player, and a card with no handler renders the words as plain text.
+ *  3. THE EDIT LADDER LIVES BEHIND REVIEW. The card offers no editor of its own: our own produced
+ *     documents edit through the panel/ask path, foreign types by ask. Never a fake editor here.
+ *  4. ANY TYPE, ONE ANATOMY. PDF · Word · Slides · Sheets differ in ONE letter of `docType`.
+ *
+ * The meta line is JOINED FROM WHAT IS TRUE: each fact is its own optional field and an absent
+ * one leaves no gap (pages are "when known" — a card that has never been rendered says nothing
+ * about its length). The commit row exists ONLY where a send-deed was handed in.
+ */
+export interface DocCard extends CardBase {
+  kind: 'doc';
+  title: string;
+  /** The glyph family — resolved by the host through `lib/documents/doc-card` (extension first). */
+  docType: 'pdf' | 'word' | 'slides' | 'sheet' | 'doc';
+  /** "PDF" · "Word" · "Presentation" — the same resolver's word, never composed at the surface. */
+  typeLabel?: string;
+  /** Known only once something has really rendered the file. Absent = unknown, and silent. */
+  pages?: number;
+  /** "v3" — the stored chain's own label (empty for a single-version document). */
+  versionLabel?: string;
+  /** "Max" — who produced it. */
+  owner?: string;
+  /** THE COMPOSED INTRO — the mind's one line above the handle (speech-is-composed, floored).
+   *  Vocabulary the kit never authors: it prints what the host composed, or nothing. */
+  intro?: string;
+  reviewLabel?: string;
+  onReview?: () => void;
+  /** THE COMMIT DOOR, only where a send-deed for THIS document exists — the host wires it to the
+   *  one door it already owns. No handler → no button (never a lying deed). */
+  sendLabel?: string;
+  onSend?: () => void;
+  sendDisabled?: boolean;
+  /** The status word at the commit row's right edge ("ready" · "sending…" · "sent"). */
+  receipt?: string;
+  error?: string;
+}
+
 export type ThreadCard =
   | DeliverableCard | ApprovalCard | InputCard | RoutineCard
-  | FrameCard | ProposalCard | InviteCard | EmailCard | CustomCard;
+  | FrameCard | ProposalCard | InviteCard | EmailCard | BulkCard | DocCard | SourceCard | CustomCard;
 
 /** The full kind set, for hosts and gates that must enumerate the grammar. */
 export const THREAD_CARD_KINDS: ThreadCardKind[] = [
-  'deliverable', 'approval', 'input', 'routine', 'frame', 'proposal', 'invite', 'email', 'custom',
+  'deliverable', 'approval', 'input', 'routine', 'frame', 'proposal', 'invite', 'email', 'bulk', 'doc',
+  'source', 'custom',
 ];
 
 /**

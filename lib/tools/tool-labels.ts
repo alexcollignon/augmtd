@@ -32,6 +32,7 @@ export const TOOL_LABELS: Record<string, string> = {
   compose_email: 'Draft email',
   send_email: 'Send email',
   send_calendar_invite: 'Send calendar invite',
+  prepare_bulk_deed: 'Preview a bulk deed',
   forward_email: 'Forward email',
   slack_list_channels: 'List Slack channels',
   slack_post_message: 'Post to Slack',

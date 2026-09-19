@@ -88,9 +88,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       meetingIds.length
         ? supabase.from('meeting_transcripts').select('id, title, start_time, created_at').in('id', meetingIds).eq('user_id', user.id)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
-      // The shared spine, filtered below to this entity's members (so the board/Gantt match the
-      // Timeline exactly). Keys on the user alone — never needed the links to FETCH.
-      buildWorkItems(supabase, user.id, { todayStr, includeCalendar: false, includeOutbound: false, skipReconcile: true }).catch(() => []),
+      // The shared spine, SCOPED TO THIS ROOM'S MEMBERS (Sep 18). It is still the one shared
+      // derivation — the same function, the same shape, so the board/Gantt match the Timeline
+      // exactly — but it no longer reads the whole account's ledger to paint one project. This
+      // route sat on a ~850-item, ~2.4s whole-account build and then threw away everything but the
+      // few dozen rows `memberIds` kept. The links are already in hand from stage 1; they are now
+      // handed to the fetch instead of used only as a post-filter.
+      buildWorkItems(supabase, user.id, { todayStr, includeCalendar: false, includeOutbound: false, skipReconcile: true, onlyItemIds: [...memberIds] }).catch(() => []),
       // THE STANDING PROPOSAL, FILED (Sep 7 — ONE AGENDA PER ROOM): the bring-in proposal the
       // room narrated at founding is membership review, and membership review has ONE home — the
       // drawer, beside "Might belong here". Served from the SAME durable turn the rail speaks once

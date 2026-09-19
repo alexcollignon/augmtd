@@ -9,6 +9,7 @@ export type { ThreadTimelineProps } from './thread-timeline';
 export { ThreadComposer } from './thread-composer';
 export type { ThreadComposerProps } from './thread-composer';
 export { ThreadCards, ThreadCardView } from './thread-cards';
+export { SourceObjectCard } from './source-object-card';
 export { AvatarStatus, FacePile, WorkRing, NeedsYouBadge, accentFor } from './avatar-status';
 export type { AvatarStatusProps } from './avatar-status';
 export * from './types';

@@ -16,6 +16,9 @@ import { reconcileRepliedItems } from '@/lib/inbox/reconcile-replied';
 import { foldDuplicateCommitments, visibleObligationsFromItems } from '@/lib/home/dedupe-deck';
 import { isCalendarSystemSubject } from '@/lib/inbox/automated';
 import { computeBundles } from '@/lib/home/bundle-brief';
+import { clipAnchorTitle, writeDayAnchors } from '@/lib/home/day-anchors';
+import { TODAY_ZONE_FEATURE } from '@/lib/home/day';
+import { CATCH_UP_THRESHOLD } from '@/lib/work/catch-up';
 import { nameBundles, type BundleName, type BundleNameInput } from '@/lib/home/name-bundles';
 
 export const maxDuration = 30;
@@ -250,6 +253,35 @@ export async function GET() {
   // relying on classify-item's process-global render cache, which is not a safe source of per-user
   // configuration in a server route.
   const userRules = await loadUserRules(user.id, supabase);
+
+  // ── THE ONE SCALE (docs/attention-plan.md, A3) ────────────────────────────────────────────────
+  // The Home's "Held quiet · N →" door speaks the LEDGER'S OWN number, computed by the ledger's own
+  // derivation (`lib/deeds/held-members.ts` — the same function `/api/home/held` serves through and
+  // the same one a bulk deed acts through). Before this the door counted the deck's remainder while
+  // the ledger behind it counted every held piece of mail: two scales, one door, and a reader who
+  // opened "Held quiet · 9" onto an account of 1,200. It rides as a PROMISE started here so it costs
+  // no wall clock (the brief's own passes are the long pole), and a failure serves null — the door
+  // then falls back to what it always showed rather than claiming a number nobody computed.
+  //
+  // Q2 · AND THE DOOR SPEAKS THE SMALL NUMBER. "Held quiet · 4,939" is not a queue, it is weather.
+  // The same one derivation now returns the gradient's three bands, so the door can say
+  // "When you're ready · 12" (WAITING — alive, real, held only by the budget) and rest the big
+  // number beside it as the quiet fact it is ("4,927 handled quietly"). Both numbers are SERVED:
+  // the client renders what it was given and computes neither.
+  const heldCountsPromise: Promise<{ total: number; waiting: number; handled: number; graduating: number;
+    /** THE FACTS THE COUNT WAS MADE OF — kept so the ledger's last-good can be PRIMED from the
+     *  derivation this route already paid for (see the after() below), instead of the reader
+     *  paying for a second whole-pool walk the first time they open the door. */
+    derived: import('@/lib/deeds/held-members').HeldDerivation } | null> = (async () => {
+    try {
+      const { countHeld } = await import('@/lib/deeds/held-members');
+      const c = await countHeld(supabase, user.id, user.email ?? null);
+      // WATCHED rests with HANDLED on the door: the door has exactly two numbers, and "someone else
+      // owes the move" is not something the reader is being asked to do. The ledger keeps them apart.
+      // `graduating` is the catch-up detector's fact — the same derivation, no second read.
+      return { total: c.total, waiting: c.waiting, handled: c.handled + c.watched, graduating: c.graduating, derived: c.derived };
+    } catch { return null; }
+  })();
 
   const since24 = new Date(now.getTime() - DAY).toISOString();
   const [itemsRes, commitsRes, meetingsRes, handledRes, triagedRes, summarisedRes, trackedRes, filteredRes, fyiRes] = await Promise.all([
@@ -1612,6 +1644,11 @@ export async function GET() {
   // MAIL STATE (new-user honesty): the Home's empty state must distinguish "nothing connected" /
   // "first sync in flight" / "genuinely all clear" — one cheap query, no AI.
   let mail = { connections: 0, syncing: false, emailFeature: true };
+  // THE DAY ANCHOR'S FLOOR (Sep 18): a row is anchored to a meeting ONLY IF that meeting can
+  // actually render. The Today zone is earned by the feature ladder (A5) — organ ON and calendar
+  // connected — and anchoring a row into a zone that will never exist would DELETE it from the
+  // Home, which is the opposite of what the anchor is for. A HOME IS A THING THAT EXISTS.
+  let todayZoneLive = false;
   try {
     const { data: conns } = await supabase.from('connections').select('id, last_sync')
       .eq('user_id', user.id).in('provider', ['gmail', 'outlook']).eq('status', 'active');
@@ -1625,6 +1662,9 @@ export async function GET() {
       syncing: (conns ?? []).some((c) => !c.last_sync),
       emailFeature: feats?.email !== false,
     };
+    // The SAME ladder lib/home/day.ts applies (TODAY_ZONE_FEATURE + calendarConnected), read from
+    // the facts this route already has — one law, no second read.
+    todayZoneLive = feats?.[TODAY_ZONE_FEATURE] !== false && (conns?.length ?? 0) > 0;
   } catch { /* non-fatal */ }
   // THE ROW TAG on the SERVED payload (July 30 — the invisible-EG-Bank bug, take 2: the client
   // builds the deck from THESE lanes, not from the server-side agenda): every deck lane carries its
@@ -1642,7 +1682,7 @@ export async function GET() {
   // prepared reader · live asks), BATCHED for the whole deck in one call. The word is an ENHANCEMENT:
   // the field is optional everywhere and a payload without it (a cached brief, a failed derivation)
   // renders exactly as before. Meetings are out of scope — the machine speaks for inbox + commitments.
-  const machineByAtom = new Map<string, { state: string; word: string | null; surfaced?: boolean }>();
+  const machineByAtom = new Map<string, { state: string; word: string | null; surfaced?: boolean; proved?: { at: string; quietDays: number; result?: 'reaffirmed' | 'demoted' } }>();
   try {
     const { workStatesFor, STATE_WORDS } = await import('@/lib/work/machine');
     const rowById = new Map(items.map((it) => [String(it.id), it]));
@@ -1671,11 +1711,285 @@ export async function GET() {
         ...(st.judgedFirstAt && Date.parse(st.judgedFirstAt) > dayAgo && !['settled', 'unjudged'].includes(st.state) ? { surfaced: true } : {}),
       });
     }
+    // Q7 · PROOF OF LIFE (attention-plan PART III), served ADDITIVELY: when the sweep's lane has
+    // asked a long-silent row whether it is still live, the row can say so ("went quiet — say the
+    // word to revive") instead of standing mute at day 22. One indexed read over keys already in
+    // hand; a payload without the field renders exactly as before.
+    try {
+      const { proofOfLifeByKey } = await import('@/lib/work/proof-of-life');
+      const keys = [...machineByAtom.keys()];
+      const inboxKeySet = new Set([...inboxIds].map((id) => `inbox:${id}`));
+      const proofs = await proofOfLifeByKey(supabase, user.id, [
+        ...inboxKeySet,
+        ...commitments.map((c) => `commitment:${c.id}`),
+      ]);
+      for (const [key, stamp] of proofs) {
+        const atom = key.slice(key.indexOf(':') + 1);
+        const cur = machineByAtom.get(atom);
+        if (!cur || !keys.includes(atom)) continue;
+        machineByAtom.set(atom, { ...cur, proved: { at: stamp.at, quietDays: stamp.quietDays, ...(stamp.result ? { result: stamp.result } : {}) } });
+      }
+    } catch { /* the proof fact is an enhancement — absence is honest, never "alive" */ }
   } catch { /* the word is an enhancement — the deck serves without it */ }
   const machineOf = (id: string) => machineByAtom.get(id) ?? null;
   const taggedMustRespond = mustRespondOut
     ? { ...mustRespondOut, items: (mustRespondOut.items ?? []).map((m: { itemId: string; initiative?: string | null }) => ({ ...m, initiative: tagByAtom.get(m.itemId) ?? m.initiative ?? null, machine: machineOf(m.itemId) })) }
     : mustRespondOut;
+
+  // ══ THE ATTENTION LAYER (docs/attention-plan.md, laws A1 + A2 + Q4) ════════════════════════════
+  // A1 · every needs-you row leaves here carrying WHY NOW AND WHY YOU, composed from judged facts.
+  // A2 · the needs-you set is a fixed budget of five, ranked against CURRENT context, enforced HERE
+  //      — at the one serving choke point, never by the client.
+  // Q4 · THE SEAT CONTRACT, at the SAME choke: a seat is finished preparation, not a ranking. Each
+  //      row is tested for a real counterparty (the Q1 floor), for life (Q7's stamp), and for a
+  //      staged artifact; the first two failures HOLD the row, the third seats it wearing the
+  //      machine's honest word ("needs shaping") and yields to prepared rows of equal urgency.
+  //
+  // THE PAYLOAD IS ADDITIVE, deliberately: every existing lane still serves every row it served
+  // before (nothing is dropped — the 6th-best thing is HELD, not deleted), and the budget's verdict
+  // rides as a per-row `heldBack` marker plus a served `attention` list. A consumer that has never
+  // heard of the budget renders exactly as it did; the ledger route (`/api/home/held`) accounts for
+  // everything the budget did not seat, through the SAME module.
+  //
+  // `whyNow` is composed fresh, here, from today's clock — so it is deliberately NOT in the
+  // serve-label strip table (lib/home/serve-labels): the deixis guard exists for FROZEN ingest
+  // snapshots, and stripping "due Friday" out of a clause whose whole job is to state the date would
+  // delete the fact instead of healing it. It still leaves through the one choke, like every lane.
+  let attention: {
+    budget: number;
+    served: Array<{ key: string; entityId: string; source: string; whyNow: string; rank: number;
+      /** THE DAY ANCHOR's contract, served: this row's seat came from THIS calendar event, so it
+       *  renders under the meeting in the day frame and NOT in the floating whispers. */
+      anchoredToEventId: string | null }>;
+    heldBack: string[];
+    whyNowByAtom: Record<string, string>;
+    /** A3's one scale: the held-quiet ledger's OWN total, or null when it could not be read. */
+    heldTotal: number | null;
+    /** Q2's gradient, served: the door's small number and the quiet one beside it. */
+    heldWaiting: number | null;
+    heldHandled: number | null;
+    /** THE FRESH SEAT: deck-eligible work FIRST JUDGED within the day that did NOT win a seat —
+     *  the night's arrivals, counted honestly instead of vanishing into the ledger's weather. */
+    fresh: { count: number; ids: string[] };
+    /** INSTANT CATCH-UP: this account is dirty enough that the steady-state cron cannot be the
+     *  answer — `filing` is how many rows WOULD graduate right now. Null means nothing to drain. */
+    catchUp: { filing: number } | null;
+  } = { budget: 0, served: [], heldBack: [], whyNowByAtom: {}, heldTotal: null, heldWaiting: null, heldHandled: null, fresh: { count: 0, ids: [] }, catchUp: null };
+  try {
+    const { whyNowOf, rankAttention, attentionRank, ATTENTION_BUDGET, internalDomainsOf, isInternalBridge,
+      seatVerdict, provedAliveOf } = await import('@/lib/home/attention');
+    const { itemIsSelfEcho } = await import('@/lib/inbox/self-echo');
+    type Row = import('@/lib/home/attention').AttentionRow;
+    // Q8 · AN INTERNAL TEAMMATE IS NEVER A CALENDAR BRIDGE. A colleague attends everything, so one
+    // recurring internal meeting made every teammate's mail "adjacent" and five rows all claimed
+    // someone would ask about them at 10:00. The user's OWN address gives the corporate domain at
+    // zero cost here (the ledger's derivation reads the connections too, for accounts whose login
+    // address differs from their mailbox); a free-mail address contributes no domain by law.
+    const internalDomains = internalDomainsOf([self ?? null]);
+    // ── THE CALENDAR ADJACENCY FACT (A1's why-now half) — an event in the next 48h whose attendees
+    //    overlap this row's counterparty. Real events only; a miss is simply no adjacency.
+    const adjByEmail = new Map<string, { localTime: string | null; title: string | null; eventId: string; today: boolean }>();
+    try {
+      const { data: soon } = await supabase.from('calendar_events')
+        .select('id, title, start_time, end_time, attendees, timezone, is_all_day')
+        .eq('user_id', user.id).eq('status', 'confirmed')
+        .gte('start_time', new Date(now.getTime() - 30 * 60_000).toISOString())
+        .lte('start_time', new Date(now.getTime() + 48 * 3_600_000).toISOString())
+        .order('start_time', { ascending: true }).limit(40);
+      // THE DAY ANCHOR + THE FRESH SEAT (Sep 18): the fact now carries WHICH event it is and
+      // WHETHER that event is today — the two things the adjacency was always about and never said.
+      const localDate = (iso: string): string => {
+        try { return new Intl.DateTimeFormat('en-CA', { timeZone: userTz }).format(new Date(iso)); }
+        catch { return String(iso).slice(0, 10); }
+      };
+      const todayLocal = localDate(now.toISOString());
+      for (const ev of ((soon ?? []) as any[]).filter((m) => !isCancelledEventTitle(m.title))) {
+        // `today` is the DAY FRAME'S OWN TEST, not merely a date match: the zone speaks about what
+        // is LEFT of the day, so an event that has already ended is not today's shape either — and
+        // a row anchored to it would have no line to sit under (`selectDayEvents`' own rule).
+        const endsAt = ev.end_time ? Date.parse(ev.end_time as string) : Date.parse(ev.start_time as string);
+        const fact = {
+          localTime: localHHMM(ev.start_time as string, !!ev.is_all_day), title: (ev.title as string) || null,
+          eventId: String(ev.id),
+          today: localDate(ev.start_time as string) === todayLocal
+            && (!!ev.is_all_day || !Number.isFinite(endsAt) || endsAt >= now.getTime()),
+        };
+        for (const e of attendeeEmails(ev)) {
+          if (!e || e === self) continue;
+          if (isInternalBridge(e, internalDomains)) continue;
+          if (!adjByEmail.has(e)) adjByEmail.set(e, fact); // the NEAREST event wins (query is ordered)
+        }
+      }
+    } catch { /* non-fatal — a row simply carries no calendar why-now */ }
+    const adjacencyFor = (email: string | null | undefined) =>
+      (email ? adjByEmail.get(email.toLowerCase()) ?? null : null);
+    const emailOfItem = (id: string): string | null => {
+      const raw = itemById.get(id);
+      return raw ? fromEmailOf((raw.source_data ?? {}) as Record<string, unknown>) : null;
+    };
+    const commitCounterpartyEmail = new Map<string, string>();
+    for (const c of commits) {
+      const cp = String((c.counterparty as string) || '').toLowerCase();
+      if (cp.includes('@')) commitCounterpartyEmail.set(c.id as string, cp);
+    }
+
+    const rows: Row[] = [];
+    /** The row's own LEADING WORDS, as the deck prints them (counterparty, else the work's title).
+     *  Recorded here so the day anchor speaks the row's own sentence rather than composing a
+     *  second one — a raised row and its whisper are the same row. */
+    const leadWordByAtom = new Map<string, string>();
+    const push = (
+      entityId: string, key: string, source: 'reply' | 'notice' | 'commitment',
+      f: { who?: string | null; dueDate?: string | null; overdue?: boolean; dueToday?: boolean; prepared?: string | null },
+      adj: { localTime: string | null; title: string | null; eventId?: string; today?: boolean } | null,
+    ) => {
+      // ── Q4 · THE SEAT CONTRACT's three facts, gathered HERE (the one choke) and handed to the
+      //    pure verdict. (a) REAL COUNTERPARTY reuses the Q1 floor's own predicate — never a second
+      //    sender test; a commitment has no sender, so it can never be self-authored. (b) ALIVE
+      //    reads the named optional proof-of-life stamp (absent = alive, by contract). (c) PREPARED
+      //    is the deck's own served token, which seatVerdict turns into `needsShaping`.
+      const raw = itemById.get(entityId);
+      const sd = (raw?.source_data ?? null) as Record<string, unknown> | null;
+      leadWordByAtom.set(entityId, String(f.who || raw?.work_title || 'This'));
+      const draft: Row = {
+        key, entityId, source, whyNow: '', calendarAdjacent: !!adj, prepared: f.prepared ?? null,
+        overdue: !!f.overdue, dueToday: !!f.dueToday, dueDate: f.dueDate ?? null,
+        selfAuthored: source === 'commitment' ? false : (raw ? itemIsSelfEcho(raw) : false),
+        provedAlive: provedAliveOf(sd),
+        // ── THE DAY ANCHOR: the seat CAME FROM this event, so the row's home is under it — but
+        //    ONLY where that home exists: the Today zone must be earned (the feature ladder) and
+        //    the meeting must be one the zone will actually draw (today, not yet over). Otherwise
+        //    the row stays a floating whisper, exactly as it is today.
+        anchoredToEventId: (todayZoneLive && adj?.today === true) ? adj.eventId ?? null : null,
+        adjacencyToday: adj ? adj.today !== false : undefined,
+        // ── THE FRESH SEAT: the deck's own "surfaced today" fact (first judged inside 24h), read
+        //    off the machine batch that already computed it — never a second derivation of newness.
+        fresh: machineOf(entityId)?.surfaced === true,
+      };
+      const seat = seatVerdict(draft);
+      draft.whyNow = whyNowOf({
+        source, who: f.who ?? null, dueDate: f.dueDate ?? null, overdue: !!f.overdue,
+        dueToday: !!f.dueToday, prepared: f.prepared ?? null, needsShaping: seat.needsShaping,
+        stateWord: machineOf(entityId)?.word ?? null, meeting: adj,
+      }, now);
+      rows.push(draft);
+    };
+    for (const m of ((mustRespondOut?.items ?? []) as unknown as Array<{ itemId: string; who: string; dueDate?: string | null; preparedBy?: string | null }>)) {
+      push(m.itemId, `r-${m.itemId}`, 'reply',
+        { who: m.who, dueDate: m.dueDate ?? null, overdue: !!m.dueDate && m.dueDate < todayStr, dueToday: m.dueDate === todayStr, prepared: m.preparedBy ?? null },
+        adjacencyFor(emailOfItem(m.itemId)));
+    }
+    for (const n of actionNotices) {
+      push(n.itemId, `n-${n.itemId}`, 'notice',
+        { who: n.who, dueDate: n.dueDate ?? null, overdue: !!n.dueDate && n.dueDate < todayStr, dueToday: n.dueDate === todayStr, prepared: preparedByItem.get(n.itemId) ?? null },
+        adjacencyFor(emailOfItem(n.itemId)));
+    }
+    for (const c of commitments) {
+      push(c.id, `c-${c.id}`, 'commitment',
+        { who: c.counterparty, dueDate: c.dueDate ?? null, overdue: !!c.overdue, dueToday: !!c.dueToday, prepared: c.prepared ?? null },
+        adjacencyFor(commitCounterpartyEmail.get(c.id)));
+    }
+    // THE ORDER THE BUDGET CUTS is the deck's own judged order (the agenda's law: the REASONED
+    // priority weight, stable base order for ties) — the budget re-ranks against context, it does
+    // not re-judge.
+    const ordered = rows
+      .map((r, i) => ({ r, i, w: itemWeights[r.entityId] ?? 20 }))
+      .sort((a, b) => (b.w - a.w) || (a.i - b.i))
+      .map((x) => x.r);
+    const { served, held, refused } = rankAttention(ordered, ATTENTION_BUDGET);
+    // Q4 · a refused seat is a HELD row with a reason — stated in the log so a contract that starts
+    // refusing real work is visible the same day, not a month later on somebody's walk.
+    if (refused.length) {
+      console.log(`[attention] seat contract refused ${refused.length}: `
+        + refused.slice(0, 5).map((x) => `${x.row.entityId.slice(0, 8)}:${x.refusal}`).join(' '));
+    }
+    const counts = await heldCountsPromise;
+    // THE FRESH SEAT, counted: a first-judged-today row that the budget could not seat. It is NOT a
+    // second attention queue — it is the honest size of what arrived while the user was away, so
+    // the Home can say "6 new since last night" instead of letting the night vanish into weather.
+    const freshHeld = held.filter((r) => r.fresh === true);
+    attention = {
+      budget: ATTENTION_BUDGET,
+      served: served.map((r) => ({
+        key: r.key, entityId: r.entityId, source: r.source, whyNow: r.whyNow, rank: attentionRank(r),
+        anchoredToEventId: r.anchoredToEventId ?? null,
+      })),
+      heldBack: held.map((r) => r.entityId),
+      whyNowByAtom: Object.fromEntries(rows.map((r) => [r.entityId, r.whyNow])),
+      heldTotal: counts?.total ?? null,
+      heldWaiting: counts?.waiting ?? null,
+      heldHandled: counts?.handled ?? null,
+      fresh: { count: freshHeld.length, ids: freshHeld.map((r) => r.entityId) },
+      catchUp: typeof counts?.graduating === 'number' && counts.graduating >= CATCH_UP_THRESHOLD
+        ? { filing: counts.graduating } : null,
+    };
+    // THE DAY ANCHOR is RECORDED HERE — at the one choke point that decided it — and read by the
+    // day frame's own route (lib/home/day-anchors owns the why). Only SERVED rows are anchored: a
+    // held row makes no claim on anybody's meeting.
+    const anchors = served
+      .filter((r) => !!r.anchoredToEventId)
+      .map((r) => ({
+        itemId: r.entityId, eventId: r.anchoredToEventId!,
+        // The row's own leading words — the counterparty as the deck prints it, else its title.
+        title: clipAnchorTitle(leadWordByAtom.get(r.entityId) ?? 'This'),
+        whyNow: r.whyNow,
+        // THE ROOM-DOOR LAW, from the same derivation the deck's rows use.
+        href: projectByAtom[r.entityId]
+          ? `/home?view=${projectByAtom[r.entityId]}`
+          : `/item/${r.entityId}?kind=${r.source === 'commitment' ? 'commitment' : 'email'}`,
+      }));
+    after(() => writeDayAnchors(supabase, user.id, anchors, now));
+  } catch { /* the attention layer is additive — the deck serves exactly as it did without it */ }
+  const heldBackSet = new Set(attention.heldBack);
+  const whyNowOfAtom = (id: string) => attention.whyNowByAtom[id] ?? null;
+  const withAttention = <T extends { }>(row: T, id: string): T & { whyNow: string | null; heldBack: boolean } =>
+    ({ ...row, whyNow: whyNowOfAtom(id), heldBack: heldBackSet.has(id) });
+  const attentionMustRespond = taggedMustRespond
+    ? { ...taggedMustRespond, items: (taggedMustRespond.items ?? []).map((m: { itemId: string }) => withAttention(m, m.itemId)) }
+    : taggedMustRespond;
+  // ── INSTANT CATCH-UP (attention-plan PART III, Sep 18) ─────────────────────────────────────────
+  // THE FIRST-LOOK IDIOM, one layer up: opening the Home IS the signal that this account matters
+  // now. When the ledger's own count says thousands of rows are waiting to file, a 200-per-2-hours
+  // cron is not an answer — the drain starts THE MOMENT the user looks, and the next open is clean.
+  //
+  // FIRE-AND-FORGET, NEVER SYNCHRONOUS: this route drains nothing. It dispatches to the internal
+  // kick, which claims (atomically, ≥6h apart), returns 202, and does the work in its own window.
+  // The dispatch is awaited only as far as the 202 — a few milliseconds — so the kick is reliably
+  // in flight before this function's scope ends (the kick doctrine's own lesson).
+  if (attention.catchUp) {
+    after(async () => {
+      try {
+        const base = process.env.AUGMTD_WEBHOOK_BASE_URL;
+        const secret = process.env.AGENTOS_SECRET;
+        if (!base || !secret) return;
+        await fetch(`${base}/api/internal/attention/catch-up`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
+          body: JSON.stringify({ userId: user.id }),
+        });
+      } catch { /* the Home already served; the cron remains the backstop it always was */ }
+    });
+  }
+
+  // ── THE LEDGER'S LAST-GOOD, PRIMED BY THE READ THIS ROUTE ALREADY PAID FOR (owner walk, Sep 18 —
+  //    "still not instant enough"). `countHeld` runs the ledger's WHOLE derivation to compute the
+  //    door's two numbers; storing what it derived costs one upsert and turns the first visit to the
+  //    door into a cached read. THE SHAPE AND THE WRITER ARE THE LEDGER ROUTE'S OWN
+  //    (lib/deeds/held-cache), so the two can never serve different accounts of one thing.
+  //    In after(), best-effort, never in the reader's path: a failed prime is a slower door.
+  after(async () => {
+    try {
+      const c = await heldCountsPromise;
+      if (!c?.derived) return;
+      const [{ buildHeldPayload, storeHeldCache }, { countGraduatedThisMonth }] = await Promise.all([
+        import('@/lib/deeds/held-cache'), import('@/lib/work/graduation'),
+      ]);
+      const filedThisMonth = await countGraduatedThisMonth(supabase, user.id).catch(() => 0);
+      await storeHeldCache(supabase as never, user.id,
+        buildHeldPayload(c.derived, todayStr, { filedThisMonth }));
+    } catch { /* the door derives for itself, exactly as it did before */ }
+  });
+
   // THE ANTICIPATION PASS (initiative loop) — walks the near future in after(); self-gated to
   // one run per 6h, hard-capped, judge-gated. Most runs fire nothing (silence is a verdict).
   after(async () => {
@@ -1698,5 +2012,5 @@ export async function GET() {
   // upstream `stripDeixis` seams stay where they are (they feed the SERVER-side agenda and the
   // briefing composer's inputs, which never pass through here); this is the guarantee that no lane
   // — present or future — can serve a word that has stopped being true.
-  return NextResponse.json(guardDeckLabels({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => ({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null, machine: machineOf(n.itemId) })), mustRespond: taggedMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities.map((p) => ({ ...p, machine: p.itemId ? machineOf(p.itemId) : null })), commitments: commitments.map((c) => ({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null, machine: machineOf(c.id) })), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, projectByAtom, briefing: cachedBriefing, trackedProjects, mail }));
+  return NextResponse.json(guardDeckLabels({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => withAttention({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null, machine: machineOf(n.itemId) }, n.itemId)), mustRespond: attentionMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities.map((p) => ({ ...p, machine: p.itemId ? machineOf(p.itemId) : null })), commitments: commitments.map((c) => withAttention({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null, machine: machineOf(c.id) }, c.id)), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, projectByAtom, briefing: cachedBriefing, trackedProjects, mail, today: todayStr, attention: { budget: attention.budget, served: attention.served, heldBack: attention.heldBack, heldTotal: attention.heldTotal, heldWaiting: attention.heldWaiting, heldHandled: attention.heldHandled, fresh: attention.fresh, catchUp: attention.catchUp } }));
 }

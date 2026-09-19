@@ -3,7 +3,9 @@
 
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { subjectIsCampaignEcho } from '@/lib/inbox/campaign-echo';
+import { isOwnCoworkerSender } from '@/lib/inbox/self-echo';
 import { resolveDeixisInDescriptions } from '@/lib/inbox/deixis';
+import { seatStripsObligation, type SeatFacts } from '@/lib/inbox/recipient-role';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
@@ -239,6 +241,37 @@ export async function writeCommitments(
 // anything else (a fabricated / relative / null value) becomes null. We never invent a date here.
 // Write-time dedup (writeCommitments) collapses the near-identical fragments an over-eager insights
 // pass emits for one obligation, so a meeting yields a small set of real commitments, not a backlog.
+// THE 1:1 COUNTERPART REDUCTION, at ONE address (extracted Sep 18 so the counterparty BACKFILL
+// asks the same question the write path asks — a second copy of this is a second answer). Strip the
+// user in ANY form (their name, an address that denotes it, a known address of theirs), collapse the
+// rest into DISTINCT people alias-aware, prefer a display name over an email as the label, and
+// return a counterpart ONLY when exactly one person remains. A group meeting reduces to null — the
+// display layer derives a source label; a placeholder is never printed and a name is never invented.
+export function soleCounterpartOf(
+  attendees: Array<string | null | undefined> | null | undefined,
+  userName?: string | null,
+  userEmails?: Array<string | null | undefined> | null,
+): string | null {
+  const uName = userName || '';
+  const userNorm = norm(uName);
+  const mine = new Set((userEmails ?? []).map((e) => (e || '').toString().toLowerCase().trim()).filter(Boolean));
+  const notUser = [...new Set((attendees ?? []).map((a) => (a || '').toString().trim()).filter(Boolean))]
+    .filter((a) => {
+      if (mine.has(a.toLowerCase())) return false;
+      const local = emailLocalpart(a);
+      if (!userNorm) return true;
+      if (norm(a) === userNorm) return false;
+      return !(local && emailDenotesName(local, uName));
+    });
+  const people: string[] = [];
+  for (const a of notUser) {
+    const idx = people.findIndex((p) => sameAttendee(p, a));
+    if (idx === -1) people.push(a);
+    else if (emailLocalpart(people[idx]) && !emailLocalpart(a)) people[idx] = a; // prefer a name over an email
+  }
+  return people.length === 1 ? people[0] : null;
+}
+
 export async function writeMeetingCommitments(
   userId: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -248,24 +281,9 @@ export async function writeMeetingCommitments(
 ): Promise<void> {
   // The set of "other" participants (attendee names that aren't the user). Used only to resolve a
   // 1:1 counterpart for a user task — never to fabricate a name.
-  const userName = meta.userName || '';
-  const userNorm = norm(userName);
-  // Strip the user in ANY form (name or an email that denotes their name), then collapse the rest
-  // into DISTINCT people (alias-aware), preferring a display name over an email as the label.
-  const notUser = [...new Set((meta.attendees ?? []).map((a) => (a || '').toString().trim()).filter(Boolean))]
-    .filter((a) => {
-      if (!userNorm) return true;
-      if (norm(a) === userNorm) return false;
-      const local = emailLocalpart(a);
-      return !(local && emailDenotesName(local, userName));
-    });
-  const people: string[] = [];
-  for (const a of notUser) {
-    const idx = people.findIndex((p) => sameAttendee(p, a));
-    if (idx === -1) people.push(a);
-    else if (emailLocalpart(people[idx]) && !emailLocalpart(a)) people[idx] = a; // prefer a name over an email
-  }
-  const soleCounterpart = people.length === 1 ? people[0] : null;
+  // Strip the user in ANY form, collapse the rest alias-aware, and take the counterpart only from a
+  // genuine 1:1 — ONE implementation, shared with the counterparty backfill (soleCounterpartOf).
+  const soleCounterpart = soleCounterpartOf(meta.attendees, meta.userName);
 
   // Persist the initiative at write time (meeting commitments were born initiative-less and only got one
   // via the read-time person-bridge). Resolve each counterpart's GROUNDED canonical — the same label the
@@ -326,9 +344,12 @@ export async function extractEmailCommitments(opts: {
   /** The email's OWN date — the deixis anchor ("tomorrow" in a 3-day-old email is 3 days ago's
    *  tomorrow, never extraction-day's). Falls back to now when absent. */
   receivedAt?: string | null;
+  /** THE SEAT LAW (threads-plan · THE OPENING CONTRACT clause 4): the user's To/CC position on this
+   *  email. Absent = unknown, and an unknown seat never demotes anything. */
+  seat?: SeatFacts | null;
   client: DBClient;
 }): Promise<number> {
-  const { userId, subject, body, isFromUser, userName, counterparty, sourceId, threadId, instructions, receivedAt, client } = opts;
+  const { userId, subject, body, isFromUser, userName, counterparty, sourceId, threadId, instructions, receivedAt, seat, client } = opts;
   const text = (body || '').trim();
   if (text.length < 20 || !COMMITMENT_HINT.test(text)) return 0;
   // Received bulk/newsletter mail never carries a real commitment — skip before the AI call.
@@ -339,6 +360,14 @@ export async function extractEmailCommitments(opts: {
   // vendor, token or language is named; an empty signature leaves this inert. Skipped before the
   // AI call (cheap, and the refusal costs nothing).
   if (!isFromUser && await subjectIsCampaignEcho(client, userId, subject)) return 0;
+  // THE SELF-RECOGNITION FLOOR (Q1 — attention-plan PART III): a coworker's own mail never mints a
+  // commitment. Their reminder ("approve the shortlist") is a POINTER to work that already stands —
+  // minting from it is how ONE ask came to stand four times on the reference account (three
+  // re-sent reminders plus the commitment one of them minted). The user does not owe their own
+  // assistant a debt. `counterparty` IS the sender on the received path, so no new parameter: the
+  // registry predicate reads the address the caller already hands us. Structural, zero AI, before
+  // the call.
+  if (!isFromUser && isOwnCoworkerSender(counterparty)) return 0;
 
   const who = userName || 'the user';
   // Context-grounded initiative: the labels this counterparty/thread already carries, so a commitment
@@ -394,6 +423,19 @@ Return ONLY JSON. Empty array if there are no real commitments:
     // so a requested action can never land in the user's "on your plate" lane.
     if (isFromUser) {
       list = list.map((c) => (c.direction === 'you_owe' && !FIRST_PERSON_PROMISE.test(c.description) ? { ...c, direction: 'awaiting' } : c));
+    }
+    // THE SEAT LAW (threads-plan · THE OPENING CONTRACT clause 4) — the sibling of the backstop
+    // above, keyed off WHO WAS ADDRESSED instead of who sent it. A request addressed To: a third
+    // party with the user merely in CC is that party's obligation: it is not the user's `you_owe`,
+    // and re-directioning it to `awaiting` would be a second lie (the user is not owed a stranger's
+    // deliverable either), so the honest outcome is NO ROW — the mail stays visible as awareness,
+    // which is the seat it actually holds. Deterministic, zero AI, positive evidence only (an
+    // unstamped/unknown seat demotes nothing). EXCEPTION: the mail names the user directly — a CC'd
+    // person asked for something by name genuinely owes it. Found live: the sender asked the To:
+    // recipient for THAT person's CV and the user, in CC, was served "You owe <sender>".
+    if (!isFromUser && seatStripsObligation(`${subject || ''}\n${text}`, seat)) {
+      list = list.filter((c) => c.direction !== 'you_owe');
+      if (!list.length) return 0;
     }
     // THE DEIXIS LAW, structural belt (T-class): a title carrying a relative time word decays into
     // a lie ("tomorrow" is only true for a day) — detection is lexical, the REWRITE is reasoned

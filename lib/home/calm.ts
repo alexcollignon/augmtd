@@ -42,6 +42,9 @@ export type Whisper = {
   receipt: string | null;
   /** The honest state word for a row with nothing prepared (grey) — the machine's own vocabulary. */
   note: string | null;
+  /** THE ROW'S PROJECT — a REFERENCE (where this work lives), never a claim about it. `null` when
+   *  the row is loose, or when its own sentence already names the project. */
+  project: string | null;
 };
 
 // ── THE PICK ────────────────────────────────────────────────────────────────────────────────────
@@ -231,21 +234,104 @@ function rawWhisperBody(item: DoItem): string {
   return (item.ask ?? '').trim() || (item.second ?? '').split(' · ')[0].trim();
 }
 
+// ── THE ROW LEADS WITH WHO ──────────────────────────────────────────────────────────────────────
+// Owner walk, Sep 18: a mail row reads "M Condomínios Lda — Review and respond…" and a commitment
+// row read "Send AI agent platform presentation deck with implementations — needs shaping" — the
+// same page, two grammars, and the second one lost the person the work is FOR. Whom you owe is the
+// first thing a chief of staff says; the lane the obligation happened to arrive through is not a
+// reason to drop it.
+//
+// THE LAW: a whisper leads with WHO when the row has a known counterparty and its own title does
+// not already name them — one grammar for every lane. Two floors keep it honest:
+//   · NEVER INVENT A WHO. The who is SERVED (`primary` for the sender lanes, `counterparty` for the
+//     ones with no sender). No counterparty → the title stands alone, exactly as today. A
+//     source-derived label ("from <the meeting>") is not a counterparty and is refused here too —
+//     it is where the work came from, not who is waiting on it.
+//   · NEVER SAY THE NAME TWICE. "Acme — Send Acme the deck" is worse than the bare title, so a
+//     counterparty whose significant tokens already appear in the body does not prefix. This test
+//     applies to the counterparty lane only: the sender lanes have always led with their sender
+//     (a subject quoting the sender's name is the ordinary case there, not a duplication).
+
+/** The label shapes that describe a SOURCE rather than a person ("from <the standup>"). */
+const SOURCE_LABEL = /^from\s/i;
+/** Corporate form words carry no identity — "Lda" is not what makes M Condomínios distinctive. */
+const FORM_WORDS = new Set(['lda', 'ltd', 'ltda', 'inc', 'llc', 'gmbh', 'sa', 'srl', 'bv', 'nv', 'plc', 'co', 'corp', 'ag', 'oy', 'ab', 'as', 'the', 'and']);
+
+/** The distinctive tokens of a name — lowercase, ≥3 chars, form words dropped. Pure + language-agnostic. */
+function significantTokens(name: string): string[] {
+  return name
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((t) => t.length >= 3 && !FORM_WORDS.has(t));
+}
+
+/** Does this body already name them? True when ANY distinctive token of the name appears in it. */
+function bodyNames(body: string, name: string): boolean {
+  const toks = significantTokens(name);
+  if (!toks.length) return false;
+  const hay = body.toLowerCase();
+  return toks.some((t) => hay.includes(t));
+}
+
+/** THE ROW'S SERVED WHO — the sender for the lanes that have one, the counterparty for the ones
+ *  that don't. `null` when the row genuinely has no counterparty (a source label is not one).
+ *  ONE reading, shared by every surface that prints a who — never re-derived per renderer. */
+export function servedWho(item: DoItem): string | null {
+  const primary = (item.primary ?? '').trim();
+  if (primary) return primary;
+  const cp = (item.counterparty ?? '').trim();
+  if (!cp || SOURCE_LABEL.test(cp)) return null;   // never invent a who
+  return cp;
+}
+
+/** THE WHO a whisper leads with — served, never guessed, never doubled. `null` = the title alone. */
+export function whisperWho(item: DoItem, body: string): string | null {
+  const primary = (item.primary ?? '').trim();
+  if (primary) return primary;           // the sender lanes are unchanged: the sender always leads
+  const cp = servedWho(item);
+  if (!cp) return null;
+  if (bodyNames(body, cp)) return null;            // never say the name twice
+  return cp;
+}
+
+// ── THE ROW'S PROJECT REFERENCE ─────────────────────────────────────────────────────────────────
+// Owner walk, Sep 18: the deck served the tracked project on every row (`DoItem.initiative`, the
+// brief route's `tagByAtom` — the P15 tracked-only law) and the whispered line printed none of it,
+// so a reader scanning five rows could not tell which body of work any of them belonged to.
+//
+// A PROJECT IS A REFERENCE, NOT A CLAIM: it says where the work lives, not what is owed or when —
+// so it coexists with the why-now tail (ONE CLAIM PER ROW is about claims) and it goes LAST and
+// muted, after the sentence and after whatever the row says about itself.
+//
+// The two floors are the ones the who already obeys, in ONE implementation: the value is SERVED
+// (never derived here), and it never says the same name twice — a sentence that already names the
+// project prints no reference (`bodyNames`, the same significant-token test `whisperWho` uses).
+
+/** THE ROW'S PROJECT — served, never guessed, never doubled. `null` = the line stands alone. */
+export function whisperProject(item: DoItem, sentence: string): string | null {
+  const name = (item.initiative ?? '').trim();
+  if (!name) return null;
+  if (bodyNames(sentence, name)) return null;      // never say the name twice
+  return name;
+}
+
 /** One sentence from the row's OWN fields — who + what. Never a new claim. */
 export function whisperSentence(item: DoItem): string {
   const raw = rawWhisperBody(item);
   // THE FLOOR: derived speech passes through verbatim; anything else serves as a neutral title.
   const body = isDerivedSpeech(raw) ? raw : neutralizeChrome(raw);
-  const who = (item.primary ?? '').trim();
+  const who = whisperWho(item, body) ?? '';
   if (who && body) return `${who} — ${body}`;
   return body || who || 'Open this';
 }
 
 export function toWhisper(item: DoItem, today?: Date): Whisper {
   const receipt = receiptOf(item);
+  const sentence = whisperSentence(item);
   return {
     item,
-    sentence: whisperSentence(item),
+    sentence,
+    project: whisperProject(item, sentence),
     urgency: urgencyOf(item, today),
     receipt,
     // ONE CLAIM: a receipt outranks the state word (the prepared thing IS the state).

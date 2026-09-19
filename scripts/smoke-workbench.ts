@@ -50,8 +50,13 @@ const src = (p: string) => readFileSync(p, 'utf8');
   const extract = src('lib/commitments/extract.ts');
   check('B2: the meeting path writes status=suggested (email stays open — explicit text is trusted)',
     extract.includes("status: 'suggested' }, client)") && extract.includes("status: meta.status ?? 'open'"));
+  // RE-POINTED Sep 18: the law is unchanged (the status filter ENUMERATES the live states and can
+  // never contain 'suggested'); the spine's commitment read simply moved from one OR-string to two
+  // ordered per-side lanes (SP1), so the enumeration is now a builder `.in()` instead of a PostgREST
+  // filter string. Both halves of the assertion survive verbatim in the new shape.
   check('B2: the spine excludes suggested BY CONSTRUCTION (its status filter enumerates, never includes it)',
-    src('lib/work-items/model.ts').includes('status.in.(open,pending,in_progress)') &&
+    src('lib/work-items/model.ts').includes("in('status', ['open', 'pending', 'in_progress'])") &&
+    !/in\('status',\s*\[[^\]]*suggested/.test(src('lib/work-items/model.ts')) &&
     !/status\.in\.\([^)]*suggested/.test(src('lib/work-items/model.ts')));
   const patchRoute = src('app/api/commitments/[id]/route.ts');
   check('B2: accept flips ONLY a suggested row to open + logs + learning signal',
@@ -64,8 +69,10 @@ const src = (p: string) => readFileSync(p, 'utf8');
 
   // ── B4 STRUCTURAL — human status + priority ──
   const model = src('lib/work-items/model.ts');
+  // RE-POINTED Sep 18 for the same reason as B2 — the live-status enumeration moved to a builder
+  // `.in()` when the commitment read split into ordered per-side lanes (SP1). The law is identical.
   check('B4: the spine carries in_progress (query + state map)',
-    model.includes('status.in.(open,pending,in_progress)') && model.includes("status === 'in_progress' ? 'in_progress'"));
+    model.includes("in('status', ['open', 'pending', 'in_progress'])") && model.includes("status === 'in_progress' ? 'in_progress'"));
   check('B4: a human-set priority OUTRANKS the computed weight (floor 85 / cap 15)',
     model.includes('Math.max(w.priority, 85)') && model.includes('Math.min(w.priority, 15)'));
   const patchB4 = src('app/api/commitments/[id]/route.ts');
@@ -106,9 +113,20 @@ const src = (p: string) => readFileSync(p, 'utf8');
     !hv.includes('<OneDeck') && !hv.includes('PEEK_VISIBLE') && !hv.includes('setFocusKey') &&
     hv.includes('<WhisperLine') && src('lib/home/calm.ts').includes('export function sortDoorRows'));
   const passB3 = src('lib/prepare/pass.ts');
-  check('B3c: the pass preps DEAL-LINKED upcoming meetings (idempotent per meeting, capped, evaluated, attributed)',
-    passB3.includes('meeting-prep-') && passB3.includes('PREP_CAP') &&
-    passB3.includes('evaluateDeliverable') && passB3.includes('meetingPrep: true'));
+  // ── B3c RE-POINTED (owner call, Sep 17 — attention-plan PART III, law Q8) ──────────────────────
+  // The gate used to assert that the PASS prepares deal-linked upcoming meetings. That lane is
+  // retired: it spent the item lanes' own budget, always last, on a 118-candidate backlog it could
+  // not reach — while THE ANTICIPATION PASS prepared the same meetings better, on its own clock.
+  // The law did not change (an upcoming deal-linked meeting must arrive prepared); its SEAT did.
+  // So the gate now asserts the DECISION (one prep mechanism — no meeting-prep block in the pass)
+  // and the coverage lives below, on the anticipation lane's own records.
+  check('B3c: ONE prep mechanism — the pass no longer writes meeting briefs (the duplicate lane is gone)',
+    !passB3.includes('meeting-prep-') && !passB3.includes('meetingPrep: true') &&
+    passB3.includes('B3c · MEETING PREP RETIRED HERE'));
+  const antic = src('lib/home/anticipation.ts');
+  check('B3c: …and THE ANTICIPATION LANE is the prep seat (deal-linked only, fire-recorded, narrated into the room)',
+    antic.includes("item_kind', 'calendar_event'") && antic.includes('kind: \'meeting_brief\'') &&
+    antic.includes('anticipate:meeting:') && antic.includes('PREP_NOTHING'));
 
   // ── B6 STRUCTURAL — portfolio urgency is a FACT (earliest open due date), badge derives client-side ──
   check('B6: the portfolio serves nextDue from open commitments only',
@@ -218,24 +236,28 @@ const src = (p: string) => readFileSync(p, 'utf8');
     await sb.from('commitments').delete().eq('id', dp.id);
   } else check('B4 live · probe insert failed', false);
 
-  // ── B3c LIVE (users A + B) — a deal-linked upcoming meeting gets a prep brief after the pass. ──
-  const { runPreparationPass } = await import('../lib/prepare/pass');
+  // ── B3c LIVE (users A + B) — the COVERAGE, read at its new seat: a deal-linked upcoming meeting
+  // is reached by THE ANTICIPATION LANE, whose fire record and room turn are its own receipts.
+  // Read-only: the lane self-gates on a 6h clock and is never forced here (forcing it would make
+  // the gate the thing that prepared the meeting — the classic gate-proves-itself failure).
   for (const [uid, label] of [[A, 'user A'], [B, 'user B']] as const) {
-    const ceil14 = new Date(Date.now() + 14 * 86_400_000).toISOString();
-    const { data: upEvs } = await sb.from('calendar_events').select('id').eq('user_id', uid)
-      .gte('start_time', new Date().toISOString()).lte('start_time', ceil14).limit(20);
+    const ceil = new Date(Date.now() + 36 * 3_600_000).toISOString();
+    const { data: upEvs } = await sb.from('calendar_events').select('id, start_time').eq('user_id', uid)
+      .gte('start_time', new Date(Date.now() - 30 * 86_400_000).toISOString()).lte('start_time', ceil).limit(50);
     const evIds = (upEvs ?? []).map((e) => e.id as string);
     const { data: evLinks } = evIds.length
-      ? await sb.from('entity_links').select('item_id').eq('user_id', uid).eq('item_kind', 'calendar_event').in('item_id', evIds).not('entity_id', 'is', null)
+      ? await sb.from('entity_links').select('item_id, entity_id').eq('user_id', uid).eq('item_kind', 'calendar_event').in('item_id', evIds).not('entity_id', 'is', null)
       : { data: [] };
-    if (!(evLinks ?? []).length) { check(`${label} · meeting prep (vacuous — no deal-linked upcoming meetings)`, true); continue; }
-    await runPreparationPass(sb, uid);
-    const linkedIds = (evLinks ?? []).map((l) => l.item_id as string).slice(0, 4);
-    const { data: preps } = await sb.from('item_deliverables').select('id, task_id, metadata')
-      .eq('user_id', uid).eq('kind', 'entity').in('task_id', linkedIds.map((i) => `meeting-prep-${i}`));
-    check(`${label} · a prep brief landed for a deal-linked upcoming meeting (attributed)`,
-      (preps ?? []).length > 0 && !!((preps![0].metadata ?? {}) as { agentName?: string }).agentName,
-      `${(preps ?? []).length} prep brief(s), by ${((preps?.[0]?.metadata ?? {}) as { agentName?: string }).agentName ?? '—'}`);
+    if (!(evLinks ?? []).length) { check(`${label} · meeting prep (vacuous — no deal-linked meetings in the lane's window)`, true); continue; }
+    const linked = (evLinks ?? []).map((l) => l.item_id as string);
+    const { data: fires } = await sb.from('item_plans').select('entity_id, tasks')
+      .eq('user_id', uid).eq('kind', 'anticipation').like('entity_id', 'meeting:%').limit(200);
+    const covered = (fires ?? []).filter((f) => linked.some((id) => String(f.entity_id).startsWith(`meeting:${id}:`)));
+    // THE HONEST READING: a fire record with `silent: true` IS coverage — the lane looked and the
+    // room held nothing worth preparing (clean silence is a correct answer, never a miss).
+    check(`${label} · the anticipation lane has reached its deal-linked meetings (prep or honest silence)`,
+      covered.length > 0,
+      `${covered.length} fire record(s) over ${linked.length} linked meeting(s)`);
   }
 
   console.log('\n════ THE WORKBENCH GATES ════');

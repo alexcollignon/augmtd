@@ -8,6 +8,7 @@
 // Consumers: the Home brief route (both paths) + judgeWork's structural floor.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { ItemUnderstanding } from '@/lib/inbox/item-understanding';
+import { isOwnCoworkerSender } from '@/lib/inbox/self-echo';
 
 /** The strong "do not reply to this mailbox" sender read (moved verbatim from the brief route —
  *  broader than lib/inbox/automated's, tuned for the Home's demotion decisions). */
@@ -78,9 +79,17 @@ export function isNoMoveNotice(args: {
    *  `bulk:false / customer / action / confidence 92`, so deferring to that judgment here would
    *  make the floor a no-op. The human escape (type_override) is applied by the caller, above. */
   campaignEcho?: boolean;
+  /** THE SELF-RECOGNITION FLOOR (Q1 — attention-plan PART III), mirrored here for the same reason
+   *  the echo floor is: the demotion is ONE law with one shape wherever it is asked. Derived by
+   *  `lib/inbox/self-echo` `isOwnCoworkerSender` off this module's OWN `fromEmail` when the caller
+   *  does not supply it — a floor whose fact every caller had to remember to pass is a site list.
+   *  Our own coworker's mail is a POINTER to work that already stands: nobody owes a reply to
+   *  their own assistant. The human escape (type_override) is applied by the caller, above. */
+  selfEcho?: boolean;
 }): boolean {
-  const { u, rawKind, fromEmail, fromName, subject, workState, campaignEcho } = args;
+  const { u, rawKind, fromEmail, fromName, subject, workState, campaignEcho, selfEcho } = args;
   if (campaignEcho === true) return true;
+  if (selfEcho === true || (selfEcho === undefined && isOwnCoworkerSender(fromEmail))) return true;
   const auto = isAutomatedSenderStrong(fromEmail, fromName, subject);
   const kind = (u?.mailKind ?? rawKind ?? '').toLowerCase();
   const noticeKind = kind === 'notification' || kind === 'calendar' || kind === 'receipt' || kind === 'newsletter';

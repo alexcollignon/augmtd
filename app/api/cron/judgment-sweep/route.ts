@@ -38,17 +38,26 @@ export async function GET(request: NextRequest) {
 
   let candidates = 0, visited = 0, fresh = 0, cached = 0, failed = 0, resolved = 0, anchorPassed = 0;
   let leftBehind = 0, usersTouched = 0, usersLeftBehind = 0;
+  // Q3 · the graduation lane's own tally, reported beside the judgments it rides with.
+  let graduated = 0, graduationLeftBehind = 0;
+  // Q7 · the proof-of-life lane's own tally — reported, never folded into the judgment counts.
+  let proofChecked = 0, proofReaffirmed = 0, proofDemoted = 0, proofLeftBehind = 0;
   for (const uid of users) {
     if (Date.now() + Math.min(budgetMs, 20_000) > routeDeadline) { usersLeftBehind++; continue; }
     try {
       const r = await runJudgmentSweep(sb, uid, { budgetMs: Math.min(budgetMs, Math.max(5_000, routeDeadline - Date.now())) });
       candidates += r.candidates; visited += r.visited; fresh += r.fresh; cached += r.cached;
       failed += r.failed; resolved += r.resolved; anchorPassed += r.anchorPassed; leftBehind += r.leftBehind;
+      graduated += r.graduated; graduationLeftBehind += r.graduationLeftBehind;
+      proofChecked += r.proofOfLife.checked; proofReaffirmed += r.proofOfLife.reaffirmed;
+      proofDemoted += r.proofOfLife.demoted; proofLeftBehind += r.proofOfLife.leftBehind;
       if (r.visited > 0) usersTouched++;
       await stampServed(sb, uid, 'judgment_sweep', { visited: r.visited, fresh: r.fresh, leftBehind: r.leftBehind });
     } catch { /* non-fatal per user — the rotation carries the account to the next run */ }
   }
 
   if (usersLeftBehind > 0) console.log(`[judgment-sweep] route budget spent: ${usersLeftBehind} user(s) lead the next run (least-recently-served)`);
-  return NextResponse.json({ candidates, visited, fresh, cached, failed, resolved, anchorPassed, leftBehind, usersTouched, usersLeftBehind, budgetMs, activeUsers: users.length });
+  return NextResponse.json({ candidates, visited, fresh, cached, failed, resolved, anchorPassed, leftBehind, graduated, graduationLeftBehind,
+    proofOfLife: { checked: proofChecked, reaffirmed: proofReaffirmed, demoted: proofDemoted, leftBehind: proofLeftBehind },
+    usersTouched, usersLeftBehind, budgetMs, activeUsers: users.length });
 }

@@ -95,7 +95,7 @@ const src = (p: string) => readFileSync(p, 'utf8');
   const n = await extractEmailCommitments({
     userId: A, subject: 'Pilot proposal for Acme',
     body: 'Hi, following our call: please send over the pilot proposal — it should include the pricing for 7-8 seats, the presentation deck explaining the platform, and your answers on which data sources you would integrate. Can you get that to me by Friday? Thanks, Sam',
-    isFromUser: false, userName: 'Alexandre Collignon', counterparty: 'Sam Vendor <sam@acme-example.com>',
+    isFromUser: false, userName: 'Jordan Probe', counterparty: 'Sam Vendor <sam@acme-example.com>',
     sourceId: GMARK, threadId: null, client: sb,
   });
   const { data: gRows } = await sb.from('commitments').select('id, description').eq('user_id', A).eq('source_id', GMARK);
@@ -216,12 +216,28 @@ const src = (p: string) => readFileSync(p, 'utf8');
   // (pickWhispers seats every overdue row FIRST, above the fold, in every lane — so urgency can no
   // longer sit inside a collapsed group at all), and the door expands the remainder IN PLACE, in
   // the calm module's ONE stated order, in the SAME row grammar — never a second deck.
-  check('H7: NOTHING IS HIDDEN (the groups retired Sep 8) — every fire is SEATED above the fold, and the door expands the rest in place, in one stated order and one grammar',
+  check('H7: NOTHING IS HIDDEN (the groups retired Sep 8) — every fire is SEATED above the fold, and the one door opens the held-quiet ledger, where the rest is sorted in one stated order and accounted for',
     src('lib/home/calm.ts').includes('A NAMED FIRE IS A SEATED FIRE') &&
     src('lib/home/calm.ts').includes('export function sortDoorRows') &&
     src('lib/home/calm.ts').includes('function doorRank') &&
-    hv.includes('THE DOOR EXPANDS IN PLACE, IN ORDER') &&
-    hv.includes('<CalmDoor remaining={restRows.length}') &&
+    // RE-POINTED Sep 17 (docs/attention-plan.md A3): the remainder no longer unfolds in place — the
+    // one door opens THE HELD-QUIET LEDGER, where every held thing carries its class, its
+    // consequence of waiting and its way back. NOTHING IS HIDDEN got stronger, not weaker: the
+    // unfold accounted for nothing, the ledger accounts for everything it holds.
+    hv.includes('THE REMAINDER IS SORTED, IN ONE STATED ORDER') &&
+    // …and RE-POINTED again the same day for A3's ONE SCALE: the door speaks the LEDGER'S own held
+    // total (plus the deck's non-mail held rows — the sum the ledger's intro states), so the door
+    // and the account behind it can never disagree; `restRows` survives as the honest fallback for
+    // a brief served without the field. Still one door, still opening the ledger.
+    // …and RE-POINTED once more for Q2's GRADIENT: the door speaks the ledger's WAITING band (plus
+    // the deck's non-mail held rows) rather than the whole archive — the same one derivation, the
+    // honest scale. Still one door, still opening the ledger, still `restRows` as the fallback.
+    hv.includes("b.attention.heldWaiting + deckHeldRows.length") &&
+    // …and the fallback grew a floor (Sep 18): a brief not yet in hand yields NULL, never a number
+    // nobody computed — the door goes quiet instead of guessing (the same law smoke-deeds WD4.4
+    // carries). Strictly stronger: the fallback AND the honesty floor, in one expression.
+    hv.includes(': b ? restRows.length : null}') &&
+    hv.includes("setView('held')") &&
     !hv.includes("'aug-do-pinned'") &&
     !src('components/one/one-home.tsx').includes('hoverGroup === g.key'));
   check('H8: membership is visible IMMEDIATELY (July 30) — attach busts the brief server-side, the Home listens for membership-changed, and the row wears an optimistic TRACKED-only tag until the server tag arrives',

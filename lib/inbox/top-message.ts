@@ -20,6 +20,10 @@ const CUT_PATTERNS: RegExp[] = [
   /^-{2,}\s*Original Message\s*-{2,}\s*$/im,                 // Outlook classic
   /^_{10,}\s*$/m,                                            // Outlook divider
   /^From:\s.+\r?\nSent:\s.+\r?\nTo:\s.+$/im,                 // Outlook inline header block (EN)
+  // Apple Mail / new Outlook use "Date:" where classic Outlook uses "Sent:" — without this the
+  // whole quoted chain read as the sender's own words (found live by THE SEAT LAW: a quoted earlier
+  // message named the CC'd user, and the naming exception swallowed the law).
+  /^From:\s.+\r?\nDate:\s.+\r?\nTo:\s.+$/im,                 // Apple Mail / new Outlook header block
   /^De:\s.+\r?\nEnviad[oa]:?\s.+$/im,                        // Outlook inline header block (PT/ES)
   /^Von:\s.+\r?\nGesendet:\s.+$/im,                          // Outlook inline header block (DE)
 ];

@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { SegmentedControl } from '@/components/ui';
 import { ThreadShell, AvatarStatus, type ThreadItem, type ThreadKind } from '@/components/thread';
+import { AliveMark } from '@/components/home/alive-mark';
 
 /**
  * The three fixtures mirror the frozen canvas (docs/design/threads/*.dc.html): a PROJECT thread
@@ -105,11 +106,35 @@ const DM_ITEMS: ThreadItem[] = [
     text: 'Competitor digest for the week — three moves worth your minute; the rest is quiet.',
     cards: [{ kind: 'routine', id: 'r1', title: 'Competitor digest — Sep 4', meta: 'Document · 3 highlights', onOpen: noop }],
   },
+  {
+    // THE REVIEW-FIRST DOC CARD (attention-plan D): the HANDLE — glyph · title · the known facts ·
+    // one deed. The document is never in the thread; Review raises the panel.
+    type: 'actor_bubble', id: 'dm1b', actorId: 'max', actorName: 'Max', ts: 'Thu 08:04',
+    cards: [{
+      kind: 'doc', id: 'doc1', title: 'Harbor pricing review', docType: 'word',
+      typeLabel: 'Word', pages: 12, versionLabel: 'v3', owner: 'Max',
+      intro: 'Third pass — the two numbers you flagged are corrected and the appendix is new.',
+      onReview: noop,
+    }],
+  },
   { type: 'divider', id: 'd-today', variant: 'day', label: 'Today' },
   { type: 'user_bubble', id: 'dmu1', text: 'where did we land on Atlas pricing? and can you do the same exercise for Harbor?' },
   {
     type: 'actor_bubble', id: 'dm2', actorId: 'max', actorName: 'Max', ts: '10:20',
     text: 'From the Atlas Pilot room: the brief went to Jordan on Tuesday — €500 for six months, ten seats, early-graduation clause at month three. No counter yet.',
+    // THE ONE OBJECT CARD (THE OPENING CONTRACT, clause 1): what the answer is ABOUT, shown with
+    // it. In the product the host reads the thread door once and hands these facts over; here they
+    // are fixture words, because the kit renders what it is handed and invents nothing.
+    cards: [{
+      kind: 'source', id: 'src1', source: 'email',
+      who: 'Jordan Wills', when: 'Sep 16', title: 'Re: pilot terms',
+      messages: [{
+        id: 'm1', author: 'Jordan Wills',
+        body: 'Thanks — taking this to the board on Thursday. Two things I need first: the early-graduation wording, and whether the platform fee is waived for the whole pilot…',
+      }],
+      files: [{ name: 'pilot-terms.pdf', size: 184_320, onOpen: noop }],
+      openLabel: 'Thread →', onOpen: noop,
+    }],
   },
   {
     type: 'actor_bubble', id: 'dm3', actorId: 'max', actorName: 'Max',
@@ -170,6 +195,30 @@ const FACES = [
   { id: 'clara', name: 'Clara' }, { id: 'max', name: 'Max', status: 'working' as const },
 ];
 
+/** THE MARKS ROW — the two renderers side by side, at the seat size and at the loading energy, so
+ *  the call between them is made by looking rather than by describing. This harness is the ONLY
+ *  place both are mounted; the product mounts exactly one, through the entrance's seat. */
+function MarksRow() {
+  return (
+    <span className="flex items-center gap-5">
+      {([
+        { v: 'v4' as const, label: 'v4 · alive' },
+        { v: 'v3' as const, label: 'v3 · disco' },
+      ]).map(({ v, label }) => (
+        <span key={v} className="flex items-center gap-2">
+          <AliveMark size={44} variant={v} />
+          <AliveMark size={44} variant={v} loading />
+          <span className="text-[11px] leading-tight text-neutral-400">
+            {label}
+            <br />
+            <span className="text-neutral-300">rest · loading</span>
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
 export function ThreadPreview() {
   const [tab, setTab] = useState<ThreadKind>('project');
 
@@ -187,6 +236,7 @@ export function ThreadPreview() {
           ]}
         />
         <span className="flex-grow" />
+        <MarksRow />
         <span className="flex items-center gap-3">
           {(['idle', 'working', 'needs_you', 'blocked'] as const).map((s) => (
             <span key={s} className="flex items-center gap-1.5">

@@ -66,7 +66,7 @@ export type PrepareResult = { prepared: number; skipped: number; nudges: number;
 
 type WorkerRow = { id: string; name: string; worker_role: string | null; is_worker: boolean | null };
 export type PrepareOneResult = {
-  did: 'draft' | 'nudge' | 'delegated' | 'docsend' | 'invite' | 'forward' | 'decision' | 'none';
+  did: 'draft' | 'nudge' | 'delegated' | 'docsend' | 'invite' | 'forward' | 'decision' | 'paste_pack' | 'none';
   worker?: string;   // the coworker's name when did === 'delegated'
   reason?: string;   // the honest why when did === 'none'
   why?: string;      // the JUDGE's reason a delegation happened (provenance for the room narration)
@@ -124,6 +124,41 @@ export async function prepareOneItem(
     const { applyVerdictConsequences } = await import('@/lib/work/apply-verdict');
     const cons = await applyVerdictConsequences(admin, userId, { kind: w.id.startsWith('commit:') ? 'commitment' : 'inbox', id: w.entityId }, verdict);
     if (cons.resolved) return { did: 'none', reason: `resolved by the verdict (${verdict.resolution}): ${verdict.reason}` };
+    // ── Q8b · THE PASTE PACK (attention-plan PART III): BEFORE the commit-door lanes, ask whether
+    // this account/item HAS the door they end at. When it does not — an email-off workspace, or a
+    // `reply` verdict on a commitment (the reply lane is mail-only by construction and its first
+    // query simply misses; measured: 4 standing reply commitments, all preparing nothing) — the
+    // deed is out of reach but the WORDS are not. The pack is the preparation; the user pastes it
+    // where the work actually lives. Deterministic eligibility, zero AI before the decision. ──
+    {
+      const { pastePackEligibility } = await import('@/lib/prepare/paste-pack');
+      const itemKind = w.id.startsWith('commit:') ? 'commitment' as const : 'inbox' as const;
+      let features: Record<string, boolean> | null = null;
+      try {
+        const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
+        features = (await getWorkspaceFeatures(userId, admin)) as unknown as Record<string, boolean>;
+      } catch { /* unknown features never pack — the ordinary lanes stand */ }
+      const elig = pastePackEligibility({ work: verdict.work, itemKind, features });
+      if (elig.eligible && elig.reason) {
+        const { preparePastePack } = await import('@/lib/prepare/paste-pack');
+        let material: string | null = null;
+        if (itemKind === 'inbox') {
+          const { data: mIt } = await admin.from('inbox_items').select('source_data').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
+          material = String(((mIt?.source_data ?? {}) as { body?: string }).body ?? '').slice(0, 1200) || null;
+        }
+        const pack = await preparePastePack(admin, userId, {
+          itemKind, itemId: w.entityId, title: w.title,
+          counterparty: w.who ?? w.blockedOn ?? null, reason: elig.reason, material,
+          // A chase is the only one of these verbs where the OTHER side owes; everything else is
+          // the user's own obligation, and the drafter is told which.
+          userOwes: verdict.work !== 'chase',
+        });
+        if (pack.status === 'written') return await done({ did: 'paste_pack', worker: pack.by ?? undefined, why: elig.why });
+        return { did: 'none', reason: pack.status === 'fresh'
+          ? 'the words for this are already prepared'
+          : 'could not write the words for this yet — it will retry' };
+      }
+    }
     if (verdict.work === 'send_file') return await done(await prepareDocSend(admin, userId, w, verdict));
     if (verdict.work === 'chase' && (w.who || w.blockedOn)) return await done(await prepareNudge(admin, userId, { ...w, blockedOn: w.blockedOn ?? w.who ?? null }));
     // ── W1: THE JUDGE'S NEW HANDS — schedule and forward were judged-but-never-prepared (the
@@ -329,6 +364,9 @@ async function narratePrepare(
       r.did === 'invite' ? `${first ?? 'I'} prepared the calendar invite for "${title}" — review it and approve to send.` :
       r.did === 'forward' ? `${first ?? 'I'} prepared the forward on "${title}" — nothing goes out until you approve it.` :
       r.did === 'decision' ? `${first ?? 'I'} laid out the decision on "${title}" — options, trade-offs, and a recommendation are ready.` :
+      // Q8 · THE PASTE PACK: the words exist, and the line says plainly that the sending does not
+      // happen here — a narration may claim only what is true beside it.
+      r.did === 'paste_pack' ? `${first ?? 'I'} wrote the words for "${title}" — copy them wherever this lives; nothing goes out from here.` :
       // PROVENANCE (promise fix): an ambient delegation says WHY it happened — a coworker showing
       // up in the room is never a surprise, and the commit line stays with the user.
       `${first ?? 'A coworker'} is on "${title}"${r.why ? ` — ${clip(r.why, 110)}` : ''}. Nothing goes out without you.`;
@@ -529,6 +567,30 @@ async function prepareInviteDraft(admin: SupabaseClient, userId: string, w: Work
   const ctx = await buildItemContext(admin, userId, planKind, w.entityId);
   if (!ctx) return { did: 'none', reason: 'could not ground the invite in the item' };
   const invite = await prepareCalendarInvite(admin, userId, planKind, ctx, w.title);
+  // ── Q8c · THE PROPOSE TIER'S LAST MILE (attention-plan PART III; measured: 11 standing schedule
+  // verdicts, 9 with no invite at all and 2 with no time — the scheduling asks sat CTA-only). The
+  // grounding pass may only propose INSIDE a day or window the item itself states, which is right:
+  // a time nobody mentioned is not a fact about the thread. So when the thread states no day, the
+  // proposal comes from the OTHER authority — the user's own calendar, in code, zero AI. The card
+  // already says `proposed`, and approve-before-commit is untouched: nothing books. ──
+  if (!invite.startISO) {
+    try {
+      const { userTimezone, localNow } = await import('@/lib/utils/user-time');
+      const { proposeFreeSlots } = await import('@/lib/prepare/free-slots');
+      const tz = invite.timezone && invite.timezone !== 'UTC' ? invite.timezone : await userTimezone(admin, userId);
+      const slots = await proposeFreeSlots(admin, userId, { tz, todayStr: localNow(tz).dateStr, count: 3 });
+      if (slots.length) {
+        invite.startISO = slots[0].startISO;
+        invite.endISO = slots[0].endISO;
+        invite.proposed = true;      // OURS, not theirs — the card says so in the user's own words
+        invite.timezone = tz;
+        // The other two ride as the card's alternatives. Their note states their ONLY evidence:
+        // the user's calendar is free then. (The item's own stated slots, when it has any, were
+        // already code-verified upstream — this branch only runs when it stated none.)
+        invite.alternatives = slots.slice(1, 3).map((s) => ({ ...s, note: 'free on your calendar' }));
+      }
+    } catch { /* a calendar we cannot read proposes nothing — the card still asks for a time */ }
+  }
   // ── THE ALREADY-BOOKED FLOOR (pilot diagnosis, Aug 13 — found live: the lane prepared an
   // invite DUPLICATING a meeting the counterparty had already accepted on the real calendar,
   // at a conflicting time): when a calendar event with one of the invite's attendees already
@@ -1003,7 +1065,7 @@ export async function runPreparationPass(
   } catch { /* default ON */ }
   let prepared = 0, skipped = 0, nudges = 0, delegated = 0, leftBehind = 0;
   const tally = (r: PrepareOneResult) => {
-    if (r.did === 'draft' || r.did === 'docsend' || r.did === 'invite' || r.did === 'forward' || r.did === 'decision') prepared++;
+    if (r.did === 'draft' || r.did === 'docsend' || r.did === 'invite' || r.did === 'forward' || r.did === 'decision' || r.did === 'paste_pack') prepared++;
     else if (r.did === 'nudge') nudges++;
     else if (r.did === 'delegated') delegated++;
     else skipped++;
@@ -1036,13 +1098,26 @@ export async function runPreparationPass(
   } catch { /* unordered walk */ }
   const keyOf = judgmentKeyOf;
 
-  // The three candidate lanes, each walked in ONE nominated order under ONE shared budget. Lane 3 is
+  // ── THE CANDIDATE LANES, each walked in ONE nominated order under ONE shared budget. Lane 3 is
   // judge-driven end to end (W1): the cached work judgment decides chase/produce/schedule/forward/
   // send_file + the executor — the second batch router is gone (one judge, not two).
+  //
+  // Q8a · NEW & UNSORTED IS A LANE (attention-plan PART III). The audit's headline — 8 of the 40
+  // NEWEST actionable items had anything staged — had a structural half nobody had looked at: the
+  // spine's report routes a FRESH, undated item to `triage`, and the pass only ever read `needsYou`
+  // and `openQuestions`. So the newest work on the desk was, by construction, the work the engine
+  // never prepared. Measured on the reference account: 7 triage items, every one judged actionable
+  // by the sweep and prepared by nobody.
+  //
+  // The `stale` lane stays OUT, deliberately: a month-overdue, long-untouched item is the QUIET
+  // TAIL, and Q7's proof-of-life lane — not a drafting budget — is what decides whether it is still
+  // live. Preparing 74 items nothing has moved in two months would spend the desk's budget on the
+  // ledger's population. (Measured: 74 stale candidates on the reference account.)
   const lanes: WorkItem[][] = [
     autoDraft ? rep.needsYou.filter((x) => x.kind === 'reply' && x.id.startsWith('inbox:')) : [],
     rep.openQuestions.filter((x) => x.blockedOn),
     rep.needsYou.filter((w) => !w.automated && w.kind !== 'reply' && (w.id.startsWith('inbox:') || w.id.startsWith('commit:'))),
+    rep.triage.filter((w) => !w.automated && (w.id.startsWith('inbox:') || w.id.startsWith('commit:'))),
   ];
   // THE ONE ORDERING (proactive-reach LAW 1): computed once over the union of the lanes and applied
   // to each — the judgment ages come from the same cache the judge writes, so "least recently
@@ -1075,96 +1150,61 @@ export async function runPreparationPass(
     } catch { /* observability is an enhancement */ }
   };
   const seen = new Set<string>();
-  for (const lane of lanes) {
-    for (const w of lane) {
-      if (seen.has(w.id)) continue; // one attempt per item per pass (lanes can overlap)
-      seen.add(w.id);
-      if (Date.now() > deadline) { leftBehind++; continue; }
-      const r = await prepareOneItem(admin, userId, w);
-      tally(r);
-      await recordOutcome(w, r);
+  const work = async (w: WorkItem) => {
+    seen.add(w.id);
+    const r = await prepareOneItem(admin, userId, w);
+    tally(r);
+    await recordOutcome(w, r);
+  };
+
+  // ── Q8a · THE LANE FLOORS (attention-plan PART III — the STARVATION class, measured). ──────────
+  // The walk used to spend the single budget lane by lane, in order: lane 1 (80 reply items on the
+  // reference account) ate it, and lanes 2-4 were reached only by whatever survived. The pass's own
+  // ledger says what that cost — `(never attempted)` was the standing outcome for 6 of 11 schedule
+  // verdicts and 8 of 16 send_file verdicts, items the engine had literally never once looked at.
+  // A late lane must get its slice.
+  //
+  // THE SHARE, the graduation lane's idiom applied inside one pass: at each lane, the REMAINING
+  // wall clock is divided by the lanes still unserved. A lane that finishes early hands its
+  // remainder to the next (nothing is reserved for a lane with nothing in it); a lane that runs long
+  // stops at its own floor and its rest goes to the overflow below. Then — and only then — whatever
+  // budget is left is spent on everything deferred, in the ONE nominated order, so a genuinely quiet
+  // day still drains the backlog exactly as it did before.
+  const deferred: WorkItem[] = [];
+  for (let i = 0; i < lanes.length; i++) {
+    const lanesLeft = lanes.length - i;
+    const laneDeadline = Math.min(deadline, Date.now() + Math.max(0, deadline - Date.now()) / lanesLeft);
+    for (const w of lanes[i]) {
+      if (seen.has(w.id)) continue;       // one attempt per item per pass (lanes can overlap)
+      if (Date.now() > laneDeadline) { deferred.push(w); continue; }
+      await work(w);
     }
+  }
+  // THE OVERFLOW — the deferred items in the one nominated order (never lane order: a lane's floor
+  // decides who is REACHED FIRST, never who matters more).
+  deferred.sort((a, b) => (rankOf.get(keyOf(a)) ?? Number.MAX_SAFE_INTEGER) - (rankOf.get(keyOf(b)) ?? Number.MAX_SAFE_INTEGER));
+  for (const w of deferred) {
+    if (seen.has(w.id)) continue;
+    if (Date.now() > deadline) { leftBehind++; continue; }
+    await work(w);
   }
   if (leftBehind > 0) {
     console.log(`[prepare-pass] budget spent for user ${userId}: ${leftBehind} candidate(s) left for the next sweep`);
   }
 
-  // ── B3c · MEETING PREP (workbench) — an upcoming DEAL-LINKED meeting (next 14 days) gets a prep
-  // brief prepared into the deal's pool: assembled facts (state, open tasks, goals/rules) + ONE
-  // reasoned tightening pass, attributed to the assistant, evaluated like everything else.
-  // Idempotent per meeting (task_id), capped per pass (trickle). Zero effect for unlinked meetings.
-  const PREP_CAP = 2;
-  try {
-    const floorIso = new Date().toISOString();
-    const ceilIso = new Date(Date.now() + 14 * 86_400_000).toISOString();
-    const { data: evs } = await admin.from('calendar_events').select('id, title, start_time')
-      .eq('user_id', userId).gte('start_time', floorIso).lte('start_time', ceilIso)
-      .order('start_time', { ascending: true }).limit(20);
-    const evRows = (evs ?? []) as Array<{ id: string; title: string | null; start_time: string }>;
-    if (evRows.length) {
-      const { data: links } = await admin.from('entity_links').select('item_id, entity_id')
-        .eq('user_id', userId).eq('item_kind', 'calendar_event')
-        .in('item_id', evRows.map((e) => e.id)).not('entity_id', 'is', null);
-      const entByEv = new Map(((links ?? []) as Array<{ item_id: string; entity_id: string }>).map((l) => [l.item_id, l.entity_id]));
-      let prepped = 0;
-      for (const ev of evRows) {
-        if (prepped >= PREP_CAP || Date.now() > deadline) break;
-        const entId = entByEv.get(ev.id);
-        if (!entId) continue;
-        const taskId = `meeting-prep-${ev.id}`;
-        const { data: prior } = await admin.from('item_deliverables').select('id')
-          .eq('user_id', userId).eq('kind', 'entity').eq('entity_id', entId).eq('task_id', taskId).limit(1).maybeSingle();
-        if (prior) continue; // already prepared for this meeting
-
-        const { data: ent } = await admin.from('work_entities').select('name, state, next_move, goals, rules')
-          .eq('id', entId).eq('user_id', userId).maybeSingle();
-        if (!ent) continue;
-        const st = (ent.state ?? {}) as { summary?: string; whoOwes?: { you?: string[]; them?: string[] } };
-        const nm = (ent.next_move ?? null) as { title?: string } | null;
-        const openTasks = items.filter((w) => w.entity?.id === entId && (w.state === 'todo' || w.state === 'waiting' || w.state === 'in_progress'))
-          .slice(0, 8).map((w) => `- ${w.title.slice(0, 90)}${w.when.explicit ? ` (due ${w.when.explicit})` : ''}${w.blockedOn ? ` — waiting on ${w.blockedOn.split('<')[0].trim()}` : ''}`);
-        const facts = [
-          `MEETING: ${String(ev.title || 'Meeting')} · ${ev.start_time.slice(0, 16).replace('T', ' ')}`,
-          `THE DEAL: ${ent.name}`,
-          st.summary ? `Where it stands: ${st.summary}` : '',
-          nm?.title ? `The next move: ${nm.title}` : '',
-          (st.whoOwes?.you ?? []).length ? `You owe: ${(st.whoOwes!.you!).slice(0, 3).join(' · ')}` : '',
-          openTasks.length ? `OPEN TASKS:\n${openTasks.join('\n')}` : '',
-          Array.isArray(ent.goals) && (ent.goals as string[]).length ? `Goals: ${(ent.goals as string[]).join(' · ')}` : '',
-          Array.isArray(ent.rules) && (ent.rules as string[]).length ? `Rules: ${(ent.rules as string[]).join(' · ')}` : '',
-        ].filter(Boolean).join('\n');
-        const res = await aiCall<{ brief?: string }>({
-          userId, supabase: admin, shape: { output: 'json' }, temperature: 0.2, maxTokens: 500, source: 'task_preparation',
-          prompt: `Turn these FACTS into a tight meeting-prep brief (5-8 short lines): where things stand, ` +
-            `what to raise, what you owe them / they owe you, and the one outcome to walk out with. Use ONLY ` +
-            `the facts given — never invent. Plain prose lines, no headers.\n\n${facts}\n\nJSON only: {"brief":"..."}`,
-        }).catch(() => ({ json: null as { brief?: string } | null }));
-        const briefText = res.json?.brief?.trim();
-        if (!briefText) continue;
-        const review = await evaluateDeliverable(admin, userId, { content: briefText, task: `Prep for ${String(ev.title || 'the meeting')}`, entityId: entId, kind: 'deliverable' });
-        const pa = await getDraftingAssistant(admin, userId);
-        const { error: prepErr } = await admin.from('item_deliverables').insert({
-          user_id: userId, kind: 'entity', entity_id: entId, task_id: taskId, type: 'document',
-          title: `Prep — ${String(ev.title || 'Meeting')}`.slice(0, 100), content: briefText, ref: null,
-          metadata: { meetingPrep: true, meetingAt: ev.start_time, ...(pa ? { agentName: pa.name } : {}), ...(review.verdict !== 'pass' ? { review } : {}) },
-        });
-        if (!prepErr) {
-          prepped++; prepared++;
-          // W4 — THE ENGINE NARRATES the prep too (briefs live in the deal rooms by design; a brief
-          // nobody is told about is a brief nobody reads). Keyed per meeting — one line, ever.
-          try {
-            const { writeRoomTurn } = await import('@/lib/room/turns');
-            await writeRoomTurn(admin, userId, entId, {
-              role: 'system',
-              text: `${pa?.name?.split(' ')[0] ?? 'I'} prepared the brief for "${String(ev.title || 'the meeting').slice(0, 70)}" (${ev.start_time.slice(0, 10)}) — it's on the stage when you're ready.`,
-              author: null, // one-narrator law: narration is the CoS voice, never a coworker bubble
-              dedupeKey: `meeting-prep:${ev.id}`,
-            });
-          } catch { /* narration is an enhancement */ }
-        }
-      }
-    }
-  } catch { /* prep is an enhancement — the pass's core work already landed */ }
+  // ── B3c · MEETING PREP RETIRED HERE (owner call, Sep 17 — attention-plan PART III, law Q8) ─────
+  // This pass used to prepare a brief for every deal-linked meeting in the next 14 days, out of the
+  // SAME budget as the item lanes and always after them: a 118-candidate backlog behind a walk that
+  // rarely reached its own third lane, i.e. structurally unreachable. Meanwhile THE ANTICIPATION
+  // PASS (lib/home/anticipation.ts) prepares the same meetings on its own 6h clock, with the room's
+  // full grounding, one resolved clock, the ground-evidence rule and an explicit NOTHING sentinel —
+  // strictly the better preparation, already narrated into the room where the work lives.
+  //
+  // ONE PREP MECHANISM. Two lanes writing meeting briefs is how two surfaces come to disagree about
+  // what was prepared, and the weaker one was the one starving the item lanes. The anticipation lane
+  // is THE PREP SEAT; the workbench gate B3c asserts the decision (no meeting-prep block here) and
+  // the coverage (anticipation's fire records + the room turn), and smoke-compute's AN1 gates the
+  // surface. Nothing was lost but the duplicate.
 
   return { prepared, skipped, nudges, delegated, leftBehind };
 }

@@ -156,7 +156,8 @@ export async function GET(request: NextRequest) {
     // brief over the anchor + its turns (same composer, `<kind>:<id>` key — lib/room/turns.ts).
     const looseKey = `${linkKind === 'inbox_item' ? 'inbox' : linkKind}:${id}`;
     let looseBrief: string | null = null;
-    let looseMove: { label: string; ref: string | null } | null = null;
+    // Q6 · the move carries its own `offer` mark (an unstaged CTA is the CoS's offer, not a button).
+    let looseMove: { label: string; ref: string | null; offer?: boolean; offerText?: string } | null = null;
     let looseOffers: Array<{ label: string; say: string }> = [];
     let looseBriefAt: string | null = null; // THE GROUND LAW: narration older than this folds
     if (linkRes.data?.entity_id) {
@@ -203,6 +204,9 @@ export async function GET(request: NextRequest) {
         // THE DECISION BRIEF's structured payload — the DecisionCard is its one surface
         // (the strip filters it; the card renders trade-offs + the recommendation).
         ...(a.decision ? { decision: a.decision } : {}),
+        // Q8 · THE PASTE PACK's note — where these words go, and that nothing goes out from here.
+        // Served with the artifact so the card never composes a claim of its own.
+        ...(a.note ? { note: a.note } : {}),
       })),
       anchor,
       gap,

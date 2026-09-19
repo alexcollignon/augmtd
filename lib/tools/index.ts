@@ -42,6 +42,11 @@ export {
 export {
   composeEmailDefinition, executeComposeEmail, sendCoworkerEmail, getUserEmailIdentities, isEmailEnabledForAgent,
 } from './coworker-email';
+// THE BULK DEED's chat producer (attention-plan A7). It PREVIEWS only — the commit door is not
+// reachable from it, and no committing executor is exported from anywhere in this barrel.
+export {
+  prepareBulkDeedDefinition, executePrepareBulkDeed, resolveHeldClass, bulkDeedCardLine,
+} from './prepare-bulk-deed';
 // P6b — the item-action doables (complete/dismiss/resolve/find/remember): ONE executor each, consumed
 // by the API routes AND the conversation core AND (by exposure) any agent. Irreversible sends are NOT
 // here as committing executors — approve-before-commit is structural.

@@ -1231,10 +1231,16 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   // narrated twice, two Send buttons, and the drafted reply buried below a 34-message thread. ═══
   {
     const { clip } = await import('../lib/room/turns');
+    // RE-POINTED (Sep 18, QD — attention-plan PART III law Q8): the third clause used to read the
+    // literal `author: null, // one-narrator law` inside the pass's MEETING-PREP block. That block
+    // was retired (one prep mechanism — the anticipation lane owns meeting narration now), so the
+    // clause follows the law to its new site: the anticipation lane writes its meeting prep with NO
+    // author at all, which is the same statement in the stronger form (absent = the CoS narrating).
+    // The law did not change; only the place it is written down did.
     check('P29 · THE ONE-NARRATOR LAW at every write site (narration author-less; coworker author = first-person speech only)',
       src('lib/prepare/pass.ts').includes('ONE-NARRATOR LAW') &&
       /author: null,\s*\n\s*dedupeKey: `prep:/.test(src('lib/prepare/pass.ts')) &&
-      src('lib/prepare/pass.ts').includes('author: null, // one-narrator law') &&
+      /writeRoomTurn\(client, userId, entityId, \{\s*\n\s*role: 'system',\s*\n\s*text,\s*\n\s*dedupeKey: `anticipate:meeting:/.test(src('lib/home/anticipation.ts')) &&
       src('lib/home/delegate.ts').includes("author: { kind: 'coworker', id: worker.id"));
     check('P29 · three grammars derived STRUCTURALLY in the rail (event lines for narration · bubbles for speech · components keep their affordances) + prep narration folds into the artifact card',
       src('components/home/item-rail.tsx').includes('three grammars, derived STRUCTURALLY') &&
@@ -1520,6 +1526,63 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       const ids = [String(C.id), String(D.id), ...((dec ?? []) as Array<{ id: string }>).map((d) => String(d.id))];
       await sb.from('room_turns').delete().eq('user_id', PERSONAL).in('room_key', ids);
       await sb.from('work_entities').delete().in('id', ids);
+    }
+  }
+
+  // ═══ P35 · THE SEAT LAW (docs/threads-plan.md · THE OPENING CONTRACT clause 4, found live: the
+  // sender asked the To: recipient for THAT person's CV and the user, in CC, was served "You owe
+  // <sender>" plus a checklist asking for the user's OWN CV). A request addressed to a third party
+  // is never the user's debt. The FACT (is_cc_only + the to/cc lists) has been stamped at sync
+  // since July 8; this gate holds the READERS to it — the extractor, the judge, and the repair. ═══
+  {
+    const { seatStripsObligation, isBystanderSeat, textNamesUser } = await import('../lib/inbox/recipient-role');
+    const seat = { to: ['sam@acme-example.com'], cc: ['owner@acme-example.com'], userAddresses: ['owner@acme-example.com'], userName: 'Jordan Rivers' };
+    const askedOfSam = 'Dear Sam,\n\nCould you share your CV and the training offerings so we can build a profile?\n\nBest, Casey';
+    const askedOfBoth = 'Dear Sam,\n\nCould you share your CV? Jordan, could you send the pricing sheet as well?\n\nBest, Casey';
+    check('P35 unit · a CC-only seat on a request addressed to someone else STRIPS the obligation; naming the user keeps it; an unknown seat demotes nothing',
+      isBystanderSeat(seat) && seatStripsObligation(askedOfSam, seat)
+      && textNamesUser(askedOfBoth, seat) && !seatStripsObligation(askedOfBoth, seat)
+      && !seatStripsObligation(askedOfSam, { userAddresses: ['owner@acme-example.com'] })
+      && !seatStripsObligation(askedOfSam, null));
+    check('P35 unit · the naming exception reads the message\'s OWN words — a quoted reply-chain naming the CC\'d user never rescues a third party\'s ask',
+      seatStripsObligation(`${askedOfSam}\n\nFrom: Sam Vendor <sam@acme-example.com>\nDate: Thursday, 17 September 2026 at 16:05\nTo: Casey <casey@acme-example.com>\n\nLet me know what works for you and Jordan.`, seat));
+    check('P35 · the EXTRACTOR consults the seat (the law lives beside the fact; a you_owe on a bystander seat is dropped, never re-directioned to "awaiting") and the sync hands it the facts',
+      src('lib/commitments/extract.ts').includes('seatStripsObligation') &&
+      src('lib/commitments/extract.ts').includes('THE SEAT LAW') &&
+      src('lib/inbox/recipient-role.ts').includes('export function seatStripsObligation') &&
+      src('lib/email-sync/sync-emails.ts').includes('isCcOnly: _recipientRole.is_cc_only') &&
+      src('app/api/internal/backfill-intelligence/route.ts').includes('userAddresses: myAddrs'));
+    check('P35 · the JUDGE is handed the seat as a CODE fact and ruled on it (no you_owe framing on a CC-only third-party ask) — JUDGE_VERSION bumped so cached verdicts re-judge',
+      src('lib/work/judge.ts').includes("THE USER'S SEAT ON THIS EMAIL") &&
+      src('lib/work/judge.ts').includes('- THE SEAT LAW:') &&
+      src('lib/work/judge.ts').includes('isBystanderSeat') &&
+      (Number(/JUDGE_VERSION = (\d+)/.exec(src('lib/work/surface-registry.ts'))?.[1] ?? 0) >= 20));
+    check('P35 · the repair sweep exists and asks the SAME predicate (one law, never a second copy)',
+      src('scripts/sweep-cc-seat.ts').includes('seatStripsObligation') &&
+      src('scripts/sweep-cc-seat.ts').includes("resolved_reason: 'cc_seat'"));
+    // LIVE — the outcome scan: no OPEN email-sourced you_owe commitment may stand on a bystander
+    // seat. ⚠️ This is RED until `npx tsx scripts/sweep-cc-seat.ts --apply --all` has drained the
+    // historical backlog (the E3 precedent — a law's gate fails honestly until its repair has run).
+    const { userAddresses } = await import('../lib/inbox/ensure-mail-kind');
+    for (const [uid, label] of USERS) {
+      const { data: rows } = await sb.from('commitments').select('id, description, source_id')
+        .eq('user_id', uid).eq('direction', 'you_owe').eq('source', 'email')
+        .in('status', ['open', 'pending', 'in_progress'])
+        .order('created_at', { ascending: false }).limit(120);
+      if (!rows?.length) { check(`P35 live ${label} · no open email you_owe stands on a CC-only seat (vacuous — none open)`, true); continue; }
+      const mine = await userAddresses(sb, uid);
+      const { data: prof } = await sb.from('profiles').select('full_name').eq('id', uid).maybeSingle();
+      const offenders: string[] = [];
+      for (const c of rows) {
+        if (!c.source_id) continue;
+        const { data: e } = await sb.from('emails').select('subject, body, to_addresses, cc_addresses, is_from_user')
+          .eq('user_id', uid).eq('id', c.source_id).maybeSingle();
+        if (!e || e.is_from_user) continue;
+        const s = { to: (e.to_addresses as string[] | null) ?? [], cc: (e.cc_addresses as string[] | null) ?? [], userAddresses: mine, userName: (prof?.full_name as string | null) ?? null };
+        if (seatStripsObligation(`${e.subject ?? ''}\n${e.body ?? ''}`, s)) offenders.push(String(c.description).slice(0, 40));
+      }
+      check(`P35 live ${label} · no open email you_owe stands on a CC-only seat (a third party's ask is never the user's debt)`,
+        offenders.length === 0, offenders.length ? `${offenders.length} standing — run scripts/sweep-cc-seat.ts --apply: ${offenders.slice(0, 3).join(' · ')}` : 'clean');
     }
   }
 

@@ -97,9 +97,45 @@ function preparedOf(sd: Record<string, unknown>): { list: string[]; by: string |
   return { list, by };
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// Q1 · THE VOICE COLLAPSES, AT THE SOURCE (docs/attention-plan.md PART III — Sep 18).
+//
+// The room's opening read "Clara is asking you to approve the shortlist" — in Clara's own voice.
+// `lib/room/self-voice` collapses that AFTER composition, which fixes the sentence and leaves the
+// cause standing: THIS page — the one every reasoner in room scope reads — rendered the speaker's
+// own ask as "Clara asks", so every consumer (the responder, answerEntityQuestion, the converse
+// loop) had to re-derive the same collapse or speak a third person that was itself.
+//
+// So the speaker is plumbed in HERE, and the page states whose ask it is in the first person. The
+// post-hoc collapse becomes a BELT, not the fix; every consumer inherits the law for free, without
+// a single edit, because they all read `text`.
+//
+// The seat is OPTIONAL by design: a caller with no speaker in hand renders exactly as before.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** The speaker's own first name — the only token the ask renderer compares (the self-voice name
+ *  test's own rule: a counterparty sharing a given name is a different person, but an ASK's author
+ *  is one of our own seats, so the first name is the identity here). */
+const firstNameOf = (n: string | null | undefined): string =>
+  String(n ?? '').trim().split(/\s+/)[0]?.toLowerCase() ?? '';
+
+/** THE ASK'S ATTRIBUTION LINE — first person when the asker IS the speaker reading this page. */
+export function askAttribution(who: string | null | undefined, speaker: string | null | undefined): string {
+  if (who && speaker && firstNameOf(who) === firstNameOf(speaker)) {
+    return 'YOUR OWN ask to the user — "I ask"; never your own name in the third person';
+  }
+  return who ? `${who} asks` : 'the team asks';
+}
+
+export type GroundingOptions = {
+  /** The CoS seat reading this page (lib/workers/cos-seat). Absent = no collapse, as before. */
+  speaker?: string | null;
+};
+
 export async function assembleRoomGrounding(
-  client: SupabaseClient, userId: string, scope: RoomScope,
+  client: SupabaseClient, userId: string, scope: RoomScope, opts: GroundingOptions = {},
 ): Promise<RoomGrounding> {
+  const speaker = opts.speaker ?? null;
   // Resolve the room: an item linked to an entity grounds as the ENTITY's room (one conversation
   // per deal); a loose item grounds on its own context.
   let entityId: string | null = scope.kind === 'entity' ? scope.entityId : null;
@@ -350,7 +386,7 @@ export async function assembleRoomGrounding(
     // and so it survives every clip a consumer applies to the tail of this page.
     renderGroundEvidence(groundEvidence),
     prodRes.length ? `STANDING PRODUCTION (scheduled workflows serving this work — deliverables arrive on their own; never propose building what already runs):\n${prodRes.map((w) => `- "${w.name}"${w.scheduleLabel ? ` — ${w.scheduleLabel}` : ''}${w.status !== 'active' ? ` [${w.status}]` : ''}${w.lastRunAt ? ` · last ran ${String(w.lastRunAt).slice(0, 10)}` : ' · never run yet'}${w.nextRunAt ? ` · next ${String(w.nextRunAt).slice(0, 10)}` : ''}`).join('\n')}` : null,
-    asks.length ? `OPEN ASKS TO THE USER (each one is STANDING on the page under your brief — an ask you walk past is a second voice):\n${asks.map((a) => `- ${a.who ? `${a.who} asks` : 'the team asks'}, since ${a.since ?? '?'}${a.proceeded ? ' (user said go ahead)' : ''}: ${a.items.join('; ')}`).join('\n')}` : null,
+    asks.length ? `OPEN ASKS TO THE USER (each one is STANDING on the page under your brief — an ask you walk past is a second voice):\n${asks.map((a) => `- ${askAttribution(a.who, speaker)}, since ${a.since ?? '?'}${a.proceeded ? ' (user said go ahead)' : ''}: ${a.items.join('; ')}`).join('\n')}` : null,
     ledgerLines.length ? `HISTORY (newest first, reference as [L#]):\n${ledgerLines.join('\n')}` : null,
     fileLines.length ? `FILES on this work (reference as [F#]):\n${fileLines.join('\n')}` : null,
     transcript ? `THE CONVERSATION (recent turns):\n${transcript}` : null,

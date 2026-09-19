@@ -43,6 +43,10 @@ export type JudgmentSweepResult = {
   anchorPassed: number; // how many of the candidates carried a passed anchor
   siblingNominated: number; // LAW 4: items a settled sibling conversation pushed to the front
   leftBehind: number;   // counted, never silently truncated
+  graduated: number;    // Q3: handled rows that filed themselves after their quiet days
+  graduationLeftBehind: number; // qualifying rows this run's cap left for the next one
+  /** Q7 · PROOF OF LIFE: long-silent actionable items made to re-earn their seat this run. */
+  proofOfLife: { eligible: number; checked: number; reaffirmed: number; demoted: number; leftBehind: number };
 };
 
 const CONCURRENCY = 3;   // the judge is read-heavy + one small call; three in flight is polite
@@ -77,12 +81,48 @@ async function meetingStartsByEmail(admin: SupabaseClient, userId: string): Prom
  * Read-only on everything except the judgment cache and the verdict's own consequence door.
  */
 export async function runJudgmentSweep(
-  admin: SupabaseClient, userId: string, opts?: { budgetMs?: number; concurrency?: number },
+  admin: SupabaseClient, userId: string,
+  opts?: { budgetMs?: number; concurrency?: number;
+    /** THE CATCH-UP OVERRIDES (instant-help, Sep 18): the cron's steady-state slices are wrong for
+     *  a first drain — the catch-up runner widens them; every cron caller leaves them default. */
+    proofOfLifeCap?: number; proofSliceMs?: number },
 ): Promise<JudgmentSweepResult> {
   const deadline = Date.now() + (opts?.budgetMs ?? DEFAULT_BUDGET_MS);
   const tz = await userTimezone(admin, userId);
   const todayStr = localNow(tz).dateStr;
-  const out: JudgmentSweepResult = { candidates: 0, visited: 0, fresh: 0, cached: 0, failed: 0, resolved: 0, anchorPassed: 0, siblingNominated: 0, leftBehind: 0 };
+  const out: JudgmentSweepResult = { candidates: 0, visited: 0, fresh: 0, cached: 0, failed: 0, resolved: 0, anchorPassed: 0, siblingNominated: 0, leftBehind: 0, graduated: 0, graduationLeftBehind: 0, proofOfLife: { eligible: 0, checked: 0, reaffirmed: 0, demoted: 0, leftBehind: 0 } };
+
+  // ── Q3 · THE GRADUATION LANE, hosted here (docs/attention-plan.md PART III) ─────────────────────
+  // It rides this cron because this cron already walks every active account every two hours — but it
+  // shares NOTHING with the judge: filing is deterministic (band + class + deadline + clock, from
+  // the ledger's own zero-AI classification) and it runs FIRST, under its own small slice, so a
+  // spent judgment budget can never be the reason the standing number stops falling. Non-fatal by
+  // construction: a failed lane leaves the backlog exactly where it was.
+  //
+  // THE SLICE, measured (Sep 17, the reference account — 4,958 pending rows): the derivation the
+  // lane selects from costs ~8.7s, so the lane is given a 25s ceiling and is SKIPPED ENTIRELY unless
+  // the user's own budget has room for it plus a real judgment pass. Filing is the slower-moving
+  // half of the arc; a run that spent itself filing and never judged would be the Aug-14 coverage
+  // failure wearing Q3's clothes.
+  const GRADUATION_SLICE_MS = 25_000;
+  const graduate = async () => {
+    if (deadline - Date.now() < GRADUATION_SLICE_MS + 15_000) {
+      // Honest, not silent: a skipped lane is not an empty one. (`graduated` stays 0 and the run
+      // says why — the same honest-budget grammar `leftBehind` uses one lane over.)
+      console.log(`[judgment-sweep] graduation lane skipped for user ${userId}: budget too small this run`);
+      return;
+    }
+    try {
+      const { runGraduationLane } = await import('@/lib/work/graduation');
+      const r = await runGraduationLane(admin, userId, {
+        apply: true,
+        deadlineMs: Math.min(deadline, Date.now() + GRADUATION_SLICE_MS),
+      });
+      out.graduated = r.filed;
+      out.graduationLeftBehind = r.leftBehind;
+    } catch { /* the lane never costs the sweep its judgments */ }
+  };
+  await graduate();
 
   const items = await buildWorkItems(admin, userId, { todayStr, skipReconcile: true });
   const candidates = judgmentCandidates(items);
@@ -108,6 +148,32 @@ export async function runJudgmentSweep(
   );
   out.siblingNominated = nominated.filter((n) => n.siblingNominated).length;
   out.anchorPassed = nominated.filter((n) => n.anchorPassed).length;
+
+  // ── Q7 · PROOF OF LIFE, hosted here (docs/attention-plan.md PART III) ───────────────────────────
+  // It rides this cron for the same reason the graduation lane does — the walk already exists — but
+  // it asks a different question of a different population: not "which item has not been judged
+  // lately" (the nominator's) but "which item has not MOVED in ten days, and does its standing
+  // verdict still hold". It runs BEFORE the general walk and under its OWN slice, so a spent
+  // judgment budget can never be the reason an ask sits three weeks past its own stated deadline.
+  // The items it visits are re-judged fresh (the stamp moves their sig); the general walk that
+  // follows therefore hits them as cache hits and spends nothing twice.
+  const PROOF_SLICE_MS = opts?.proofSliceMs ?? 20_000;
+  if (deadline - Date.now() >= PROOF_SLICE_MS + 15_000) {
+    try {
+      const { runProofOfLifeLane, readStandingVerdicts, readProofStamps } = await import('@/lib/work/proof-of-life');
+      const [verdicts, stamps] = await Promise.all([
+        readStandingVerdicts(admin, userId), readProofStamps(admin, userId),
+      ]);
+      const r = await runProofOfLifeLane(admin, userId, candidates.map((w) => {
+        const key = w.id.startsWith('commit:') ? `commitment:${w.entityId}` : `inbox:${w.entityId}`;
+        return { key, work: verdicts.get(key) ?? null, activityAt: w.at || w.startAt || null, askedAt: stamps.get(key) ?? null };
+      }), { apply: true, cap: opts?.proofOfLifeCap, deadlineMs: Math.min(deadline, Date.now() + PROOF_SLICE_MS) });
+      out.proofOfLife = { eligible: r.eligible, checked: r.checked, reaffirmed: r.reaffirmed, demoted: r.demoted, leftBehind: r.leftBehind };
+      out.resolved += r.resolved;
+    } catch { /* the lane never costs the sweep its judgments */ }
+  } else {
+    console.log(`[judgment-sweep] proof-of-life lane skipped for user ${userId}: budget too small this run`);
+  }
 
   const byKey = new Map(candidates.map((w) => [w.id.startsWith('commit:') ? `commitment:${w.entityId}` : `inbox:${w.entityId}`, w]));
   const { judgeWork } = await import('@/lib/work/judge');

@@ -449,3 +449,74 @@ same change. Nothing merges without the owner's walk.
   — fix the voice, not the icon.)
 - Could a first-day user, knowing only "message your team," reach everything? Could an expert,
   @mentioning, go faster?
+
+## THE OPENING CONTRACT — SPEAK · SHOW · OFFER (Sep 19, owner walk of six screenshots)
+
+Born from one evening walk that found the same hole on three surfaces: the room asserted
+conclusions whose OBJECTS were nowhere on screen ("Nothing is attached to review — ask me to pull
+it together" on a decision whose object IS the inquiry email; "Clara drafted a reply below" with
+nothing below; an Emeritus ask with no reminder of what was asked). The owner's two constraints are
+the law's shape: ONE rendering per object kind on EVERY surface (consistency = reliability), and
+every fix lands class-wide — CoS/Home chat, coworker DM, deal room, item deep-dive alike.
+
+1. **THE ONE OBJECT CARD.** Every SOURCE object has exactly one rendering, keyed by kind in the
+   thread kit beside the deliverable cards (the card-contract doctrine extended from deliverables
+   to sources): an email → its tail excerpt (topMessageOf, the one clipper, the honest marker) +
+   attachment chips that open the existing viewer; a meeting → its excerpt; a document → its chip.
+   A surface never authors its own excerpt markup — it mounts the kit card or shows nothing.
+2. **THE OPENING IS SPEAK → SHOW → OFFER.** One bubble that speaks (one move, no restatement, no
+   dangling references, never the counterparty's name twice), the object card that shows, the deed
+   component that offers. No ask, decision, or brief serves without its object in reach. "Ask me to
+   pull it together" is dead copy — the machine pulls it, always.
+3. **A CLAIM RENDERS OR IT DOES NOT COMPOSE.** "…drafted a reply below" survives only when the
+   served payload actually mounts that deliverable (the MOVE-ref validation idiom, extended to
+   prose claims about renderable work). The composer speaks in the FIRST person — a coworker never
+   narrates themself in the third.
+4. **THE SEAT LAW REACHES OBLIGATIONS.** A request addressed To: a third party, with the user in
+   CC, never lands as the user's debt (`you_owe`) and never composes as "X is asking YOU" — unless
+   the body names the user directly. The fact (`is_cc_only`, the to/cc lists) has been stamped at
+   sync since July 8; the commitments lane now has to READ it. Found live: a counterparty asked the ADDRESSEE for
+   the addressee's CV; the user, in CC, was served "You owe <the sender>" plus a checklist requesting
+   the user's own CV.
+5. **KIT-SIDE RENDER DISCIPLINE.** Consecutive same-author bubbles share ONE face+name header (the
+   DM panel's grouping rule, moved into the kit so every surface inherits it); one type scale per
+   bubble — hierarchy by spacing, never per-paragraph size/color; the opener never stands as a
+   second greeter beside a pinned brief.
+
+### THE OPENING CONTRACT — PROGRESS (Sep 19, three Opus waves + orchestrator walk, ALL GREEN)
+
+- **Wave A · THE SEAT LAW**: predicate beside the fact (recipient-role.ts `seatStripsObligation`,
+  positive-evidence-only + naming exception); extractor drops CC-seat `you_owe` rows; judge rule +
+  JUDGE_VERSION 20; the quoted-chain clipper gained the Apple-Mail/new-Outlook header cut (a quoted
+  "…for you and alex" was defeating the naming exception); `sweep-cc-seat` dry-found 20 false debts
+  on the owner account (CV row among them) — owner applies. Gates P35 (147/149: the two reds are
+  the live backlog scans, red BY DESIGN until the sweep runs).
+- **Wave B · THE ONE OBJECT CARD**: `components/thread/source-object-card.tsx` (kind-keyed) +
+  `lib/inbox/thread-door.ts` = THE ONE client thread reader (deck's inline copy deleted); mounted at
+  decision card (`objectNode` — "ask me to pull it together" is dead) · pinned opening · lifted ask,
+  one seat at a time; grouping (a pinned opening joins its speaker's run) + the dangling-"·" fix in
+  the ONE timeline renderer; one type scale in the pinned bubble. T32 (14 gates).
+- **Wave C · VOICE + CLAIMS + COMPOSITION**: the defective lines were authored in TWO places — the
+  v-composer AND a lawless client stitch in item-rail (`anchorLine`: "Clara drafted a reply below",
+  "X is asking you to decide"). New `lib/room/opening-discipline.ts` (dropRestatements ·
+  stripDanglingRefs phrase-level · nameOncePerSentence, subject position deliberately untouched);
+  ROOM_BRIEF_VERSION 14 (prepared rows now IN the components list; absence stated as a fact;
+  third-person refusal to last-good); machine-framed asks attributed to us ("From X — this needs
+  you to decide…"); "drafted below" renders only while the card mounts; opener folds to the bare
+  question (nothing when the brief already asks); the object card mounts ABOVE the EmailCard
+  (`showsSource` opt-in suppression). SQ21 (19 gates) + T30.3c/T32.10b/c.
+- **Suite repairs found on the way (the cap class, twice, inside gates)**: smoke-one-room's pilot
+  discovery scan silently served PostgREST's 1000-row page (and `like` can't match a uuid) — the
+  pilot user's ENTIRE live matrix had gone vacuous; resolved via the auth listing → 94/94 with the
+  matrix rows running again. AK1 re-pointed to the chat-lane clock's wrapper. R9's version-range
+  pin → a floor. Real-name fixture in smoke-work-surface → generic.
+- **Walked (Sep 19 morning)**: deck clean of the CV false debt (JUDGE 20 re-judged it out pre-sweep);
+  cold-inquiry door = SPEAK/SHOW/OFFER exactly (our-frame ask line, object card with honest clip marker
+  + PDF chip + Thread door, options); the pilot room's v14 brief absorbed the sent reply, one Clara run, opener
+  folded, one connected offer; Home-chat lane instant + grouped.
+- Board: threads 609/609 · quality 291/291 · one-room 94/94 · attention 362/362 · compute 156/156 ·
+  work-surface 52/52 · promise 147/149 (sweep-gated) · tsc clean.
+- **Queued follow-ups**: the deck reply-lane "who — ask" join lacks never-say-twice ("<Name Surname> —
+  Review <Name>'s application…" walked live); meeting/document source-kind host mounts (payload
+  plumbing); DM/Home-chat producer seats for the object card (no inbox id on those payloads);
+  `awaiting` rows on a bystander seat (owner call — wider than debt); ONE-MOVE is prompt-only.

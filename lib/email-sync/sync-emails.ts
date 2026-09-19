@@ -1160,6 +1160,14 @@ export async function syncEmailsForConnection(
               threadId: storedEmail.thread_id || null,
               instructions: emailSettings.todo_instructions,
               receivedAt: storedEmail.received_at || null, // the deixis anchor — the email's own date
+              // THE SEAT LAW (threads-plan clause 4): the user's To/CC position rides with the
+              // email, so a request addressed to a third party never mints the user a debt.
+              seat: {
+                isCcOnly: _recipientRole.is_cc_only,
+                to: _recipientRole.to, cc: _recipientRole.cc,
+                userAddresses: Array.from(_userAddresses),
+                userName: _ownerProfile?.full_name ?? null,
+              },
               client: adminSupabase,
             }),
           ).catch(() => {});

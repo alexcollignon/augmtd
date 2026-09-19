@@ -28,7 +28,16 @@ import type { ThreadAction, ThreadCard, ThreadItem } from '@/components/thread';
 import { useCosSeat } from '@/hooks/use-cos-seat';
 import { moveTargetId, mergedArtifactKey, stageOfArtifactKey } from '@/lib/room/presentation';
 import { DecisionCard } from '@/components/work/decision-card';
+// THE ONE OBJECT CARD's host mount — the room shows WHAT IT IS TALKING ABOUT (THE OPENING
+// CONTRACT, clause 1): one read of the thread door, one kit card, one viewer, every seat.
+import { SourceObjectMount } from '@/components/room/source-object';
+import type { DecisionObject } from '@/lib/room/decision-object';
 import { panelPlan } from '@/lib/room/render-plan';
+import { enforceCtaLaw, shapingOffer } from '@/lib/room/cta-law';
+// THE OPENING'S SPEECH LAWS, imported — the pre-compose stitch obeys exactly what the composed
+// brief obeys (ONE copy of each law; a hand-written second version is how the excerpt law rotted).
+import { collapseSelfVoice } from '@/lib/room/self-voice';
+import { nameOncePerSentence } from '@/lib/room/opening-discipline';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 // THE FRESHNESS FLOOR IS ONE NUMBER, IMPORTED — never restated at a second site.
 import { ROOM_CACHE_MAX_AGE_MS } from '@/lib/room/no-mutation';
@@ -52,7 +61,9 @@ export type RailView = {
   /** THE ONE RESPONDER for a LOOSE room (no entity) — composed server-side; the anchor stitch
    *  is only the fallback until the first compose lands. Linked rooms carry it on entity.*. */
   brief?: string | null;
-  move?: { label: string; ref: string | null } | null;
+  /** Q6 · `offer` marks a move whose object is NOT staged: the room speaks it as the CoS's offer
+   *  (`offerText`), never as a primary action button (lib/room/cta-law). */
+  move?: { label: string; ref: string | null; offer?: boolean; offerText?: string } | null;
   offers?: Array<{ label: string; say: string }>;
   /** THE GROUND LAW — "narration expires with the brief": the loose brief's composition time.
    *  Engine narration older than it folds under "earlier (N)" (the brief IS its digest). */
@@ -67,7 +78,7 @@ export type RailView = {
     /** THE ONE RESPONDER — the room's whole opening from one reasoned pass over the one grounding
      *  (served last-good; null until first compose → the stitched fields fall back). */
     brief?: string | null;
-    move?: { label: string; ref: string | null } | null;
+    move?: { label: string; ref: string | null; offer?: boolean; offerText?: string } | null;
     offers?: Array<{ label: string; say: string }>;
     /** THE GROUND LAW — the entity brief's composition time (see RailView.briefAt). */
     briefAt?: string | null;
@@ -300,7 +311,7 @@ function Chip({ icon, label, onClick }: { icon?: React.ReactNode; label: string;
   );
 }
 
-export function ItemRail({ kind, id, view, pending = false, onDraft, decision, artifacts, onOpenHref, onStage, onHistory }: {
+export function ItemRail({ kind, id, view, pending = false, onDraft, decision, artifacts, onOpenHref, onStage, onHistory, sourceItemId }: {
   kind: RailKind; id: string; view: RailView;
   /** THE STRUCTURAL FRAME (UX arc): true while the view is still loading — the rail mounts its
    *  shell (header, turns, composer) immediately and shows a quiet shimmer instead of anchor
@@ -309,7 +320,10 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   onDraft?: (draft: string) => void;
   /** One-room R2 — the judged DECISION mounts INLINE in the stream (surface:'inline' per the
    *  registry). The caller wires onChoose through steer; "Leave it with me" clears. */
-  decision?: { title: string | null; options: Array<{ label: string; tradeoff?: string | null }>; recommendation?: { label: string; why?: string | null } | null; onChoose: (label: string) => void | Promise<void>; onDismiss: () => void } | null;
+  /** Q5 · A DECISION SHOWS ITS OBJECT: `object` is the thing being decided (resolved by
+   *  lib/room/decision-object from the door's OWN prepared artifacts). The card renders it as its
+   *  head and, with none, says so — and recommends nothing. */
+  decision?: { title: string | null; options: Array<{ label: string; tradeoff?: string | null }>; recommendation?: { label: string; why?: string | null } | null; object?: DecisionObject | null; onOpenObject?: () => void; onChoose: (label: string) => void | Promise<void>; onDismiss: () => void } | null;
   /** One-room R2 → the PREPARED-ACTION GRAMMAR (Aug 4): EVERY prepared thing — reply draft,
    *  calendar invite, forward — is an ARTIFACT CARD in the conversation that summons its own
    *  stage (onOpen). The words and the deed are ONE element (law 8).
@@ -320,7 +334,12 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
    *  THE CARD CONTRACT (Sep 8): an artifact whose kind HAS a kit card carries it as `node` — the
    *  stream mounts the real, interactive card (the invite is the first) instead of the generic
    *  "Open →" row, and the generic row is then structurally absent for that artifact. */
-  artifacts?: Array<{ key: string; label: string; by?: string | null; onOpen: () => void; anchorKey?: string; node?: React.ReactNode }> | null;
+  /** `showsSource` — THE ONE DECLARATION that suppresses the source object card (THE OPENING
+   *  CONTRACT, clause 1): a mounted card that ALREADY renders the inbound's own words. Today none
+   *  do (the EmailCard is the outbound reply's editor; the InviteCard is the invite) — so the
+   *  default is false and the object mounts ABOVE them. A future card that quotes the thread sets
+   *  it and the object stands down, without this room guessing from a key name. */
+  artifacts?: Array<{ key: string; label: string; by?: string | null; onOpen: () => void; anchorKey?: string; node?: React.ReactNode; showsSource?: boolean }> | null;
   /** THE ONE-NAVIGATION LAW (Aug 4): inside a room, a rail link must open IN the room (the host's
    *  focus/summoned-stage opener), never page-navigate away — clicking Clara's draft from the EG
    *  Bank room dumped the user on a separate item page. Return true = handled; false = fall
@@ -335,6 +354,11 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
    *  the ONE drawer (components/room/filed-drawer.tsx → RoomHistorySection), read-only, beside
    *  everything else this work has filed. One seam, both doors: no door-local fork. */
   onHistory?: (lines: RoomHistoryLine[]) => void;
+  /** THE OPENING CONTRACT (clause 2): the INBOX-BACKED item this room's opening is about, when the
+   *  host knows it (a project room's focused mail). The loose email door needs no prop — its own
+   *  `id` IS the item — and a project room with a mail MOVE falls back to the move's target, so no
+   *  new server plumbing exists at either door. */
+  sourceItemId?: string | null;
 }) {
   const router = useRouter();
   const ent = view.entity;
@@ -371,10 +395,23 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   // time — no stage, no overlay, no second rendering of a deed that already has one.
   // ══════════════════════════════════════════════════════════════════════════════════════════════
   const mountedCards = (artifacts ?? []).filter((a) => !!a.node);
+  // THE MOVE'S OWN SHAPE — read off the ref's kind, the one thing the board states about the deed.
+  // An `inbox:` move is a MAIL deed: its editor is the email card, and the composer overlay is the
+  // machine this law exists to keep unreachable.
+  const moveIsMail = (respMove?.ref ?? '').startsWith('inbox:');
   const cardForMove = (() => {
     if (respMoveTargetId) {
-      return mountedCards.find((a) =>
+      const exact = mountedCards.find((a) =>
         (a.anchorKey ?? '').includes(respMoveTargetId) || a.key.includes(respMoveTargetId)) ?? null;
+      if (exact) return exact;
+      // THE BOARD CAN LOSE A ROW; THE DOOR MUST NOT LOSE ITS CARD (found live, Sep 18 — a data
+      // eviction). A VALIDATED ref that matches no mounted card used to die here and drop the click
+      // onto the stage fallback below — the one behaviour this law forbids. The same rule that
+      // already covers an unbound ref covers a ref whose row went missing: with exactly ONE card of
+      // the move's own kind in the thread there is no guess to make, so the door leads to it. Two
+      // cards of a kind and it stays null — code never guesses between two.
+      const ofKind = mountedCards.filter((a) => (stageOfArtifactKey(a.key) === 'reply') === moveIsMail);
+      return ofKind.length === 1 ? ofKind[0] : null;
     }
     // A MOVE WITHOUT A VALIDATED REF STILL HAS ONE OBJECT (Sep 14): the composed move names the
     // deed in words but the board couldn't bind its ref, and the room mounts EXACTLY ONE card. That
@@ -577,11 +614,32 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
     if (turns.some((t) => t.role === 'user')) return null;  // the exchange has started — step aside
     const name = ent?.name?.trim();
     const pinned = ent?.brief ?? view.brief ?? null;
-    if (pinned) return name ? `Fresh start on ${name}. What do you want to pick up?` : 'Fresh start. What do you want to pick up?';
     const sum = (ent?.summary ?? '').trim();
+    // ── A ROOM WITH A RECORD IS NEVER GREETED AS A NEW ONE (owner, Sep 18 — a two-month-old
+    // project answered "Fresh start on <project>") ────────────────────────────────────────────────
+    // The greeting was derived from the LIVE conversation alone, and a reset ARCHIVES turns: the
+    // record was intact, filed, one drawer away — and the seat introduced itself as if the work had
+    // begun this minute. The reader's own history is not something the room may forget out loud.
+    //
+    // DERIVED FROM WHAT THE ROOM ALREADY HOLDS (no second fetch, no new fact): a composed brief, a
+    // brief watermark, a synthesized summary and any standing narration each exist only because
+    // this work has a past. Only a room with none of them is genuinely new.
+    const hasRecord = !!pinned || !!(ent?.briefAt ?? view.briefAt) || !!sum || turns.length > 0;
+    const invite = hasRecord
+      ? (name ? `Picking ${name} back up — what do you want to look at?` : 'Picking this back up — what do you want to look at?')
+      : (name ? `Fresh start on ${name}. What do you want to pick up?` : 'Fresh start. What do you want to pick up?');
+    // ── THE OPENER NEVER STANDS AS A SECOND GREETER (THE OPENING CONTRACT, clause 5 — owner walk,
+    // Sep 19) ────────────────────────────────────────────────────────────────────────────────────
+    // With a position pinned one bubble above, "Picking <X> back up" is the room naming its own
+    // subject a second time, in a second bubble, under a second copy of the same face. Wave B's
+    // grouping merged the faces; the RESTATEMENT is a words problem, and it is solved by saying
+    // less: with a brief standing, the opener is PURELY the invitation — no preamble, no subject.
+    // And when that brief already ends by asking something, the turn is ALREADY back with the
+    // reader: a question under a question is the machine talking to itself, so nothing renders.
+    if (pinned) return /\?\s*$/.test(pinned.trim()) ? null : 'What do you want to pick up?';
     const firstSentence = sum ? (sum.match(/^[\s\S]{0,220}?[.!?](?=\s|$)/)?.[0] ?? null) : null;
     if (firstSentence) return `${firstSentence} What do you want to pick up?`;
-    return name ? `Fresh start on ${name}. What do you want to pick up?` : null;
+    return name ? invite : null;
   })();
   const openerRef = useRef<string | null>(null);
   openerRef.current = openerText;
@@ -935,16 +993,53 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   // fields (anchor · summary · debts) are ONLY the fallback until the first compose lands — and
   // they ride the SAME pinned seat, so there is never a second prose opening anywhere.
   const composed = ent?.brief ?? view.brief ?? null;
+  // ══ THE ASK LINE SPEAKS THE COUNTERPARTY'S OWN ASK (THE OPENING CONTRACT, clauses 2+3 — the
+  // owner's Sep 19 walk) ═══════════════════════════════════════════════════════════════════════
+  //
+  // This stitch is the pre-compose opening (and the one that paints first on every cold open), and
+  // the walk found three lies in its one sentence:
+  //
+  //   · "Sam is asking you to decide whether to engage with Sam's collaboration proposal" — the
+  //     counterparty named TWICE, and a frame that is not theirs at all. Deciding is OUR reading of
+  //     what arrived; the anchor's `ask` is the understanding's verb-first line, which is sometimes
+  //     the counterparty's actual request ("send the signed form") and sometimes the machine's own
+  //     disposition ("decide whether to…"). Fusing the second into "X is asking you to…" puts our
+  //     words in their mouth. So the machine-framed shapes are DETECTED and attributed to the
+  //     machine, with the counterparty kept as what they actually are: the sender.
+  //   · "Clara drafted a reply below" — the speaker narrating herself, with nothing below. THE ONE
+  //     LAW, imported: the claim survives only while its card is MOUNTED in this stream, and the
+  //     seat's own name collapses to "I" through lib/room/self-voice.
+  //
+  // FIXED HERE, NOT IN THE JUDGE: the verdict's words are cached per item and JUDGE_VERSION was
+  // bumped this same day — re-judging the world twice over a framing question is spend for a
+  // sentence the composition layer already owns. The judge keeps saying what the work IS; this
+  // seat decides whose mouth it comes out of.
   const anchorLine = (() => {
     const a = view.anchor;
     const who = a?.who ? spokenName(a.who) : null;
     const askText = a?.ask ? a.ask.charAt(0).toLowerCase() + a.ask.slice(1).replace(/\.+$/, '') : null;
-    // Never lowercase the drafter — "I"/a name stays capital mid-sentence ("— I drafted…").
-    const prep = a?.prepared ? (a.prepared === 'draft' ? 'I drafted a reply below' : `${a.prepared.split(' ')[0]} drafted a reply below`) : null;
-    if (who && askText) return `${who} is asking you to ${askText}${prep ? ` — ${prep}` : ''}.`;
-    if (askText) return `This needs you to ${askText}${prep ? ` — ${prep}` : ''}.`;
-    if (prep) return `${prep}.`;
-    return null;
+    // OUR disposition, not their request — the verbs the judge uses to say what the reader must do
+    // with what arrived. A counterparty asks for a thing; they do not ask you to "decide".
+    const machineFramed = !!askText
+      && /^(decide|choose|determine|assess|evaluate|weigh|consider|review|triage|judge)\b/.test(askText);
+    // THE CLAIM RENDERS OR IT IS NOT MADE: "below" is true only while the card is in this stream.
+    const replyMounted = mountedCards.some((c) => c.key === 'reply');
+    const prep = a?.prepared && replyMounted
+      ? collapseSelfVoice(
+          a.prepared === 'draft' ? 'I drafted a reply below' : `${a.prepared.split(' ')[0]} drafted a reply below`,
+          seat?.name ?? null)
+      : null;
+    const tail = prep ? ` — ${prep}` : '';
+    const line = who && askText
+      ? (machineFramed
+        // Their seat (sender) and our frame (the disposition), in that order, never fused.
+        ? `From ${who} — this needs you to ${askText}${tail}.`
+        : `${who} is asking you to ${askText}${tail}.`)
+      : askText ? `This needs you to ${askText}${tail}.`
+      : prep ? `${prep}.`
+      : null;
+    // A person is introduced once per sentence; the second mention is "they"/"their".
+    return line ? nameOncePerSentence(line, [who]) : null;
   })();
   const openingText = composed ?? (inRoom
     ? (ent?.summary ?? (turns.length === 0
@@ -987,22 +1082,57 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
         // The merged card's click carries the STAGE INTENT — Open lands on the prepared thing (the
         // host raises the stage), never the bare thread.
         if (mergedArt && respMoveTargetId && onStage?.(stageOfArtifactKey(mergedArt.key), respMoveTargetId)) return;
+        // ── THE FALLBACK NEVER RAISES A REPLY COMPOSER (Sep 18) ──────────────────────────────────
+        // The two branches below were the ladder's last rungs, and both ended in the old split-screen
+        // stage: a self-targeting move asked the host for a 'reply' stage outright, and a mail move
+        // whose card had been evicted from the board navigated into a door that raises one. The law
+        // above says a mail deed flows in the thread and its card IS the editor — so when that card
+        // is absent the door goes no deeper than the THREAD (the same place the card's own
+        // "Thread →" lands), and with nowhere left to go the seat SAYS SO rather than renting a
+        // second editor for a draft the board no longer holds.
+        // Forward and invite keep their stages: their cards are not in the thread yet.
+        if (moveIsMail) {
+          if (moveHref && !selfTarget) { go(moveHref); return; }
+          pushDealTurn(roomKey,
+            "That prepared work isn't on the board right now — there's nothing to open yet. Ask me to prepare it again and it'll land here as a card.",
+            { key: 'move-without-card', ephemeral: true });
+          return;
+        }
         if (selfTarget) { if (!onStage?.('reply', id)) { /* the stage host isn't mounted — nothing to do */ } return; }
         if (moveHref) go(moveHref);
       }
     : null;
+  // ══ Q6 · A CTA REVIEWS WORK DONE (attention-plan PART III) ═════════════════════════════════════
+  // A primary button promises that something was PREPARED and the user's part is to review it. The
+  // walk found "Next: Confirm Sep 14 call status, send material, lock call time" standing as one —
+  // a to-do list in button costume, composed weeks earlier by the state synthesis.
+  //
+  // The composed move is already floored at composition (lib/room/brief.ts consults the board and
+  // marks an unstaged move `offer`). THE PRE-COMPOSE FALLBACK NEVER PASSED A COMPOSER AT ALL, so it
+  // is floored HERE against the fact this pane actually holds: does this room mount prepared work?
+  // Same predicate, same offer sentence, one implementation (lib/room/cta-law).
+  const roomHasStagedWork = (artifacts?.length ?? 0) > 0;
+  const fallbackMove = (!resp && ent?.nextMove && !echoesAnchor(ent.nextMove, view.anchor?.ask ?? null))
+    ? enforceCtaLaw({ label: `Next: ${ent.nextMove}`, ref: ent.nextMoveHref ?? null },
+      { targetPrepared: roomHasStagedWork })
+    : null;
   const pinnedActions: ThreadAction[] = [];
-  if (resp?.move) {
+  // THE CoS's OFFER LINE — what stands in the CTA's place when the deed is not staged. One seat,
+  // whether the demotion happened at composition or here.
+  const ctaOffer: string | null = resp?.move?.offer
+    ? (resp.move.offerText ?? shapingOffer(resp.move.label))
+    : (fallbackMove?.demoted ? fallbackMove.offerText : null);
+  if (resp?.move && !resp.move.offer) {
     // A CARD IN THE THREAD IS A LIVE DESTINATION (Sep 14) — the CTA is clickable whenever it has
     // somewhere real to go, and its own card counts first.
     const live = (cardForMove || moveHref || selfTarget || mergedArt) && moveClick;
     pinnedActions.push({ label: resp.move.label, tone: 'primary', ...(live ? { onClick: moveClick! } : {}) });
-  } else if (!resp && ent?.nextMove && !echoesAnchor(ent.nextMove, view.anchor?.ask ?? null)) {
-    // Pre-compose fallback: the legacy next-move line, deed-only, in the SAME seat.
-    const target = ent.nextMoveHref && !(!inRoom && ent.nextMoveHref.includes(`/item/${id}`)) ? ent.nextMoveHref : null;
+  } else if (fallbackMove?.move && !fallbackMove.demoted) {
+    // Pre-compose fallback, staged: the legacy next-move line, deed-only, in the SAME seat.
+    const target = ent!.nextMoveHref && !(!inRoom && ent!.nextMoveHref!.includes(`/item/${id}`)) ? ent!.nextMoveHref! : null;
     pinnedActions.push(target
-      ? { label: `Next: ${ent.nextMove}`, tone: 'primary', onClick: () => go(target) }
-      : { label: `Next: ${ent.nextMove}`, tone: 'quiet' });
+      ? { label: fallbackMove.move.label, tone: 'primary', onClick: () => go(target) }
+      : { label: fallbackMove.move.label, tone: 'quiet' });
   }
   // (No chip-row seat any more — see THE CHIPS ARE RETIRED FROM THE ROOM, at the composer below.
   //  `resp.offers` stays served and deduped at composition; the room renders none of them.)
@@ -1037,7 +1167,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   // the law is "one agenda", never "hide the ask". Without a composed brief the ask's own sentence
   // rides into the pinned card with its rows, because nothing above it names the gap.
   // ══════════════════════════════════════════════════════════════════════════════════════════════
-  const pinnedSpeaks = !!(composed || openingText || pinnedActions.length > 0);
+  const pinnedSpeaks = !!(composed || openingText || pinnedActions.length > 0 || ctaOffer);
   const foldedAsk = pinnedSpeaks && liftedAsk?.checklist?.length ? liftedAsk : null;
 
   // WHAT THE WORK ITSELF IS CALLED — the context the go-ahead test judges a missing item against:
@@ -1050,7 +1180,49 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
     view.anchor?.ask ?? null,
   ];
 
-  const pinnedNode = (showShimmer || secondarySummary || owesYou || owesThem || view.gap || mergedArt || foldedAsk) ? (
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  // THE OPENING IS SPEAK → SHOW → OFFER (docs/threads-plan.md, THE OPENING CONTRACT, clauses 1+2).
+  //
+  // "No ask, decision, or brief serves without its object in reach." The walk found the room asking
+  // the reader to act on a request it never showed them — and a decision card saying nothing was
+  // attached while the decision's object was the inbound message sitting one fetch away.
+  //
+  // WHICH OBJECT: the loose email door's own item; a project room's focused mail (the host's prop);
+  // failing that, a mail MOVE's own target, which the room already validated client-side. No new
+  // server plumbing at either door.
+  //
+  // NEVER TWO RENDERINGS OF ONE THREAD (the owner's second constraint, enforced twice):
+  //  · if a card for that same item already RENDERS THE INBOUND'S OWN WORDS (`showsSource`), the
+  //    object card does not mount — the reader never meets two excerpts of one conversation;
+  //
+  //    ⚠️ THE TEST WAS "IS A CARD MOUNTED", AND IT HID THE COMMONEST DOOR (owner walk, Sep 19).
+  //    An item with a prepared draft mounts the EmailCard — and the EmailCard is the REPLY: its
+  //    to/subject/body are the words going OUT. It never shows the message being answered. So the
+  //    one state where showing the inbound matters most — "here is what they asked, here is what
+  //    I'd send" — was exactly the state that suppressed it. The suppression now keys on the one
+  //    fact that decides it (does that card carry the source's words?), which today is never true,
+  //    so the object card mounts ABOVE the reply: the inbound you are answering, then the answer.
+
+  //  · and it mounts at exactly ONE seat per stream, by priority: the DECISION (the ask that needs
+  //    it most) → the PINNED opening (which is also where a folded ask lives) → the lifted ask's
+  //    own bubble. Every one of those seats is within a screen of the others; three copies of one
+  //    message would be the same noise this law exists to remove.
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  const objectItemId = kind === 'email' ? id : (sourceItemId || (moveIsMail ? respMoveTargetId : null));
+  const objectAlreadyMounted = !!objectItemId
+    && mountedCards.some((a) => !!a.showsSource
+      && ((a.anchorKey ?? '').includes(objectItemId) || a.key.includes(objectItemId)));
+  const objectCard = objectItemId && !objectAlreadyMounted ? (
+    <SourceObjectMount itemId={objectItemId}
+      onOpenThread={() => go(`/item/${objectItemId}?kind=email`)} />
+  ) : null;
+  // A decision that ALREADY shows a prepared object keeps it (that is the work being approved) —
+  // the source then takes the next seat down, where it is the material, not the deliverable.
+  const decisionSeatsObject = !!objectCard && decisionIsPrimary && !decision?.object;
+  const askSeatsObject = !!objectCard && !decisionSeatsObject && !!liftedAsk && !foldedAsk;
+  const pinnedSeatsObject = !!objectCard && !decisionSeatsObject && !askSeatsObject;
+
+  const pinnedNode = (showShimmer || secondarySummary || owesYou || owesThem || view.gap || mergedArt || foldedAsk || ctaOffer || pinnedSeatsObject) ? (
     <div className="space-y-1.5">
       {showShimmer && (
         <div className="space-y-1.5 py-0.5" aria-hidden>
@@ -1058,17 +1230,28 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           <div className="h-3 w-3/5 rounded bg-neutral-100 animate-pulse" />
         </div>
       )}
-      {secondarySummary && <p className="text-[12.5px] text-neutral-500">{secondarySummary}</p>}
-      {owesYou && <p className="text-[12.5px] text-neutral-500">You owe: {owesYou}</p>}
-      {owesThem && <p className="text-[12.5px] text-neutral-500">They owe: {owesThem}</p>}
+      {/* ══ ONE TYPE SCALE PER BUBBLE (THE OPENING CONTRACT, clause 5 — owner: "not a fan") ══════
+          These lines used to render at 12.5px in three colours — a dark headline, a muted middle
+          and a darker offer inside ONE bubble, under a 13px pinned sentence. Four treatments for
+          one voice reads as four voices. They are ONE SIZE (the bubble's own 13px) and ONE muted
+          tone now; hierarchy is SPACING and weight, which is what the kit already defines. */}
+      {secondarySummary && <p className="text-[13px] leading-[1.5] text-neutral-500">{secondarySummary}</p>}
+      {owesYou && <p className="text-[13px] leading-[1.5] text-neutral-500">You owe: {owesYou}</p>}
+      {owesThem && <p className="text-[13px] leading-[1.5] text-neutral-500">They owe: {owesThem}</p>}
       {/* The gap — one plain ask, same channel (never a step list). */}
       {/* ONE ACCENT PER ROOM: the gap is a SENTENCE, not a warning — amber here was a second focus
           point competing with the pinned CTA (owner walk, Sep 7). */}
-      {view.gap && <p className="text-[12.5px] text-neutral-600">{view.gap}</p>}
+      {view.gap && <p className="text-[13px] leading-[1.5] text-neutral-500">{view.gap}</p>}
+      {/* Q6 · THE OFFER IN THE CTA'S SEAT: nothing is staged, so the room offers to shape it —
+          in the speaker's own first person, sayable, and never dressed as a button. */}
+      {ctaOffer && <p className="text-[13px] leading-[1.5] text-neutral-500">{ctaOffer}</p>}
+      {/* SHOW, between the speech and the offer: the thing the position is ABOUT — the source
+          object, in the ONE object card, directly under the words that ask about it. */}
+      {pinnedSeatsObject && <div className="pt-0.5">{objectCard}</div>}
       {mergedArt && (
-        <p className="text-[12.5px] text-neutral-800">
+        <p className="text-[13px] leading-[1.5] text-neutral-500">
           <span className="font-medium">{mergedArt.label}</span>
-          {mergedArt.by && <span className="ml-1.5 text-[11px] font-semibold text-indigo-500">by {mergedArt.by.split(' ')[0]}</span>}
+          {mergedArt.by && <span className="ml-1.5 font-medium text-indigo-500">by {mergedArt.by.split(' ')[0]}</span>}
         </p>
       )}
       {/* The live ask, folded under the position that speaks it — one agenda, one seat. With a
@@ -1076,7 +1259,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           so only the rows ride; without one the ask's own sentence comes with them, because
           nothing above it has said what is missing. */}
       {foldedAsk && !composed && foldedAsk.text && (
-        <p className="text-[12.5px] text-neutral-600">{foldedAsk.text}</p>
+        <p className="text-[13px] leading-[1.5] text-neutral-500">{foldedAsk.text}</p>
       )}
       {foldedAsk && checklistBlock(
         foldedAsk.checklist!,
@@ -1320,13 +1503,18 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
     items.push({
       type: 'actor_bubble', id: 'lifted-ask', actorId: seatId, actorName: seatName,
       actorRoleLabel: seatLabel, text: liftedAsk.text,
-      cards: [{
-        kind: 'custom', id: 'lifted-ask-card',
-        node: checklistBlock(liftedAsk.checklist!,
-          liftedAsk.proceeded || !askAllowsGoAhead(liftedAsk.checklist!, askContext(liftedAsk))
-            ? undefined
-            : proceedChip(liftedAsk.checklist!, () => void proceedEngineAsk(liftedAsk.turnId!))),
-      }],
+      cards: [
+        // SHOW, WITH THE ASK (clause 2): an ask about an inbox-backed item carries the message it
+        // is asking about — the reader is never asked to act on something they must remember.
+        ...(askSeatsObject ? [{ kind: 'custom' as const, id: 'lifted-ask-object', node: objectCard }] : []),
+        {
+          kind: 'custom' as const, id: 'lifted-ask-card',
+          node: checklistBlock(liftedAsk.checklist!,
+            liftedAsk.proceeded || !askAllowsGoAhead(liftedAsk.checklist!, askContext(liftedAsk))
+              ? undefined
+              : proceedChip(liftedAsk.checklist!, () => void proceedEngineAsk(liftedAsk.turnId!))),
+        },
+      ],
     });
   }
 
@@ -1342,6 +1530,13 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
             title={decision.title}
             options={decision.options}
             recommendation={decision.recommendation ?? null}
+            // Q5 · the object rides INTO the one card — the ask and the thing asked about on the
+            // same surface, in the handle grammar (never the document inlined).
+            object={decision.object ?? null}
+            // …and with NO prepared object, the SOURCE one (clause 2): the machine pulls the thing
+            // being decided — the inbound message — instead of the card telling the reader to ask.
+            {...(decisionSeatsObject && !decision.object ? { objectNode: objectCard } : {})}
+            {...(decision.object && decision.onOpenObject ? { onOpenObject: decision.onOpenObject } : {})}
             onChoose={decision.onChoose}
             onDismissCard={decision.onDismiss}
           />

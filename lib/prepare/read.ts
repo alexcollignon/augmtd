@@ -10,7 +10,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export type PreparedArtifact = {
-  kind: 'reply_draft' | 'nudge_draft' | 'deliverable' | 'invite' | 'forward';
+  kind: 'reply_draft' | 'nudge_draft' | 'deliverable' | 'invite' | 'forward' | 'paste_pack';
   title: string | null;
   content: string;
   by: string | null;           // coworker name (attributed) or null (in-house)
@@ -21,6 +21,10 @@ export type PreparedArtifact = {
    *  is this artifact's ONE surface (options + trade-offs + recommendation render THERE; the
    *  prepared strip must not duplicate it as a second document — owner, Aug 12). */
   decision?: { options: Array<{ label: string; tradeoff?: string | null }>; recommendation: string | null; why: string | null } | null;
+  /** THE PASTE PACK (Q8, attention-plan PART III): prepared WORDS for work whose deed is out of
+   *  reach — the note says where they go. Present only on `kind: 'paste_pack'`; a pack is never
+   *  send-shaped (there is no door here that could fire), which is the whole honesty of it. */
+  note?: string | null;
   /** René sweep (Aug 13): an invite with no time / a forward with no recipient is NOT send-shaped —
    *  the send door hard-rejects it, so a Send primary would be a button that cannot fire. false =
    *  staged but missing what the send needs (the machine reads awaiting_input). Absent = ready. */
@@ -102,8 +106,19 @@ export function poolRowsToArtifacts(rows: Array<Record<string, unknown>>, poolKi
   for (const d of rows) {
     if (!d.content) continue;
     if (d.type === 'file' || d.type === 'sent') continue;
-    const meta = (d.metadata ?? {}) as { agentName?: string; worker?: string; attachment?: { fileId: string; filename: string; source?: string }; provenance?: Record<string, string>; version_of?: string; decisionBrief?: boolean; options?: Array<string | { label?: string; tradeoff?: string | null }>; recommendation?: string | null; why?: string | null; prepared_from?: PreparedFrom };
+    const meta = (d.metadata ?? {}) as { agentName?: string; worker?: string; attachment?: { fileId: string; filename: string; source?: string }; provenance?: Record<string, string>; version_of?: string; decisionBrief?: boolean; pastePack?: boolean; note?: string; options?: Array<string | { label?: string; tradeoff?: string | null }>; recommendation?: string | null; why?: string | null; prepared_from?: PreparedFrom };
     if (meta.version_of) continue;
+    // THE PASTE PACK reads FIRST: it is neither a commitment's send-shaped draft nor a document to
+    // review — it is words with a destination, and its note is the only thing that says so.
+    if (meta.pastePack) {
+      out.push({
+        kind: 'paste_pack', title: (d.title as string) ?? null, content: String(d.content),
+        by: meta.agentName ?? meta.worker ?? null, at: (d.created_at as string) ?? null,
+        attachment: null, provenance: meta.provenance ?? null, note: meta.note ?? null,
+        ground: groundFrom(meta.prepared_from),
+      });
+      continue;
+    }
     const isCommitDraft = poolKind === 'commitment' && d.type === 'draft' && !meta.decisionBrief;
     if (isCommitDraft && sawCommitDraft) continue;
     if (isCommitDraft) sawCommitDraft = true;

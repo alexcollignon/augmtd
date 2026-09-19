@@ -2,10 +2,13 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { ChevronDownIcon } from '@heroicons/react/20/solid';
-import { SparklesIcon, CheckCircleIcon, DocumentTextIcon, ExclamationTriangleIcon, PencilSquareIcon, DocumentDuplicateIcon, TableCellsIcon, PresentationChartBarIcon, EnvelopeIcon, ArrowTopRightOnSquareIcon, UserCircleIcon, BoltIcon } from '@heroicons/react/24/outline';
+import { SparklesIcon, CheckCircleIcon, DocumentTextIcon, ExclamationTriangleIcon, PencilSquareIcon, DocumentDuplicateIcon, EnvelopeIcon, ArrowTopRightOnSquareIcon, UserCircleIcon, BoltIcon } from '@heroicons/react/24/outline';
 import { ArrowPathIcon } from '@heroicons/react/20/solid';
 import { ClarificationWidget, ClarificationData } from './clarification-widget';
 import { FrameCard } from '@/components/frames/frame-card';
+// ONE CARD PER KIND (threads plan): the document handle is the kit's own `doc` card, mounted here.
+import { ThreadCardView } from '@/components/thread';
+import { docCardTypeOf } from '@/lib/documents/doc-card';
 import { MENTION_ICONS, MENTION_COLORS, MentionChip } from './chat-input-bar';
 
 // Coworker-chat mention types (coworker/task/document) — mirrors WorkerMentionInput.
@@ -441,16 +444,25 @@ function AssistantMessage({ content, toolCalls, artifactIds, citations, clarific
                   </div>
                 );
               }
-              const ArtIcon =
-                meta?.type === 'spreadsheet' ? TableCellsIcon
-                : meta?.type === 'presentation' ? PresentationChartBarIcon
-                : meta?.type === 'email' ? EnvelopeIcon
-                : DocumentTextIcon;
-              const typeLabel =
-                meta?.type === 'spreadsheet' ? 'Spreadsheet'
-                : meta?.type === 'presentation' ? 'Presentation'
-                : meta?.type === 'email' ? 'Email draft'
-                : 'Document';
+              // THE REVIEW-FIRST DOC CARD (attention-plan D) — ONE RENDERING PER KIND: a produced
+              // DOCUMENT wears the grammar's own `doc` card here, exactly as it does in the Home
+              // thread, and its single deed raises THE ONE panel. An email artifact is a different
+              // deliverable kind (the panel holds its send form) and keeps its own chip.
+              if (meta?.type !== 'email') {
+                const k = docCardTypeOf(meta?.type ?? 'document', null);
+                return (
+                  <div key={id} className="w-full">
+                    <ThreadCardView card={{
+                      kind: 'doc', title: meta?.title ?? 'Document',
+                      docType: k.type, typeLabel: k.label,
+                      ...(meta?.versionLabel ? { versionLabel: meta.versionLabel } : {}),
+                      ...(onViewArtifact ? { onReview: () => onViewArtifact(id) } : {}),
+                    }} />
+                  </div>
+                );
+              }
+              const ArtIcon = EnvelopeIcon;
+              const typeLabel = 'Email draft';
               return (
                 <button
                   key={id}

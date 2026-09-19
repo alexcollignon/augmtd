@@ -292,6 +292,61 @@ export function EmailPreview({ content, artifact, threadId, onSent }: EmailPrevi
   );
 }
 
+// ── THE PLAYER (docs/attention-plan.md, law D: "Review opens the SIDE PANEL — the player idiom") ─
+//
+// THE ONE PLAYER, and it lives here, inside THE ONE PANEL. Its ladder is the honest one:
+//   (a) our OWN produced documents render from their structured content, exactly as they always
+//       have (the callers above this component) — the player is never asked;
+//   (b) a stored PDF plays as a PDF — the same `<iframe src={signedUrl}>` idiom the attachment
+//       lightbox uses for the same bytes;
+//   (c) docx · pptx · xlsx convert SERVER-SIDE through the compute sandbox's LibreOffice lane
+//       (the preview door, cached per version) and then play as (b).
+// A converter that is down, a file that cannot be read, a type nobody can render: all end in the
+// SAME honest state — one sentence of why, and Download. Never a spinner that never resolves, and
+// never an editable surface over rendered pixels (the edit ladder lives in the ask path).
+export function DocumentPlayer({ threadId, artifactId, title }: {
+  threadId: string; artifactId: string; title?: string;
+}) {
+  const [state, setState] = useState<{ url?: string; reason?: string; loading: boolean }>({ loading: true });
+
+  useEffect(() => {
+    let live = true;
+    setState({ loading: true });
+    fetch(`/api/work/threads/${threadId}/artifacts/${artifactId}/preview`)
+      .then(r => (r.ok ? r.json() : { available: false, reason: 'the preview could not be prepared' }))
+      .then((d: { url?: string; available?: boolean; reason?: string }) => {
+        if (!live) return;
+        if (d?.url) setState({ url: d.url, loading: false });
+        else setState({ reason: d?.reason ?? 'no preview is available for this one', loading: false });
+      })
+      .catch(() => { if (live) setState({ reason: 'the preview service could not be reached', loading: false }); });
+    return () => { live = false; };
+  }, [threadId, artifactId]);
+
+  if (state.loading) {
+    return (
+      <div className="h-full flex items-center justify-center text-[13px] text-neutral-400">
+        Preparing the preview…
+      </div>
+    );
+  }
+  if (state.url) {
+    return <iframe src={state.url} className="w-full h-full bg-white" title={title ?? 'Document'} />;
+  }
+  return (
+    <div className="h-full flex flex-col items-center justify-center gap-3 px-6 text-center">
+      <DocumentTextIcon className="w-9 h-9 text-neutral-200" />
+      <p className="text-[13px] text-neutral-500 max-w-[320px]">Preview unavailable — {state.reason}.</p>
+      <button
+        onClick={() => window.open(`/api/work/threads/${threadId}/download?artifactId=${artifactId}`)}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-[12px] font-medium text-neutral-700 hover:border-indigo-300 hover:text-indigo-700 transition-colors"
+      >
+        <ArrowDownTrayIcon className="w-3.5 h-3.5" />Download
+      </button>
+    </div>
+  );
+}
+
 // ── QA report panel ───────────────────────────────────────────────────────────
 
 function QAPanel({ report }: { report: QAReport }) {
@@ -340,6 +395,17 @@ interface ArtifactDetailViewProps {
 
 function ArtifactDetailView({ artifact, threadId, allArtifacts, onBack, onClose, onNavigate, onArtifactsUpdate }: ArtifactDetailViewProps) {
   const ct = contentType(artifact);
+
+  // THE PLAYER'S DOOR (attention-plan D4 — "the PDF player is the universal reviewer"). Our own
+  // produced documents open in the READER, exactly as they always have (their structured content
+  // IS what the writer wrote). But the compiled file — the charts, the brand, the real pages — is
+  // a different thing from its text, and the reader is the only one who knows which they want, so
+  // the choice is a door and never a guess. Conversion happens on THIS click and never at
+  // delivery: a document nobody reviews costs nothing.
+  const ext = String(artifact.storage_path ?? '').split('.').pop()?.toLowerCase() ?? '';
+  const playable = !!artifact.id && ['pdf', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls'].includes(ext);
+  const [rendered, setRendered] = useState(false);
+  const showPlayer = playable && (rendered || ct === 'none');
 
   // All versions of this document, oldest first
   const versionGroup = useMemo(() => {
@@ -405,6 +471,17 @@ function ArtifactDetailView({ artifact, threadId, allArtifacts, onBack, onClose,
             </div>
           )}
 
+          {/* THE ONE TOGGLE — the reader's own choice between the words and the rendered file.
+              It renders only where a real file can actually play (never a door onto nothing). */}
+          {playable && ct !== 'none' && (
+            <button
+              onClick={() => setRendered(v => !v)}
+              className="flex-shrink-0 rounded-lg px-1.5 py-1 text-[11px] font-medium text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+              title={rendered ? 'Show the text' : 'Show the rendered file'}
+            >
+              {rendered ? 'Reader' : 'Rendered →'}
+            </button>
+          )}
           {artifact.storage_path && (
             <button
               onClick={() => window.open(`/api/work/threads/${threadId}/download?artifactId=${artifact.id}`)}
@@ -441,6 +518,13 @@ function ArtifactDetailView({ artifact, threadId, allArtifacts, onBack, onClose,
             <div className="flex-1 min-h-0">
               <FrameCard artifactId={artifact.id} title={artifact.title} full />
             </div>
+          </div>
+        ) : showPlayer && artifact.id ? (
+          /* THE PLAYER (attention-plan D) — a stored file with nothing structured to render used
+             to dead-end at "No preview available" while its bytes sat one signed URL away. PDFs
+             play directly; office files convert once per version in the locked room. */
+          <div className="flex-1 min-h-0">
+            <DocumentPlayer threadId={threadId} artifactId={artifact.id} title={artifact.title} />
           </div>
         ) : (
         <div className="flex-1 overflow-y-auto px-6 py-6">
