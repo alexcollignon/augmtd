@@ -108,6 +108,7 @@ def check_calendar(
     propose_slots: bool = False,
     duration_minutes: int = 30,
     count: int = 3,
+    refresh: bool = False,
 ) -> str:
     """Read the user's calendar for a date range — busy/free per day, and optionally propose
     genuinely free slots. ALWAYS use this before any claim about availability, free time, or
@@ -119,8 +120,10 @@ def check_calendar(
         propose_slots: Also propose free working-hour slots inside the window.
         duration_minutes: Length of a proposed slot in minutes. Default 30.
         count: How many slots to propose. Default 3, max 5.
+        refresh: Re-read the calendar from the provider first. Set this when the user says they
+            just changed, added or deleted something.
     """
-    config: dict = {"propose_slots": propose_slots, "duration_minutes": duration_minutes, "count": count}
+    config: dict = {"propose_slots": propose_slots, "duration_minutes": duration_minutes, "count": count, "refresh": refresh}
     if from_date:
         config["from_date"] = from_date
     if to_date:

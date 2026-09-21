@@ -1256,7 +1256,7 @@ function WhisperLine({ w, whyNow, handlers }: {
   );
 }
 
-/** THE ONE QUIET DOOR — Q2's gradient, as two numbers that mean two different things.
+/** THE ONE QUIET DOOR — Q2's gradient, now as the ONE number that is actually a queue.
  *
  *  THE NAME IS THE LAW (A3): "Everything else" read as a guilt backlog — a pile the reader failed to
  *  get to. And "Held quiet · 4,939" was the next failure along: a number that large is not a queue,
@@ -1265,14 +1265,21 @@ function WhisperLine({ w, whyNow, handlers }: {
  *  alive and real and held only because today's five were fuller — and rests the big one beside it
  *  as the quiet fact it is: those are HANDLED, not owed.
  *
- *  Both numbers are SERVED. The client renders them and computes neither. */
-function CalmDoor({ waiting, handledQuietly, handledToday, onOpen }: {
+ *  THE RECEIPT IS GONE FROM THIS LINE (owner, Sep 21 — "it looks clickable/meaningful but opens
+ *  nothing; let's just remove that label"). "N handled quietly · M today" sat at the right edge
+ *  wearing a button's affordance for a door that only repeated the left one. The ACCOUNT of what
+ *  was filed quietly is NOT lost — it is the held page's own intro sentence (lib/home/held-words.ts
+ *  `heldIntro`, composed from the numbers the route served), one click behind this door, where a
+ *  reader who asks for the account gets the whole of it instead of a teaser.
+ *
+ *  The number that remains is SERVED. The client renders it and computes none. */
+function CalmDoor({ waiting, onOpen }: {
   /** `null` = not known yet (the brief has not landed). The door still renders — it simply does
    *  not speak a number it does not have. */
-  waiting: number | null; handledQuietly: number; handledToday: number; onOpen: () => void;
+  waiting: number | null; onOpen: () => void;
 }) {
   // ── THE DOOR ALWAYS RENDERS (regression, Sep 18) ──────────────────────────────────────────────
-  // It used to return NULL whenever all three numbers were zero — which is exactly the state a Home
+  // It used to return NULL whenever its numbers were all zero — which is exactly the state a Home
   // is in while its brief is still in flight, and exactly the state the day anchor leaves it in when
   // every seat renders under a meeting. The result was a page with nothing at all between the
   // composer and TODAY: no rows, no door, no way to the account. The door is the LEDGER'S ONE ENTRY;
@@ -1284,18 +1291,6 @@ function CalmDoor({ waiting, handledQuietly, handledToday, onOpen }: {
         className="text-[12px] text-neutral-400 hover:text-indigo-600 transition-colors">
         {typeof waiting === 'number' && waiting > 0 ? `When you're ready · ${waiting} →` : "When you're ready →"}
       </button>
-      <span className="flex-1" />
-      {(handledQuietly > 0 || handledToday > 0) && (
-        <button onClick={onOpen}
-          className="text-[12px] text-neutral-400 hover:text-neutral-600 transition-colors">
-          {handledQuietly > 0 && `${handledQuietly.toLocaleString()} handled quietly`}
-          {handledToday > 0 && (
-            <span className={handledQuietly > 0 ? 'text-neutral-300' : undefined}>
-              {handledQuietly > 0 ? ` · ${handledToday} today` : `${handledToday} handled today`}
-            </span>
-          )}
-        </button>
-      )}
     </div>
   );
 }
@@ -1554,19 +1549,41 @@ export function HomeView() {
   const searchParams = useSearchParams();
   useEffect(() => {
     const v = searchParams.get('view');
-    if (v && (LENSES as readonly string[]).includes(v)) setViewState(v as HomeViewLens);
+    if (v && (LENSES as readonly string[]).includes(v)) {
+      setViewState(v as HomeViewLens);
+      // AN ADDRESS IS NOT THE HOME'S DOOR: a lens reached by URL closes back onto itself, not onto
+      // a Home the reader never came from. The ECHO of our own replaceState is not an address
+      // change, though — it is the door's own click coming back around — so it clears nothing.
+      if (selfNavRef.current === v) selfNavRef.current = null;
+      else setHeldFromHome(false);
+    }
   }, [searchParams]);
   // THE LENS ANNOUNCER — replaceState is invisible to useSearchParams subscribers, so the
   // sidebar mirrors the active lens through this event (fires on every lens change, any path).
   useEffect(() => {
     try { window.dispatchEvent(new CustomEvent('aug:view-changed', { detail: { view } })); } catch { /* SSR-safe */ }
   }, [view]);
+  // OUR OWN WRITE, MARKED. Next syncs `useSearchParams` with a history.replaceState, so the effect
+  // above re-fires for the lens THIS component just wrote — indistinguishable from a real address
+  // change unless the writer says so. It matters for one thing only: a lens the Home's door opened
+  // must not have its recorded origin wiped by the echo of its own navigation.
+  const selfNavRef = useRef<HomeViewLens | null>(null);
   const setView = useCallback((v: HomeViewLens) => {
+    selfNavRef.current = v;
     setViewState(v);
     const url = new URL(window.location.href);
     if (v === 'dashboard') url.searchParams.delete('view'); else url.searchParams.set('view', v);
     window.history.replaceState({}, '', url);
   }, []);
+  // ── THE HELD LENS REMEMBERS WHERE IT WAS OPENED FROM (owner walk, Sep 21) ─────────────────────
+  // "Back returns WHERE YOU CAME FROM" (components/ui/back-link.tsx, Aug 25). The Home's own door
+  // opens INTO the triage deck, so closing the deck must land back HERE — it used to drop the
+  // reader on the held LIST, a page they never asked for. The origin is RECORDED at the door
+  // (never inferred from history length, which cannot tell a door from a deep link): this one
+  // handler is the only thing that sets it, and an address that names the lens clears it below, so
+  // a deep link's Close stays on the address it asked for.
+  const [heldFromHome, setHeldFromHome] = useState(false);
+  const openHeldFromHome = useCallback(() => { setHeldFromHome(true); setView('held'); }, [setView]);
   // Clicking "Home" in the left nav while already on /home (viewing Timeline/Projects) fires this event
   // (a plain <Link> can't reset the lens because the switcher tracks it via replaceState). Reset to Dashboard.
   // ── A DEEP LINK TO A LENS ALWAYS OPENS THAT LENS (regression, Sep 18: /home?view=held rewrote
@@ -2636,8 +2653,7 @@ export function HomeView() {
                   waiting={typeof b?.attention?.heldWaiting === 'number'
                     ? b.attention.heldWaiting + deckHeldRows.length
                     : b ? restRows.length : null}
-                  handledQuietly={b?.attention?.heldHandled ?? 0}
-                  handledToday={ringCleared} onOpen={() => setView('held')} />
+                  onOpen={openHeldFromHome} />
               </div>
             </RiseIn>
 
@@ -2651,8 +2667,10 @@ export function HomeView() {
                 strictly more is accounted for than the wall ever was.
                 (The legacy deck that used to live down here — the "What needs you N" header, the
                 Tasks/By-project toggle, the boxed OVERDUE cards, the day ring and the This-week
-                rail — stays retired; the calendar lives on /meetings and the ring's count still
-                rests beside the door as "N handled today".) */}
+                rail — stays retired; the calendar lives on /meetings. The handled receipt that used
+                to rest beside the door came off the line entirely on Sep 21, by owner's call: it
+                wore a button's affordance for a door that only repeated the left one, and the held
+                page's own intro is where that account is actually spoken.) */}
           </div>
         )}
 
@@ -2675,7 +2693,7 @@ export function HomeView() {
         {view === 'held' && (
           <RiseIn key="lens-held">
             <HeldQuietView ledger={heldLedger} deckHeld={deckHeldRows} warmHeld={warmHeldRows}
-              servedDay={b?.today ?? null}
+              servedDay={b?.today ?? null} fromHome={heldFromHome}
               onBack={() => setView('dashboard')} onRefresh={reloadHeld} />
           </RiseIn>
         )}

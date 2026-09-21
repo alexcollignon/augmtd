@@ -764,7 +764,12 @@ async function main() {
   ok('the rail\'s WHEN summary reads the same one reader (no second door derivation)',
     /const \{ primary, doors \} = normalizeTriggers\(workflow\);/.test(studioCode.slice(studioCode.indexOf('function whenEntries('))));
 
-  console.log('\nP — THE FOUR-DOOR PARITY SWEEP (one schema, four doors; mode: source):');
+  // ⚠️ RENAMED (Sep 21). This sweep asserts THREE doors — describe-it, coworker chat, canvas — and
+  // never did assert the constitution's fourth, the HOME CHAT. That mis-naming is part of how the
+  // chief door went without a single task verb for months while a gate said "four-door parity".
+  // The Home-chat half now lives where it can be derived rather than transcribed: `doorParity()` in
+  // lib/work/surface-registry.ts, asserted at P21b in scripts/smoke-promise.ts.
+  console.log('\nP — THE TRIGGER-DOOR PARITY SWEEP (one schema; describe-it · coworker chat · canvas — the Home-chat door is gated by doorParity/P21b in smoke-promise):');
   ok('DOOR 1 (describe-it): generate-config authors through THE ONE SANITISER',
     /import \{ authorDoors[^}]*\} from '@\/lib\/workflows\/author-doors'/.test(genCfgCode)
     && /await authorDoors\(generated\.triggers, \{ supabase, userId, features \}\)/.test(genCfgCode));
@@ -5790,8 +5795,11 @@ async function main() {
         /resumeSeeded === true \? \{ resumeSeeded: true \} : \{\}/.test(dispatchSrc));
 
       const chatSrc = stripComments(readFileSync('app/api/work/threads/[id]/chat/route.ts', 'utf8'));
+      // RE-POINTED (Sep 21, the door-parity wave): the DEFINITION moved to the one derived table
+      // (lib/work/chat-tool-defs.ts); the route still DISPATCHES it. Same law, two files.
       ok('FOUR-DOOR PARITY — the native loop registers AND dispatches the verb',
-        /supplyRunInputDefinition,/.test(chatSrc) && /case 'supply_run_input': \{/.test(chatSrc)
+        /supply_run_input: supplyRunInputDefinition/.test(stripComments(readFileSync('lib/work/chat-tool-defs.ts', 'utf8')))
+        && /case 'supply_run_input': \{/.test(chatSrc)
         && /executeSupplyRunInput\(/.test(chatSrc));
       const internalSrc = stripComments(readFileSync('app/api/internal/agentos/tasks/route.ts', 'utf8'));
       ok('…and the AgentOS runtime passes it through to the SAME executor',
@@ -5799,7 +5807,9 @@ async function main() {
       const pySrc = readFileSync('infra/agentos/tools_tasks.py', 'utf8');
       ok('…with the Python tool mirrored and registered (box redeploy pending, TS accepts it today)',
         /def supply_run_input\(/.test(pySrc) && /_call\("supply_run_input"/.test(pySrc)
-        && /run_task, supply_run_input, duplicate_task/.test(pySrc));
+        // RE-POINTED (Sep 21): TASK_TOOLS gained set_tasks_status between run_task and
+        // supply_run_input. The law is REGISTERED IN THE LIST, never the neighbours' order.
+        && /TASK_TOOLS = \[[\s\S]*?\bsupply_run_input\b[\s\S]*?\]/.test(pySrc));
       ok('THE PROMPT TEACHES THE ATTACHMENT PATH (an attached file is supplied BY NAME)',
         /supply_run_input — a run can STOP and ask/.test(chatSrc)
         && /lands in the user's Knowledge under its own filename/.test(chatSrc));

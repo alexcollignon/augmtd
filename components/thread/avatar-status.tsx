@@ -46,9 +46,28 @@ export function accentFor(key: string): string {
   return ACCENTS[h % ACCENTS.length];
 }
 
+/**
+ * THE RING ORBITS OUTSIDE THE FACE — and the geometry of that overhang is OWNED HERE, exported, so
+ * no surface has to guess at it (owner screenshot, Sep 21: the working ring was sliced down its left
+ * side in the Home chat — the avatar sits at the very left edge of the thread's reading column and
+ * the column sat flush against its scroller's padding box, which is where an `overflow-y-auto` box
+ * clips. The arc was drawn where nothing could paint it).
+ *
+ * Two facts, one source: `ringOverhang(size)` is how far the arc reaches beyond the avatar's own
+ * box, and `AVATAR_RING_GUTTER` is the breathing room a mounting scroller must reserve on each side
+ * so the arc is never clipped at ANY face size the kit uses (28px in the timeline, 32px in the
+ * header, 26px in the pile — ringOverhang tops out at 5px there; 8 leaves real air and is a scale
+ * value). The kit's one scroller (thread-shell) reserves it for every surface at once.
+ */
+export function ringOverhang(size: number): number {
+  return Math.max(2, Math.round(size * 0.14));
+}
+
+export const AVATAR_RING_GUTTER = 8;
+
 /** The orbiting arc — a 20% arc of the circle, spinning once per 2.4s. */
 export function WorkRing({ size, color }: { size: number; color: string }) {
-  const pad = Math.max(2, Math.round(size * 0.14));
+  const pad = ringOverhang(size);
   const box = size + pad * 2;
   const r = box / 2 - pad / 2;
   const c = 2 * Math.PI * r;

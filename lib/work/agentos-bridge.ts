@@ -17,6 +17,8 @@ import { buildSkillsBlock } from '@/lib/work/worker-skills-context'
 import { buildConnectedIntegrationsBlock } from '@/lib/integrations/connection'
 import { logAIUsage } from '@/lib/ai/log-usage'
 import { enforceWeekdayDatePairs } from '@/lib/utils/weekday-floor'
+// THE DEED FLOOR (Sep 21) — one predicate, every lane that composes a final say.
+import { deedFloorVerdict, deedAmendment, deedFromToolResult, type DeedRecord } from '@/lib/work/deed-floor'
 
 // AgentOS is hardcoded to mirror the bedrock_optimised tier (infra/agentos/models.py) — every
 // AgentOS-routed call by construction uses that tier's models, so cost logging can log
@@ -360,9 +362,15 @@ export async function streamWorkerViaAgentOS({
   // dependencies carries both tool-routing IDs (agent_id, thread_id — read by
   // Python tools) and the per-user context block (rendered into the model prompt
   // via the agent's add_dependencies_to_context=True).
+  // `user_text` is the USER'S OWN SENTENCE, forwarded by the Python tools to the internal door so
+  // the deeds whose dangerous arguments are decided in code (which direction, whether "all" was
+  // meant) read what the person said rather than what a model extracted. Never prompt material —
+  // it is already the message — purely a floor input. (Box redeploy owed for the Python half; the
+  // floors fail closed without it.)
   form.set('dependencies', JSON.stringify({
     agent_id: agentId,
     thread_id: threadId,
+    user_text: message,
     ...(userContext ? { user_context: userContext } : {}),
   }))
 
@@ -381,6 +389,7 @@ export async function streamWorkerViaAgentOS({
 
   let fullText = ''
   const toolCalls: Array<{ name: string; summary: string }> = []
+  const deeds: DeedRecord[] = []
   const artifactMeta: Record<string, { title: string; type: string }> = {}
   const emailDrafts: Record<string, unknown>[] = []
   const workflowDrafts: Record<string, unknown>[] = []
@@ -443,6 +452,12 @@ export async function streamWorkerViaAgentOS({
               const summary = summarizeToolResult(name, tool.result)
               send({ type: 'tool_result', name, id: tool.tool_call_id ?? name, summary })
               toolCalls.push({ name, summary })
+              // THE DEED LEDGER ON THIS LANE (Sep 21) — the Python @tools call back into our own
+              // internal routes, which wrap the SAME executors, so the string arriving here is OUR
+              // deterministic sentence. `deedFromToolResult` reads only what those executors write
+              // and yields nothing for anything else.
+              const deed = deedFromToolResult(name, tool.result)
+              if (deed) deeds.push(deed)
               // Document generation surfaces an artifact (Op-B). The tool result
               // carries a [[artifact:id|type|title]] marker — emit + accumulate.
               const art = parseArtifactMarker(tool.result)
@@ -472,6 +487,19 @@ export async function streamWorkerViaAgentOS({
         }
 
         if (thinkingOpen) send({ type: 'thinking_done' })
+        // THE DEED FLOOR (Sep 21) — AMENDMENT ONLY on this lane. The answer has already streamed to
+        // the client token by token; there is nothing to retract and a corrective round would mean
+        // a second AgentOS run over a reply the user has already read. So a claim the turn's ledger
+        // cannot carry ships with the count the code measured beside it, and that amendment is part
+        // of the persisted turn below — the record and the screen say the same thing.
+        {
+          const { breach } = deedFloorVerdict(fullText, deeds)
+          if (breach) {
+            const note = deedAmendment(breach)
+            fullText += note
+            send({ type: 'text', delta: note })
+          }
+        }
         send({ type: 'done' })
       } catch (err) {
         console.error('[AgentOS bridge] stream error:', err)
@@ -484,7 +512,10 @@ export async function streamWorkerViaAgentOS({
           // FUTURE event in the PAST TENSE with a fabricated weekday, inside a publish-ready draft.
           // A weekday is arithmetic over a date, so code owns it; only unambiguous pairs are touched
           // and the pass is idempotent. The PERSISTED turn is the record (streamed partials stay raw).
-          const persistedText = enforceWeekdayDatePairs(fullText)
+          // THE ANCHOR LAW (Sep 21): the user's own words ride along, so a weekday THEY asked for
+          // outranks a date the model derived — without them the floor would "correct" the weekday
+          // and launder the miscount into a confident wrong day.
+          const persistedText = enforceWeekdayDatePairs(fullText, { userText: message })
           await adminClient.from('work_messages').insert({
             thread_id: threadId,
             role: 'assistant',

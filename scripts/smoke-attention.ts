@@ -453,9 +453,13 @@ async function dayFrameGates() {
       && /\{whyNow \? <span className="text-neutral-400"> — \{whyNow\}<\/span>/.test(home));
     // (Q2, Sep 17: the door's WORDS changed — it now speaks the waiting band, see AQ2 — but the
     //  one-door law did not: it opens the LEDGER, never a wall in place.)
+    // RE-POINTED (Sep 21 — CLOSE RETURNS WHERE YOU CAME FROM): the door still opens the LEDGER and
+    // nothing else; it now RECORDS that it was the opener, so the deck's Close can return here.
     ok('A3 · the one door opens the LEDGER (not a wall in place)',
       !/Everything else ·/.test(home)
-      && /onOpen=\{\(\) => setView\('held'\)\}/.test(home) && !/restRows\.map\(/.test(home));
+      && /onOpen=\{openHeldFromHome\}/.test(home)
+      && /const openHeldFromHome = useCallback\(\(\) => \{ setHeldFromHome\(true\); setView\('held'\); \}, \[setView\]\);/.test(home)
+      && !/restRows\.map\(/.test(home));
     const held = src('components/home/held-quiet.tsx');
     ok('A3 · the ledger prints the SERVED account — class · count · consequence · why-held · a way back',
       /\{c\.label\}/.test(held) && /\{c\.count\}/.test(held) && /\{c\.consequence\}/.test(held)
@@ -678,10 +682,25 @@ function qualityGates() {
       /When you're ready · \$\{waiting\} →/.test(home)
       && /waiting=\{typeof b\?\.attention\?\.heldWaiting === 'number'/.test(home)
       && !/Held quiet · \$\{/.test(home));
-    ok('   …and the big number rests beside it as a FACT, not a door\'s claim',
-      /handledQuietly=\{b\?\.attention\?\.heldHandled \?\? 0\}/.test(home)
-      && /handled quietly/.test(home));
-    ok('   …both numbers are SERVED — the client computes neither',
+    // RE-POINTED (Sep 21 — owner: "it looks clickable/meaningful but opens nothing; let's just
+    // remove that label"). The handled total no longer rests on the DOOR LINE: it wore a button's
+    // affordance for a door that only repeated the left one. THE LAW THAT SURVIVES is the one that
+    // always mattered — the big number is a FACT and never a door's claim — and the ACCOUNT of it
+    // is still spoken, one click in, by the held page's own intro sentence.
+    ok('   …and the door line carries NO handled-quietly receipt at all',
+      (() => {
+        // The door's OWN body: from its signature to the end of its render. (The ring's "N handled
+        // today" lives elsewhere on the page and is a different fact — it is not this door's.)
+        const door = home.slice(home.indexOf('function CalmDoor({ waiting, onOpen }'), home.indexOf('// ── THE URL IS THE LENS'));
+        return !!door && !/handled quietly|handled today|heldHandled|toLocaleString/.test(door)
+          && (door.match(/<button/g) ?? []).length === 1
+          && !/handledQuietly=|handledToday=/.test(home);
+      })());
+    ok('   …while the held page still accounts for it, in words, from the served numbers',
+      /filed quietly/.test(src('lib/home/held-words.ts'))
+      && /Everything else is handled: \$\{handled\.toLocaleString\(\)\} filed quietly/.test(src('lib/home/held-words.ts'))
+      && /heldIntro\(ledger, deckHeld\.length\)/.test(src('components/home/held-quiet.tsx')));
+    ok('   …and the number the door does speak is SERVED — the client computes none',
       !/heldHandled \+|heldWaiting \*/.test(home)
       && /heldWaiting\?: number \| null;/.test(home) && /heldHandled\?: number \| null;/.test(home));
     const brief = src('app/api/home/brief/route.ts');
@@ -1437,10 +1456,34 @@ function walkGates() {
       && /requestAnimationFrame\(\(\) => \{ resetArmedRef\.current = true; \}\)/.test(home)
       && /if \(!resetArmedRef\.current && lensInSearch\(window\.location\.search\)\) return;/.test(home));
     // …and the lens itself never walks out on its own: Esc is session-local and un-stored.
+    // RE-POINTED (Sep 21 — CLOSE RETURNS WHERE YOU CAME FROM). The law is unchanged: the lens never
+    // walks out on its own. What changed is where a reader's OWN close lands — the deck's Close is
+    // routed by the RECORDED ORIGIN, and that is still a deed, never an effect. So: no effect may
+    // call onBack, and the only call site in the file is the origin branch of the deck's exit.
     ok('the ledger holds NO auto-exit path (onBack is the reader\'s click, never an effect)',
       !/useEffect\([^)]*onBack/.test(held)
-      && !/onBack\(\)/.test(held.replace(/onClick=\{onBack\}/g, ''))
+      && (held.replace(/onClick=\{onBack\}/g, '').match(/onBack\(\)/g) ?? []).length === 1
+      && /if \(closeReturnsHome\) \{ onBack\(\); return; \}/.test(held)
       && /const \[exited, setExited\] = useState\(false\);/.test(held));
+    // ── THE NEW LAW (Sep 21): CLOSE RETURNS WHERE YOU CAME FROM ───────────────────────────────
+    // The Home's door opens INTO the deck, so Close (and Esc) there means "back to the Home" — it
+    // used to leave the reader on the held LIST, a page they never asked for. The origin is
+    // RECORDED at the door, never inferred from history length, and an address that names the lens
+    // is not a door: a deep link's Close stays on the address it asked for.
+    ok('the deck\'s close consults a RECORDED origin, and the Home\'s door is what records it',
+      /const \[heldFromHome, setHeldFromHome\] = useState\(false\);/.test(home)
+      && /setHeldFromHome\(true\); setView\('held'\);/.test(home)
+      && /fromHome=\{heldFromHome\}/.test(home)
+      && /const closeReturnsHome = fromHome && !deckFromList;/.test(held));
+    ok('   …an address that names the lens is NOT the Home\'s door (a deep link closes onto itself)',
+      /setHeldFromHome\(false\);/.test(home)
+      && (home.match(/setHeldFromHome\(true\)/g) ?? []).length === 1);
+    ok('   …and choosing the cards FROM the ledger re-homes the way out to the ledger',
+      /if \(s === 'deck'\) setDeckFromList\(true\);/.test(held)
+      && /const \[deckFromList, setDeckFromList\] = useState\(false\);/.test(held));
+    ok('   …while "View as list" and the page\'s own ← Home line are unchanged',
+      /onViewAsList=\{\(\) => chooseShape\('list'\)\}/.test(held)
+      && /<button onClick=\{onBack\}/.test(held));
     ok('   …and the deck\'s exit is never persisted (no store ever holds `exited`)',
       !/saveLS\([^)]*exited|sessionStorage\.setItem\([^)]*exit/i.test(held)
       && /VIEW_KEY = 'aug-triage-view-v1'/.test(held));
@@ -1537,13 +1580,14 @@ function walkGates() {
       /who\?: string \| null;/.test(held) && /preparedWord\?: string \| null;/.test(held)
       && /who: servedWho\(it\),/.test(home)
       && /import \{[^}]*servedWho[^}]*\} from '@\/lib\/home\/calm';/.test(home));
-    // THE CLUSTER — RE-POINTED to Q9v2 (the afternoon of the same walk). The inverted-T of four
-    // arrow key-caps INSIDE the card was the shape the owner then called hard to follow: the verbs
-    // now live in the FRAME, above the stack, as two large pills with two quiet companions. The
-    // law that survives verbatim is the one this gate was always about — the component types no
-    // label, key or order; the table owns them. (The structural half lives in smoke-quality SQ19.)
-    ok('the two clearing verbs are large pills ABOVE the stack, the companions quiet beside them',
-      deck.indexOf('THE PILL BAR — FIXED ABOVE THE STACK') > 0
+    // THE CLUSTER — RE-POINTED to Q9v2 (the afternoon of the same walk), and AGAIN Sep 21 (owner:
+    // "CTA buttons should be below?"). The inverted-T of four arrow key-caps INSIDE the card was
+    // the shape the owner first called hard to follow: the verbs live in the FRAME — now BELOW the
+    // stack — as two large pills with two quiet companions. The law that survives verbatim is the
+    // one this gate was always about: the component types no label, key or order; the table owns
+    // them, and the card holds none of them. (The structural half lives in smoke-quality SQ19.)
+    ok('the two clearing verbs are large pills BELOW the card, the companions quiet beneath them',
+      deck.indexOf('THE PILL BAR — BELOW THE CARD') > deck.indexOf('THE STACK, PEEKING')
       && /\{primary\.map\(\(v\) => \(\s*\n\s*<PrimaryPill/.test(deck)
       && /<QuietPill v=\{verbOf\('keep'\)\}[\s\S]{0,400}<QuietPill v=\{verbOf\('open'\)\}[\s\S]{0,400}<QuietPill v=\{verbOf\('later'\)\}/.test(deck));
     ok('   …each a real target, plain-worded, coloured only on hover',

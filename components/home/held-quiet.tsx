@@ -315,7 +315,7 @@ const VIEW_KEY = 'aug-triage-view-v1';
 type WaitingShape = 'deck' | 'list';
 const loadShape = (): WaitingShape => (loadLS<WaitingShape>(VIEW_KEY) === 'list' ? 'list' : 'deck');
 
-export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = null, onBack, onRefresh }: {
+export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = null, fromHome = false, onBack, onRefresh }: {
   ledger: HeldLedger | null; deckHeld: DeckHeldRow[];
   /** THE WARM STACK — held rows the Home already holds (its own brief, hydrated from the stamped
    *  localStorage cache before the first paint). The deck opens on these; the ledger's read EXTENDS
@@ -326,6 +326,12 @@ export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = nul
    *  owns no clock, so the warm stack opens on the BRIEF's day and the ledger's own day replaces it
    *  the moment the account lands. Absent → no deck (a ← LATER that invents a day is worse). */
   servedDay?: string | null;
+  /** THE RECORDED ORIGIN (owner walk, Sep 21 — Close left the reader on the ledger they never
+   *  asked for). `true` = the Home's own "When you're ready" door opened this lens, so the deck's
+   *  Close returns WHERE THEY CAME FROM (components/ui/back-link.tsx, Aug 25). `false` = the
+   *  address itself named the lens (a deep link, a soft nav), and Close stays on the page the
+   *  address asked for. It is an ORIGIN, recorded at the door — never a guess from history length. */
+  fromHome?: boolean;
   onBack: () => void;
   /** Re-read the account after a deed runs — archived members must leave the list honestly. */
   onRefresh?: () => void;
@@ -341,10 +347,22 @@ export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = nul
   // PREVIOUS visit must never exit the next deliberate one — which is also why this page holds no
   // effect that calls `onBack`: the way out of the lens is the reader's own click, always. (The
   // shape toggle is the only thing that sticks, and it is a choice about how to READ the band.)
+  // Sep 21: Close may now hand the reader back to the Home — that is still the reader's own deed,
+  // routed by the RECORDED ORIGIN below, and it is written to no store either.
   const [exited, setExited] = useState(false);
+  // ── CLOSE RETURNS WHERE YOU CAME FROM (owner walk, Sep 21) ────────────────────────────────────
+  // The door on the Home opens INTO the deck, so ← Close (and Esc) there means "back to the Home"
+  // — it left the reader standing on a ledger they never chose. But "View as list" → "One at a
+  // time" is a deliberate choice made ON this page, and closing THAT returns to the page it was
+  // chosen from. One recorded origin decides, at the moment the deck was entered: the Home's door
+  // (`fromHome`, recorded by the door itself) unless the reader picked cards from the ledger.
+  const [deckFromList, setDeckFromList] = useState(false);
+  const closeReturnsHome = fromHome && !deckFromList;
   useEffect(() => { setShape(loadShape()); }, []);
   const chooseShape = useCallback((s: WaitingShape) => {
     setShape(s); setExited(false); setReceipt(null); saveLS(VIEW_KEY, s);
+    // Choosing the cards FROM the ledger re-homes the way out: Close goes back to the list.
+    if (s === 'deck') setDeckFromList(true);
   }, []);
   const [watchedOpen, setWatchedOpen] = useState(false);
   /** Q9v2 · 2: while the deck has the room, the rest of the account is one word away — never gone. */
@@ -526,7 +544,11 @@ export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = nul
             <div className="px-1">
               <TriageDeck rows={waitingRows.map((r) => r.triage)} today={deckDay!}
                 complete={deckComplete}
-                onExit={(r) => { setReceipt(r || null); setExited(true); }}
+                onExit={(r) => {
+                  // THE ORIGIN DECIDES, and it was recorded at the door. Home-opened → Home.
+                  if (closeReturnsHome) { onBack(); return; }
+                  setReceipt(r || null); setExited(true);
+                }}
                 onViewAsList={() => chooseShape('list')}
                 onRefresh={onRefresh} />
             </div>

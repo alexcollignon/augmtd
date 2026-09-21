@@ -1,5 +1,6 @@
 import { Client } from '@microsoft/microsoft-graph-client';
 import { refreshAccessToken } from './oauth';
+import { sanitizeAddressList, sanitizeFilename, sanitizeHeaderValue, sanitizeMimeType } from '@/lib/utils/email-headers';
 
 interface OutlookMessage {
   id: string;
@@ -301,7 +302,15 @@ export async function sendOutlookEmail(params: {
   body: string;
   attachments?: EmailAttachment[];
 }): Promise<void> {
-  const { encryptedTokens, to, cc, bcc, subject, body, attachments = [] } = params;
+  const { encryptedTokens, body, attachments = [] } = params;
+  // THE HEADER FLOOR (the Gmail transport's law, mirrored). Graph takes JSON rather than RFC822
+  // lines, so a newline cannot forge a header here — but an address is still an ADDRESS, and the
+  // two transports must not disagree about what they will carry.
+  const to = sanitizeAddressList(params.to);
+  const cc = params.cc ? sanitizeAddressList(params.cc) : '';
+  const bcc = params.bcc ? sanitizeAddressList(params.bcc) : '';
+  const subject = sanitizeHeaderValue(params.subject);
+  if (!to) throw new Error('No valid recipient address');
 
   const tokens = JSON.parse(Buffer.from(encryptedTokens, 'base64').toString());
   let accessToken = tokens.accessToken;
@@ -340,8 +349,8 @@ export async function sendOutlookEmail(params: {
       ? {
           attachments: attachments.map((att) => ({
             '@odata.type': '#microsoft.graph.fileAttachment',
-            name: att.filename,
-            contentType: att.mimeType,
+            name: sanitizeFilename(att.filename),
+            contentType: sanitizeMimeType(att.mimeType),
             contentBytes: att.content.toString('base64'),
           })),
         }
@@ -637,7 +646,11 @@ export function persistOutlookTokens(supabase: any, connection: { id: string; me
 }
 
 export async function sendOutlookReply(params: SendOutlookReplyParams): Promise<string> {
-  const { encryptedTokens, messageId, body, attachments = [], to, cc, bcc } = params;
+  const { encryptedTokens, messageId, body, attachments = [] } = params;
+  // THE HEADER FLOOR — the same address discipline as the send path above.
+  const to = params.to ? sanitizeAddressList(params.to) : '';
+  const cc = params.cc ? sanitizeAddressList(params.cc) : '';
+  const bcc = params.bcc ? sanitizeAddressList(params.bcc) : '';
 
   // Decode tokens and refresh if needed (mirrors getGraphClient logic)
   const tokens = JSON.parse(Buffer.from(encryptedTokens, 'base64').toString());
@@ -675,8 +688,8 @@ export async function sendOutlookReply(params: SendOutlookReplyParams): Promise<
           ...(attachments.length > 0 ? {
             attachments: attachments.map(att => ({
               '@odata.type': '#microsoft.graph.fileAttachment',
-              name: att.filename,
-              contentType: att.mimeType,
+              name: sanitizeFilename(att.filename),
+              contentType: sanitizeMimeType(att.mimeType),
               contentBytes: att.content.toString('base64'),
             })),
           } : {}),

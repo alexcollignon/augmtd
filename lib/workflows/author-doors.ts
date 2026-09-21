@@ -103,10 +103,10 @@ async function listUserWorkflows(
   }
 }
 
-interface NamedRow { id: string; name: string }
+export interface NamedRow { id: string; name: string }
 /** Why a spoken name yielded nothing — the two misses are DIFFERENT refusals and get different
  *  sentences ("I don't have one called X" vs "more than one of yours matches X"). */
-type NameMatch<T extends NamedRow> = { hit: T } | { hit: null; miss: 'none' | 'ambiguous' };
+export type NameMatch<T extends NamedRow> = { hit: T } | { hit: null; miss: 'none' | 'ambiguous' };
 
 /** THE ONE NAME LADDER, shared by every by-name resolution in this module: exact (case- and
  *  whitespace-insensitive) → unique containment → refusal. AMBIGUITY IS NEVER A GUESS — picking
@@ -129,6 +129,12 @@ function resolveByName<T extends NamedRow>(rows: T[], spoken: string): NameMatch
  *  which pipeline feeds which — a wrong binding fires the wrong work forever). */
 export function matchWorkflowByName(rows: WorkflowRow[], spoken: string): WorkflowRow | null {
   return resolveByName(rows, spoken).hit;
+}
+
+/** The SAME ladder, with the miss kept (Sep 21 — the bulk status deed refuses BY LISTING, so it
+ *  needs to tell "I have none called X" apart from "more than one of yours matches X"). */
+export function matchWorkflowName<T extends NamedRow>(rows: T[], spoken: string): NameMatch<T> {
+  return resolveByName(rows, spoken);
 }
 
 /**

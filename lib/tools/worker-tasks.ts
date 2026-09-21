@@ -8,6 +8,9 @@ import type { WorkflowDraft } from '@/lib/workflows/draft-marker';
 import {
   authorDoors, doorCatalogueOneLine, doorNote, doorsForStorage, describeDoors,
   authorInputs, inputNote, inputsForStorage, describeInputs,
+  // THE ONE NAME LADDER (Sep 21) — the bulk status deed and the chief's by-name doors resolve
+  // through the SAME resolver the door authoring uses: exact → unique containment → refusal.
+  matchWorkflowName,
 } from '@/lib/workflows/author-doors';
 import { readWorkflowInputs, writeWorkflowInputs, type WorkflowInputs } from '@/lib/workflows/inputs';
 import {
@@ -217,7 +220,7 @@ export const updateTaskDefinition = {
 
 export const runTaskDefinition = {
   name: 'run_task',
-  description: 'Trigger an immediate manual run of an existing task. Call when the user asks to run, execute, or trigger a task right now. Use list_tasks to find the task ID first.',
+  description: 'Trigger an immediate manual run of an existing task. Call when the user asks to run, execute, or trigger a task RIGHT NOW. Use list_tasks to find the task ID first. NOT for "resume" / "unpause" / "turn it back on" — those mean the schedule goes back on, which is set_tasks_status.',
   input_schema: {
     type: 'object',
     properties: {
@@ -272,6 +275,43 @@ export const useTaskDefinition = {
       task_id: { type: 'string', description: 'ID of the shared team task to copy (use list_team_tasks to get IDs)' },
     },
     required: ['task_id'],
+  },
+};
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE BULK STATUS DEED (Sep 21 — the incident's own verb).
+//
+// "Pause all workflows" used to force the model into an N-call loop with NOTHING reconciling N
+// intents to N results: one call got eaten by the turn dedupe, the other succeeded, and the reply
+// said "both are paused". The loop is now SERVER-SIDE and the answer is a PER-ITEM LEDGER — the
+// count in the sentence is a count the code observed, one row at a time, verified after each write.
+//
+// REVERSIBLE BY CONSTRUCTION (its own mirror resumes what it paused), which is why it may act on the
+// user's explicit words, exactly as update_task's status field already does. DESTRUCTIVE bulk is
+// deliberately absent: delete_task stays single-item.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+export const setTasksStatusDefinition = {
+  name: 'set_tasks_status',
+  description:
+    "Pause or resume tasks in ONE action. Use this whenever the user speaks about more than one task at once " +
+    "(\"pause all my workflows\", \"pause everything\", \"resume the two briefings\") and for a single task named in words " +
+    "(\"pause the weekly briefing\") — never a chain of update_task calls. Tasks are matched BY NAME, so you do not need " +
+    "their ids. \"Resume\" / \"unpause\" / \"turn it back on\" mean status \"active\" HERE — they never mean run_task. " +
+    "It returns a per-item ledger: report exactly what it says, naming each task, and never a count it did not give you.",
+  input_schema: {
+    type: 'object',
+    properties: {
+      status: { type: 'string', enum: ['active', 'paused'], description: '"paused" stops the task from running; "active" resumes it.' },
+      scope: {
+        type: 'string', enum: ['all', 'named'],
+        description: '"all" = every task in view (the user said "all", "everything"). "named" = only the tasks listed in names. Defaults to "named" when names are given.',
+      },
+      names: {
+        type: 'array', items: { type: 'string' },
+        description: "The tasks to act on, as the USER says them (names, never ids). Required when scope is \"named\".",
+      },
+    },
+    required: ['status'],
   },
 };
 
@@ -490,21 +530,26 @@ async function readDoors(
 
 // ─── Executors ────────────────────────────────────────────────────────────────
 
+/** THE CHIEF'S SEAT (Sep 21, CLASS 2): `agentId` is now OPTIONAL. A coworker asks for its own
+ *  tasks; the chief of staff asks for the user's WHOLE set and needs each row to name the coworker
+ *  who owns it — same executor, same user scope, one filter's difference. */
 export async function executeListTasks(
-  agentId: string,
+  agentId: string | null,
   userId: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   adminClient: any,
 ): Promise<string> {
-  const { data, error } = await adminClient
+  let q = adminClient
     .from('workflows')
-    .select('id, name, status, trigger, last_run_at')
-    .eq('agent_id', agentId)
-    .eq('user_id', userId)
-    .order('created_at', { ascending: true });
+    .select('id, name, status, trigger, last_run_at, agent_id')
+    .eq('user_id', userId);
+  if (agentId) q = q.eq('agent_id', agentId);
+  const { data, error } = await q.order('created_at', { ascending: true });
 
   if (error || !data || data.length === 0) {
-    return 'No tasks found for this worker. Use create_task to set one up.';
+    return agentId
+      ? 'No tasks found for this worker. Use create_task to set one up.'
+      : 'No tasks set up yet. Ask one of your coworkers to build one.';
   }
 
   const rows = data as Array<{
@@ -513,14 +558,38 @@ export async function executeListTasks(
     status: string;
     trigger: { type: string; cron?: string; label?: string };
     last_run_at: string | null;
+    agent_id: string | null;
   }>;
+
+  // THE OWNER RIDES THE ROW on the chief's door — "pause the weekly briefing" is answerable only if
+  // the answer can say whose it is.
+  const owners = agentId ? {} : await agentNames(rows.map((r) => r.agent_id), adminClient);
 
   const lines = rows.map(t => {
     const dot = t.status === 'active' ? '●' : '○';
-    return `${dot} [${t.id}] ${t.name} — ${formatSchedule(t.trigger)} — ${formatLastRun(t.last_run_at)} [${t.status}]`;
+    const owner = !agentId && t.agent_id && owners[t.agent_id] ? ` — ${owners[t.agent_id]}` : '';
+    return `${dot} [${t.id}] ${t.name}${owner} — ${formatSchedule(t.trigger)} — ${formatLastRun(t.last_run_at)} [${t.status}]`;
   });
 
-  return `Tasks (${rows.length}):\n${lines.join('\n')}\n\nUse task IDs when calling update_task or delete_task.`;
+  return `Tasks (${rows.length}):\n${lines.join('\n')}\n\nRefer to tasks by NAME when speaking to the user; use the ids only when a tool asks for one.`;
+}
+
+/** agent_id → coworker name, for the chief's listing. Best-effort: a missing name just omits it. */
+async function agentNames(
+  ids: Array<string | null>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+): Promise<Record<string, string>> {
+  const unique = [...new Set(ids.filter((i): i is string => !!i))];
+  if (!unique.length) return {};
+  try {
+    const { data } = await adminClient.from('custom_agents').select('id, name').in('id', unique);
+    const out: Record<string, string> = {};
+    for (const a of (data ?? []) as Array<{ id: string; name: string | null }>) {
+      if (a.name) out[a.id] = a.name;
+    }
+    return out;
+  } catch { return {}; }
 }
 
 export async function executeCreateTask(
@@ -994,6 +1063,10 @@ export async function executeUpdateTask(
     return 'Nothing to update — no fields provided.';
   }
 
+  // ── VERIFY AFTER WRITE (Sep 21, CLASS 1B) — a PostgREST `.update().eq('id')` that matches ZERO
+  // rows is not an error: it returns cleanly and the sentence below used to claim the change. The
+  // write now RE-READS the row and reports the OBSERVED state; a write that moved nothing SAYS SO.
+  let observed: Record<string, unknown> | null = null;
   if (Object.keys(update).length > 0) {
     const { error } = await adminClient
       .from('workflows')
@@ -1002,6 +1075,20 @@ export async function executeUpdateTask(
       .eq('user_id', userId);
 
     if (error) return `Failed to update "${row.name}": ${error.message}`;
+
+    const { data: after } = await adminClient
+      .from('workflows')
+      .select('id, name, status')
+      .eq('id', taskId)
+      .eq('user_id', userId)
+      .maybeSingle();
+    observed = (after ?? null) as Record<string, unknown> | null;
+    if (!observed) {
+      return `Failed to update "${row.name}": the task no longer exists (nothing was changed).`;
+    }
+    if (fields.status !== undefined && observed.status !== fields.status) {
+      return `Failed to update "${row.name}": it is still ${String(observed.status)}, not ${fields.status}. Nothing was changed.`;
+    }
   }
 
   // THE TRAY lands after the row (its own store; ownership was proven by the load above). A store
@@ -1021,7 +1108,268 @@ export async function executeUpdateTask(
   }
 
   const notesTail = [doorNoteLine, inputNoteLine, limitNoteLine].filter(Boolean).join(' ');
-  return `"${fields.name ?? row.name}" updated — ${changes.join(', ')}.${notesTail ? ` ${notesTail}` : ''}`;
+  // The sentence speaks the OBSERVED name and, when status was the change, the OBSERVED status.
+  const finalName = (observed?.name as string) ?? fields.name ?? row.name;
+  const statusLine = fields.status !== undefined && observed ? ` It is now ${String(observed.status)}.` : '';
+  return `"${finalName}" updated — ${changes.join(', ')}.${statusLine}${notesTail ? ` ${notesTail}` : ''}`;
+}
+
+/**
+ * A SPOKEN NAME → one task id (Sep 21, CLASS 2). The chief of staff talks about tasks by name; a
+ * tool that only takes an id is useless in conversation. Same ladder, same refusal-by-listing.
+ * `agentId` null = the user's whole set (the chief's seat).
+ */
+export async function resolveTaskIdByName(
+  spoken: string,
+  agentId: string | null,
+  userId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+): Promise<{ id: string; name: string } | { error: string }> {
+  let q = adminClient.from('workflows').select('id, name').eq('user_id', userId);
+  if (agentId) q = q.eq('agent_id', agentId);
+  const { data, error } = await q.order('created_at', { ascending: true });
+  if (error) return { error: `I couldn't read your tasks: ${error.message}` };
+  const rows = ((data ?? []) as Array<{ id: string; name: string | null }>)
+    .filter((r) => !!r.id && !!r.name)
+    .map((r) => ({ id: r.id, name: (r.name as string).trim() }));
+  if (!rows.length) return { error: 'There are no tasks set up yet.' };
+  const m = matchWorkflowName(rows, spoken);
+  if (m.hit) return m.hit;
+  if (m.miss === 'ambiguous') {
+    return { error: `More than one of your tasks matches "${spoken}" — ${rows.filter((r) => r.name.toLowerCase().includes(spoken.toLowerCase())).map((r) => `"${r.name}"`).join(' · ')}. Which one?` };
+  }
+  return { error: `I don't have a task called "${spoken}". You have: ${rows.map((r) => `"${r.name}"`).join(' · ')}.` };
+}
+
+// ── THE DIRECTION WORDS + THE ALL WORDS, in the four languages this repo already speaks. Used ONLY
+// to overrule a model's extraction with what the user plainly said — never to invent an argument. ──
+const RESUME_WORDS =
+  /\b(?:resume[sd]?|resuming|re-?activate[sd]?|re-?enable[sd]?|un-?pause[sd]?|turn (?:it |them |these |those )?back on|switch (?:it |them )?back on|retoma(?:r|m)?|reativar|ativar|fortsetzen|reaktivieren|wieder aktivieren|reprendre|réactiver)\b/i;
+const PAUSE_WORDS =
+  /\b(?:pause[sd]?|pausing|stop|halt|suspend|disable[sd]?|turn (?:it |them |these |those )?off|pausar|parar|suspender|desativar|pausier(?:en|e|st|t)|anhalten|stoppen|deaktivieren|mettre en pause|suspendre|désactiver)\b/i;
+const ALL_WORDS =
+  /\b(?:all|every|everything|each of (?:them|these|those)|both|the lot|todas?|todos?|tudo|ambas|ambos|alle[sn]?|beide|tous|toutes|tout|les deux)\b/i;
+/** A CARVE-OUT ("all except the briefing"). The exception is invisible to a scope+status pair, so a
+ *  bulk that carries one would act on exactly the task the user asked to spare. */
+const EXCEPT_WORDS =
+  /\b(?:except|excepting|but not|apart from|other than|aside from|ausser|außer|exceto|excepto|salvo|menos que|sauf|hormis)\b/i;
+/** A NEGATED direction ("don't pause the weekly one"). Which way it points is a guess, and a guess
+ *  here is a deed on work the user just told us to leave alone. */
+const NEGATION_WORDS =
+  /(?:\b(?:do ?n'?t|do not|never|nicht|keine?|não|nao)\b|\bne\b[^.!?]{0,30}\bpas\b)/i;
+
+/** What the two dangerous arguments of the bulk status deed resolve to, decided from the user's own
+ *  words. A refusal carries the CLASS it refused on — gates assert the class, copy stays free. */
+export type TasksStatusPlan =
+  | { act: true; status: 'active' | 'paused'; scope: 'all' | 'named'; names: string[] }
+  | { act: false; code: 'exception' | 'negation' | 'mixed' | 'unnamed'; why: string };
+
+/**
+ * THE BULK STATUS FLOORS — pure, so their whole truth table is gateable without a database.
+ *
+ * ⚠️ THEY FAIL CLOSED (Sep 21, second pass). The first cut read "no words heard" as permission:
+ * `allWasSaid = !said || ALL_WORDS.test(said)` made an EMPTY message satisfy the all-word floor, and
+ * the AgentOS door calls this executor with no user text at all — so a model emitting
+ * `{status:'paused'}` with no names would have paused every workflow the user owns, through a door
+ * where nobody had said anything. Now: a bulk over EVERYTHING needs the user's own all-word AND
+ * their own direction word, together, in this message. With nothing heard, only EXPLICITLY NAMED
+ * targets may move; with neither names nor heard words the deed REFUSES BY LISTING.
+ *
+ * `knownNames` is not decoration: a task called "All Hands Digest" puts an all-word in every
+ * sentence that names it, so known names are removed from the text before any word floor reads it.
+ */
+export function planTasksStatusDeed(args: {
+  status: 'active' | 'paused';
+  scope?: 'all' | 'named';
+  names?: string[];
+  userText?: string;
+  knownNames?: readonly string[];
+}): TasksStatusPlan {
+  const names = (Array.isArray(args.names) ? args.names : [])
+    .map((n) => String(n ?? '').trim()).filter(Boolean);
+
+  let said = String(args.userText ?? '').toLowerCase();
+  const known = [...(args.knownNames ?? [])]
+    .map((s) => String(s ?? '').trim().toLowerCase()).filter(Boolean)
+    .sort((a, b) => b.length - a.length); // longest first — a name inside a name still comes out
+  for (const n of known) said = said.split(n).join(' ');
+  said = said.trim();
+
+  const wantsResume = RESUME_WORDS.test(said);
+  const wantsPause = PAUSE_WORDS.test(said);
+
+  // ── FLOOR 0: A CARVED-OUT, NEGATED OR TWO-DIRECTION LINE IS NOT ONE DEED. Each of these is a
+  // sentence whose meaning cannot survive the {status, scope, names} shape — so it is refused by
+  // listing rather than flattened into whichever half the model happened to extract.
+  if (said && EXCEPT_WORDS.test(said)) {
+    return { act: false, code: 'exception', why: 'I won\'t act on an "all except" — I\'d have to guess what to leave out.' };
+  }
+  if (said && NEGATION_WORDS.test(said)) {
+    return { act: false, code: 'negation', why: 'There\'s a "not" in there and I won\'t guess which way it points.' };
+  }
+  if (wantsResume && wantsPause) {
+    return { act: false, code: 'mixed', why: 'You named both directions in one line, and I won\'t split them by guessing.' };
+  }
+
+  // ── FLOOR 1: THE DIRECTION IS THE USER'S WORD. Heard, it wins over the model's extraction; not
+  // heard, the model's direction stands — but only for targets the user explicitly named (below).
+  const status: 'active' | 'paused' = wantsResume ? 'active'
+    : wantsPause ? 'paused'
+    : args.status === 'active' ? 'active' : 'paused';
+
+  // ── FLOOR 2: NAMES ARE THE MOST SPECIFIC THING SAID. With names in hand the deed acts on THOSE,
+  // whatever scope came back — a model that says "all" while naming two tasks meant the two.
+  if (names.length) return { act: true, status, scope: 'named', names };
+
+  // ── FLOOR 3: "ALL" MUST BE SAID, WITH A DIRECTION, IN THIS MESSAGE. Anything less refuses.
+  const allWasSaid = !!said && ALL_WORDS.test(said);
+  const directionHeard = wantsResume || wantsPause;
+  if (args.scope !== 'named' && allWasSaid && directionHeard) return { act: true, status, scope: 'all', names: [] };
+  return { act: false, code: 'unnamed', why: '' };
+}
+
+/**
+ * "RESUME" IS THE MIRROR OF "PAUSE", NOT "RUN NOW" (Sep 21, found by the live replay: "resume the X
+ * task" was served by `run_task` — it STARTED a real run, which can spend money and send mail, when
+ * the person only wanted the schedule turned back on). The disambiguation is code's, from the
+ * user's own words: a resume word with no run-now word is a STATUS deed.
+ */
+export const spokenIsResumeNotRun = (userText: string): boolean =>
+  RESUME_WORDS.test(userText) && !/\b(?:run|runs|execute|trigger|kick(?:ing)? off|right now|immediately)\b/i.test(userText);
+
+/** What the bulk status deed OBSERVED. `text` is the per-item ledger the model must report; the
+ *  counts are what the deed floor checks the reply's arithmetic against. */
+export interface BulkStatusOutcome {
+  text: string;
+  /** Rows re-read at the requested status AFTER a write — the only number anyone may claim. */
+  changed: number;
+  /** Rows already at the requested status (a truthful no-op, named separately). */
+  alreadyThere: number;
+  failed: number;
+  /** True when nothing was attempted (no match / ambiguity) — a refusal, not a deed. */
+  refused: boolean;
+}
+
+/**
+ * THE BULK STATUS DEED. Loops SERVER-side over the resolved set, writes one row at a time, RE-READS
+ * each row, and returns a named ledger. Names resolve through the ONE ladder (`matchWorkflowName`:
+ * exact → unique containment → refusal); AMBIGUITY IS A REFUSAL BY LISTING, never a guess.
+ *
+ * `agentId` scopes the set the way the caller's door sees it: a coworker acts on ITS OWN tasks (the
+ * same set its list_tasks shows); the chief passes null and acts across the user's whole set.
+ * Another user's workflows are unreachable by construction — every query is `.eq('user_id', userId)`.
+ */
+export async function executeSetTasksStatus(
+  input: { status: 'active' | 'paused'; scope?: 'all' | 'named'; names?: string[] },
+  agentId: string | null,
+  userId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+  /** THE USER'S OWN WORDS (the EXPLICIT_SEND floor's idiom) — a bulk deed's two most dangerous
+   *  arguments are decided HERE, in code, from what the person actually said, never from a model's
+   *  extraction. Found live: a "resume X" turn came back from the router as status=paused with no
+   *  names, which would have paused every task the user owns. */
+  userText = '',
+): Promise<BulkStatusOutcome> {
+  let q = adminClient
+    .from('workflows')
+    .select('id, name, status, trigger, next_run_at')
+    .eq('user_id', userId);
+  if (agentId) q = q.eq('agent_id', agentId);
+  const { data, error } = await q.order('created_at', { ascending: true });
+  if (error) {
+    return { text: `I couldn't read your tasks: ${error.message}. Nothing was changed.`, changed: 0, alreadyThere: 0, failed: 0, refused: true };
+  }
+
+  type Row = { id: string; name: string; status: string; trigger: { type?: string; cron?: string; timezone?: string } | null; next_run_at: string | null };
+  const all = ((data ?? []) as Row[]).filter((r) => !!r.name);
+  if (!all.length) {
+    return { text: 'There are no tasks to change.', changed: 0, alreadyThere: 0, failed: 0, refused: true };
+  }
+
+  // ── THE FLOORS, decided on the user's own words against the set that actually exists. They run
+  // AFTER the read because a task's own name can contain a command word (see planTasksStatusDeed).
+  const listing = `You have: ${all.map((r) => `"${r.name}"`).join(' · ')}.`;
+  const plan = planTasksStatusDeed({
+    status: input.status, scope: input.scope, names: input.names,
+    userText, knownNames: all.map((r) => r.name),
+  });
+  if (!plan.act) {
+    return {
+      text: plan.code === 'unnamed'
+        ? `Which one${all.length > 1 ? 's' : ''}? ${listing} Name them, or say "all".`
+        : `${plan.why} ${listing} Name the ones to change, or say "all" to cover every one.`,
+      changed: 0, alreadyThere: 0, failed: 0, refused: true,
+    };
+  }
+  const { status, scope } = plan;
+  const spokenNames = plan.names;
+  const verb = status === 'paused' ? 'Paused' : 'Resumed';
+  const past = status === 'paused' ? 'paused' : 'active';
+
+  let targets: Row[] = [];
+  const refusals: string[] = [];
+  if (scope === 'all') {
+    targets = all;
+  } else {
+    for (const spoken of spokenNames) {
+      const m = matchWorkflowName(all, spoken);
+      if (m.hit) {
+        if (!targets.some((t) => t.id === m.hit.id)) targets.push(m.hit as Row);
+      } else if (m.miss === 'ambiguous') {
+        const candidates = all.filter((r) => r.name.toLowerCase().includes(spoken.toLowerCase())).map((r) => `"${r.name}"`);
+        refusals.push(`More than one of your tasks matches "${spoken}"${candidates.length ? ` — ${candidates.join(' · ')}` : ''}. Which one?`);
+      } else {
+        refusals.push(`I don't have a task called "${spoken}". You have: ${all.map((r) => `"${r.name}"`).join(' · ')}.`);
+      }
+    }
+  }
+
+  if (!targets.length) {
+    return {
+      text: refusals.join(' ') || 'Nothing matched, so nothing was changed.',
+      changed: 0, alreadyThere: 0, failed: 0, refused: true,
+    };
+  }
+
+  const moved: string[] = [];
+  const already: string[] = [];
+  const failed: string[] = [];
+
+  for (const row of targets) {
+    if (row.status === status) { already.push(row.name); continue; }
+    const update: Record<string, unknown> = { status };
+    // Resuming a SCHEDULED task with no next run would leave it silently dead (the July dead-month
+    // class) — the schedule is recomputed here, through the engine's own helper.
+    if (status === 'active' && row.trigger?.type === 'schedule' && row.trigger.cron && !row.next_run_at) {
+      const d = computeNextRun(row.trigger.cron, row.trigger.timezone);
+      if (d) update.next_run_at = d.toISOString();
+    }
+    const { error: upErr } = await adminClient
+      .from('workflows').update(update).eq('id', row.id).eq('user_id', userId);
+    if (upErr) { failed.push(`${row.name} (${upErr.message})`); continue; }
+    // VERIFY AFTER WRITE — the ledger counts rows READ BACK at the new status, never rows we asked to move.
+    const { data: after } = await adminClient
+      .from('workflows').select('status').eq('id', row.id).eq('user_id', userId).maybeSingle();
+    if ((after as { status?: string } | null)?.status === status) moved.push(row.name);
+    else failed.push(`${row.name} (still ${(after as { status?: string } | null)?.status ?? 'missing'})`);
+  }
+
+  const parts: string[] = [];
+  if (moved.length) parts.push(`${verb} ${moved.length}: ${moved.map((n) => `"${n}"`).join(' · ')}.`);
+  if (already.length) parts.push(`Already ${past} (${already.length}): ${already.map((n) => `"${n}"`).join(' · ')}.`);
+  if (failed.length) parts.push(`Failed (${failed.length}): ${failed.join(' · ')}.`);
+  if (refusals.length) parts.push(refusals.join(' '));
+  if (!parts.length) parts.push('Nothing needed changing.');
+
+  return {
+    text: parts.join(' '),
+    changed: moved.length,
+    alreadyThere: already.length,
+    failed: failed.length,
+    refused: false,
+  };
 }
 
 export async function executeRunTask(
@@ -1415,6 +1763,12 @@ export async function executeDeleteTask(
     .eq('user_id', userId);
 
   if (error) return `Failed to delete task: ${error.message}`;
+
+  // VERIFY AFTER WRITE (Sep 21) — the same discipline as update: a delete that matched nothing is
+  // not an error, so the claim is grounded in a re-read, never in the absence of one.
+  const { data: still } = await adminClient
+    .from('workflows').select('id').eq('id', taskId).eq('user_id', userId).maybeSingle();
+  if (still) return `Failed to delete "${(task as { name: string }).name}" — it is still there. Nothing was removed.`;
 
   return `"${(task as { name: string }).name}" has been permanently deleted.`;
 }

@@ -81,7 +81,12 @@ export const TRIAGE_SOURCE_WORD: Record<string, string> = {
 export const TRIAGE_THREADED: readonly string[] = ['reply', 'notice'];
 
 /** THE ITEM'S OWN CONVERSATION DOOR takes the item KIND, not the deck's lane token. A source with
- *  no honest mapping gets NO reply slot rather than a slot that would post to the wrong room. */
+ *  no honest mapping gets NO reply slot rather than a slot that would post to the wrong room.
+ *
+ *  ⚠️ PARKED (owner call, Sep 21 — "remove 'Ask or tell Clara about this…' from the cards for
+ *  now"): the deck mounts no reply slot at present, so nothing reads this table today. It stays
+ *  because it is the reinstatement's ONE table — the map that keeps a card from posting to the
+ *  wrong room — and because a source that gains an honest kind should gain it here, once. */
 export const TRIAGE_STEER_KIND: Record<string, 'email' | 'commitment' | 'meeting'> = {
   reply: 'email', notice: 'email', commitment: 'commitment', meeting: 'meeting',
 };

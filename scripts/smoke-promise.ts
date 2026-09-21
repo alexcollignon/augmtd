@@ -6,7 +6,7 @@
 // "project" everywhere, labels tell the truth (kind = identity, posture = lifecycle, rules outrank).
 // Run per user. 100% required — a failure is a live trust bug, not a flaky test.
 import { config } from 'dotenv'; config({ path: '.env.local' });
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { createClient } from '@supabase/supabase-js';
 import { resolveKind, postureFor, labelNamesFor } from '../lib/inbox/rules/write-back';
 import { isAutomatedSender } from '../lib/inbox/automated';
@@ -785,6 +785,231 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     } else check('P21 live · forward probe insert failed', false);
   }
 
+  // ═══ P21b · THE DERIVED DOOR-PARITY LAW (Sep 21 — CLASS 2: "a verb has every conversational
+  // door"). Live incident: the Home chat answered "I don't have a tool to pause workflows" while a
+  // coworker DM had been pausing them for months. Cause: NOT ONE task verb was a row in the
+  // CAPABILITY_MAP — the coworker door pushed its list as literals, the chief door derives from the
+  // registry, so the one map every parity gate reads could not see the hole. The fix is structural
+  // (the coworker door now READS the registry) and this gate proves the two halves agree. ═══
+  {
+    const { doorParity, TASK_CLASS_TOOLS, CAPABILITY_MAP, capabilitiesFor, renderCapabilitySet } = await import('../lib/work/surface-registry');
+    const { buildCoworkerTools, COWORKER_CHAT_TOOLS } = await import('../lib/work/chat-tool-defs');
+    const { DEFAULT_FEATURES } = await import('../lib/workspace/types');
+
+    // The coworker door, at its widest: every source on, a seeded worker, every feature on
+    // (meetings is OFF in DEFAULT_FEATURES, and the widest door is what parity is about).
+    const ALL_ON = { ...DEFAULT_FEATURES, meetings: true };
+    const coworker = buildCoworkerTools(['kb', 'inbox', 'calendar', 'web'], true, ALL_ON).map((t) => t.name);
+    // The chief door's real definition list — DERIVED from the module that owns it, never grepped.
+    const chiefSrc = src('lib/converse/index.ts');
+    const { CHIEF_TOOL_DEFS } = await import('../lib/converse');
+    const chief = CHIEF_TOOL_DEFS.map((d) => (d as { name: string }).name);
+
+    const violations = doorParity({ chief, coworker });
+    check('P21b · door parity — every tool BOTH conversational doors offer has a registry row, every row that claims a door is offered there, and no task verb is coworker-only without a written reason',
+      violations.length === 0, violations.join(' · ') || 'lawful');
+
+    // THE SET-EQUALITY PROOF: the derived coworker door offers EXACTLY the tools the old literal
+    // push offered, plus the new bulk verb. (The literal list is transcribed here from the
+    // pre-Sep-21 buildChatTools — this is the before/after equality, frozen as a gate.)
+    const BEFORE = [
+      'search_knowledge_base', 'read_document', 'get_emails', 'get_email_body',
+      'get_meeting_context', 'check_calendar', 'web_search', 'fetch_url', 'run_compute',
+      'request_clarification', 'generate_document',
+      'list_tasks', 'create_task', 'get_task', 'update_task', 'duplicate_task', 'delete_task',
+      'run_task', 'supply_run_input', 'share_task', 'list_team_tasks', 'use_task',
+      'list_worker_documents', 'get_worker_document', 'list_skills', 'apply_skill',
+      'slack_list_channels', 'slack_post_message', 'slack_read_messages', 'slack_list_members',
+      'find_team_work', 'read_team_work', 'compose_email', 'prepare_calendar_invite',
+      'present_linkedin_post',
+    ];
+    const expected = new Set([...BEFORE, 'set_tasks_status']);
+    const got = new Set(coworker);
+    const missing = [...expected].filter((t) => !got.has(t));
+    const extra = [...got].filter((t) => !expected.has(t));
+    check('P21b · the coworker door lost NOTHING when it started reading the registry (before-set === after-set, plus the new bulk verb)',
+      missing.length === 0 && extra.length === 0,
+      `missing=${missing.join(',') || 'none'} extra=${extra.join(',') || 'none'}`);
+
+    check('P21b · a non-worker agent still holds no task/Slack/skill verbs (the pre-registry split, preserved)',
+      !buildCoworkerTools(['kb', 'inbox', 'calendar', 'web'], false, ALL_ON)
+        .some((t) => TASK_CLASS_TOOLS.has(t.name) || t.name.startsWith('slack_')));
+
+    check('P21b · the task verbs are STUDIO-gated on both doors (they sat on "always on" while their propose/steer siblings were gated — a Studio-off workspace could pause through a coworker and not propose through the chief)',
+      [...TASK_CLASS_TOOLS].every((t) => CAPABILITY_MAP[t]?.feature === 'studio') &&
+      !buildCoworkerTools(['kb'], true, { ...ALL_ON, studio: false }).some((t) => TASK_CLASS_TOOLS.has(t.name)));
+
+    check('P21b · the task verbs are conversational rows — excluded from builtCapabilities(), so NO PLAN_VERSION bump is owed (the prepare_calendar_invite precedent)',
+      [...TASK_CLASS_TOOLS].every((t) => CAPABILITY_MAP[t]?.conversational === true) &&
+      !renderCapabilitySet().includes('pause or resume tasks in one go'));
+
+    // THE SCHEMA-LESS ROUTER NEVER FIRES A BULK DEED (Sep 21, found by the live replay: "resume the
+    // X task" came back from the chief's fast-path classifier as {status:'paused'} with no names —
+    // a turn that asked to resume ONE would have paused EVERY task the user owns).
+    check('P21b · a capability whose ARGUMENTS are the deed is served only by the schema-bearing loop (loopOnly, with a written reason), and the router filters it out',
+      !!CAPABILITY_MAP.set_tasks_status?.loopOnly &&
+      src('lib/converse/index.ts').includes('.filter((c) => !c.loopOnly)'));
+
+    check('P21b · the chief holds the four task verbs its seat needs, through the SAME executors (one implementation, two doors)',
+      ['list_tasks', 'get_task', 'run_task', 'set_tasks_status'].every((t) => chief.includes(t)) &&
+      chiefSrc.includes("from '@/lib/tools/worker-tasks'") &&
+      chiefSrc.includes('resolveTaskIdByName') &&
+      COWORKER_CHAT_TOOLS.set_tasks_status?.name === 'set_tasks_status');
+  }
+
+  // ═══ P21c · A DEED'S RESULT MUST BE TRUE (Sep 21 — CLASS 1). The live incident: "pause all
+  // workflows" → "Done. Both active workflows are now paused" with ONE paused. Three causes, three
+  // gates: the constant dedupe key that ate the second write, the write that never looked, and the
+  // completion claim nothing checked. ═══
+  {
+    const { toolDedupeKey, isMutatingTool, mayServeFromCache } = await import('../lib/work/tool-dedupe');
+    const { deedFloorVerdict, deedAmendment, deedFromToolResult } = await import('../lib/work/deed-floor');
+
+    // (A) THE KEY IS THE WHOLE ARGUMENT — the incident's own two calls must be two calls.
+    const a = toolDedupeKey('update_task', { task_id: 'A', status: 'paused' });
+    const b = toolDedupeKey('update_task', { task_id: 'B', status: 'paused' });
+    check('P21c · the dedupe key is the WHOLE argument — update_task(A) and update_task(B) are two different calls (the old `${name}:${query ?? filter ?? ""}` collapsed them into one slot and silently skipped the second write)',
+      a !== b && toolDedupeKey('update_task', { status: 'paused', task_id: 'A' }) === a,
+      `${a} vs ${b}`);
+
+    // (B) A MUTATION IS NEVER SERVED FROM CACHE; an identical READ still dedupes.
+    check('P21c · a mutating tool never serves from the turn cache, an identical read still does, and an UNREGISTERED tool fails closed',
+      isMutatingTool('update_task') && isMutatingTool('set_tasks_status') &&
+      !isMutatingTool('search_knowledge_base') && isMutatingTool('some_tool_with_no_row') &&
+      mayServeFromCache('search_knowledge_base', true) && !mayServeFromCache('update_task', true) &&
+      !mayServeFromCache('search_knowledge_base', false));
+
+    check('P21c · both dispatch sites in the coworker route read the ONE helper, and a skipped call is still RECORDED (never silently dropped from the turn\'s ledger)',
+      (src('app/api/work/threads/[id]/chat/route.ts').match(/toolDedupeKey\(tc\.function\.name, toolInput\)/g) ?? []).length === 2 &&
+      (src('app/api/work/threads/[id]/chat/route.ts').match(/mayServeFromCache\(tc\.function\.name/g) ?? []).length === 2 &&
+      (src('app/api/work/threads/[id]/chat/route.ts').match(/Already retrieved \(identical request\)/g) ?? []).length === 2 &&
+      !src('app/api/work/threads/[id]/chat/route.ts').includes('toolInput.query ?? toolInput.filter'));
+
+    // (C) VERIFY AFTER WRITE — a zero-row update is not a success.
+    check('P21c · the mutators re-read and report the OBSERVED state (a .update().eq() matching zero rows returns cleanly — it is not an error, and it was being claimed)',
+      src('lib/tools/worker-tasks.ts').includes('VERIFY AFTER WRITE') &&
+      src('lib/tools/worker-tasks.ts').includes('it is still ${String(observed.status)}') &&
+      src('lib/tools/worker-tasks.ts').includes('it is still there. Nothing was removed.') &&
+      src('lib/tools/worker-tasks.ts').includes('the ledger counts rows READ BACK at the new status'));
+
+    // (D) THE DEED FLOOR's unit matrix — no model anywhere in it.
+    const one = [{ tool: 'set_tasks_status', kind: 'status' as const, ok: true, count: 1 }];
+    const two = [{ tool: 'set_tasks_status', kind: 'status' as const, ok: true, count: 2 }];
+    const doc = [{ tool: 'generate_document', kind: 'document' as const, ok: true, count: 1 }];
+    const claim = 'Done. Both active workflows are now paused.';
+    check('P21c · the deed floor — "both are paused" over a 1-item ledger is a BREACH; over a 2-item ledger it passes; an empty ledger breaches; the count is the ledger\'s, never the sentence\'s',
+      !!deedFloorVerdict(claim, one).breach && deedFloorVerdict(claim, one).breach?.claimed === 2 &&
+      !deedFloorVerdict(claim, two).breach &&
+      !!deedFloorVerdict(claim, []).breach);
+    check('P21c · the floor NEVER fires on a question, an offer, or a plain state report read off list_tasks (a missed catch costs nothing; a false correction costs the user\'s trust)',
+      !deedFloorVerdict('Should I pause it?', []).breach &&
+      !deedFloorVerdict('Want me to pause both of them?', []).breach &&
+      !deedFloorVerdict("I'll pause them now.", []).breach &&
+      !deedFloorVerdict('Two of them are paused and one is active.', []).breach &&
+      !deedFloorVerdict("They're already paused.", []).breach &&
+      !deedFloorVerdict("I've updated the draft for you.", []).breach);
+    check('P21c · the document lane keeps its Aug-8 behaviour exactly (a claimed document with no artifact breaches; with one it passes)',
+      !!deedFloorVerdict("I've created a focused priorities report for you.", []).breach &&
+      !deedFloorVerdict("I've created a focused priorities report for you.", doc).breach);
+    check('P21c · the floor speaks the other languages this repo already speaks (PT/DE), and a failed deed never covers a claim',
+      !!deedFloorVerdict('Feito. Ambas as tarefas estão agora pausadas.', one).breach &&
+      !!deedFloorVerdict('Erledigt. Beide Aufgaben sind jetzt pausiert.', []).breach &&
+      !!deedFloorVerdict('Done — it is now paused.', [{ tool: 'set_tasks_status', kind: 'status', ok: false, count: 0 }]).breach);
+    check('P21c · the prose reader (the AgentOS lane) reads OUR OWN executor sentences and nothing else',
+      deedFromToolResult('set_tasks_status', 'Paused 2: "A" · "B".')?.count === 2 &&
+      deedFromToolResult('update_task', 'Failed to update "X": still active.')?.ok === false &&
+      deedFromToolResult('search_knowledge_base', 'whatever') === null);
+
+    // (D2) THE BULK DEED'S TWO DANGEROUS ARGUMENTS ARE DECIDED IN CODE, from the user's own words.
+    // ⚠️ RE-POINTED Sep 21 (review): this gate used to pin the floor's SOURCE LINES, which said
+    // nothing about their REACHABILITY — and the floors themselves failed OPEN when no words were
+    // heard (`allWasSaid = !said || …`), which is exactly the AgentOS door's shape. The floors are
+    // now a pure function and the gate walks its whole truth table, plus every door's coverage.
+    const { planTasksStatusDeed } = await import('../lib/tools/worker-tasks');
+    const plan = (o: Parameters<typeof planTasksStatusDeed>[0]) => planTasksStatusDeed(o);
+    const KNOWN = ['Weekly Briefing', 'Client Radar', 'All Hands Digest'];
+    check('P21c · FAIL CLOSED — with NO user words heard (the AgentOS door\'s shape) a bulk over everything REFUSES BY LISTING; it never pauses what nobody named',
+      plan({ status: 'paused', scope: 'all', userText: '', knownNames: KNOWN }).act === false &&
+      plan({ status: 'paused', knownNames: KNOWN }).act === false);
+    const named = plan({ status: 'paused', scope: 'all', names: ['Client Radar'], userText: '', knownNames: KNOWN });
+    check('P21c · …but EXPLICITLY NAMED targets still move with no words heard, and names beat an extracted "all" scope',
+      named.act === true && named.scope === 'named' && named.names.join() === 'Client Radar');
+    const allSaid = plan({ status: 'active', scope: 'all', userText: 'pause all of my workflows please', knownNames: KNOWN });
+    check('P21c · an all-scope deed needs the user\'s OWN all-word AND their own direction word — and the heard direction overrules the model\'s',
+      allSaid.act === true && allSaid.scope === 'all' && allSaid.status === 'paused' &&
+      plan({ status: 'paused', scope: 'all', userText: 'what about my workflows?', knownNames: KNOWN }).act === false);
+    check('P21c · a TWO-DIRECTION line refuses rather than flattening to one status ("pause A and resume B" used to pause both)',
+      plan({ status: 'paused', scope: 'all', userText: 'pause the radar and resume the briefing', knownNames: KNOWN }).act === false);
+    check('P21c · an "all EXCEPT X" refuses (the exception is invisible to {status, scope} — it would pause exactly the one being spared)',
+      plan({ status: 'paused', scope: 'all', userText: 'pause all of them except the radar', knownNames: KNOWN }).act === false &&
+      plan({ status: 'paused', scope: 'all', userText: 'pause everything apart from the briefing', knownNames: KNOWN }).act === false);
+    check('P21c · a NEGATED direction refuses ("don\'t pause everything" is not a pause)',
+      plan({ status: 'paused', scope: 'all', userText: "don't pause all of them", knownNames: KNOWN }).act === false);
+    check('P21c · a TASK\'S OWN NAME is not a command word — "pause All Hands Digest" is a named deed, never a bulk over everything',
+      plan({ status: 'paused', scope: 'all', userText: 'pause All Hands Digest', knownNames: KNOWN }).act === false &&
+      (() => { const p2 = plan({ status: 'paused', names: ['All Hands Digest'], userText: 'pause All Hands Digest', knownNames: KNOWN }); return p2.act && p2.scope === 'named'; })() &&
+      plan({ status: 'paused', scope: 'all', userText: 'pause All', knownNames: [...KNOWN, 'All'] }).act === false);
+    const pt = plan({ status: 'active', scope: 'all', userText: 'pausar todas as tarefas', knownNames: KNOWN });
+    const de = plan({ status: 'active', scope: 'all', userText: 'pausiere bitte alle', knownNames: KNOWN });
+    const fr = plan({ status: 'active', scope: 'all', userText: 'mettre en pause toutes les tâches', knownNames: KNOWN });
+    check('P21c · the floors speak the four languages this repo speaks (PT/DE/FR all-words and direction words)',
+      [pt, de, fr].every((p) => p.act === true && p.scope === 'all' && p.status === 'paused'));
+    check('P21c · the executor runs the deed through the ONE pure planner, with the real set\'s names in hand',
+      src('lib/tools/worker-tasks.ts').includes('const plan = planTasksStatusDeed({') &&
+      src('lib/tools/worker-tasks.ts').includes('knownNames: all.map((r) => r.name)') &&
+      src('lib/tools/worker-tasks.ts').includes('Name them, or say "all".'));
+    // THE DOOR-COVERAGE LAW: every call site either hands the executor the user's words, or is
+    // provably safe under the fail-closed default. (The words ride to the box on dependencies.)
+    check('P21c · every door that can reach the bulk deed passes the user\'s own words — chief loop, coworker chat, and the AgentOS internal door (bridge → dependencies.user_text → Python _call)',
+      src('lib/converse/index.ts').includes('}, null, userId, admin, userText);') &&
+      src('app/api/work/threads/[id]/chat/route.ts').includes('ctx.userText ?? \'\'') &&
+      src('app/api/internal/agentos/tasks/route.ts').includes('}, agent_id ?? null, user_id, ac, userText);') &&
+      src('app/api/internal/agentos/tasks/route.ts').includes("typeof body.user_text === 'string'") &&
+      src('lib/work/agentos-bridge.ts').includes('user_text: message,') &&
+      src('infra/agentos/tools_tasks.py').includes('"user_text": deps.get("user_text") or ""') &&
+      // …and the CENSUS itself: a new door that calls the executor without the words is a build
+      // error here, not a silent bulk deed. (The executor's own file is its definition.)
+      (() => {
+        const seen: string[] = [];
+        const walk = (dir: string) => {
+          for (const e of readdirSync(dir, { withFileTypes: true })) {
+            if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+            const p = `${dir}/${e.name}`;
+            if (e.isDirectory()) walk(p);
+            else if (/\.tsx?$/.test(e.name) && /executeSetTasksStatus\s*\(/.test(src(p))) seen.push(p);
+          }
+        };
+        for (const root of ['lib', 'app', 'components']) walk(root);
+        const KNOWN_SITES = new Set([
+          'lib/tools/worker-tasks.ts',                          // the executor itself
+          'lib/converse/index.ts',                              // chief loop — passes userText
+          'app/api/work/threads/[id]/chat/route.ts',            // coworker chat — passes ctx.userText
+          'app/api/internal/agentos/tasks/route.ts',            // the box — passes the forwarded user_text
+        ]);
+        const strays = seen.filter((p) => !KNOWN_SITES.has(p));
+        if (strays.length) console.log(`      ↳ unaudited set_tasks_status call sites: ${strays.join(', ')}`);
+        return strays.length === 0 && seen.length === KNOWN_SITES.size;
+      })());
+
+    const { spokenIsResumeNotRun } = await import('../lib/tools/worker-tasks');
+    check('P21c · "resume X" is the mirror of pause, never a RUN — code decides it from the user\'s own words (found live: the model served "resume the X task" with run_task and STARTED a real run, which can spend money and send mail)',
+      spokenIsResumeNotRun('resume the Probe Client Radar task') &&
+      spokenIsResumeNotRun('unpause the weekly briefing') &&
+      !spokenIsResumeNotRun('run the weekly briefing now') &&
+      !spokenIsResumeNotRun('resume it and run it right now') &&
+      src('lib/converse/index.ts').includes('if (spokenIsResumeNotRun(userText))') &&
+      src('app/api/work/threads/[id]/chat/route.ts').includes("if (spokenIsResumeNotRun(ctx.userText ?? ''))"));
+
+    // (E) ONE RETRY, THEN AN HONEST AMENDMENT — the floor may never block a reply forever.
+    check('P21c · the floor is wired at every lane that composes a final say: coworker chat (one corrective round, then an amendment), the chief loop and the AgentOS bridge (amendment only — their streams never retype)',
+      src('app/api/work/threads/[id]/chat/route.ts').includes('deedFloorVerdict(cleanText, floorLedger)') &&
+      src('app/api/work/threads/[id]/chat/route.ts').includes('deedCorrection(breach)') &&
+      src('app/api/work/threads/[id]/chat/route.ts').includes('deedAmendment(breach)') &&
+      src('lib/converse/index.ts').includes('deedFloorVerdict(say, deeds)') &&
+      src('lib/work/agentos-bridge.ts').includes('deedFloorVerdict(fullText, deeds)') &&
+      deedAmendment({ kind: 'status', claimed: 2, covered: 1, sentence: '' }).includes('1 of those'));
+  }
+
   // ═══ P22 · FAILED-TO-JUDGE IS NEVER JUDGED-NONE (proactive-team W2) — an AI outage must not
   // resolve items, strip real work, or cache a day-long "nothing to do". ═══
   check('P22 · the judge marks failure and NEVER caches it (an outage retries, it never becomes a verdict)',
@@ -849,6 +1074,29 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       await sb.from('action_commits').delete().eq('user_id', PERSONAL).eq('idempotency_key', key);
     }
   }
+
+  // ── P23b · THE PARITY LAW, AS IT ACTUALLY STANDS (Sep 21, the owner's convergence call:
+  // "shouldn't we allow the user to do all he can across the board in the different areas of the
+  // tool?"). Irreversible-in-chat is allowed ONLY through a commit-door-mediated send the USER
+  // clicks — a card's Send button IS the human approval (THE HUMAN-IN-THE-LOOP LAW). What the
+  // MODEL may never do is fire one: the chat-born email door returns a CARD, never a commit, and
+  // the only caller of the send route is the card's own click.
+  check('P23b · a chat-born email sends ONLY through the one commit door, and no model-reachable path can fire it',
+    (() => {
+      const door = src('app/api/emails/send/route.ts');
+      const core = src('lib/converse/index.ts');
+      const callers = ['lib/converse/index.ts', 'lib/converse/hands.ts', 'lib/home/ask.ts', 'app/api/home/ask/route.ts']
+        .filter((f) => /fetch\([^)]*emails\/send/.test(src(f)));
+      return door.includes('claimCommit(') && door.includes('releaseCommitClaim(')
+        && door.includes('alreadyExecuted')
+        // the draft door hands back a card; a commit is emitted only behind the explicit-send floor
+        && /emailDraft: \{ id: card\.id/.test(core)
+        && !/tool === 'draft_reply'[\s\S]{0,4000}?commit:/.test(core)
+        && core.includes("if (!EXPLICIT_SEND.test(userText))")
+        && callers.length === 0
+        // …and the deed is recorded where every other prepared send is recorded
+        && door.includes("type: 'message_sent'");
+    })());
 
   // ═══ P24 · AN ASK IS NEVER ROOM-LOCAL AND NEVER A DEAD END (proactive-team W3) — every open ask
   // is globally discoverable (the Home's "Needs your input" ledger), the go-ahead escape exists on

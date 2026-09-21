@@ -9,10 +9,16 @@
 // Nothing here fetches a list, ranks a list, or filters a list. It receives one.
 //
 // ── THE THREE CORRECTIONS Q9v2 MAKES ────────────────────────────────────────────────────────────
-// 1 · THE FRAME OWNS THE VERBS, THE CARD OWNS THE CONTENT. Two large pills fixed ABOVE the stack
-//     (← Dismiss · Done →), two quiet companions beside them (↑ Keep · ⏎ Open), a demoted Later
-//     chip and an Undo pill that exists only when there is something to undo. NOTHING verb-shaped
-//     renders inside the card — `TriageCard` below holds no deed, no door and no verb table at all.
+// 1 · THE FRAME OWNS THE VERBS, THE CARD OWNS THE CONTENT. Two large pills (← Dismiss · Done →),
+//     two quiet companions beside them (↑ Keep · ⏎ Open), a demoted Later chip and an Undo pill
+//     that exists only when there is something to undo. NOTHING verb-shaped renders inside the
+//     card — `TriageCard` below holds no deed, no door and no verb table at all.
+//     ⚠️ THE VERBS SIT BELOW THE CARD (owner, Sep 21 — "CTA buttons should be below?"). The frame
+//     still owns them; only their seat moved. They must not BOUNCE as cards change height, so the
+//     card area carries a stable floor (`CARD_MIN_H`): short cards pad down to it, and the pills
+//     sit at one place for most of a session rather than climbing with every advance. A taller
+//     card still pushes them down — a card that is the thing itself is never clipped to keep a
+//     button still.
 // 2 · TRUE FOCUS. The card is ~640px, centred, and the surrounding prose collapses (the lens owns
 //     that half — this file owns the one header line: Close · the band · what is left · view as
 //     list).
@@ -20,13 +26,16 @@
 //     CONTENT: for a mail row the thread's tail, lazily read through THE EXISTING THREAD DOOR
 //     (`GET /api/inbox/<id>/thread`), clipped by THE ONE CLIPPER, cached for the session and
 //     PREFETCHED one card ahead; for anything else the founding context it was already handed.
-//     At the bottom, the reply slot: a prepared draft rendered read-only where one stands, else a
-//     quiet line that talks to Clara about THIS item through the item's OWN conversation door.
+//     THE REPLY SLOT IS PARKED (owner call, Sep 21 — the composer is off the cards for now). Both
+//     of its states are gone: the composer that spoke to the assistant about the item, and the
+//     read-only preview of a stored draft under its own standing line. The PREPARED
+//     FACT survives where it always belonged — as the card's own contextual chip ("draft ready"),
+//     which is information rather than a composer. Reinstating it is one mount at the card's foot.
 //
 // ── THE INVARIANT, UNCHANGED ────────────────────────────────────────────────────────────────────
-// NOTHING EVER FLOWS BACK TO THE TOP BY ITSELF, and nothing in this file can send anything: the
-// reply slot never commits (it speaks), the draft preview never commits (it shows), and the only
-// route to a commit is ⏎ OPEN — the item's own room, its own door, the person's own keystroke.
+// NOTHING EVER FLOWS BACK TO THE TOP BY ITSELF, and nothing in this file can send anything: there
+// is no composer and no draft body in the deck at all, and the only route to a commit is ⏎ OPEN —
+// the item's own room, its own door, the person's own keystroke.
 //
 // ── THE VERBS, AND WHOSE DOOR EACH ONE IS ───────────────────────────────────────────────────────
 //   ← DISMISS  the EXISTING dismiss door (`useRowActions`' own `drop` — /api/inbox/<id>/dismiss for
@@ -62,7 +71,7 @@ import type { HeldClassId } from '@/lib/home/attention';
 // THE DECK'S PURE WORDS — the receipt, the whens, the verb table, the keyboard map, the tail clip.
 import {
   TRIAGE_KEYS, TRIAGE_VERBS, TRIAGE_EXIT_LABEL, TRIAGE_HINTS, TRIAGE_UNDO_LABEL,
-  TRIAGE_SOURCE_WORD, TRIAGE_THREADED, TRIAGE_STEER_KIND,
+  TRIAGE_SOURCE_WORD, TRIAGE_THREADED,
   laterOptions, whenWords, triageReceipt, triageEnd, initialOf, verbsOfRank,
   type TriageTally, type TriageVerb, type TriageMessage,
 } from '@/lib/triage/words';
@@ -86,13 +95,19 @@ export type TriageRow = {
   /** The prepared artifact's kind, when one stands ('reply_draft' | 'invite'). A row handed over by
    *  the Home carries none: it may say a prepared WORD (below) but it never promises a renderer. */
   prepared: string | null;
-  /** The prepared RECEIPT as a word ("drafted", "ready to send") — a chip, never a mount. */
+  /** The prepared RECEIPT as a word ("drafted", "reply prepared") — a chip, never a mount. */
   preparedWord?: string | null;
   /** The held class — the subject of a posture, when one is keepable. */
   cls: HeldClassId | null;
 };
 
 type Decided = { row: TriageRow; verb: TriageVerb; undoable: boolean };
+
+/** THE CARD AREA'S FLOOR (Sep 21, with the verbs beneath the card). The two big targets must not
+ *  climb and drop with every advance, so the card's block pads down to one height: a short card
+ *  leaves quiet space beneath it, a tall one grows past it. A floor, never a cap — the card is the
+ *  thing itself, and clipping it to keep a button still would be the wrong trade. */
+const CARD_MIN_H = 'min-h-[300px]';
 
 const CARD_EXIT: Record<TriageVerb, string> = {
   done: 'translate-x-10', dismiss: '-translate-x-10', keep: '-translate-y-8', later: '-translate-x-10', open: '',
@@ -111,19 +126,9 @@ const CARD_EXIT: Record<TriageVerb, string> = {
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 const loadTail = (itemId: string): Promise<TriageMessage[]> => loadThreadTail(itemId);
 
-/** THE PREPARED DRAFT'S OWN WORDS, for the read-only preview in the slot. Asked for ONLY where the
- *  serve already said a reply draft stands (`row.prepared === 'reply_draft'`), so this is the
- *  door's instant serve of a stored draft — never a generation the deck triggered. */
-const _draftCache = new Map<string, string>();
-function loadDraft(itemId: string): Promise<string> {
-  const had = _draftCache.get(itemId);
-  if (had !== undefined) return Promise.resolve(had);
-  return fetch(`/api/inbox/${itemId}/draft`, { method: 'POST' })
-    .then((r) => (r.ok ? r.json() : null))
-    .then((d) => String(d?.draft ?? ''))
-    .catch(() => '')
-    .then((t) => { _draftCache.set(itemId, t); return t; });
-}
+// ⚠️ THE DRAFT READ IS PARKED WITH THE SLOT (owner call, Sep 21). The deck no longer opens a stored
+// draft's body at all — the prepared fact reaches the reader as the card's own chip, and the words
+// live one ⏎ away in the room, which is also the only place they can be sent.
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE FRAME'S PILLS. The two deeds that clear are large and plain-worded; the two companions are
@@ -167,14 +172,8 @@ function QuietPill({ v, busy, onClick }: {
 // verb, no deed, no door and no keyboard. The frame above it owns all of those (Q9v2 · 1), which is
 // why this component imports neither the row kit nor the verb table.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-function TriageCard({ row, onOpen }: {
-  row: TriageRow;
-  /** The ONE navigation a card may ask for: the reply slot's "open it to send" pointer. It is the
-   *  frame's ⏎ OPEN, handed down — never a second door. */
-  onOpen: () => void;
-}) {
+function TriageCard({ row }: { row: TriageRow }) {
   const [tail, setTail] = useState<TriageMessage[] | null>(() => peekThreadDoor(row.id)?.tail ?? null);
-  const [draft, setDraft] = useState<string | null>(() => _draftCache.get(row.id) ?? null);
   const threaded = TRIAGE_THREADED.includes(row.item.source);
 
   // LAZY, ON THE CARD IN HAND. The cache makes a revisit free; a stale component that resolves
@@ -185,13 +184,6 @@ function TriageCard({ row, onOpen }: {
     void loadTail(row.id).then((t) => { if (live) setTail(t); });
     return () => { live = false; };
   }, [row.id, threaded]);
-
-  useEffect(() => {
-    if (row.prepared !== 'reply_draft') { setDraft(null); return; }
-    let live = true;
-    void loadDraft(row.id).then((t) => { if (live) setDraft(t); });
-    return () => { live = false; };
-  }, [row.id, row.prepared]);
 
   const sourceWord = TRIAGE_SOURCE_WORD[row.item.source] ?? null;
   // THE CONTEXTUAL CHIP — the prepared state where one was served, else the held class's own word.
@@ -242,85 +234,33 @@ function TriageCard({ row, onOpen }: {
         ) : null}
       </div>
 
-      {/* ── BOTTOM · THE REPLY SLOT ───────────────────────────────────────────────────────────────
-          A prepared draft renders IN it, read-only: review at speed. The slot NEVER sends — there
-          is no send door in this file at all; the pointer is ⏎ Open, where the commit already
-          lives. With no draft, the slot is a quiet line that talks to Clara about THIS item. */}
-      <ReplySlot row={row} draft={draft} onOpen={onOpen} />
+      {/* ── BOTTOM · NOTHING (Q9v2 · 3, AMENDED Sep 21) ───────────────────────────────────────────
+          The reply slot is PARKED by owner call: no composer, and no read-only draft body. What a
+          reader needs to know at triage speed — that something is already prepared — is the chip
+          at the top of this card, and the words themselves are one ⏎ away in the room, which is
+          also the only surface that can send them. */}
+      <div className="pb-4" />
     </div>
   );
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// THE REPLY SLOT. Two states, one law: IT NEVER SENDS.
-//   · A PREPARED DRAFT renders as itself, read-only, under a "ready to send" line whose only
-//     affordance is the room (⏎ Open) — the same commit door every other surface uses.
-//   · OTHERWISE it is a composer that speaks to Clara ABOUT this item, through the item's own
-//     conversation door (`POST /api/items/steer`, the same door the room's composer posts to, with
-//     the item's own kind). The answer renders in place; the deck does not advance, because asking
-//     a question is not a verdict.
-// THE DECK WRITES NO ROOM TURN OF ITS OWN: the room key of an item is resolved SERVER-side (an item
-// linked to an entity lives in that entity's room), and a client that guessed it would write the
-// exchange into the wrong room. The item's own door is the whole of what this slot touches.
+// THE REPLY SLOT IS GONE (owner call, Sep 21 — the "ask or tell me about this" line comes off the
+// cards for now). It held two states and both are retired from this surface: the composer that
+// spoke to the assistant about the item through the item's own conversation door, and the
+// read-only preview of a stored draft. Neither is lost as a FACT — the card's chip still says a
+// draft stands, and the room (⏎ Open) still holds the words and the only door that can send them.
+// REINSTATING IT IS ONE MOUNT at the card's foot; the item-kind map that door takes is parked in
+// lib/triage/words.ts beside the verbs, so a card can never post to the wrong room.
+//
+// THE DECK THEREFORE HOLDS NO COMPOSER AT ALL, which makes the "no send-capable component in this
+// surface" law strictly stronger than it was: there is now no text input on a card either.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-function ReplySlot({ row, draft, onOpen }: { row: TriageRow; draft: string | null; onOpen: () => void }) {
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [said, setSaid] = useState<string | null>(null);
-  const steerKind = TRIAGE_STEER_KIND[row.item.source] ?? null;
-
-  const ask = useCallback(async () => {
-    const t = text.trim();
-    if (!t || busy || !steerKind) return;
-    setBusy(true); setSaid(null);
-    try {
-      const res = await fetch('/api/items/steer', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: steerKind, id: row.id, text: t }),
-      });
-      const d = await res.json().catch(() => ({}));
-      setSaid(res.ok ? String(d.say ?? d.answer ?? 'Noted.') : String(d.error ?? "That didn't go through — try again in a moment."));
-      if (res.ok) setText('');
-    } catch {
-      setSaid("That didn't go through — try again in a moment.");
-    } finally { setBusy(false); }
-  }, [busy, row.id, steerKind, text]);
-
-  if (draft) {
-    return (
-      <div className="mt-4 border-t border-neutral-100 px-5 py-3">
-        <p className="text-[11px] font-medium text-indigo-500">ready to send</p>
-        <p className="mt-1.5 max-h-52 overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed text-neutral-600">{draft}</p>
-        <button type="button" onClick={onOpen}
-          className="mt-2 text-[12px] font-medium text-neutral-400 transition-colors hover:text-indigo-600">
-          Open it to send or change it →
-        </button>
-      </div>
-    );
-  }
-  // A row with no honest item kind gets NO slot rather than one that would post to the wrong door.
-  if (!steerKind) return <div className="pb-4" />;
-  return (
-    <div className="mt-4 border-t border-neutral-100 px-5 py-3">
-      {said && <p className="mb-2 whitespace-pre-wrap text-[13px] leading-relaxed text-neutral-600">{said}</p>}
-      <div className="flex items-center gap-2">
-        <input value={text} disabled={busy}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); void ask(); } }}
-          placeholder={busy ? 'Clara is reading it…' : 'Ask or tell Clara about this…'}
-          className="min-w-0 flex-1 bg-transparent text-[13px] text-neutral-700 outline-none placeholder:text-neutral-300 disabled:opacity-60" />
-        {text.trim() && !busy && (
-          <button type="button" onClick={() => void ask()}
-            className="flex-shrink-0 text-[12px] font-medium text-indigo-600">Ask</button>
-        )}
-      </div>
-    </div>
-  );
-}
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// THE STATION — one row's frame. It owns the doors, the keyboard and the pills; the card below it
-// owns the content. The pills sit ABOVE the stack, fixed, in the frame's own row.
+// THE STATION — one row's frame. It owns the doors, the keyboard and the pills; the card owns the
+// content. The pills sit BELOW the stack (owner, Sep 21) and they do not move when the card does:
+// the card area holds a floor and only the card itself wears the exit class.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 function TriageStation({ row, today, canUndo, onUndo, exiting, under, onDecided, onCount }: {
   row: TriageRow;
@@ -328,7 +268,7 @@ function TriageStation({ row, today, canUndo, onUndo, exiting, under, onDecided,
   today: string;
   canUndo: boolean;
   onUndo: () => void;
-  /** The verdict the card is leaving on — the ONLY thing that moves. The pill bar is fixed. */
+  /** The verdict the card is leaving on — the ONLY thing that moves. The pill bar beneath it stays. */
   exiting: TriageVerb | null;
   /** Whether anything is under this card (the second shoulder). */
   under: boolean;
@@ -431,7 +371,7 @@ function TriageStation({ row, today, canUndo, onUndo, exiting, under, onDecided,
   }, [fire]);
 
   // ── THE KEYBOARD, read from THE ONE TABLE. Every binding in Q9v2's row, and no binding that is
-  //    not in it. Typing inside the card's own fields (a date, the reply slot) never steers. ──────
+  //    not in it. Typing inside the frame's own fields (the L date) never steers the deck. ────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -454,9 +394,34 @@ function TriageStation({ row, today, canUndo, onUndo, exiting, under, onDecided,
 
   return (
     <div className="flex flex-col gap-3">
-      {/* ══ THE PILL BAR — FIXED ABOVE THE STACK. The two deeds that clear are the big pair; Keep
-          and Open are quiet beside them; Later is a chip; Undo exists only when there is something
-          to undo. Nothing verb-shaped renders below this bar. ════════════════════════════════ */}
+      {/* ══ THE STACK, PEEKING — FIRST, because the thing being judged comes before the judgment
+          (owner, Sep 21: "CTA buttons should be below?"). Two hairline shoulders behind the card
+          say how much is under it without rendering a second row of content, and the wrapper's
+          bottom padding keeps them readable as a STACK now that the verbs sit underneath.
+          Only THIS block moves on a verdict; the pill bar below it never does.
+
+          THE FLOOR (`CARD_MIN_H`) is what keeps the pills from bouncing: a short card pads down to
+          it, so the two big targets sit in one place across a run of ordinary cards. A genuinely
+          taller card still pushes them down — clipping the thing itself to hold a button still
+          would trade the card's whole purpose for a pixel. ════════════════════════════════════ */}
+      <div className={`${CARD_MIN_H} flex flex-col pb-4`}>
+        <div className={`relative transition-all duration-200 ease-out motion-reduce:transition-none motion-reduce:transform-none ${
+          exiting ? `opacity-0 ${CARD_EXIT[exiting]}` : 'opacity-100'
+        }`}>
+          <div aria-hidden className="pointer-events-none absolute inset-x-3 -bottom-1.5 h-3 rounded-b-2xl border border-t-0 border-neutral-200/70 bg-white" />
+          {under && (
+            <div aria-hidden className="pointer-events-none absolute inset-x-6 -bottom-3 h-3 rounded-b-2xl border border-t-0 border-neutral-200/50 bg-white" />
+          )}
+          <div className="relative">
+            <TriageCard row={row} />
+          </div>
+        </div>
+      </div>
+
+      {/* ══ THE PILL BAR — BELOW THE CARD, and still the FRAME'S (Q9v2 · 1 — only the seat moved).
+          The two deeds that clear are the big pair; Keep and Open are quiet beneath them; Later is
+          a chip; Undo exists only when there is something to undo. Nothing verb-shaped renders
+          inside the card above. ══════════════════════════════════════════════════════════════ */}
       <div className="flex flex-col gap-2">
         <div className="flex items-stretch gap-2">
           {primary.map((v) => (
@@ -510,21 +475,6 @@ function TriageStation({ row, today, canUndo, onUndo, exiting, under, onDecided,
         )}
         {postureNote && <p className="text-[12px] text-neutral-500">{postureNote}</p>}
         {note && <p className="text-[12px] text-rose-600">{note}</p>}
-      </div>
-
-      {/* THE STACK, PEEKING. Two hairline shoulders behind the card say how much is under it
-          without rendering a second row of content — the card is the only thing that can be read.
-          Only THIS block moves on a verdict; the pill bar above never does. */}
-      <div className={`relative transition-all duration-200 ease-out motion-reduce:transition-none motion-reduce:transform-none ${
-        exiting ? `opacity-0 ${CARD_EXIT[exiting]}` : 'opacity-100'
-      }`}>
-        <div aria-hidden className="pointer-events-none absolute inset-x-3 -bottom-1.5 h-3 rounded-b-2xl border border-t-0 border-neutral-200/70 bg-white" />
-        {under && (
-          <div aria-hidden className="pointer-events-none absolute inset-x-6 -bottom-3 h-3 rounded-b-2xl border border-t-0 border-neutral-200/50 bg-white" />
-        )}
-        <div className="relative">
-          <TriageCard row={row} onOpen={openRoom} />
-        </div>
       </div>
     </div>
   );

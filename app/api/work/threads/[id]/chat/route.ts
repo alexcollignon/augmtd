@@ -20,39 +20,42 @@ import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { getMyWorkspace } from '@/lib/workspace/features';
 import { isToolAllowed } from '@/lib/workspace/tool-capabilities';
 import { DEFAULT_FEATURES, type WorkspaceFeatures } from '@/lib/workspace/types';
+// THE DEFINITIONS MOVED (Sep 21, the door-parity wave): every tool DEFINITION this route used to
+// push by hand now lives in lib/work/chat-tool-defs.ts, derived from the capability registry. This
+// route keeps only the EXECUTORS — what a tool DOES is still dispatched here.
 import {
-  webSearchDefinition, fetchUrlDefinition, executeWebSearch, executeFetchUrl,
-  getEmailsDefinition, executeGetEmails,
-  getMeetingContextDefinition, executeGetMeetingContext,
-  checkCalendarDefinition, executeCheckCalendar,
+  executeWebSearch, executeFetchUrl,
+  executeGetEmails,
+  executeGetMeetingContext,
+  executeCheckCalendar,
   deepResearchDefinition, executeDeepResearch,
-  slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition, slackListMembersDefinition,
   executeSlackListChannels, executeSlackPostMessage, executeSlackReadMessages, executeSlackListMembers,
-  findTeamWorkDefinition, readTeamWorkDefinition, executeFindTeamWork, executeReadTeamWork,
-  composeEmailDefinition, executeComposeEmail, getUserEmailIdentities, type EmailDraft,
-  runComputeDefinition, executeRunCompute, type ComputeConfig,
+  executeFindTeamWork, executeReadTeamWork,
+  executeComposeEmail, getUserEmailIdentities, type EmailDraft,
+  executeRunCompute, type ComputeConfig,
 } from '@/lib/tools';
 import { buildConnectedIntegrationsBlock } from '@/lib/integrations/connection';
 // THE WEEKDAY FLOOR (Wave 1) — deterministic, applied at the assistant-message persist seam below.
 import { enforceWeekdayDatePairs } from '@/lib/utils/weekday-floor';
 import {
-  listTasksDefinition, createTaskDefinition, getTaskDefinition, updateTaskDefinition, duplicateTaskDefinition, deleteTaskDefinition, runTaskDefinition,
-  shareTaskDefinition, listTeamTasksDefinition, useTaskDefinition,
-  listWorkerDocumentsDefinition, getWorkerDocumentDefinition,
-  supplyRunInputDefinition, executeSupplyRunInput,
+  executeSupplyRunInput,
   executeListTasks, executeCreateTask, executeGetTask, executeUpdateTask, executeDuplicateTask, executeDeleteTask, executeRunTask,
-  executeShareTask, executeListTeamTasks, executeUseTask,
+  executeShareTask, executeListTeamTasks, executeUseTask, executeSetTasksStatus, spokenIsResumeNotRun,
   executeListWorkerDocuments, executeGetWorkerDocument,
 } from '@/lib/tools/worker-tasks';
-import {
-  listSkillsDefinition, applySkillDefinition,
-  executeListSkills, executeApplySkill,
-} from '@/lib/tools/worker-skills';
+import { executeListSkills, executeApplySkill } from '@/lib/tools/worker-skills';
 // EVERY THREAD, EVERY PRODUCER (threads plan, Sep 8): the invite card's producer — ONE tool
 // contract + ONE execution body, shared with the chief's loop (lib/converse). It prepares and
 // never sends. ⚠️ The AgentOS (Python) runtime has no `prepare_calendar_invite` @tool yet — see the
 // note in lib/tools/prepare-calendar-invite.ts; a worker on that runtime prepares invites only here.
-import { prepareCalendarInviteDefinition, executePrepareCalendarInvite, inviteCardLine, type PreparedInviteCard } from '@/lib/tools/prepare-calendar-invite';
+import { executePrepareCalendarInvite, inviteCardLine, type PreparedInviteCard } from '@/lib/tools/prepare-calendar-invite';
+// THE ONE COWORKER TOOL TABLE (Sep 21, CLASS 2) — the door's list is DERIVED from the capability
+// registry there, never pushed as literals here.
+import { buildCoworkerTools } from '@/lib/work/chat-tool-defs';
+// THE TURN'S TOOL LEDGER + THE DEED FLOOR (Sep 21, CLASS 1) — the whole-argument dedupe key, the
+// never-cache-a-mutation law, and the generalised completion-claim check.
+import { toolDedupeKey, mayServeFromCache } from '@/lib/work/tool-dedupe';
+import { deedFloorVerdict, deedCorrection, deedAmendment, type DeedRecord } from '@/lib/work/deed-floor';
 import { checkRateLimit } from '@/lib/utils/rate-limit';
 import { isAgentOSEnabled, streamWorkerViaAgentOS } from '@/lib/work/agentos-bridge';
 
@@ -474,7 +477,7 @@ export async function POST(
               : '',
             routinesBrief || '',
             `[TOOLS YOU HAVE RIGHT NOW — use them, never claim otherwise]\n- web_search: search the live web for any news, data, or information. Call it immediately when the user asks about anything current.\n- fetch_url: read the full content of any URL.\n- deep_research: multi-source research synthesis for complex topics.${features.email ? "\n- get_emails: read the user's inbox." : ''}${features.meetings ? '\n- get_meeting_context: read their calendar and meetings.' : ''}${features.meetings ? '\n- check_calendar: read the calendar for a date range (busy/free per day, optional free-slot proposals) — ALWAYS call it before any claim about availability, free time or scheduling; never state availability from memory.' : ''}\nNEVER say you cannot access the web, live data, news sources, or current information. You can. Call web_search and do it.`,
-            `[TASKS]\nA task is reusable structured work you set up once. It runs on a schedule OR on demand whenever asked (run_task) — so neither of you rebuilds it each time. Offer to set one up whenever work is repeatable, even without a schedule ("want me to save this as a task you can re-run anytime?").\n- list_tasks — see what's already running\n- create_task — set up something new from a plain description\n- get_task — read the full config of a task (steps, schedule, language, instructions)\n- update_task — edit any aspect: name, schedule, output language, task instructions, step prompts, status\n\nA task can also start on EVENTS, not just a schedule: pass trigger_doors on create_task (or add_trigger_doors / remove_trigger_doors on update_task) when the user says the work should begin when an email arrives, a file lands in Knowledge, a meeting is recorded, or another named task delivers — the door verbs are additive, so doors you don't mention are kept.\n\nA task can also PIN REFERENCE MATERIAL it reads every run — a policy, template, rubric or brand guide: pass input_doc_names on create_task (or add_input_docs / remove_input_docs on update_task) with the document's name as the user says it, and input_accept_material when the work is done on something handed over at run time ("when I upload a CV"). These verbs are additive too, and get_task shows the tray as "Inputs:".\n\nA task that starts on events also has a PACE — pass daily_run_limit (on create_task, or on update_task to change it) when the user says how many a day it should handle ("at most 3 a day", "let it run more"); extra events QUEUE and run the next day, nothing is dropped, and get_task shows it as "Daily event limit:".\n- duplicate_task — copy a task (useful for variants: same pipeline, different language or audience)\n- run_task — trigger a task right now\n- supply_run_input — a run can STOP and ask the user for something only they have; when they hand it over ("here are the numbers", "here's the JD"), pass it straight through — the run picks up where it stopped. An attached file lands in the user's Knowledge under its own filename, so supply it by name (kb_file_name), never by re-typing its contents.\n- delete_task — remove a task permanently\n- share_task — share a task with the team so teammates can copy it (or stop sharing)\n- list_team_tasks — see tasks shared by teammates\n- use_task — copy a shared team task to your own list\n\nWhen the user asks you to change, update, fix, or adjust a task — YOU MUST COMPLETE THE FULL TOOL SEQUENCE before saying anything. Do not say "Done" or "Updated" until the final action tool has returned a result.\n\nRequired sequences (complete every step, no skipping):\n- Change language / schedule / name / status → list_tasks (get ID) → update_task → say one sentence confirming\n- Change a step prompt → list_tasks (get ID) → get_task (read steps) → update_task with step_patch → confirm\n- Duplicate a task → list_tasks (get ID) → duplicate_task → confirm\n- Run a task → list_tasks (get ID) → run_task → confirm\n- Share a task → list_tasks (get ID) → share_task → confirm\n- Use a team task → list_team_tasks (get ID) → use_task → confirm\n\nNEVER report success after only calling list_tasks. list_tasks only finds the ID — the action hasn't happened yet. A colleague who said "Done, changed to Portuguese" without actually changing it would be fired. Don't be that colleague.`,
+            `[TASKS]\nA task is reusable structured work you set up once. It runs on a schedule OR on demand whenever asked (run_task) — so neither of you rebuilds it each time. Offer to set one up whenever work is repeatable, even without a schedule ("want me to save this as a task you can re-run anytime?").\n- list_tasks — see what's already running\n- create_task — set up something new from a plain description\n- get_task — read the full config of a task (steps, schedule, language, instructions)\n- update_task — edit any aspect: name, schedule, output language, task instructions, step prompts, status\n\nA task can also start on EVENTS, not just a schedule: pass trigger_doors on create_task (or add_trigger_doors / remove_trigger_doors on update_task) when the user says the work should begin when an email arrives, a file lands in Knowledge, a meeting is recorded, or another named task delivers — the door verbs are additive, so doors you don't mention are kept.\n\nA task can also PIN REFERENCE MATERIAL it reads every run — a policy, template, rubric or brand guide: pass input_doc_names on create_task (or add_input_docs / remove_input_docs on update_task) with the document's name as the user says it, and input_accept_material when the work is done on something handed over at run time ("when I upload a CV"). These verbs are additive too, and get_task shows the tray as "Inputs:".\n\nA task that starts on events also has a PACE — pass daily_run_limit (on create_task, or on update_task to change it) when the user says how many a day it should handle ("at most 3 a day", "let it run more"); extra events QUEUE and run the next day, nothing is dropped, and get_task shows it as "Daily event limit:".\n- duplicate_task — copy a task (useful for variants: same pipeline, different language or audience)\n- run_task — trigger a task right now\n- set_tasks_status — pause or resume tasks BY NAME, one or many, in ONE call. Use it whenever the user speaks about more than one task at once (\"pause all my workflows\", \"pause everything\") and for a single named task (\"pause the weekly briefing\") — NEVER a chain of update_task calls. It returns a per-item ledger; report exactly what it says, naming each task, and never a number it did not give you.\n- supply_run_input — a run can STOP and ask the user for something only they have; when they hand it over ("here are the numbers", "here's the JD"), pass it straight through — the run picks up where it stopped. An attached file lands in the user's Knowledge under its own filename, so supply it by name (kb_file_name), never by re-typing its contents.\n- delete_task — remove a task permanently\n- share_task — share a task with the team so teammates can copy it (or stop sharing)\n- list_team_tasks — see tasks shared by teammates\n- use_task — copy a shared team task to your own list\n\nWhen the user asks you to change, update, fix, or adjust a task — YOU MUST COMPLETE THE FULL TOOL SEQUENCE before saying anything. Do not say "Done" or "Updated" until the final action tool has returned a result.\n\nRequired sequences (complete every step, no skipping):\n- Change language / schedule / name → list_tasks (get ID) → update_task → say one sentence confirming\n- Pause or resume ANYTHING (one task or all of them) → set_tasks_status → report its ledger verbatim in your own words\n- Change a step prompt → list_tasks (get ID) → get_task (read steps) → update_task with step_patch → confirm\n- Duplicate a task → list_tasks (get ID) → duplicate_task → confirm\n- Run a task → list_tasks (get ID) → run_task → confirm\n- Share a task → list_tasks (get ID) → share_task → confirm\n- Use a team task → list_team_tasks (get ID) → use_task → confirm\n\nNEVER report success after only calling list_tasks. list_tasks only finds the ID — the action hasn't happened yet. A colleague who said "Done, changed to Portuguese" without actually changing it would be fired. Don't be that colleague.`,
             `[YOUR DOCUMENTS]\nlist_worker_documents shows everything you've produced. get_worker_document retrieves the full content. When the user asks to see, revise, or reference something you made, call get_worker_document — don't say you can't retrieve it.`,
             `[TEAM]\nYou work alongside other coworkers. To build on a teammate's output (e.g. research another coworker did), use find_team_work to locate it (by topic, or by coworker name like "Max") and read_team_work to read it — then do your part. Don't ask the user to fetch a teammate's work; get it yourself. The user talks to whoever owns the result they want — so if they ask you for a deliverable that needs a colleague's input, pull it.`,
             ...(features.meetings ? [`[MEETINGS]\nWhen the user asks to set up, schedule or book a meeting or call, call prepare_calendar_invite — it hands them a FILLED, editable invite card (attendees and time grounded in this conversation) that they review and send themselves. You NEVER send an invite and never say one was sent; keep your reply to one short line, because the card carries the detail.`] : []),
@@ -837,6 +840,9 @@ export async function POST(
       conversation: rawHistory.slice(-10)
         .map((m: { role: string; content: string }) => `[${m.role === 'user' ? 'user' : 'you'}] ${String(m.content ?? '').slice(0, 900)}`)
         .join('\n'),
+      // THE USER'S OWN WORDS — the bulk status deed decides its direction and its "all" from THESE
+      // in code, never from the model's extraction (the EXPLICIT_SEND floor's idiom).
+      userText: content,
     };
 
     // ── Stream ────────────────────────────────────────────────────────────────
@@ -910,9 +916,12 @@ export async function POST(
           const MAX_TOOL_RETRIES = 2;
           // THE WORD IS THE DEED — STRUCTURAL (Aug 8): one corrective round max per turn.
           let wordDeedCorrected = false;
-          // Dedup: prevent same tool+query being called twice in one turn
+          // Dedup: prevent the SAME call (tool + whole argument) running twice in one turn.
           const calledTools = new Set<string>();
           const toolResultCache = new Map<string, string>();
+          // THE TURN'S DEED LEDGER (Sep 21) — one record per MUTATION that actually ran, carrying
+          // what the executor OBSERVED. The deed floor below checks the final reply against it.
+          const deedLedger: DeedRecord[] = [];
 
           while (continueLoop) {
             // Accumulate tool call fragments — OpenAI streams arguments in pieces
@@ -1064,15 +1073,20 @@ export async function POST(
                     let toolInput: Record<string, unknown> = {};
                     try { toolInput = JSON.parse(tc.function.arguments); } catch {}
 
-                    const dedupeKey = `${tc.function.name}:${String(toolInput.query ?? toolInput.filter ?? '')}`;
-                    if (calledTools.has(dedupeKey)) {
+                    // THE WHOLE ARGUMENT IS THE KEY (Sep 21) — see lib/work/tool-dedupe.ts.
+                    const dedupeKey = toolDedupeKey(tc.function.name, toolInput);
+                    if (mayServeFromCache(tc.function.name, calledTools.has(dedupeKey))) {
+                      // A SKIPPED CALL IS STILL RECORDED — the turn's ledger tells the truth about
+                      // what ran, including what did not because it had already run identically.
+                      allToolCalls.push({ name: tc.function.name, summary: 'Already retrieved (identical request)' });
                       toolResultMessages.push({ role: 'tool', tool_call_id: tc.id, content: toolResultCache.get(dedupeKey) ?? 'Already retrieved.' });
                       continue;
                     }
                     calledTools.add(dedupeKey);
 
                     send({ type: 'tool_start', name: tc.function.name, id: tc.id, label: toolLabel(tc.function.name) });
-                    const { result, summary, artifact, citations, clarification, stopStream, emailDraft, cardArtifact, workflowDraft, inviteCard } = await executeChatTool(tc.function.name, toolInput, sources, runContext);
+                    const { result, summary, artifact, citations, clarification, stopStream, emailDraft, cardArtifact, workflowDraft, inviteCard, deed } = await executeChatTool(tc.function.name, toolInput, sources, runContext);
+                    if (deed) deedLedger.push(deed);
                     send({ type: 'tool_result', name: tc.function.name, id: tc.id, summary, ...(citations?.length ? { citations } : {}) });
                     allToolCalls.push({ name: tc.function.name, summary, ...(citations?.length ? { citations } : {}) });
                     if (clarification) send({ type: 'clarification_request', ...(clarification as object) });
@@ -1088,20 +1102,31 @@ export async function POST(
                   for (const tr of toolResultMessages) messages.push(tr);
                   if (continueLoop) continueLoop = true; // continue to get AI's response after tools
                 } else {
-                  // THE WORD IS THE DEED — STRUCTURAL (Aug 8; the prompt rule alone failed live:
-                  // "I've created a focused priorities report", tool_calls: []): a final reply
-                  // CLAIMING a document while none was produced this turn gets ONE corrective
-                  // round — produce it now or restate without the claim. Never ship the lie.
-                  const claimsDoc = /\b(?:i(?:'ve| have)?\s+(?:created|prepared|generated|put together)|created)\b[^.!?\n]{0,80}\b(?:document|report|file|deck|spreadsheet|presentation|pdf)\b/i.test(cleanText);
-                  if (claimsDoc && allArtifactIds.length === 0 && !wordDeedCorrected) {
+                  // THE DEED FLOOR — GENERALISED (Sep 21, from the Aug-8 document check; the live
+                  // incident that forced it: "Done. Both active workflows are now paused" with ONE
+                  // paused). A final reply claiming a MUTATION is checked against this turn's own
+                  // ledger — the kind must be covered by a SUCCESSFUL mutating result, and the count
+                  // it claims must not exceed the count the ledger observed. The document lane keeps
+                  // its original shape: artifacts are its ledger.
+                  const floorLedger: DeedRecord[] = [
+                    ...deedLedger,
+                    ...allArtifactIds.map(() => ({ tool: 'generate_document', kind: 'document' as const, ok: true, count: 1 })),
+                  ];
+                  const { breach } = deedFloorVerdict(cleanText, floorLedger);
+                  if (breach && !wordDeedCorrected) {
+                    // ONE corrective round, never a loop.
                     wordDeedCorrected = true;
                     send({ type: 'text_clear' });
                     messages.push({ role: 'assistant', content: cleanText || '' });
-                    messages.push({ role: 'user', content: '[SYSTEM CHECK — not the user] Your reply claims a document was created, but generate_document was never called: no document exists. Either call generate_document NOW with the full content and then summarize, or restate your reply without claiming a document. Never claim what was not done. Do not apologize or mention this check.' });
+                    messages.push({ role: 'user', content: deedCorrection(breach) });
                     // continueLoop stays true → one more round.
                   } else {
-                    fullAssistantText += cleanText;
-                    messages.push({ role: 'assistant', content: cleanText || '' });
+                    // THE FLOOR NEVER BLOCKS A REPLY FOREVER: after the one retry the answer ships,
+                    // but it ships TRUE — with a code-owned amendment naming what the ledger holds.
+                    const amended = breach ? cleanText + deedAmendment(breach) : cleanText;
+                    if (breach) send({ type: 'text_set', content: amended });
+                    fullAssistantText += amended;
+                    messages.push({ role: 'assistant', content: amended || '' });
                     continueLoop = false;
                   }
                 }
@@ -1146,10 +1171,16 @@ export async function POST(
                     toolInput = {};
                   }
 
-                  // Dedup: if same tool+query already ran this turn, return cached result silently
-                  const dedupeKey = `${tc.function.name}:${String(toolInput.query ?? toolInput.filter ?? '')}`;
-                  if (calledTools.has(dedupeKey)) {
+                  // THE CONSTANT DEDUPE KEY, ENDED (Sep 21 — the live incident: "pause all
+                  // workflows" issued update_task(A) then update_task(B); the key was
+                  // `${name}:${query ?? filter ?? ''}`, so both calls collapsed to ONE slot, B was
+                  // silently `continue`d, and the reply said both were paused). The key is now the
+                  // WHOLE normalized argument object, and a MUTATING tool is never served from
+                  // cache — the second write is the second deed. See lib/work/tool-dedupe.ts.
+                  const dedupeKey = toolDedupeKey(tc.function.name, toolInput);
+                  if (mayServeFromCache(tc.function.name, calledTools.has(dedupeKey))) {
                     const cached = toolResultCache.get(dedupeKey) ?? 'Already retrieved.';
+                    allToolCalls.push({ name: tc.function.name, summary: 'Already retrieved (identical request)' });
                     toolResultMessages.push({ role: 'tool', tool_call_id: tc.id, content: cached });
                     continue;
                   }
@@ -1157,12 +1188,15 @@ export async function POST(
 
                   send({ type: 'tool_start', name: tc.function.name, id: tc.id, label: toolLabel(tc.function.name) });
 
-                  const { result, summary, artifact, citations, clarification, stopStream, retryCorrection, emailDraft, cardArtifact, workflowDraft, inviteCard } = await executeChatTool(
+                  const { result, summary, artifact, citations, clarification, stopStream, retryCorrection, emailDraft, cardArtifact, workflowDraft, inviteCard, deed } = await executeChatTool(
                     tc.function.name,
                     toolInput,
                     sources,
                     runContext
                   );
+                  // THE DEED LEDGER (Sep 21): what this mutation actually did, as the executor
+                  // OBSERVED it — never re-read out of the prose it returned.
+                  if (deed) deedLedger.push(deed);
 
                   // Validation failed — inject correction and retry via next loop iteration
                   if (retryCorrection) {
@@ -1316,7 +1350,10 @@ export async function POST(
             // draft. A weekday is arithmetic over a date, so code owns it; only unambiguous pairs
             // are touched and the pass is idempotent. The PERSISTED turn is the record (streamed
             // partials stay raw). Documents are NOT touched here — verify-claims owns those.
-            const persistedAssistantText = enforceWeekdayDatePairs(fullAssistantText);
+            // THE ANCHOR LAW (Sep 21): the user's own words ride along, so a weekday THEY asked for
+            // outranks a date the model derived — the floor must never "correct" a weekday the user
+            // stated and launder a miscount into a confident wrong day.
+            const persistedAssistantText = enforceWeekdayDatePairs(fullAssistantText, { userText: content });
             await adminClient.from('work_messages').insert({
               thread_id: threadId,
               role: 'assistant',
@@ -1392,177 +1429,12 @@ function deriveToolChoice(
 }
 
 function buildChatTools(sources: string[], _provider: string, _modelFamily: string, isWorker = false, features: WorkspaceFeatures = DEFAULT_FEATURES): OpenAI.Chat.ChatCompletionTool[] {
-  const neutral: NeutralTool[] = [];
-
-  // ── Search tools ──────────────────────────────────────────────────────────
-  if (sources.includes('kb')) {
-    neutral.push({
-      name: 'search_knowledge_base',
-      description: "Search indexed files and Drive documents for relevant content.",
-      input_schema: {
-        type: 'object',
-        properties: {
-          query: { type: 'string', description: 'Specific search query' },
-        },
-        required: ['query'],
-      },
-    });
-  }
-
-  if (sources.includes('kb')) {
-    neutral.push({
-      name: 'read_document',
-      description: "Read the full content of a specific document. Call after search_knowledge_base finds a relevant file and you need more detail than the search excerpt.",
-      input_schema: {
-        type: 'object',
-        properties: {
-          file_id: { type: 'string', description: 'File ID from search results' },
-          filename: { type: 'string', description: 'Filename (for display)' },
-        },
-        required: ['file_id', 'filename'],
-      },
-    });
-  }
-
-  if (sources.includes('inbox')) {
-    neutral.push(getEmailsDefinition);
-    neutral.push({
-      name: 'get_email_body',
-      description: "Read the full body of a specific email by ID. Call after get_emails identifies the email you need.",
-      input_schema: {
-        type: 'object',
-        properties: {
-          email_id: { type: 'string', description: 'The email ID from get_emails results' },
-        },
-        required: ['email_id'],
-      },
-    });
-  }
-
-  if (sources.includes('calendar')) {
-    neutral.push(getMeetingContextDefinition);
-    // THE COWORKER LANE REACHES THE CALENDAR (Sep 18): get_meeting_context reads meetings we
-    // RECORDED and a 7-day upcoming ceiling — it is not a calendar read. Without check_calendar a
-    // coworker asked about a date answered from the only calendar in its prompt, which is how a
-    // publish-ready post narrated the NEXT day's event in the past tense. The verb the chief of
-    // staff got in Wave 1 is the same verb this lane needed. (The features filter below keeps it
-    // behind `meetings`, exactly as its neighbour.)
-    neutral.push(checkCalendarDefinition);
-  }
-
-  // deep_research is executed directly before the AI loop (not as a model-invoked tool)
-  // so it is intentionally omitted from the tool list here.
-
-  // ── Web tools — available when user enables web search ─────────────────────
-  if (sources.includes('web')) {
-    neutral.push(
-      webSearchDefinition,
-      fetchUrlDefinition,
-    );
-  }
-
-  // ── Compute (Arc 1) — sandboxed code over the user's files/data; reversible by construction
-  // (the sandbox cannot send). Gates itself on env config inside the executor. ──
-  neutral.push(runComputeDefinition);
-
-  // ── Action tools ────────────────────────────────────────────────────────────
-  neutral.push(
-    {
-      name: 'request_clarification',
-      description: "Present a confirmation card before generating a file. Call ONLY when: (1) the user's message explicitly requested a file artifact using words like 'document', 'Word doc', 'spreadsheet', 'presentation', 'deck', 'PDF', 'file', 'to download', 'to send as' AND (2) you have searched and found relevant content. Content type alone is never enough — 'write a press release / report / proposal / summary' does NOT qualify. Do NOT call when searches returned nothing — respond conversationally instead.",
-      input_schema: {
-        type: 'object',
-        properties: {
-          question: {
-            type: 'string',
-            minLength: 10,
-            description: 'A STATEMENT of what you will create — must be declarative, not a question. Example: "I\'ll create a pricing summary using the three documents I found."',
-          },
-          sources: {
-            type: 'array',
-            description: 'Documents/items found. Use EXACT full filenames from search results.',
-            items: {
-              type: 'object',
-              properties: {
-                id: { type: 'string' },
-                title: { type: 'string', minLength: 3, description: 'EXACT full filename from search results — never abbreviated' },
-                type: { type: 'string', enum: ['kb', 'email', 'calendar'] },
-              },
-              required: ['id', 'title', 'type'],
-            },
-          },
-          options: {
-            type: 'array',
-            description: 'Optional choice groups (max 3) for genuinely ambiguous decisions.',
-            items: {
-              type: 'object',
-              properties: {
-                key: { type: 'string' },
-                label: { type: 'string' },
-                choices: { type: 'array', items: { type: 'string' } },
-                default: { type: 'string' },
-              },
-              required: ['key', 'label', 'choices'],
-            },
-          },
-        },
-        required: ['question'],
-      },
-    },
-    {
-      name: 'generate_document',
-      description: "Generate a downloadable file artifact. Call ONLY when the user explicitly asked for a file using words like 'document', 'Word doc', 'spreadsheet', 'presentation', 'deck', 'PDF', 'file', 'to download', 'to send as'. Content type alone is never a trigger — 'write a press release / report / proposal / summary / draft an email' always produces inline text, not a file. Only 'create a press release document' / 'I need a Word report' / 'make me a presentation' triggers this tool.",
-      input_schema: {
-        type: 'object',
-        properties: {
-          type: { type: 'string', enum: ['word', 'excel', 'pptx', 'email'], description: 'File format. "word" = user asked for a Word doc / document / report to download. "excel" = user asked for a spreadsheet / tracker / budget. "pptx" = user asked for a presentation / deck / slides. "email" = user explicitly asked to send an email or open a draft in their mail client — NOT for "write an email about X" (that goes inline).' },
-          instructions: { type: 'string', description: 'Detailed instructions: purpose, audience, key sections, tone, specific data to include.' },
-        },
-        required: ['type', 'instructions'],
-      },
-    },
-  );
-
-  // Worker-only tools — task management + document access
-  if (isWorker) {
-    neutral.push(
-      listTasksDefinition, createTaskDefinition, getTaskDefinition, updateTaskDefinition, duplicateTaskDefinition, deleteTaskDefinition, runTaskDefinition,
-      supplyRunInputDefinition,
-      shareTaskDefinition, listTeamTasksDefinition, useTaskDefinition,
-      listWorkerDocumentsDefinition, getWorkerDocumentDefinition,
-      listSkillsDefinition, applySkillDefinition,
-      slackListChannelsDefinition, slackPostMessageDefinition, slackReadMessagesDefinition, slackListMembersDefinition,
-      findTeamWorkDefinition, readTeamWorkDefinition,
-      composeEmailDefinition,
-      prepareCalendarInviteDefinition,
-      {
-        name: 'present_linkedin_post',
-        description: "Present a finished LinkedIn post to the user as a rich, reviewable card (faithful preview, character count, the \"see more\" fold). Call this whenever you've written a LinkedIn post for the user — put the post text HERE, not in your chat reply. Display-only (it does not publish). Provide 1–3 variants only if you genuinely drafted alternatives. After calling it, keep your chat reply to a short intro line.",
-        input_schema: {
-          type: 'object',
-          properties: {
-            variants: {
-              type: 'array',
-              description: '1–3 post options.',
-              items: {
-                type: 'object',
-                properties: {
-                  text: { type: 'string', description: 'The full post text.' },
-                  hashtags: { type: 'array', items: { type: 'string' }, description: 'Optional hashtags (without #).' },
-                },
-                required: ['text'],
-              },
-            },
-          },
-          required: ['variants'],
-        },
-      },
-    );
-  }
-
-  // Drop any tool whose workspace feature is off (single source: tool-capabilities map),
-  // then convert to OpenAI function-calling format.
-  return neutral.filter(t => isToolAllowed(t.name, features)).map(t => ({
+  // THE DOOR READS THE REGISTRY (Sep 21, CLASS 2). This function used to PUSH its tools as
+  // literals — including a whole `if (isWorker)` block of task verbs that had no registry row, so
+  // the one map every parity gate reads did not know they existed and the chief door could not
+  // offer them. The list, its source gating, its worker gating and its feature filter now live in
+  // ONE derived place (lib/work/chat-tool-defs.ts); drift is impossible, not merely detectable.
+  return buildCoworkerTools(sources, isWorker, features).map(t => ({
     type: 'function' as const,
     function: {
       name: t.name,
@@ -1628,6 +1500,9 @@ interface RunContext {
   /** THE THREAD ITSELF, rendered — the invite preparer reads the conversation the ask was made in
    *  (a card is FILLED FROM THE ONE GROUNDING; an item-local scrap is not a conversation). */
   conversation?: string;
+  /** THIS turn's user message, verbatim — for the deterministic argument floors (which direction a
+   *  bulk status deed takes, and whether "all" was actually said). */
+  userText?: string;
 }
 
 // ── Clarification validator ───────────────────────────────────────────────────
@@ -1662,7 +1537,10 @@ async function executeChatTool(
   input: Record<string, unknown>,
   sources: string[],
   ctx: RunContext
-): Promise<{ result: string; summary: string; artifact?: DocumentArtifact; citations?: string[]; clarification?: object; stopStream?: boolean; retryCorrection?: string; emailDraft?: EmailDraft; cardArtifact?: Record<string, unknown>; workflowDraft?: Record<string, unknown>; inviteCard?: PreparedInviteCard }> {
+): Promise<{ result: string; summary: string; artifact?: DocumentArtifact; citations?: string[]; clarification?: object; stopStream?: boolean; retryCorrection?: string; emailDraft?: EmailDraft; cardArtifact?: Record<string, unknown>; workflowDraft?: Record<string, unknown>; inviteCard?: PreparedInviteCard;
+  /** THE DEED LEDGER (Sep 21): a MUTATING tool reports what it OBSERVED — never parsed back out of
+   *  its own prose. The deed floor checks the final reply against these. */
+  deed?: DeedRecord }> {
   switch (name) {
     case 'prepare_calendar_invite': {
       // PREPARE ONLY — the card is handed to the user; the Send is their click, through the one
@@ -2029,7 +1907,33 @@ async function executeChatTool(
         ...(input.step_patch && typeof input.step_patch === 'object' && typeof (input.step_patch as Record<string, unknown>).step_id === 'string' ? { step_patch: input.step_patch as { step_id: string; label?: string; prompt?: string; config?: Record<string, unknown> } } : {}),
         ...(Array.isArray(input.steps) ? { steps: input.steps as import('@/lib/workflows/types').WorkflowStep[] } : {}),
       }, ctx.userId, ctx.adminClient);
-      return { result, summary: 'Task updated' };
+      // The executor VERIFIES AFTER WRITE, so a leading "Failed" is an observed failure, not a guess.
+      const ok = !/^Failed |^Nothing to update|^Step "/.test(result);
+      return {
+        result, summary: ok ? 'Task updated' : 'Task not updated',
+        deed: { tool: 'update_task', kind: input.status ? 'status' : 'update', ok, count: ok ? 1 : 0 },
+      };
+    }
+
+    // THE BULK STATUS DEED (Sep 21) — ONE server-side loop over the resolved set, a per-item
+    // ledger back. The model reports what the ledger says; the deed floor holds it to that count.
+    case 'set_tasks_status': {
+      const status = input.status === 'active' ? 'active' : 'paused';
+      const out = await executeSetTasksStatus(
+        {
+          status,
+          scope: input.scope === 'all' ? 'all' : input.scope === 'named' ? 'named' : undefined,
+          names: Array.isArray(input.names) ? (input.names as string[]) : undefined,
+        },
+        ctx.agentId ?? null, ctx.userId, ctx.adminClient, ctx.userText ?? '',
+      );
+      return {
+        result: out.text,
+        summary: out.refused
+          ? 'Nothing changed'
+          : `${status === 'paused' ? 'Paused' : 'Resumed'} ${out.changed}${out.failed ? ` · ${out.failed} failed` : ''}`,
+        deed: { tool: 'set_tasks_status', kind: 'status', ok: out.changed > 0, count: out.changed },
+      };
     }
 
     case 'duplicate_task': {
@@ -2037,13 +1941,15 @@ async function executeChatTool(
       const taskId = typeof input.task_id === 'string' ? input.task_id : '';
       const newName = typeof input.name === 'string' ? input.name : undefined;
       const result = await executeDuplicateTask(taskId, ctx.agentId, ctx.userId, newName, ctx.adminClient);
-      return { result, summary: 'Task duplicated' };
+      const ok = !/^Failed |not found/i.test(result);
+      return { result, summary: ok ? 'Task duplicated' : 'Task not duplicated', deed: { tool: 'duplicate_task', kind: 'create', ok, count: ok ? 1 : 0 } };
     }
 
     case 'delete_task': {
       const taskId = typeof input.task_id === 'string' ? input.task_id : '';
       const result = await executeDeleteTask(taskId, ctx.userId, ctx.adminClient);
-      return { result, summary: 'Task deleted' };
+      const ok = /permanently deleted/.test(result);
+      return { result, summary: ok ? 'Task deleted' : 'Task not deleted', deed: { tool: 'delete_task', kind: 'delete', ok, count: ok ? 1 : 0 } };
     }
 
     case 'share_task': {
@@ -2067,8 +1973,21 @@ async function executeChatTool(
 
     case 'run_task': {
       const taskId = typeof input.task_id === 'string' ? input.task_id : '';
+      // "RESUME X" IS A STATUS DEED, NOT A RUN (Sep 21) — the same code-owned disambiguation the
+      // chief door makes, on the door the incident happened on.
+      if (spokenIsResumeNotRun(ctx.userText ?? '')) {
+        // The id is already in hand here, so the single-task mutator (which verifies after write)
+        // is the right door — set_tasks_status resolves by NAME and this lane has none to give.
+        const resumed = await executeUpdateTask(taskId, { status: 'active' }, ctx.userId, ctx.adminClient);
+        const moved = !/^Failed |^Nothing to update|^Step "/.test(resumed);
+        return {
+          result: resumed, summary: moved ? 'Task resumed' : 'Task not resumed',
+          deed: { tool: 'update_task', kind: 'status', ok: moved, count: moved ? 1 : 0 },
+        };
+      }
       const result = await executeRunTask(taskId, ctx.userId, ctx.adminClient, ctx.threadId);
-      return { result, summary: 'Task started' };
+      const ok = /is now running|is already running/.test(result);
+      return { result, summary: ok ? 'Task started' : 'Task not started', deed: { tool: 'run_task', kind: 'run', ok, count: ok ? 1 : 0 } };
     }
 
     // THE SAYABLE SUPPLY (THE WAVE): answering a parked input station in words. The executor holds

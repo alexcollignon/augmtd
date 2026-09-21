@@ -15,6 +15,8 @@ import { WorkerMentionInput } from '@/components/workers/worker-mention-input';
 import { ProjectPickerPanel } from '@/components/work/work-row';
 import { AnchoredPopover } from '@/components/ui/anchored-popover';
 import { EmailCard, type CoworkerEmailDraft } from '@/components/home/email-card';
+import type { StandaloneEmailDraft } from '@/lib/prepare/email-card';
+import { askStreamReducer, initialAskStream, type AskStreamEvent } from '@/components/home/ask-stream';
 import { WorkflowDraftCard, type WorkflowDraft } from '@/components/workflows/workflow-draft-card';
 import { ThreadArtifactsPanel } from '@/components/work/chat-artifact-panel';
 import { InviteCard } from '@/components/home/invite-card';
@@ -29,12 +31,18 @@ import type { DocumentArtifact } from '@/lib/types/inbox';
 // THE DOC CARD'S TWO FACTS, from the ONE resolver (client-safe: types + the version chain).
 import { docCardTypeOf, resolveDocVersion, type DocCardType } from '@/lib/documents/doc-card';
 import { projectHref } from '@/lib/room/project-href';
+// THE REF IS ITS TAG — the ONE ref grammar, shared with the two serving doors (lib/home/ask.ts,
+// lib/entities/ask.ts). A chip resolves by id here, never by its position in the served array.
+import { ASK_TAG_LETTERS, askTagRe, bracketTags, indexByTag, resolveAskRefs } from '@/lib/home/ask-refs';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { ROLE_LABELS } from '@/lib/workers/roles';
 // (BriefingBlock removed from the chat — Phase 3 F2: the prose brief duplicated the deck; the
 // composeBriefing machinery survives as the deck's ordering anchor + the daily report.)
 
-type Ref = { id: string; kind: string; label: string; href: string | null };
+/** `tag` = the grounding id the answer's own prose placed ([E7], [R2]…) — THE identity this chip
+ *  resolves by (lib/home/ask-refs.ts). Absent on turns stored before that law: those render as
+ *  prose with no chips rather than chips resolved by position. */
+type Ref = { id: string; kind: string; label: string; href: string | null; tag?: string };
 /** THE CARD CONTRACT's pointer vocabulary — one per card kind a coworker exchange can produce.
  *  Each names ONLY what identifies the card in its own store; the content is read back from there
  *  (`/api/work/threads/<tid>/chat` — messages' metadata + the thread's artifacts). */
@@ -81,6 +89,11 @@ type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
   /** THE BULK DEED (attention-plan A7) — a previewed deed over a held-quiet class. The payload
    *  is for the FIRST paint only; the card re-reads the stored row, which is the deed's truth. */
   bulkDeeds?: Array<{ deedId: string; deed?: BulkDeedLike }>;
+  /** THE EMAIL CARD (Sep 21) — the chief's own drafted reply, on the SAME card every other producer
+   *  lands. Two shapes, one kind: `itemId` points at a matched inbox item (the card reads that
+   *  item's prepared reply), `draft` carries a STANDALONE one for the first paint. Durable — it
+   *  rides the turn's component, so a reload finds it standing and still sendable. */
+  emailDrafts?: Array<{ emailId: string; itemId?: string; draft?: StandaloneEmailDraft }>;
   /** THE SENSIBLE ASK: one consequential decision as tappable options — a tap SPEAKS its `say`
    *  through the composer. Ephemeral scaffolding (never persisted); consumed on tap. */
   options?: Array<{ label: string; say: string }>;
@@ -159,7 +172,9 @@ function useTypewriter(full: string, active: boolean): string {
     }, 16);
     return () => window.clearInterval(iv);
   }, [full, active]);
-  return full.slice(0, len).replace(/\[[ECRF]?\d*(?:\s*,\s*[ECRF]?\d*)*$/, '');
+  // ONE VOCABULARY (Sep 21): the partial-tag trim reads the same letter set the resolver does, so a
+  // half-revealed [L3] can never flash as raw notation just because this copy knew fewer letters.
+  return full.slice(0, len).replace(new RegExp(`\\[[${ASK_TAG_LETTERS}]?\\d*(?:\\s*,\\s*[${ASK_TAG_LETTERS}]?\\d*)*$`), '');
 }
 
 // Split answer text on [E#]/[C#]/[R#] tags → inline chips that open the referenced item.
@@ -170,30 +185,46 @@ function AnimatedAnswer({ text, refs, onOpen, animate }: { text: string; refs: R
 
 function Answer({ text, refs, onOpen }: { text: string; refs: Ref[]; onOpen: (r: Ref) => void }) {
   // FORMATTING GUARDS: the renderer is plain-prose — strip any markdown the model leaks, and
-  // SEPARATE adjacent refs with " · ". Refs resolve by emit order ACROSS paragraphs. Structure:
-  // blank lines split the answer into real spaced paragraphs (never one massive block).
+  // SEPARATE adjacent chips with " · ". Structure: blank lines split the answer into real spaced
+  // paragraphs (never one massive block).
   const clean = text.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/(?<!\w)\*([^*\n]+)\*(?!\w)/g, '$1').replace(/^#+\s*/gm, '');
-  // Grouped tags ("[E34, E35, E36]") are tolerated — one chip per id, refs consumed in order.
-  const re = /\[([ECRF]\d+(?:\s*,\s*[ECRF]\d+)*)\]/g;
-  let k = 0, refIdx = 0;
+  // ── THE REF IS ITS TAG (Sep 21 — the wrong-object-door incident; lib/home/ask-refs.ts) ──
+  // This loop used to walk the served array with a cursor: chips resolved BY EMIT ORDER across the
+  // whole answer. One grouped bracket ("[R1, R2]") consumed the first two served refs — two
+  // clickable doors to work the sentence never named. A chip resolves by its ID or it does not render: a missing chip is a gap,
+  // a wrong chip is a lie the user can click.
+  //
+  // THE SAFE DEGRADE for turns stored BEFORE the law (refs without tags): the positional fallback
+  // IS the bug, so it is not kept quietly — such a turn indexes to nothing, its tags are stripped,
+  // and it renders as clean prose with no inline chips. We deliberately do NOT reconstruct chips in
+  // the "counts happen to match" case: a rule with an exception is the rule people trust wrongly.
+  const byTag = indexByTag(refs);
+  // ONE PASS removes every tag this turn cannot resolve (and tidies the space it leaves) through
+  // the SAME resolver the server serves by — so notation can never reach the reader as raw text,
+  // on a live answer or a rehydrated one. The cap is what this turn actually holds: the ceiling was
+  // already enforced at the door, and re-capping here would silently drop a served ref.
+  const prose = resolveAskRefs(clean, (t) => byTag.get(t), { cap: byTag.size }).text;
+  const re = askTagRe();
+  let k = 0;
   const renderPara = (para: string) => {
     const parts: React.ReactNode[] = [];
     let last = 0, m: RegExpExecArray | null, prevWasRef = false;
     re.lastIndex = 0;
     while ((m = re.exec(para)) !== null) {
       if (m.index > last) { parts.push(<span key={`t${k++}`}>{para.slice(last, m.index)}</span>); prevWasRef = false; }
-      const ids = m[1].split(/\s*,\s*/);
-      for (const _id of ids) {
+      for (const id of bracketTags(m[1])) {
+        const r = byTag.get(id) ?? null;
+        if (!r) continue;                     // unresolvable: the tag renders as nothing at all
         if (prevWasRef) parts.push(<span key={`s${k++}`} className="text-neutral-300"> · </span>);
-        const r = refs[refIdx] ?? null; refIdx++;
-        if (r) { parts.push(<button key={`r${k++}`} onClick={() => onOpen(r)} className="inline font-medium text-indigo-700 hover:underline decoration-indigo-300 underline-offset-2">{r.label}</button>); prevWasRef = true; }
+        parts.push(<button key={`r${k++}`} onClick={() => onOpen(r)} className="inline font-medium text-indigo-700 hover:underline decoration-indigo-300 underline-offset-2">{r.label}</button>);
+        prevWasRef = true;
       }
       last = m.index + m[0].length;
     }
     if (last < para.length) parts.push(<span key={`t${k++}`}>{para.slice(last)}</span>);
     return parts;
   };
-  const paras = clean.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+  const paras = prose.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
   return (
     <div className="space-y-2.5">
       {paras.map((para, i) => (
@@ -408,13 +439,16 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // Load ANY chat room into the panel (mount rehydration + the History picker share this).
-  const mapServerTurns = (raw: Array<{ role: string; text: string; refs?: Array<{ label: string; href: string | null }>;
+  const mapServerTurns = (raw: Array<{ role: string; text: string; refs?: Array<{ label: string; href: string | null; tag?: string }>;
     author?: { kind?: string; id?: string; name?: string } | null;
     component?: { key?: string; refId?: string; state?: Record<string, unknown> } | null }>): Turn[] =>
     raw.map((t) => ({
       role: t.role === 'user' ? 'user' as const : 'assistant' as const,
       text: t.text,
-      refs: (t.refs ?? []).map((r, i) => ({ id: `h${i}`, kind: 'link', label: r.label, href: r.href })),
+      // THE REF IS ITS TAG on the way back in: the stored grounding id rides through, so a
+      // rehydrated answer resolves its chips exactly as the live one did. A row written before the
+      // law carries none — it renders as prose with no chips (never chips placed by position).
+      refs: (t.refs ?? []).map((r, i) => ({ id: `h${i}`, kind: 'link', label: r.label, href: r.href, ...(r.tag ? { tag: r.tag } : {}) })),
       // THE ONE-NARRATOR LAW on the way back in: a turn a COWORKER spoke wears their face again
       // (the store's server-written author), so a reloaded Home exchange with Clara is still hers.
       ...(t.author?.name ? { author: String(t.author.name).split(' ')[0], ...(t.author.id ? { authorId: String(t.author.id) } : {}) } : {}),
@@ -427,6 +461,17 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // lives on its own row, so a reloaded card can never show "pending" on a deed already run.
       ...(t.component?.key === 'bulk_deed_card' && t.component.refId
         ? { bulkDeeds: [{ deedId: t.component.refId }] }
+        : {}),
+      // …and so does THE EMAIL CARD. A matched item comes back as a POINTER (the card re-reads the
+      // item's own prepared reply — a reload never paints a draft the room has since moved on
+      // from); a standalone one carries its stored payload for the first paint, and its own door
+      // re-reads the row before it mails anything.
+      ...(t.component?.key === 'email_draft_card' && t.component.refId
+        ? { emailDrafts: [{
+            emailId: t.component.refId,
+            ...(typeof t.component.state?.itemId === 'string' ? { itemId: t.component.state.itemId } : {}),
+            ...(t.component.state?.draft ? { draft: t.component.state.draft as StandaloneEmailDraft } : {}),
+          }] }
         : {}),
       // …and so does every card an addressed COWORKER produced — as POINTERS at their own homes
       // (hydrateCardRefs below re-reads them). Nothing about a card's mutable state is copied
@@ -830,7 +875,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           // v2 link model: turns ALWAYS live on the chat's own key — the binding, not the
           // turns' address, says which project the conversation belongs to.
           roomKey: chatRoomKey(), role, text,
-          refs: refs?.length ? refs.map((r) => ({ label: r.label, href: r.href })) : undefined,
+          // The tag rides into the store with the label — the client door and the server door
+          // (app/api/home/ask) write the SAME shape, so which one persisted a turn can never
+          // decide whether its chips resolve.
+          refs: refs?.length ? refs.map((r) => ({ label: r.label, href: r.href, ...(r.tag ? { tag: r.tag } : {}) })) : undefined,
           ...(extra?.authorAgentId ? { authorAgentId: extra.authorAgentId } : {}),
           ...(extra?.component ? { component: extra.component } : {}),
         }),
@@ -1269,7 +1317,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // STREAMING ASK (Aug 6): SSE — `progress` events narrate the core's live stage (the busy
       // line speaks them), `done` carries the answer. A non-SSE response (error JSON) falls back.
       const res = await fetch('/api/home/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(sentRoomKey ? { roomKey: sentRoomKey } : {}), ...(attachments.length ? { attachments } : {}), ...(scope ? { entityId: scope.id } : {}) }) });
-      let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike }; bulkDeed?: { id: string; deed: BulkDeedLike } } = {};
+      let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike }; bulkDeed?: { id: string; deed: BulkDeedLike }; emailDraft?: { id: string; itemId?: string; draft?: StandaloneEmailDraft } } = {};
+      // THE STREAM NEVER RETYPES: the reducer's own verdict decides whether the seated turn
+      // animates — it must be the thing the component reads, not a parallel re-derivation.
+      let st = initialAskStream;
       if (res.body && res.headers.get('content-type')?.includes('text/event-stream')) {
         const reader = res.body.getReader();
         const dec = new TextDecoder();
@@ -1283,11 +1334,14 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             const line = f.split('\n').find((l) => l.startsWith('data: '));
             if (!line) continue;
             try {
-              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike }; bulkDeed?: { id: string; deed: BulkDeedLike } };
-              if (ev.type === 'progress' && ev.label) setStage(ev.label);
-              else if (ev.type === 'token' && (ev as unknown as { t?: string }).t) { liveTextRef.current += (ev as unknown as { t: string }).t; setLiveText(liveTextRef.current); }
-              else if (ev.type === 'token_reset') { liveTextRef.current = ''; setLiveText(''); }
-              else if (ev.type === 'done') d = ev;
+              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike }; bulkDeed?: { id: string; deed: BulkDeedLike }; emailDraft?: { id: string; itemId?: string; draft?: StandaloneEmailDraft } };
+              // THE STREAM NEVER RETYPES (Sep 21): every decision about what the user sees is the
+              // PURE reducer's (components/home/ask-stream.ts) — this branch only moves its
+              // output into React state. The `done` frame's authority is unchanged.
+              st = askStreamReducer(st, ev as AskStreamEvent);
+              if (st.stage !== null) setStage(st.stage);
+              if (st.live !== liveTextRef.current) { liveTextRef.current = st.live; setLiveText(st.live); }
+              if (ev.type === 'done') d = ev;
             } catch { /* partial frame */ }
           }
         }
@@ -1310,8 +1364,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             };
           }) }
         : {};
-      // A token-streamed answer already revealed itself — the typewriter must not re-type it.
-      setTurns((prev) => { pendingAnimate.current = liveTextRef.current ? -1 : prev.length; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...(d.invite ? { invites: [{ inviteId: d.invite.id, invite: d.invite.invite }] } : {}), ...(d.bulkDeed ? { bulkDeeds: [{ deedId: d.bulkDeed.id, deed: d.bulkDeed.deed }] } : {}), ...artCard }]; });
+      // A token-streamed answer already revealed itself — the typewriter must not re-type it
+      // (the reducer decides; `animate:false` means the user has already read these words, so a
+      // final text that differs only slightly settles in place instead of clearing and retyping).
+      setTurns((prev) => { pendingAnimate.current = st.animate ? prev.length : -1; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...(d.invite ? { invites: [{ inviteId: d.invite.id, invite: d.invite.invite }] } : {}), ...(d.bulkDeed ? { bulkDeeds: [{ deedId: d.bulkDeed.id, deed: d.bulkDeed.deed }] } : {}), ...(d.emailDraft ? { emailDrafts: [{ emailId: d.emailDraft.id, ...(d.emailDraft.itemId ? { itemId: d.emailDraft.itemId } : {}), ...(d.emailDraft.draft ? { draft: d.emailDraft.draft } : {}) }] } : {}), ...artCard }]; });
       if (d.artifact) void openArtifact(d.artifact.threadId, d.artifact.id);
       if (d.answer && !sentRoomKey) persistTurn('system', d.answer, d.refs ?? []);
       if (d.focus && !scope && !temp) setScopeHint(d.focus);
@@ -1405,6 +1461,16 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       (t.drafts ?? []).forEach((d, j) => cards.push({
         kind: 'custom', id: `${key}-email-${j}`,
         node: <EmailCard coworker={{ threadId: d.tid, agentId: d.agentId, draft: d.draft }} />,
+      }));
+      // …and the CHIEF's own drafted reply, on that same one card: the item lane reads the matched
+      // item's prepared reply, the standalone lane carries its own payload and sends through its
+      // own commit door. One rendering, whichever lane produced it.
+      // A card with neither an item nor a payload is nothing to render — it is never mounted empty.
+      (t.emailDrafts ?? []).filter((ed) => ed.itemId || ed.draft).forEach((ed, j) => cards.push({
+        kind: 'custom', id: `${key}-mail-${j}`,
+        node: ed.itemId
+          ? <EmailCard item={{ id: ed.itemId }} />
+          : <EmailCard standalone={{ emailId: ed.emailId, draft: ed.draft as StandaloneEmailDraft }} />,
       }));
       (t.workflowDrafts ?? []).forEach((wd, j) => cards.push({
         kind: 'custom', id: `${key}-wf-${j}`, node: <WorkflowDraftCard draft={wd} />,

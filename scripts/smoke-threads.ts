@@ -406,6 +406,46 @@ console.log('\nT3 · THE ONE THREAD COMPONENT — one kit, three kinds, presenta
     !!shell && /max-w-\[760px\]/.test(shell) && /<ThreadHeader/.test(shell)
     && /<ThreadTimeline/.test(shell) && /<ThreadComposer/.test(shell));
 
+  // ── THE RING GUTTER — A STATUS IS NOT A THING A CONTAINER MAY SLICE ───────────────────────────
+  // (owner screenshot, Sep 21: the working arc rendered cut off down its LEFT side in the Home chat,
+  // mid-thought.) The avatar is the whole status system, and its working ring orbits OUTSIDE the
+  // face's own box; the thread's reading column sits flush against the kit's scroller, and
+  // `overflow-y-auto` makes the other axis `auto` too — so the arc was drawn exactly on the cut
+  // line. THE CLASS: the ring's extent is owned by the avatar (one formula, exported) and RESERVED
+  // by THE ONE SCROLLER, so every surface mounting the kit inherits the room and no host can forget
+  // it. Three clauses: one source for the geometry, the scroller reserves it FROM that source (never
+  // a copied number), and the reserve covers every face size the kit actually renders.
+  {
+    const shellSrc = shell ?? '';
+    const avatarSrc = avatar ?? '';
+    gate('T3.11b the ring\'s overhang has ONE source (avatar-status owns and exports the geometry)',
+      /export function ringOverhang\(size: number\): number/.test(avatarSrc)
+      && /export const AVATAR_RING_GUTTER = (\d+)/.test(avatarSrc)
+      // WorkRing may not re-derive its own pad — a second formula is how the reserve goes stale.
+      && /const pad = ringOverhang\(size\)/.test(avatarSrc)
+      && !/Math\.max\(2, Math\.round\(size \* 0\.14\)\)[\s\S]{0,40}\n\s*const box/.test(avatarSrc));
+
+    gate('T3.11c THE ONE SCROLLER reserves the ring gutter (from the constant, both sides, width returned)',
+      /overflow-y-auto[\s\S]{0,240}paddingInline: AVATAR_RING_GUTTER/.test(shellSrc)
+      && /marginInline: -AVATAR_RING_GUTTER/.test(shellSrc)
+      && /import \{ AVATAR_RING_GUTTER \} from '\.\/avatar-status'/.test(shellSrc));
+
+    // The reserve must cover the LARGEST face the kit renders — otherwise the law is true only for
+    // the sizes that happened to exist the day it was written.
+    {
+      const gutter = Number((avatarSrc.match(/export const AVATAR_RING_GUTTER = (\d+)/) || [])[1] ?? 0);
+      const sizes: number[] = [];
+      for (const rel of sourceFiles(KIT)) {
+        const src = read(rel) || '';
+        for (const m of src.matchAll(/\bsize(?:\s*=|=\{)\s*(\d+)/g)) sizes.push(Number(m[1]));
+      }
+      const over = sizes.filter((s) => Math.max(2, Math.round(s * 0.14)) > gutter);
+      gate('T3.11d the gutter covers EVERY face size the kit renders (the reserve can\'t go stale)',
+        gutter > 0 && sizes.length > 0 && over.length === 0,
+        `gutter=${gutter}px · sizes=${[...new Set(sizes)].sort((a, b) => a - b).join(',')}${over.length ? ` · uncovered=${[...new Set(over)].join(',')}` : ''}`);
+    }
+  }
+
   // PRESENTATIONAL PURITY — the kit never fetches, never talks to the DB, never routes. Every
   // deed is a callback from the host, where the commit door and the human-in-the-loop law live.
   {
@@ -596,9 +636,13 @@ console.log('\nT5 · THE LIVE CHAT SURFACE — the Home thread and the coworker 
   // (e) THE ENGINE SEAMS — a render-layer port may not disturb a single one of them.
   {
     const SEAMS: [string, RegExp][] = [
-      ['the streaming ask (SSE token frames + the NUL preview reset)',
-        /ev\.type === 'token'[\s\S]{0,240}ev\.type === 'token_reset'/],
-      ['the progress stage line', /ev\.type === 'progress' && ev\.label/],
+      // RE-POINTED (Sep 21, THE STREAM NEVER RETYPES): the panel's four inline SSE branches became
+      // ONE pure reducer (components/home/ask-stream.ts) and the NUL preview reset was RETIRED —
+      // preamble text is now withheld from the bubble rather than wiped out of it. The seams
+      // themselves are unchanged; they moved one file over, so the gate reads them there.
+      ['the streaming ask (SSE token frames, folded through the pure reducer)',
+        /st = askStreamReducer\(st, ev as AskStreamEvent\)/],
+      ['the progress stage line', /setStage\(st\.stage\)/],
       ['THE ANSWER SURVIVES THE TAB (the server persists the moment the answer is composed)',
         /const sentRoomKey = temp \|\| workerRoomRef\.current \? null : chatRoomKey\(\);/],
       ['…and the client skips its own write when the key was sent (one writer per turn)',
@@ -1072,10 +1116,15 @@ console.log('\nT8 · THE CALM HOME — one sentence, five whispers, one door');
     // numbers were zero — the exact state of a Home whose brief has not landed, and of one whose
     // every seat moved under a meeting. It now always renders and only its WORDS depend on what is
     // known, which is what the second clause below asserts. One door, still one door.
-    !!home && /<CalmDoor\n\s+waiting=\{typeof b\?\.attention\?\.heldWaiting === 'number'\n\s+\? b\.attention\.heldWaiting \+ deckHeldRows\.length\n\s+: b \? restRows\.length : null\}\n\s+handledQuietly=\{b\?\.attention\?\.heldHandled \?\? 0\}\n\s+handledToday=\{ringCleared\} onOpen=\{\(\) => setView\('held'\)\} \/>/.test(home)
+    // RE-POINTED Sep 21 (owner: the handled receipt "looks clickable/meaningful but opens nothing;
+    // let's just remove that label"). The door line is now ONE door and nothing else — which is
+    // what this gate was always named for. The handled account is still spoken, one click in, by
+    // the held page's own intro sentence (lib/home/held-words.ts), so nothing went unaccounted.
+    !!home && /<CalmDoor\n\s+waiting=\{typeof b\?\.attention\?\.heldWaiting === 'number'\n\s+\? b\.attention\.heldWaiting \+ deckHeldRows\.length\n\s+: b \? restRows\.length : null\}\n\s+onOpen=\{openHeldFromHome\} \/>/.test(home)
     && /typeof waiting === 'number' && waiting > 0 \? `When you're ready · \$\{waiting\} →`/.test(home)
     && !/if \(waiting <= 0 && handledQuietly <= 0 && handledToday <= 0\) return null;/.test(home)
-    && /handled quietly/.test(home)
+    && !/handledQuietly=|handledToday=/.test(home)
+    && /Everything else is handled: \$\{handled\.toLocaleString\(\)\} filed quietly/.test(read('lib/home/held-words.ts') ?? '')
     // …and the guilt-backlog wording is gone from the surface, not merely unused
     && !/Everything else ·/.test(home));
 
@@ -1277,7 +1326,9 @@ console.log('\nT8 · THE CALM HOME — one sentence, five whispers, one door');
     //  archived member leaves the list rather than standing as a row the ledger no longer holds.)
     // (Sep 18: the mount gained the WARM stack and the served day — the rows the Home already holds,
     //  so the deck opens on them while the account is read. Same one lens, same one read.)
-    && /<HeldQuietView ledger=\{heldLedger\} deckHeld=\{deckHeldRows\} warmHeld=\{warmHeldRows\}\n\s+servedDay=\{b\?\.today \?\? null\}\n\s+onBack=\{\(\) => setView\('dashboard'\)\} onRefresh=\{reloadHeld\} \/>/.test(home)
+    // (Sep 21: the mount gained the RECORDED ORIGIN — `fromHome` — so the deck's Close returns
+    //  where the reader came from. Still one lens, one read, one mount.)
+    && /<HeldQuietView ledger=\{heldLedger\} deckHeld=\{deckHeldRows\} warmHeld=\{warmHeldRows\}\n\s+servedDay=\{b\?\.today \?\? null\} fromHome=\{heldFromHome\}\n\s+onBack=\{\(\) => setView\('dashboard'\)\} onRefresh=\{reloadHeld\} \/>/.test(home)
     && /useHeldLedger\(view === 'held'\)/.test(home)
     // nothing the deck held is dropped on the floor: the non-mail remainder rides along, worded by
     // the Home's OWN vocabulary (toWhisper), never a second grammar invented at the ledger
@@ -1306,10 +1357,12 @@ console.log('\nT8 · THE CALM HOME — one sentence, five whispers, one door');
     && (home.match(/<DayClearedRing/g) || []).length === 1
     // …and the component itself is retired at its own address, so nothing can mount it again
     && (() => { const one = read('components/one/one-home.tsx'); return !!one && !/export function OneDeck/.test(one) && /export type FlatRow/.test(one); })()
-    // the handled count keeps its ONE home: beside the door (Q2 — it now reads
-    // "N handled quietly · M today", the same one seat, two honest scales)
-    && /handledToday=\{ringCleared\}/.test(home)
-    && (home.match(/handled quietly/g) || []).length === 1);
+    // RE-POINTED Sep 21: the handled count's ONE home is no longer beside the door — the receipt
+    // came off the line by owner's call. It is now spoken in exactly one place, the held page's own
+    // intro, and the Home says it NOWHERE. Same law (one home for one fact), one fewer seat.
+    && !/handledQuietly=|handledToday=\{ringCleared\}/.test(home)
+    // (the two survivors are the day-progress RING's own title and label — its seat, not the door's)
+    && (home.match(/\$\{cleared\} handled today/g) || []).length === 2);
   gate('T8.13 the whispers derive from the SERVED deck — one agenda, one order (no re-judging)',
     !!home && /for \(const e of agenda\.entries\) \{/.test(home)
     // (RE-POINTED Sep 18: the remainder also drops DAY-ANCHORED rows — they are SERVED and already
@@ -2299,7 +2352,11 @@ console.log('\nT17 · THE PROMPTED INVITE — one producer, one card, two stores
     && !!registry && /prepare_calendar_invite: \{[\s\S]{0,600}?feature: 'meetings'/.test(registry)
     // the chief slice filters its defs through TOOL_FEATURE; the DM's buildChatTools through isToolAllowed
     && !!converse && /TOOL_FEATURE\[\(d as \{ name: string \}\)\.name\]/.test(converse)
-    && !!dmRoute && /neutral\.filter\(t => isToolAllowed\(t\.name, features\)\)/.test(dmRoute));
+    // RE-POINTED (Sep 21, the door-parity wave): the DM route's tool list moved into
+    // lib/work/chat-tool-defs.ts, where it is DERIVED from the capability registry. Same one map,
+    // same isToolAllowed filter — a new home, not a new law.
+    && (read('lib/work/chat-tool-defs.ts') || '').includes('if (!isToolAllowed(id, features)) continue;')
+    && !!dmRoute && /buildCoworkerTools\(sources, isWorker, features\)/.test(dmRoute));
 
   // ── the preparer: the ONE grounding, never a fork
   gate('T17.4 THE CHAT PREPARER RIDES THE ONE GROUNDING — no forked time discipline (no second prompt, no second parse, no second evidence check)',
@@ -2513,6 +2570,12 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
         // (the local-file half never leaves the browser until the send carries it)
         '/api/kb/attachment?fileId=<id>',
         '/api/work/threads/<id>/send-coworker-email',
+        // RE-POINTED (Sep 21, the owner's convergence call): the STANDALONE lane's own commit door
+        // — a draft answering a message in no inbox of ours. It is a SEND, and it is here under the
+        // same rule as its two siblings: approve-before-commit, exactly-once at the route, and
+        // reachable only from the card's one `send`. An eighth door is still a new door, and this
+        // gate is still where it stops.
+        '/api/emails/send',
       ];
       return doors.length === expected.length && expected.every((d) => doors.includes(d));
     })()
@@ -2523,7 +2586,8 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
       const code = (host ?? '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
       return /const send = async \(\) => \{/.test(code)
         && (code.match(/send-coworker-email/g) ?? []).length === 1
-        && (code.match(/send-reply/g) ?? []).length === 1;
+        && (code.match(/send-reply/g) ?? []).length === 1
+        && (code.match(/emails\/send/g) ?? []).length === 1;
     })());
   gate('T18.14 `EmailDraftCard` is GONE codebase-wide (a donor retires the wave its successor ships)',
     !read('components/workers/email-draft-card.tsx')
@@ -2556,7 +2620,7 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
   gate('T18.19 THE TIER LAW BOTH WAYS — the mailbox reply lane is gated on the workspace feature; the COWORKER lane (compose_email, feature-null) works on a sovereign workspace',
     !!host && /const mailboxLane = features\.email !== false;/.test(host)
     && /useFeatures\(\)/.test(host)
-    && /const live = !sent && \(coworker \|\| mailboxLane\)/.test(host)
+    && /const live = !sent && \(coworker \|\| standalone \|\| mailboxLane\)/.test(host)
     && !!featureMap && /compose_email: null/.test(featureMap)
     && /send_prepared_reply: 'email'/.test(featureMap));
   gate('T18.20 PERSISTENCE PER SURFACE — each lane reuses the store it already had (the item’s own draft; the DM’s message metadata, whose `sent_at` write-back survives a reload)',
@@ -2565,6 +2629,60 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
     && !!homeAsk && /coworker=\{\{ threadId: d\.tid/.test(homeAsk)
     && !!read('app/api/work/threads/[id]/send-coworker-email/route.ts')
     && /sent_at: new Date\(\)\.toISOString\(\)/.test(read('app/api/work/threads/[id]/send-coworker-email/route.ts') || ''));
+  // ── T18.21 · THE STANDALONE LANE (Sep 21 — the owner's convergence call) ──────────────────────
+  // "I don't want us to have multiple components for the same thing in different ways — shouldn't
+  // we reuse the email draft component, and leave the reply-FROM open for the user? If only one
+  // mailbox it fills with that one; if multiple inboxes, allow email/inbox selection." A draft
+  // answering a message in no inbox of ours is THE SAME CARD, plus the one fact the item lane never
+  // has to ask: which mailbox sends.
+  gate('T18.21a NO FOURTH RENDERING — the standalone draft is a MODE of the one card, not a component of its own',
+    (() => {
+      const defs = sourceFiles('components').filter((f) => /export function EmailCard\(/.test(read(f) || ''));
+      // nothing anywhere renders an email draft outside the one host + the kit
+      const strays = sourceFiles('components').filter((f) =>
+        /function (Standalone|Chat)?Email(Draft|Compose)?Card\b/.test(read(f) || '')
+        && f !== 'components/home/email-card.tsx' && f !== 'components/thread/thread-cards.tsx');
+      return defs.length === 1 && strays.length === 0
+        && !!host && /standalone\?: \{ emailId: string; draft: StandaloneEmailDraft \}/.test(host);
+    })());
+  gate('T18.21b THE FROM ROW belongs to the KIT, and renders only where the sender is a real question (one states itself · several offer themselves · none names the assistant’s address)',
+    !!types && /from\?: string;/.test(types) && /fromOptions\?: Array<\{ id: string; label: string \}>/.test(types)
+    && !!emailView && /\{\(card\.from \|\| \(card\.fromOptions\?\.length \?\? 0\) > 0\) && \(/.test(emailView)
+    && /card\.onPickFrom!\(ev\.target\.value\)/.test(emailView)
+    && !!host && /\.\.\.\(standalone \? \{\s*\n\s*from: sendFromLabel\(/.test(host)
+    // the item lane never grows the row: its sender is settled by the thread it answers
+    && /\.\.\.\(\(standalone\.draft\.from\?\.options\?\.length \?\? 0\) > 1 && !sent \?/.test(host));
+  gate('T18.21c THE FROM RESOLUTION IS PURE AND LIVES IN THE ONE MAPPER — no second derivation, and the assembly that uses it never drafts',
+    !!mapper && /export function resolveSendFrom\(/.test(mapper) && /export function sendFromLabel\(/.test(mapper)
+    && !/\bfetch\(/.test(mapper) && !/@supabase/.test(mapper)
+    && (() => {
+      const callers = sourceFiles('components').concat(sourceFiles('lib'), sourceFiles('app'))
+        .filter((f) => /resolveSendFrom\(/.test(read(f) || ''));
+      return callers.length === 2 && callers.includes('lib/prepare/email-card.ts')
+        && callers.includes('lib/prepare/standalone-reply.ts');
+    })());
+  gate('T18.21d A CARD IS A TURN on this lane too — the draft persists as one component and rehydrates through the SAME host (an item-born one as a POINTER, a standalone one with its payload)',
+    !!read('app/api/home/ask/route.ts') && /key: 'email_draft_card', refId: turn\.emailDraft\.id/.test(read('app/api/home/ask/route.ts') || '')
+    && !!homeAsk && /t\.component\?\.key === 'email_draft_card'/.test(homeAsk)
+    && /\<EmailCard item=\{\{ id: ed\.itemId \}\} \/\>/.test(homeAsk)
+    && /\<EmailCard standalone=\{\{ emailId: ed\.emailId/.test(homeAsk));
+  gate('T18.21e THE STORE IS THE TRUTH — a standalone draft lives on its own row (the chat_invite precedent) and its send door reads THAT row, never the request body',
+    (() => {
+      const store = read('lib/prepare/chat-email-store.ts') || '';
+      const door = read('app/api/emails/send/route.ts') || '';
+      return /export const CHAT_EMAIL_KIND = 'chat_email';/.test(store)
+        && /export async function readChatEmail\(/.test(store) && /export async function markChatEmailSent\(/.test(store)
+        && /const stored = await readChatEmail\(supabase, user\.id, emailId\);/.test(door)
+        && /if \(stored\.sentAt\) return NextResponse\.json\(\{ ok: true, alreadyExecuted: true/.test(door)
+        && /await markChatEmailSent\(supabase, user\.id, emailId\)/.test(door);
+    })());
+  gate('T18.21f THE CARD NEVER WEARS A FIELD ITS DOOR WOULD DROP — Bcc, attachments, the direction tabs and the tone menu are the ITEM lane’s alone',
+    !!host && /const itemLane = !!item && !coworker && !standalone;/.test(host)
+    && /\.\.\.\(itemLane \? \{\s*\n\s*onOpenBcc/.test(host)
+    && /\.\.\.\(itemLane \? \{ onSteer:/.test(host)
+    && /\.\.\.\(itemLane \? \{ toneOptions/.test(host)
+    && /directions: itemLane && mailboxLane \? directions : \[\]/.test(host));
+
   // ── THE CARD SURVIVES THE RELOAD ON THE CHIEF LANE (Sep 8, found live: a draft a Home-addressed
   // coworker produced rendered live and was GONE on reload — the exchange itself was never written)
   gate('T18.22a THE EXCHANGE PERSISTS — a coworker addressed from the Home thread writes BOTH turns into the room (worker mode still opts out: the DM store owns that conversation)',
@@ -2630,7 +2748,12 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
     && /token\?: string;/.test(read('components/workflows/workflow-draft-card.tsx') || '')
     && /localStorage\.getItem\(consumedKey\(draft\.token\)\)/.test(read('components/workflows/workflow-draft-card.tsx') || ''));
   gate('T18.22d ONE RENDERING PER KIND — every rehydrated card (chief lane and the Home’s DM twin) mounts through the host that kind already had, never a second card',
-    !!homeAsk && (homeAsk.match(/<EmailCard\b/g) ?? []).length === 1
+    // RE-POINTED (Sep 21): "one rendering" is about the COMPONENT, never the number of mounts. The
+    // chief lane now mounts the SAME EmailCard in three lanes (a coworker's draft, a matched item's
+    // prepared reply, a standalone one) — which is the law being kept, not broken. What must stay
+    // singular is the component, and T18.15/T18.21a hold that.
+    !!homeAsk && (homeAsk.match(/<EmailCard\b/g) ?? []).length === 3
+    && /<EmailCard coworker=/.test(homeAsk) && /<EmailCard item=/.test(homeAsk) && /<EmailCard standalone=/.test(homeAsk)
     && (homeAsk.match(/<InviteCard\b/g) ?? []).length === 1
     && (homeAsk.match(/<WorkflowDraftCard\b/g) ?? []).length === 1
     // both lanes end in the SAME turn fields the one mount reads
@@ -3290,7 +3413,9 @@ console.log('\nT24 · THE CARD EDITOR — content-truth, live controls, one comp
     !!host && /onPickVariant: pickVariant,/.test(host)
     && !/\(dirty \? \{\} : \{ onPickVariant/.test(host)
     // …and the tone menu / steer field survive an edit too
-    && /\.\.\.\(item \? \{ onSteer/.test(host) && /\.\.\.\(item \? \{ toneOptions/.test(host)
+    // RE-POINTED (Sep 21): the predicate is now named — `itemLane` (an item, and neither of the
+    // two card-owned lanes). Same condition, same law: these survive an edit.
+    && /\.\.\.\(itemLane \? \{ onSteer/.test(host) && /\.\.\.\(itemLane \? \{ toneOptions/.test(host)
     && !/item && !dirty/.test(host));
   gate('T24.2b …and nothing anywhere drops the user’s version once it exists (no silent reset)',
     !!host && !/setUserEdit\(null\)/.test(host));
@@ -3340,7 +3465,10 @@ console.log('\nT24 · THE CARD EDITOR — content-truth, live controls, one comp
     && !!coworkerSend && /const \{ to, cc, subject, body, agentId, draftId \} = await req\.json\(\);/.test(coworkerSend)
     && !/bcc/.test(coworkerSend)
     // …so the card offers bcc only on the mailbox lane, and sends what it collected
-    && !!host && /\.\.\.\(coworker \? \{\} : \{\s*\n\s*onOpenBcc/.test(host)
+    // RE-POINTED (Sep 21): bcc is the ITEM lane's alone now — the standalone door models
+    // to/cc/subject/body and nothing else, so it shows no bcc either. The law is unchanged and now
+    // covers one more door.
+    && !!host && /\.\.\.\(itemLane \? \{\s*\n\s*onOpenBcc/.test(host)
     && /\.\.\.\(bcc\.length \? \{ bcc \} : \{\}\)/.test(host));
   gate('T24.7 ATTACH IS THE INBOX’S OWN MODEL, and it rides the send that can carry it',
     !!host && /type PendingAttachment = \{ filename: string; content: string; mimeType: string \}/.test(host)
@@ -3355,8 +3483,10 @@ console.log('\nT24 · THE CARD EDITOR — content-truth, live controls, one comp
     && !!host && /setAttachments\(\(prev\) => prev\.filter\(\(_, j\) => j !== i\)\)/.test(host));
   gate('T24.7c a rich toolbar only where the door carries HTML (the Resend lane escapes its body)',
     !!types && /richBody\?: boolean;/.test(types)
-    && !!host && /\.\.\.\(coworker \? \{\} : \{ richBody: true \}\)/.test(host)
-    && /const text = coworker \? emailBodyText\(body\)\.trim\(\) : body;/.test(host));
+    // RE-POINTED (Sep 21): a standalone draft with no connected mailbox rides the SAME Resend
+    // channel, so it takes the same words-not-markup treatment. One predicate, both Resend lanes.
+    && !!host && /\.\.\.\(coworker \|\| viaCoworker \? \{\} : \{ richBody: true \}\)/.test(host)
+    && /const text = coworker \|\| viaCoworker \? emailBodyText\(body\)\.trim\(\) : body;/.test(host));
 
   // ── (c) THE WORKING STATE ──
   gate('T24.8 ONE MOTION IDIOM for a card that is working — and it honours reduced motion',
@@ -3458,10 +3588,15 @@ console.log('\nT24 · THE CARD EDITOR — content-truth, live controls, one comp
   gate('T24.14b ONE DRAFTER, ONE GROUNDING — the preview is the SAME call the deed makes',
     (() => {
       const conv = read('lib/converse/index.ts') || '';
-      // exactly one call of each drafter in the core, and one composition of the steering note
+      // exactly one call of each drafter in the core, and one composition of the steering note.
+      // RE-POINTED (Sep 21, HANDS FOR THE SCOPE): the draft door's STANDALONE lane — a message in
+      // no inbox of ours — calls the SAME `generateReplyDraft` with the SAME steering-note
+      // composition rather than minting a second drafter, so the core now holds two call sites and
+      // three notes. The law is unchanged and now covers one more door: ONE drafter, ONE grounding.
       return (conv.match(/generateReplyDraft\(userId, sd, client, instr\)/g) ?? []).length === 1
+        && (conv.match(/generateReplyDraft\(userId, sd, client,\n/g) ?? []).length === 1
         && (conv.match(/generateNudgeDraft\(userId, \{/g) ?? []).length === 1
-        && (conv.match(/THE USER'S STEERING NOTE/g) ?? []).length === 2
+        && (conv.match(/THE USER'S STEERING NOTE/g) ?? []).length === 3
         // …and the persisting door calls the very same helper
         && /await redraftItemDraft\(client, userId, scope, text, \{ persist: true, learned: turn\.learned \}\)/.test(conv);
     })());
@@ -4485,6 +4620,12 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
   // under layered, additively-composited light — and it is the DEFAULT. v3 survives whole, behind
   // an explicit variant, because a reverted owner call should cost one word.
   const v4 = mark15.slice(mark15.indexOf('export function makeSoftBodyDraw('), mark15.indexOf('v3 · THE MESH SPHERE'));
+  // The seated painter's own slice — T29.9a asserts the DEFAULT carries no mesh, so it has to read
+  // the renderer the default actually names, not the one it used to name.
+  const eyesPainter = (() => {
+    const from = mark15.indexOf('function makeEyesDraw(');
+    return from < 0 ? '' : mark15.slice(from, from + 9000);
+  })();
   gate('T29.9 THE ORB IS ALIVE, NOT A DISCO BALL — a morphing soft body, layered light, zero-alloc',
     v4.length > 500
     // THE MORPH IS THE MOTION — the silhouette is displaced by the noise field, sampled on the
@@ -4510,8 +4651,13 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
   // 1b · THE DISCO IS UNREACHABLE WITHOUT ASKING FOR IT. Nothing lat/long, nothing dot-gridded, no
   // stroked wireframe survives in the v4 path — the geometry is not toned down, it is absent — and
   // the product seat never names the old variant.
-  gate('T29.9a v4 IS THE DEFAULT AND CARRIES NO DISCO — no mesh, no nodes, no halo specks, no strokes',
-    /variant = 'v4'/.test(mark15)
+  // RE-POINTED (Sep 20): the owner picked 'eyes' from the harness, so the DEFAULT moved. The law
+  // this gate protects never did — the disco stays unreachable without asking for it, and the
+  // seated renderer carries none of the mesh's geometry. Asserting the default is the OWNER'S PICK
+  // (not a particular renderer forever) is the version of this gate that survives the next call.
+  gate('T29.9a THE SEATED MARK CARRIES NO DISCO — the default is the owner\'s pick, and no mesh, nodes, halo specks or strokes ride with it',
+    /variant = 'eyes'/.test(mark15)
+    && !/RINGS|EDGES|NODE_IDX|ctx\.stroke\(\)/.test(eyesPainter)
     && /variant === 'v3' \? makeMeshDraw\(ctx, size\) : makeSoftBodyDraw\(ctx, size, dpr\)/.test(mark15)
     // the v4 painter touches NONE of the mesh's tables and strokes nothing
     && !/RINGS|EDGES|NODE_IDX|BUCKET_ALPHA|NODE_ALPHA|HALO_ALPHA|TILT_C/.test(v4)
@@ -4519,11 +4665,20 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     // …and no product surface asks for v3 (the dev harness is the only place both are mounted)
     && !/variant="v3"|variant: 'v3'/.test(read('components/home/orb-entrance.tsx') ?? '')
     && !/variant="v3"/.test(home15)
+    // RE-POINTED AGAIN (Sep 21): the comparison is over, so the dev harness no longer mounts the
+    // candidates at all. The law is now stronger and simpler — the SEATED DEFAULT IS THE ONLY
+    // RENDERER MOUNTED ANYWHERE: no file under app/ or components/ (alive-mark.tsx excepted, it
+    // owns them) passes `variant=` to AliveMark or names 'v3'/'v4'/'v5' as a variant.
     && (() => {
-      const dev = read('app/(main)/dev/thread-preview/preview-client.tsx') ?? '';
-      return /import \{ AliveMark \} from '@\/components\/home\/alive-mark';/.test(dev)
-        && /v: 'v4' as const/.test(dev) && /v: 'v3' as const/.test(dev)
-        && /<AliveMark size=\{44\} variant=\{v\} \/>/.test(dev);
+      const offenders = [...sourceFiles('app'), ...sourceFiles('components')]
+        .filter((f) => f !== path.join('components', 'home', 'alive-mark.tsx'))
+        .filter((f) => {
+          const src = read(f) ?? '';
+          if (!/AliveMark/.test(src)) return false;
+          // a mounted variant in any spelling: variant="v5" / variant={'v4'} / v: 'v3' as const
+          return /variant\s*=\s*\{?\s*['"](v3|v4|v5)['"]|['"](v3|v4|v5)['"]\s+as const|variant=\{/.test(src);
+        });
+      return offenders.length === 0;
     })());
 
   // 1c · THE PERF CLAIM IS A MEASURED NUMBER, NOT A HOPE. The file's own budget comment carries the

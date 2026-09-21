@@ -277,6 +277,20 @@ export interface EmailCard extends CardBase {
   /** "Thread →" — the right edge of the tab row. */
   threadLabel?: string;
   onOpenThread?: () => void;
+  /**
+   * THE FROM ROW (Sep 21 — the standalone lane). A reply to a message in one of the user's own
+   * threads leaves from that thread's own mailbox: the fact is settled and the row is absent. A
+   * STANDALONE draft — a pasted message, another mailbox — has to say which account sends it, and
+   * where the user holds several, let them choose.
+   *
+   * ONE option ⇒ `from` alone: a quiet statement, never a select with nothing to select. Several ⇒
+   * `fromOptions` + `onPickFrom`. A lane whose sender is not a question passes neither, and the row
+   * simply is not there — the card never grows chrome for a fact nobody has to decide.
+   */
+  from?: string;
+  fromOptions?: Array<{ id: string; label: string }>;
+  selectedFromId?: string;
+  onPickFrom?: (id: string) => void;
   to: string[];
   cc?: string[];
   bcc?: string[];

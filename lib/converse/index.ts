@@ -29,8 +29,27 @@ import {
 import { getEmailsDefinition, executeGetEmails, getMeetingContextDefinition, executeGetMeetingContext, checkCalendarDefinition, executeCheckCalendar, readActionHistoryDefinition, executeReadActionHistory, type ActionHistoryConfig, runComputeDefinition, executeRunCompute, type ComputeConfig } from '@/lib/tools';
 // THE WEEKDAY FLOOR (Wave 1) — deterministic, applied at the one outermost answer seam below.
 import { enforceWeekdayDatePairs } from '@/lib/utils/weekday-floor';
+// THE TASK VERBS' ONE SET OF EXECUTORS (Sep 21) — the chief door calls the SAME functions the
+// coworker door calls; only the scope (agentId null = the user's whole set) and the by-name
+// resolution differ. A second implementation is how two doors start disagreeing.
+import {
+  setTasksStatusDefinition, executeSetTasksStatus, executeListTasks, executeGetTask, executeRunTask,
+  resolveTaskIdByName, spokenIsResumeNotRun,
+} from '@/lib/tools/worker-tasks';
+// THE DEED FLOOR (Sep 21) — the chief's answer is held to the turn's own mutation ledger.
+import { deedFloorVerdict, deedAmendment, type DeedRecord } from '@/lib/work/deed-floor';
+// THE REF IS ITS TAG (Sep 21) — the ask lane's resolver, mounted at this core's ONE exit so the
+// ref-tag floor strips only what nobody resolved.
+import { stripUnresolvedTags } from '@/lib/home/ask-refs';
 // THE REACH VALVE (Sep 18) — the model's own judgment that a question needs a lookup.
 import { REACH_CONTRACT, needsReach, sayInsteadOfSentinel } from '@/lib/converse/reach';
+// HANDS FOR THE SCOPE (Sep 21) — THE OFFER LAW, the forward-motion floor, and the deterministic
+// reply-target ladder. See lib/converse/hands.ts for the incident these three laws answer.
+import {
+  renderOfferLaw, unavailableToolResult, isAffirmation, endsInAnOffer, repeatsTheQuestion,
+  FORWARD_MOTION_DIRECTIVE, pickReplyTarget, looksPasted, pastedAsSourceData,
+  type ReplyCandidate,
+} from '@/lib/converse/hands';
 import { proposeStandingTaskDefinition } from '@/lib/work/standing-spec';
 // EVERY THREAD, EVERY PRODUCER (threads plan, Sep 8): the invite card's producer is ONE tool
 // contract + ONE execution body, shared with the coworker DM. It prepares and never sends — and
@@ -58,10 +77,64 @@ const sendPreparedReplyDefinition = {
   description: 'Send the ALREADY-DRAFTED reply on the current item. Use ONLY when the user explicitly says to send ("send it", "envia"). Never to create a draft.',
   input_schema: { type: 'object', properties: {}, required: [] },
 };
+// HANDS FOR THE SCOPE (Sep 21 — the pilot's dead-ended "yes please"): the Home chat could read a
+// calendar and offer to write to someone, and then had NOTHING that writes to someone. `draft_reply`
+// is that hand. It PREPARES and never sends: a matched inbox item's draft lands on the item (the
+// one redraft lane, versioned + evaluated + composer-served), an unmatched one comes back as plain
+// text the user copies. The send door stays exactly where it was — send_prepared_reply, behind the
+// deterministic explicit-send floor.
+const draftReplyDefinition = {
+  name: 'draft_reply',
+  description:
+    'Draft a reply to a message for the user to review — the reply the CONVERSATION has been about. ' +
+    'Use this whenever the user asks you to reply, respond, answer, write back or offer something to ' +
+    'someone by email, and whenever they agree to an offer you made to do so. It never sends: it ' +
+    'prepares the draft and hands it back.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      to: { type: 'string', description: "who the reply goes to — their name or address, in the user's words" },
+      about: { type: 'string', description: 'the subject or topic of the message being replied to' },
+      instruction: { type: 'string', description: 'what the reply must say or do, in one or two sentences, including any concrete details (times, options, figures) already settled in this conversation' },
+    },
+    required: ['instruction'],
+  },
+};
 const prepareForwardDefinition = {
   name: 'prepare_forward',
   description: 'Prepare forwarding the current email to someone for the user to review & approve. Never sends by itself.',
   input_schema: { type: 'object', properties: { to: { type: 'string', description: 'recipient, when the user names one' } }, required: [] },
+};
+
+// ── THE TASK VERBS REACH THE HOME (Sep 21, CLASS 2 — "a verb has every conversational door").
+// Live incident: the Home chat answered "I don't have a tool to pause workflows" while a coworker
+// DM had been pausing them for months. The chief's slice is deliberately narrow — SEE what is
+// automated, READ one, CHANGE ITS STATUS, RUN it now — and every one of them resolves BY NAME
+// through the one ladder (a raw id is useless in conversation). Creation stays on the confirm card
+// (propose_standing_task) and the full pipeline editor stays with the coworker who owns the task;
+// both exemptions are written on their registry rows as `chiefExempt`. ──
+const listTasksChiefDefinition = {
+  name: 'list_tasks',
+  description: "List the user's automated tasks — what is running, on what schedule, when it last ran, and which coworker owns it. Call whenever they ask what is automated, what is running, or before acting on a task they named.",
+  input_schema: { type: 'object', properties: {} as Record<string, unknown>, required: [] as string[] },
+};
+const getTaskChiefDefinition = {
+  name: 'get_task',
+  description: "Read one task's full configuration (schedule, steps, output, triggers). Give the task's NAME as the user says it.",
+  input_schema: {
+    type: 'object',
+    properties: { task_name: { type: 'string', description: "the task's name, in the user's own words" } },
+    required: ['task_name'],
+  },
+};
+const runTaskChiefDefinition = {
+  name: 'run_task',
+  description: 'Run an existing task RIGHT NOW. Give the task\'s NAME as the user says it. Only on their explicit ask ("run the weekly briefing"). NOT for "resume" / "unpause" — that turns the schedule back on, which is set_tasks_status.',
+  input_schema: {
+    type: 'object',
+    properties: { task_name: { type: 'string', description: "the task's name, in the user's own words" } },
+    required: ['task_name'],
+  },
 };
 
 // ── THE DISPATCHER + THE SENSIBLE ASK (Aug 8) — production asks reach the team without the user
@@ -128,6 +201,7 @@ const TOOL_PROGRESS: Record<string, string> = {
   create_task_item: 'Creating the task…',
   send_prepared_reply: 'Checking the prepared reply…',
   prepare_forward: 'Preparing the forward…',
+  draft_reply: 'Writing the reply…',
   prepare_calendar_invite: 'Putting the invite together…',
   prepare_bulk_deed: 'Working out exactly what that would do…',
   propose_standing_task: 'Drafting the standing task…',
@@ -142,7 +216,10 @@ const RAW_CONTEXT_READS = new Set(['search_knowledge_base', 'check_calendar', 'g
 
 export type ConverseTurn = {
   say: string;
-  refs: Array<{ id?: string; kind?: string; label: string; href: string | null }>;
+  /** THE REF IS ITS TAG (Sep 21): a ref the ask lane resolved carries the grounding tag it was
+   *  resolved FROM, so the exit floor below can keep the notation that earned a chip and strip only
+   *  the notation nobody resolved. Optional — most lanes serve refs with no tags at all. */
+  refs: Array<{ id?: string; kind?: string; label: string; href: string | null; tag?: string }>;
   files?: Array<{ id: string; filename: string; source: string }>;
   /** Reversible actions the turn APPLIED (already done, undoable) — the surface confirms them. */
   applied?: Array<{ tool: string; title: string }>;
@@ -163,6 +240,12 @@ export type ConverseTurn = {
    *  and nothing else, so the model can never widen what it previewed. Nothing acts until the
    *  user clicks. */
   bulkDeed?: { id: string; deed: Record<string, unknown> } | null;
+  /** THE EMAIL CARD (Sep 21 — the owner's convergence call). ONE field, two lanes, ONE rendering:
+   *  a matched inbox item rides as `itemId` (the card reads that item's own prepared reply), and a
+   *  STANDALONE draft — a message in no inbox of ours — rides as its stored row's `id` plus the
+   *  payload for the first paint. The Send door reads the store, never these fields, and nothing
+   *  is sent until the user clicks: the model returns a CARD and can never return a commit. */
+  emailDraft?: { id: string; itemId?: string; draft?: Record<string, unknown> } | null;
   /** A verb whose review lives on a stage — the client summons it (forward/invite/reply). */
   openStage?: { stage: 'forward' | 'invite' | 'reply'; itemId: string } | null;
   /** THE SENSIBLE ASK (Aug 8): ONE consequential decision as tappable options — each tap SPEAKS
@@ -369,7 +452,10 @@ type Verdict = {
 async function classifyTurn(client: SupabaseClient, userId: string, scope: ConverseScope, text: string, transcript = ''): Promise<Verdict> {
   // The command list is DERIVED from the chief-of-staff registry slice — the router can only route to
   // what's registered (adding a capability row updates this prompt automatically; the one-truth law).
+  // A capability marked `loopOnly` is NOT offered here: this router invents its own arguments from a
+  // one-line blurb, and some arguments ARE the deed (Sep 21 — see the field's own note).
   const commands = capabilitiesFor('chief_of_staff')
+    .filter((c) => !c.loopOnly)
     .map((c) => `- ${c.tool}: ${c.blurb}`).join('\n');
   const inItem = scope.kind === 'item';
   const prompt =
@@ -391,7 +477,9 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
     `{"project_name":"Admin","item_description":"Acme invoice"}; "start a project called Acme Pilot ` +
     `from this" → create_project {"name":"Acme Pilot"}; "add a task: chase the signed NDA by Friday" → ` +
     `create_task_item {"text":"Chase the signed NDA","due_date":"<that Friday>"}; "send it" / "send the reply" → ` +
-    `send_prepared_reply {}; "forward this to Rita" → prepare_forward {"to":"Rita"}; "set up a meeting with Sam ` +
+    `send_prepared_reply {}; "reply to Sam offering both slots" / "write back and say yes" → draft_reply ` +
+    `{"to":"Sam","instruction":"<what the reply must say, with the concrete details already settled>"} — ` +
+    `it prepares the draft, it never sends; "forward this to Rita" → prepare_forward {"to":"Rita"};"set up a meeting with Sam ` +
     `Thursday 11h" / "book a call with them next week" → prepare_calendar_invite {"request":"<their words>"} — ` +
     `it prepares the card, it never sends); "archive all the notices" / "unsubscribe from the newsletters" → ` +
     `prepare_bulk_deed {"verb":"archive","group":"notices"} — it prepares the card, it never acts). ` +
@@ -423,6 +511,31 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
       open: o.open === true,
     };
   } catch { return { command: null, question: false, facts: [], delegate: null, open: true }; }
+}
+
+/** The pool the reply/forward matcher ranks: the user's OPEN inbox work. Deliberately pending-only
+ *  and recency-ordered — a resolved thread is not something the user is being asked to answer. The
+ *  cap is loud in shape (the deck's own saturation lesson): 120 rows is far past what any real
+ *  "reply to X" resolves against, and the ladder refuses rather than guesses when it is crowded. */
+async function loadReplyCandidates(client: SupabaseClient, userId: string): Promise<ReplyCandidate[]> {
+  try {
+    const { data } = await client.from('inbox_items')
+      .select('id, work_title, source_data')
+      .eq('user_id', userId).eq('status', 'pending')
+      .order('last_activity_at', { ascending: false, nullsFirst: false })
+      .limit(120);
+    return ((data ?? []) as Array<Record<string, unknown>>).map((it) => {
+      const sd = (it.source_data ?? {}) as Record<string, unknown>;
+      return {
+        id: String(it.id),
+        title: String(it.work_title ?? ''),
+        fromName: String(sd.from_name ?? ''),
+        fromAddress: String(sd.from_address ?? sd.from ?? ''),
+        subject: String(sd.subject ?? ''),
+        body: String(sd.body ?? ''),
+      };
+    }).filter((c) => c.fromAddress || c.subject || c.title);
+  } catch { return []; }
 }
 
 // THE EXPLICIT-SEND FLOOR (deterministic, Aug 4): chat may fire the send door ONLY when the user's
@@ -464,10 +577,49 @@ async function dispatchCommand(
   /** The conversation the turn happens in — a preparer that must read the thread (the invite card)
    *  gets the SAME merged transcript every other reader sees, plus the room it belongs to. */
   convo: { transcript?: string; roomKey?: string | null } = {},
+  /** THE TURN'S DEED LEDGER (Sep 21) — a mutating branch pushes what it OBSERVED, so the loop's
+   *  final answer can be held to a count the code actually measured. */
+  deeds: DeedRecord[] = [],
 ): Promise<ConverseTurn | null> {
   const allowed = new Set(capabilitiesFor('chief_of_staff').map((c) => c.tool));
   if (!allowed.has(tool)) return null;
   const ctx = { client, userId };
+
+  // ── THE TASK VERBS (Sep 21, CLASS 2). ONE set of executors, shared with the coworker door; the
+  // chief's difference is scope (the user's WHOLE set, agentId null) and BY-NAME resolution.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const admin = client as any;
+  if (tool === 'list_tasks') {
+    return { say: await executeListTasks(null, userId, admin), refs: [] };
+  }
+  if (tool === 'get_task' || tool === 'run_task') {
+    const spoken = String(args.task_name ?? args.name ?? '').trim();
+    if (!spoken) return { say: 'Which task? Name it and I\'ll look.', refs: [] };
+    const hit = await resolveTaskIdByName(spoken, null, userId, admin);
+    if ('error' in hit) return { say: hit.error, refs: [] };
+    if (tool === 'get_task') return { say: await executeGetTask(hit.id, userId, admin), refs: [] };
+    // "RESUME X" IS A STATUS DEED, NOT A RUN (Sep 21, found live: the model served "resume the X
+    // task" with run_task and STARTED a real run). Code decides from the user's own words.
+    if (spokenIsResumeNotRun(userText)) {
+      const out = await executeSetTasksStatus({ status: 'active', scope: 'named', names: [hit.name] }, null, userId, admin, userText);
+      deeds.push({ tool: 'set_tasks_status', kind: 'status', ok: out.changed > 0, count: out.changed });
+      return { say: out.text, refs: [] };
+    }
+    const say = await executeRunTask(hit.id, userId, admin);
+    deeds.push({ tool: 'run_task', kind: 'run', ok: /is now running|is already running/.test(say), count: /is now running|is already running/.test(say) ? 1 : 0 });
+    return { say, refs: [] };
+  }
+  if (tool === 'set_tasks_status') {
+    const status = args.status === 'active' ? 'active' : 'paused';
+    const out = await executeSetTasksStatus({
+      status,
+      scope: args.scope === 'all' ? 'all' : args.scope === 'named' ? 'named' : undefined,
+      names: Array.isArray(args.names) ? (args.names as string[]) : undefined,
+    }, null, userId, admin, userText);
+    deeds.push({ tool: 'set_tasks_status', kind: 'status', ok: out.changed > 0, count: out.changed });
+    return { say: out.text, refs: [] };
+  }
+
   // ── THE DISPATCHER: a clear-fit production ask ACTS (delegation is reversible — the work
   // reports back; nothing external fires) with visible attribution. ──
   if (tool === 'assign_to_coworker') {
@@ -533,6 +685,67 @@ async function dispatchCommand(
       bulkDeed: { id: out.card.id, deed: out.card.deed as unknown as Record<string, unknown> },
     };
   }
+  // ── THE DRAFT-REPLY DOOR (Sep 21) — deterministic resolution first, the one drafter behind it. ──
+  if (tool === 'draft_reply') {
+    const instruction = (String(args.instruction ?? '').trim() || userText).trim();
+    const to = String(args.to ?? args.recipient ?? '').trim();
+    const about = String(args.about ?? args.subject ?? args.topic ?? '').trim();
+    // On an OPEN email the target is not a question — it is what the user is looking at.
+    if (scope.kind === 'item' && linkKindOf(scope) === 'inbox_item') {
+      const body = await redraftItemDraft(client, userId, scope, instruction, { persist: true }).catch(() => null);
+      return body
+        ? { say: "I've drafted the reply — it's ready to review and send.", refs: [], draft: body }
+        : { say: "I couldn't put a draft together on this one — tell me the angle and I'll try again.", refs: [] };
+    }
+    const pasteSource = looksPasted(userText) ? userText
+      : looksPasted(convo.transcript ?? '') ? String(convo.transcript) : '';
+    const match = pickReplyTarget(await loadReplyCandidates(client, userId), { to, about, pasted: pasteSource || userText });
+    if (match.kind === 'many') {
+      // AMBIGUITY IS A REFUSAL BY LISTING (the house law) — never a guess with the user's mail.
+      return { say: `Which one should I answer: ${match.candidates.map((c) => `"${(c.subject || c.title).slice(0, 60)}"`).join(' · ')}?`, refs: [] };
+    }
+    if (match.kind === 'one') {
+      const c = match.candidate;
+      const body = await redraftItemDraft(client, userId, { kind: 'item', itemKind: 'email', itemId: c.id }, instruction, { persist: true }).catch(() => null);
+      if (body) {
+        return {
+          say: `Drafted the reply to ${c.fromName || c.fromAddress || 'them'} — it's on "${(c.subject || c.title).slice(0, 60)}", ready to review and send.`,
+          refs: [{ id: c.id, kind: 'inbox_item', label: (c.subject || c.title).slice(0, 60), href: `/item/${c.id}?kind=email` }],
+          draft: body,
+          // ONE CARD, EVERY THREAD: the matched item's prepared reply mounts HERE too — the same
+          // component the item room mounts, reading the same draft. The conversation that wrote it
+          // is where it should be reviewable.
+          emailDraft: { id: c.id, itemId: c.id },
+        };
+      }
+    }
+    // NONE — the message is not in our inbox (another mailbox, a paste). The SAME drafter writes it,
+    // and it lands on THE SAME CARD: the standalone lane, whose one extra question is which mailbox
+    // sends. (It used to travel as delimited plain text to copy-paste — a fourth rendering of an
+    // email, and the only one the user could not send. The owner's call, Sep 21.)
+    const sd = pastedAsSourceData(pasteSource);
+    if (sd) {
+      const { generateReplyDraft } = await import('@/lib/inbox/draft-reply');
+      const body = await generateReplyDraft(userId, sd, client,
+        `THE USER'S STEERING NOTE (fold this into the reply — it overrides anything conflicting): ${instruction}`).catch(() => '');
+      if (body?.trim()) {
+        const { prepareStandaloneEmail } = await import('@/lib/prepare/standalone-reply');
+        const card = await prepareStandaloneEmail(client, userId, {
+          body, source: sd, hintText: pasteSource, roomKey: convo.roomKey ?? null,
+        }).catch(() => null);
+        // A card that cannot survive a reload is not offered — the words still reach the user.
+        if (card) {
+          return {
+            say: `Here's the reply${sd.from_name ? ` to ${String(sd.from_name)}` : ''} — check the sender and the wording, then send it from here.`,
+            refs: [],
+            emailDraft: { id: card.id, draft: card.draft as unknown as Record<string, unknown> },
+          };
+        }
+        return { say: `Here's the reply — I couldn't keep it as a card just now, so copy it before you leave:\n\n${body.trim()}`, refs: [] };
+      }
+    }
+    return { say: "I couldn't tell which message to answer — paste it here, or open it and ask me from there.", refs: [] };
+  }
   if (tool === 'prepare_forward') {
     if (scope.kind === 'item' && linkKindOf(scope) === 'inbox_item') {
       const to = String(args.to ?? '').trim();
@@ -554,7 +767,21 @@ async function dispatchCommand(
       if (rows.length > 1) return { say: `Which email should I forward: ${rows.map((r) => `"${String(r.work_title ?? '').slice(0, 50)}"`).join(' · ')}?`, refs: [] };
       return { say: 'No open email on this project to forward.', refs: [] };
     }
-    return null;
+    // THE HOME SCOPE IS NOT A DEAD END (Sep 21): this used to `return null` — a silent nothing the
+    // model papered over with "I can't prepare a forward from this view", then re-asked its own
+    // question. The Home resolves its target through the SAME matcher the draft door uses, so a
+    // named email is forwardable from here; only a genuinely unresolvable one speaks, and it speaks
+    // an alternative rather than a refusal.
+    const fwdMatch = pickReplyTarget(await loadReplyCandidates(client, userId), {
+      to: String(args.to ?? ''), about: userText, pasted: userText,
+    });
+    if (fwdMatch.kind === 'one') {
+      return { say: 'Opening the forward for review — approve there and it goes.', refs: [], openStage: { stage: 'forward', itemId: fwdMatch.candidate.id } };
+    }
+    if (fwdMatch.kind === 'many') {
+      return { say: `Which email should I forward: ${fwdMatch.candidates.map((c) => `"${(c.subject || c.title).slice(0, 60)}"`).join(' · ')}?`, refs: [] };
+    }
+    return { say: "I couldn't find that email in your inbox to forward. Open it and say it there, or tell me who it's from and I'll look again — I can also write the message from scratch.", refs: [] };
   }
   if (tool === 'resolve_inbox_item' && scope.kind === 'item' && linkKindOf(scope) === 'inbox_item') {
     const resolution = args.resolution === 'complete' ? 'complete' as const : 'dismiss' as const;
@@ -758,6 +985,10 @@ async function dispatchCommand(
     const text = await executeCheckCalendar({
       from_date: args.from_date, to_date: args.to_date,
       propose_slots: args.propose_slots, duration_minutes: args.duration_minutes, count: args.count,
+      // THE FRESH READ (Sep 21): the tool has always carried `refresh` and this dispatch dropped
+      // it on the floor — "I just added it, check again" re-read the same stale cache and the
+      // answer was confidently wrong twice. The arg reaches its executor.
+      refresh: args.refresh === true,
     }, userId, client).catch(() => '');
     return { say: text.slice(0, 3000) || "I couldn't read the calendar just now.", refs: [] };
   }
@@ -925,7 +1156,16 @@ async function runCoworkerDelegation(
 }
 
 // ── The bounded AGENT LOOP (the 20%) — function-calling over the chief-of-staff toolset. ──
-const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, checkCalendarDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, prepareForwardDefinition, prepareCalendarInviteDefinition, prepareBulkDeedDefinition, readActionHistoryDefinition, proposeStandingTaskDefinition, steerStandingTaskDefinition, runComputeDefinition, assignToCoworkerDefinition, offerChoicesDefinition];
+/** THE CHIEF DOOR'S TOOL SET, exported (Sep 21) so the door-parity gate can DERIVE it instead of
+ *  grepping for it — a gate that reads source text is a gate that can be fooled by a rename. */
+export const CHIEF_TOOL_DEFS = [listTasksChiefDefinition, getTaskChiefDefinition, runTaskChiefDefinition, setTasksStatusDefinition,
+  resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, checkCalendarDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, draftReplyDefinition, prepareForwardDefinition, prepareCalendarInviteDefinition, prepareBulkDeedDefinition, readActionHistoryDefinition, proposeStandingTaskDefinition, steerStandingTaskDefinition, runComputeDefinition, assignToCoworkerDefinition, offerChoicesDefinition];
+
+/** THE HOLD WINDOW (see THE STREAM NEVER RETYPES, inside the loop). Long enough that a
+ *  preamble-then-tool turn resolves inside it — a model that is about to call a tool emits its
+ *  tool-call deltas within the first second — and short enough that a genuine answer (which takes
+ *  several seconds to write) is still watched being written. */
+const STREAM_HOLD_MS = 1200;
 
 async function agentLoop(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string, grounding: string,
@@ -965,9 +1205,13 @@ async function agentLoop(
       `TODAY is ${label} — it is ${clock} in the user's local time (${tz}). Reason about "today", "this week" ` +
       `and "next week" from THAT date. Weekday names for dates come from your tools/context — if a date's ` +
       `weekday is not stated there, do not guess it. For anything about availability, free time or ` +
-      `scheduling, call check_calendar first: never state availability from memory.\n\n`;
+      `scheduling, call check_calendar first: never state availability from memory. When the user ` +
+      `says they have just changed, added or deleted something in their calendar, call it with ` +
+      `refresh:true so the read comes from the provider and not from a cached view.\n\n`;
   } catch { /* the clock is an enhancement — an unreadable zone must never break the turn */ }
   const applied: ConverseTurn['applied'] = [];
+  // THE TURN'S DEED LEDGER — what the dispatcher OBSERVED, for the floor at the answer below.
+  const deeds: DeedRecord[] = [];
   const files: NonNullable<ConverseTurn['files']> = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const messages: any[] = [
@@ -978,7 +1222,10 @@ async function agentLoop(
       `use them when the user asks. You never CREATE ` +
       `and send anything in one motion: send_prepared_reply fires ONLY the already-drafted reply and ONLY when ` +
       `the user's own words explicitly say send; prepare_forward and prepare_calendar_invite only PREPARE — they ` +
-      `hand the user a card to review, and the approve stays with them. When they ask to set up, schedule or book ` +
+      `hand the user a card to review, and the approve stays with them. When the user asks you to reply to, ` +
+      `answer, write back to or offer something to someone by email — or agrees to your own offer to do so — ` +
+      `call draft_reply with the concrete details this conversation has already settled; it prepares the draft ` +
+      `and sends nothing. When they ask to set up, schedule or book ` +
       `a meeting, call prepare_calendar_invite and keep your line to ONE sentence: the card carries the detail. ` +
       `When they ask to clear, archive, unsubscribe from or bin a WHOLE GROUP you are holding quiet, call ` +
       `prepare_bulk_deed — it only previews; the card states what would happen and their click is the commit. ` +
@@ -998,6 +1245,11 @@ async function agentLoop(
       // very brief the evidence settled (lib/room/ground-evidence.ts). Self-gating: a page with no
       // GROUND EVIDENCE block is untouched by it.
       `${GROUND_EVIDENCE_RULE}\n\n` +
+      // THE OFFER LAW (Sep 21) — DERIVED from the very toolDefs this loop holds, AFTER the
+      // workspace-feature filter above, so the promise the mind is allowed to make and the hands
+      // it actually has are the same list by construction. A hand-written block would drift the
+      // day a tool is added or a feature is switched off; this one cannot.
+      `${renderOfferLaw(toolDefs)}\n\n` +
       `--- CONTEXT ---\n${grounding.slice(0, 4000)}` },
     // THE PANEL CONVERSATION as real turns (Aug 10, the amnesia class): a follow-up ("yes
     // please" · "in bullet points" · "ask Sofia to do it") resolves against what was just
@@ -1009,11 +1261,32 @@ async function agentLoop(
     { role: 'user', content: text },
   ];
   for (let i = 0; i < 4; i++) {
-    // TOKEN STREAMING (Aug 10 — the answer materializes live, the Claude idiom): each iteration
-    // streams; content deltas flow to the client as they land. A message that turns out to be a
-    // tool call streams no content (the models emit one or the other), and the final `done`
-    // payload always replaces the preview — the honesty floor can still amend it. Any streaming
-    // failure falls back to the plain call; streaming is presentation, never correctness.
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    // THE STREAM NEVER RETYPES (Sep 21 — the pilot: "it types the text twice, once, then deletes
+    // it and then writes it again")
+    //
+    // The old design assumed "the models emit content OR a tool call". Current models do both:
+    // they write a near-complete answer and THEN call a tool. The client was told to WIPE its
+    // preview (a NUL sentinel) so the preamble wouldn't linger — so the user watched a whole
+    // answer get typed, erased, and typed again.
+    //
+    // The constraint is real: tool_call deltas arrive at the END of an iteration's content, so
+    // there is no up-front way to know whether what is streaming is the answer or a preamble.
+    // Designs considered: (a) hold everything until the iteration ends — correct, but it kills the
+    // live typing the pilot likes on the common single-iteration answer; (b) a CHARACTER budget —
+    // fails for exactly this incident, whose preamble was hundreds of characters.
+    //
+    // CHOSEN: a TIME-BOXED HOLD plus an APPEND-ONLY law.
+    //   • Content is buffered and NOT forwarded until HOLD_MS has passed with no tool-call delta
+    //     seen. A preamble-then-tool turn resolves well inside that window, so its text NEVER
+    //     enters the answer bubble at all — it surfaces once on the PROGRESS channel, which is
+    //     transient by contract and is retracted by nobody.
+    //   • Once flushing begins, nothing is ever retracted. A tool call arriving after the flush
+    //     leaves the words standing and the later content APPENDS; the `done` frame then replaces
+    //     the preview in place, without a typing animation. Growth and a settle — never an erase.
+    // The NUL sentinel is therefore no longer emitted (the client keeps handling it for any other
+    // producer, and for a client that has not yet reloaded).
+    // ══════════════════════════════════════════════════════════════════════════════════════════
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let msg: any = null;
     try {
@@ -1024,17 +1297,37 @@ async function agentLoop(
       });
       const toolCalls: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> = [];
       let content = '';
+      let held = '';
+      let flushing = false;
+      let sawToolDelta = false;
+      const startedAt = Date.now();
       for await (const chunk of stream) {
         const delta = chunk.choices?.[0]?.delta;
         if (!delta) continue;
-        if (delta.content) { content += delta.content; onToken(delta.content); }
+        if (delta.content) {
+          content += delta.content;
+          if (flushing) onToken(delta.content);
+          else {
+            held += delta.content;
+            if (!sawToolDelta && Date.now() - startedAt >= STREAM_HOLD_MS) { flushing = true; onToken(held); held = ''; }
+          }
+        }
         for (const tc of delta.tool_calls ?? []) {
+          sawToolDelta = true;
           const ti = tc.index ?? 0;
           if (!toolCalls[ti]) toolCalls[ti] = { id: '', type: 'function', function: { name: '', arguments: '' } };
           if (tc.id) toolCalls[ti].id = tc.id;
           if (tc.function?.name) toolCalls[ti].function.name += tc.function.name;
           if (tc.function?.arguments) toolCalls[ti].function.arguments += tc.function.arguments;
         }
+      }
+      // The iteration ended still holding: now we KNOW which it was. No tool call → it is the
+      // answer and it flushes whole. A tool call → the held words were a preamble and they go to
+      // the transient progress channel, never the bubble (nothing to retract, because nothing
+      // was ever shown).
+      if (held) {
+        if (toolCalls.length) onProgress?.(clipForPrompt(held.replace(/\s+/g, ' '), 90));
+        else onToken(held);
       }
       msg = { role: 'assistant', content: content || null, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) };
     } catch {
@@ -1043,28 +1336,40 @@ async function agentLoop(
     }
     if (!msg) break;
     const calls = (msg.tool_calls ?? []) as Array<{ id: string; function: { name: string; arguments: string } }>;
-    // Preamble text before a tool call ("Let me check that…") must not linger under the real
-    // answer — the NUL sentinel tells the client to clear its preview.
-    if (calls.length && msg.content && onToken) onToken('\u0000');
+    // THE SENTINEL IS RETIRED (Sep 21 — see THE STREAM NEVER RETYPES above). Preamble text is now
+    // withheld from the bubble by the hold window instead of being WIPED out of it after the fact,
+    // so there is nothing left to retract and no reset is sent. The non-streaming fallback showed
+    // no preview either, so it owes none.
     if (!calls.length) {
       const raw = (msg.content ?? '').trim() || 'Done.';
       // THE HONESTY FLOOR AT THE ANSWER DOOR (Aug 4, found by the P30 gate; hoisted Sep 13 so the
       // question doors carry it too): no denial leaves ANY answer door without a registry check.
       const say = await honestyFloor(client, userId, raw, text, scope.kind === 'entity' ? scope.entityId : null);
-      return { say, refs: [], applied, files: files.length ? files : undefined };
+      // THE DEED FLOOR AT THE CHIEF'S ANSWER (Sep 21). The same predicate the coworker lane runs,
+      // wired here as an AMENDMENT ONLY — never a corrective round: this loop's streaming law is
+      // "growth and a settle, never an erase" (THE STREAM NEVER RETYPES above), and re-running the
+      // turn would retype an answer the user has already watched arrive. Appending is growth; a
+      // claim the ledger cannot carry ships with the count the code actually measured beside it.
+      const { breach } = deedFloorVerdict(say, deeds);
+      return { say: breach ? say + deedAmendment(breach) : say, refs: [], applied, files: files.length ? files : undefined };
     }
     messages.push(msg);
     for (const call of calls) {
       let args: Record<string, unknown> = {};
       try { args = JSON.parse(call.function.arguments || '{}'); } catch { /* empty */ }
       onProgress?.(progressLabelFor(call.function.name));
-      const out = await dispatchCommand(client, userId, scope, call.function.name, args, text, convo);
+      const out = await dispatchCommand(client, userId, scope, call.function.name, args, text, convo, deeds);
       if (out?.applied) applied.push(...out.applied);
       if (out?.files) files.push(...out.files);
       // A commit/stage/options/delegation signal ends the loop — the client (or the coworker)
       // owns the next step; the loop never talks past its own hand-off.
-      if (out?.commit || out?.openStage || out?.options || out?.delegated || out?.invite || out?.bulkDeed) return { ...out, applied: applied.length ? applied : out.applied };
-      messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(out ?? { error: 'tool unavailable in this context' }).slice(0, 1500) });
+      if (out?.commit || out?.openStage || out?.options || out?.delegated || out?.invite || out?.bulkDeed || out?.emailDraft) return { ...out, applied: applied.length ? applied : out.applied };
+      // THE NULL IS NEVER SILENT (Sep 21): a dispatcher that cannot serve this scope used to hand
+      // back `{error:'tool unavailable in this context'}` — five words the model improvised over
+      // ("I can't prepare a forward from this view…") before re-asking its own question. The
+      // result now NAMES the actions that ARE available here, derived from the same filtered
+      // toolDefs the mind was given, and forbids both fabrication and the re-ask.
+      messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(out ?? unavailableToolResult(call.function.name, toolDefs)).slice(0, 1500) });
     }
   }
   // Loop exhausted without a final answer: NEVER the bare shrug (found live: "I couldn't finish
@@ -1118,6 +1423,28 @@ function panelTranscript(history: ConverseHistoryTurn[] | undefined): string {
 // resolved into a real link is stripped at the ONE core exit, so no caller can leak it. The
 // negative lookahead spares markdown links; [CONFIRM: …] doesn't match the letter+digits shape.
 const GROUNDING_TAG_RE = /\s?\[(?:[EFLCRKW]\d+)\](?!\()/g;
+
+// ── THE FLOOR'S OWN RULE, NOW EXPRESSIBLE (Sep 21). GROUNDING_TAG_RE was written when NOTHING
+// resolved tags, so "a tag nobody resolved into a real link is stripped" could only be implemented
+// as "strip them all" — and once the ask lane started resolving them (lib/home/ask-refs.ts), the
+// correctly-placed chips were erased on the way out and only MALFORMED brackets survived (which is
+// how the wrong-chip incident became visible at all).
+//
+// Two lanes, stated:
+//   · NO REF CARRIES A TAG (every lane but the ask doors: the agent loop, delegation, item scope,
+//     every command reply) → the ORIGINAL floor runs, byte for byte, lookahead and all. Nothing
+//     resolved, so nothing can be kept, and the REF-TAG FLOOR cannot regress.
+//   · A REF CARRIES ITS TAG → the shared resolver keeps exactly the tags it served and strips the
+//     rest (unknown id, grouped, over-cap). The resolver has no markdown lookahead, so a link's own
+//     bracket `[F3](…)` is PARKED across the strip and put back — a link is never notation.
+const MARKDOWN_TAG_RE = /\[[EFLCRKW]\d+(?:\s*,\s*[EFLCRKW]\d+)*\]\(/g;
+function stripGroundingNotation(say: string, refs: ConverseTurn['refs']): string {
+  if (!refs?.some((r) => r.tag)) return say.replace(GROUNDING_TAG_RE, '');
+  const parked: string[] = [];
+  const guarded = say.replace(MARKDOWN_TAG_RE, (m) => { parked.push(m); return `«md${parked.length - 1}»`; });
+  if (!parked.length) return stripUnresolvedTags(say, refs);
+  return stripUnresolvedTags(guarded, refs).replace(/«md(\d+)»/g, (_m, i) => parked[Number(i)] ?? '');
+}
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // A PREVIEW IS NOT A DEED (Sep 10 — the tab-latency correction)
@@ -1228,7 +1555,16 @@ export async function converse(
   // prompts and our code. If one ever survives to here — the loop was unavailable, a call errored —
   // it is replaced with an honest one-liner. Sitting at the one answer door makes that structural
   // rather than a list of guarded returns.
-  if (turn?.say) turn.say = enforceWeekdayDatePairs(turn.say.replace(GROUNDING_TAG_RE, ''));
+  // THE ANCHOR LAW REACHES THE LANE (Sep 21): the floor's precedence chain needs the USER'S OWN
+  // recent words to know whether a weekday was THEIRS ("either thursday or friday") or the model's
+  // own derivation. Only USER turns ride — an assistant turn would let the model's invented weekday
+  // be read back as a user claim and launder itself into the anchor position.
+  const userWords = [text, ...(opts.history ?? []).filter((h) => h.role === 'user').slice(-3).map((h) => h.text)]
+    .filter(Boolean).join('\n');
+  // THE REF-TAG FLOOR, RE-POINTED (Sep 21): same site, same shape, same weekday floor wrapped
+  // around it — the strip itself now keeps a tag whose ref was SERVED (see stripGroundingNotation
+  // above). Refs empty → identical behaviour to the old `.replace(GROUNDING_TAG_RE, '')`.
+  if (turn?.say) turn.say = enforceWeekdayDatePairs(stripGroundingNotation(turn.say, turn.refs), { userText: userWords });
   if (turn?.say) turn.say = sayInsteadOfSentinel(turn.say);
   return turn;
 }
@@ -1380,6 +1716,17 @@ async function converseInner(
       } catch { /* the classifier's verdict stands */ }
     }
   }
+  // ── THE FORWARD-MOTION LAW, STRUCTURALLY (Sep 21, the pilot's dead-ended "yes please") ──
+  // The assistant offered ("would you like me to offer both options to them?"), the user agreed,
+  // and the turn was routed as if it were a fresh QUESTION — so it answered with a question of its
+  // own. An agreement to the assistant's OWN offer is an INSTRUCTION: it belongs on the path that
+  // has hands. Deterministic and narrow (a bare affirmation, under a turn that ends in a question),
+  // and it never touches the item scope, whose affirmations already mean "rework the draft".
+  const lastAssistant = [...(opts.history ?? [])].reverse().find((h) => h.role === 'assistant')?.text ?? '';
+  const answeringAnOffer = scope.kind !== 'item' && !!lastAssistant
+    && endsInAnOffer(lastAssistant) && isAffirmation(text);
+  if (answeringAnOffer && !verdict.command && !verdict.delegate) { verdict.question = false; verdict.open = true; }
+
   // A hand-off OUTRANKS a command (same bug, second face: the classifier returned BOTH
   // delegate AND create_task_item, and the command fast-path ran first — the addressed
   // work landed on the user's own plate instead of the coworker's).
@@ -1544,13 +1891,29 @@ async function converseInner(
     : '';
   const preamble = [
     ANSWER_HONESTY_RULE, reachNote,
+    // THE FORWARD-MOTION LAW as the mind reads it — the agreement IS the instruction.
+    answeringAnOffer ? FORWARD_MOTION_DIRECTIVE : '',
     dlg.transcript, matches, viewing,
   ].filter(Boolean).join('\n\n');
   // The PANEL conversation rides as REAL messages (not a squeezed grounding block) — a follow-up
   // operates on the prior answer at full fidelity, the way any chat model expects. The room
   // narration transcript stays in the preamble (room callers don't always carry panel history).
-  const loopTurn = await agentLoop(client, userId, scope, text, preamble ? `${preamble}\n\n${grounding}` : grounding,
+  let loopTurn = await agentLoop(client, userId, scope, text, preamble ? `${preamble}\n\n${grounding}` : grounding,
     opts.history, opts.onProgress, material, opts.onToken, { transcript, roomKey: dlg.roomKey });
+  // NEVER RE-ASK WHAT YOU JUST ASKED (Sep 21) — the prompt directive above carries the law; this is
+  // the deterministic floor under it, because a law is only alive while something enforces it. If an
+  // affirmation came back as a near-verbatim repeat of the very question it answered, the turn is
+  // spent ONE more time with the failure named. The retry is TOKENLESS: the first attempt already
+  // streamed, and the `done` frame is what the user finally reads.
+  if (answeringAnOffer && loopTurn.say && repeatsTheQuestion(lastAssistant, loopTurn.say)) {
+    const retry = await agentLoop(client, userId, scope, text,
+      `${FORWARD_MOTION_DIRECTIVE}\nYOU HAVE ALREADY RE-ASKED THIS QUESTION ONCE. Do not ask it again — ` +
+      `act on what the conversation already states, or say in one sentence what you cannot do and what ` +
+      `you are doing instead.\n\n${preamble ? `${preamble}\n\n${grounding}` : grounding}`,
+      opts.history, opts.onProgress, material, undefined, { transcript, roomKey: dlg.roomKey })
+      .catch(() => null);
+    if (retry?.say && !repeatsTheQuestion(lastAssistant, retry.say)) loopTurn = retry;
+  }
   // THE EXHAUSTION HAND-OFF (Aug 10, found live: the loop's old bare "I couldn't finish that
   // one." beside a competitor's finished document): when the inline loop can't land the work,
   // the work — WITH the user's full material and the conversation — goes to the production

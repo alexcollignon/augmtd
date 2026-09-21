@@ -45,7 +45,17 @@ def _call(action: str, run_context: RunContext, **args) -> str:
     if not user_id:
         return "Cannot manage tasks: no user context for this run."
 
-    payload = {"action": action, "user_id": user_id, "agent_id": agent_id, "args": args}
+    # THE USER'S OWN WORDS ride to the internal door (Sep 21). Deeds whose dangerous arguments are
+    # decided in code — which direction a status change goes, whether "all" was really meant — read
+    # the person's sentence, never only the model's extraction. The bridge puts it on dependencies;
+    # a run without one simply sends nothing and the TS floors fail closed.
+    payload = {
+        "action": action,
+        "user_id": user_id,
+        "agent_id": agent_id,
+        "args": args,
+        "user_text": deps.get("user_text") or "",
+    }
     try:
         resp = httpx.post(
             f"{INTERNAL_URL}/api/internal/agentos/tasks",
@@ -302,6 +312,29 @@ def run_task(run_context: RunContext, task_id: str) -> str:
 
 
 @tool
+def set_tasks_status(
+    run_context: RunContext,
+    status: str,
+    scope: str = None,
+    names: list = None,
+) -> str:
+    """Pause or resume tasks in ONE action, matched BY NAME (no ids needed).
+
+    Use this whenever the user speaks about more than one task at once ("pause all my
+    workflows", "pause everything") and for a single task they name ("pause the weekly
+    briefing") — never a chain of update_task calls. It returns a per-item ledger: report
+    exactly what it says, naming each task, and never a number it did not give you.
+
+    Args:
+        status: "paused" to stop them running, "active" to resume.
+        scope: "all" for every task in view, "named" for only the ones in names.
+        names: The tasks to act on, as the user says them.
+    """
+    args = {k: v for k, v in {"scope": scope, "names": names}.items() if v is not None}
+    return _call("set_tasks_status", run_context, status=status, **args)
+
+
+@tool
 def supply_run_input(
     run_context: RunContext,
     run_id: Optional[str] = None,
@@ -437,7 +470,7 @@ def apply_skill(run_context: RunContext, skill_name: str) -> str:
 
 # All task tools — assigned to every worker (matches the native chat loop).
 TASK_TOOLS = [
-    list_tasks, create_task, get_task, update_task, run_task, supply_run_input, duplicate_task,
+    list_tasks, create_task, get_task, update_task, run_task, set_tasks_status, supply_run_input, duplicate_task,
     share_task, list_team_tasks, use_task, delete_task,
     list_worker_documents, get_worker_document,
     list_skills, apply_skill,

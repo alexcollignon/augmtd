@@ -20,6 +20,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { embedText } from '@/lib/knowledge/indexer';
 import { subjectIsCampaignEcho } from '@/lib/inbox/campaign-echo';
+import { cleanEntityName } from '@/lib/entities/entity-name';
 
 // ── The item shape recognition reads (assembled by callers from any source: email/meeting/calendar). ──
 export type RecogItem = {
@@ -392,9 +393,17 @@ export async function recognizeItem(
       ).then(() => {}, () => {});
       return { entityId: null, via: 'none', founded: false, reason };
     }
-    const emb = await embedText(entityEmbedText(verdict.name, verdict.summary, item.from ? [item.from] : []), userId, supabase);
+    // THE NAMING FLOOR (lib/entities/entity-name — found live: a body of work standing in the
+    // registry under an email SUBJECT LINE, "About … Workshop?"). Both verdict paths — the judge's
+    // `new_name` and the named-subject veto's `named_engagement` — are free text read off an item
+    // whose most salient string is its subject, so the floor sits at the founding door itself:
+    // reply/forward heads, aboutness filler and terminal punctuation come off deterministically.
+    // A wide, punctuated name is not cosmetic — every identity primitive here reasons over a name's
+    // tokens, so it matches far more text than the work it denotes.
+    const foundedName = cleanEntityName(verdict.name) || verdict.name;
+    const emb = await embedText(entityEmbedText(foundedName, verdict.summary, item.from ? [item.from] : []), userId, supabase);
     const { data: created } = await supabase.from('work_entities')
-      .insert({ user_id: userId, kind: 'initiative', name: verdict.name, summary: verdict.summary, embedding: emb, last_event_at: item.at ?? new Date().toISOString() })
+      .insert({ user_id: userId, kind: 'initiative', name: foundedName, summary: verdict.summary, embedding: emb, last_event_at: item.at ?? new Date().toISOString() })
       .select('id').single();
     const entityId = (created?.id as string) ?? null;
     if (entityId) await writeLink(supabase, userId, entityId, item, 'recognized', verdict.reason);

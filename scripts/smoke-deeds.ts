@@ -34,6 +34,7 @@ import {
   type BulkDeed, type DeedOutcome,
 } from '../lib/deeds/words';
 import { resolveHeldClass, classListSentence } from '../lib/tools/prepare-bulk-deed';
+import { sanitizeAddressList, sanitizeFilename, sanitizeHeaderValue, sanitizeMimeType } from '../lib/utils/email-headers';
 import { HELD_CLASSES, HELD_CLASS_ORDER } from '../lib/home/attention';
 import { POSTURE_ELIGIBILITY, POSTURE_VERBS, postureFromDeed } from '../lib/postures/from-deed';
 import { validatePrimitives, renderPostureSentence } from '../lib/postures/registry';
@@ -360,7 +361,9 @@ console.log('\nBD6 · PARITY — the same deed is sayable, and the spoken door c
     && /if \(tool === 'prepare_bulk_deed'\) \{/.test(converse));
   gate('BD6.9 the card channel rides the turn AND the loop\'s early return (a card that never returns is a card that never renders)',
     !!converse && /bulkDeed\?: \{ id: string; deed: Record<string, unknown> \} \| null;/.test(converse)
-    && /out\?\.invite \|\| out\?\.bulkDeed\) return/.test(converse));
+    // RE-POINTED (Sep 21): the email card joined the same early return. The law is the channel —
+    // a card-bearing turn must survive the loop — and it now carries one more kind.
+    && /out\?\.invite \|\| out\?\.bulkDeed \|\| out\?\.emailDraft\) return/.test(converse));
   gate('BD6.10 the router prompt and the system prompt both name it (an unmentioned tool is an unused tool)',
     !!converse && /prepare_bulk_deed \{"verb":"archive","group":"notices"\}/.test(converse)
     && /call \` \+\n      \`prepare_bulk_deed — it only previews/.test(converse));
@@ -396,7 +399,10 @@ console.log('\nBD7 · THE CARD — what will happen, to how many, the undo note,
 {
   gate('BD7.1 the kit owns a `bulk` card kind, in the grammar, the enumeration and the render',
     !!cardTypes && /kind: 'bulk';/.test(cardTypes)
-    && /'proposal', 'invite', 'email', 'bulk', 'doc', 'custom'/.test(cardTypes)
+    // RE-POINTED (Sep 21): the enumeration pinned an exact neighbour list and broke the day the
+    // kit gained its `source` kind (THE ONE OBJECT CARD, Sep 19). The law is MEMBERSHIP — `bulk`
+    // is one of the kit's enumerated kinds — not who happens to sit beside it.
+    && /THREAD_CARD_KINDS[\s\S]{0,400}'bulk'/.test(cardTypes)
     && !!cardKit && /case 'bulk':/.test(cardKit) && /function BulkCardView\(/.test(cardKit));
 
   gate('BD7.2 the card renders the INTRO, the BREAKDOWN LINES and the UNDO NOTE',
@@ -677,10 +683,16 @@ console.log('\nWD4 · ONE SCALE — the door speaks the number the ledger accoun
     // these. The one-scale law is untouched — the door's numbers are still the ledger's own, served.
     && /heldTotal: attention\.heldTotal, heldWaiting: attention\.heldWaiting, heldHandled: attention\.heldHandled,/.test(briefRoute));
 
-  gate('WD4.2 the door READS those numbers (and the deck\'s non-mail rows the ledger also adds)',
+  // RE-POINTED (Sep 21): the third clause pinned `handledQuietly={…heldHandled ?? 0}` on the door.
+  // The owner removed that receipt from the line ("it looks clickable/meaningful but opens nothing")
+  // — it wore a button's affordance for a door that only repeated the left one. The LAW is that the
+  // handled account is still SPOKEN somewhere the reader can reach, and its new home is the held
+  // page's own intro (lib/home/held-words.ts `heldIntro`), one click behind this door. So the clause
+  // now asserts THAT — the account survives the receipt's removal — instead of the retired prop.
+  gate('WD4.2 the door READS those numbers (and the handled account is still spoken, one click on)',
     !!homeView && /b\?\.attention\?\.heldWaiting === 'number'/.test(homeView)
     && /b\.attention\.heldWaiting \+ deckHeldRows\.length/.test(homeView)
-    && /handledQuietly=\{b\?\.attention\?\.heldHandled \?\? 0\}/.test(homeView));
+    && /Everything else is handled: \$\{handled\.toLocaleString\(\)\} filed quietly/.test(read('lib/home/held-words.ts') || ''));
 
   gate('WD4.3 …and the ledger\'s own intro sums the SAME two numbers',
     /const waiting = \(b\?\.waiting\.count \?\? 0\) \+ deckHeld;/.test(read('lib/home/held-words.ts') || ''));
@@ -690,6 +702,42 @@ console.log('\nWD4 · ONE SCALE — the door speaks the number the ledger accoun
   //  BOTH halves of the law instead of only the fallback's leading token.)
   gate('WD4.4 a brief served WITHOUT the field falls back — never a number nobody computed',
     !!homeView && /restRows\.length : null/.test(homeView));
+}
+
+// ── BD8 · THE HEADER FLOOR ──────────────────────────────────────────────────────────────────────
+// A header value can never carry a line break. Found by review: `/api/emails/send` capped its
+// subject at 300 chars with interior CR/LF intact, and lib/google/gmail.ts wrote `Subject: ${s}`
+// straight into the RFC822 block — a silent Bcc away from a message the user never authorised.
+console.log('\nBD8 · THE HEADER FLOOR — no user string reaches a mail header carrying a newline');
+{
+  gate('BD8.1 a subject with CR/LF collapses to ONE line (the injected header becomes text)',
+    !/[\r\n]/.test(sanitizeHeaderValue('Invoice\r\nBcc: someone@example.com'))
+    && sanitizeHeaderValue('Invoice\r\nBcc: someone@example.com') === 'Invoice Bcc: someone@example.com');
+  gate('BD8.2 …and every other control character goes too (a tab or a NUL is not a header value)',
+    sanitizeHeaderValue('a\u0000b\tc') === 'a b c');
+  gate('BD8.3 an address list keeps real addresses, drops anything that is not one',
+    sanitizeAddressList('sam@example.com, not-an-address, Sam Doe <sam2@example.com>')
+      === 'sam@example.com, Sam Doe <sam2@example.com>');
+  gate('BD8.4 an address carrying a newline can never smuggle a header through the To line',
+    !/[\r\n]/.test(sanitizeAddressList('sam@example.com\r\nBcc: other@example.com'))
+    && sanitizeAddressList('sam@example.com\r\nBcc: other@example.com') === '');
+  gate('BD8.5 an attachment filename cannot close its own quoted parameter',
+    sanitizeFilename('re"port\r\nX.pdf') === 'report X.pdf'
+    && sanitizeMimeType('text/plain; x=1') === 'application/octet-stream');
+  const gmailSrc = read('lib/google/gmail.ts') || '';
+  const outlookSrc = read('lib/microsoft/outlook.ts') || '';
+  gate('BD8.6 BOTH Gmail RFC822 builders take their header values through the floor, never from params directly',
+    (gmailSrc.match(/const subject = sanitizeHeaderValue\(params\.subject\);/g) ?? []).length === 2
+    && (gmailSrc.match(/const to = sanitizeAddressList\(params\.to\);/g) ?? []).length === 2
+    && !/const \{ encryptedTokens, to, cc, bcc, subject/.test(gmailSrc));
+  gate('BD8.7 …and attachment headers are built from the sanitized name and type',
+    !/name="\$\{att\.filename\}"/.test(gmailSrc) && !/\$\{att\.mimeType\}/.test(gmailSrc));
+  gate('BD8.8 the Outlook transport holds the same address discipline (one law, two transports)',
+    /const to = sanitizeAddressList\(params\.to\);/.test(outlookSrc)
+    && /const subject = sanitizeHeaderValue\(params\.subject\);/.test(outlookSrc));
+  gate('BD8.9 both user-facing send doors sanitize the subject on the way IN as well',
+    /sanitizeHeaderValue\(typeof e\.subject === 'string'/.test(read('app/api/emails/send/route.ts') || '')
+    && /const subject = sanitizeHeaderValue\(raw\.subject, 300\);/.test(read('app/api/compose/send/route.ts') || ''));
 }
 
 async function live() {

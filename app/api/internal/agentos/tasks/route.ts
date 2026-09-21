@@ -4,7 +4,7 @@ import {
   executeListTasks, executeCreateTask, executeGetTask, executeUpdateTask,
   executeRunTask, executeDuplicateTask, executeShareTask, executeListTeamTasks,
   executeUseTask, executeDeleteTask, executeListWorkerDocuments, executeGetWorkerDocument,
-  executeSupplyRunInput,
+  executeSupplyRunInput, executeSetTasksStatus,
 } from '@/lib/tools/worker-tasks';
 import { executeListSkills, executeApplySkill } from '@/lib/tools/worker-skills';
 
@@ -34,6 +34,11 @@ interface TaskRequest {
   user_id: string;
   agent_id?: string;
   args?: Record<string, unknown>;
+  /** THE USER'S OWN WORDS, carried across the box (Sep 21). A deed whose dangerous arguments are
+   *  decided from what the person actually said needs the sentence, not just the model's
+   *  extraction — the bridge puts it on `dependencies.user_text` and the Python `_call` forwards
+   *  it. Absent (an older box, or a run with no human turn) the executor's floors FAIL CLOSED. */
+  user_text?: string;
 }
 
 export async function POST(request: NextRequest) {
@@ -55,6 +60,7 @@ export async function POST(request: NextRequest) {
   }
 
   const { action, user_id, agent_id, args = {} } = body;
+  const userText = typeof body.user_text === 'string' ? body.user_text.slice(0, 4000) : '';
   if (!action || !user_id) {
     return NextResponse.json({ error: 'action and user_id are required' }, { status: 400 });
   }
@@ -100,6 +106,22 @@ export async function POST(request: NextRequest) {
       case 'run_task':
         result = await executeRunTask(String(args.task_id ?? ''), user_id, ac, args.thread_id as string | undefined);
         break;
+
+      // THE BULK STATUS DEED (Sep 21) — the AgentOS half of the same verb, wrapping the SAME
+      // executor. (The Python @tool ships on the next box redeploy; the TS side accepts it today,
+      // exactly as `trigger_doors` and `supply_run_input` did before it.)
+      // THE WORDS RIDE THROUGH: the executor's floors are decided from the user's own sentence, and
+      // a door that hands them nothing gets the FAIL-CLOSED answer (named targets only, else a
+      // refusal by listing) — never a bulk over everything nobody asked for.
+      case 'set_tasks_status': {
+        const out = await executeSetTasksStatus({
+          status: args.status === 'active' ? 'active' : 'paused',
+          scope: args.scope === 'all' ? 'all' : args.scope === 'named' ? 'named' : undefined,
+          names: Array.isArray(args.names) ? (args.names as string[]) : undefined,
+        }, agent_id ?? null, user_id, ac, userText);
+        result = out.text;
+        break;
+      }
 
       // THE SAYABLE SUPPLY (THE WAVE) — the AgentOS half of the same deed. The executor holds the
       // rules; both runtimes are passthrough. (The Python tool ships on the next box redeploy; the

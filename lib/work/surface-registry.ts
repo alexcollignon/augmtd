@@ -135,10 +135,27 @@ export interface Capability {
   built: boolean;               // is the executor actually wired TODAY? false → grade [You] honestly
   kind: CapabilityKind;         // atomic → System runs it; judgment → suits a Coworker
   irreversible: boolean;        // send / post / create-invite → forces an approval gate
+  /** Does the executor WRITE? (Sep 21, THE CONSTANT DEDUPE KEY — see lib/work/tool-dedupe.ts.)
+   *  Distinct from `irreversible`: pausing a task is reversible AND a mutation. A chat loop may
+   *  serve a repeated READ from its turn cache; it may never serve a repeated WRITE, because the
+   *  second write is the second deed. Absent = a read (unregistered tools fail closed at the
+   *  reader, not here). */
+  mutates?: boolean;
   feature?: FeatureKey | null;  // cross-ref to TOOL_FEATURE so a disabled feature also gates it
   blurb: string;                // one terse line rendered into the classifier prompt
   /** Which agents/surfaces may hold this tool. Absent = the pre-P6b default (coworker + workflow). */
   exposure?: CapabilityExposure[];
+  /** NOT ROUTABLE BY THE SCHEMA-LESS ROUTER (Sep 21). The chief's fast path classifies a turn
+   *  against a list of `- tool: blurb` lines and invents the ARGUMENTS itself — there is no schema
+   *  there. Found live: "resume the X task" came back as {status:'paused'} with no names, which
+   *  would have paused every task the user owns. A capability whose arguments carry consequence
+   *  says so here and is served ONLY by the agent loop, which holds the real JSON schema. The
+   *  string is the reason, written down. */
+  loopOnly?: string;
+  /** THE DOOR-PARITY ESCAPE HATCH (Sep 21). A conversational verb a COWORKER holds but the chief
+   *  deliberately does not must say WHY, in writing, here — `doorParity()` fails on a silent
+   *  asymmetry. The reason is the record of the decision, not a mute exception. */
+  chiefExempt?: string;
   /** A CONVERSATION-FLOW capability (dispatcher/ask) — real in chat loops, but never a plan STEP:
    *  excluded from the item-plan classifier prompt (a step graded "assign_to_coworker" would have
    *  no assembler path). */
@@ -219,12 +236,12 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
   },
   compose_email: {
     intent: 'draft an email, reply, or message in the user\'s voice',
-    tool: 'compose_email', built: true, kind: 'judgment', irreversible: false, feature: null,
+    tool: 'compose_email', built: true, kind: 'judgment', irreversible: false, mutates: true, feature: null,
     blurb: 'draft an email / reply / message (drafting only — sending is a separate step)',
   },
   generate_document: {
     intent: 'generate / produce a document or deliverable',
-    tool: 'generate_document', built: true, kind: 'judgment', irreversible: false, feature: null,
+    tool: 'generate_document', built: true, kind: 'judgment', irreversible: false, mutates: true, feature: null,
     blurb: 'generate a document / deliverable',
   },
 
@@ -234,7 +251,7 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
   // never asserted. ──
   run_compute: {
     intent: 'compute over files/data with code — parse or reconcile spreadsheets/PDFs/CSVs, verify numbers, transform data, produce a data file',
-    tool: 'run_compute', built: true, kind: 'atomic', irreversible: false, feature: null, exposure: ['chief_of_staff', 'coworker', 'workflow'],
+    tool: 'run_compute', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: null, exposure: ['chief_of_staff', 'coworker', 'workflow'],
     blurb: 'RUN CODE over files/data we have (parse/verify/transform spreadsheets, PDFs, CSVs; compute numbers; produce a data file) — sandboxed, cannot send anything',
   },
 
@@ -256,7 +273,9 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
   },
   fetch_url: {
     intent: 'read the full current content of a specific web page every run',
-    tool: 'fetch_url', built: true, kind: 'atomic', irreversible: false, feature: null, exposure: ['workflow'],
+    // Also a COWORKER chat verb (it always was, in the route's literal list — the row said workflow
+    // only; Sep 21, door parity, the drift this arc exists to make impossible).
+    tool: 'fetch_url', built: true, kind: 'atomic', irreversible: false, feature: null, exposure: ['coworker', 'workflow'],
     blurb: 'READ a specific web page (date-stamped; never a news landing page — use rss_feed)',
   },
   rss_feed: {
@@ -291,7 +310,7 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
   },
   slack_send: {
     intent: 'post a coworker-written message to a Slack channel from the pipeline output',
-    tool: 'slack_send', built: true, kind: 'atomic', irreversible: true, feature: null, exposure: ['workflow'],
+    tool: 'slack_send', built: true, kind: 'atomic', irreversible: true, mutates: true, feature: null, exposure: ['workflow'],
     blurb: 'SEND a Slack message from the pipeline (real post — the approval-gated send step)',
   },
 
@@ -302,7 +321,7 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
   // ONE ask channel — actionable options, never a wall of questions. ──
   assign_to_coworker: {
     intent: "hand a production task (report, draft, research, analysis, post) to the best-fit coworker when the user didn't name one",
-    tool: 'assign_to_coworker', built: true, kind: 'judgment', irreversible: false, feature: null, exposure: ['chief_of_staff'], conversational: true,
+    tool: 'assign_to_coworker', built: true, kind: 'judgment', irreversible: false, mutates: true, feature: null, exposure: ['chief_of_staff'], conversational: true,
     blurb: 'ASSIGN produced work to the best-fit coworker and start it now (reversible — it reports back here)',
   },
   offer_choices: {
@@ -314,17 +333,17 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
   // ── Commit (irreversible → approval gate) ──
   send_email: {
     intent: 'send an email as the user (connected mailbox)',
-    tool: 'send_email', built: true, kind: 'atomic', irreversible: true, feature: 'email',
+    tool: 'send_email', built: true, kind: 'atomic', irreversible: true, mutates: true, feature: 'email',
     blurb: 'SEND an email as the user (connected mailbox)',
   },
   slack_post_message: {
     intent: 'post a message to a Slack channel',
-    tool: 'slack_post_message', built: true, kind: 'atomic', irreversible: true, feature: null,
+    tool: 'slack_post_message', built: true, kind: 'atomic', irreversible: true, mutates: true, feature: null,
     blurb: 'POST a message to Slack',
   },
   send_calendar_invite: {
     intent: 'put a meeting on the calendar / send a calendar invite to attendees',
-    tool: 'send_calendar_invite', built: true, kind: 'atomic', irreversible: true, feature: 'meetings',
+    tool: 'send_calendar_invite', built: true, kind: 'atomic', irreversible: true, mutates: true, feature: 'meetings',
     blurb: 'SEND a calendar invite / put a meeting on the calendar (real Google/Outlook event, notifies attendees)',
   },
   // ── S5 proof-of-agnosticism: one map row + a registered executor + a prepared-action surface makes
@@ -332,7 +351,7 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
   // assembler needed NO structural edits — they read this map. Real send → irreversible → approval gate.
   forward_email: {
     intent: 'forward an email we already have to a new recipient (e.g. forward the deck to finance)',
-    tool: 'forward_email', built: true, kind: 'atomic', irreversible: true, feature: 'email',
+    tool: 'forward_email', built: true, kind: 'atomic', irreversible: true, mutates: true, feature: 'email',
     blurb: 'FORWARD an existing email to another recipient (real send as the user)',
   },
 
@@ -342,12 +361,12 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
   // the irreversible flag on sends stays the structural approve gate.
   resolve_inbox_item: {
     intent: 'mark the current email/notice done or dismiss it from the Home',
-    tool: 'resolve_inbox_item', built: true, kind: 'atomic', irreversible: false, feature: 'email',
+    tool: 'resolve_inbox_item', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'email',
     blurb: 'mark the current item done / dismiss it (reversible)', exposure: ['chief_of_staff'],
   },
   resolve_commitment: {
     intent: 'mark the current commitment or follow-up done or dismissed',
-    tool: 'resolve_commitment', built: true, kind: 'atomic', irreversible: false, feature: null,
+    tool: 'resolve_commitment', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: null,
     blurb: 'mark the current commitment done / dismissed (reversible)', exposure: ['chief_of_staff'],
   },
   find_file: {
@@ -357,17 +376,17 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
   },
   remember_fact: {
     intent: "save a durable fact/constraint onto this deal's memory",
-    tool: 'remember_fact', built: true, kind: 'atomic', irreversible: false, feature: null,
+    tool: 'remember_fact', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: null,
     blurb: "remember a durable fact on the deal (future drafts respect it)", exposure: ['chief_of_staff'],
   },
   propose_standing_task: {
     intent: 'the user asks for a RECURRING deliverable (weekly report, daily digest) — propose the standing task for confirmation',
-    tool: 'propose_standing_task', built: true, kind: 'atomic', irreversible: false, feature: 'studio',
+    tool: 'propose_standing_task', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'studio',
     blurb: 'propose a STANDING task ("weekly report on X") — places the confirm card; creates nothing by itself', exposure: ['chief_of_staff'],
   },
   steer_standing_task: {
     intent: 'feedback on a standing/recurring task ("less macro, more tenders") — bake it into the method so future runs inherit it',
-    tool: 'steer_standing_task', built: true, kind: 'atomic', irreversible: false, feature: 'studio',
+    tool: 'steer_standing_task', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'studio',
     blurb: 'apply feedback to a STANDING task\'s method (next runs inherit it) — only in the standing task\'s room', exposure: ['chief_of_staff'],
   },
   read_action_history: {
@@ -379,27 +398,27 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
   // registry so every chat surface gets them at once. All reversible-or-logged; none send anything.
   move_item_to_project: {
     intent: 'move this item into a different project, or take it out of its project',
-    tool: 'move_item_to_project', built: true, kind: 'atomic', irreversible: false, feature: null,
+    tool: 'move_item_to_project', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: null,
     blurb: "move the open item to another project / out of its project ('this isn't part of X')", exposure: ['chief_of_staff'],
   },
   set_project_status: {
     intent: "change a project's lifecycle: done, archived, reopened, or not-a-project",
-    tool: 'set_project_status', built: true, kind: 'atomic', irreversible: false, feature: null,
+    tool: 'set_project_status', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: null,
     blurb: "mark a project done / archive / reopen / 'not a project'", exposure: ['chief_of_staff'],
   },
   merge_projects: {
     intent: 'merge two projects that are really one body of work',
-    tool: 'merge_projects', built: true, kind: 'atomic', irreversible: false, feature: null,
+    tool: 'merge_projects', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: null,
     blurb: 'merge two projects into one (everything moves to the kept one)', exposure: ['chief_of_staff'],
   },
   create_project: {
     intent: 'start a new project to track, optionally founded from the item being viewed',
-    tool: 'create_project', built: true, kind: 'atomic', irreversible: false, feature: null,
+    tool: 'create_project', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: null,
     blurb: 'start a new project ("start a project called X from this")', exposure: ['chief_of_staff'],
   },
   create_task_item: {
     intent: "add a task to the user's plate, optionally on a project",
-    tool: 'create_task_item', built: true, kind: 'atomic', irreversible: false, feature: null,
+    tool: 'create_task_item', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: null,
     blurb: 'add a task ("add a task on Acme: chase the signed NDA, due Friday")', exposure: ['chief_of_staff'],
   },
   // ── THE PARITY LAW (Aug 4): every verb the UI offers must be SAYABLE. "Send it" typed in the
@@ -408,7 +427,7 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
   // the approve click stays the commit.
   send_prepared_reply: {
     intent: 'send the ALREADY-DRAFTED reply on the current item — only when the user explicitly says to send',
-    tool: 'send_prepared_reply', built: true, kind: 'atomic', irreversible: true, feature: 'email',
+    tool: 'send_prepared_reply', built: true, kind: 'atomic', irreversible: true, mutates: true, feature: 'email',
     blurb: 'send the prepared reply ("send it") — fires only on the user\'s own explicit send word', exposure: ['chief_of_staff'],
   },
   // EVERY THREAD, EVERY PRODUCER (threads plan, Sep 8): the invite card's producer, sayable. It
@@ -417,9 +436,11 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
   // is exactly why the sending capability (`send_calendar_invite`, irreversible) stays out of chat.
   prepare_calendar_invite: {
     intent: 'prepare a calendar invite from what the conversation says (never sends by itself)',
-    tool: 'prepare_calendar_invite', built: true, kind: 'atomic', irreversible: false, feature: 'meetings',
+    tool: 'prepare_calendar_invite', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'meetings',
     blurb: 'prepare a calendar invite CARD ("set up a meeting with Sam Thursday 11h") — the user reviews, picks the time and sends',
-    exposure: ['chief_of_staff'], conversational: true,
+    // The coworker DM route registers the SAME definition + executor (see the import note in
+    // app/api/work/threads/[id]/chat/route.ts); the exposure row now says so (Sep 21, door parity).
+    exposure: ['chief_of_staff', 'coworker'], conversational: true,
   },
   // THE BULK DEED (attention-plan A7's parity clause): the ledger's natural verbs, sayable. It
   // PREPARES the same stored deed row the ledger's own buttons prepare and returns it on the turn —
@@ -429,14 +450,206 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
   // prompt), so no PLAN_VERSION bump is owed — the same reasoning the invite entry stands on.
   prepare_bulk_deed: {
     intent: 'preview a bulk deed over a group the agent is holding quiet (never acts by itself)',
-    tool: 'prepare_bulk_deed', built: true, kind: 'atomic', irreversible: false, feature: 'email',
+    tool: 'prepare_bulk_deed', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'email',
     blurb: 'preview a bulk deed ("archive all the notices", "unsubscribe from the newsletters") — the card states what would happen and the user commits it',
+    exposure: ['chief_of_staff'], conversational: true,
+  },
+  // HANDS FOR THE SCOPE (Sep 21 — the pilot's dead-ended "yes please"): the chat could OFFER to
+  // write to someone and held nothing that writes. `draft_reply` prepares the reply and hands it
+  // back; the send door is unchanged (send_prepared_reply, explicit-send floor). Reversible by
+  // construction — nothing leaves. `conversational: true` keeps it out of builtCapabilities(), so
+  // no PLAN_VERSION bump is owed (the same reasoning the invite/bulk-deed rows stand on).
+  draft_reply: {
+    intent: 'draft the reply the conversation has been about, for the user to review (never sends by itself)',
+    tool: 'draft_reply', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'email',
+    blurb: 'draft a reply ("reply to them offering both slots") — it prepares the draft; sending stays the user\'s explicit word',
     exposure: ['chief_of_staff'], conversational: true,
   },
   prepare_forward: {
     intent: 'prepare forwarding the current email to someone for review & approval (never sends by itself)',
-    tool: 'prepare_forward', built: true, kind: 'atomic', irreversible: false, feature: 'email',
+    tool: 'prepare_forward', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'email',
     blurb: 'prepare a forward ("forward this to Rita") — review & approve on the card before anything sends', exposure: ['chief_of_staff'],
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  // THE CONVERSATIONAL DOORS JOIN THE REGISTRY (Sep 21 — CLASS 2: "a verb has every conversational
+  // door"). Live incident: the Home chat answered "I don't have a tool to pause workflows" while a
+  // coworker DM had paused them for months. Cause: NOT ONE task verb was a row here. The coworker
+  // door built its list with a literal push; the chief door derives from this map — so the map, the
+  // thing every parity gate reads, never knew these verbs existed, and the gates could not see the
+  // hole they were built to see.
+  //
+  // Every row below is `conversational: true`: they are chat verbs, never item-plan steps, so
+  // `builtCapabilities()` excludes them and NO PLAN_VERSION bump is owed (the precedent stated on
+  // prepare_calendar_invite / prepare_bulk_deed / draft_reply above).
+  //
+  // A verb a coworker holds and the chief does NOT must carry a written `chiefExempt` — doorParity()
+  // fails on a silent asymmetry.
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+
+  // ── Tasks: the chief's slice — see what is automated, read one, change its status, run it now.
+  // All four resolve BY NAME on the chief side (a raw id is useless in conversation).
+  list_tasks: {
+    intent: 'list the automated tasks that exist and whether they are running',
+    tool: 'list_tasks', built: true, kind: 'atomic', irreversible: false, feature: 'studio',
+    blurb: "list the automated tasks ('what's running?')",
+    exposure: ['chief_of_staff', 'coworker'], conversational: true,
+  },
+  get_task: {
+    intent: 'read one task\'s full configuration (schedule, steps, output, doors)',
+    tool: 'get_task', built: true, kind: 'atomic', irreversible: false, feature: 'studio',
+    blurb: "read one task's configuration ('what does the weekly briefing actually do?')",
+    exposure: ['chief_of_staff', 'coworker'], conversational: true,
+  },
+  // THE BULK DEED OVER TASKS (Sep 21 — the incident's own verb). "Pause all workflows" used to force
+  // an N-call model loop with NOTHING reconciling N intents to N results; one round got eaten by the
+  // dedupe and the reply claimed both. This verb loops SERVER-side and returns a per-item ledger, so
+  // the count in the sentence is a count the code observed. Reversible by construction (its own
+  // mirror resumes) — which is why it may act on the user's explicit words, and why DESTRUCTIVE bulk
+  // (delete) is deliberately NOT here: delete stays single-item.
+  set_tasks_status: {
+    intent: 'pause or resume tasks in one deed — all of them, or the ones the user names',
+    tool: 'set_tasks_status', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'studio',
+    blurb: "pause or resume tasks in one go ('pause all my workflows', 'resume the weekly briefing')",
+    exposure: ['chief_of_staff', 'coworker'], conversational: true,
+    loopOnly: 'its arguments (which direction, and whether "all" was meant) carry the whole deed — ' +
+      'they need the tool schema, not a blurb. The executor keeps its own user-words floors as well.',
+  },
+  run_task: {
+    intent: 'run an existing task right now',
+    tool: 'run_task', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'studio',
+    blurb: "run an existing task now ('run the weekly briefing')",
+    exposure: ['chief_of_staff', 'coworker'], conversational: true,
+  },
+
+  // ── Tasks: the coworker-only slice. Each says WHY the chief does not hold it.
+  create_task: {
+    intent: 'build a new automated task from a plain description',
+    tool: 'create_task', built: true, kind: 'judgment', irreversible: false, mutates: true, feature: 'studio',
+    blurb: 'build a new automated task from a description',
+    exposure: ['coworker'], conversational: true,
+    chiefExempt: 'the chief creates standing work through propose_standing_task — the ONE confirm card ' +
+      '(SAYING PREPARES, COMMITTING STAYS EXPLICIT). A second creation path from the Home would bypass it.',
+  },
+  update_task: {
+    intent: 'edit an existing task — schedule, output, instructions, steps, status',
+    tool: 'update_task', built: true, kind: 'judgment', irreversible: false, mutates: true, feature: 'studio',
+    blurb: 'edit an existing task (schedule, output, instructions, a step)',
+    exposure: ['coworker'], conversational: true,
+    chiefExempt: 'editing a pipeline needs its steps in view; the chief steers standing work through ' +
+      'steer_standing_task (the method) and changes status through set_tasks_status. The full editor ' +
+      'belongs to the coworker who owns the task, and to Studio.',
+  },
+  duplicate_task: {
+    intent: 'copy an existing task as the basis for a variant',
+    tool: 'duplicate_task', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'studio',
+    blurb: 'copy a task as the basis for a variant',
+    exposure: ['coworker'], conversational: true,
+    chiefExempt: 'a duplicate is only useful alongside the edit that makes it different — it rides with update_task.',
+  },
+  delete_task: {
+    intent: 'delete a task permanently',
+    tool: 'delete_task', built: true, kind: 'atomic', irreversible: true, mutates: true, feature: 'studio',
+    blurb: 'delete a task permanently',
+    exposure: ['coworker'], conversational: true,
+    chiefExempt: 'DESTRUCTIVE and irreversible: it stays single-item, in the room that holds the task, ' +
+      'never a Home-chat verb and never part of a bulk deed.',
+  },
+  share_task: {
+    intent: 'share a task with the team, or stop sharing it',
+    tool: 'share_task', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'studio',
+    blurb: 'share a task with the team / stop sharing it',
+    exposure: ['coworker'], conversational: true,
+    chiefExempt: 'a team-library verb that belongs with the coworker who owns the task; the Home never lists the library.',
+  },
+  list_team_tasks: {
+    intent: 'see the tasks teammates have shared',
+    tool: 'list_team_tasks', built: true, kind: 'atomic', irreversible: false, feature: 'studio',
+    blurb: 'see tasks teammates have shared',
+    exposure: ['coworker'], conversational: true,
+    chiefExempt: 'the team library is browsed where a task is adopted — beside use_task, on the coworker.',
+  },
+  use_task: {
+    intent: "copy a teammate's shared task into your own list",
+    tool: 'use_task', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'studio',
+    blurb: "copy a teammate's shared task into your own list",
+    exposure: ['coworker'], conversational: true,
+    chiefExempt: 'adoption lands the task ON a coworker, so it is asked of that coworker.',
+  },
+  supply_run_input: {
+    intent: 'hand a parked run the material it stopped to ask for',
+    tool: 'supply_run_input', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'studio',
+    blurb: 'hand a parked run the paste or document it is waiting for',
+    exposure: ['coworker'], conversational: true,
+    chiefExempt: 'an input station raises its own deck ask with a deep link to the run; the supply is ' +
+      'answered there or in the run\'s own room, never blind from the Home.',
+  },
+
+  // ── The coworker's own reading room: its documents, its skills, its teammates' work. Chief-exempt
+  // as a class — the Home reads the SAME material through search_knowledge_base / find_file.
+  list_worker_documents: {
+    intent: "list the documents this coworker has produced",
+    tool: 'list_worker_documents', built: true, kind: 'atomic', irreversible: false, feature: null,
+    blurb: "list the documents this coworker has produced", exposure: ['coworker'], conversational: true,
+    chiefExempt: 'scoped to ONE coworker\'s own output; the Home reads across everything through find_file / search_knowledge_base.',
+  },
+  get_worker_document: {
+    intent: "read one document this coworker produced",
+    tool: 'get_worker_document', built: true, kind: 'atomic', irreversible: false, feature: null,
+    blurb: "read one document this coworker produced", exposure: ['coworker'], conversational: true,
+    chiefExempt: 'same scope as list_worker_documents — the Home reads documents through read_document.',
+  },
+  read_team_work: {
+    intent: "read one of a teammate coworker's recent outputs",
+    tool: 'read_team_work', built: true, kind: 'atomic', irreversible: false, feature: null,
+    blurb: "read a teammate coworker's output in full", exposure: ['coworker'], conversational: true,
+    chiefExempt: 'cross-coworker pickup is how COWORKERS build on each other; the Home asks the owner.',
+  },
+  list_skills: {
+    intent: 'list the reusable skills in the library',
+    tool: 'list_skills', built: true, kind: 'atomic', irreversible: false, feature: null,
+    blurb: 'list the skills library', exposure: ['coworker'], conversational: true,
+    chiefExempt: 'a skill is HOW a coworker works — the library is consulted by the coworker applying it.',
+  },
+  apply_skill: {
+    intent: 'pull one skill from the library and follow it for this response',
+    tool: 'apply_skill', built: true, kind: 'atomic', irreversible: false, feature: null,
+    blurb: 'apply one named skill from the library', exposure: ['coworker'], conversational: true,
+    chiefExempt: 'the chief does not produce in a coworker\'s voice; it hands the work over (assign_to_coworker).',
+  },
+
+  // ── The coworker chat's remaining reads/renders.
+  get_email_body: {
+    intent: 'read the full body of one email already identified in the inbox',
+    tool: 'get_email_body', built: true, kind: 'atomic', irreversible: false, feature: 'email',
+    blurb: 'read one email in full (after get_emails found it)',
+    exposure: ['coworker'], conversational: true,
+    chiefExempt: 'the chief already receives the message it is answering about IN its grounding (the ' +
+      'viewing anchor / the one room grounding) — a second reading verb would be a second source of truth.',
+  },
+  slack_list_channels: {
+    intent: 'list the Slack channels this coworker can reach',
+    tool: 'slack_list_channels', built: true, kind: 'atomic', irreversible: false, feature: null,
+    blurb: 'list reachable Slack channels', exposure: ['coworker'], conversational: true,
+    chiefExempt: 'Slack is per-coworker (one app per coworker, its own identity) — the chief holds no Slack app.',
+  },
+  slack_list_members: {
+    intent: 'list the members of a Slack workspace/channel',
+    tool: 'slack_list_members', built: true, kind: 'atomic', irreversible: false, feature: null,
+    blurb: 'list Slack members (to resolve a mention)', exposure: ['coworker'], conversational: true,
+    chiefExempt: 'same as slack_list_channels — the connection belongs to the coworker.',
+  },
+  request_clarification: {
+    intent: 'put a confirmation card up before producing a file',
+    tool: 'request_clarification', built: true, kind: 'judgment', irreversible: false, feature: null,
+    blurb: 'confirm what to produce before generating a file', exposure: ['coworker'], conversational: true,
+    chiefExempt: 'the chief\'s decision door is offer_choices — one asking grammar per surface, not two.',
+  },
+  present_linkedin_post: {
+    intent: 'present a finished post as a reviewable card (display only)',
+    tool: 'present_linkedin_post', built: true, kind: 'judgment', irreversible: false, feature: null,
+    blurb: 'present a finished post as a reviewable card (never publishes)', exposure: ['coworker'], conversational: true,
+    chiefExempt: 'a render card for the coworker who wrote the post; the Home hands post work over instead.',
   },
 };
 
@@ -446,6 +659,69 @@ export function capabilitiesFor(surface: CapabilityExposure): Capability[] {
   return Object.values(CAPABILITY_MAP).filter((c) =>
     c.built && (c.exposure ? c.exposure.includes(surface) : surface !== 'chief_of_staff'));
 }
+
+/** The tool ids a door may hold, in registry order — what `buildChatTools` and the chief loop READ
+ *  instead of keeping a literal list of their own (Sep 21, CLASS 2). */
+export function doorToolIds(surface: CapabilityExposure): string[] {
+  return capabilitiesFor(surface).map((c) => c.tool);
+}
+
+/**
+ * THE DERIVED DOOR-PARITY LAW (Sep 21) — the sibling of `registryParity()`, for the CONVERSATIONAL
+ * doors. Asserted by the promise gate (P21b) with the doors' real definition sets.
+ *
+ *   1. Every tool a door actually offers has a registry row (the hole that hid the task verbs).
+ *   2. A row whose exposure names a door is actually offered there (a row that lies the other way).
+ *   3. A TASK-CLASS verb a coworker holds and the chief does not must carry a written `chiefExempt`.
+ *
+ * ⚠️ WHAT THIS LAW DOES NOT YET COVER (Sep 21, written down rather than implied):
+ *   • Rule 1 is FREE BY CONSTRUCTION on the coworker arm — `buildChatTools` iterates this very
+ *     registry, so that door cannot offer a tool without a row. The rule earns its keep on the
+ *     chief arm and on any future door that keeps a list of its own.
+ *   • THERE IS NO AGENTOS ARM. The Python worker mirror (infra/agentos/tools_*.py) is a THIRD door
+ *     and nothing here compares it to the registry, so a drift there is invisible to this function.
+ *     Known gaps found by review, stated as a gap rather than silently carried: `read_document`,
+ *     `get_email_body` and `request_clarification` have coworker exposure here and no Python tool —
+ *     a coworker on the box simply cannot reach them. Closing it means a real third arm (the door
+ *     set read from the Python source) plus a box redeploy; not built in this pass.
+ *
+ * Returns the violations (empty = lawful).
+ */
+export function doorParity(doors: { chief: readonly string[]; coworker: readonly string[] }): string[] {
+  const out: string[] = [];
+  const sets: Array<[CapabilityExposure, ReadonlySet<string>]> = [
+    ['chief_of_staff', new Set(doors.chief)],
+    ['coworker', new Set(doors.coworker)],
+  ];
+  for (const [surface, offered] of sets) {
+    for (const name of offered) {
+      const cap = CAPABILITY_MAP[name];
+      if (!cap) { out.push(`the ${surface} door offers "${name}", which has no registry row`); continue; }
+      const exp = cap.exposure ?? ['coworker', 'workflow'];
+      if (!exp.includes(surface)) out.push(`the ${surface} door offers "${name}", whose row does not expose it there`);
+    }
+    for (const cap of capabilitiesFor(surface)) {
+      // Only CONVERSATIONAL rows claim a chat door; a plan/workflow capability (analyze, send_email,
+      // the pipeline sources) is legitimately absent from a chat tool list.
+      if (!cap.conversational) continue;
+      if (!offered.has(cap.tool)) out.push(`"${cap.tool}" claims ${surface} exposure but that door does not offer it`);
+    }
+  }
+  // 3 — the asymmetry must be WRITTEN. Scoped to the task class: the verbs this law was found on.
+  const chief = new Set(doors.chief);
+  for (const cap of capabilitiesFor('coworker')) {
+    if (!cap.conversational || !TASK_CLASS_TOOLS.has(cap.tool)) continue;
+    if (chief.has(cap.tool)) continue;
+    if (!cap.chiefExempt?.trim()) out.push(`task verb "${cap.tool}" has a coworker door and no chief door, with no written chiefExempt reason`);
+  }
+  return out;
+}
+
+/** The task-management verb family — the class the door-parity law was found on. */
+export const TASK_CLASS_TOOLS: ReadonlySet<string> = new Set([
+  'list_tasks', 'get_task', 'create_task', 'update_task', 'run_task', 'duplicate_task', 'delete_task',
+  'share_task', 'list_team_tasks', 'use_task', 'supply_run_input', 'set_tasks_status',
+]);
 
 // Only the capabilities that are actually wired today drive the classifier prompt —
 // conversation-flow capabilities (dispatcher/ask) and WORKFLOW-ONLY step tools excluded:

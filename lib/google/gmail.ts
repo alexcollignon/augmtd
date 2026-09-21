@@ -1,5 +1,6 @@
 import { google } from 'googleapis';
 import { getOAuth2Client } from './oauth';
+import { sanitizeAddressList, sanitizeFilename, sanitizeHeaderValue, sanitizeMimeType } from '@/lib/utils/email-headers';
 
 export interface GmailAttachmentMeta {
   attachmentId: string;
@@ -363,7 +364,17 @@ export async function sendGmailEmail(params: {
   inReplyTo?: string;
   references?: string;
 }): Promise<string> {
-  const { encryptedTokens, to, cc, bcc, subject, body, attachments = [], gmailThreadId, inReplyTo, references } = params;
+  const { encryptedTokens, body, attachments = [], gmailThreadId } = params;
+  // ── THE HEADER FLOOR: nothing user-supplied reaches an RFC822 header line unsanitized. A CR/LF in
+  // a subject ENDS the Subject header and starts the next one — `Bcc:` included — so the guarantee
+  // lives HERE, at the layer that writes the lines, not in whichever door happened to remember.
+  const to = sanitizeAddressList(params.to);
+  const cc = params.cc ? sanitizeAddressList(params.cc) : '';
+  const bcc = params.bcc ? sanitizeAddressList(params.bcc) : '';
+  const subject = sanitizeHeaderValue(params.subject);
+  const inReplyTo = params.inReplyTo ? sanitizeHeaderValue(params.inReplyTo, 998) : undefined;
+  const references = params.references ? sanitizeHeaderValue(params.references, 998) : undefined;
+  if (!to) throw new Error('No valid recipient address');
 
   const gmail = await getGmailClient(encryptedTokens);
   const htmlBody = plainTextToHtml(body);
@@ -391,9 +402,10 @@ export async function sendGmailEmail(params: {
 
     for (const att of attachments) {
       lines.push(`--${boundary}`);
-      lines.push(`Content-Type: ${att.mimeType}; name="${att.filename}"`);
+      const fname = sanitizeFilename(att.filename);
+      lines.push(`Content-Type: ${sanitizeMimeType(att.mimeType)}; name="${fname}"`);
       lines.push('Content-Transfer-Encoding: base64');
-      lines.push(`Content-Disposition: attachment; filename="${att.filename}"`);
+      lines.push(`Content-Disposition: attachment; filename="${fname}"`);
       lines.push('');
       lines.push(att.content.toString('base64'));
     }
@@ -663,7 +675,15 @@ export async function getGmailMessageDetail(
 }
 
 export async function sendGmailReply(params: SendGmailReplyParams): Promise<string> {
-  const { encryptedTokens, threadId, to, subject, body, inReplyTo, references, attachments = [], cc, bcc } = params;
+  const { encryptedTokens, threadId, body, attachments = [] } = params;
+  // THE HEADER FLOOR — the reply builder writes the same header lines, so it takes the same floor.
+  const to = sanitizeAddressList(params.to);
+  const cc = params.cc ? sanitizeAddressList(params.cc) : '';
+  const bcc = params.bcc ? sanitizeAddressList(params.bcc) : '';
+  const subject = sanitizeHeaderValue(params.subject);
+  const inReplyTo = params.inReplyTo ? sanitizeHeaderValue(params.inReplyTo, 998) : undefined;
+  const references = params.references ? sanitizeHeaderValue(params.references, 998) : undefined;
+  if (!to) throw new Error('No valid recipient address');
 
   const gmail = await getGmailClient(encryptedTokens);
 
@@ -692,9 +712,10 @@ export async function sendGmailReply(params: SendGmailReplyParams): Promise<stri
     ];
     for (const att of attachments) {
       lines.push(`--${boundary}`);
-      lines.push(`Content-Type: ${att.mimeType}; name="${att.filename}"`);
+      const fname = sanitizeFilename(att.filename);
+      lines.push(`Content-Type: ${sanitizeMimeType(att.mimeType)}; name="${fname}"`);
       lines.push('Content-Transfer-Encoding: base64');
-      lines.push(`Content-Disposition: attachment; filename="${att.filename}"`);
+      lines.push(`Content-Disposition: attachment; filename="${fname}"`);
       lines.push('');
       lines.push(att.content.toString('base64'));
     }

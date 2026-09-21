@@ -154,15 +154,35 @@ export function useOrbEntrance(loading: boolean, coldRef: RefObject<boolean | nu
   // does anything that lands in the column ahead of the brief (the day frame arrives on its own
   // fetch, and the column is vertically centred, so its height moving moves the seat). Both are
   // re-measured, so the flight never starts from a rect that stopped being the truth.
+  //
+  // ⚠️ THE HEADER RE-FLOWS UNDERNEATH THE ORB (owner walk, Sep 20: "there's a slight shift of the
+  // eyes to the left, anticipating the welcome/greeting text"). The header row is `justify-center`,
+  // so the orb and the greeting are centred AS A GROUP: the instant the name lands in the h1 (and
+  // "· next:" in the date line) the group gets wider and the seat's own rect slides LEFT — while
+  // the FIRST transform still points at where the seat used to be. The orb therefore drifts off the
+  // centre it is supposed to be holding, before the flight has even started. The veil hides the
+  // text, not its width, and the column's SIZE never changes, so the host observer above could not
+  // see it. Now the row and each of its children are observed too — the boxes whose growth actually
+  // moves the seat — and the rect is re-taken.
   useEffect(() => {
     if (phase !== 'cold') return;
     const on = () => place();
     window.addEventListener('resize', on);
-    const host = seatRef.current?.closest('[data-home-column]');
-    const ro = host && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(on) : null;
-    if (ro && host) ro.observe(host);
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(on) : null;
+    if (ro) {
+      const host = seatRef.current?.closest('[data-home-column]');
+      if (host) ro.observe(host);
+      const row = seatRef.current?.parentElement;
+      if (row) { ro.observe(row); for (const child of Array.from(row.children)) ro.observe(child); }
+    }
     return () => { window.removeEventListener('resize', on); ro?.disconnect(); };
   }, [phase, place]);
+
+  // …and the same truth, one frame earlier: a ResizeObserver reports AFTER the layout it describes,
+  // so a render that widens the greeting would still show one drifted frame. While cold — and only
+  // while cold — the FIRST rect is re-taken after every render, which is two rect reads on a page
+  // that is doing nothing else. It writes to the node, never to state, so it cannot loop.
+  useLayoutEffect(() => { if (phase === 'cold') place(); });
 
   const veil = useCallback((step: number): CSSProperties => {
     if (phase === 'done') return {};
@@ -193,11 +213,21 @@ export function OrbSeat({ entrance, size = 70, loading = false }: {
   /** Passed straight through to the one mark — the brief is in flight, so it runs energetic. */
   loading?: boolean;
 }) {
-  const flying = entrance.phase === 'cold' || entrance.phase === 'flying' || entrance.phase === 'pending';
+  const { phase } = entrance;
+  const flying = phase === 'cold' || phase === 'flying' || phase === 'pending';
+  // THE ORB SAYS WHAT IT IS DOING (owner walk, Sep 20: "weird loading state as there's no label, so
+  // the user is just looking at those eyes while waiting without understanding what's happening").
+  // The cold phase was wordless by construction — one mark holding a veiled column — which reads as
+  // a stall rather than as work. It now carries the SAME sentence the deck already uses for the
+  // same fact, so there is one vocabulary for "the brief is still in flight" and not two. It leaves
+  // the moment the flight begins (the landed Home is never captioned), it is ABSOLUTE so it cannot
+  // touch the header's geometry, and it is counter-scaled so the 1.7× upscale never becomes 1.7×
+  // type. The mark hides itself from assistive tech; this line is the part worth announcing, so the
+  // seat no longer blankets both with aria-hidden.
+  const captioned = phase === 'cold' || phase === 'flying';
   return (
     <span
       ref={entrance.seatRef}
-      aria-hidden="true"
       className="relative inline-block flex-shrink-0 align-middle"
       style={{ width: size, height: size }}
     >
@@ -207,6 +237,21 @@ export function OrbSeat({ entrance, size = 70, loading = false }: {
         style={{ transformOrigin: '50% 50%' }}
       >
         <AliveMark size={size} loading={loading} />
+        {captioned && (
+          <span
+            role="status"
+            className="pointer-events-none absolute left-1/2 top-full whitespace-nowrap text-[13px] text-neutral-400"
+            style={{
+              transform: `translateX(-50%) scale(${1 / CENTER_SCALE})`,
+              transformOrigin: '50% 0',
+              marginTop: 12,
+              opacity: phase === 'cold' ? 1 : 0,
+              transition: `opacity 180ms ${EASE}`,
+            }}
+          >
+            Reading your day…
+          </span>
+        )}
       </span>
     </span>
   );

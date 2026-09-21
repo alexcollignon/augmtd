@@ -373,6 +373,28 @@ function EmailCardView({ card }: { card: EmailCard }) {
 
       {/* THE DRAFT */}
       <div className="flex flex-col gap-2 px-4 py-3">
+        {/* THE FROM ROW — present only where the sender is a real question (the standalone lane).
+            One mailbox states itself; several offer themselves. Same 11px address-row grammar as
+            To, so the two read as one block rather than a settings strip bolted on top. */}
+        {(card.from || (card.fromOptions?.length ?? 0) > 0) && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] text-neutral-400">From</span>
+            {(card.fromOptions?.length ?? 0) > 1 && card.onPickFrom ? (
+              <select
+                value={card.selectedFromId ?? card.fromOptions![0].id}
+                onChange={(ev) => card.onPickFrom!(ev.target.value)}
+                aria-label="Send from"
+                className="aug-focus max-w-full rounded border border-neutral-200 bg-white px-1.5 py-0.5 text-[12px] text-neutral-700"
+              >
+                {card.fromOptions!.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+              </select>
+            ) : (
+              <span className="truncate text-[12px] text-neutral-600">
+                {card.from ?? card.fromOptions?.[0]?.label}
+              </span>
+            )}
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-[11px] text-neutral-400">To</span>
           {card.recipientsEditor ?? (

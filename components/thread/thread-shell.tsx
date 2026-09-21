@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { cn } from '@/lib/cn';
+import { AVATAR_RING_GUTTER } from './avatar-status';
 import { ThreadHeader, type ThreadHeaderProps } from './thread-header';
 import { ThreadTimeline } from './thread-timeline';
 import { ThreadComposer, type ThreadComposerProps } from './thread-composer';
@@ -58,7 +59,19 @@ export function ThreadShell({ kind, header, items, composer, composerNode, befor
             (the Home's own centred column): a short stack sits just above the composer, and the
             moment the content outgrows the viewport the stack overflows and scrolls normally, with
             `justify-end` inert. One rule, both cases — never a length branch. */}
-        <div className="min-h-0 flex-grow overflow-y-auto [scrollbar-width:thin]">
+        {/* THE RING GUTTER — a status is not a thing a container may slice (owner screenshot, Sep 21:
+            the working arc cut off down its left side in the Home chat, mid-thought).
+            `overflow-y-auto` makes the other axis `auto` too, so THIS box clips at its padding box;
+            the reading column sits flush against it whenever the pane is narrower than 760 + gutters,
+            which puts the leading avatar's orbiting arc (it reaches `ringOverhang(size)` px outside
+            the face's own box) exactly on the cut line. The scroller now reserves the ring's extent
+            as its own padding and gives the width back with an equal negative margin — so the clip
+            boundary moves outward while the column's position, width and centring are byte-identical,
+            and no horizontal scrollbar is born (leading-edge overflow is not scrollable overflow).
+            It lives on THE ONE SCROLLER, so every surface that mounts the kit — Home chat, coworker
+            DM, project room, item room — inherits it; a host cannot forget it. */}
+        <div className="min-h-0 flex-grow overflow-y-auto [scrollbar-width:thin]"
+          style={{ marginInline: -AVATAR_RING_GUTTER, paddingInline: AVATAR_RING_GUTTER }}>
           <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col justify-end pt-4 pb-2">
             {beforeTimeline}
             <ThreadTimeline items={items} />

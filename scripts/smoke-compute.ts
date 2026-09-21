@@ -53,7 +53,8 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     (builder.match(/run_compute/g)?.length ?? 0) >= 5 &&
     builder.includes("{ label: 'Compute',     ids: ['run_compute'] }"));
   check('C3: the chat surface mounts the same definition + a dispatch case; the step engine dispatches run_compute',
-    src('app/api/work/threads/[id]/chat/route.ts').includes('runComputeDefinition') &&
+    src('lib/work/chat-tool-defs.ts').includes('run_compute: runComputeDefinition') &&  // RE-POINTED Sep 21: the definitions moved to the one derived table
+    src('app/api/work/threads/[id]/chat/route.ts').includes("case 'run_compute'") &&
     src('app/api/work/threads/[id]/chat/route.ts').includes("case 'run_compute'") &&
     src('lib/workflows/execute-step.ts').includes("case 'run_compute'"));
 
@@ -237,7 +238,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
   }
 
   // ── U · THE ONE-GROUNDING UNIFICATION (the Home ask reads the room's page). ──
-  const { findEntityFocus } = await import('../lib/home/ask');
+  const { findEntityFocus, suggestFilingFocus, askEvidenceText } = await import('../lib/home/ask');
   const fents = [
     { id: 'e1', name: 'Meridian Audit', aliases: ['Meridian'] },
     { id: 'e2', name: 'AI Assessment', aliases: [] },          // all-generic — must NEVER match
@@ -248,6 +249,76 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     findEntityFocus('how is our ai assessment going?', fents) === null &&
     findEntityFocus('what did I miss this week?', fents) === null &&
     findEntityFocus('anything new on the baltra pilot?', fents)?.id === 'e3');
+  // ── FC · THE FILING CLAIM (Sep 21, found live: a conversation entirely about scheduling a press
+  // interview was offered "About <unrelated project>? · File it"). A focus — and above all the
+  // composer's filing chip — CLAIMS this conversation is about that project. The law, as a scenario
+  // matrix on the pure producers: identity whole · the user's own words · tracked only · silence
+  // beats a wrong claim. ──
+  const { cleanEntityName, isSubjectShapedName } = await import('../lib/entities/entity-name');
+  const fc = [
+    { id: 'p1', name: 'Northvale Rollout', aliases: ['Northvale'], tracked: true },
+    { id: 'p2', name: 'Acme Family Business Workshop', aliases: [], tracked: true },
+    { id: 'p3', name: 'AI Assessment', aliases: [], tracked: true },              // all-generic
+    { id: 'p4', name: 'Orinoco Review', aliases: [], tracked: false },            // machine-founded
+    { id: 'p5', name: 'Orinoco Review', aliases: [], tracked: true },
+  ];
+  check('FC1: the user NAMES a tracked project distinctively → the claim fires (name and alias forms both)',
+    suggestFilingFocus('where do we stand on the Northvale rollout?', fc)?.id === 'p1' &&
+    suggestFilingFocus('quick one on Northvale before the call', fc)?.id === 'p1');
+  check('FC2: IDENTITY, WHOLE — an entity sharing only a generic/partial token with the conversation never claims it',
+    suggestFilingFocus('can you help me schedule a press interview about our family business?', fc) === null &&
+    suggestFilingFocus('what is the business plan for the workshop?', fc) === null);
+  check('FC3: THE USER\'S OWN WORDS — a pasted/quoted email carrying a project\'s distinctive token, with the user\'s own words naming nothing, makes no claim',
+    (() => {
+      const ask = 'Can you draft a reply to Sam about the interview slot?\n\nOn Tue, Sam wrote:\n'
+        + '> We would love to run the press interview.\n> Our desk also covered the Northvale rollout last month.\n'
+        + '> Could you do Thursday morning?';
+      return suggestFilingFocus(ask, fc) === null
+        && askEvidenceText(ask) === 'Can you draft a reply to Sam about the interview slot?'
+        // …and the SAME text, said by the user, does claim — the discount is on transport, not on topic.
+        && suggestFilingFocus('give me the state of the Northvale rollout', fc)?.id === 'p1';
+    })());
+  check('FC3b: a paste-sized ask is discounted to the user\'s own framing — a name buried in the pasted middle is not the user naming a project',
+    (() => {
+      const filler = 'lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor. '.repeat(20);
+      const ask = `Here is what they sent, what do you think?\n${filler}we also touched the Northvale rollout briefly\n${filler}\nThanks`;
+      return ask.length > 900 && suggestFilingFocus(ask, fc) === null;
+    })());
+  check('FC4: an all-generic name can never match, however often its words appear',
+    suggestFilingFocus('how is our ai assessment going? the assessment matters', fc) === null);
+  check('FC5: TRACKED ONLY — an untracked machine-founded entity is never SUGGESTED as a home; the tracked twin is',
+    suggestFilingFocus('status on the orinoco review?', [fc[3]]) === null &&
+    suggestFilingFocus('status on the orinoco review?', [fc[3], fc[4]])?.id === 'p5' &&
+    // …and the grounding matcher (not a claim to the user) still reads untracked work.
+    findEntityFocus('status on the orinoco review?', [fc[3]])?.id === 'p4');
+  check('FC6: AMBIGUITY IS A REFUSAL — two tracked candidates tied at the top serve no chip at all',
+    suggestFilingFocus('where are we on the orinoco review?', [
+      { id: 'a', name: 'Orinoco Review', tracked: true }, { id: 'b', name: 'Orinoco Review', tracked: true },
+    ]) === null);
+  check('FC6b: the ONE ordering rule below a tie — an entity\'s OWN name outranks an equally-weighted ALIAS (found live: an over-merged entity carries a neighbour\'s name among its aliases, and silence there loses a true focus)',
+    findEntityFocus('what is the status on Orinoco Review?', [
+      { id: 'own', name: 'Orinoco Review' },
+      { id: 'borrowed', name: 'Delta Platform', aliases: ['Orinoco Review'] },
+    ])?.id === 'own');
+  check('FC7: THE NAMING FLOOR — a machine-founded body of work never wears a message header (prefix, aboutness filler, terminal punctuation), and an ordinary name is untouched',
+    cleanEntityName('Re: About the Acme workshop?') === 'Acme workshop' &&
+    cleanEntityName('Fwd: Q3 numbers') === 'Q3 numbers' &&
+    cleanEntityName("About Sam's proposal?") === "Sam's proposal" &&
+    cleanEntityName('AW: WG: Betreff: Acme Rollout') === 'Acme Rollout' &&
+    cleanEntityName('Meridian Audit') === 'Meridian Audit' &&
+    cleanEntityName('Acme: Phase 2') === 'Acme: Phase 2' &&   // a colon head is not a reply prefix
+    cleanEntityName('The Acme rollout') === 'The Acme rollout' && // an article only falls behind filler
+    isSubjectShapedName('Re: About the Acme workshop?') && !isSubjectShapedName('Meridian Audit'));
+  check('FC8: the floor sits at the FOUNDING DOORS (recognition + the case step), reusing the house reply/forward table — never a second language list',
+    src('lib/entities/recognize.ts').includes('cleanEntityName(verdict.name)') &&
+    src('lib/workflows/case-step.ts').includes('cleanEntityName(caseKey!)') &&
+    src('lib/entities/entity-name.ts').includes("import { REPLY_PREFIX } from '@/lib/inbox/campaign-echo'"));
+  check('FC9: the law is stated where the producer lives, and candidacy runs through THE ONE identity primitive',
+    (() => { const a = src('lib/home/ask.ts');
+      return a.includes('THE LAW A PROJECT CLAIM MUST MEET')
+        && a.includes("import { namesStatedIn, distinctiveTokens } from '@/lib/workflows/case-step'")
+        && a.includes('ambiguity is a refusal') && a.includes('evidenceOnly: true'); })());
+
   check('U2: the snapshot appends the FOCUSED WORK from the ONE room grounding, tags stripped (no minted wrong links), non-fatal',
     (() => { const a = src('lib/home/ask.ts');
       return a.includes('THE ONE-GROUNDING UNIFICATION') && a.includes('assembleRoomGrounding') &&
@@ -638,7 +709,11 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/converse/index.ts').includes('progressLabelFor(call.function.name)') &&
     src('lib/converse/index.ts').includes('progressLabelFor(verdict.command.tool)') &&
     src('components/home/home-ask.tsx').includes('stream: true') &&
-    src('components/home/home-ask.tsx').includes('setStage(ev.label)') &&
+    // RE-POINTED (Sep 21, THE STREAM NEVER RETYPES): the panel's four inline SSE branches became
+    // ONE pure reducer (components/home/ask-stream.ts) — the law (a progress label reaches the busy
+    // line) is unchanged; the seam moved, so the gate follows it to the reducer's own output.
+    src('components/home/home-ask.tsx').includes('setStage(st.stage)') &&
+    src('components/home/ask-stream.ts').includes("case 'progress'") &&
     src('components/home/home-ask.tsx').includes("{stage ?? 'Thinking…'}"));
 
   check('F7: THE SCOPE CHIP + THE ADOPTION CASCADE — the conversation header shows its scope ("No project · Add to…" / "<Project> ✓" = the room door), settable any time via the ONE picker grammar (ProjectPickerPanel, extracted and shared with the deck door); adopting MOVES the turns into the project room (chat:* only, idempotent narration at the seam), then the panel talks IN the room: turns persist to its key, answers ground entity-scoped through the one core',
@@ -725,7 +800,12 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('components/settings/team-section.tsx').includes('<SkillsLibraryView'));
 
   check('RN1: THE RECOGNITION NUDGE (owner, Aug 7 — "will it suggest opening the project room?") — an unscoped Home ask that NAMES a registered project carries the deterministic focus match back (`focus` on both response paths, zero AI); the scope chip becomes an OFFER ("About X? · File it" + dismiss) — a suggestion, never an auto-file; one click runs the adoption cascade; the hint clears on New/chat-load/DM-load',
-    src('app/api/home/ask/route.ts').includes('findEntityFocus') &&
+    // RE-POINTED (Sep 21, THE FILING CLAIM): the chip's producer is `suggestFilingFocus` — the
+    // strict read (the user's own words, tracked projects only). The wave landed, so the gate is
+    // TIGHTENED off the either-symbol tolerance it was written with: the door must call the strict
+    // producer, and must select the `tracked` column that producer reads.
+    src('app/api/home/ask/route.ts').includes('suggestFilingFocus(q,') &&
+    src('app/api/home/ask/route.ts').includes("select('id, name, aliases, tracked')") &&
     src('app/api/home/ask/route.ts').includes("scope.kind !== 'global'") &&
     src('components/home/home-ask.tsx').includes('About {scopeHint.name}? · File it') &&
     src('components/home/home-ask.tsx').includes('if (d.focus && !scope && !temp) setScopeHint(d.focus)') &&
@@ -852,9 +932,14 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/work/generate-thread-document.ts').includes('verifyComputableClaims') &&
     src('lib/work/generate-thread-document.ts').includes('qa_report') &&
     src('lib/work/generate-thread-document.ts').includes('qaNote}`') &&
-    src('app/api/work/threads/[id]/chat/route.ts').includes('THE WORD IS THE DEED — STRUCTURAL') &&
-    src('app/api/work/threads/[id]/chat/route.ts').includes('claimsDoc && allArtifactIds.length === 0 && !wordDeedCorrected') &&
-    src('app/api/work/threads/[id]/chat/route.ts').includes('[SYSTEM CHECK — not the user]'));
+    // RE-POINTED (Sep 21): THE WORD IS THE DEED was GENERALISED out of this file into the one pure
+    // predicate lib/work/deed-floor.ts — a document claim is now one `kind` among several, checked
+    // against the turn's whole mutation ledger (artifacts are the document lane's ledger, so the
+    // Aug-8 behaviour is preserved exactly; unit-proven at P21c in scripts/smoke-promise.ts).
+    src('app/api/work/threads/[id]/chat/route.ts').includes('THE DEED FLOOR — GENERALISED') &&
+    src('app/api/work/threads/[id]/chat/route.ts').includes("kind: 'document' as const") &&
+    src('app/api/work/threads/[id]/chat/route.ts').includes('if (breach && !wordDeedCorrected)') &&
+    src('lib/work/deed-floor.ts').includes('[SYSTEM CHECK — not the user]'));
 
   // ── PA · THE PRODUCTION ARC step 1 — the workflow step space joins the one registry ──
   {
@@ -1624,7 +1709,11 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/converse/index.ts').includes('GROUNDING_TAG_RE') &&
     // RE-POINTED (Sep 18): the chat-lane clock wave wrapped the one-exit strip in
     // enforceWeekdayDatePairs — same site, same strip, one more floor on the way out.
-    src('lib/converse/index.ts').includes('turn.say = enforceWeekdayDatePairs(turn.say.replace(GROUNDING_TAG_RE') &&
+    // RE-POINTED AGAIN (Sep 21): the strip moved behind `stripGroundingNotation` — SAME site, same
+    // floor, now able to tell a tag that earned a chip from one nobody resolved. Lanes whose refs
+    // carry no tag still run the original GROUNDING_TAG_RE replace, byte for byte (gated at RT12).
+    src('lib/converse/index.ts').includes('turn.say = enforceWeekdayDatePairs(stripGroundingNotation(turn.say, turn.refs)') &&
+    src('lib/converse/index.ts').includes("if (!refs?.some((r) => r.tag)) return say.replace(GROUNDING_TAG_RE, '')") &&
     src('lib/converse/index.ts').includes('async function converseInner') &&
     src('lib/room/brief.ts').includes('THE SAY IS EXECUTABLE') &&
     src('lib/room/turns.ts').includes('FORWARD-MOTION LAW #5') &&
@@ -1900,6 +1989,339 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/work-items/model.ts').includes('{ data: basisRows }') &&
     // the fold still asks the ONE shared predicate, never a local re-derivation
     src('lib/work-items/model.ts').includes('visibleObligationsFromItems(dedupeBasis)'));
+
+  // ════════════════════════════════════════════════════════════════════════════════════════════
+  // HN — HANDS FOR THE SCOPE + THE STREAM NEVER RETYPES (Sep 21, the live pilot incident)
+  //
+  // The pilot pasted a contact's email, asked for a reply around their free time, was OFFERED
+  // "would you like me to offer both options to them?", said "yes please", and was answered with
+  // "I can't prepare a forward from this view" plus the same question again. Separately: "it types
+  // the text twice — once, then deletes it and then writes it again."
+  //
+  // Four laws, four gate families: THE OFFER LAW (only offer what a tool here can do, derived from
+  // the tools actually held) · THE NULL IS NEVER SILENT · THE FORWARD-MOTION LAW (an agreement
+  // EXECUTES; never a re-ask) · THE STREAM NEVER RETYPES.
+  // ════════════════════════════════════════════════════════════════════════════════════════════
+  {
+    const conv = src('lib/converse/index.ts');
+    const hands = await import('../lib/converse/hands');
+    const stream = await import('../components/home/ask-stream');
+
+    // ── HN1 · THE STREAM REDUCER, pure, under the five real sequences ──
+    const { runAskStream, initialAskStream } = stream;
+    const sameSeq = runAskStream([
+      { type: 'token', t: 'Your Thursday ' }, { type: 'token', t: 'is clear.' },
+      { type: 'done', answer: 'Your Thursday is clear.' },
+    ]);
+    check('HN1a: tokens → done with the SAME text is a NO-OP on what is shown (the answer seats, nothing re-types)',
+      sameSeq.text === 'Your Thursday is clear.' && sameSeq.animate === false && sameSeq.stage === null,
+      JSON.stringify(sameSeq));
+    const amendedSeq = runAskStream([
+      { type: 'token', t: 'Tuesday, 24 September works.' },
+      { type: 'done', answer: 'Thursday, 24 September works.' },
+    ]);
+    check('HN1b: tokens → done AMENDED (the weekday/honesty floors did their work) replaces IN PLACE, with the typewriter off — a re-type over words the user has already read is the bug itself',
+      amendedSeq.text === 'Thursday, 24 September works.' && amendedSeq.animate === false,
+      JSON.stringify(amendedSeq));
+    const resetSeq = runAskStream([
+      { type: 'token', t: 'Let me check that…' }, { type: 'token_reset' },
+      { type: 'token', t: 'You are free after 14:00.' }, { type: 'done', answer: 'You are free after 14:00.' },
+    ]);
+    check('HN1c: a retracted preview (the retired NUL sentinel, still honoured for an older producer) leaves NO residue of the preamble',
+      resetSeq.text === 'You are free after 14:00.' && !resetSeq.text.includes('Let me check'),
+      JSON.stringify(resetSeq));
+    const preambleOnly = runAskStream([
+      { type: 'progress', label: 'Checking your calendar…' }, { type: 'ping' },
+      { type: 'done', answer: 'Two slots are open.' },
+    ]);
+    check('HN1d: a turn whose pre-tool words never reached the bubble animates normally, and `ping` is inert',
+      preambleOnly.text === 'Two slots are open.' && preambleOnly.animate === true && preambleOnly.live === '',
+      JSON.stringify(preambleOnly));
+    const errored = runAskStream([{ type: 'token', t: 'Half an ans' }, { type: 'error' }]);
+    check('HN1e: an error mid-stream is honest — it is marked, and what streamed stays readable rather than vanishing',
+      errored.errored === true && errored.text === 'Half an ans' && errored.stage === null,
+      JSON.stringify(errored));
+    check('HN1f: the reducer is PURE — folding a sequence never mutates the shared initial state',
+      initialAskStream.text === '' && initialAskStream.live === '' && initialAskStream.done === null);
+
+    // ── HN2 · THE SERVER SIDE OF THE SAME LAW ──
+    check('HN2: the loop HOLDS content until it knows whether the turn is an answer or a preamble (a time-boxed window, not a character budget — the incident\'s preamble was hundreds of characters); held preamble text goes to the transient PROGRESS channel and never to the answer bubble; once flushing starts nothing is retracted, and the retired NUL sentinel is no longer emitted',
+      conv.includes('THE STREAM NEVER RETYPES') &&
+      conv.includes('STREAM_HOLD_MS') &&
+      conv.includes('flushing = true; onToken(held)') &&
+      conv.includes('if (toolCalls.length) onProgress?.(') &&
+      conv.includes('THE SENTINEL IS RETIRED') &&
+      !/onToken\('\\u0000'\)/.test(conv) &&
+      // the client still ACCEPTS a reset (back-compat), it simply never receives one from us
+      src('components/home/home-ask.tsx').includes('askStreamReducer') &&
+      // …and the reducer's verdict is what the seated turn READS — not a parallel re-derivation
+      // beside it, which is how a law quietly stops governing the thing it names.
+      src('components/home/home-ask.tsx').includes('pendingAnimate.current = st.animate ? prev.length : -1') &&
+      src('app/api/home/ask/route.ts').includes("{ type: 'token', t }"));
+
+    // ── HN3 · THE MATCHER LADDER, pure, on fake data (no real names — Acme/Sam/Jordan) ──
+    const { pickReplyTarget, scoreReplyCandidates, looksPasted, pastedAsSourceData } = hands;
+    const cands = [
+      { id: 'i1', title: 'Acme pilot scheduling', fromName: 'Sam Rivers', fromAddress: 'sam@acme.example', subject: 'Acme pilot scheduling', body: 'Could we find thirty minutes next week to walk through the pilot scope and the onboarding sequence for the rollout team?' },
+      { id: 'i2', title: 'Northwind invoice', fromName: 'Jordan Blake', fromAddress: 'jordan@northwind.example', subject: 'Northwind invoice 4412', body: 'Attaching the invoice for last quarter; please confirm the purchase order reference before the finance cutoff.' },
+      { id: 'i3', title: 'Acme pilot contract', fromName: 'Sam Rivers', fromAddress: 'sam@acme.example', subject: 'Acme pilot contract redlines', body: 'Our counsel returned redlines on the liability clause and the termination notice period.' },
+    ];
+    const one = pickReplyTarget(cands, { to: 'jordan@northwind.example', about: 'the invoice', pasted: '' });
+    check('HN3a: ONE confident match — an address the user named resolves to that item and nothing else',
+      one.kind === 'one' && one.candidate.id === 'i2', JSON.stringify(one));
+    const many = pickReplyTarget(cands, { to: 'Sam', about: 'the Acme pilot', pasted: '' });
+    check('HN3b: AMBIGUITY IS A REFUSAL BY LISTING — two equally plausible threads from the same sender come back as candidates, never as a guess with the user\'s mail',
+      many.kind === 'many' && many.candidates.length === 2, JSON.stringify(many));
+    const none = pickReplyTarget(cands, { to: 'someone@elsewhere.example', about: 'a warranty claim', pasted: '' });
+    check('HN3c: NONE — a message that is not in the inbox scores nothing and falls through to the standalone lane',
+      none.kind === 'none', JSON.stringify(none));
+    const pastedOne = pickReplyTarget(cands, {
+      to: '', about: '',
+      pasted: 'Our counsel returned redlines on the liability clause and the termination notice period. Can you turn these around this week?',
+    });
+    check('HN3d: PASTED-EMAIL OVERLAP — the pasted body resolves to its own item by vocabulary alone, with no sender or subject hint',
+      pastedOne.kind === 'one' && pastedOne.candidate.id === 'i3', JSON.stringify(pastedOne));
+    const senderOnly = pickReplyTarget([cands[1]], { to: 'Jordan', about: '', pasted: '' });
+    check('HN3e: SENDER-ONLY — a named sender with exactly one open thread resolves; the ladder does not demand a subject',
+      senderOnly.kind === 'one' && senderOnly.candidate.id === 'i2', JSON.stringify(senderOnly));
+    check('HN3f: THE DISTINCTIVE-TOKEN LAW holds in the scorer — generic work-words alone score nothing (they match every thread in a portfolio and prove nothing)',
+      scoreReplyCandidates(cands, { about: 'the project update meeting', to: '', pasted: '' })
+        .every((r) => r.score === 0));
+    check('HN3g: the standalone lane reads a PASTE structurally (headers, or an address plus a body) and renders it into the shape the ONE drafter already speaks — never a second drafter',
+      looksPasted(`From: Sam Rivers <sam@acme.example>\nSubject: Pilot scope\n\nCould we find thirty minutes next week to walk through the pilot scope and the onboarding sequence together before the rollout begins?`) &&
+      !looksPasted('reply to sam please') &&
+      (() => { const sd = pastedAsSourceData(`From: Sam Rivers <sam@acme.example>\nSubject: Pilot scope\n\nCould we find thirty minutes next week?`); return sd?.from === 'sam@acme.example' && sd?.subject === 'Pilot scope' && !String(sd?.body).includes('Subject:'); })());
+
+    // ── HN4 · THE OFFER LAW is DERIVED, never hand-written ──
+    const { renderOfferLaw, unavailableToolResult } = hands;
+    const fakeDefs = [{ name: 'check_calendar', description: 'Read the calendar. Second sentence.' }, { name: 'draft_reply', description: 'Draft a reply.' }];
+    const block = renderOfferLaw(fakeDefs);
+    check('HN4a: the capability block is BUILT FROM the tool defs handed in — every tool named, nothing invented — and states the offer law plus the agreement-executes clause',
+      block.includes('check_calendar') && block.includes('draft_reply') && !/prepare_forward/.test(block) &&
+      /THE OFFER LAW/.test(block) && /never offer/i.test(block) && /re-ask/i.test(block));
+    check('HN4b: the loop feeds it the POST-FILTER toolDefs, so a workspace with a feature switched off can never be told it holds that verb (the phantom-offer class)',
+      conv.includes('renderOfferLaw(toolDefs)') &&
+      conv.indexOf('toolDefs = CHIEF_TOOL_DEFS.filter') < conv.indexOf('renderOfferLaw(toolDefs)'));
+    const un = unavailableToolResult('prepare_forward', fakeDefs);
+    check('HN4c: THE NULL IS NEVER SILENT — an unserveable tool call comes back NAMING what is available here, forbidding both fabrication and the re-ask',
+      un.error === 'not_available_here' && un.message.includes('check_calendar') && un.message.includes('draft_reply') &&
+      !un.message.includes('prepare_forward, ') && /nothing happened/i.test(un.message) && /re-ask/i.test(un.message) &&
+      conv.includes('unavailableToolResult(call.function.name, toolDefs)') &&
+      !conv.includes("{ error: 'tool unavailable in this context' }"));
+
+    // ── HN5 · THE FORWARD-MOTION LAW ──
+    const { isAffirmation, endsInAnOffer, repeatsTheQuestion } = hands;
+    check('HN5a: a bare agreement is recognised in every language the platform serves, and a sentence that goes on to say something else is NOT one',
+      ['yes please', 'sim, por favor', 'ja bitte', 'oui', 'go ahead', 'ok', 'claro'].every(isAffirmation) &&
+      !isAffirmation('yes but change the date to Friday and drop the second option'));
+    check('HN5b: an offer is read STRUCTURALLY (the turn ends in a question), never by keyword-matching offer verbs in four languages',
+      endsInAnOffer('Two slots are open. Would you like me to offer both to them?') &&
+      !endsInAnOffer('I have drafted the reply — it is ready to review.'));
+    check('HN5c: the re-ask detector fires on a near-verbatim repeat of the question the agreement answered, and stays quiet on a real answer',
+      repeatsTheQuestion(
+        'Would you like me to offer both options to them?',
+        'Could you let me know how you would like to offer the options to them?') &&
+      !repeatsTheQuestion(
+        'Would you like me to offer both options to them?',
+        'Drafted the reply offering both slots — it is on the thread, ready to review.'));
+    check('HN5d: an agreement to the assistant\'s OWN offer is routed to the path that HAS HANDS (never answered as a fresh question), carries the directive, and is caught deterministically by ONE tokenless corrective retry if it still re-asks',
+      conv.includes('answeringAnOffer') &&
+      conv.includes('verdict.question = false; verdict.open = true') &&
+      conv.includes('FORWARD_MOTION_DIRECTIVE') &&
+      conv.includes('repeatsTheQuestion(lastAssistant, loopTurn.say)') &&
+      // the retry must not stream a second time over a bubble that already has words
+      /const retry = await agentLoop\([\s\S]{0,600}undefined, \{ transcript/.test(conv) &&
+      // …and the affirmation read never touches the item scope, whose "yes" already means rework
+      conv.includes("scope.kind !== 'item' && !!lastAssistant"));
+
+    // ── HN6 · THE DRAFT DOOR: a real hand, and it never sends ──
+    const capDraft = CAPABILITY_MAP.draft_reply;
+    check('HN6a: draft_reply is a registry capability — chief-of-staff only, email-gated, REVERSIBLE (nothing leaves), and `conversational` so no PLAN_VERSION bump is owed',
+      !!capDraft && capDraft.built && capDraft.kind === 'atomic' && capDraft.irreversible === false &&
+      capDraft.feature === 'email' && (capDraft.exposure ?? []).join(',') === 'chief_of_staff' &&
+      capDraft.conversational === true &&
+      src('lib/workspace/tool-capabilities.ts').includes("draft_reply: 'email'"));
+    check('HN6b: registryParity stays lawful with the new row', registryParity().length === 0, registryParity().join('; '));
+    // RE-POINTED (Sep 21, the owner's convergence call): the standalone branch used to hand back
+    // `standaloneDraftBlock(body)` — delimited plain text to copy-paste, a FOURTH rendering of an
+    // email and the only one the user could not send. It now lands on THE ONE EMAIL CARD. The law
+    // this gate holds is unchanged and is the reason the change is safe: the door PREPARES, it
+    // returns a card, and it never returns a commit.
+    check('HN6c: THE DRAFT DOOR PREPARES AND NEVER SENDS — it routes to the ONE redraft lane (versioned, evaluated, composer-served) or, unmatched, to the ONE drafter behind the ONE card; the send door is untouched and still behind the deterministic explicit-send floor',
+      conv.includes("if (tool === 'draft_reply')") &&
+      conv.includes("redraftItemDraft(client, userId, { kind: 'item', itemKind: 'email', itemId: c.id }, instruction, { persist: true })") &&
+      conv.includes('prepareStandaloneEmail(client, userId, {') &&
+      conv.includes('emailDraft: { id: card.id, draft: card.draft as unknown as Record<string, unknown> }') &&
+      // the retired donor is gone from the core AND from its own module
+      !conv.includes('standaloneDraftBlock') &&
+      !/export const standaloneDraftBlock/.test(src('lib/converse/hands.ts')) &&
+      // no send/commit anywhere in the draft branch
+      !/tool === 'draft_reply'[\s\S]{0,3000}?commit:/.test(conv) &&
+      conv.includes('if (!EXPLICIT_SEND.test(userText))'));
+    check('HN6d: the Home scope is no longer a DEAD END for prepare_forward — it resolves through the SAME matcher, lists on ambiguity, and its last word offers an alternative instead of a bare refusal',
+      conv.includes('THE HOME SCOPE IS NOT A DEAD END') &&
+      conv.includes('const fwdMatch = pickReplyTarget(') &&
+      /Which email should I forward/.test(conv) &&
+      !/if \(scope\.kind === 'entity'\)[\s\S]{0,1400}?\n    return null;\n  \}/.test(conv));
+
+    // ── HN8 · THE STANDALONE LANE IS THE SAME CARD (Sep 21, the owner's convergence call) ──
+    // "I don't want us to have multiple components for the same thing in different ways — shouldn't
+    // we reuse the email draft component, and leave the reply-FROM open for the user?" And: "a card
+    // whose Send button the USER clicks IS the human approval."
+    {
+      const emailCard = await import('../lib/prepare/email-card');
+      const { resolveSendFrom, sendFromLabel } = emailCard;
+      const boxes = [
+        { id: 'c1', address: 'Sam@acme.example', provider: 'gmail' },
+        { id: 'c2', address: 'sam.rivers@northwind.example', provider: 'outlook' },
+      ];
+      const none = resolveSendFrom([], null);
+      const one = resolveSendFrom([boxes[0]], null);
+      const many = resolveSendFrom(boxes, null);
+      const hinted = resolveSendFrom(boxes, { addresses: ['SAM.RIVERS@northwind.example', 'other@elsewhere.example'] });
+      check('HN8a: THE FROM LADDER is pure and deterministic — no mailbox falls to the coworker channel (stated, never silent); one prefills; several default to the first (oldest) account',
+        none.viaCoworker === true && none.selectedId === null && none.options.length === 0 &&
+        one.viaCoworker === false && one.selectedId === 'c1' && one.options.length === 1 &&
+        many.viaCoworker === false && many.selectedId === 'c1' && many.options.length === 2,
+        JSON.stringify({ none, one, many }));
+      check('HN8b: THE RECIPIENT HINT WINS — the mailbox the pasted message actually addressed is the one that answers it (case-insensitive), and a malformed address is never an option',
+        hinted.selectedId === 'c2' &&
+        resolveSendFrom([{ id: 'c3', address: 'not-an-address' }], null).options.length === 0,
+        JSON.stringify(hinted));
+      check('HN8c: the From row SAYS what it will do — a picked mailbox by address, the coworker lane by its real address (read from the registry), never a guess',
+        sendFromLabel({ from: many, coworkerAddress: null }) === 'sam@acme.example' &&
+        sendFromLabel({ from: none, coworkerAddress: 'clara@team.example' }).startsWith('clara@team.example') &&
+        /your assistant/.test(sendFromLabel({ from: none, coworkerAddress: null })));
+      const assembly = src('lib/prepare/standalone-reply.ts');
+      check('HN8d: NEVER INVENT AN ADDRESS — the recipient is the sender the paste actually named or nothing, and the assembly NEVER drafts (the body is handed to it by the ONE drafter)',
+        assembly.includes("to: sender.includes('@') ? [sender] : []") &&
+        !/generateReplyDraft|getAIClient\(/.test(assembly) &&
+        assembly.includes('resolveSendFrom(mailboxes, { addresses: hintAddresses })'));
+      const sendDoor = src('app/api/emails/send/route.ts');
+      check('HN8e: THE SEND RIDES THE ONE COMMIT DOOR — claim → fire → record, a failed send releases its claim, and the door reads the STORED row rather than the fields a browser handed it',
+        sendDoor.includes("claimCommit(supabase, user.id, {") &&
+        sendDoor.includes('idemKey = `chat_email:${emailId}`') &&
+        sendDoor.includes("if (claim.status === 'duplicate')") &&
+        sendDoor.includes('releaseCommitClaim(supabase, user.id, idemKey)') &&
+        sendDoor.includes('await updateChatEmailPayload(supabase, user.id, emailId, merged)') &&
+        sendDoor.includes('const toSend = record?.email ?? merged;') &&
+        // the FROM can never be widened by a request body
+        sendDoor.includes("options.some((o) => o.id === e.connectionId)"));
+      check('HN8f: NOTHING FIRES WITHOUT THE CLICK — no model-reachable path reaches the send door (the tool returns a card), and the card is the only caller',
+        // the core never calls it (it returns a card), and the ONE caller in the whole product is
+        // the card's own `send` — the user's click.
+        !/fetch\([^)]*emails\/send/.test(conv) &&
+        !/fetch\([^)]*emails\/send/.test(src('lib/converse/hands.ts')) &&
+        src('components/home/email-card.tsx').includes("await fetch('/api/emails/send'"));
+    }
+
+    // ── HN7 · the wiring owed to the finished waves ──
+    check('HN7a: THE ANCHOR LAW reaches the lane — the weekday floor is handed the USER\'S OWN recent words (the current ask plus the last user turns, NEVER an assistant turn, which would let the model\'s invented weekday launder itself into the anchor position)',
+      conv.includes("opts.history ?? []).filter((h) => h.role === 'user')") &&
+      conv.includes('{ userText: userWords }') &&
+      !/userWords[\s\S]{0,200}role === 'assistant'/.test(conv));
+    check('HN7b: THE FRESH READ — check_calendar\'s `refresh` arg reaches its executor instead of being dropped by the dispatcher, and the loop is told when to set it',
+      conv.includes('refresh: args.refresh === true') &&
+      /refresh:true/.test(conv) &&
+      src('lib/tools/check-calendar.ts').includes("config.refresh === true ? 0 : STALE_MS"));
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════════════════════
+  // RT · THE REF IS ITS TAG (Sep 21 — the wrong-object-door incident)
+  //
+  // A Home answer ended with two PROJECT chips the sentence never named: the model had placed ONE
+  // grouped tag ("[R1, R2]") after the thing it meant, the server served its DECLARED ref list in
+  // declaration order, and the renderer walked that array positionally. Every chip from the first
+  // mismatch on is a clickable door to the wrong object. The law — identity is deterministic, a ref
+  // resolves by id, never by position — lives in lib/home/ask-refs.ts and is asserted here with
+  // ZERO AI: fixtures on the pure resolver plus source floors on the three doors.
+  // ════════════════════════════════════════════════════════════════════════════════════════════
+  {
+    const { resolveAskRefs, indexByTag, placedTags, ASK_TAG_CAP } = await import('../lib/home/ask-refs');
+    // A snapshot in DECLARATION order — the two replies sit at the END, exactly as in the incident.
+    const snap = new Map<string, { id: string; label: string }>([
+      ['E1', { id: 'e1', label: 'Project One' }],
+      ['E2', { id: 'e2', label: 'Project Two' }],
+      ['E3', { id: 'e3', label: 'Project Three' }],
+      ['C1', { id: 'c1', label: 'A commitment' }],
+      ['C2', { id: 'c2', label: 'Another commitment' }],
+      ['R1', { id: 'r1', label: 'Reply to a teammate' }],
+      ['R2', { id: 'r2', label: 'Reply on the second brief' }],
+    ]);
+    const look = (t: string) => snap.get(t);
+
+    const inc = resolveAskRefs('Send those two briefs a teammate is waiting for [R1, R2]. Then rest.', look);
+    check('RT1: THE INCIDENT — a GROUPED bracket resolves to the ids it names, never to the head of the served array (the positional read handed the reader two unrelated projects)',
+      inc.refs.map((r) => r.tag).join(',') === 'R1,R2' &&
+      inc.refs.map((r) => r.label).join(' · ') === 'Reply to a teammate · Reply on the second brief',
+      inc.refs.map((r) => `${r.tag}=${r.label}`).join(' | '));
+
+    const rev = resolveAskRefs('The third one [E3] moved before the first [E1].', look);
+    check('RT2: PLACEMENT ORDER, not snapshot order — refs come back in the order the prose places them',
+      rev.refs.map((r) => r.tag).join(',') === 'E3,E1', rev.refs.map((r) => r.tag).join(','));
+
+    const twice = resolveAskRefs('It started here [E1] and it still sits there [E1].', look);
+    check('RT3: A REPEATED TAG IS THE SAME REF, TWICE — served once, and BOTH placements keep their chip (a repeat used to shift every later chip by one)',
+      twice.refs.length === 1 && twice.refs[0].tag === 'E1' && placedTags(twice.text).join(',') === 'E1,E1',
+      `${twice.refs.length} ref(s) · placed ${placedTags(twice.text).join(',')}`);
+
+    const unknown = resolveAskRefs('Nothing is open on that [E9].', look);
+    check('RT4: AN UNKNOWN ID RESOLVES TO NOTHING and is STRIPPED FROM THE PROSE — never a wrong chip, never raw notation reaching the reader',
+      unknown.refs.length === 0 && !/\[/.test(unknown.text) && unknown.text === 'Nothing is open on that.',
+      `"${unknown.text}"`);
+
+    const many = resolveAskRefs('a [E1] b [E2] c [E3] d [C1] e [C2] f [R1] g [R2]', look);
+    check(`RT5: THE CEILING IS CODE, not a prompt's hope — at most ${ASK_TAG_CAP} refs are served and every tag past it is stripped rather than left raw`,
+      many.refs.length === ASK_TAG_CAP && placedTags(many.text).length === ASK_TAG_CAP && !/R1|R2/.test(many.text),
+      `${many.refs.length} served · ${placedTags(many.text).length} placed`);
+
+    // THE SAFE DEGRADE — a turn stored before the law carries refs with NO tag. Positional
+    // resolution is the bug, so it is not kept quietly: such a turn indexes to nothing and renders
+    // as clean prose with no chips (a missing chip is a gap; a wrong chip is a lie you can click).
+    const legacy = [{ label: 'Project One', href: '/x' }, { label: 'Project Two', href: '/y' }];
+    const byTagLegacy = indexByTag(legacy);
+    const degraded = resolveAskRefs('Two things moved [R1, R2].', (t) => byTagLegacy.get(t), { cap: byTagLegacy.size });
+    check('RT6: THE SAFE DEGRADE — a legacy turn (refs without tags) resolves NOTHING, keeps its prose, and shows no chips rather than chips guessed by position',
+      byTagLegacy.size === 0 && degraded.refs.length === 0 && degraded.text === 'Two things moved.',
+      `"${degraded.text}"`);
+
+    // ── SOURCE FLOORS: the three doors speak the one grammar. ──
+    const askSrc = src('lib/home/ask.ts');
+    const entSrc = src('lib/entities/ask.ts');
+    const routeSrc = src('app/api/home/ask/route.ts');
+    const panelSrc = src('components/home/home-ask.tsx');
+    check('RT7: NO POSITIONAL READ SURVIVES in the renderer — the emit-order cursor is gone and chips resolve through the shared index',
+      !/refs\[refIdx/.test(panelSrc) && !/refIdx/.test(panelSrc) && panelSrc.includes('byTag.get(id)'),
+      /refIdx/.test(panelSrc) ? 'refIdx still present' : '');
+    check('RT8: ONE RESOLVER, BOTH ENDS — the two serving doors and the renderer all import lib/home/ask-refs (a grammar owned by two parsers drifts)',
+      askSrc.includes("from '@/lib/home/ask-refs'") && entSrc.includes("from '@/lib/home/ask-refs'") &&
+      panelSrc.includes("from '@/lib/home/ask-refs'") &&
+      askSrc.includes('resolveAskRefs(raw') && entSrc.includes('resolveAskRefs(raw'));
+    check('RT9: THE PERSIST DOOR CARRIES THE TAG — both writers (the server door and the panel\'s own) store it beside the label, so a rehydrated turn resolves identically',
+      /tagOf\(r\) \? \{ tag: tagOf\(r\) \}/.test(routeSrc) && /r\.tag \? \{ tag: r\.tag \}/.test(panelSrc) &&
+      src('lib/room/turns.ts').includes('tag?: string'));
+    // ⚠️ THE READY SEAM — MOUNTED (Sep 21). The core's ref-tag floor used to strip EVERY
+    // well-formed single-id tag on the way out, resolved or not, because it was written before
+    // anything resolved them; `stripUnresolvedTags` now runs at that one exit behind
+    // `stripGroundingNotation`. RT11 gates the rule; RT12 gates the no-regression half.
+    {
+      const { stripUnresolvedTags } = await import('../lib/home/ask-refs');
+      const served = [{ label: 'Project One', href: '/x', tag: 'E1' }];
+      check('RT11: THE FLOOR\'S OWN RULE, expressible — a tag WITH a resolved ref survives; a tag nobody resolved is stripped (the floor today cannot tell them apart and strips both)',
+        stripUnresolvedTags('the pilot [E1] and the other [E2].', served) === 'the pilot [E1] and the other.' &&
+        stripUnresolvedTags('nothing here [E2].', served) === 'nothing here.',
+        stripUnresolvedTags('the pilot [E1] and the other [E2].', served));
+      // RT12 — THE REF-TAG FLOOR DOES NOT REGRESS. A turn whose refs carry NO tag (every lane but
+      // the ask doors) must still lose every tag, and a markdown link's own bracket must survive.
+      check('RT12: no ref carries a tag → the original floor runs and no raw notation can leak; a tagged ref keeps its own tag; a markdown link is never notation',
+        stripUnresolvedTags('owed on [F3] and [L2] today.', []) === 'owed on and today.' &&
+        stripUnresolvedTags('the pilot [E1].', served) === 'the pilot [E1].' &&
+        /\[F3\]\(\/x\)/.test('see [F3](/x)'.replace(/\s?\[(?:[EFLCRKW]\d+)\](?!\()/g, '')),
+        stripUnresolvedTags('owed on [F3] and [L2] today.', []));
+    }
+    check('RT10: the declared ref list no longer decides anything — neither serving door maps res.json.refs to objects (the declaration-order read that started this)',
+      !/res\.json\?\.refs/.test(askSrc) && !/res\.json\?\.refs/.test(entSrc));
+  }
 
   // ── Report ──
   let pass = 0;

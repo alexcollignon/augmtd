@@ -3,7 +3,6 @@
 import React, { useState } from 'react';
 import { SegmentedControl } from '@/components/ui';
 import { ThreadShell, AvatarStatus, type ThreadItem, type ThreadKind } from '@/components/thread';
-import { AliveMark } from '@/components/home/alive-mark';
 
 /**
  * The three fixtures mirror the frozen canvas (docs/design/threads/*.dc.html): a PROJECT thread
@@ -181,6 +180,25 @@ const HOME_ITEMS: ThreadItem[] = [
     }],
   },
   {
+    // THE EMAIL CARD'S STANDALONE MODE (Sep 21) — a reply to a message that is in no inbox of ours
+    // (a paste, another mailbox). The SAME kind as the item-born reply; its one extra row is FROM,
+    // because that is the one fact the item lane never has to ask. With several mailboxes it is a
+    // selector; with one it states itself; with none it names the assistant's address.
+    type: 'actor_bubble', id: 'hc1b', actorId: 'clara', actorName: 'Clara', ts: 'just now',
+    text: 'Here’s the reply to Rowan — check the sender and the wording, then send it from here.',
+    cards: [{
+      kind: 'email', id: 'he1', state: 'ready',
+      from: 'sam@acme.example',
+      fromOptions: [{ id: 'c1', label: 'sam@acme.example' }, { id: 'c2', label: 'sam.rivers@northwind.example' }],
+      selectedFromId: 'c1', onPickFrom: noop,
+      to: ['rowan@driftwood.example'], subject: 'Re: Press timetable',
+      body: 'Thanks for the note — Tuesday and Thursday afternoons both work on my side. Either one suits; tell me which you prefer and I will hold it.',
+      onEditRecipients: noop, onOpenCc: noop, onEditSubject: noop, onEditBody: noop,
+      onSend: noop, sendLabel: 'Send', receipt: 'ready to send',
+      bodyHint: 'click anywhere to edit',
+    }],
+  },
+  {
     type: 'actor_bubble', id: 'hc2', actorId: 'clara', actorName: 'Clara',
     cards: [{
       kind: 'proposal', id: 'hp1', title: 'New workflow — Weekly Atlas status note',
@@ -195,29 +213,9 @@ const FACES = [
   { id: 'clara', name: 'Clara' }, { id: 'max', name: 'Max', status: 'working' as const },
 ];
 
-/** THE MARKS ROW — the two renderers side by side, at the seat size and at the loading energy, so
- *  the call between them is made by looking rather than by describing. This harness is the ONLY
- *  place both are mounted; the product mounts exactly one, through the entrance's seat. */
-function MarksRow() {
-  return (
-    <span className="flex items-center gap-5">
-      {([
-        { v: 'v4' as const, label: 'v4 · alive' },
-        { v: 'v3' as const, label: 'v3 · disco' },
-      ]).map(({ v, label }) => (
-        <span key={v} className="flex items-center gap-2">
-          <AliveMark size={44} variant={v} />
-          <AliveMark size={44} variant={v} loading />
-          <span className="text-[11px] leading-tight text-neutral-400">
-            {label}
-            <br />
-            <span className="text-neutral-300">rest · loading</span>
-          </span>
-        </span>
-      ))}
-    </span>
-  );
-}
+/** THE MARK COMPARISON IS OVER (owner, Sep 20): 'eyes' is seated as the default in alive-mark.tsx,
+ *  so this harness no longer mounts a row of candidates or a specimens page. The alternates stay
+ *  whole behind the `variant` prop — reverting the call is one word at the seat, not a rebuild. */
 
 export function ThreadPreview() {
   const [tab, setTab] = useState<ThreadKind>('project');
@@ -236,7 +234,6 @@ export function ThreadPreview() {
           ]}
         />
         <span className="flex-grow" />
-        <MarksRow />
         <span className="flex items-center gap-3">
           {(['idle', 'working', 'needs_you', 'blocked'] as const).map((s) => (
             <span key={s} className="flex items-center gap-1.5">

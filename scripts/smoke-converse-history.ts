@@ -179,6 +179,195 @@ async function main() {
     `noTruncClaim=${!TRUNC_CLAIM.test(t8b.say)} notBlocked=${!BLOCKED.test(t8b.say)}\n---\n${t8b.say.slice(0, 700)}\n---`);
   const t8ok = t8aok && t8bok;
 
+  // ════════════════════════════════════════════════════════════════════════════════════════════
+  // T9-T13 — HANDS FOR THE SCOPE (Sep 21, the live pilot incident)
+  //
+  // The user pasted a contact's email, asked for a reply built around their free time, was offered
+  // "would you like me to offer both options to them?", said "yes please", and got back "I can't
+  // prepare a forward from this view" plus the same question again. Tolerant in wording, STRICT in
+  // outcome: a draft is prepared, nothing is sent, and no turn answers an agreement with the
+  // question that earned it.
+  // ════════════════════════════════════════════════════════════════════════════════════════════
+  const RE_ASK = /could you let me know|what would you like|how would you like|which (?:one )?would you|let me know how/i;
+  const DEAD_END = /can'?t (?:prepare|do|help with) .{0,40}(?:from (?:this|that) view|here)|not available from this view/i;
+  const hnStart = new Date().toISOString();
+  const hnThreadId = `hn-thread-${Date.now()}`;
+  const hnT0 = new Date(Date.now() - 3 * 3_600_000).toISOString();
+  const hnBody =
+    'Thanks for the introduction earlier. We are putting together the press timetable for the launch and I would ' +
+    'like to walk you through the embargo plan and the syndication list before we lock the schedule. Could you let ' +
+    'me know which afternoons suit you over the next fortnight?';
+  const { data: hnItem } = await admin.from('inbox_items').insert({
+    user_id: userId, source: 'email', status: 'pending', rule_type: 'needs_reply',
+    work_title: 'Press timetable — embargo plan and syndication list', work_state: 'work_prepared',
+    source_data: {
+      subject: 'Press timetable — embargo plan and syndication list', thread_id: hnThreadId,
+      from: 'Rowan Ash <rowan@driftwood-example.com>', from_address: 'rowan@driftwood-example.com', from_name: 'Rowan Ash',
+      body: hnBody, body_text: hnBody, received_at: hnT0,
+    },
+    last_activity_at: hnT0,
+  }).select('id').single();
+
+  const hnCleanup = async () => {
+    if (!hnItem?.id) return;
+    try {
+      await admin.from('item_deliverables').delete().eq('user_id', userId).eq('entity_id', hnItem.id);
+      await admin.from('item_plans').delete().eq('user_id', userId).in('entity_id', [`inbox:${hnItem.id}`, hnItem.id]);
+      const { data: rts } = await admin.from('room_turns').select('id').eq('user_id', userId).like('room_key', `%${hnItem.id}%`);
+      if (rts?.length) await admin.from('room_turns').delete().in('id', rts.map((t) => t.id as string));
+      await admin.from('inbox_items').delete().eq('id', hnItem.id);
+    } catch (e) { console.log(`T9-T13 cleanup warning: ${String((e as Error).message).slice(0, 120)}`); }
+  };
+
+  /** Did a real draft land on the fixture item? (The matched lane persists through the ONE redraft
+   *  lane; the standalone lane lands on the card instead — RE-POINTED Sep 21: it used to hand back
+   *  delimited plain text, which the owner rejected as a fourth rendering of an email.) */
+  const draftOnFixture = async (): Promise<string> => {
+    if (!hnItem?.id) return '';
+    const { data } = await admin.from('inbox_items').select('source_data').eq('id', hnItem.id).maybeSingle();
+    return String(((data?.source_data as Record<string, unknown> | undefined)?.draft as { body?: string } | undefined)?.body ?? '');
+  };
+  /** Nothing may leave: the probe's send ledger must be untouched by any of these turns. */
+  const sentSince = async (): Promise<number> => {
+    const { count } = await admin.from('email_sends').select('id', { count: 'exact', head: true })
+      .eq('user_id', userId).gte('created_at', hnStart);
+    return count ?? 0;
+  };
+
+  let t9ok = false, t10ok = false, t11ok = false, t12ok = false, t13ok = false, t14ok = false;
+  try {
+    // T9 — the incident's own opening move: a PASTED message plus a reply instruction must PREPARE
+    // a draft (on the matched item, or standalone), and must not send.
+    const pasted =
+      `From: Rowan Ash <rowan@driftwood-example.com>\nSubject: Press timetable — embargo plan and syndication list\n\n${hnBody}`;
+    const t9 = await converse(admin as never, userId, { kind: 'global' },
+      `${pasted}\n\nPlease reply to this offering Tuesday afternoon or Thursday afternoon, whichever suits them.`,
+      { history: [] });
+    const t9draft = await draftOnFixture();
+    const t9standalone = !!t9.emailDraft || !!t9.draft;
+    t9ok = (t9draft.length > 60 || t9standalone) && !DEAD_END.test(t9.say) && (await sentSince()) === 0;
+    console.log(`T9 pasted email → a reply is PREPARED: ${t9ok ? 'PASS' : 'FAIL'} ` +
+      `draftOnItem=${t9draft.length} standalone=${t9standalone} sent=${await sentSince()}\n---\n${t9.say.slice(0, 500)}\n---`);
+
+    // T10 — THE FORWARD-MOTION LAW: an agreement to the assistant's OWN offer must EXECUTE, and
+    // must never come back as the same question.
+    const offer = 'Your Tuesday and Thursday afternoons are both open. Would you like me to offer both options to Rowan Ash?';
+    const hist10 = [
+      { role: 'user' as const, text: 'When am I free to meet Rowan Ash about the press timetable?' },
+      { role: 'assistant' as const, text: offer },
+    ];
+    const t10 = await converse(admin as never, userId, { kind: 'global' }, 'yes please', { history: hist10 });
+    t10ok = !RE_ASK.test(t10.say) && !DEAD_END.test(t10.say) && (await sentSince()) === 0;
+    console.log(`T10 offer → "yes please" EXECUTES, never re-asks: ${t10ok ? 'PASS' : 'FAIL'} sent=${await sentSince()}\n---\n${t10.say.slice(0, 500)}\n---`);
+
+    // T11 — an action NO tool in this scope can perform: the answer says what it CAN do; it never
+    // pretends the action ran and never loops on a clarifying question.
+    const t11 = await converse(admin as never, userId, { kind: 'global' },
+      'Publish this week\'s summary to our public status page right now.', { history: [] });
+    const pretends = /(?:published|posted) (?:it|the summary)|has been published/i.test(t11.say);
+    t11ok = !!t11.say.trim() && !pretends && !DEAD_END.test(t11.say);
+    console.log(`T11 no tool in scope → honest, no pretending: ${t11ok ? 'PASS' : 'FAIL'} pretends=${pretends}\n---\n${t11.say.slice(0, 400)}\n---`);
+
+    // T12 — a forward named from the HOME: it resolves to a stage, or lists candidates. What it may
+    // never do is the incident's own sentence — a dead "can't from this view" with no alternative.
+    const t12 = await converse(admin as never, userId, { kind: 'global' },
+      'Forward the press timetable email from Rowan Ash to my operations lead.', { history: [] });
+    const offersAnAlternative = /open it|tell me|I can|paste/i.test(t12.say);
+    t12ok = !!t12.openStage || /which email|which one/i.test(t12.say)
+      || (!DEAD_END.test(t12.say) && offersAnAlternative);
+    console.log(`T12 forward from Home resolves or lists: ${t12ok ? 'PASS' : 'FAIL'} stage=${t12.openStage?.stage ?? 'none'}\n---\n${t12.say.slice(0, 400)}\n---`);
+
+    // T13 — the same law in another language: an affirmation is an affirmation.
+    const hist13 = [
+      { role: 'user' as const, text: 'Quando estou livre para falar com o Rowan Ash sobre o calendário de imprensa?' },
+      { role: 'assistant' as const, text: 'Terça e quinta à tarde estão livres. Quer que eu ofereça as duas opções ao Rowan Ash?' },
+    ];
+    const t13 = await converse(admin as never, userId, { kind: 'global' }, 'sim, por favor', { history: hist13 });
+    const reAskPt = /o que gostaria|como gostaria|pode dizer-me como/i.test(t13.say);
+    t13ok = !RE_ASK.test(t13.say) && !reAskPt && !DEAD_END.test(t13.say) && (await sentSince()) === 0;
+    console.log(`T13 PT affirmation works the same: ${t13ok ? 'PASS' : 'FAIL'}\n---\n${t13.say.slice(0, 400)}\n---`);
+    // T14 — THE STANDALONE LANE IS A CARD (Sep 21, the owner's convergence call). A pasted message
+    // that matches NOTHING in the inbox must still come back sendable: the same email card, its
+    // From resolved from the user's own mailboxes (or honestly the assistant's address), its To
+    // prefilled from the sender the paste actually named — and nothing sent.
+    const strangerBody =
+      'Following the dockside survey we completed on the eastern jetty, the mooring cleats need replacing before the ' +
+      'winter charter season and the harbourmaster wants the fendering specification confirmed. Could you let us know ' +
+      'whether the marine plywood substitution is acceptable, and who signs off the berth reallocation?';
+    const t14 = await converse(admin as never, userId, { kind: 'global' },
+      `From: Wren Calloway <wren@tidegate-example.net>\nSubject: Jetty survey — mooring cleats and fendering\n\n${strangerBody}` +
+      `\n\nPlease reply saying the plywood substitution is fine and that I'll confirm the berth sign-off this week.`,
+      { history: [] });
+    const card = t14.emailDraft;
+    const cd = card?.draft as { to?: string[]; body?: string; subject?: string;
+      from?: { options?: unknown[]; selectedId?: string | null; viaCoworker?: boolean } } | undefined;
+    t14ok = !!card && !card.itemId && !!cd
+      && (cd.to ?? []).includes('wren@tidegate-example.net')
+      && String(cd.body ?? '').trim().length > 60
+      && !!cd.from && (cd.from.viaCoworker === true || !!cd.from.selectedId)
+      // the retired envelope must not come back
+      && !/-----/.test(t14.say)
+      && (await sentSince()) === 0;
+    console.log(`T14 unmatched paste → the STANDALONE CARD: ${t14ok ? 'PASS' : 'FAIL'} ` +
+      `card=${!!card} to=${JSON.stringify(cd?.to ?? [])} bodyLen=${String(cd?.body ?? '').length} ` +
+      `from=${JSON.stringify(cd?.from ?? null)} sent=${await sentSince()}\n---\n${t14.say.slice(0, 300)}\n---`);
+    if (card?.id) await admin.from('item_plans').delete().eq('user_id', userId).eq('kind', 'chat_email').eq('entity_id', card.id);
+  } catch (e) {
+    console.log(`T9-T13 threw: ${String((e as Error).message).slice(0, 200)}`);
+  } finally {
+    await hnCleanup();
+  }
+  const hnOk = t9ok && t10ok && t11ok && t12ok && t13ok && t14ok;
+
+  // ── T15 / T16 — THE TASK VERBS HAVE A HOME DOOR (Sep 21, CLASS 2 + CLASS 1).
+  // Live incident: the Home chat answered "I don't have a tool to pause workflows" while a coworker
+  // DM had been pausing them for months; and when a coworker DID pause, it paused one of two and
+  // said both. Both halves are replayed here on SEEDED FAKE workflows on the probe host — outcome
+  // strict (the DB must actually move), wording tolerant. Nothing real is ever touched.
+  let t15ok = false, t16ok = false;
+  const seeded: string[] = [];
+  try {
+    const mk = async (name: string, status: 'active' | 'paused') => {
+      const { data } = await admin.from('workflows').insert({
+        user_id: userId, name, status,
+        trigger: { type: 'manual' },
+        steps: [{ id: 's1', type: 'ai', label: 'Write it', prompt: 'Say hello.' }],
+      }).select('id').single();
+      if (data?.id) seeded.push(data.id as string);
+      return data?.id as string | undefined;
+    };
+    await mk('Probe Weekly Digest', 'active');
+    await mk('Probe Client Radar', 'active');
+    await mk('Probe Dormant Sweep', 'paused');
+
+    const statusOf = async (): Promise<Record<string, string>> => {
+      const { data } = await admin.from('workflows').select('name, status').in('id', seeded);
+      return Object.fromEntries(((data ?? []) as Array<{ name: string; status: string }>).map((w) => [w.name, w.status]));
+    };
+
+    // T15 — "pause all my workflows" from the HOME. The promise: they are ACTUALLY paused in the
+    // database, and the say names them. The old answer ("I don't have a tool for that") fails.
+    const t15 = await converse(admin as never, userId, { kind: 'global' }, 'pause all my workflows', { history: [] });
+    const after15 = await statusOf();
+    const allPaused = Object.values(after15).length >= 3 && Object.values(after15).every((v) => v === 'paused');
+    const noDenial = !/don'?t have a tool|can'?t pause|no way to pause|unable to pause/i.test(t15.say);
+    const namesOne = /Probe (?:Weekly Digest|Client Radar|Dormant Sweep)/i.test(t15.say);
+    t15ok = allPaused && noDenial && namesOne;
+    console.log(`T15 Home "pause all my workflows": ${t15ok ? 'PASS' : 'FAIL'} db=${JSON.stringify(after15)} names=${namesOne} denial=${!noDenial}\n---\n${t15.say.slice(0, 400)}\n---`);
+
+    // T16 — the mirror, BY NAME. Only the named one moves; the others stay put.
+    const t16 = await converse(admin as never, userId, { kind: 'global' }, 'resume the Probe Client Radar task', { history: [] });
+    const after16 = await statusOf();
+    t16ok = after16['Probe Client Radar'] === 'active'
+      && after16['Probe Weekly Digest'] === 'paused'
+      && after16['Probe Dormant Sweep'] === 'paused';
+    console.log(`T16 resume ONE by name (the others stay put): ${t16ok ? 'PASS' : 'FAIL'} db=${JSON.stringify(after16)}\n---\n${t16.say.slice(0, 400)}\n---`);
+  } catch (e) {
+    console.log(`T15-T16 threw: ${String((e as Error).message).slice(0, 200)}`);
+  } finally {
+    if (seeded.length) await admin.from('workflows').delete().in('id', seeded);
+  }
+
   // CLEANUP — the hand-off threads are STANDING (one per worker, pre-existing), so only the
   // messages these runs wrote are removed; a thread left empty by that is removed too.
   try {
@@ -193,6 +382,6 @@ async function main() {
     }
   } catch (e) { console.log(`T8 cleanup warning: ${String((e as Error).message).slice(0, 120)}`); }
 
-  process.exit(t2ok && t3ok && t4ok && t5ok && t6ok && t7ok && t8ok ? 0 : 1);
+  process.exit(t2ok && t3ok && t4ok && t5ok && t6ok && t7ok && t8ok && hnOk && t15ok && t16ok ? 0 : 1);
 }
 main().catch((e) => { console.error(e); process.exit(1); });
