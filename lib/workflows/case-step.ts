@@ -57,6 +57,7 @@ import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 import { GENERIC_WORK_WORDS, entityEmbedText } from '@/lib/entities/recognize';
+import { cleanEntityName } from '@/lib/entities/entity-name';
 import { embedText } from '@/lib/knowledge/indexer';
 import type { CaseStep } from './types';
 
@@ -405,9 +406,14 @@ export async function resolveCaseForRun(
       if (matchOnly) {
         return noneCard(`"${caseKey}" doesn't match an open case yet. [test mode — no case opened]`);
       }
-      const created = await foundCase(admin, userId, workflowId, workflowName, caseKey!, eventText);
+      // THE NAMING FLOOR (lib/entities/entity-name): a case is a machine-founded body of work, and
+      // its key can arrive as a message header ("Re: About the rollout?"). Cleaned ONCE here, so the
+      // entity row and the workflow's index row are founded under the SAME name — the later
+      // deterministic match reads the narrower, punctuation-free key it was filed under.
+      const caseName = cleanEntityName(caseKey!) || caseKey!;
+      const created = await foundCase(admin, userId, workflowId, workflowName, caseName, eventText);
       if (!created) return noneCard('The case could not be opened — continuing without one.');
-      entityId = created; name = caseKey!; founded = true;
+      entityId = created; name = caseName; founded = true;
     }
 
     // THE LINK — the atom joins the case's room through the door every other atom uses.

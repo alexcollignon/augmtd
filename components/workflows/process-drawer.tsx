@@ -39,7 +39,9 @@ import Link from 'next/link';
 import { toast } from 'sonner';
 import { XMarkIcon, ChevronDownIcon, ArrowPathIcon, BellIcon, ArrowRightCircleIcon, ChatBubbleLeftEllipsisIcon } from '@heroicons/react/24/outline';
 import { Button, Badge, TabBar } from '@/components/ui';
-import { GATE_WORDS, type ProcessRow } from '@/lib/workflows/process-state';
+import { GATE_WORDS, GATE_OUTCOME_WORDS, GATE_SETTLED_ELSEWHERE, type ProcessRow, type GateOutcome } from '@/lib/workflows/process-state';
+// THE ONE RESUME DOOR (W3-A) — this drawer's own `fetch` to the resume route is gone.
+import { resumeRun } from '@/lib/deeds/gate-doors';
 // THE ONE SUPPLY DEED — shared with the commitment deep-dive's InputStationCard. A station's ask
 // is answered where it is shown; neither door owns a paste box of its own.
 import InputSupplyForm, { type SupplyOutcome } from '@/components/workflows/input-supply-form';
@@ -50,7 +52,9 @@ import { previewFromOutput } from '@/lib/workflows/handoff-context';
 // THE ONE MARKDOWN RENDERER — the same component the chat surfaces and the artifact panel mount
 // (headings, lists, TABLES, inline emphasis). The gate reuses it rather than growing a second
 // reading of the same syntax.
-import { MarkdownText } from '@/components/work/chat-message';
+// THE GATE'S SHARED PIECES (W3-A) — one implementation, mounted here and, through the two hosts,
+// on every thread-shaped surface.
+import { GateStandingLine, GateAsk, GateObject } from '@/components/workflows/gate-pieces';
 import type { GateVerdict, WorkflowStep, HandoffStep } from '@/lib/workflows/types';
 
 // ── THE GATE'S RECEIPTS (guardrails arc): what the delivery check did — checked clean, fixed with
@@ -163,7 +167,9 @@ export default function ProcessDrawer({
   const [busy, setBusy] = useState(false);
   // 'supplied' = an INPUT STATION was answered in place (the wave's third settle word — a supply
   // is neither an approval nor a rejection, and the settled banner must not call it one).
-  const [decided, setDecided] = useState<'approved' | 'rejected' | 'supplied' | null>(null);
+  // W3-A (Sep 22): the union is `GateOutcome`, the ONE gate-outcome vocabulary
+  // (lib/workflows/process-state.ts). This file declares no settle word of its own any more.
+  const [decided, setDecided] = useState<GateOutcome | null>(null);
   // When the deed landed — the run resumes server-side, so the drawer keeps watching for a window
   // after a decision even if the status it holds hasn't caught up yet.
   const [decidedAt, setDecidedAt] = useState<number | null>(null);
@@ -309,17 +315,24 @@ export default function ProcessDrawer({
     if (busy) return;
     setBusy(true);
     try {
-      const r = await fetch(`/api/workflows/runs/${process.runId}/resume`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approve }),
-      });
-      if (!r.ok) { toast.error('That decision did not land — try again.'); return; }
+      // THE ONE RESUME DOOR (W3-A) — the same call the two hosts make.
+      const res = await resumeRun(process.runId, { approve });
+      if (!res.ok) {
+        // A CONFLICT IS A FACT, NOT A RETRY: the run is no longer parked (someone else decided, a
+        // subprocess resumed it). Say so and re-read, rather than inviting a click that can only
+        // fail again. The server's own sentence wins where it has one.
+        if (res.reason === 'conflict') { toast(res.message ?? GATE_SETTLED_ELSEWHERE); void loadRun(); return; }
+        toast.error(res.reason === 'denied' ? 'This one isn’t yours to decide any more.' : 'That decision did not land — try again.');
+        return;
+      }
       decidedStepsRef.current = process.stepsDone;
-      setDecided(approve ? 'approved' : 'rejected');
+      const outcome = approve ? 'approved' as const : 'rejected' as const;
+      setDecided(outcome);
       setDecidedAt(Date.now());
       // The deed is done server-side in after() — start watching immediately rather than waiting a
       // whole beat to learn the run moved.
       void loadRun();
-      toast.success(approve ? `Approved — "${process.workflowName}" is delivering.` : 'Held back — nothing was delivered.');
+      toast.success(approve ? `Approved — "${process.workflowName}" is delivering.` : GATE_OUTCOME_WORDS[outcome].line);
       onDecided?.();
     } catch { toast.error('That decision did not land — try again.'); } finally { setBusy(false); }
   }, [busy, process.runId, process.workflowName, onDecided, loadRun]);
@@ -334,7 +347,7 @@ export default function ProcessDrawer({
     void loadRun();
     toast.success(outcome === 'supplied'
       ? `Sent — "${process.workflowName}" picked up from there.`
-      : 'Held back — the run stopped here.');
+      : GATE_OUTCOME_WORDS.rejected.line);
     onDecided?.();
   }, [process.workflowName, onDecided, loadRun]);
 
@@ -752,7 +765,7 @@ export default function ProcessDrawer({
 function DecisionOutcome({
   decided, run, stepsTotal, onOpenDeliverable,
 }: {
-  decided: 'approved' | 'rejected' | 'supplied';
+  decided: GateOutcome;
   run: DrawerRun | null | undefined;
   stepsTotal: number;
   onOpenDeliverable: () => void;
@@ -760,7 +773,8 @@ function DecisionOutcome({
   if (decided === 'rejected') {
     return (
       <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-[13px] text-neutral-700">
-        Held back — nothing was delivered.
+        {/* W3-A (Sep 22): the sentence is the ONE vocabulary's, read — not typed here. */}
+        {GATE_OUTCOME_WORDS.rejected.line}
       </div>
     );
   }
@@ -873,104 +887,12 @@ function SubprocessStation({ n, step, status, waitingSince }: {
   );
 }
 
-// ── THE GATE CARRIES ITS OBJECT (owner walk, Aug 20) — a decision asked without showing what it
-// decides is the whole find. The parked run's last step output, in its own bytes, in the SAME
-// grammar the commitment room's gate card uses. A run we couldn't read renders nothing at all:
-// the object is additive, and Approve never waits on it. ──
-// THE OBJECT READS LIKE THE WORK IT IS (pilot walk, Sep 1). The parked output was rendered as
-// raw text in a mono block — a reviewer facing a markdown report with ranked tables could not
-// judge it, and an approval you cannot read is an approval you cannot give. Prose renders as
-// prose through the SAME `MarkdownText` the chat surfaces use (one renderer, never a second
-// opinion about what markdown means); JSON keeps the mono block, where the punctuation IS the
-// meaning. The switch is STRUCTURAL, not a guess: previewFromOutput JSON-stringifies anything
-// that is not a string, so a leading { or [ is the machine-shaped case by construction.
-const looksLikeJson = (s: string) => /^[[{]/.test(s.trimStart());
-
-// ── THE STANDING LINE — where the run stands, said ONCE, quietly, under the station title.
-// It was a full-weight paragraph wedged between the ask and the object: the same visual weight
-// as the instruction, and physically separating the two things a reviewer compares. It is
-// context, not an instruction, so it wears context's type. Shared by both gate cards. ──
-function GateStandingLine({ done, total, mode, holder }: {
-  done: number;
-  total: number;
-  mode: 'input' | 'mine' | 'other';
-  holder?: string;
-}) {
-  return (
-    <div className="mt-0.5 text-[11.5px] text-neutral-500">
-      {`Ran ${done} of ${total} steps · `}
-      {mode === 'input'
-        ? 'stopped here — it needs this from you'
-        : mode === 'mine'
-          ? 'nothing is delivered until you say so'
-          : `waiting on ${holder ?? 'a teammate'}`}
-    </div>
-  );
-}
-
-// ── THE ASK, CLAMPED — a long authored instruction pushed the object (the thing being decided)
-// below the fold. Two lines, then the reader opens it by choice. `line-clamp-2` is CSS-only:
-// no measurement, no layout pass, and the full text is always one click away — never truncated
-// away. Shared by both gate cards. ──
-function GateAsk({ text, muted }: { text: string; muted?: boolean }) {
-  const [open, setOpen] = useState(false);
-  const long = text.length > 160;
-  return (
-    <div className={`mt-1 text-[12.5px] ${muted ? 'text-neutral-400' : 'text-neutral-600'}`}>
-      <span className={open || !long ? '' : 'line-clamp-2'}>{text}</span>
-      {long && (
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="ml-1 text-[11.5px] text-neutral-400 transition-colors hover:text-neutral-700"
-        >
-          {open ? 'less' : 'more'}
-        </button>
-      )}
-    </div>
-  );
-}
-
-function GateObject({ preview }: { preview: { text: string; truncated: boolean } | null }) {
-  const [expanded, setExpanded] = useState(false);
-  if (!preview) return null;
-  const json = looksLikeJson(preview.text);
-  // The collapsed height is a READING height, not a peek. "Show all" appears only when there is
-  // plausibly more than fits — measuring the real overflow would cost a layout pass on every
-  // render for an affordance that is harmless when it is unnecessary.
-  const mayOverflow = preview.text.length > 1200;
-  return (
-    <div className="mt-3">
-      <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">What&apos;s being approved</div>
-      <div
-        className={`overflow-y-auto rounded-lg border border-neutral-200 bg-white px-3 py-2.5 ${expanded ? 'max-h-[70vh]' : 'max-h-[380px]'}`}
-      >
-        {json ? (
-          <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-neutral-700">{preview.text}</pre>
-        ) : (
-          // Tables are the reason this exists — they scroll INSIDE their own container (the
-          // shared renderer already wraps each one in overflow-x-auto), so a wide table never
-          // pushes the drawer sideways.
-          <div className="text-[13px] [&_table]:text-[12px]">
-            <MarkdownText content={preview.text} />
-          </div>
-        )}
-      </div>
-      {mayOverflow && (
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="mt-1 text-[11.5px] text-neutral-500 transition-colors hover:text-neutral-800"
-        >
-          {expanded ? 'Collapse ↑' : 'Show all ↓'}
-        </button>
-      )}
-      {preview.truncated && (
-        <div className="mt-1 text-[11px] text-neutral-400">— first 20,000 characters shown; the full output is in the Log.</div>
-      )}
-    </div>
-  );
-}
+// ── THE GATE'S PIECES ARE SHARED (W3-A, Sep 22 — docs/component-map.md §2a) ───────────────────
+// `GateStandingLine`, `GateAsk` and `GateObject` used to live here as PRIVATE helpers, which is
+// exactly why the room rail and the commitment deep-dive drew their own: they could not import
+// them. They are in components/workflows/gate-pieces.tsx now, mounted by this drawer AND (through
+// the two hosts) by every thread-shaped surface. A DRAWER IS NOT A THREAD (§2's closing note), so
+// this file keeps its own layout and shares the PIECES and the DEED, never a mounted kit card.
 
 // ── THE RUN'S NOTES — ONE thread (the run's room), shown under whichever gate card asked for it
 // and labelled as what it is. Turns are muted rows; the composer is one line. ──

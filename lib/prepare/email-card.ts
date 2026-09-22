@@ -46,6 +46,76 @@ export interface PreparedEmailLike {
   userEdit?: boolean;
 }
 
+// ── THE FROM LANE (Sep 21 — the owner's convergence call) ───────────────────────────────────────
+// A reply to a message that is NOT in the synced inbox still has to leave from SOMEWHERE. The old
+// standalone lane answered that by refusing to answer it: the draft came back as delimited plain
+// text to copy-paste, a fourth rendering of an email nobody could send. The card does it instead,
+// and the one fact that lane needs beyond the item lane's is WHICH MAILBOX SENDS.
+//
+// THE LADDER, pure and deterministic (the house grammar — a resolution, never a guess):
+//   · no connected mailbox → `viaCoworker`: the workspace's OAuth-free channel (the same fallback
+//     /api/compose/send has always had), stated on the card rather than hidden.
+//   · exactly one           → it is prefilled and shown quietly; there is no choice to offer.
+//   · several               → the one the PASTED message actually addressed wins (the recipient
+//     hint — resolveConnectionForItem's own law, one lane over), else the first (oldest) account.
+//     The user can still pick; the selector is the whole point.
+export interface SendMailbox {
+  /** The connection row's id — what the send door validates and sends through. */
+  id: string;
+  /** The mailbox's own address (connections.metadata.email). */
+  address: string;
+  provider?: string;
+}
+
+export interface SendFrom {
+  options: SendMailbox[];
+  selectedId: string | null;
+  /** No mailbox at all: the send rides the coworker (Resend) channel, and the card SAYS so. */
+  viaCoworker: boolean;
+}
+
+const ADDR_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * resolveSendFrom — the mailbox a standalone draft sends from.
+ * `hint.addresses` are the addresses the SOURCE message named (its To/Cc); a mailbox of the user's
+ * that appears there is the account the message actually reached, so it is the honest default.
+ */
+export function resolveSendFrom(
+  mailboxes: SendMailbox[],
+  hint?: { addresses?: string[] } | null,
+): SendFrom {
+  const options = (Array.isArray(mailboxes) ? mailboxes : [])
+    .map((m) => ({ id: String(m?.id ?? ''), address: String(m?.address ?? '').trim().toLowerCase(), provider: m?.provider }))
+    .filter((m) => m.id && ADDR_RE.test(m.address));
+  if (!options.length) return { options: [], selectedId: null, viaCoworker: true };
+  const named = new Set((hint?.addresses ?? []).map((a) => String(a ?? '').trim().toLowerCase()).filter(Boolean));
+  const hit = named.size ? options.find((m) => named.has(m.address)) : undefined;
+  return { options, selectedId: (hit ?? options[0]).id, viaCoworker: false };
+}
+
+/** THE STANDALONE DRAFT — what the store holds and the card renders. The same email the card
+ *  always rendered, plus the sender the item lane never had to ask about. */
+export interface StandaloneEmailDraft {
+  to: string[];
+  cc: string[];
+  subject: string;
+  body: string;
+  from: SendFrom;
+  /** The address the coworker channel would send as — shown, never guessed, only when it is used. */
+  coworkerAddress?: string | null;
+  sentAt?: string | null;
+}
+
+/** The quiet word on the From row — one derivation, so the card and the door agree on what it says. */
+export function sendFromLabel(draft: Pick<StandaloneEmailDraft, 'from' | 'coworkerAddress'>): string {
+  if (draft.from?.viaCoworker) {
+    return draft.coworkerAddress ? `${draft.coworkerAddress} · your assistant` : 'your assistant’s address';
+  }
+  const picked = (draft.from?.options ?? []).find((o) => o.id === draft.from?.selectedId);
+  return picked?.address ?? (draft.from?.options?.[0]?.address ?? '');
+}
+
 export interface EmailCardOption {
   id: string;
   label: string;

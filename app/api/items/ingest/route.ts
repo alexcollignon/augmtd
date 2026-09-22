@@ -91,14 +91,14 @@ export async function POST(request: NextRequest) {
           if (arch.error) await supabase.from('room_turns').update({ component: null }).in('id', engineIds); // pre-migration fallback
         }
         // A satisfied requirements-ask makes the current draft stale — the next pass re-drafts
-        // with the artifact staged (dropping generated_at trips the pass's freshness check).
+        // with the artifact staged. ONE RE-OPEN (W4-B, Sep 22): this file used to carry the
+        // generated_at drop by hand, and the type-it door would have been a second copy of it.
+        // Both doors call lib/prepare/supply.ts `reopenAfterSupply` now.
         if (kind !== 'entity' && kind !== 'meeting') {
-          const { data: itRow } = await supabase.from('inbox_items').select('id, source_data').eq('id', id).eq('user_id', user.id).maybeSingle();
-          const isd = (itRow?.source_data ?? {}) as Record<string, unknown>;
-          const dr = isd.draft as Record<string, unknown> | undefined;
-          if (itRow && dr?.generated_at) {
-            await supabase.from('inbox_items').update({ source_data: { ...isd, draft: { ...dr, generated_at: undefined } } }).eq('id', itRow.id);
-          }
+          const { reopenAfterSupply } = await import('@/lib/prepare/supply');
+          await reopenAfterSupply(supabase, user.id, {
+            itemKind: kind === 'commitment' ? 'commitment' : 'inbox', itemId: id,
+          });
         }
       }
     } catch { /* non-fatal */ }

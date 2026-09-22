@@ -1287,19 +1287,54 @@ async function main() {
         .test(itemDetailSrc), 'the door stopped consulting the table');
 
     // ── H17h — THE DECISION IS BYTE-SAFE ───────────────────────────────────────────────────────
-    const decideBody = itemDetailSrc.slice(
-      itemDetailSrc.indexOf('const decide = async (approve: boolean)'),
-      itemDetailSrc.indexOf('const openReceipts'));
-    const iComments = decideBody.indexOf('/comments');
-    const iResume = decideBody.indexOf('/resume');
+    // RE-POINTED (W3-A, Sep 22 — docs/component-map.md §2a): the deep-dive's own `decide()` is gone.
+    // The gate converged onto the kit (components/home/approval-card.tsx → the kit's `approval`
+    // card), and the deed itself onto ONE client module (lib/deeds/gate-doors.ts `resumeRun`), which
+    // is now the only caller of the resume route in the product. Every clause below is unchanged —
+    // they are simply asserted where the code lives, and they are now true for EVERY surface at
+    // once instead of this one file. The deep-dive half that survives is asserted too: it must hand
+    // the note seat over (`notable`) and must not post a comment of its own.
+    const doorsSrc = await readSrc('lib/deeds/gate-doors.ts');
+    const gateHostSrc = await readSrc('components/home/approval-card.tsx');
+    const resumeBody = doorsSrc.slice(
+      doorsSrc.indexOf('export async function resumeRun('),
+      doorsSrc.indexOf('export function outcomeOf('));
+    const iComments = resumeBody.indexOf('/comments');
+    // RE-POINTED (W3-A, Sep 22): the door's URL is NAMED at the top of the function (so that no
+    // `return` sits between the note and the decision), so the ORDER law is measured against the
+    // POST itself — which is what "before the decision" always meant.
+    const iResume = resumeBody.indexOf('post(door');
     ok('H17h the decision still posts to the ONE resume door',
-      /\/api\/workflows\/runs\/\$\{runId\}\/resume/.test(decideBody) && iResume > 0, String(iResume));
+      /const door = `\/api\/workflows\/runs\/\$\{runId\}\/resume`;/.test(resumeBody) && iResume > 0, String(iResume));
+    ok('H17h …and that module is the ONLY client caller of it',
+      (await (async () => {
+        const files = [
+          'components/home/item-detail.tsx', 'components/home/item-rail.tsx',
+          'components/workflows/process-drawer.tsx', 'components/workflows/input-supply-form.tsx',
+          'components/home/approval-card.tsx', 'components/home/input-card.tsx',
+        ];
+        for (const f of files) {
+          const src = (await readSrc(f)).replace(/^\s*\/\/.*$/gm, '');
+          if (/fetch\([^)]*\/api\/workflows\/runs\/[^)]*\/resume/.test(src)) return false;
+        }
+        return true;
+      })()), 'a surface still holds the resume route string');
     ok('H17h the note is spoken BEFORE the decision (the thread reads in the order it happened)',
       iComments > 0 && iComments < iResume, `${iComments} vs ${iResume}`);
     ok('H17h …inside its own try/catch — a failed note can never cost the decision',
-      /try \{[\s\S]*?\/comments[\s\S]*?\} catch \{[^}]*\}/.test(decideBody.slice(0, iResume)), 'the note is unguarded');
+      /try \{[\s\S]*?\/comments[\s\S]*?\} catch \{[^}]*\}/.test(resumeBody.slice(0, iResume)), 'the note is unguarded');
     ok('H17h …and nothing between the note and the resume returns early',
-      !/\breturn\b/.test(decideBody.slice(iComments, iResume)), 'an early return sits before the resume');
+      // RE-POINTED (W3-A, Sep 22): the resume is now a tail `return post(door, …)`, so the `return`
+      // that immediately precedes it IS the decision, not an escape from it. The window ends where
+      // that statement begins — the law (no EARLY exit between the note and the deed) is unchanged.
+      !/\breturn\b/.test(resumeBody.slice(iComments, resumeBody.lastIndexOf('return post(door'))),
+      'an early return sits before the resume');
+    ok('H17h the deep-dive still OFFERS the note, and posts no comment of its own',
+      /notable: true/.test(itemDetailSrc) && !/runs\/\$\{runId\}\/comments/.test(itemDetailSrc),
+      'the note seat moved or the door grew a second comment writer');
+    ok('H17h the host passes the note it holds to the ONE door',
+      /resumeRun\(spec\.runId, \{ approve, \.\.\.\(note\.trim\(\) \? \{ note \} : \{\}\) \}\)/.test(gateHostSrc),
+      'the host stopped handing its note over');
 
     // ── H17i — THE FALSE LINE ──────────────────────────────────────────────────────────────────
     const falseLineCount = (itemDetailSrc.match(/No linked source to show/g) ?? []).length;

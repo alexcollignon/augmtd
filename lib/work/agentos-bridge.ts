@@ -17,6 +17,25 @@ import { buildSkillsBlock } from '@/lib/work/worker-skills-context'
 import { buildConnectedIntegrationsBlock } from '@/lib/integrations/connection'
 import { logAIUsage } from '@/lib/ai/log-usage'
 import { enforceWeekdayDatePairs } from '@/lib/utils/weekday-floor'
+// THE DEED FLOOR (Sep 21) — one predicate, every lane that composes a final say.
+import { deedFloorVerdict, deedAmendment, deedFromToolResult, type DeedRecord } from '@/lib/work/deed-floor'
+// THE CHIP IS OURS, ONE TABLE (Sep 22, WAVE 0 — THE PRESENTATION LAW). This lane used to ship the
+// FIRST RAW LINE of any executor's result as the chip and persist it ("Tasks (4):", the head of a KB
+// context block). Labels AND summaries now come from the one module the native loop reads, so the
+// two coworker doors can never disagree about the same executor again.
+import { toolLabel, summarizeToolResult, toolResultOk } from '@/lib/work/tool-summaries'
+import { buildTrace } from '@/lib/work/trace'
+// THE MARKERS NEVER REACH THE BUBBLE (Sep 22) — one stripper, both coworker lanes.
+import { stripChatMarkers, splitStreamableText } from '@/lib/work/chat-markers'
+// ── THE PRESENTATION SIDE-CHANNEL (W4-C, Sep 22 — docs/component-map.md §6) ───────────────────
+// The box's tools reach our OWN internal routes, which run the SAME executors the native DM loop
+// runs — so the typed half of a presenting read already exists there. It cannot come home through
+// the tool's return string (rows in a model's context are the leak THE PRESENTATION LAW ends), so
+// the route writes it to a per-thread channel and this lane reads it as the run streams, emitting
+// the SAME `{type:'collection'|'event'}` frames the native route emits and persisting the SAME
+// pointers. The model's side of the wire is untouched.
+import { clearDmPresents, drainDmPresents, PRESENTING_TOOLS } from '@/lib/present/dm-channel'
+import { collectionPointer, eventPointer, type CollectionTurnPointer, type EventTurnPointer } from '@/lib/present/pointer'
 
 // AgentOS is hardcoded to mirror the bedrock_optimised tier (infra/agentos/models.py) — every
 // AgentOS-routed call by construction uses that tier's models, so cost logging can log
@@ -48,39 +67,6 @@ function logAgentOSUsage(
 }
 
 const SSE = (data: object) => `data: ${JSON.stringify(data)}\n\n`
-
-// Human labels for tool chips (mirrors the native loop's toolLabel).
-const TOOL_LABELS: Record<string, string> = {
-  web_search: 'Searching the web',
-  fetch_url: 'Reading page',
-  deep_research: 'Researching',
-  get_emails: 'Checking inbox',
-  get_meeting_context: 'Checking calendar',
-  search_knowledge_base: 'Searching knowledge base',
-  list_tasks: 'Listing tasks',
-  create_task: 'Creating task',
-  get_task: 'Reading task',
-  update_task: 'Updating task',
-  run_task: 'Running task',
-  duplicate_task: 'Duplicating task',
-  delete_task: 'Deleting task',
-  share_task: 'Sharing task',
-  list_team_tasks: 'Listing team tasks',
-  use_task: 'Adding team task',
-  list_worker_documents: 'Listing documents',
-  get_worker_document: 'Opening document',
-  generate_document: 'Generating document',
-  compose_email: 'Drafting email',
-}
-const toolLabel = (name: string) => TOOL_LABELS[name] ?? name.replace(/_/g, ' ')
-
-// Short chip summary from a tool's result string.
-function summarizeToolResult(name: string, result: unknown): string {
-  const text = typeof result === 'string' ? result : ''
-  if (!text) return 'Done'
-  const firstLine = text.split('\n').find(l => l.trim())?.trim() ?? 'Done'
-  return firstLine.length > 80 ? firstLine.slice(0, 80) + '…' : firstLine
-}
 
 // generate_document embeds a machine-readable marker in its result so the bridge
 // can surface the artifact chip: [[artifact:<id>|<type>|<title>]]
@@ -360,9 +346,24 @@ export async function streamWorkerViaAgentOS({
   // dependencies carries both tool-routing IDs (agent_id, thread_id — read by
   // Python tools) and the per-user context block (rendered into the model prompt
   // via the agent's add_dependencies_to_context=True).
+  // `user_text` is the USER'S OWN SENTENCE, forwarded by the Python tools to the internal door so
+  // the deeds whose dangerous arguments are decided in code (which direction, whether "all" was
+  // meant) read what the person said rather than what a model extracted. Never prompt material —
+  // it is already the message — purely a floor input. (Box redeploy owed for the Python half; the
+  // floors fail closed without it.)
+  // THE TURN TOKEN (W4-C): minted here, forwarded by the Python `_call`s, stamped on anything the
+  // internal routes leave in the presentation side-channel — so a card can only ever be served to
+  // the turn that made it. The channel is CLEARED first, which is what makes a stale card
+  // structurally impossible even on a box that predates the token. (Box redeploy owed for the
+  // Python half; without it the token is simply absent and the clear-before/drain-during
+  // discipline carries the correctness on its own.)
+  const turnId = crypto.randomUUID()
+  await clearDmPresents(adminClient, userId, threadId)
   form.set('dependencies', JSON.stringify({
     agent_id: agentId,
     thread_id: threadId,
+    user_text: message,
+    turn_id: turnId,
     ...(userContext ? { user_context: userContext } : {}),
   }))
 
@@ -381,10 +382,20 @@ export async function streamWorkerViaAgentOS({
 
   let fullText = ''
   const toolCalls: Array<{ name: string; summary: string }> = []
+  // THE TRACE's raw material — execution order, outcome only; `buildTrace` at the persist seam is
+  // the ONE writer of `metadata.trace` on this lane and on the native one.
+  const traceCalls: Array<{ name: string; ok: boolean }> = []
+  const deeds: DeedRecord[] = []
   const artifactMeta: Record<string, { title: string; type: string }> = {}
   const emailDrafts: Record<string, unknown>[] = []
   const workflowDrafts: Record<string, unknown>[] = []
   const cardArtifacts: Record<string, unknown>[] = []
+  // THE COLLECTION / EVENT CARD — POINTERS ONLY on the record (the native route's law, the same
+  // shared reading): what persists is `{id, kind, framing, params}` / `{eventId, proposal}`, and
+  // the next open re-derives through `GET /api/collections` and `GET /api/events/[id]/card`. A
+  // stored row set — or a stored verb ladder — is exactly what a reload would lie about.
+  const allCollections: CollectionTurnPointer[] = []
+  const allEventCards: EventTurnPointer[] = []
   let runMetrics: AgnoMetrics | null = null
   let runModel: string | undefined
 
@@ -399,10 +410,29 @@ export async function streamWorkerViaAgentOS({
         try { controller.enqueue(encoder.encode(': keep-alive\n\n')) } catch { /* closed */ }
       }, 15000)
 
+      // SPEAK → SHOW, on the box lane: the card streams BESIDE the coworker's prose, in the same
+      // frame shapes the native DM route emits — so `home-ask.tsx` reads ONE contract for both
+      // coworker doors and the live card and the rehydrated one are the same card.
+      const drainPresents = async () => {
+        const entries = await drainDmPresents(adminClient, userId, threadId, { turn: turnId })
+        for (const e of entries) {
+          if (e.collection) {
+            const id = crypto.randomUUID()
+            allCollections.push(collectionPointer(id, e.collection))
+            send({ type: 'collection', collection: { id, spec: e.collection } })
+          } else if (e.event) {
+            allEventCards.push(eventPointer(e.event))
+            send({ type: 'event', event: { id: crypto.randomUUID(), spec: e.event } })
+          }
+        }
+      }
+
       const reader = upstream.body!.getReader()
       const decoder = new TextDecoder()
       let buf = ''
       let thinkingOpen = false
+      /** A trailing fragment that could still close into a card marker — held, never streamed. */
+      let markerHold = ''
 
       try {
         while (true) {
@@ -430,8 +460,12 @@ export async function streamWorkerViaAgentOS({
               }
               if (content) {
                 if (thinkingOpen) { send({ type: 'thinking_done' }); thinkingOpen = false }
-                fullText += content
-                send({ type: 'text', delta: content })
+                // THE MARKERS NEVER REACH THE BUBBLE: a model that has seen `[[artifact:…]]` in its
+                // context writes one back in its own prose. The split holds a trailing partial so a
+                // marker arriving across two SSE chunks can't slip through in halves.
+                const { emit, hold } = splitStreamableText(markerHold + content)
+                markerHold = hold
+                if (emit) { fullText += emit; send({ type: 'text', delta: emit }) }
               }
             } else if (kind === 'ToolCallStarted') {
               const tool = (evt.tool ?? {}) as { tool_name?: string; tool_call_id?: string }
@@ -441,8 +475,19 @@ export async function streamWorkerViaAgentOS({
               const tool = (evt.tool ?? {}) as { tool_name?: string; tool_call_id?: string; result?: unknown }
               const name = tool.tool_name ?? 'tool'
               const summary = summarizeToolResult(name, tool.result)
-              send({ type: 'tool_result', name, id: tool.tool_call_id ?? name, summary })
+              // THE TRACE — the same receipt the native lane emits, read through the SAME outcome
+              // predicate, so the two coworker runtimes can never disagree about whether a call
+              // worked. The words are never chosen here (lib/work/trace.ts owns them).
+              const ok = toolResultOk(name, tool.result)
+              traceCalls.push({ name, ok })
+              send({ type: 'tool_result', name, id: tool.tool_call_id ?? name, summary, ok })
               toolCalls.push({ name, summary })
+              // THE DEED LEDGER ON THIS LANE (Sep 21) — the Python @tools call back into our own
+              // internal routes, which wrap the SAME executors, so the string arriving here is OUR
+              // deterministic sentence. `deedFromToolResult` reads only what those executors write
+              // and yields nothing for anything else.
+              const deed = deedFromToolResult(name, tool.result)
+              if (deed) deeds.push(deed)
               // Document generation surfaces an artifact (Op-B). The tool result
               // carries a [[artifact:id|type|title]] marker — emit + accumulate.
               const art = parseArtifactMarker(tool.result)
@@ -459,6 +504,10 @@ export async function streamWorkerViaAgentOS({
                 cardArtifacts.push(card)
                 send({ type: 'artifact', artifact: card })
               }
+              // The DATA half of a PRESENTING read is waiting on the side-channel by now (the
+              // internal route wrote it before the tool returned). Only these tools can leave one,
+              // so an ordinary tool call costs no read.
+              if (PRESENTING_TOOLS.includes(name)) await drainPresents()
             } else if (kind === 'RunError') {
               send({ type: 'error', message: (evt.content as string) || 'Worker error' })
             } else if (kind === 'RunCompleted') {
@@ -472,6 +521,30 @@ export async function streamWorkerViaAgentOS({
         }
 
         if (thinkingOpen) send({ type: 'thinking_done' })
+        // THE LAST DRAIN: a tool whose name this lane does not know as presenting, or a frame that
+        // never arrived, must not strand its card on the channel — the turn takes what is its own
+        // and the row is gone either way.
+        await drainPresents()
+        // Flush whatever the marker hold still carries — a fragment that never became a marker is
+        // ordinary prose and belongs in the answer.
+        if (markerHold) {
+          const tail = stripChatMarkers(markerHold)
+          markerHold = ''
+          if (tail) { fullText += tail; send({ type: 'text', delta: tail }) }
+        }
+        // THE DEED FLOOR (Sep 21) — AMENDMENT ONLY on this lane. The answer has already streamed to
+        // the client token by token; there is nothing to retract and a corrective round would mean
+        // a second AgentOS run over a reply the user has already read. So a claim the turn's ledger
+        // cannot carry ships with the count the code measured beside it, and that amendment is part
+        // of the persisted turn below — the record and the screen say the same thing.
+        {
+          const { breach } = deedFloorVerdict(fullText, deeds)
+          if (breach) {
+            const note = deedAmendment(breach)
+            fullText += note
+            send({ type: 'text', delta: note })
+          }
+        }
         send({ type: 'done' })
       } catch (err) {
         console.error('[AgentOS bridge] stream error:', err)
@@ -484,7 +557,15 @@ export async function streamWorkerViaAgentOS({
           // FUTURE event in the PAST TENSE with a fabricated weekday, inside a publish-ready draft.
           // A weekday is arithmetic over a date, so code owns it; only unambiguous pairs are touched
           // and the pass is idempotent. The PERSISTED turn is the record (streamed partials stay raw).
-          const persistedText = enforceWeekdayDatePairs(fullText)
+          // THE ANCHOR LAW (Sep 21): the user's own words ride along, so a weekday THEY asked for
+          // outranks a date the model derived — without them the floor would "correct" the weekday
+          // and launder the miscount into a confident wrong day.
+          // THE MARKERS NEVER REACH THE RECORD either — the stream was already stripped; this is
+          // the belt to that brace (a non-streaming path or a future writer must not reintroduce it).
+          const persistedText = stripChatMarkers(enforceWeekdayDatePairs(fullText, { userText: message }))
+          // ONE WRITER, BOTH RUNTIMES (Sep 22): `buildTrace` is the only thing that ever produces
+          // `metadata.trace`, and it strips everything but `{tool, ok}`.
+          const trace = buildTrace(traceCalls)
           await adminClient.from('work_messages').insert({
             thread_id: threadId,
             role: 'assistant',
@@ -492,12 +573,19 @@ export async function streamWorkerViaAgentOS({
             metadata: {
               source: 'agentos',
               ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+              // THE TRACE — the turn's receipt, folded on the next open. No args, no results.
+              ...(trace.length > 0 ? { trace } : {}),
               ...(Object.keys(artifactMeta).length > 0
                 ? { artifact_ids: Object.keys(artifactMeta), artifact_meta: artifactMeta }
                 : {}),
               ...(emailDrafts.length > 0 ? { email_drafts: emailDrafts } : {}),
               ...(workflowDrafts.length > 0 ? { workflow_drafts: workflowDrafts } : {}),
               ...(cardArtifacts.length > 0 ? { artifacts: cardArtifacts } : {}),
+              // A POINTER, NEVER THE ROWS: the next open re-derives through the one re-read door.
+              ...(allCollections.length > 0 ? { collections: allCollections } : {}),
+              // A POINTER, NEVER THE SPEC: `GET /api/events/[id]/card` re-derives the verbs, so a
+              // reloaded card can never offer one the event's live state has stopped allowing.
+              ...(allEventCards.length > 0 ? { events: allEventCards } : {}),
             },
           })
           await adminClient

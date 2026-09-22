@@ -1,5 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js'
-import { searchKnowledgeGrouped } from './search'
+import { searchKnowledgeGrouped, type FileChunkGroup } from './search'
 
 interface KBContextOptions {
   fileLimit?: number
@@ -14,6 +14,11 @@ export interface KBContextResult {
   context: string
   filenames: string[]
   fileGroups: Array<{ fileId: string; filename: string }>
+  /** ONE READ, TWO RENDERINGS (Wave 1, Sep 22 — the collection card): the RAW grouped hits this
+   *  context was rendered from, so a caller that also wants to SHOW the documents builds its rows
+   *  from the very same search — never a second query that could rank differently. Additive; every
+   *  existing consumer reads `context`/`fileGroups` exactly as before. */
+  groups: FileChunkGroup[]
 }
 
 export async function buildKBContext(
@@ -43,7 +48,7 @@ export async function buildKBContext(
       // else: fall through to full global results (agent KB had no relevant hits)
     }
 
-    if (groups.length === 0) return { context: '', filenames: [], fileGroups: [] }
+    if (groups.length === 0) return { context: '', filenames: [], fileGroups: [], groups: [] }
 
     const sections = groups.map((g) => {
       const summaryLine = g.summary ? `Summary: ${g.summary}\n` : '';
@@ -57,8 +62,9 @@ export async function buildKBContext(
       context: `RELEVANT KNOWLEDGE BASE (from your indexed files — use this content when answering):\n\n${joined.slice(0, maxTotalChars)}`,
       filenames,
       fileGroups,
+      groups,
     }
   } catch {
-    return { context: '', filenames: [], fileGroups: [] }
+    return { context: '', filenames: [], fileGroups: [], groups: [] }
   }
 }

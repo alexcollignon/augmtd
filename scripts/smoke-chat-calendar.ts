@@ -35,7 +35,8 @@ import { getScheduleWindow, renderCalendarWindow, userTimezone, weekdayOf } from
 import { getTodaySchedule, renderScheduleBlock } from '../lib/calendar/today-schedule';
 import { proposeFreeSlots, zonedTimeToUtc } from '../lib/prepare/free-slots';
 import { enforceWeekdayDatePairs } from '../lib/utils/weekday-floor';
-import { executeCheckCalendar } from '../lib/tools/check-calendar';
+import { executeCheckCalendar, renderCalendarFreshness } from '../lib/tools/check-calendar';
+import { planCalendarPrune, decidePruneBatch } from '../lib/calendar/sync-calendar';
 import { linkifyReport } from '../lib/workflows/report-back';
 import { converse } from '../lib/converse';
 import { REACH_SENTINEL, needsReach, sayInsteadOfSentinel } from '../lib/converse/reach';
@@ -85,6 +86,24 @@ async function main() {
   const FAR_TOKEN = 'Northwind';
   const FAR_TITLE = `${PREFIX} — ${FAR_TOKEN} board review`;
 
+  // ── THE ALL-DAY FIXTURES (G11, Sep 21) ────────────────────────────────────────────────────────
+  // Parked ~90 days beyond the far day so they sit outside every other window this suite reads.
+  // An all-day row is stored the way the providers write one: a MIDNIGHT with an EXCLUSIVE end.
+  const AD_PREFIX = `${PREFIX} — allday`;
+  const A0 = addDays(FAR, 90);
+  const AD_MULTI_TITLE = `${AD_PREFIX} multi`;
+  const AD_SINGLE_TITLE = `${AD_PREFIX} single`;
+  const AD_NIGHT_TITLE = `${PREFIX} — overnight`;
+  const AD_DST_TITLE = `${AD_PREFIX} dst`;
+  /** The zone's own UTC offset on a given day — the suite computes it itself, never from the module. */
+  const offsetOn = (dayStr: string) => zonedTimeToUtc(dayStr, '12:00', TZ) - Date.parse(`${dayStr}T12:00:00Z`);
+  /** The first clock change at or after the all-day fixtures — a real DST boundary to span. */
+  let DST_DAY: string | null = null;
+  for (let i = 1; i < 300 && !DST_DAY; i++) {
+    const d = addDays(A0, 12 + i);
+    if (offsetOn(d) !== offsetOn(addDays(d, -1))) DST_DAY = d;
+  }
+
   const rows = [
     // (b) THE FOUR-DAY ALL-DAY BLOCK — the shape that produced two of the three bad slots: its
     // start_time predates the window the gate queries, so only an overlap read can see it.
@@ -106,7 +125,29 @@ async function main() {
     { event_id: `${PREFIX}-far`, title: FAR_TITLE, is_all_day: false, status: 'confirmed',
       start_time: new Date(zonedTimeToUtc(FAR, '10:00', TZ)).toISOString(),
       end_time: new Date(zonedTimeToUtc(FAR, '12:00', TZ)).toISOString() },
-  ].map((r) => ({ ...r, user_id: uid, calendar_id: 'primary', provider: 'gmail', timezone: TZ }));
+  ].map((r) => ({ ...r, user_id: uid, calendar_id: 'primary', provider: 'gmail', timezone: TZ }))
+    .concat([
+      // (f) THE FOUR-DAY ALL-DAY BLOCK IN PROVIDER SHAPE — UTC midnights, end EXCLUSIVE. Read as an
+      // instant this lands a day early west of UTC and a day late east of it; read as calendar days
+      // it cannot move at all. Kept to THREE UTC-zoned rows so the fixture's home zone stays Lisbon.
+      { event_id: `${PREFIX}-ad-multi`, title: AD_MULTI_TITLE, is_all_day: true, status: 'confirmed',
+        start_time: `${A0}T00:00:00.000Z`, end_time: `${addDays(A0, 4)}T00:00:00.000Z`,
+        user_id: uid, calendar_id: 'primary', provider: 'gmail', timezone: 'UTC' },
+      { event_id: `${PREFIX}-ad-single`, title: AD_SINGLE_TITLE, is_all_day: true, status: 'confirmed',
+        start_time: `${addDays(A0, 6)}T00:00:00.000Z`, end_time: `${addDays(A0, 7)}T00:00:00.000Z`,
+        user_id: uid, calendar_id: 'primary', provider: 'gmail', timezone: 'UTC' },
+      // (g) A TIMED EVENT ACROSS MIDNIGHT — busy on both of its days, by the overlap law.
+      { event_id: `${PREFIX}-ad-night`, title: AD_NIGHT_TITLE, is_all_day: false, status: 'confirmed',
+        start_time: new Date(zonedTimeToUtc(addDays(A0, 8), '22:00', TZ)).toISOString(),
+        end_time: new Date(zonedTimeToUtc(addDays(A0, 9), '02:00', TZ)).toISOString(),
+        user_id: uid, calendar_id: 'primary', provider: 'gmail', timezone: TZ },
+      // (h) AN ALL-DAY BLOCK ACROSS A REAL DST BOUNDARY — the hour that moves must move no days.
+      ...(DST_DAY ? [{
+        event_id: `${PREFIX}-ad-dst`, title: AD_DST_TITLE, is_all_day: true, status: 'confirmed',
+        start_time: `${addDays(DST_DAY, -1)}T00:00:00.000Z`, end_time: `${addDays(DST_DAY, 2)}T00:00:00.000Z`,
+        user_id: uid, calendar_id: 'primary', provider: 'gmail', timezone: 'UTC',
+      }] : []),
+    ]);
 
   // ── THE MEETINGS FEATURE IS PART OF THE FIXTURE (found live by the R3 gate) ────────────────────
   // check_calendar is gated behind the `meetings` feature at EVERY lane (TOOL_FEATURE) — and the probe
@@ -264,6 +305,178 @@ async function main() {
       wf(wf('How about Tuesday, September 24?')) === wf('How about Tuesday, September 24?'), '');
     ok('a stated year is honoured, not second-guessed',
       wf('Monday, 24 September 2026') === 'Thursday, 24 September 2026', wf('Monday, 24 September 2026'));
+
+    // ── G5b — THE ANCHOR LAW ─────────────────────────────────────────────────────────────────────
+    // Sep 21, a live pilot: the user asked for "either thursday or friday"; the model miscounted and
+    // wrote "Thursday 25 or Friday 26"; the floor, holding the DATE sacred, rewrote the weekdays to
+    // "Friday 25 or Saturday 26" and offered a client a Saturday. The precedence chain is the law:
+    // the user's stated weekday outranks the model's derived date; failing that the date anchors;
+    // failing that nothing is touched.
+    console.log('\nG5b — THE ANCHOR LAW (a weekday the USER stated outranks a date the MODEL derived):');
+    // A Monday, so the fixture sentences below read exactly like the incident's week.
+    const NOW2 = new Date('2026-09-21T12:00:00Z');
+    const ASK = 'answer based on when I am free. Either thursday or friday would be good';
+    const wa = (t: string, userText?: string) => enforceWeekdayDatePairs(t, { now: NOW2, userText });
+    ok('(a) THE INCIDENT — the user\'s weekdays stand and the DATES move back one',
+      wa('Thursday 25 or Friday 26', ASK) === 'Thursday 24 or Friday 25', wa('Thursday 25 or Friday 26', ASK));
+    ok('(a) …the same with the month stated once at the end',
+      wa('Thursday 25 and Friday 26 September', ASK) === 'Thursday 24 and Friday 25 September',
+      wa('Thursday 25 and Friday 26 September', ASK));
+    ok('(a) an off-by-MINUS-one moves forward just as readily',
+      wa('Thursday 23 September works', ASK) === 'Thursday 24 September works', wa('Thursday 23 September works', ASK));
+    ok('(b) THE OLD LAW SURVIVES — the user said nothing, so the date anchors and the weekday moves',
+      wa('How about Tuesday, September 24 at 10:00?') === 'How about Thursday, September 24 at 10:00?',
+      wa('How about Tuesday, September 24 at 10:00?'));
+    ok('(b) …and a weekday the user never mentioned is still corrected against the date',
+      wa('Wednesday, 24 September', ASK) === 'Thursday, 24 September', wa('Wednesday, 24 September', ASK));
+    ok('(c) THE USER STATED BOTH AND THEY DISAGREE — untouched; the contradiction is theirs to resolve',
+      wa('meet Thursday 25 September', 'thursday the 25th works for me') === 'meet Thursday 25 September',
+      wa('meet Thursday 25 September', 'thursday the 25th works for me'));
+    ok('(d) a PORTUGUESE stated weekday moves the date, in Portuguese prose',
+      wa('Marquei para quinta-feira, 25 September.', 'quinta-feira ou sexta-feira') === 'Marquei para quinta-feira, 24 September.',
+      wa('Marquei para quinta-feira, 25 September.', 'quinta-feira ou sexta-feira'));
+    ok('(d) …and a GERMAN one',
+      wa('Donnerstag, 25 September', 'Donnerstag oder Freitag passt') === 'Donnerstag, 24 September',
+      wa('Donnerstag, 25 September', 'Donnerstag oder Freitag passt'));
+    ok('(d) …and a FRENCH one',
+      wa('jeudi 25 September', 'jeudi ou vendredi') === 'jeudi 24 September', wa('jeudi 25 September', 'jeudi ou vendredi'));
+    ok('(e) THE MONTHLESS SHAPE parses only when the prose reads like a date…',
+      wa('Thursday 25', ASK) === 'Thursday 24', wa('Thursday 25', ASK));
+    ok('(e) …and NEVER when the number is plainly not one ("Friday 15 people attended")',
+      wa('Friday 15 people attended', ASK) === 'Friday 15 people attended', wa('Friday 15 people attended', ASK));
+    ok('(e) …nor when the number could be a clock hour ("Monday 10 works")',
+      wa('Monday 10 works', ASK) === 'Monday 10 works', wa('Monday 10 works', ASK));
+    ok('(f) A MONTHLESS number too far out is AMBIGUOUS between two months — untouched',
+      wa('Thursday 20', ASK) === 'Thursday 20', wa('Thursday 20', ASK));
+    ok('(f) …and a monthless correction that would cross a month boundary is refused (a bare number cannot change months)',
+      enforceWeekdayDatePairs('Friday 31', { now: new Date('2026-12-28T12:00:00Z'), userText: 'friday please' }) === 'Friday 31',
+      enforceWeekdayDatePairs('Friday 31', { now: new Date('2026-12-28T12:00:00Z'), userText: 'friday please' }));
+    ok('(g) YEAR ROLLOVER — a late-December correction into the previous month is written in full',
+      enforceWeekdayDatePairs('Thursday, 1 January', { now: new Date('2026-12-28T12:00:00Z'), userText: 'thursday works' })
+        === 'Thursday, 31 December',
+      enforceWeekdayDatePairs('Thursday, 1 January', { now: new Date('2026-12-28T12:00:00Z'), userText: 'thursday works' }));
+    ok('(g) …and a STATED year the correction would have to cross is never rewritten — untouched',
+      wa('Thursday, 1 January 2027', 'thursday works') === 'Thursday, 1 January 2027', wa('Thursday, 1 January 2027', 'thursday works'));
+    ok('(h) an ALREADY-TRUE pair is never touched, with or without the user\'s words',
+      wa('Friday, 25 September', ASK) === 'Friday, 25 September' && wa('Friday, 25 September') === 'Friday, 25 September', '');
+    ok('(i) text with no digits passes straight through',
+      wa('Thursday or Friday both work for me.', ASK) === 'Thursday or Friday both work for me.', '');
+    ok('IDEMPOTENT under the anchor law too', wa(wa('Thursday 25 or Friday 26', ASK), ASK) === wa('Thursday 25 or Friday 26', ASK), '');
+
+    // ── G11 — THE ALL-DAY LAW ────────────────────────────────────────────────────────────────────
+    // An all-day event is CALENDAR DAYS with an EXCLUSIVE end, not an instant. Read as an instant,
+    // its midnight lands on the previous local day west of UTC and bleeds an hour into the next day
+    // east of it — the same away block reported a day early in one zone and a day late in another.
+    console.log('\nG11 — THE ALL-DAY LAW (days, not instants; the end is exclusive; the viewer\'s zone cannot move it):');
+    const adWin = (zone: string, from: string, to: string) => getScheduleWindow(sb, uid, { fromDayStr: from, toDayStr: to, tz: zone });
+    const busyDaysOf = (w: Awaited<ReturnType<typeof getScheduleWindow>>, title: string) =>
+      w.days.filter((d) => d.busy.some((b) => b.title.startsWith(title))).map((d) => d.dayStr);
+    for (const zone of ['America/New_York', 'Pacific/Auckland', TZ]) {
+      const w = await adWin(zone, addDays(A0, -2), addDays(A0, 10));
+      ok(`a FOUR-DAY all-day block covers exactly its four days in ${zone} (end exclusive, no drift)`,
+        busyDaysOf(w, AD_MULTI_TITLE).join(',') === [A0, addDays(A0, 1), addDays(A0, 2), addDays(A0, 3)].join(','),
+        busyDaysOf(w, AD_MULTI_TITLE).join(','));
+      ok(`…and a ONE-DAY all-day block covers exactly one day in ${zone}`,
+        busyDaysOf(w, AD_SINGLE_TITLE).join(',') === addDays(A0, 6), busyDaysOf(w, AD_SINGLE_TITLE).join(','));
+      ok(`…and both read as "all day", never as a clock range, in ${zone}`,
+        w.days.every((d) => d.busy.filter((b) => b.title.startsWith(AD_PREFIX)).every((b) => b.allDay === true)), '');
+    }
+    const overnightWin = await adWin(TZ, addDays(A0, 7), addDays(A0, 10));
+    ok('a TIMED event spanning midnight is busy on BOTH of its days (the overlap law, unchanged)',
+      busyDaysOf(overnightWin, AD_NIGHT_TITLE).join(',') === [addDays(A0, 8), addDays(A0, 9)].join(','),
+      busyDaysOf(overnightWin, AD_NIGHT_TITLE).join(','));
+    if (DST_DAY) {
+      const dstWin = await adWin(TZ, addDays(DST_DAY, -3), addDays(DST_DAY, 3));
+      ok('an all-day block ACROSS A DST BOUNDARY still covers exactly the days it names',
+        busyDaysOf(dstWin, AD_DST_TITLE).join(',') === [addDays(DST_DAY, -1), DST_DAY, addDays(DST_DAY, 1)].join(','),
+        busyDaysOf(dstWin, AD_DST_TITLE).join(','));
+    } else {
+      ok('a DST boundary was found in the horizon to test against', false, 'no offset change found — the fixture cannot prove the DST case');
+    }
+
+    // ── G12 — THE DEPARTURE LAW ──────────────────────────────────────────────────────────────────
+    // A deleted event stayed in calendar_events forever: neither provider reports a deletion in a
+    // windowed list, and the sync was upsert-only. Absence IS the news — but only a COMPLETE fetch
+    // may be read as absence, so the decision is a pure function that refuses by default.
+    console.log('\nG12 — THE DEPARTURE LAW (a deletion is news; a partial pull never mass-deletes):');
+    const W1 = '2026-09-01T00:00:00.000Z', W2 = '2026-09-30T00:00:00.000Z';
+    const PNOW = '2026-09-10T00:00:00.000Z';
+    const full = planCalendarPrune({ complete: true, fetchedEventIds: ['a', 'b'], windowStartISO: W1, windowEndISO: W2, nowISO: PNOW });
+    ok('a COMPLETE fetch licenses a prune, keeping exactly what came back',
+      full.prune && full.keep.has('a') && full.keep.has('b') && full.keep.size === 2, JSON.stringify(full));
+    ok('…and it is scoped to the window that was actually fetched',
+      full.prune && full.windowStartISO === W1 && full.windowEndISO === W2, '');
+    ok('a TRUNCATED fetch prunes NOTHING, and says why',
+      planCalendarPrune({ complete: false, fetchedEventIds: ['a'], windowStartISO: W1, windowEndISO: W2, nowISO: PNOW }).prune === false, '');
+    // ⚠️ RE-POINTED Sep 21 (review). This gate used to read an empty COMPLETE fetch as "an empty
+    // diary is a fact" and assert prune===true. It is indistinguishable from a degraded read (auth
+    // expiry, a mis-resolved calendar id, a provider hiccup) — and the wrong reading deletes the
+    // whole window. The law is now the stricter one; the gate follows it, never the other way.
+    ok('a COMPLETE fetch returning ZERO events prunes NOTHING (a degraded read looks exactly like this)',
+      planCalendarPrune({ complete: true, fetchedEventIds: [], windowStartISO: W1, windowEndISO: W2, nowISO: PNOW }).prune === false, '');
+    ok('a malformed window prunes nothing (nothing to scope a delete to)',
+      planCalendarPrune({ complete: true, fetchedEventIds: [], windowStartISO: W2, windowEndISO: W1, nowISO: PNOW }).prune === false, '');
+    // ONLY THE FUTURE DEPARTS — a past event absent from a forward-looking listing is normal, and it
+    // may already have been met and transcribed.
+    const futureFloor = planCalendarPrune({ complete: true, fetchedEventIds: ['a'], windowStartISO: W1, windowEndISO: W2, nowISO: PNOW });
+    ok('the prune floor is NOW when now is inside the window (past rows are never candidates)',
+      futureFloor.prune && futureFloor.floorFromISO === PNOW, JSON.stringify(futureFloor));
+    const allFuture = planCalendarPrune({ complete: true, fetchedEventIds: ['a'], windowStartISO: W1, windowEndISO: W2, nowISO: '2026-08-01T00:00:00.000Z' });
+    ok('…and the window start when the whole window is still ahead',
+      allFuture.prune && allFuture.floorFromISO === W1, '');
+    ok('a window entirely in the past prunes nothing at all',
+      planCalendarPrune({ complete: true, fetchedEventIds: ['a'], windowStartISO: W1, windowEndISO: W2, nowISO: '2026-12-01T00:00:00.000Z' }).prune === false, '');
+    // THE PROPORTIONAL FLOOR — being slow to prune is safe; being fast is not.
+    ok('a departure batch over half the window is REFUSED, with a reason',
+      decidePruneBatch({ goneCount: 20, storedInWindow: 30 }).prune === false
+      && /refused/.test(decidePruneBatch({ goneCount: 20, storedInWindow: 30 }).reason), '');
+    ok('a normal handful of departures still prunes',
+      decidePruneBatch({ goneCount: 3, storedInWindow: 30 }).prune === true, '');
+    ok('…and the share floor sleeps on tiny batches (2 of 3 departed is a real deletion)',
+      decidePruneBatch({ goneCount: 2, storedInWindow: 3 }).prune === true, '');
+    ok('nothing absent ⇒ no prune (and no receipt)',
+      decidePruneBatch({ goneCount: 0, storedInWindow: 30 }).prune === false, '');
+    const syncSrc = readFileSync('lib/calendar/sync-calendar.ts', 'utf8');
+    ok('BOTH providers paginate — a single page is not a complete fetch',
+      /pageToken/.test(syncSrc) && /@odata\.nextLink/.test(syncSrc), '');
+    ok('BOTH providers run the prune through the ONE decision function, clock included',
+      (syncSrc.match(/applyCalendarPrune\(supabase, connection, '(gmail|outlook)'/g) ?? []).length === 2
+      && (syncSrc.match(/planCalendarPrune\(\{ complete[^)]*nowISO: new Date\(\)\.toISOString\(\)/g) ?? []).length === 2, '');
+    ok('the prune is scoped to user AND connection AND provider AND the FUTURE floor (never a global sweep)',
+      /\.eq\('user_id', connection\.user_id\)[\s\S]{0,200}?\.eq\('connection_id', connection\.id\)[\s\S]{0,200}?\.eq\('provider', provider\)[\s\S]{0,200}?\.gte\('start_time', plan\.floorFromISO\)/.test(syncSrc), '');
+    // A DEPARTURE TAKES THE EVENT, NEVER THE WORK DERIVED FROM IT. cleanupEventLinks HARD-DELETES
+    // inbox_items (meeting action items, email-prep rows) that no later sync recreates.
+    ok('the departure path NEVER calls the inbox_items deleter — only the explicit-cancellation path does',
+      !/applyCalendarPrune[\s\S]*?^}/m.test(syncSrc)
+      || !(syncSrc.slice(syncSrc.indexOf('async function applyCalendarPrune'),
+        syncSrc.indexOf('const SYNCED_AT_KEY')).includes('cleanupEventLinks')), '');
+    ok('…and cleanupEventLinks is still reached by the cancellation path (the law narrowed, nothing was dropped)',
+      /cleanupEventLinks\(userId, \(cancelledRows/.test(syncSrc), '');
+    ok('every prune batch leaves a receipt on the user\'s own timeline',
+      /logActivity\(supabase, connection\.user_id, \{[\s\S]{0,120}?type: 'calendar_pruned'/.test(syncSrc), '');
+
+    // FRESHNESS IS A FACT, NOT A GUESS — the answer states when the calendar was last read, and a
+    // stale window is RE-READ before the answer exists ("my view may need a moment" was the shrug).
+    console.log('\nG12b — FRESHNESS IS A FACT (the calendar says when it was last read):');
+    ok('a never-read connection says UNKNOWN rather than implying it is current',
+      /unknown/.test(renderCalendarFreshness([{ provider: 'gmail', syncedAt: null }])), '');
+    ok('a recent read states its age in minutes',
+      /LAST READ from the calendar provider: 5 min ago/.test(renderCalendarFreshness([{ provider: 'gmail', syncedAt: new Date(Date.now() - 5 * 60_000).toISOString() }])), '');
+    ok('with TWO connections the OLDEST read is the one reported (the weakest link is the truth)',
+      /2 h ago/.test(renderCalendarFreshness([
+        { provider: 'gmail', syncedAt: new Date(Date.now() - 2 * 3_600_000).toISOString() },
+        { provider: 'outlook', syncedAt: new Date(Date.now() - 60_000).toISOString() },
+      ])), '');
+    ok('no connections at all ⇒ NO freshness claim (silence beats a manufactured fact)',
+      renderCalendarFreshness([]) === '', '');
+    const calSrc = readFileSync('lib/tools/check-calendar.ts', 'utf8');
+    ok('check_calendar re-reads a stale window BEFORE it renders anything',
+      /refreshCalendarIfStale\(supabase, userId[\s\S]{0,120}?\)[\s\S]{0,200}?getScheduleWindow\(/.test(calSrc), '');
+    ok('…TIME-BOXED: the chat path never hangs on a provider round-trip (it answers from the stored view and says its age)',
+      /Promise\.race\(\[[\s\S]{0,240}?refreshCalendarIfStale\([\s\S]{0,200}?REFRESH_BUDGET_MS/.test(calSrc)
+      && /const REFRESH_BUDGET_MS = 8_000;/.test(calSrc), '');
+    ok('…and the verb exposes a `refresh` argument for "I just changed it"',
+      /refresh: \{ type: 'boolean'/.test(calSrc) && /config\.refresh === true \? 0 : STALE_MS/.test(calSrc), '');
 
     // ── G6 — REGISTRATION PARITY ─────────────────────────────────────────────────────────────────
     console.log('\nG6 — REGISTRATION PARITY (a verb missing one registration point is a verb that does not exist):');
@@ -496,12 +709,19 @@ async function main() {
     const dmRoute = readFileSync('app/api/work/threads/[id]/chat/route.ts', 'utf8');
     const agentosTools = readFileSync('app/api/internal/agentos/tools/route.ts', 'utf8');
     const pyTools = readFileSync('infra/agentos/tools_data.py', 'utf8');
-    ok('R5 — the AgentOS bridge applies the weekday floor to the PERSISTED message',
-      /enforceWeekdayDatePairs\(fullText\)/.test(bridge) && /from '@\/lib\/utils\/weekday-floor'/.test(bridge), '');
+    // RE-POINTED Sep 21 (THE ANCHOR LAW): the floor now takes the USER'S OWN WORDS, and a seam that
+    // calls it WITHOUT them is the bug this arc closed — a weekday the user asked for would be
+    // silently "corrected" away. The gate therefore demands the userText argument, not just the call.
+    ok('R5 — the AgentOS bridge applies the weekday floor to the PERSISTED message, WITH the user\'s words',
+      /enforceWeekdayDatePairs\(fullText, \{ userText: message \}\)/.test(bridge) && /from '@\/lib\/utils\/weekday-floor'/.test(bridge), '');
     ok('R5 — the native DM route does the same at its own persist seam',
-      /enforceWeekdayDatePairs\(fullAssistantText\)/.test(dmRoute), '');
+      /enforceWeekdayDatePairs\(fullAssistantText, \{ userText: content \}\)/.test(dmRoute), '');
     ok('R5 — buildChatTools hands the coworker lane checkCalendarDefinition',
-      /buildChatTools\(/.test(dmRoute) && /neutral\.push\(checkCalendarDefinition\)/.test(dmRoute), '');
+      // RE-POINTED (Sep 21, the door-parity wave): the coworker door's tool list is DERIVED from
+      // the capability registry in lib/work/chat-tool-defs.ts — the verb is still on the door, it
+      // is simply no longer pushed by hand.
+      /buildCoworkerTools\(/.test(dmRoute)
+      && /check_calendar: checkCalendarDefinition/.test(readFileSync('lib/work/chat-tool-defs.ts', 'utf8')), '');
     ok('R5 — …and the DM dispatch has a branch to run it', /case 'check_calendar':/.test(dmRoute), '');
     ok('R5 — the internal AgentOS tools route dispatches check_calendar', /case 'check_calendar':/.test(agentosTools), '');
     ok('R5 — the Python tool is registered in DATA_TOOLS (dormant until the box redeploy)',

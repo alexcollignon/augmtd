@@ -67,6 +67,43 @@ export async function POST(request: NextRequest) {
       : { kind: 'item', itemKind: kind, itemId: id };
     const turn = await converse(supabase, user.id, scope, text);
 
+    // ── THE ROOM SHOWS WHAT IT READ (W4-C, Sep 22 — docs/component-map.md §6) ───────────────────
+    // The one core already hands back the DATA half of a presenting read (`collection` / `event`).
+    // The Home chat mounted it and the rooms did not — not because a room is different, but
+    // because nothing wrote the turn. A CARD IS A TURN: the pointer rides `room_turns.component`
+    // in the SAME shape the Home chat stores, so the rail paints it live from the response and
+    // finds it standing on the next open. POINTERS ONLY — the rows and the verbs are re-derived at
+    // that open (`GET /api/collections`, `GET /api/events/[id]/card`), so a reloaded card can
+    // never paint a set, or offer a verb, that stopped being true. Non-fatal by construction.
+    if (turn.collection || turn.event) {
+      try {
+        const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
+        const { collectionTurnComponent, eventTurnComponent } = await import('@/lib/present/pointer');
+        const roomKey = kind === 'entity'
+          ? id
+          : await roomKeyForItem(supabase, user.id,
+              kind === 'commitment' ? 'commitment' : kind === 'meeting' ? 'meeting' : 'inbox', id);
+        if (turn.collection) {
+          await writeRoomTurn(supabase, user.id, roomKey, {
+            role: 'system',
+            // The framing sentence is CODE's (arithmetic over the rows) — the card's own words.
+            text: turn.collection.spec.framing,
+            dedupeKey: `collection:${turn.collection.id}`,
+            component: collectionTurnComponent(turn.collection.id, turn.collection.spec),
+          });
+        } else if (turn.event) {
+          await writeRoomTurn(supabase, user.id, roomKey, {
+            role: 'system',
+            text: turn.say?.trim() || turn.event.spec.title,
+            // ONE CARD PER EVENT in a room: a second look at the same meeting UPDATES the standing
+            // card (its verbs are re-derived anyway) instead of stacking a near-identical twin.
+            dedupeKey: `event:${turn.event.spec.id}`,
+            component: eventTurnComponent(turn.event.spec),
+          });
+        }
+      } catch { /* the card is an enhancement — the answer stands without it */ }
+    }
+
     return NextResponse.json({
       ok: true,
       say: turn.say,
@@ -88,6 +125,10 @@ export async function POST(request: NextRequest) {
       ...(turn.artifact ? { artifact: turn.artifact } : {}),
       // THE ONE CREATION CARD (Aug 10): a drafted standing task reviews inline in the room too.
       ...(turn.workflowDraft ? { workflowDraft: turn.workflowDraft } : {}),
+      // THE COLLECTION / EVENT CARD (W4-C): the rail paints the served spec at once; the durable
+      // turn written above is what a reload re-reads. Same contract as the Home ask door.
+      ...(turn.collection ? { collection: turn.collection } : {}),
+      ...(turn.event ? { event: turn.event } : {}),
       ...(turn.options?.length ? { options: turn.options } : {}),
     });
   } catch (e) {

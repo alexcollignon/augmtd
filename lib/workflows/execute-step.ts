@@ -689,10 +689,14 @@ async function executeVerifyStep(
   );
   // Unparseable verdict JSON: the draft half is still the deliverable — never leak the sentinel
   // and its debris into what gets delivered; only the report degrades.
-  if (!parsed || typeof parsed !== 'object') return { text: body || raw, verdict: degraded };
-  // A model that emitted the verdict but no draft has told us nothing about the deliverable —
-  // the whole output is the safest text, and the verdict is not trustworthy as a report.
-  if (!body) return { text: raw, verdict: degraded };
+  // THE SENTINEL IS NEVER PART OF A DELIVERABLE (Sep 22, WAVE 0 — THE PRESENTATION LAW): `raw`
+  // still carries `===GATE_VERDICT===` and its JSON, and both fallbacks below used to ship it. The
+  // honest fallback is the PRE-GATE DRAFT — the deliverable as the producing step wrote it,
+  // uncorrected, which is exactly what a gate that told us nothing leaves standing. The verdict
+  // still degrades (reported:false), so the report never claims a pass it did not observe.
+  if (!parsed || typeof parsed !== 'object') return { text: body || draft, verdict: degraded };
+  // A model that emitted the verdict but no draft has told us nothing about the deliverable.
+  if (!body) return { text: draft, verdict: degraded };
 
   const allowedStepLabels = new Set(
     (ctx.stepChecks ?? []).map(c => clip(c?.stepLabel, 80)).filter(Boolean),
@@ -953,6 +957,16 @@ function getOutputLanguageName(code: string): string {
 // tools + per-user context) and falls back to the native inline call otherwise — so the caller never
 // has to know which path is live. Reused by the Home item-delegation route (`/api/items/delegate`).
 export async function executeAgentStep(step: AgentStep, ctx: StepContext): Promise<string> {
+  return (await executeAgentStepDetailed(step, ctx)).text;
+}
+
+/** What the producer KNOWS about its own completion. `complete` is the model's finish_reason read
+ *  literally — true when the completion ENDED (finish_reason 'stop'), false when the budget cut it,
+ *  undefined when the runtime hands back no receipt (the AgentOS bridge). Downstream floors that
+ *  otherwise GUESS at truncation take the receipt over their guess (see `looksMechanicallyTruncated`). */
+export interface AgentStepResult { text: string; complete?: boolean }
+
+export async function executeAgentStepDetailed(step: AgentStep, ctx: StepContext): Promise<AgentStepResult> {
   // Load agent
   const { data: agent, error } = await ctx.supabase
     .from('custom_agents')
@@ -986,14 +1000,16 @@ export async function executeAgentStep(step: AgentStep, ctx: StepContext): Promi
         `<workflow_task>\n${step.prompt}\n</workflow_task>`,
         guardrailFeedbackBlock(ctx),
       ].filter(Boolean).join('\n\n');
-      return await runWorkerStepViaAgentOS({
+      // No finish_reason rides back over the bridge — the receipt is honestly UNKNOWN here, and
+      // the downstream floors keep their own (structure-aware) guess.
+      return { text: await runWorkerStepViaAgentOS({
         workerRole: agentRow.worker_role,
         agentId: agentRow.id,
         userId: ctx.userId,
         message: stepMessage,
         sessionId: `wf-${ctx.workflowId ?? 'run'}-${agentRow.id}`,
         adminClient: ctx.supabase,
-      });
+      }) };
     } catch (err) {
       console.error('[execute-step] AgentOS agent step failed, falling back to inline:', err);
     }
@@ -1047,15 +1063,28 @@ export async function executeAgentStep(step: AgentStep, ctx: StepContext): Promi
     guardrailFeedbackBlock(ctx),
   ].filter(Boolean).join('\n\n');
 
-  const res = await aiCreate(resolved.client, {
+  // A PRODUCED DELIVERABLE IS NEVER SILENTLY CUT (Sep 21) — the budget doctrine the AI step already
+  // carries, applied to the coworker step: the completion's own finish_reason is read, and a budget
+  // cut earns ONE retry at a real ceiling before anything downstream sees the text. The receipt
+  // travels with the output so no later floor has to guess at what the model already told us.
+  const run = async (budget: number) => aiCreate(resolved.client, {
     model: resolved.model,
     messages: [
       { role: 'system', content: systemParts.join('\n\n') },
       { role: 'user',   content: userPrompt },
     ],
     temperature: 0.4,
-    max_tokens: 3000,
+    max_tokens: budget,
   });
-
-  return res.choices[0]?.message?.content?.trim() ?? '';
+  let res = await run(3000);
+  if (res.choices[0]?.finish_reason === 'length') {
+    console.warn(`[executeAgentStep] completion hit the budget (${resolved.model}) — retrying once at a larger ceiling`);
+    const wider = await run(8000).catch(() => null);
+    if (wider?.choices[0]?.message?.content?.trim()) res = wider;
+  }
+  const choice = res.choices[0];
+  return {
+    text: choice?.message?.content?.trim() ?? '',
+    complete: choice?.finish_reason ? choice.finish_reason !== 'length' : undefined,
+  };
 }

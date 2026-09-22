@@ -42,11 +42,36 @@ function parseSince(since: string): Date {
   return isNaN(d.getTime()) ? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) : d;
 }
 
-export async function executeGetMeetingContext(
+/** ONE READ, TWO RENDERINGS (Wave 1, Sep 22 — the collection card). `readMeetingContext` owns the
+ *  QUERIES and hands back both halves: the block written for the model, and the typed rows the
+ *  kit's `recordings` collection renders. The executor is a thin wrapper over it, so the card and
+ *  the model can never be looking at different meetings. */
+export type MeetingRow = {
+  id: string;
+  title: string;
+  start_time: string;
+  duration_minutes: number | null;
+  summary: string | null;
+  actionItems: string[];
+  attendees: Array<{ email: string; name?: string }>;
+  /** Already rendered in the USER's zone (code's output, never the model's arithmetic). */
+  dateLabel: string;
+};
+export type UpcomingEventRow = {
+  id: string;
+  title: string;
+  start_time: string;
+  end_time: string | null;
+  dateLabel: string;
+  timeLabel: string;
+  attendeeNames: string[];
+};
+
+export async function readMeetingContext(
   config: Record<string, unknown>,
   userId: string,
   supabase: SupabaseClient,
-): Promise<string> {
+): Promise<{ text: string; meetings: MeetingRow[]; upcoming: UpcomingEventRow[]; tz: string }> {
   const since          = parseSince((config.since as string) || '30d');
   const include        = (config.include as string) || 'summaries';
   const withPerson     = typeof config.with_person === 'string' ? config.with_person.toLowerCase().trim() : null;
@@ -95,8 +120,11 @@ export async function executeGetMeetingContext(
 
   meetings = meetings.slice(0, limit);
 
+  const meetingRows: MeetingRow[] = [];
+  const upcomingRows: UpcomingEventRow[] = [];
+
   if (meetings.length === 0 && !includeUpcoming) {
-    return 'No processed meetings found in the specified period.';
+    return { text: 'No processed meetings found in the specified period.', meetings: [], upcoming: [], tz };
   }
 
   if (meetings.length > 0) {
@@ -119,11 +147,11 @@ export async function executeGetMeetingContext(
         lines.push(`Summary: ${m.summary.trim().slice(0, 500)}`);
       }
 
-      if (wantNotes && m.notes_structured) {
-        const ns = m.notes_structured;
-        const actionItems: string[] = Array.isArray(ns.action_items)
-          ? ns.action_items.map((a: any) => (typeof a === 'string' ? a : a.text ?? JSON.stringify(a)))
-          : [];
+      const ns = m.notes_structured;
+      const actionItems: string[] = ns && Array.isArray(ns.action_items)
+        ? ns.action_items.map((a: any) => (typeof a === 'string' ? a : a.text ?? JSON.stringify(a)))
+        : [];
+      if (wantNotes && ns) {
         if (actionItems.length > 0) {
           lines.push(`Action items: ${actionItems.slice(0, 5).join(' · ')}`);
         }
@@ -131,6 +159,17 @@ export async function executeGetMeetingContext(
           lines.push(`Notes: ${ns.live_notes.trim().slice(0, 300)}`);
         }
       }
+
+      meetingRows.push({
+        id: m.id, title: m.title, start_time: m.start_time,
+        duration_minutes: m.duration_minutes ?? null,
+        summary: m.summary?.trim() || null,
+        // The action-item COUNT is a fact of the meeting, not of the `include` mode the model asked
+        // for — a card saying "2 action items" must not depend on which block the prompt wanted.
+        actionItems,
+        attendees: m.attendees ?? [],
+        dateLabel: date,
+      });
 
       parts.push(lines.join('\n'));
     }
@@ -152,20 +191,31 @@ export async function executeGetMeetingContext(
 
     if (upcoming && upcoming.length > 0) {
       parts.push(`\n## Upcoming meetings (next 7 days)\n`);
-      for (const ev of upcoming as Array<{ title: string; start_time: string; end_time: string; attendees?: Array<{ email: string; displayName?: string }> }>) {
+      for (const ev of upcoming as Array<{ id: string; title: string; start_time: string; end_time: string; attendees?: Array<{ email: string; displayName?: string }> }>) {
         const date = new Date(ev.start_time).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: tz });
         const time = new Date(ev.start_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: tz });
         const attendeeNames = (ev.attendees ?? [])
           .map(a => a.displayName ?? a.email)
-          .filter(n => n)
-          .join(', ');
-        const line = attendeeNames
-          ? `**${ev.title}** — ${date} ${time} · with ${attendeeNames}`
+          .filter((n): n is string => !!n);
+        const line = attendeeNames.length
+          ? `**${ev.title}** — ${date} ${time} · with ${attendeeNames.join(', ')}`
           : `**${ev.title}** — ${date} ${time}`;
+        upcomingRows.push({
+          id: String(ev.id), title: ev.title, start_time: ev.start_time, end_time: ev.end_time ?? null,
+          dateLabel: date, timeLabel: time, attendeeNames,
+        });
         parts.push(line);
       }
     }
   }
 
-  return parts.join('\n\n');
+  return { text: parts.join('\n\n'), meetings: meetingRows, upcoming: upcomingRows, tz };
+}
+
+export async function executeGetMeetingContext(
+  config: Record<string, unknown>,
+  userId: string,
+  supabase: SupabaseClient,
+): Promise<string> {
+  return (await readMeetingContext(config, userId, supabase)).text;
 }

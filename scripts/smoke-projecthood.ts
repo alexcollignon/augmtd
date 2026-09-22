@@ -76,7 +76,9 @@ const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
     check('F1 doctrine: lens sorts dead — ordering is the reasoned priority', !ag.includes('DoSort') && ag.includes('orderEntries') && !hv.includes('DoSortToggle value'));
     check('F2: the briefing prose block is out of the chat', !ha.includes('BriefingBlock briefing'));
     check('F4 doctrine: membership suggestions pass THE JUDGE', rv.includes('belongs') && rv.includes('aiCall'));
-    check('F4: room = calm first paint + disclosures + status ⋯', er.includes('Disclosure label="Tasks"') && er.includes("lifecycle('done')"));
+    // Re-pointed Sep 22: the inventory disclosures became the ONE TabBar (Tasks·Schedule·Meetings·…)
+    // in the Aug 2 room arc; the law (calm first paint · inventory behind a fold · lifecycle) holds.
+    check('F4: room = calm first paint + disclosures + status ⋯', /label: 'Tasks' \+/.test(er) && er.includes("lifecycle('done')"));
     check('F6 doctrine: prominence = the reasoned priority alone', pr.includes('const prominent = weight >= 40') && !pr.includes('quietDays ?? 99'));
   }
   {
@@ -204,16 +206,24 @@ const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
     readFileSync('components/entities/portfolio-view.tsx', 'utf8').includes('Merge into…'));
   // SUPERSEDED (P13): the Smaller-things stratum is gone; promotion = TRACK, offered where the
   // work actually is — the item's context strip ("connects to X · Track") and the portfolio accept.
-  check('S7→P13 structural: promotion is the tracked flip (strip surfaces the untracked relation; accept flips tracked in place)',
-    readFileSync('components/room/context-strip.tsx', 'utf8').includes("'Connects to'") &&
+  // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT): context-strip.tsx retired as unreachable. The
+  // untracked relation now surfaces in the item room's related rows, and the Track flip itself is
+  // in the ONE picker grammar (add-to-work-control) — both live, both asserted.
+  check('S7→P13 structural: promotion is the tracked flip (the room surfaces the untracked relation; accept flips tracked in place)',
+    readFileSync('components/home/item-detail.tsx', 'utf8').includes("'Connects to'") &&
+    readFileSync('components/entities/add-to-work-control.tsx', 'utf8').includes("action: 'track'") &&
     readFileSync('components/entities/portfolio-view.tsx', 'utf8').includes('tracked: true'));
   check('S2 structural: the room has + Add and Might belong here',
     readFileSync('components/entities/entity-room.tsx', 'utf8').includes('AddItemPicker') &&
     readFileSync('components/entities/entity-room.tsx', 'utf8').includes('Might belong here'));
-  // The founding affordance MOVED to the context strip (the one-room R-era: the strip is the only
-  // per-anchor variance) — the law (every item can found a project) holds, at its current home.
-  check('S1 structural: the room offers Start a project from this (context strip)',
-    readFileSync('components/room/context-strip.tsx', 'utf8').includes('Start a project from this'));
+  // The founding affordance MOVED to the context strip (the one-room R-era), and MOVED AGAIN when
+  // that strip was retired (W4-D, Sep 22 — THE RETIREMENT): it is the ONE picker grammar's
+  // "Start a new project…", which founds and files in one motion and is mounted by the item room.
+  // The law (every item can found a project, from the item) holds, at its current home.
+  check('S1 structural: the room offers to start a project from this item (the one picker grammar)',
+    readFileSync('components/entities/add-to-work-control.tsx', 'utf8').includes('Start a new project…') &&
+    readFileSync('components/entities/add-to-work-control.tsx', 'utf8').includes("'/api/entities'") &&
+    readFileSync('components/home/item-detail.tsx', 'utf8').includes('AddToProjectControl'));
 
   console.log('\n════ PROJECTHOOD GATES (P1–P4 + PHASE 2) ════');
   let pass = 0;

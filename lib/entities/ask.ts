@@ -10,8 +10,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { GROUND_EVIDENCE_RULE } from '@/lib/room/ground-evidence';
 import { REACH_CONTRACT } from '@/lib/converse/reach';
+// THE REF IS ITS TAG — the ONE ref grammar this lane shares with the Home ask and the renderer.
+import { resolveAskRefs } from '@/lib/home/ask-refs';
 
-export type EntityAskRef = { id: string; kind: 'item' | 'file'; label: string; href: string | null };
+/** `tag` is the grounding id the answer placed ([L3], [F1]…) — THE identity a chip resolves by. */
+export type EntityAskRef = { id: string; kind: 'item' | 'file'; label: string; href: string | null; tag?: string };
 export type EntityAskTurn = { role: 'user' | 'assistant'; text: string };
 
 export async function answerEntityQuestion(
@@ -56,9 +59,10 @@ export async function answerEntityQuestion(
   const res = await aiCall<{ answer?: string; refs?: string[] }>({
     userId, supabase, shape: deep ? { output: 'json', reasoning: 'deep' } : { output: 'json' }, prompt, maxTokens: 500, temperature: 0.2, source: 'brain_synthesis',
   });
-  const answer = String(res.json?.answer || '').trim() || "I don't have anything on that yet.";
-  const used = (res.json?.refs ?? []).map((t) => refs.get(t)).filter((r): r is EntityAskRef => !!r);
-  const seen = new Set<string>(); const outRefs: EntityAskRef[] = [];
-  for (const r of used) { if (!seen.has(r.id)) { seen.add(r.id); outRefs.push(r); } }
+  const raw = String(res.json?.answer || '').trim() || "I don't have anything on that yet.";
+  // THE REF IS ITS TAG (Sep 21 — the same class as the Home lane's wrong-object-door incident, and
+  // the same one resolver): the served set comes from the tags the answer PLACES, resolved by id;
+  // the model's declared order never decides which object a chip opens.
+  const { text: answer, refs: outRefs } = resolveAskRefs(raw, (tag) => refs.get(tag));
   return { answer, refs: outRefs };
 }

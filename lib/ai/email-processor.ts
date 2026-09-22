@@ -4,6 +4,7 @@ import { parseModelJSON } from '@/lib/ai/parse-json';
 import { SupabaseClient } from '@supabase/supabase-js';
 import type { UserContextProfile } from '@/lib/types/user-context';
 import { coerceUnderstanding, type ItemUnderstanding } from '@/lib/inbox/item-understanding';
+import { EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 
 /**
  * Calendar context for email processing
@@ -988,6 +989,11 @@ export async function computeUnderstanding(email: EmailData, supabase: SupabaseC
     (opts.facts?.length ? opts.facts.map((f) => `FACT: ${f}`).join('\n') + '\n\n' : '') +
     `You judge an email from the seat of the user, whose own address(es) are: ${mine.join(', ') || '(unknown)'}${email.user_name ? ` (name: ${email.user_name})` : ''}.\n` +
     `This email — To: ${(email.to_addresses ?? []).join(', ') || '(none)'} ; Cc: ${(email.cc_addresses ?? []).join(', ') || '(none)'}\n` +
+    // THE EXCERPT-HONESTY LAW: the body below is clipped — by this call (`truncateText`) and, on the
+    // refresh seam (lib/inbox/refresh-understanding.ts), by `clipForPrompt` before it ever gets here,
+    // so the marker can arrive inside it. The rule rides ABOVE the body, where the body's own tail
+    // can never carry it away: a mechanical cut is never evidence that the email was truncated.
+    `${EXCERPT_RULE}\n` +
     `From: ${email.from_name} <${email.from_address}>\nSubject: ${email.subject}\nBody:\n${truncateText(email.body, 2000)}\n\n` +
     `Reason (not keywords): is the user the one expected to respond, one of many on a group thread, or a bystander kept informed?\n` +
     `- role: "addressed" = the ask lands on the user specifically; "one_of_many" = a group/broad To or "Dear Team" where the user isn't singled out; "bystander" = only cc'd / kept informed.\n` +

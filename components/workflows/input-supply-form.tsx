@@ -49,6 +49,7 @@
 
 import { useRef, useEffect, useState } from 'react';
 import { CheckIcon, DocumentTextIcon, PaperClipIcon } from '@heroicons/react/24/outline';
+import { resumeRun } from '@/lib/deeds/gate-doors';
 
 /** Everything lib/attachments/text-extractor.ts can actually read (the allowlist-drift lesson). */
 const ATTACH_ACCEPT = '.pdf,.doc,.docx,.xlsx,.pptx,.csv,.txt';
@@ -126,31 +127,28 @@ export default function InputSupplyForm({
     const said = text.trim();
     if (!said && !doc) return;
     setBusy(true); setError(null);
-    try {
-      const r = await fetch(`/api/workflows/runs/${runId}/resume`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input: { ...(said ? { text: said } : {}), ...(doc ? { kbFileId: doc.id, pin } : {}) } }),
-      });
-      if (!r.ok) {
-        // The server's sentence is the honest one (too long · not indexed yet · already moved on).
-        const j = (await r.json().catch(() => null)) as { error?: string } | null;
-        setError(j?.error || 'That did not land — try again.');
-        return;
-      }
-      onSettled('supplied');
-    } catch { setError('That did not land — try again.'); } finally { setBusy(false); }
+    // THE ONE RESUME DOOR (W3-A, Sep 22): this used to be its own `fetch` — one of five hand-written
+    // callers of the same route. `resumeRun` (lib/deeds/gate-doors.ts) is the only one left, and it
+    // keeps the server's own sentence, which is the honest one here (too long · not indexed yet ·
+    // already moved on).
+    const res = await resumeRun(runId, {
+      approve: false,
+      input: { ...(said ? { text: said } : {}), ...(doc ? { kbFileId: doc.id, pin } : {}) },
+    });
+    setBusy(false);
+    if (res.ok) { onSettled('supplied'); return; }
+    if (res.reason === 'denied') { setError('This one isn’t yours to answer any more.'); return; }
+    setError(res.message || 'That did not land — try again.');
   };
 
   const holdBack = async () => {
     if (!runId || busy) return;
     setBusy(true); setError(null);
-    try {
-      const r = await fetch(`/api/workflows/runs/${runId}/resume`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approve: false }),
-      });
-      if (!r.ok) { setError('That did not land — try again.'); return; }
-      onSettled('held');
-    } catch { setError('That did not land — try again.'); } finally { setBusy(false); }
+    const res = await resumeRun(runId, { approve: false });
+    setBusy(false);
+    if (res.ok) { onSettled('held'); return; }
+    if (res.reason === 'denied') { setError('This one isn’t yours to answer any more.'); return; }
+    setError(res.message || 'That did not land — try again.');
   };
 
   // A caller that does not know its run yet says NOTHING rather than paint a form that can't post.

@@ -1,4 +1,10 @@
 import type { ReactNode } from 'react';
+import type { AskRowDoors } from './ask-rows';
+// THE TRACE'S VOCABULARY LIVES IN ONE PLACE (lib/work/trace.ts) — the kit renders its words, the
+// server persists its facts, and neither owns a second spelling of the shape.
+import type { TraceEntry } from '@/lib/work/trace';
+
+export type { TraceEntry };
 
 /**
  * ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -45,12 +51,34 @@ export interface ThreadAction {
  *   deliverable → prepared work · judged item · handoff-with-artifact ("Open → the stage")
  *   approval    → approval gate · guardrail hold · parked event-fired run · handoff decision
  *   input       → input station · engine ask (the ask carries its own answer door)
- *   routine     → scheduled workflow delivery, owned by a face
- *   frame       → the living deliverable, previewed inline
- *   proposal    → standing-task proposal (saying prepares, committing stays explicit)
+ *   frame       → THE LIVING DELIVERABLE, rendered in the thread through THE ONE FRAME RENDERER
+ *                 (components/frames/frame-card.tsx — one srcdoc sandbox, one opaque origin). The
+ *                 kit COMPOSES that renderer; it never draws a second iframe and never a second
+ *                 header. Open raises the side panel; full screen is one click further, from it.
+ *   proposal    → THE ROOM'S MOVE (W4-A, Sep 22): the single most consequential next thing, named
+ *                 by the responder and CODE-VALIDATED against the board before it may arrive here
+ *                 — with its secondary offers as UTTERANCES (clicks are literally words).
  *   bulk        → THE BULK DEED (attention-plan A7): a ledger class's natural verb, previewed with
  *                 its honest breakdown and committed through ONE door. The preview is a STORED
  *                 fact, so what the card counted is what the commit does.
+ *   collection  → THE ONE COLLECTION CARD (docs/component-map.md §6, Wave 1): the answer to "what
+ *                 workflows do I have" / "find the document about X" / "what's on tomorrow" is the
+ *                 user's OWN OBJECTS, as typed rows — name · status chip · one meta line · a door ·
+ *                 at most two row verbs. ONE card for every such set, on every surface; read-only
+ *                 wherever a verb makes no sense.
+ *   event       → THE EVENT CARD (docs/component-map.md §6, Wave 2): ONE calendar event as an
+ *                 object — when · who · where · the user's own standing — and THE VERBS ITS STATE
+ *                 PERMITS, served by the ladder in lib/present/event.ts. The kit never derives a
+ *                 verb and never reads a clock: it renders the permitted set, arms one at a time,
+ *                 and the second click is the approval (THE HUMAN-IN-THE-LOOP LAW).
+ *   decision    → THE JUDGED DECISION (docs/component-map.md §2 item 7, W3-C): a question with ≥2
+ *                 routes, each with its consequence, one of them marked as the recommended path.
+ *                 The choice is ARMED then CONFIRMED (the event card's two-step, one kind over) and
+ *                 the card settles in place with what was chosen.
+ *   forward     → THE PREPARED FORWARD (docs/component-map.md §2 item 8, W3-C): the one prepared
+ *                 verb that used to have no card and degraded to "Open →". Recipients (literal
+ *                 addresses only) · a note · the message being forwarded, folded, in the `source`
+ *                 kind's own rendering · Send armed, confirmed, then a receipt.
  *   doc         → THE REVIEW-FIRST DOC CARD (attention-plan D): a produced document arrives as a
  *                 HANDLE — glyph · title · type · pages · version · owner — and NEVER as the
  *                 document. "Docs can get big" is solved by never putting the doc in the thread:
@@ -58,10 +86,15 @@ export interface ThreadAction {
  *   custom      → THE CARD SLOT: a host mounts its own already-built rich component (email draft
  *                 card, decision card, frame card) through `node`, rather than the kit rebuilding
  *                 it. The escape hatch exists so ports are mounts, not rewrites.
+ *
+ * (`routine` was RETIRED on Sep 22 — W4-A, THE PREVIEW IS THE PRODUCT. A standing responsibility
+ *  is rendered by its standing-spec proposal card and by the `collection` kind's list of them; a
+ *  third drawing of it was a kind with no producer, which is a promise the preview made on the
+ *  product's behalf. Gate: smoke-threads T38.1, the inverse of T37.1.)
  */
 export type ThreadCardKind =
-  | 'deliverable' | 'approval' | 'input' | 'routine' | 'frame' | 'proposal' | 'invite' | 'email' | 'bulk' | 'doc'
-  | 'source' | 'custom';
+  | 'deliverable' | 'approval' | 'input' | 'frame' | 'proposal' | 'invite' | 'email' | 'bulk' | 'doc'
+  | 'source' | 'collection' | 'event' | 'decision' | 'forward' | 'custom';
 
 /** The icon tile on the compact card kinds — a shape, never a claim about a module. */
 export type ThreadCardIcon = 'mail' | 'document' | 'file' | 'calendar';
@@ -81,11 +114,50 @@ export interface DeliverableCard extends CardBase {
   onOpen?: () => void;
 }
 
+/**
+ * THE LIFE OF AN ANSWERABLE CARD (W3-A — docs/component-map.md §2a, Sep 22).
+ *
+ * The approval gate and the ask are the only two kinds whose whole existence is a QUESTION PUT TO
+ * THE READER, so they are the only two that need a lifecycle in the contract. Before this wave the
+ * kit could render exactly one moment of that life (the live question) while the eight hand-drawn
+ * copies each invented the rest — which is why the same deed read "Held back", "held back" and
+ * "Hold it back" on three surfaces.
+ *
+ *   open     the question stands, the verbs are live
+ *   busy     the reader's own click is in flight — the card stands down rather than moving twice
+ *   settled  it has been answered (here, or elsewhere): NO verbs at all, one quiet receipt line
+ *
+ * There is deliberately no `error` state: a failure is a LINE ON a card (`error`), never a state
+ * the card becomes — the question it was asking is still the question.
+ */
+export type AnswerableState = 'open' | 'busy' | 'settled';
+
 export interface ApprovalCard extends CardBase {
   kind: 'approval';
+  /** Defaults to 'open' — an older host that passes none renders the live question, as before. */
+  state?: AnswerableState;
   title: string;
-  /** The draft preview, in-card and bordered — a gate is answered where it is asked. */
+  /** The gate's own kind word ("Your approval" · "Wait on a person") — GATE_WORDS', never typed
+   *  here. Absent ⇒ no chip beside the title. */
+  gateWord?: string;
+  /** The quiet word standing where the verbs stood, once answered. The host composes it from the
+   *  ONE vocabulary (GATE_OUTCOME_WORDS); the kit never derives a word from a state. */
+  statusChip?: string;
+  /** The provenance line — what this decision belongs to ("From the workflow X · run of …"). */
+  meta?: string;
+  /** Where the run stands, and anything else that is CONTEXT rather than the object: the host
+   *  mounts the shared GateStandingLine here. */
+  standingNode?: ReactNode;
+  /** The draft preview, in-card and bordered — a gate is answered where it is asked. Plain text
+   *  only: markdown (the pilot's ranked tables) arrives through `previewNode`, where the host
+   *  mounts the shared GateObject and its ONE markdown renderer. The kit renders no markdown. */
   preview?: string;
+  previewNode?: ReactNode;
+  /** THE NOTE — one optional line, spoken into the run's thread WITH the decision. A gate whose
+   *  door cannot carry a note passes neither, and the field simply is not there. */
+  noteValue?: string;
+  onNote?: (v: string) => void;
+  notePlaceholder?: string;
   approveLabel?: string;
   onApprove?: () => void;
   openLabel?: string;
@@ -93,49 +165,119 @@ export interface ApprovalCard extends CardBase {
   /** Reject is QUIET by design: the destructive path never competes with the deed. */
   rejectLabel?: string;
   onReject?: () => void;
+  /** The settled state's ONE line. */
+  settledLine?: string;
+  /** An honest failure line above the verbs. Never a toast the thread cannot keep. */
+  error?: string;
+  /** Quiet, below the deed — the receipts door, context and never a competing action. */
+  footer?: ReactNode;
 }
 
 export interface InputCard extends CardBase {
   kind: 'input';
+  /** Defaults to 'open'. */
+  state?: AnswerableState;
   ask: string;
+  /** THE CONCRETE MISSING THINGS — the engine ask's judged labels, as quiet rows. The whole point
+   *  of an ask is WHAT is missing; a card that could only print the sentence was why every room
+   *  surface redrew this. The host mounts the shared AskRows through the kit's own render. */
+  items?: string[];
+  /** THE DOORS ON THE ROW (W4-B, Sep 22 — THE TYPE-IT DOOR). Index-aligned with `items`: each
+   *  missing thing may carry its own Type it · Attach · Point me to it, because a row's best
+   *  answer depends on what the row IS (an IBAN is typed; a signed addendum is attached). All
+   *  three always render where the host owns them; only the ORDER changes (lib/room/go-ahead.ts
+   *  `askItemShape`). With `rowDoors` the card-level chips below are absent — one deed, one door. */
+  rowDoors?: Array<AskRowDoors | null>;
+  /** The provenance line ("X stopped here and needs this from you · feeds …"). */
+  meta?: string;
+  statusChip?: string;
+  standingNode?: ReactNode;
+  /** WHAT HAS ALREADY ARRIVED — the situation this ask sits in (a station's folded trail). */
+  contextNode?: ReactNode;
+  /**
+   * THE STATION'S OWN DEED, MOUNTED WHOLE — the host puts the ONE shared supply form
+   * (components/workflows/input-supply-form.tsx) here. The kit never draws a paste box: a second
+   * one anywhere is a fork of that law. With a `supplyNode` the three chips below are absent — the
+   * form already carries paste, pin and attach, and offering both would be two doors to one deed.
+   */
+  supplyNode?: ReactNode;
+  /** The three answer doors. A door with NO handler does not render — an ask surface with no file
+   *  picker must not print "Pick a file" at a reader who cannot pick one. Their words are
+   *  overridable because the room's own paste door is a composer prefill and says so ("Point me to
+   *  it"); the kit still owns the defaults so nobody invents a fourth spelling. */
   onAttach?: () => void;
+  attachLabel?: string;
   onPaste?: () => void;
+  pasteLabel?: string;
   onPickFile?: () => void;
+  pickFileLabel?: string;
   /** The never-blocking door's words ("Go ahead without it →" by default) — an ask NEVER BLOCKS
    *  (the July law). WHETHER it renders is the host's call: an ask whose missing item IS the
    *  deliverable has nothing to proceed with, so the host omits `onProceed` (lib/room/go-ahead.ts,
    *  owner walk Sep 14). The kit renders the door it is given; it never decides. */
   proceedLabel?: string;
   onProceed?: () => void;
+  settledLine?: string;
+  error?: string;
 }
 
-export interface RoutineCard extends CardBase {
-  kind: 'routine';
-  title: string;
-  /** "Max · every Monday 08:00 · method →" */
-  meta?: string;
-  openLabel?: string;
-  onOpen?: () => void;
-}
-
+/**
+ * THE FRAME — a living deliverable, IN the thread (W4-A, Sep 22).
+ *
+ * THE ONE RENDERER LAW (frames plan law 2) is not negotiable and not duplicable: the frame's HTML
+ * only ever reaches the page through `components/frames/frame-card.tsx`'s srcdoc iframe under
+ * `sandbox="allow-scripts"` and an opaque origin. So this kind does not DRAW a frame — the host
+ * mounts that one renderer as `preview`, and the kit composes it.
+ *
+ * With a `preview` the renderer's own header is the card's header (it carries the title, the
+ * STRUCTURAL provenance chip and the Open door), so the kit adds no second one. Without a preview
+ * the card degrades to the handle idiom — title · meta · one door — never an empty preview box.
+ */
 export interface FrameCard extends CardBase {
   kind: 'frame';
   title: string;
   meta?: string;
-  /** The live mini-preview — the host mounts the ONE frame renderer here. */
+  /** The live render — the host mounts THE ONE frame renderer here. */
   preview?: ReactNode;
   openLabel?: string;
   onOpen?: () => void;
 }
 
+/**
+ * THE PROPOSAL — THE ROOM'S MOVE, as a card (W4-A, Sep 22; docs/component-map.md §2).
+ *
+ * The one responder (lib/room/brief.ts) emits `{brief, move, offers}`: ONE primary deed, model-
+ * picked and then CODE-VALIDATED against the room's board (an invented ref carries no door — the
+ * card renders the words and no click, never a dead link), plus offers that are UTTERANCES.
+ *
+ * THE OFFERS ARE WORDS, LITERALLY: an offer's `say` is sent through the room's ONE composer door,
+ * so a click enters the record as the reader's own turn. A chip that navigates is a different
+ * object and does not belong here.
+ *
+ * THE MOVE YIELDS (lib/room/render-plan.ts): when a decision is rendered, the card IS the CTA and
+ * the host does not seat this one at all. That stays the host's call; the kit renders what it is
+ * handed.
+ */
 export interface ProposalCard extends CardBase {
   kind: 'proposal';
-  title: string;
+  /** THE OBJECT the move is about, when the room has one ("Reply to the Q3 renewal"). Optional by
+   *  design: the commonest move has no object but itself, and its own words ARE the deed below —
+   *  printing them twice was the fork this card replaced. */
+  title?: string;
+  /** The quiet second line — the object it is about, or the CoS's offer when nothing is staged. */
   detail?: string;
+  /** THE DEED. With no handler the label still renders, as plain words: a move whose target the
+   *  board could not confirm is still true, it just has nowhere to go (no lying doors). */
   confirmLabel?: string;
   onConfirm?: () => void;
   dismissLabel?: string;
   onDismiss?: () => void;
+  /** THE SECONDARY OFFERS — each one a sentence the reader can say. */
+  offers?: Array<{ label: string; say: string }>;
+  /** Where an offer's words go: the host's own composer door. Absent ⇒ no offers render. */
+  onSay?: (say: string) => void;
+  /** The reader's own click is in flight — the card stands down rather than firing twice. */
+  busy?: boolean;
 }
 
 export interface CustomCard extends CardBase {
@@ -277,6 +419,20 @@ export interface EmailCard extends CardBase {
   /** "Thread →" — the right edge of the tab row. */
   threadLabel?: string;
   onOpenThread?: () => void;
+  /**
+   * THE FROM ROW (Sep 21 — the standalone lane). A reply to a message in one of the user's own
+   * threads leaves from that thread's own mailbox: the fact is settled and the row is absent. A
+   * STANDALONE draft — a pasted message, another mailbox — has to say which account sends it, and
+   * where the user holds several, let them choose.
+   *
+   * ONE option ⇒ `from` alone: a quiet statement, never a select with nothing to select. Several ⇒
+   * `fromOptions` + `onPickFrom`. A lane whose sender is not a question passes neither, and the row
+   * simply is not there — the card never grows chrome for a fact nobody has to decide.
+   */
+  from?: string;
+  fromOptions?: Array<{ id: string; label: string }>;
+  selectedFromId?: string;
+  onPickFrom?: (id: string) => void;
   to: string[];
   cc?: string[];
   bcc?: string[];
@@ -445,15 +601,277 @@ export interface DocCard extends CardBase {
   error?: string;
 }
 
+/**
+ * ONE ROW VERB of the collection card. At most TWO per row, and the KIT enforces that cap — a row
+ * is one calm line, never a toolbar. Like every affordance in this file: no handler ⇒ plain text.
+ *
+ * `confirm` is the two-step, IN PLACE: the verb swaps itself for "<confirm.label> · Cancel" on the
+ * first click and fires on the second. No modal, no native confirm() — a spend-or-send deed asks
+ * where it stands (the bulk deed's law, one kind over).
+ */
+export interface CollectionRowVerb {
+  id: string;
+  label: string;
+  onClick?: () => void;
+  /** 'primary' = the row's own deed · 'quiet' = the muted one (undo, the way out). */
+  tone?: 'primary' | 'quiet';
+  busy?: boolean;
+  confirm?: { label: string };
+}
+
+/**
+ * ONE ROW of the collection card — an object of the user's, as one line.
+ * Every string is SERVED or composed by the host: the kit reads no clock, counts nothing, and
+ * derives no verb (the host owns verbs, from the object's STATE — never from a label).
+ */
+export interface CollectionRow {
+  id: string;
+  title: string;
+  /** One short word + its tone ("paused", "draft", "indexed", "free"). */
+  status?: { word: string; tone: CollectionRowTone } | null;
+  /** ONE muted line, already joined by the server from known facts only. */
+  meta?: string | null;
+  /** A small face where one helps (the owning coworker). */
+  face?: { id: string; name: string } | null;
+  /** The row's door. Without it the title is a fact, not a link (no lying doors). */
+  onOpen?: () => void;
+  /** At most two; the renderer slices. */
+  verbs?: CollectionRowVerb[];
+  /** After a verb has settled: the word that stands where the deed stood ("paused"). Any verbs
+   *  handed in beside it are what SURVIVES the deed — the undo, and nothing else. */
+  receipt?: string | null;
+  /** One quiet line under the row. Never a toast the thread cannot keep. */
+  error?: string | null;
+  /** THE ROW OPENS IN PLACE (Wave 2): what the row's door raises UNDER it rather than away from
+   *  it — a calendar row's own event card. The kit gives it the seat and nothing else; the host
+   *  decides what it is and when it stands (one at a time is the host's rule, not the kit's). */
+  expanded?: ReactNode;
+}
+
+/** The tone of a row's status chip — semantic, never a colour name (mirrors lib/present/collection). */
+export type CollectionRowTone = 'active' | 'paused' | 'draft' | 'attention' | 'done' | 'neutral';
+
+/**
+ * THE COLLECTION CARD (docs/component-map.md §6 — "ONE COLLECTION CARD, not N bespoke lists").
+ *
+ * The answer to a question about a SET OF THE USER'S OWN OBJECTS is those objects. The framing
+ * sentence is the turn's own words (composed by code, above the card); this is the set.
+ *
+ *   the rows     name · status chip · one meta line · a door · at most two verbs
+ *   the fold     past `foldAfter` the tail folds behind the ONE expander idiom
+ *   `more`       what the server CAPPED — a cap is never silent
+ *   `emptyLine`  what stands where rows would ("No workflows yet.")
+ *
+ * ONE TYPE SCALE: hierarchy is spacing and weight, never a second font size per row.
+ */
+export interface CollectionCard extends CardBase {
+  kind: 'collection';
+  /** An optional header word for the set. Usually absent — the framing sentence is the turn's. */
+  title?: string;
+  rows: CollectionRow[];
+  /** "and 12 more →" — the served set's own cap, with a door where one exists. */
+  more?: { count: number; label?: string; onOpen?: () => void };
+  emptyLine?: string;
+  /** Defaults to COLLECTION_INLINE_ROWS (lib/present/collection) — ONE number, not two. */
+  foldAfter?: number;
+}
+
+/**
+ * ONE VERB of the event card — a single entry of the SERVED ladder (`spec.verbs`), already worded
+ * by the contract's own `EVENT_VERB_WORDS`. The kit chooses NOTHING here: it does not know which
+ * verbs an event permits, what order they belong in, or what a verb is called. It arms them.
+ *
+ * `consequence` is the one quiet line an IRREVERSIBLE verb wears under its armed button — handed
+ * over by the host from `IRREVERSIBLE_VERBS`, never inferred from a label.
+ */
+export interface EventCardVerb {
+  /** The contract's own verb string — the id the host posts to the deeds door. */
+  id: string;
+  /** `EVENT_VERB_WORDS[verb].label` — the resting word. */
+  label: string;
+  /** `EVENT_VERB_WORDS[verb].armed` — the word the confirming button wears ("Confirm decline"). */
+  armedLabel: string;
+  /** Irreversible only: "Everyone invited gets the update." Absent ⇒ nothing is printed. */
+  consequence?: string;
+  /** True for the verbs that take an editable one-line note (decline · cancel). */
+  notable?: boolean;
+  /** True for the verb that needs a new window — the armed step raises the in-card picker when the
+   *  host handed over no proposed window of its own. */
+  needsWindow?: boolean;
+  busy?: boolean;
+  /** THE SECOND CLICK IS THE DEED. The kit hands back what the user typed / picked; it composes no
+   *  ISO and reads no clock — the host turns a picked wall time into the deed's arguments. */
+  onConfirm?: (args: EventVerbArgs) => void;
+}
+
+/** What the card's armed step hands its host — the user's own words and their own pick. */
+export interface EventVerbArgs {
+  note?: string;
+  pick?: { date: string; time: string; durationMin: number };
+}
+
+/**
+ * THE EVENT CARD (docs/component-map.md §6, Wave 2 — "a single calendar event as an object card").
+ *
+ *   the head     title · day + time · who · where · ONE quiet standing chip
+ *   the verbs    EXACTLY `spec.verbs`, in the ladder's order, worded by the contract
+ *   the arming   a proposal arms one on first paint; any other verb arms on its FIRST click and
+ *                fires on the second. Escape or a click away disarms. One armed verb at a time.
+ *   the done     replaces the verb row entirely — a spent deed keeps no button
+ *   the quiet    with no verbs at all, one honest line ("This one's in the past.")
+ *
+ * PRESENTATIONAL, like every kind here: no fetch, no clock, no verb derivation, no ISO arithmetic.
+ */
+export interface EventCard extends CardBase {
+  kind: 'event';
+  title: string;
+  /** "Tue 23 Sep" — composed by the server in the user's zone. */
+  dayLabel?: string;
+  /** "14:00–15:00" or "all day". */
+  timeLabel?: string;
+  /** "with Sam, Jordan +2" — already joined and capped by the host. */
+  attendeesLine?: string;
+  location?: string | null;
+  /** The user's own standing, as ONE quiet word ("accepted" · "no reply yet" · "you organise"). */
+  standing?: string | null;
+  /** The permitted set, served. An empty array renders no verb row — never a disabled one. */
+  verbs?: EventCardVerb[];
+  /** The verb a PROPOSAL armed, if any — armed on the first paint, nothing else moved. */
+  armedVerbId?: string | null;
+  /** Reschedule armed BY A PROPOSAL: the new window's label, composed by code ("Thu 25 Sep ·
+   *  10:00–10:30"). Present ⇒ the picker stands down; the proposal already named the time. */
+  proposedLabel?: string | null;
+  /** The note a proposal prefilled for decline / cancel — the user edits it in place. */
+  note?: string | null;
+  /** The picker's starting values — THE EVENT'S OWN (never today, never a guess). */
+  pickerDefaults?: { date: string; time: string; durationMin: number };
+  /** The spent deed's word ("Declined" · "Moved to Thu 25 Sep · 10:00"). Replaces the verb row. */
+  done?: string | null;
+  /** What stands where verbs would when there are none ("This one's in the past."). */
+  quietLine?: string | null;
+  /** One quiet line under the card — an honest failure, never a toast the thread cannot keep. */
+  error?: string | null;
+}
+
+/**
+ * ONE ROUTE of the judged decision — a thing the reader could do, and what taking it COSTS.
+ *
+ * `consequence` is THE DECISION BRIEF's own trade-off line for this route (never a tone label and
+ * never composed here); `why` is the grounded reason the recommended one is recommended, and it
+ * rides WITH that option rather than as a block between the options and the way out (owner,
+ * Aug 12: a nine-line why block read as a lecture, not a card).
+ */
+export interface DecisionOption {
+  id: string;
+  label: string;
+  /** The route's trade-off, one line. Absent ⇒ nothing is printed. */
+  consequence?: string | null;
+  /** Recommended options only: the grounded why, already clipped by the host. */
+  why?: string | null;
+  /** THE HOST DECIDES WHAT MAY BE RECOMMENDED (the no-object rule) — the kit only marks it. */
+  recommended?: boolean;
+}
+
+/**
+ * THE DECISION CARD (docs/component-map.md §2 item 7 — the last interactive room card with no kit
+ * kind, converged in W3-C).
+ *
+ *   the question   the judge's one-line reason — why this is a decision at all
+ *   the object     THE ONE OBJECT CARD, mounted by the host: the ask and the thing asked about are
+ *                  on ONE surface (THE OPENING CONTRACT, clause 2). With nothing to show, one
+ *                  honest `quietLine` — and, by the host's own rule, nothing is recommended either.
+ *   the routes     numbered, each with its consequence; the recommended one marked
+ *   the arming     a click ARMS a route; the second click confirms it (the event card's two-step).
+ *                  A decision is the one room card whose deed spends real work downstream.
+ *   the way out    "Leave it with me" — always last, never something the reader has to hunt for
+ *   the settled    NO routes at all, one quiet line ("Chosen: …") — the answerable-card lifecycle
+ *
+ * PRESENTATIONAL like every kind here: it resolves nothing, recommends nothing of its own, and an
+ * option with no confirm handler is a fact rather than a door.
+ */
+export interface DecisionCard extends CardBase {
+  kind: 'decision';
+  /** Defaults to 'open'. `busy` stands the routes down; `settled` replaces them with one line. */
+  state?: AnswerableState;
+  question?: string | null;
+  /** The thing being decided, in the ONE object rendering. Mounted by the host, never authored here. */
+  objectNode?: ReactNode;
+  /** What stands where the object would when there is none — the host's own honest sentence. */
+  quietLine?: string | null;
+  options: DecisionOption[];
+  /** The armed route on first paint (a host that already knows the reader's intent). */
+  armedOptionId?: string | null;
+  /** The armed button's word ("Go with this"). */
+  confirmLabel?: string;
+  /** THE SECOND CLICK IS THE DEED — fires with the chosen option's LABEL, the word the deed is. */
+  onConfirm?: (label: string) => void;
+  dismissLabel?: string;
+  onDismiss?: () => void;
+  settledLine?: string;
+  /** An honest failure line. Never a toast the thread cannot keep. */
+  error?: string | null;
+}
+
+/**
+ * THE FORWARD CARD (docs/component-map.md §2 item 8 — "forward is the one prepared verb whose
+ * artifact carries no card; it degrades to 'Open →' beside reply and invite cards").
+ *
+ *   the recipients  LITERAL ADDRESSES ONLY (the prepare door evidences them; a model-authored
+ *                   address can never reach here), edited through THE ONE people editor the invite
+ *                   and email cards already mount — the kit draws no fourth recipients field.
+ *   the note        one optional line above the forwarded message
+ *   the source      THE MESSAGE BEING FORWARDED, folded, in the `source` kind's OWN rendering —
+ *                   mounted by the host. There is no second thread renderer here and no HTML lane:
+ *                   the body that actually goes out is composed server-side at the commit door.
+ *   the commit      Send ARMS, the second click fires (the irreversible-verb two-step), and a sent
+ *                   forward keeps only its receipt — a spent deed keeps no button.
+ *
+ * TRUTH BEFORE PRESENTATION: `needs_recipient` carries NO Send (the email card's law, one kind
+ * over) — a card that cannot mail never wears a Send button.
+ */
+export interface ForwardCard extends CardBase {
+  kind: 'forward';
+  state: 'ready' | 'needs_recipient' | 'sent';
+  /** The addresses as they will be mailed — never a name the card invented. */
+  to: string[];
+  /** The host's mount of THE ONE people editor. Without it the addresses are read-only chips. */
+  recipientsEditor?: ReactNode;
+  /** Quiet, at the right of the address row. Read-only: a forward's subject belongs to its thread. */
+  subject?: string;
+  note?: string;
+  onEditNote?: (v: string) => void;
+  notePlaceholder?: string;
+  /** The folded object — the host mounts the `source` card whole. */
+  sourceNode?: ReactNode;
+  /** The disclosure's own word ("The message you're forwarding"). Vocabulary, never speech. */
+  sourceLabel?: string;
+  sendLabel?: string;
+  /** The armed button's word ("Confirm forward"). */
+  armedLabel?: string;
+  onSend?: () => void;
+  cancelLabel?: string;
+  onCancel?: () => void;
+  /** The receipt word at the commit row's right edge, and the sent state's ONE line. */
+  receipt?: string;
+  error?: string;
+  busy?: boolean;
+  /** The prepare read is still in flight — the fields stand down rather than posing as empty. */
+  loading?: boolean;
+}
+
 export type ThreadCard =
-  | DeliverableCard | ApprovalCard | InputCard | RoutineCard
-  | FrameCard | ProposalCard | InviteCard | EmailCard | BulkCard | DocCard | SourceCard | CustomCard;
+  | DeliverableCard | ApprovalCard | InputCard
+  | FrameCard | ProposalCard | InviteCard | EmailCard | BulkCard | DocCard | SourceCard
+  | CollectionCard | EventCard | DecisionCard | ForwardCard | CustomCard;
 
 /** The full kind set, for hosts and gates that must enumerate the grammar. */
 export const THREAD_CARD_KINDS: ThreadCardKind[] = [
-  'deliverable', 'approval', 'input', 'routine', 'frame', 'proposal', 'invite', 'email', 'bulk', 'doc',
-  'source', 'custom',
+  'deliverable', 'approval', 'input', 'frame', 'proposal', 'invite', 'email', 'bulk', 'doc',
+  'source', 'collection', 'event', 'decision', 'forward', 'custom',
 ];
+
+/** At most TWO verbs on a row — a collection row is a line, not a toolbar. Enforced in the kit. */
+export const COLLECTION_ROW_MAX_VERBS = 2;
 
 /**
  * THE TIMELINE'S THREE GRAMMARS (structurally derived, the item-rail law, unchanged):
@@ -462,7 +880,31 @@ export const THREAD_CARD_KINDS: ThreadCardKind[] = [
  * Plus the two structural items: the pinned opening, and dividers (day markers + the fold handle).
  */
 export type ThreadItem =
-  | UserBubbleItem | ActorBubbleItem | EventLineItem | DividerItem | PinnedItem | WorkingLineItem;
+  | UserBubbleItem | ActorBubbleItem | EventLineItem | DividerItem | PinnedItem | WorkingLineItem
+  | TraceLineItem;
+
+/**
+ * THE TRACE LINE — the coworker's RECEIPT, in the event-line grammar (Sep 22).
+ *
+ * It is an ITEM, never a card. A card is a thing you can act on; a trace is a delta the reader
+ * glances at and moves past — exactly what "muted, system, no author, no affordance" describes. It
+ * renders through the timeline's own event-line piece (ONE muted-line renderer in the kit), and its
+ * WORDS are not the host's to write: the item carries the machine facts (`{tool, ok}`), and
+ * `traceLine` in lib/work/trace.ts composes the sentence. A host that could type the words could
+ * type a tool id into a sentence a person reads, which is the whole thing this layer prevents.
+ *
+ * TWO SHAPES, ONE ITEM: while the coworker works, one item PER CALL (its single entry has no `ok`,
+ * so it reads present tense — "Checking the calendar…"); once the answer lands, ONE item carrying
+ * every entry, folded ("Checked the calendar · searched Knowledge"). The host decides which; the
+ * kit renders whatever it is handed and invents nothing.
+ */
+export interface TraceLineItem {
+  type: 'trace_line';
+  id: string;
+  /** The turn's tool calls in EXECUTION order. `ok === undefined` = still running. An entry whose
+   *  tool has no wording contributes nothing; an item that composes to nothing renders nothing. */
+  entries: TraceEntry[];
+}
 
 /**
  * HEAVY WORK IN FLIGHT — a first-class timeline item, NOT a card (the constitution's grammar

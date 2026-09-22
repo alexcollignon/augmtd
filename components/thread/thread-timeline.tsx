@@ -4,7 +4,8 @@ import React, { useState } from 'react';
 import { cn } from '@/lib/cn';
 import { AvatarStatus } from './avatar-status';
 import { ThreadCards } from './thread-cards';
-import type { ActorBubbleItem, PinnedItem, ThreadAction, ThreadItem } from './types';
+import { traceLine } from '@/lib/work/trace';
+import type { ActorBubbleItem, EventLineItem, PinnedItem, ThreadAction, ThreadItem } from './types';
 
 /**
  * ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -96,6 +97,35 @@ function Pinned({ item }: { item: PinnedItem }) {
   );
 }
 
+/** ── THE MUTED LINE, ONCE ────────────────────────────────────────────────────────────────────
+ *  An event line has no author and no affordance — it is a delta, spoken once. Its refs are quiet
+ *  inline WORDS (law 8), never buttons; a handler-less ref is plain text.
+ *
+ *  THE SEPARATOR BELONGS TO A WORD (owner walk, Sep 19): an event line was rendering
+ *  "…Undo from Activity. ·" — a ref whose LABEL was empty still joined its " · ". A separator is
+ *  punctuation BETWEEN two things; with nothing after it, it is a typo the machine typed.
+ *  Blank-labelled refs are dropped HERE, in the ONE renderer, so no host can produce the artifact
+ *  by handing over a label it never had.
+ *
+ *  ⚠️ THE TRACE LINE IS THIS PIECE (Sep 22). The coworker's receipt is not a second muted-line
+ *  component with its own padding, colour and size — it is a delta like any other, so it renders
+ *  through here. A second renderer is how two greys and two type scales are born. */
+function EventLine({ text, refs }: { text: string; refs?: EventLineItem['refs'] }) {
+  return (
+    <div className="px-1 text-[12px] leading-[1.5] text-neutral-400">
+      {text}
+      {refs?.filter((r) => !!r.label?.trim()).map((r, ri) => (
+        <span key={ri}>
+          {' · '}
+          {r.onClick
+            ? <button type="button" onClick={r.onClick} className="aug-focus text-neutral-400 underline decoration-neutral-300 hover:text-indigo-600 transition-colors">{r.label}</button>
+            : <span>{r.label}</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function ActorBubble({ item, showHeader }: { item: ActorBubbleItem; showHeader: boolean }) {
   return (
     <div className="flex gap-2.5">
@@ -151,27 +181,19 @@ export function ThreadTimeline({ items, className }: ThreadTimelineProps) {
             );
           }
 
-          // An event line has no author and no affordance — it is a delta, spoken once. Its refs
-          // are quiet inline WORDS (law 8), never buttons; a handler-less ref is plain text.
-          // THE SEPARATOR BELONGS TO A WORD (owner walk, Sep 19): an event line was rendering
-          // "…Undo from Activity. ·" — a ref whose LABEL was empty still joined its " · ". A
-          // separator is punctuation BETWEEN two things; with nothing after it, it is a typo the
-          // machine typed. Blank-labelled refs are dropped here, in the ONE renderer, so no host
-          // can produce the artifact by handing over a label it never had.
+          // The muted EVENT LINE — one renderer (see `EventLine` above).
           case 'event_line':
-            return (
-              <div key={item.id} className="px-1 text-[12px] leading-[1.5] text-neutral-400">
-                {item.text}
-                {item.refs?.filter((r) => !!r.label?.trim()).map((r, ri) => (
-                  <span key={ri}>
-                    {' · '}
-                    {r.onClick
-                      ? <button type="button" onClick={r.onClick} className="aug-focus text-neutral-400 underline decoration-neutral-300 hover:text-indigo-600 transition-colors">{r.label}</button>
-                      : <span>{r.label}</span>}
-                  </span>
-                ))}
-              </div>
-            );
+            return <EventLine key={item.id} text={item.text} refs={item.refs} />;
+
+          // ── THE TRACE LINE — the coworker's receipt, in the event-line grammar ────────────────
+          // THE WORDS ARE NOT THE HOST'S: the item carries `{tool, ok}` and `traceLine` composes
+          // the sentence from the ONE wording table (lib/work/trace.ts). A tool with no word in
+          // that table contributes nothing, and an item that composes to nothing RENDERS NOTHING —
+          // never a raw tool id, never an empty muted row.
+          case 'trace_line': {
+            const line = traceLine(item.entries);
+            return line ? <EventLine key={item.id} text={line} /> : null;
+          }
 
           case 'user_bubble':
             return (

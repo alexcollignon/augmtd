@@ -32,3 +32,19 @@ export function clipForPrompt(text: string, max: number): string {
   }
   return `${cut.trim()} ${EXCERPT_MARK}`;
 }
+
+/** A LABEL IS NOT AN EXCERPT (Sep 21, found by the T2 replay). Titles, thread names and the
+ *  report-back's `Task: "…"` line are cut for DISPLAY, not for prompt budget — they carry no
+ *  marker (chrome inside a title reads as a defect) but they must still end at a word boundary.
+ *  A raw `.slice()` here produced `…'Last Week's Highlights' s`, and the coworker composing the
+ *  hand-back quoted OUR cut back at the user as evidence that the work had been truncated — the
+ *  excerpt-honesty law's own failure mode, arriving through the one seam the law never covered
+ *  because it isn't a prompt excerpt. Every label clip goes through here. */
+export function clipLabel(text: string, max: number): string {
+  const t = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, Math.max(1, max - 1));
+  const word = cut.lastIndexOf(' ');
+  const kept = word > max * 0.5 ? cut.slice(0, word) : cut;
+  return `${kept.replace(/[\s,;:—–-]+$/, '')}…`;
+}

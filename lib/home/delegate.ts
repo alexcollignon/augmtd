@@ -1,11 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { executeAgentStep } from '@/lib/workflows/execute-step';
+import { executeAgentStepDetailed } from '@/lib/workflows/execute-step';
 import { generateReportBack, fallbackReport, type ReportFacts } from '@/lib/workflows/report-back';
 import { getAIClient } from '@/lib/ai/factory';
 import type { AgentStep, StepOutput } from '@/lib/workflows/types';
 import type { ItemPlanKind, ItemPlanTask } from './item-plan';
 import { TYPED_OUTPUT_RULE } from '@/lib/workflows/typed-output';
-import { EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { EXCERPT_RULE, clipLabel } from '@/lib/utils/clip-for-prompt';
 import { readPool, writeDeliverable, renderPoolForContext, type Deliverable } from './deliverable-pool';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -114,10 +114,14 @@ export interface DelegateResult {
   /** ARTIFACTS-INTO-ORIGIN (Aug 9): substantial delegated production is materialized as a REAL
    *  document artifact on the delegation thread (same primitives as workflow runs) — the origin
    *  conversation renders its card and opens it, instead of pointing at a text wall elsewhere. */
-  artifact?: { id: string; title: string; threadId: string } | null;
+  /** THE TYPE IS STATED, NOT GUESSED (W4-C, Sep 22): `type` is the ONE production door's own
+   *  verdict for these bytes (`document` · `presentation` · `spreadsheet` · `frame`), carried up
+   *  so the card that renders it wears the right kind. The chat lane used to hard-code
+   *  "document" — a delegated FRAME arrived wearing a document glyph and the word "document". */
+  artifact?: { id: string; title: string; threadId: string; type?: string } | null;
   /** MULTI-DELIVERABLE: every file this delegation produced (a report AND a deck each get a
    *  card); `artifact` stays the first for callers that render one. */
-  artifacts?: Array<{ id: string; title: string; threadId: string }>;
+  artifacts?: Array<{ id: string; title: string; threadId: string; type?: string }>;
 }
 
 /**
@@ -234,12 +238,16 @@ export async function runDelegation(args: {
 
   // ── Run the coworker through the ONE worker entry point (flag-agnostic). ──
   const step: AgentStep = { type: 'agent', id: 'delegate', label: 'Delegated work', agent_id: worker.id, prompt };
-  let output = (await executeAgentStep(step, {
+  const produced = await executeAgentStepDetailed(step, {
     userId,
     supabase,
     previousOutputs,
-    workflowName: `Delegation: ${itemLabel}`.slice(0, 120),
-  })).trim();
+    workflowName: clipLabel(`Delegation: ${itemLabel}`, 120),
+  });
+  let output = produced.text.trim();
+  // THE PRODUCER'S RECEIPT travels with the work (Sep 21): the evaluator's truncation floor is a
+  // heuristic, and a heuristic may never overrule the completion's own finish_reason.
+  let sourceComplete = produced.complete;
 
   // ── THE EVALUATOR REVIEWS DELEGATED OUTPUT like every other artifact (promise fix): the same
   // `evaluateDeliverable` (incl. the deliverable-shape rule — deliberation/meta-monologue is not
@@ -254,15 +262,16 @@ export async function runDelegation(args: {
   let needsInput: string[] | null = null;
   try {
     const { evaluateDeliverable } = await import('@/lib/prepare/evaluate');
-    let review = await evaluateDeliverable(supabase, userId, { content: output, task: itemLabel, recipient: null, entityId: null, kind: 'deliverable' });
+    let review = await evaluateDeliverable(supabase, userId, { content: output, task: itemLabel, recipient: null, entityId: null, kind: 'deliverable', sourceComplete });
     if (review.verdict === 'revise' && review.objection) {
-      const retry = (await executeAgentStep(
+      const second = await executeAgentStepDetailed(
         { ...step, prompt: `${prompt}\n\nA REVIEWER REJECTED YOUR FIRST ATTEMPT:\n"${review.objection}"\nProduce the actual finished deliverable now — the thing itself, not commentary about it.` },
-        { userId, supabase, previousOutputs, workflowName: `Delegation (retry): ${itemLabel}`.slice(0, 120) },
-      ).catch(() => '')).trim();
+        { userId, supabase, previousOutputs, workflowName: clipLabel(`Delegation (retry): ${itemLabel}`, 120) },
+      ).catch(() => ({ text: '' } as { text: string; complete?: boolean }));
+      const retry = second.text.trim();
       if (retry) {
-        review = await evaluateDeliverable(supabase, userId, { content: retry, task: itemLabel, recipient: null, entityId: null, kind: 'deliverable' });
-        if (review.verdict !== 'revise') output = retry;
+        review = await evaluateDeliverable(supabase, userId, { content: retry, task: itemLabel, recipient: null, entityId: null, kind: 'deliverable', sourceComplete: second.complete });
+        if (review.verdict !== 'revise') { output = retry; sourceComplete = second.complete; }
       }
     }
     if (review.verdict === 'needs_input') { deliverableOk = false; needsInput = review.missing ?? []; }
@@ -393,7 +402,8 @@ export async function runDelegation(args: {
           .upload(path, m.bytes, { contentType: m.mime, upsert: true, cacheControl: '0' });
         if (upErr) throw new Error(`artifact upload failed: ${upErr.message}`);
         rows.push({ id: artifactId, title, type: m.type, generated_at: new Date().toISOString(), storage_path: path, content: m.content });
-        artifacts.push({ id: artifactId, title, threadId: artifactThread });
+        // The door's OWN verdict for these bytes rides with the id — the renderer never re-guesses.
+        artifacts.push({ id: artifactId, title, threadId: artifactThread, type: m.type });
       }
       const { data: th } = await supabase.from('work_threads').select('artifacts').eq('id', artifactThread).single();
       const existing = Array.isArray(th?.artifacts) ? (th!.artifacts as Array<{ id?: string }>) : [];

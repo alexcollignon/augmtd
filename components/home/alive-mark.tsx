@@ -32,6 +32,31 @@
 // v3 is preserved below, whole, behind `variant="v3"` — reverting the owner's call is a one-word
 // change at the seat, and nothing about the lifecycle differs between the two.
 //
+// ── 'eyes' · THE SEATED MARK (owner call, Sep 20 — THE CURRENT RENDER) ──────────────────────────
+// v4 up close: "looks like a spot on the screen." Two candidates answered it side by side in the
+// dev harness, and the owner picked 'eyes'. It is the DEFAULT now — the seat names no variant, so
+// the pick lives in one word here and every other renderer stays whole below it.
+// (Sep 21: the comparison is over and the harness mounts no candidates any more — no surface
+// anywhere passes `variant`. The alternates stay whole and remain reachable by that prop alone.)
+//
+// Why a pair of eyes and not a better orb: the behaviours that read as ALIVE are gaze and blinking,
+// and an orb can only imply them. What the eyes must never become is a character — there is no
+// brow, no mouth, no cartoon; the coworkers (Clara · Luca · Max) own the faces in this product, and
+// this mark is the unlabelled layer above them. Two lenses that look where you look is presence,
+// not a persona.
+//   · 'v5' · THE STRUCTURED ORB — v4's DNA with the three legibility faults corrected: a REAL EDGE
+//     (tight falloff, a third of the blur, plus a ~1px luminous rim), INTERNAL STRUCTURE (three
+//     drifting lobes clipped to the silhouette, under a high-contrast specular core), and a GAZE
+//     (the core eases toward the cursor, clamped to 0.35 R, idling back to a wander after 3s). It
+//     blinks every 4–8s (a ~185ms squash to 0.82 height, core dim, brightness rebound) and breathes
+//     at ±5.5% on the same 5.2s period — v4's ±3.5% was invisible at 40px.
+//   · 'eyes' · THE SEATED ONE — two indigo squircle LENSES with dark pupils, one specular highlight
+//     each, no outline, no brow, no mouth. The pupils track the same shared cursor fact, clipped to
+//     the lens; the blink is a real LID (scaleY about the eye's own centre) with an occasional
+//     double.
+// Both honour an optional `mood` channel ('calm' | 'working'): working breathes faster and brighter.
+// Nothing passes it today (the harness that demonstrated it is gone); the channel stays wired.
+//
 // ── v3 · THE HISTORY THAT LED HERE (kept so the retired renderer still explains itself) ─────────
 // THE MOTION IS THE SHAPE (third owner pass, Sep 15: "I'd like the animation to be more like
 // shapeshifting and not so much just turning. also make it slightly bigger as well"). A spin is
@@ -71,6 +96,14 @@
 //     noise octaves × 96 samples). v3 also ran ten draw calls, but over a 2,304-segment mesh:
 //     MEASURED 0.062 ms/frame. v4 is ~17× cheaper on the JS half and far inside the ~0.1 ms/frame
 //     budget this file has always held; what is left is ten small gradient fills in a 70px box.
+//   · v5 · TEN draw calls too — 1 body fill, 3 lobes, 1 core, 1 RIM STROKE, 4 motes — over the same
+//     96-sample silhouette, which it also reuses as a CLIP. MEASURED JS COST: 0.0041 ms/frame
+//     (median of three runs at size 70). The gaze costs one `performance.now()` per frame and, only
+//     while the cursor is actually moving, one `getBoundingClientRect()` at most every 0.33s — it
+//     is never read per frame, because a per-frame rect read is a layout.
+//   · 'eyes' · TEN draw calls — per eye: lens, pupil, two highlights, gloss. MEASURED JS COST:
+//     0.0004 ms/frame (no noise field in the frame path at all beyond the idle wander's two taps).
+//     Both are an order of magnitude inside the 0.02 ms/frame budget set for this round.
 //   · Both write into preallocated Float32Arrays only. No object, array or string is allocated in
 //     the frame path: the gradients, the blur strings, the noise permutation table, the colours and
 //     the index tables are all built ONCE (per variant, at effect scope or module scope).
@@ -85,7 +118,7 @@
 //   · IT SLEEPS WHEN UNWATCHED — the loop runs only while the tab is VISIBLE and the mark is
 //     actually IN VIEW (visibilitychange + IntersectionObserver); otherwise the rAF is cancelled
 //     outright, so a backgrounded or scrolled-past Home costs nothing.
-//   · ONE IMPLEMENTATION — the renderer is a PROP (`variant`, default 'v4'), never a second
+//   · ONE IMPLEMENTATION — the renderer is a PROP (`variant`, default 'eyes'), never a second
 //     component: one mount, one canvas, one rAF clock, one lifecycle, whichever form is drawn.
 //     The loading state is a PROP on this component (`loading`), never a
 //     second orb. While the brief loads the mark runs a little larger and more energetic; when
@@ -540,28 +573,562 @@ export function makeMeshDraw(ctx: CanvasRenderingContext2D, size: number) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE GAZE CHANNEL — ONE document listener for every mark on the page (owner walk, Sep 20).
+//
+// A mark that looks at you has to know where the cursor is, and a page may seat several marks (the
+// Home's one, plus whatever a harness mounts beside it). N listeners for one fact is N times the
+// work on the hottest event the browser emits, so the cursor is read ONCE into module state and the
+// painters SAMPLE it — they never subscribe to it themselves. The listener is attached when the
+// first mark that wants a gaze mounts and REMOVED when the last one unmounts: the count is the
+// whole lifecycle, so a route change can never leave a listener behind.
+//
+// `at` is a wall clock in seconds (performance.now/1000), NOT the painter's own `t`, because the
+// painters start their clocks at their own mounts and the idle test ("no cursor for 3s") has to be
+// the same fact for all of them. A device that never emits a pointermove simply stays idle for
+// ever, which is exactly the touch behaviour we want: pure wander, no gaze, no listener cost.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** Wall clock, seconds. One call per frame at most; allocation-free. */
+function nowSec() {
+  return (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+}
+
+/** THE ONE CURSOR FACT — written by the one listener, read by every painter. */
+const POINTER = { x: 0, y: 0, at: -1e9 };
+/** How long after the last pointermove the marks return to their idle wander. */
+const GAZE_IDLE_S = 3;
+let gazeSubs = 0;
+let gazeBound = false;
+function onGazeMove(e: PointerEvent) {
+  POINTER.x = e.clientX;
+  POINTER.y = e.clientY;
+  POINTER.at = nowSec();
+}
+/** Subscribe this mount to the shared cursor fact. Returns the unsubscribe — the LAST one out
+ *  detaches the listener, so N marks cost exactly one `pointermove` handler and zero when none. */
+function subscribeGaze(): () => void {
+  gazeSubs++;
+  if (!gazeBound && typeof document !== 'undefined') {
+    document.addEventListener('pointermove', onGazeMove, { passive: true });
+    gazeBound = true;
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    gazeSubs = Math.max(0, gazeSubs - 1);
+    if (gazeSubs === 0 && gazeBound && typeof document !== 'undefined') {
+      document.removeEventListener('pointermove', onGazeMove);
+      gazeBound = false;
+    }
+  };
+}
+
+/** THE BLINK — one envelope, shared by both gazing renderers so they blink with the same physiology
+ *  (a fast close, a slightly slower open, a brightness rebound as the lid clears). */
+const BLINK_MS = 0.185;
+const BLINK_MIN_GAP = 4;
+const BLINK_MAX_GAP = 8;
+/** The rebound: a short brightness bloom AFTER the lid opens, which is what sells it as a blink
+ *  rather than a dropped frame. */
+const BLINK_BLOOM_S = 0.3;
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// v5 · THE STRUCTURED ORB (owner walk, Sep 20: v4 up close "looks like a spot on the screen")
+//
+// v4's diagnosis was correct in kind and wrong in degree: it feathered EVERY layer, including the
+// silhouette, so at 28–48px the whole mark averaged into a smudge — a stain on the glass rather
+// than an object above the page. v5 keeps v4's DNA (a noise-displaced soft body, layered additive
+// light, nothing rotating) and fixes the three things that made it read as a spot:
+//
+//   · A REAL EDGE. The body is filled through a TIGHT radial falloff and painted with a blur of a
+//     third of v4's — enough to anti-alias the 96-gon, not enough to dissolve it — and a faint
+//     luminous RIM (~1px at DPR) is stroked along the same path, additively. An object has a lit
+//     edge; a stain does not. This is also the cheapest legibility there is: one stroke.
+//   · INTERNAL STRUCTURE. Three translucent LOBES drift inside the body on three different phase
+//     speeds, CLIPPED TO THE SILHOUETTE so the plasma never leaks past the rim (the clip is what
+//     lets the light be bright without softening the edge — v4 had to keep the light dim precisely
+//     because it had nothing holding it in). Above them sits a high-contrast specular core.
+//   · THE CORE LOOKS AT YOU. The core is the GAZE: it eases toward the cursor's direction with a
+//     lag, clamped to 35% of the body radius so it never reaches the skin, and returns to v4's idle
+//     wander (plus micro-saccades) when the cursor has been still for three seconds.
+//
+// …and IT BLINKS: every 4–8s the whole body squashes to ~0.82 of its height for ~185ms, the core
+// dims, and the light blooms as it rebounds. The breath is ±5.5% (v4's ±3.5% was invisible at 40px)
+// on the same 5.2s period.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** The three lobes: bearing, orbital pace, phase, reach — deterministic, from the same noise field
+ *  as everything else in this file, so the orb is identical on every load. */
+const NL = 3;
+const LOBE_SPD = new Float32Array([0.21, -0.17, 0.13]);
+const LOBE_PH = new Float32Array([0.4, 2.7, 5.1]);
+const LOBE_REACH = new Float32Array([0.46, 0.52, 0.38]);
+const LOBE_RISE = new Float32Array([0.29, 0.23, 0.35]); // the vertical pace, deliberately unequal
+
+/**
+ * Build v5's frame painter. Same contract as v4's — every gradient, blur string and table built
+ * HERE; the returned function allocates nothing except the throttled rect read the gaze needs
+ * (≤ 3/second, and only while the cursor is actually moving).
+ */
+export function makeStructuredOrbDraw(
+  ctx: CanvasRenderingContext2D,
+  size: number,
+  dpr: number,
+  host?: HTMLElement | null,
+) {
+  const cx = size / 2;
+  const cy = size / 2;
+  // Slightly smaller than v4's body: the rim and the motes need the room v4 spent on feathering.
+  const baseR = size * 0.325;
+
+  // THE BODY — a TIGHT falloff, and DEEPER than v4's. The outer stop is still opaque at 0.92, so
+  // the fill carries all the way to the path and the silhouette is the silhouette (v4's outer stop
+  // was 0.10 alpha, which is how the edge became a suggestion). The mid tones are deep indigo
+  // rather than v4's pale lilac for a second reason: every light above is composited ADDITIVELY, so
+  // a pale body leaves the lobes no headroom — they blow straight out to white and the plasma the
+  // orb is supposed to show disappears into a lamp.
+  const body = ctx.createRadialGradient(cx, cy, 0, cx, cy, baseR * 1.06);
+  body.addColorStop(0, 'rgba(104,104,238,0.97)');
+  body.addColorStop(0.42, 'rgba(88,72,226,0.96)');
+  body.addColorStop(0.78, 'rgba(72,62,208,0.95)');
+  body.addColorStop(1, 'rgba(55,46,174,0.92)');
+
+  // THE LOBES — three fields, built at the ORIGIN and moved by the canvas transform, composited
+  // additively INSIDE the clip. Blue, violet, a cool pale: the plasma read, never a palette.
+  const lobeR = size * 0.30;
+  const lobes = [
+    ctx.createRadialGradient(0, 0, 0, 0, 0, lobeR),
+    ctx.createRadialGradient(0, 0, 0, 0, 0, lobeR),
+    ctx.createRadialGradient(0, 0, 0, 0, 0, lobeR),
+  ];
+  lobes[0].addColorStop(0, 'rgba(46,96,255,0.78)');
+  lobes[0].addColorStop(1, 'rgba(46,96,255,0)');
+  lobes[1].addColorStop(0, 'rgba(178,112,255,0.72)');
+  lobes[1].addColorStop(1, 'rgba(178,112,255,0)');
+  lobes[2].addColorStop(0, 'rgba(120,186,255,0.52)');
+  lobes[2].addColorStop(1, 'rgba(120,186,255,0)');
+
+  // THE SPECULAR CORE — the bright middle, and the thing that looks at you. Higher contrast than
+  // v4's wandering core (0.85 against 0.44) because it is now the mark's focal point.
+  const coreR = size * 0.115;
+  const core = ctx.createRadialGradient(0, 0, 0, 0, 0, coreR);
+  core.addColorStop(0, 'rgba(234,239,255,0.5)');
+  core.addColorStop(0.36, 'rgba(190,204,255,0.2)');
+  core.addColorStop(1, 'rgba(199,210,254,0)');
+
+  // THE RIM — a pale line hugging the silhouette. Sized at the device pixel, never as a fraction of
+  // the mark: a rim that grows with the orb stops being a rim and becomes a ring.
+  const RIM = 'rgba(214,222,255,0.72)';
+  const rimW = Math.max(0.8, 1 / dpr + 0.35);
+
+  // THE BLURS — a third of v4's on the body (anti-alias, not feather), generous on the light.
+  const BLUR_BODY = `blur(${(size * 0.007).toFixed(2)}px)`;
+  const BLUR_LIGHT = `blur(${(size * 0.055).toFixed(2)}px)`;
+  const BLUR_RIM = `blur(${(size * 0.006).toFixed(2)}px)`;
+  const BLUR_MOTE = `blur(${(size * 0.02).toFixed(2)}px)`;
+
+  const at = (x: number, y: number) => ctx.setTransform(dpr, 0, 0, dpr, x * dpr, y * dpr);
+
+  // ── THE GAZE + THE BLINK STATE (per painter, never per frame) ─────────────────────────────────
+  let gx = 0;            // the eased core offset, in px from the centre
+  let gy = 0;
+  let rcx = 0;           // the host's centre in client coords, re-measured at most 3×/second
+  let rcy = 0;
+  let rectT = -1e9;
+  let lastT = -1;
+  let blinkAt = -1;      // NEVER TWO QUEUED — a blink is in flight only while this is ≥ 0
+  let bloomAt = -1;
+  let nextBlink = BLINK_MIN_GAP + Math.random() * (BLINK_MAX_GAP - BLINK_MIN_GAP);
+
+  return function drawStructuredOrb(t: number, energy: number, work = 0) {
+    ctx.clearRect(0, 0, size, size);
+    const dt = lastT < 0 ? 0.016 : Math.min(0.05, Math.max(0, t - lastT));
+    lastT = t;
+
+    // IT BLINKS — one envelope at a time, scheduled 4–8s apart. `blinkAt < 0` is the whole guard:
+    // a blink cannot be queued behind another, and a paused tab simply resumes on its own clock.
+    if (blinkAt < 0 && t >= nextBlink) {
+      blinkAt = t;
+      nextBlink = t + BLINK_MIN_GAP + Math.random() * (BLINK_MAX_GAP - BLINK_MIN_GAP);
+    }
+    let lid = 1;
+    if (blinkAt >= 0) {
+      const p = (t - blinkAt) / BLINK_MS;
+      if (p >= 1) { blinkAt = -1; bloomAt = t; }
+      else lid = 1 - 0.18 * Math.sin(Math.PI * p);
+    }
+    const bloom = bloomAt < 0 ? 0 : Math.max(0, 1 - (t - bloomAt) / BLINK_BLOOM_S);
+
+    // IT BREATHES — ±5.5%, visible at 40px, on the same 5.2s period. Working breathes faster and
+    // brighter; it is the same breath, not a second animation.
+    const breath = Math.sin((t / (BREATH_PERIOD / (1 + 0.55 * work))) * Math.PI * 2);
+    const R = baseR * (1 + 0.055 * breath + 0.05 * energy);
+    const gain = (0.93 + 0.07 * breath) * (1 + 0.24 * energy + 0.12 * work)
+      * (1 + 0.16 * bloom) * (0.86 + 0.14 * lid);
+
+    // THE MORPH IS THE LIFE — v4's three octaves, unchanged in kind. The blink squashes the whole
+    // body by scaling the y-offset: the silhouette itself flattens, so the light inside it flattens
+    // with it (the clip below is the same path).
+    const amp = (0.20 + 0.07 * energy + 0.04 * work)
+      * (1 + 0.30 * vnoise(t * 0.07 + 31.7, 5.2, 12.9));
+    const z1 = t * 0.155 + 11.0;
+    const z2 = t * 0.235 + 3.0;
+    const z3 = t * 0.085 + 21.0;
+    for (let i = 0; i < SAMPLES; i++) {
+      const c = SIL_C[i];
+      const s = SIL_S[i];
+      const n1 = vnoise(c * 1.35 + 5.1, s * 1.35 + 2.7, z1);
+      const n2 = vnoise(c * 2.90 + 1.3, s * 2.90 + 8.4, z2);
+      const n3 = vnoise(c * 0.70 + 14.2, s * 0.70 + 6.1, z3);
+      const rr = R * (1 + amp * (0.50 * n3 + 0.36 * n1 + 0.14 * n2));
+      SIL_X[i] = cx + c * rr;
+      SIL_Y[i] = cy + s * rr * lid;
+    }
+
+    // THE GAZE — the core eases toward the CURSOR'S DIRECTION, clamped inside the body. After
+    // GAZE_IDLE_S with no pointermove (or on a device that never sends one) the target falls back
+    // to v4's idle wander plus a micro-saccade, so the orb is never staring at a cursor that left.
+    const clock = nowSec();
+    const gazing = clock - POINTER.at < GAZE_IDLE_S;
+    let tx: number;
+    let ty: number;
+    if (gazing && host) {
+      // ≤ 3 reads/second, and only while the cursor is live: a per-frame rect read is a layout.
+      if (t - rectT > 0.33) {
+        const r = host.getBoundingClientRect();
+        rcx = r.left + r.width / 2;
+        rcy = r.top + r.height / 2;
+        rectT = t;
+      }
+      const dx = POINTER.x - rcx;
+      const dy = POINTER.y - rcy;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      // Near the mark the gaze is gentle, far away it is fully committed — a linear ramp over a
+      // couple of mark-widths, then clamped. THE CORE NEVER LEAVES THE BODY: 0.35 R, always.
+      const pull = d < 0.0001 ? 0 : Math.min(1, d / (size * 2.2)) * 0.35 * R;
+      tx = (dx / (d || 1)) * pull;
+      ty = (dy / (d || 1)) * pull;
+    } else {
+      tx = Math.cos(t * 0.11 + 5.0) * R * 0.26 + vnoise(t * 0.9, 17.3, 2.2) * R * 0.05;
+      ty = Math.sin(t * 0.14 + 0.6) * R * 0.22 + vnoise(t * 0.9, 4.1, 8.8) * R * 0.05;
+    }
+    // Exponential smoothing — the LAG is the life. Fast enough to feel answered, slow enough that
+    // the core never snaps (which would read as a cursor-follower widget, not a gaze).
+    const k = Math.min(1, dt * (gazing ? 3.4 : 1.6));
+    gx += (tx - gx) * k;
+    gy += (ty - gy) * k;
+
+    // 1 · THE BODY — one path, one fill, barely blurred: THE EDGE IS THE POINT.
+    ctx.filter = BLUR_BODY;
+    ctx.globalAlpha = Math.min(1, gain);
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.moveTo(SIL_X[0], SIL_Y[0]);
+    for (let i = 1; i < SAMPLES; i++) ctx.lineTo(SIL_X[i], SIL_Y[i]);
+    ctx.closePath();
+    ctx.fill();
+
+    // 2 · THE LIGHT, CLIPPED TO THE BODY. The clip is what lets the lobes be bright — nothing can
+    // spill past the rim, so the internal contrast costs the silhouette nothing.
+    ctx.save();
+    ctx.clip();
+    ctx.filter = BLUR_LIGHT;
+    ctx.globalCompositeOperation = 'lighter';
+    const drift = 1 + 0.4 * energy + 0.3 * work;
+    for (let l = 0; l < NL; l++) {
+      ctx.globalAlpha = Math.min(1, 0.8 * gain);
+      ctx.fillStyle = lobes[l];
+      at(
+        cx + Math.cos(t * LOBE_SPD[l] * drift + LOBE_PH[l]) * R * LOBE_REACH[l],
+        cy + Math.sin(t * LOBE_RISE[l] * drift + LOBE_PH[l] * 1.7) * R * LOBE_REACH[l] * 0.8 * lid,
+      );
+      ctx.fillRect(-lobeR, -lobeR, lobeR * 2, lobeR * 2);
+    }
+    // THE CORE, where the gaze landed. It dims through the blink and blooms as the lid clears.
+    ctx.globalAlpha = Math.min(1, gain * (0.55 + 0.45 * lid) * (1 + 0.3 * bloom));
+    ctx.fillStyle = core;
+    at(cx + gx, cy + gy * lid);
+    ctx.fillRect(-coreR, -coreR, coreR * 2, coreR * 2);
+    ctx.restore();
+
+    // 3 · THE RIM — a faint lit edge along the SAME path. One stroke; it is what turns the body
+    // into an object floating above the page instead of a mark printed on it.
+    ctx.filter = BLUR_RIM;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = Math.min(1, 0.85 * gain);
+    ctx.strokeStyle = RIM;
+    ctx.lineWidth = rimW;
+    ctx.stroke();
+
+    // 4 · MICRO-LIFE — v4's absorbed motes, thinned to four and kept outside the rim.
+    ctx.filter = BLUR_MOTE;
+    ctx.fillStyle = MOTE_RGB;
+    for (let m = 0; m < 4; m++) {
+      const u = (t * MOTE_SPD[m] + MOTE_PH[m]) % 1;
+      const a = MOTE_A[m] + t * 0.045;
+      const rr = R * (1.42 - 0.40 * u);
+      const alpha = Math.sin(Math.PI * u) * 0.36 * gain;
+      if (alpha <= 0.004) continue;
+      ctx.globalAlpha = Math.min(1, alpha);
+      const px = cx + Math.cos(a) * rr;
+      const py = cy + Math.sin(a) * rr * lid;
+      const dot = MOTE_SZ[m] * size * 0.016;
+      ctx.beginPath();
+      ctx.moveTo(px + dot, py);
+      ctx.arc(px, py, dot, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.filter = 'none';
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// 'eyes' · THE CHALLENGER (owner walk, Sep 20: "or literal eyes — not an emoji — that follow the
+// mouse and blink")
+//
+// The honest version of the idea, not the clip-art one. NO face: there is no head, no brow, no
+// mouth, no outline and no white sclera — two soft indigo LENSES on the mark's own footprint, each
+// carrying a dark pupil and a single specular highlight, lit top-down. What it borrows from a face
+// is only the two things that actually read as attention: WHERE IT IS LOOKING, and THE BLINK.
+//
+//   · THE LENS is a squircle (|cos|^0.78 — a touch squarer than an ellipse, far softer than a rounded rect),
+//     built once as a unit table and scaled per eye, so the proportions are one number to tune.
+//   · THE PUPILS TRACK, sharing the one gaze channel above with v5: eased toward the cursor,
+//     clamped so the pupil can never touch the lens wall (a pupil at the rim reads as a cartoon
+//     eye rolling). Idle → a slow wander on the noise field, which is what a person's eyes do when
+//     they are thinking rather than watching.
+//   · THE BLINK is a LID, not a fade: the lens scales about its own centre (scaleY → 0.06) so the
+//     shape collapses into a lid line and opens again, with an occasional DOUBLE blink — the single
+//     most human detail available for the price of one boolean.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** The unit lens, built once: a squircle, sampled at 48 points. */
+const LENS_N = 48;
+const LENS_X = new Float32Array(LENS_N);
+const LENS_Y = new Float32Array(LENS_N);
+for (let i = 0; i < LENS_N; i++) {
+  const a = (i / LENS_N) * Math.PI * 2;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  LENS_X[i] = Math.sign(c) * Math.pow(Math.abs(c), 0.78);
+  LENS_Y[i] = Math.sign(s) * Math.pow(Math.abs(s), 0.78);
+}
+
+/** Build the eyes painter. Same contract: gradients and tables once, nothing allocated per frame
+ *  beyond the same throttled rect read the gaze needs. */
+export function makeEyesDraw(
+  ctx: CanvasRenderingContext2D,
+  size: number,
+  dpr: number,
+  host?: HTMLElement | null,
+) {
+  const cy = size / 2;
+  // PROPORTIONS — the whole design is these five numbers. A tall-ish lens (h > w) reads as an eye;
+  // a wide one reads as a visor. The pair sits slightly above centre, where a face carries them.
+  const halfW = size * 0.195;
+  const halfH = size * 0.255;
+  const gap = size * 0.225;             // half the distance between the two centres
+  const eyeY = size * 0.485;
+  const pupilR = size * 0.105;
+  // THE PUPIL NEVER TOUCHES THE WALL — its travel is bounded by the lens minus the pupil minus a
+  // margin, per axis, so the tracking stays inside the form at any extreme.
+  const travelX = Math.max(0, halfW - pupilR - size * 0.022);
+  const travelY = Math.max(0, halfH - pupilR - size * 0.05);
+
+  // THE LENS — a cool top-down gradient in the app's indigo, built at the origin and moved by the
+  // transform (never rebuilt). Pale at the top, deeper at the bottom: one light source, above.
+  const lens = ctx.createLinearGradient(0, -halfH, 0, halfH);
+  lens.addColorStop(0, 'rgba(238,241,255,0.99)');
+  lens.addColorStop(0.46, 'rgba(196,205,252,0.98)');
+  lens.addColorStop(0.86, 'rgba(146,157,241,0.97)');
+  lens.addColorStop(1, 'rgba(110,116,222,0.96)');
+  // THE GLOSS — a soft bright field in the upper third (built OFF-CENTRE, at the light's own
+  // position, so the transform that places the eye also places the highlight). It is what keeps
+  // the lens from reading flat.
+  const glossR = halfW * 1.25;
+  const glossY = -halfH * 0.5;
+  const gloss = ctx.createRadialGradient(0, glossY, 0, 0, glossY, glossR);
+  gloss.addColorStop(0, 'rgba(255,255,255,0.5)');
+  gloss.addColorStop(1, 'rgba(255,255,255,0)');
+  // THE PUPIL — deep indigo, never black: black on indigo is a sticker, a dark tint is a material.
+  const pupil = ctx.createRadialGradient(0, 0, 0, 0, 0, pupilR);
+  pupil.addColorStop(0, 'rgba(27,24,66,0.99)');
+  pupil.addColorStop(0.62, 'rgba(42,38,110,0.98)');
+  pupil.addColorStop(0.93, 'rgba(67,56,202,0.9)');
+  pupil.addColorStop(1, 'rgba(79,70,229,0.28)');
+
+  const BLUR_SOFT = `blur(${(size * 0.008).toFixed(2)}px)`;
+  const BLUR_GLOSS = `blur(${(size * 0.035).toFixed(2)}px)`;
+
+  /** Place the origin at (x, y) with an independent vertical scale — the LID. */
+  const at = (x: number, y: number, sy: number) =>
+    ctx.setTransform(dpr, 0, 0, dpr * sy, x * dpr, y * dpr);
+
+  /** The unit lens path at the current transform, scaled to (w, h). */
+  const lensPath = (w: number, h: number) => {
+    ctx.beginPath();
+    ctx.moveTo(LENS_X[0] * w, LENS_Y[0] * h);
+    for (let i = 1; i < LENS_N; i++) ctx.lineTo(LENS_X[i] * w, LENS_Y[i] * h);
+    ctx.closePath();
+  };
+
+  let gx = 0;
+  let gy = 0;
+  let rcx = 0;
+  let rcy = 0;
+  let rectT = -1e9;
+  let lastT = -1;
+  let blinkAt = -1;
+  let doubleQueued = false;
+  let nextBlink = BLINK_MIN_GAP + Math.random() * (BLINK_MAX_GAP - BLINK_MIN_GAP);
+
+  return function drawEyes(t: number, energy: number, work = 0) {
+    ctx.clearRect(0, 0, size, size);
+    const dt = lastT < 0 ? 0.016 : Math.min(0.05, Math.max(0, t - lastT));
+    lastT = t;
+
+    // THE BLINK, with the occasional DOUBLE — the second is scheduled only as the first completes,
+    // so there is still never more than one envelope in flight.
+    if (blinkAt < 0 && t >= nextBlink) {
+      blinkAt = t;
+      if (doubleQueued) { doubleQueued = false; }
+      else { doubleQueued = Math.random() < 0.28; }
+      nextBlink = doubleQueued
+        ? t + BLINK_MS + 0.11
+        : t + BLINK_MIN_GAP + Math.random() * (BLINK_MAX_GAP - BLINK_MIN_GAP);
+    }
+    let lid = 1;
+    if (blinkAt >= 0) {
+      const p = (t - blinkAt) / BLINK_MS;
+      if (p >= 1) blinkAt = -1;
+      // A fast close and a slower open — a symmetric sine blinks like a shutter, not a lid.
+      else lid = 1 - 0.94 * (p < 0.42 ? Math.sin((p / 0.42) * Math.PI * 0.5) : Math.cos(((p - 0.42) / 0.58) * Math.PI * 0.5));
+    }
+    if (lid < 0.06) lid = 0.06;
+
+    // THE GAZE — the same channel v5 uses, the same idle fallback, clamped to the lens instead of
+    // to a body radius.
+    const clock = nowSec();
+    const gazing = clock - POINTER.at < GAZE_IDLE_S;
+    let tx: number;
+    let ty: number;
+    if (gazing && host) {
+      if (t - rectT > 0.33) {
+        const r = host.getBoundingClientRect();
+        rcx = r.left + r.width / 2;
+        rcy = r.top + r.height / 2;
+        rectT = t;
+      }
+      const dx = POINTER.x - rcx;
+      const dy = POINTER.y - rcy;
+      const d = Math.sqrt(dx * dx + dy * dy) || 1;
+      const pull = Math.min(1, d / (size * 1.8));
+      tx = (dx / d) * travelX * pull;
+      ty = (dy / d) * travelY * pull;
+    } else {
+      // Idle: a slow, uneven wander — never a lissajous, which the eye reads as a machine.
+      tx = vnoise(t * 0.19, 3.7, 1.1) * travelX * 0.7;
+      ty = vnoise(t * 0.16, 9.2, 6.4) * travelY * 0.6;
+    }
+    const k = Math.min(1, dt * (gazing ? 6.5 : 1.8));
+    gx += (tx - gx) * k;
+    gy += (ty - gy) * k;
+
+    // A breath, kept to a whisper: the pair swells ~2% so the mark is alive even while it stares.
+    const breath = Math.sin((t / (BREATH_PERIOD / (1 + 0.55 * work))) * Math.PI * 2);
+    const sw = 1 + 0.02 * breath + 0.035 * energy;
+    const w = halfW * sw;
+    const h = halfH * sw;
+    const alpha = Math.min(1, (0.95 + 0.05 * breath) * (1 + 0.1 * work));
+
+    for (let e = 0; e < 2; e++) {
+      const ex = size / 2 + (e === 0 ? -gap : gap);
+      at(ex, eyeY, lid);
+
+      // 1 · THE LENS
+      ctx.filter = BLUR_SOFT;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = lens;
+      lensPath(w, h);
+      ctx.fill();
+
+      // 2 · THE PUPIL, clipped to the lens so an extreme gaze crops against the wall rather than
+      //     riding over it — which is exactly what a real pupil does.
+      ctx.save();
+      ctx.clip();
+      ctx.filter = 'none';
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = pupil;
+      ctx.beginPath();
+      ctx.arc(gx, gy, pupilR, 0, Math.PI * 2);
+      ctx.fill();
+      // 3 · THE HIGHLIGHT — one bright bead up-left and one faint bead down-right. Fixed to the
+      //     LIGHT, not to the pupil's travel, which is what makes the pupil read as wet and round.
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.beginPath();
+      ctx.arc(gx - pupilR * 0.34, gy - pupilR * 0.38, pupilR * 0.26, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = alpha * 0.3;
+      ctx.beginPath();
+      ctx.arc(gx + pupilR * 0.36, gy + pupilR * 0.42, pupilR * 0.14, 0, Math.PI * 2);
+      ctx.fill();
+      // 4 · THE GLOSS — the lens's own top light, over the pupil, inside the same clip.
+      ctx.filter = BLUR_GLOSS;
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = alpha * 0.5;
+      ctx.fillStyle = gloss;
+      ctx.fillRect(-glossR, glossY - glossR, glossR * 2, glossR * 2);
+      ctx.restore();
+    }
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.filter = 'none';
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE ONE COMPONENT — one mount, one canvas, one rAF clock, one lifecycle, whichever form is drawn.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-/** The renderer. 'v4' is the soft body (the owner's Sep 18 call); 'v3' is the retired mesh. */
-export type AliveMarkVariant = 'v4' | 'v3';
+/** The renderer. 'eyes' is the SEAT (owner call, Sep 20) and the default; 'v5' is the structured,
+ *  gazing, blinking orb; 'v4' is the soft body it grew from; 'v3' is the retired mesh. The three
+ *  alternates stay whole and are reachable ONLY by passing this prop — nothing mounts them. */
+export type AliveMarkVariant = 'v4' | 'v3' | 'v5' | 'eyes';
+
+/** What the mark is doing. A CHANNEL, not a claim: 'working' breathes faster and brighter, and
+ *  nothing wires it yet — the harness that demonstrated it is gone; the channel stays. */
+export type AliveMarkMood = 'calm' | 'working';
+
+/** The painter contract every variant satisfies. The third argument is optional, so the two
+ *  renderers that ignore it (v4, v3) assign to this type unchanged. */
+type MarkDraw = (t: number, energy: number, work?: number) => void;
 
 /** The energy carried ACROSS the skeleton→page remount, so the landing eases instead of cutting. */
 let carriedEnergy = 0;
 
 /** The abstract living mark. Purely decorative — `aria-hidden`, never a control, never a claim. */
-export function AliveMark({ size = 70, loading = false, variant = 'v4', className = '' }: {
+export function AliveMark({ size = 70, loading = false, variant = 'eyes', mood = 'calm', className = '' }: {
   size?: number;
   /** The brief is still loading → the mark runs larger and more energetic, then eases to rest. */
   loading?: boolean;
   /** THE RENDER, by name. Defaults to the soft body; 'v3' is the retired mesh, EXPLICIT ONLY. */
   variant?: AliveMarkVariant;
+  /** THE STATE CHANNEL — 'working' breathes faster and brighter. Honoured by 'v5' and 'eyes'. */
+  mood?: AliveMarkMood;
   className?: string;
 }) {
   const hostRef = useRef<HTMLSpanElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const loadingRef = useRef(loading);
   loadingRef.current = loading;
+  const moodRef = useRef(mood);
+  moodRef.current = mood;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -577,18 +1144,25 @@ export function AliveMark({ size = 70, loading = false, variant = 'v4', classNam
     ctx.scale(dpr, dpr);
 
     // ONE painter, chosen once, outside the frame path.
-    const draw = variant === 'v3' ? makeMeshDraw(ctx, size) : makeSoftBodyDraw(ctx, size, dpr);
+    const draw: MarkDraw = variant === 'v5' ? makeStructuredOrbDraw(ctx, size, dpr, host)
+      : variant === 'eyes' ? makeEyesDraw(ctx, size, dpr, host)
+      : variant === 'v3' ? makeMeshDraw(ctx, size) : makeSoftBodyDraw(ctx, size, dpr);
 
-    // MOTION IS A REQUEST — one static frame, and the loop is never started.
+    // MOTION IS A REQUEST — one static frame, and the loop is never started. No gaze listener is
+    // subscribed either: a still mark has nothing to follow.
     const reduced = typeof window !== 'undefined' && window.matchMedia
       ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
       : false;
     if (reduced) { draw(0, loadingRef.current ? 1 : 0); return; }
 
+    // THE GAZE CHANNEL — subscribed only by the renderers that look at you, released on unmount.
+    const unsubscribeGaze = variant === 'v5' || variant === 'eyes' ? subscribeGaze() : null;
+
     let raf = 0;
     let t = 0;
     let last = 0;
     let energy = carriedEnergy;
+    let work = moodRef.current === 'working' ? 1 : 0;
     let visible = typeof document === 'undefined' || document.visibilityState !== 'hidden';
     let onScreen = true;
 
@@ -601,7 +1175,12 @@ export function AliveMark({ size = 70, loading = false, variant = 'v4', classNam
       energy += (target - energy) * Math.min(1, dt * 3.2); // ease to rest on landing
       if (Math.abs(target - energy) < 0.002) energy = target;
       carriedEnergy = energy;
-      draw(t, energy);
+      // The mood eases the same way the loading energy does — a state change is a settle, never a
+      // cut (nothing about this mark has ever been allowed to snap).
+      const wTarget = moodRef.current === 'working' ? 1 : 0;
+      work += (wTarget - work) * Math.min(1, dt * 2.4);
+      if (Math.abs(wTarget - work) < 0.002) work = wTarget;
+      draw(t, energy, work);
     };
     const sync = () => {
       const run = visible && onScreen;
@@ -618,12 +1197,13 @@ export function AliveMark({ size = 70, loading = false, variant = 'v4', classNam
     }
     onVis();
     sync();
-    draw(0, energy); // paint immediately, before the first rAF tick
+    draw(0, energy, work); // paint immediately, before the first rAF tick
 
     return () => {
       if (raf) cancelAnimationFrame(raf);
       document.removeEventListener('visibilitychange', onVis);
       io?.disconnect();
+      unsubscribeGaze?.();
     };
   }, [size, variant]);
 
@@ -637,11 +1217,15 @@ export function AliveMark({ size = 70, loading = false, variant = 'v4', classNam
     >
       <style>{CSS}</style>
       {/* THE HALO — still the right chrome for a luminous body, retuned to v4's own family (the
-          magenta belonged to the mesh's gradient). Static markup, CSS-driven, zero per-frame cost. */}
+          magenta belonged to the mesh's gradient). Static markup, CSS-driven, zero per-frame cost.
+          The eyes get a FAINTER one: a lens is a surface, not a light source, and a bright halo
+          behind it is the single fastest way to make a designed pair read as a sticker. */}
       <span
         className={`absolute -inset-1 rounded-full blur-[7px] ${variant === 'v3'
           ? 'bg-[radial-gradient(circle,rgba(99,102,241,0.42),rgba(217,70,239,0.16)_55%,transparent_72%)]'
-          : 'bg-[radial-gradient(circle,rgba(129,140,248,0.38),rgba(139,92,246,0.18)_55%,transparent_74%)]'}`}
+          : variant === 'eyes'
+            ? 'bg-[radial-gradient(circle,rgba(129,140,248,0.16),rgba(139,92,246,0.07)_58%,transparent_76%)]'
+            : 'bg-[radial-gradient(circle,rgba(129,140,248,0.38),rgba(139,92,246,0.18)_55%,transparent_74%)]'}`}
         style={{ animation: 'augAliveGlow 7s ease-in-out infinite' }}
       />
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" style={{ width: size, height: size }} />

@@ -441,8 +441,14 @@ async function main() {
     ok('FAILURE HONESTY: the degraded verdict reports `reported: false`', exec.includes('reported: false'), '');
     ok('THE CODE-ENFORCED DOWNGRADE: a block without a rule finding is downgraded',
       exec.includes("findings.some(f => f.source === 'rule')"), '');
-    ok('THE SENTINEL-LEAK GUARD: an unparseable verdict still serves the draft half (`body || raw`)',
-      exec.includes('body || raw'), '');
+    // RE-POINTED Sep 22 (WAVE 0, THE PRESENTATION LAW) — STRICTER, not weaker. The old pin accepted
+    // `body || raw`, whose `raw` half still carried `===GATE_VERDICT===` and its JSON whenever the
+    // model emitted a verdict and no draft: the sentinel could reach a delivered artifact. Both
+    // fallbacks now hand back the PRE-GATE DRAFT, and the gate asserts the sentinel is unreachable.
+    ok('THE SENTINEL-LEAK GUARD: a verdict with no draft half falls back to the PRE-GATE DRAFT, never to `raw` (the sentinel can never be part of a deliverable)',
+      exec.includes('return { text: body || draft, verdict: degraded };') &&
+      exec.includes('if (!body) return { text: draft, verdict: degraded };') &&
+      !exec.includes('body || raw'), '');
     // FLOOR, never an exact pin (the version-pin lesson): the structured-verdict era is v2+.
     ok('VERIFY_GATE_VERSION is >= 2', VERIFY_GATE_VERSION >= 2, String(VERIFY_GATE_VERSION));
     const checks = await import('@/lib/workflows/builtin-checks');

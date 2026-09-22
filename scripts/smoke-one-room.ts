@@ -109,9 +109,12 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('components/entities/entity-room.tsx').includes('<RoomShell'));
   const railSrc = src('components/home/item-rail.tsx');
   // RE-POINTED (Aug 13, THE MACHINE plan AL): the stage-hosted card is DELETED — the rail is the
-  // ONE decision surface on every door; the deep-dive passes the payload (with the forward-motion
-  // contract in onChoose) and an embedded item LIFTS its decision to the host room via onDecision.
-  check('R2: the DECISION mounts INLINE in the stream (the rail renders the shared DecisionCard)',
+  // ONE decision surface on every door; the deep-dive passes the payload and an embedded item
+  // LIFTS its decision to the host room via onDecision.
+  // RE-POINTED (W3-C, Sep 22): the shared component is now a KIT KIND behind ONE host, and the
+  // forward-motion contract moved INTO that host with the steer call — so the payload carries the
+  // lane (`itemKind`/`itemId`) and the callers keep only what is theirs. Same seat, same law.
+  check('R2: the DECISION mounts INLINE in the stream (the rail renders the shared DecisionCard host)',
     railSrc.includes('decision?:') && railSrc.includes('<DecisionCard') &&
     detail.includes('decision={decisionPayload ? {'));
   // SUPERSEDED twice: ONE-COMMIT-LINE (UX arc), then the PREPARED-ACTION GRAMMAR (Aug 4) — the
@@ -142,10 +145,17 @@ const src = (p: string) => readFileSync(p, 'utf8');
     shell.includes('export function RoomShell') &&
     detail.includes('<RoomShell conversation={rail} stage={children}') &&
     room2.includes('<RoomShell') && room2.includes("from '@/components/room/room-shell'"));
-  const strip = src('components/room/context-strip.tsx');
-  check('R3: the CONTEXT STRIP exists — per-anchor (project door / siblings / founding), collapsed on the stage',
-    strip.includes('export function ContextStrip') && strip.includes('Start a project from this') &&
-    strip.includes("tracked === false ? 'Connects to' : 'In'"));
+  // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT): components/room/context-strip.tsx was proven
+  // unreachable by the import graph and retired. The LAW survives at its two live seats: the
+  // untracked-relation door reads "Connects to" in the item room's drawer (RelatedRows), and the
+  // founding affordance is the ONE picker grammar's "Start a new project…" (add-to-work-control,
+  // mounted by item-detail). Per-anchor context, still spatial, still never in the stream.
+  const relatedSeat = src('components/home/item-detail.tsx');
+  const foundingSeat = src('components/entities/add-to-work-control.tsx');
+  check('R3: the PER-ANCHOR CONTEXT exists — the untracked "Connects to" door + the founding affordance, off the stream',
+    relatedSeat.includes('function RelatedRows') &&
+    relatedSeat.includes("tracked === false ? 'Connects to' : 'In this project'") &&
+    foundingSeat.includes('Start a new project…') && foundingSeat.includes("'/api/entities'"));
   // RE-POINTED (Sep 7, THE ONE ROOM GRAMMAR): the strip is FILED TRUTH, so it moved off the stage
   // into the item room's drawer — where filed truth lives in every room. The law is unchanged and
   // now stronger: ONE mount serves all four kinds (it was three near-identical ones), and it never
@@ -299,7 +309,9 @@ const src = (p: string) => readFileSync(p, 'utf8');
       brief.includes('projectByAtom') && hv.includes('const door = (itemId: string, fallback: string)') &&
       (hv.match(/door\(/g)?.length ?? 0) >= 3); // reply + notice + commitment lanes
     check('R6 · deep-link doors survive: middleware preserves search; the room owns /project/<id> and legacy query addresses forward (THE ADDRESS LAW superseded the query-state door, Sep 5)',
-      !src('components/room/context-strip.tsx').includes("'/?view=") &&
+      // RE-POINTED (W4-D, Sep 22): context-strip.tsx retired — the legacy-query negative now sits
+      // on the live related-rows seat, which owns every in-room door.
+      !src('components/home/item-detail.tsx').includes("'/?view=") &&
       src('middleware.ts').includes('home.search = request.nextUrl.search') &&
       hv.includes('useSearchParams') &&
       src('app/(main)/home/page.tsx').includes('redirect(projectHref') &&
@@ -312,7 +324,9 @@ const src = (p: string) => readFileSync(p, 'utf8');
     check('R6 · the word is the deed: the room\'s name IS the project door (via the ONE address producer, in the ONE chrome band); the "Open project" chip is gone (tracked); no click-echo turn on the next-move CTA',
       src('components/home/item-detail.tsx').includes('projectHref(room.project.id)') &&
       !rail.includes('projectHref(') &&
-      !src('components/room/context-strip.tsx').includes("'Open project'") &&
+      // RE-POINTED (W4-D, Sep 22): context-strip.tsx retired — the "no second Open project chip"
+      // negative rides the live room seat (item-detail owns the header door AND the related rows).
+      !src('components/home/item-detail.tsx').includes("'Open project'") &&
       !rail.includes('Opening the next move'));
     const rb = src('lib/room/brief.ts');
     // Aug 5 (the one responder): the brief grew into {brief, MOVE, offers} composed from THE ONE
@@ -518,9 +532,18 @@ const src = (p: string) => readFileSync(p, 'utf8');
     // host (the invite card) needed it — the law is "one implementation, every people field", so
     // the gate now asserts exactly ONE definition in the codebase and both chip fields mounting it.
     const chips = src('components/home/people-chips.tsx');
-    check('R11 · one PeopleSuggestInput mounts in BOTH chip fields (attendees + recipients); the suggest route is user-scoped, graph-ranked, robots filtered',
+    // ⚠️ RE-POINTED AGAIN (W3-C, Sep 22 — docs/component-map.md §2 items 8+10): the deep-dive's
+    // own recipients field (the repo's FOURTH chips editor) retired with the ForwardPreviewCard —
+    // the forward's host mounts the SHARED AttendeeChips, which is the one wrapper around the one
+    // input. Same law, stricter: item-detail now mounts NEITHER a private copy nor the raw input,
+    // and every people field in the product reaches the typeahead through this one module.
+    check('R11 · one PeopleSuggestInput serves every chip field (attendees + recipients, through the ONE module); the suggest route is user-scoped, graph-ranked, robots filtered',
       chips.includes('export function PeopleSuggestInput') && !idt.includes('function PeopleSuggestInput') &&
-      ((chips.match(/<PeopleSuggestInput/g)?.length ?? 0) + (idt.match(/<PeopleSuggestInput/g)?.length ?? 0)) >= 2 &&
+      !idt.includes('<PeopleSuggestInput') &&
+      (chips.match(/<PeopleSuggestInput/g)?.length ?? 0) === 1 &&
+      chips.includes('export function AttendeeChips') &&
+      src('components/home/forward-card.tsx').includes('<AttendeeChips attendees={to}') &&
+      src('components/home/email-card.tsx').includes('<AttendeeChips') &&
       // ⚠️ RE-POINTED (Sep 8): the LOOKUP moved out of the route into lib/people/suggest.ts when the
       // chat-born invite had to resolve names through the SAME grounded source server-side. One
       // implementation is still the law — the route is now a caller of it, not a second copy.

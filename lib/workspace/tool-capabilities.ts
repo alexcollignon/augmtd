@@ -16,6 +16,9 @@ export const TOOL_FEATURE: Record<string, FeatureKey | null> = {
   // user's CONNECTED mailbox — feature-gated like every other email tool.
   send_prepared_reply: 'email',
   prepare_forward: 'email',
+  // …and the draft door (Sep 21): it reads the user's inbox to find the message being answered,
+  // so it is a mailbox verb like the rest — a sovereign workspace never sees it offered.
+  draft_reply: 'email',
 
   // ── Meetings / calendar ──
   get_meeting_context: 'meetings',
@@ -29,6 +32,10 @@ export const TOOL_FEATURE: Record<string, FeatureKey | null> = {
   // calendar verb, so a workspace without meetings never sees it offered (the tier law: capability
   // shapes content; a chip is a claim).
   prepare_calendar_invite: 'meetings',
+  // The EVENT CARD's producer (Wave 2, Sep 22) — same reasoning, one object over: it prepares a
+  // card over a meeting that already exists and never writes; a workspace without meetings has no
+  // calendar for it to read, so it is never offered there.
+  prepare_event_action: 'meetings',
 
   // ── Bulk deeds over the held-quiet ledger (attention-plan A7) ──
   // The deed PREVIEWS and never acts; the commit is the user's click. Gated on `email` because
@@ -65,10 +72,21 @@ export const TOOL_FEATURE: Record<string, FeatureKey | null> = {
   read_team_work: null,
   list_worker_documents: null,
   get_worker_document: null,
-  list_tasks: null, create_task: null, get_task: null, update_task: null,
-  duplicate_task: null, delete_task: null, run_task: null,
-  share_task: null, list_team_tasks: null, use_task: null,
+  // ── TASKS ARE THE STUDIO FEATURE (Sep 21). They sat on `null` (always on) while their siblings
+  // propose_standing_task / steer_standing_task were 'studio'-gated — so a Studio-off workspace
+  // could pause a task through a coworker and could not propose one through the chief. Aligned to
+  // 'studio' after checking every live workspace: exactly one has `studio: false` and it has ZERO
+  // members, so nothing running loses a verb.
+  list_tasks: 'studio', create_task: 'studio', get_task: 'studio', update_task: 'studio',
+  duplicate_task: 'studio', delete_task: 'studio', run_task: 'studio',
+  share_task: 'studio', list_team_tasks: 'studio', use_task: 'studio',
+  supply_run_input: 'studio',
+  // THE BULK STATUS DEED (Sep 21) — one server-side loop, one per-item ledger; same gate as its siblings.
+  set_tasks_status: 'studio',
   list_skills: null, apply_skill: null,
+  // The remaining conversational door, stated so the map covers every chat tool (a missing row is
+  // "always on" — true here, but silence is how drift starts).
+  request_clarification: null,
 
   // ── Integrations that gate themselves (connection / agent_tool_settings), not a workspace feature ──
   slack_list_channels: null, slack_post_message: null, slack_read_messages: null, slack_list_members: null,

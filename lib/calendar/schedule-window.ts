@@ -31,7 +31,16 @@ const DEFAULT_MINUTES = 60;
 /** A hard iteration ceiling so a malformed window can never walk the calendar forever. */
 const MAX_DAYS = 120;
 
-export type WindowBusy = { start: string; end: string; title: string; allDay: boolean };
+export type WindowBusy = {
+  start: string; end: string; title: string; allDay: boolean;
+  /** THE DOOR'S HALF (Wave 1, Sep 22 — the collection card): the row's own event id and its real
+   *  instants, so a rendered day can open its event and a verb can name it. Never rendered, never
+   *  read by the prompt block (which stays exactly the clamped clock labels above) — additive by
+   *  construction, so nothing that reads a busy block today changes. */
+  id?: string;
+  startISO?: string;
+  endISO?: string;
+};
 export type WindowDay = { dayStr: string; weekday: string; busy: WindowBusy[] };
 export type ScheduleWindow = {
   days: WindowDay[];
@@ -79,6 +88,26 @@ const clockIn = (ms: number, tz: string): string => {
   catch { return '00:00'; }
 };
 
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** All-day is the FLAG or the shape (a bare date string can be nothing else) — the flag is absent
+ *  on some legacy rows, and the shape is the fact that never lies. */
+const isAllDayRow = (flag: boolean | null | undefined, start: string, end: string | null): boolean =>
+  flag === true || (DATE_ONLY_RE.test(String(start ?? '')) && (!end || DATE_ONLY_RE.test(String(end))));
+
+/** THE CALENDAR DAY AN ALL-DAY BOUNDARY NAMES. A bare date says its day outright. Anything else is
+ *  a midnight recorded in the EVENT'S OWN zone (Graph writes UTC midnight; a locally-zoned row
+ *  writes local midnight), so it is read there — never in the viewer's zone, which is precisely the
+ *  reading that slid the same away block a day earlier in New York and a day later in Lisbon. */
+const allDayBoundary = (v: string | null | undefined, evTz: string): string | null => {
+  const raw = String(v ?? '');
+  if (!raw) return null;
+  if (DATE_ONLY_RE.test(raw)) return raw;
+  const ms = Date.parse(raw);
+  if (Number.isNaN(ms)) return null;
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone: evTz }).format(new Date(ms)); }
+  catch { return new Date(ms).toISOString().slice(0, 10); }
+};
+
 const clipTitle = (t: string) => { const s = String(t || '(untitled)').replace(/\s+/g, ' ').trim(); return s.length > 40 ? `${s.slice(0, 39)}…` : s; };
 
 /**
@@ -98,12 +127,12 @@ export async function getScheduleWindow(
   const winEnd = zonedTimeToUtc(addDays(to, 1), '00:00', tz);
 
   const busyBlocks: BusyBlock[] = [];
-  const events: Array<{ startMs: number; endMs: number; title: string; allDay: boolean }> = [];
+  const events: Array<{ id: string; startMs: number; endMs: number; title: string; allDay: boolean; dayFrom?: string; dayToExcl?: string }> = [];
   let hasCalendar = false;
   try {
     const { data } = await supabase.from('calendar_events')
       // EXPLICIT select (the silent-column law: a bad column returns data:null and no error).
-      .select('title, start_time, end_time, is_all_day, status')
+      .select('id, title, start_time, end_time, is_all_day, status, timezone')
       .eq('user_id', userId)
       // Cancelled/declined events are NOT busy — parity with today-schedule.ts.
       .eq('status', 'confirmed')
@@ -112,13 +141,37 @@ export async function getScheduleWindow(
       .gte('start_time', new Date(winStart - LOOKBACK_DAYS * DAY_MS).toISOString())
       .lte('start_time', new Date(winEnd).toISOString())
       .order('start_time', { ascending: true }).limit(400);
-    for (const e of (data ?? []) as Array<{ title: string | null; start_time: string; end_time: string | null; is_all_day: boolean | null }>) {
+    for (const e of (data ?? []) as Array<{ id: string; title: string | null; start_time: string; end_time: string | null; is_all_day: boolean | null; timezone: string | null }>) {
+      const title = clipTitle(String(e.title || ''));
+      const id = String(e.id ?? '');
+      // ── THE ALL-DAY LAW (Sep 21) — AN ALL-DAY EVENT IS CALENDAR DAYS, NOT AN INSTANT. Both
+      // providers write an all-day block as a date pair with an EXCLUSIVE end (Sep 24 → Sep 28
+      // means Thu–Sun), and both anchor it at midnight. Read as instants, that midnight lands on
+      // the PREVIOUS local day west of UTC and bleeds an hour into the day AFTER east of it — so
+      // the same away block reported one day early in New York and one day late in Lisbon. The
+      // day span is taken from the DATE STRINGS, which carry no zone and therefore cannot shift;
+      // the ms block the slot picker reads is then rebuilt on the user's own midnights.
+      const allDay = isAllDayRow(e.is_all_day, e.start_time, e.end_time);
+      if (allDay) {
+        const evTz = e.timezone || tz;
+        const dayFrom = allDayBoundary(e.start_time, evTz);
+        if (!dayFrom) continue;
+        let dayToExcl = allDayBoundary(e.end_time, evTz) ?? '';
+        // A same-day (or missing) end is an INCLUSIVE one-day block — never an empty span.
+        if (!dayToExcl || dayToExcl <= dayFrom) dayToExcl = addDays(dayFrom, 1);
+        const s = zonedTimeToUtc(dayFrom, '00:00', tz);
+        const en = zonedTimeToUtc(dayToExcl, '00:00', tz);
+        if (!Number.isFinite(s) || !Number.isFinite(en) || en <= winStart || s >= winEnd) continue;
+        events.push({ id, startMs: s, endMs: en, title, allDay: true, dayFrom, dayToExcl });
+        busyBlocks.push({ startMs: s, endMs: en });
+        continue;
+      }
       const s = Date.parse(String(e.start_time));
       if (Number.isNaN(s)) continue;
       const parsedEnd = e.end_time ? Date.parse(String(e.end_time)) : NaN;
       const en = Number.isNaN(parsedEnd) ? s + DEFAULT_MINUTES * 60_000 : parsedEnd;
       if (en <= winStart || s >= winEnd) continue;   // no overlap with the asked window
-      events.push({ startMs: s, endMs: en, title: clipTitle(String(e.title || '')), allDay: e.is_all_day === true });
+      events.push({ id, startMs: s, endMs: en, title, allDay: false });
       busyBlocks.push({ startMs: s, endMs: en });
     }
     // In-window events prove a calendar; an empty window needs the cheap existence probe — a user
@@ -136,7 +189,11 @@ export async function getScheduleWindow(
     const dayStart = zonedTimeToUtc(day, '00:00', tz);
     const dayEnd = zonedTimeToUtc(addDays(day, 1), '00:00', tz);
     const busy: WindowBusy[] = events
-      .filter((e) => e.startMs < dayEnd && e.endMs > dayStart)
+      // An all-day block covers exactly the calendar days it names (end EXCLUSIVE); everything
+      // else is an overlap test in real time.
+      .filter((e) => (e.dayFrom && e.dayToExcl)
+        ? (day >= e.dayFrom && day < e.dayToExcl)
+        : (e.startMs < dayEnd && e.endMs > dayStart))
       .map((e) => ({
         // Clamped to the day, so a multi-day block reads honestly on each of its days.
         start: clockIn(Math.max(e.startMs, dayStart), tz),
@@ -144,6 +201,11 @@ export async function getScheduleWindow(
         title: e.title,
         // A block spanning the whole day IS an all-day block for the reader, whatever the flag says.
         allDay: e.allDay || (e.startMs <= dayStart && e.endMs >= dayEnd),
+        // The door's half — the event's own id and its UNCLAMPED instants (the labels above are
+        // clamped to the day on purpose; a door must open the whole event).
+        ...(e.id ? { id: e.id } : {}),
+        startISO: new Date(e.startMs).toISOString(),
+        endISO: new Date(e.endMs).toISOString(),
       }));
     days.push({ dayStr: day, weekday: weekdayOf(day), busy });
     if (day === to) break;
@@ -173,7 +235,10 @@ export function renderCalendarWindow(win: ScheduleWindow, opts: { tz: string }):
   const lines: string[] = [
     `THE CALENDAR — ${first ? `${first.weekday} ${dayLabel(first.dayStr)}` : '—'} through ` +
     `${last ? `${last.weekday} ${dayLabel(last.dayStr)}` : '—'} (times in ${opts.tz || win.tz}). ` +
-    `The weekday of every date below is COMPUTED — use these labels verbatim and never derive a weekday yourself. ` +
+    // THE PAIRS ARE CODE'S ANSWER (Sep 21): the model got "this Thursday and Friday" one day out
+    // because it did the arithmetic itself over a date it had. Both directions are named, because
+    // the failure ran weekday→date, not date→weekday.
+    `Every weekday–date pair below is COMPUTED — use these pairs verbatim; never work out a date from a weekday, or a weekday from a date, yourself. ` +
     `BEYOND THIS WINDOW THE CALENDAR IS NOT VISIBLE TO YOU: say so plainly and offer to check, never state availability you cannot see here.`,
   ];
   for (const d of win.days) {

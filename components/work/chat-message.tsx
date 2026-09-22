@@ -5,7 +5,6 @@ import { ChevronDownIcon } from '@heroicons/react/20/solid';
 import { SparklesIcon, CheckCircleIcon, DocumentTextIcon, ExclamationTriangleIcon, PencilSquareIcon, DocumentDuplicateIcon, EnvelopeIcon, ArrowTopRightOnSquareIcon, UserCircleIcon, BoltIcon } from '@heroicons/react/24/outline';
 import { ArrowPathIcon } from '@heroicons/react/20/solid';
 import { ClarificationWidget, ClarificationData } from './clarification-widget';
-import { FrameCard } from '@/components/frames/frame-card';
 // ONE CARD PER KIND (threads plan): the document handle is the kit's own `doc` card, mounted here.
 import { ThreadCardView } from '@/components/thread';
 import { docCardTypeOf } from '@/lib/documents/doc-card';
@@ -428,19 +427,19 @@ function AssistantMessage({ content, toolCalls, artifactIds, citations, clarific
           <div className="flex flex-wrap gap-2 pt-1">
             {artifactIds.map(id => {
               const meta = artifactVersionMap?.get(id);
-              // A FRAME LIVES WHERE ITS WORK LIVES (frames plan law 5): in chat it is the card
-              // itself — rendered inline through the ONE renderer, not a chip you must open.
+              // A FRAME LIVES WHERE ITS WORK LIVES (frames plan law 5) — and it is the KIT's own
+              // `frame` kind now (W4-A, Sep 22). The second hand-drawn chat render that mounted the
+              // renderer here is gone; the live thread surface (components/home/home-ask.tsx)
+              // composes THE ONE RENDERER inside that kind. This bubble's routes are redirects, so
+              // it keeps the honest HANDLE and its one door: Open raises the side panel, where the
+              // frame renders through that same one renderer.
               if (meta?.type === 'frame') {
                 return (
                   <div key={id} className="w-full">
-                    {/* Open raises the SIDE PANEL (the Claude idiom) — full-screen is one more
-                        click, from the panel's own link. No panel opener here → the address. */}
-                    <FrameCard
-                      artifactId={id}
-                      title={meta.title}
-                      height={340}
-                      onOpen={onViewArtifact ? () => onViewArtifact(id) : undefined}
-                    />
+                    <ThreadCardView card={{
+                      kind: 'frame', title: meta.title ?? 'Frame', meta: 'frame',
+                      ...(onViewArtifact ? { onOpen: () => onViewArtifact(id) } : {}),
+                    }} />
                   </div>
                 );
               }

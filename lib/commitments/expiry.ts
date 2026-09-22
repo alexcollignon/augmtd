@@ -22,7 +22,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
-import { clipForPrompt } from '@/lib/utils/clip-for-prompt';
+import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 
 // Bump on ANY change to the judging prompt/facts/scoping — a cached verdict from an older law must
 // never satisfy the current one (the prompt-version-in-cache-sig law, learned three times now).
@@ -98,6 +98,9 @@ export async function judgeCommitmentExpiry(
       source: 'brain_synthesis',
       prompt:
         `Has this obligation's MOMENT PASSED, or is it still owed?\n` +
+        // THE EXCERPT-HONESTY LAW: the description below is clipped by US at 600 chars. The rule rides
+        // the HEADER, above the quote, so the quote's own tail can never carry it away.
+        `${EXCERPT_RULE}\n` +
         `OBLIGATION: "${description}"\n` +
         `FACTS: ${owes}. It was due ${due}; today is ${todayStr} — ${daysPast} day(s) past due` +
         `${age !== null ? `; it has been open ${age} day(s)` : ''}` +

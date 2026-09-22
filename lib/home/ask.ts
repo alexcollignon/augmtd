@@ -10,40 +10,109 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { resolveFileUniversal } from '@/lib/knowledge/resolve';
 import { getTodaySchedule, renderScheduleBlock } from '@/lib/calendar/today-schedule';
-import { GENERIC_WORK_WORDS } from '@/lib/entities/recognize';
+// THE ONE IDENTITY PRIMITIVE — never a second generic-word list. `namesStatedIn`/`distinctiveTokens`
+// are built on GENERIC_WORK_WORDS (lib/entities/recognize), the same law the case pre-pass, the
+// workflow-scope seam and the named-subject veto speak.
+import { namesStatedIn, distinctiveTokens } from '@/lib/workflows/case-step';
+import { topMessageOf } from '@/lib/inbox/top-message';
 import { projectHref } from '@/lib/room/project-href';
 import { GROUND_EVIDENCE_RULE } from '@/lib/room/ground-evidence';
 import { REACH_CONTRACT } from '@/lib/converse/reach';
+// THE REF IS ITS TAG — the ONE ref grammar, shared with the renderer (lib/home/ask-refs.ts).
+import { resolveAskRefs, ASK_TAG_CAP } from '@/lib/home/ask-refs';
 
-export type AskRef = { id: string; kind: 'entity' | 'inbox_item' | 'commitment' | 'meeting' | 'file'; label: string; href: string | null };
+/** `tag` is the grounding id the answer placed ([E7], [R2]…) — THE identity a chip resolves by.
+ *  Optional only because the type is also read back from turns stored before that law. */
+export type AskRef = { id: string; kind: 'entity' | 'inbox_item' | 'commitment' | 'meeting' | 'file'; label: string; href: string | null; tag?: string };
 export type AskAnswer = { answer: string; refs: AskRef[] };
 export type AskTurn = { role: 'user' | 'assistant'; text: string };
 
 const entHref = (id: string) => projectHref(id);
 
-// ── THE FOCUS MATCH (one-surface § the one grounding, Aug 5): which registered entity does an
-// unscoped question NAME? Strict by design — ≥1 distinctive token of the entity's name/aliases
-// must appear in the question (an all-generic name never matches; namesOverlap's trust-the-judge
-// fallback would make "AI Assessment" match every question). Longest matched-token weight wins.
-// Pure + exported for the deterministic gate. ──
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE FOCUS MATCH / THE FILING CLAIM (one-surface § the one grounding, Aug 5 — hardened Sep 21).
+//
+// A focus — and above all the composer's filing chip — is a CLAIM that this conversation is about
+// that project. Found live on a pilot: a conversation entirely about scheduling a press interview
+// offered "About <subject-shaped project name>? · File it" for a project with nothing to do with
+// it. Three defects, one class: the match needed only ONE of a name's distinctive tokens, it read
+// them with a bare `includes` (a substring is not a name), and it read the WHOLE ask — including a
+// pasted email the user had quoted into it. A wide machine-founded name plus a long paste is a
+// near-guaranteed spurious hit.
+//
+// THE LAW A PROJECT CLAIM MUST MEET:
+//   (a) IDENTITY, WHOLE — candidacy is `namesStatedIn` (lib/workflows/case-step): EVERY distinctive
+//       token of the name/alias, word-bounded. Never the summary, never a partial overlap. The
+//       house scorer still RANKS the qualified (longest matched weight). This is the Aug-25 scoping
+//       guard's law, moved from the workflow lane into the one matcher every lane calls.
+//   (b) THE USER'S OWN WORDS — a claim reads the evidence text, not the transport: quoted/forwarded
+//       material is cut structurally (topMessageOf), and a paste-sized remainder is discounted to
+//       the user's own framing around it. A pasted email mentioning a word is not the user naming
+//       a project.
+//   (c) TRACKED FIRST — filing is SUGGESTED only for human-created projects (the pinning law:
+//       projects are human-created; untracked machine-founded entities fold, they never claim).
+//   (d) SILENCE BEATS A WRONG CLAIM — two candidates tied at the top is ambiguity, and ambiguity
+//       is a refusal. The ONE ordering rule below a tie: an entity's own name outranks an alias.
+// Pure + exported for the deterministic gates.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+export type FocusCandidate = { id: string; name: string; aliases?: string[] | null; tracked?: boolean | null };
+
+/** Past this, an ask is carrying pasted material, not a sentence the user wrote. */
+const PASTE_CHARS = 900;
+/** How much of the user's own framing survives around a paste (head and tail). */
+const FRAMING_CHARS = 300;
+
+/** THE EVIDENCE TEXT — what the USER said, as opposed to what they transported. Quoted/forwarded
+ *  history is cut by the house's reply-convention parser; what remains, if it is still paste-sized,
+ *  is reduced to the framing the user typed around it (people paste in the middle, and ask at the
+ *  edges). Pure; exported so the gates can assert the discount on the function that owns it. */
+export function askEvidenceText(text: string): string {
+  const top = topMessageOf(String(text ?? '')).trim();
+  if (top.length <= PASTE_CHARS) return top;
+  return `${top.slice(0, FRAMING_CHARS)}\n${top.slice(-FRAMING_CHARS)}`;
+}
+
+/** Ranking weight for one entity against one text: the longest whole-name match it can show. An
+ *  entity's OWN name outranks an equally-weighted ALIAS (found live: an over-merged entity carries
+ *  a neighbour's name among its aliases, and both would otherwise tie into silence — a canonical
+ *  form is stronger evidence of identity than a borrowed one). */
+function focusScore(text: string, e: FocusCandidate): number {
+  const names: Array<[string, boolean]> = ([[e.name, true]] as Array<[string, boolean]>)
+    .concat((Array.isArray(e.aliases) ? e.aliases : []).map((a) => [a, false] as [string, boolean]))
+    .filter(([n]) => !!n);
+  let score = 0;
+  for (const [n, primary] of names) {
+    if (!namesStatedIn(text, String(n))) continue;          // (a) identity, whole — candidacy
+    const weight = distinctiveTokens(String(n)).reduce((a, t) => a + t.length, 0) * 2 + (primary ? 1 : 0);
+    if (weight > score) score = weight;
+  }
+  return score;
+}
+
 export function findEntityFocus(
   question: string,
-  ents: Array<{ id: string; name: string; aliases?: string[] | null }>,
+  ents: FocusCandidate[],
+  opts?: { evidenceOnly?: boolean },
 ): { id: string; name: string } | null {
-  const q = ` ${question.toLowerCase()} `;
-  let best: { id: string; name: string; score: number } | null = null;
-  for (const e of ents) {
-    const names = [e.name, ...(Array.isArray(e.aliases) ? e.aliases : [])].filter(Boolean);
-    let score = 0;
-    for (const n of names) {
-      const tokens = String(n).toLowerCase().split(/[^a-z0-9]+/)
-        .filter((t) => t.length >= 3 && !GENERIC_WORK_WORDS.has(t) && !/^(ai|ia|ml)$/.test(t));
-      const matched = tokens.filter((t) => q.includes(t));
-      if (matched.length) score = Math.max(score, matched.reduce((a, t) => a + t.length, 0));
-    }
-    if (score > 0 && (!best || score > best.score)) best = { id: e.id, name: e.name, score };
-  }
-  return best ? { id: best.id, name: best.name } : null;
+  const text = opts?.evidenceOnly ? askEvidenceText(question) : String(question ?? '');
+  if (!text.trim()) return null;
+  const scored = ents.map((e) => ({ e, score: focusScore(text, e) })).filter((s) => s.score > 0);
+  if (!scored.length) return null;
+  const top = Math.max(...scored.map((s) => s.score));
+  const winners = scored.filter((s) => s.score === top);
+  if (winners.length !== 1) return null;                    // (d) ambiguity is a refusal
+  return { id: winners[0].e.id, name: winners[0].e.name };
+}
+
+/** THE FILING CLAIM — what the composer's "About X? · File it" chip may offer. The strictest read
+ *  of the law: the user's own words (b), against TRACKED projects only (c). An untracked
+ *  machine-founded entity is never suggested as a home; one weak or ambiguous signal serves no
+ *  chip at all. */
+export function suggestFilingFocus(question: string, ents: FocusCandidate[]): { id: string; name: string } | null {
+  const tracked = ents.filter((e) => e.tracked === true);
+  if (!tracked.length) return null;
+  return findEntityFocus(question, tracked, { evidenceOnly: true });
 }
 
 /** Assemble a compact, bounded snapshot of the brain — everything the answer may reason over.
@@ -127,7 +196,10 @@ export async function buildBrainSnapshot(supabase: SupabaseClient, userId: strin
   // Non-fatal: a grounding failure serves the plain snapshot (the pre-unification status quo). ──
   if (focusQuery?.trim()) {
     try {
-      const focus = findEntityFocus(focusQuery, (ents ?? []) as Array<{ id: string; name: string; aliases?: string[] | null }>);
+      // THE USER'S OWN WORDS (clause b): a pasted email repoints nothing — the grounding follows
+      // what the user says this conversation is about, and degrades to the plain snapshot when the
+      // evidence is only transported text.
+      const focus = findEntityFocus(focusQuery, (ents ?? []) as FocusCandidate[], { evidenceOnly: true });
       if (focus) {
         const { assembleRoomGrounding } = await import('@/lib/room/grounding');
         const g = await assembleRoomGrounding(supabase, userId, { kind: 'entity', entityId: focus.id });
@@ -203,7 +275,9 @@ export async function answerHomeQuestion(
     `- Answer ONLY from the context (after the REACH rule above has been considered). If it doesn't cover the question AND no lookup could, say so plainly ("I don't have anything on that yet") — NEVER invent people, dates, or facts.\n` +
     `- HARD LIMITS (exceeding them is a failed answer): a simple question = 1-3 sentences. A summary question ("what did I miss", "plan my week") = at most 3 short paragraphs and 100 words TOTAL, separated by blank lines. Pick the 3-4 things that matter MOST and STOP — never inventory; the deck below the chat already lists everything. End a summary with the one thing you'd do first.\n` +
     `- PLAIN PROSE ONLY: no markdown (no **bold**, no headers, no tables, no bullet lists). Whenever the answer runs past two sentences, break it into short paragraphs separated by a BLANK LINE — never one solid block. Never place two refs back-to-back — connect them with words.\n` +
-    `- HARD LIMIT: at most 5 tags total, ONE id per bracket ([E7] — NEVER [E7, E8]), placed immediately AFTER the thing it names (\"the Soboplac pilot [E10]\"), never dangling at a sentence end. The app turns each into a link.\n` +
+    // ONE NUMBER, ONE SOURCE (Sep 21): the ceiling the prompt states is the constant the code
+    // enforces — a prompt-only limit is a hope. Extra tags are stripped, never shown raw.
+    `- HARD LIMIT: at most ${ASK_TAG_CAP} tags total, ONE id per bracket ([E7] — NEVER [E7, E8]), placed immediately AFTER the thing it names (\"the pilot [E10]\"), never dangling at a sentence end. The app turns each into a link.\n` +
     `- Reason across items when useful (connect a deal to its commitments / its meeting / who owes what).\n` +
     `Return ONLY JSON: {"answer":"<the answer, with [E#]/[C#]/[R#]/[F#] tags>","refs":["E1","C2","F1",...]}`;
 
@@ -214,10 +288,12 @@ export async function answerHomeQuestion(
   const res = await aiCall<{ answer?: string; refs?: string[] }>({
     userId, supabase, shape: deep ? { output: 'json', reasoning: 'deep' } : { output: 'json' }, prompt, maxTokens: 450, temperature: 0.2, source: 'brain_synthesis',
   });
-  const answer = String(res.json?.answer || '').trim() || "I don't have anything on that yet.";
-  const used = (res.json?.refs ?? []).map((t) => refs.get(t)).filter((r): r is AskRef => !!r);
-  // Dedup refs (a tag can repeat); keep order.
-  const seen = new Set<string>(); const outRefs: AskRef[] = [];
-  for (const r of used) { if (!seen.has(r.id)) { seen.add(r.id); outRefs.push(r); } }
+  const raw = String(res.json?.answer || '').trim() || "I don't have anything on that yet.";
+  // THE REF IS ITS TAG (Sep 21 — the wrong-object-door incident, lib/home/ask-refs.ts): the served
+  // set is derived from the tags the answer actually PLACES, resolved by id against this snapshot —
+  // never from the model's declared list in declaration order (which the renderer then walked
+  // positionally, so one grouped bracket handed the reader two chips belonging to other work).
+  // The declared `refs` array is now only a hint we no longer need; the prose is the record.
+  const { text: answer, refs: outRefs } = resolveAskRefs(raw, (tag) => refs.get(tag));
   return { answer, refs: outRefs };
 }

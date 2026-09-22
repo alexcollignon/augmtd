@@ -23,26 +23,60 @@ export type EvalVerdict = {
   missing?: string[];
 };
 
+/** A trailing connector — a cut landing between a clause and what it was about to say. */
+const DANGLING_END = /[,\-–—]$/;
+/** Emphasis/code opened on the final line and never closed: a cut INSIDE a structural line. */
+function unclosed(line: string): boolean {
+  return (line.split('**').length - 1) % 2 === 1
+    || (line.split('`').length - 1) % 2 === 1
+    || (line.match(/\[/g) ?? []).length > (line.match(/\]/g) ?? []).length;
+}
+
+/**
+ * THE MECHANICAL TRUNCATION FLOOR (W6, "the Gap: Cloud-native da" class) — a deliverable that ends
+ * mid-word/mid-clause is machine-detectable, and a coworker must never hand the principal their own
+ * truncation. Exported so a zero-AI gate can hold it: it is a HEURISTIC, and a heuristic that
+ * decides whether finished work gets destroyed needs a floor of its own.
+ *
+ * THE STRUCTURED ENDING IS A BOUNDARY (Sep 21, found by the T2 replay — the defect this law caused).
+ * The test read "no terminal punctuation" as "cut off", so a deliverable whose last line is a bullet,
+ * a heading or a table row — the shape the user LITERALLY asked for ("I need it in bullet points") —
+ * was condemned for ending like a list instead of like a paragraph. The better the coworker obeyed
+ * the format, the more certainly the work was destroyed and the user asked to regenerate it. A list
+ * item is a complete unit of writing; only PROSE owes a full stop. Inside a structural line the cut
+ * signatures still fire (unclosed emphasis, a dangling connector), so a real mid-item cut is caught.
+ *
+ * The asymmetry is deliberate, and it is the repo's standing doctrine for machine floors: a missed
+ * catch costs one honest flag downstream; a FALSE catch destroys a finished deliverable AND makes
+ * the system lie to the user about its own work.
+ */
+export function looksMechanicallyTruncated(content: string): boolean {
+  const t = String(content ?? '').trimEnd();
+  if (t.length <= 400) return false;
+  if (/[.!?…)"'\]\}»:;]$/.test(t)) return false;     // terminal punctuation/closure
+  if (!/[a-z0-9,\-–—]$/i.test(t)) return false;      // ends inside a word/clause
+  const last = t.slice(t.lastIndexOf('\n') + 1).trim();
+  const structural = /^([-*+]\s|\d+[.)]\s|#{1,6}\s|>\s|\|)/.test(last);
+  if (!structural) return true;
+  return DANGLING_END.test(last) || unclosed(last);
+}
+
 export async function evaluateDeliverable(admin: SupabaseClient, userId: string, args: {
   content: string;
   task: string;                    // what this was prepared FOR
   recipient?: string | null;       // the intended counterparty (raw form)
   entityId?: string | null;        // the deal — its goals/rules constrain the review
   kind: 'reply' | 'nudge' | 'deliverable';
+  /** THE RECEIPT OUTRANKS THE GUESS (Sep 21): the producer knows whether its own completion
+   *  finished (finish_reason 'stop') — when it says so, the truncation HEURISTIC below is off,
+   *  because a heuristic may never overrule a fact. Absent/undefined → no receipt, floor applies. */
+  sourceComplete?: boolean;
 }): Promise<EvalVerdict> {
   try {
-    // ── W6 MECHANICAL TRUNCATION FLOOR (the "Gap: Cloud-native da" class): a deliverable that ends
-    // mid-word/mid-clause is machine-detectable — no AI should be needed to see a cut-off, and a
-    // coworker must never hand the principal their own truncation. Structural, before the review;
-    // the caller's capped revision regenerates it complete (or it surfaces honestly flagged).
-    {
-      const t = args.content.trimEnd();
-      const truncated = t.length > 400
-        && !/[.!?…)"'\]\}»:;]$/.test(t)              // no terminal punctuation/closure
-        && /[a-z0-9,\-–—]$/i.test(t);                // ends inside a word/clause
-      if (truncated) {
-        return { verdict: 'revise', objection: 'The deliverable appears CUT OFF mid-sentence at the end — regenerate it complete; never hand over a truncated document.' };
-      }
+    // Structural, before the review; the caller's capped revision regenerates it complete (or it
+    // surfaces honestly flagged).
+    if (args.sourceComplete !== true && looksMechanicallyTruncated(args.content)) {
+      return { verdict: 'revise', objection: 'The deliverable appears CUT OFF mid-sentence at the end — regenerate it complete; never hand over a truncated document.' };
     }
     // ── STRUCTURAL floor: an artifact addressed to the USER THEMSELF is wrong at birth (the
     // self-nudge class) — no AI needed, the registry answers. T3 adds the twin: an AUTOMATED /

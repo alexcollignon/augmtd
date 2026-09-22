@@ -19,18 +19,51 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
-import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { clipForPrompt, clipLabel, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 import { GROUND_EVIDENCE_RULE } from '@/lib/room/ground-evidence';
 import { capabilitiesFor } from '@/lib/home/capability-map';
+// THE PRESENTATION LAW (Sep 22) — the opt-IN permission to serve a tool's string as the answer
+// lives on the registry row, not in a local set here. See the law's note below.
+import { resultIsProse, resultIsPresentation, presentsCollectionKind } from '@/lib/work/surface-registry';
+// WAVE 1 — THE COLLECTION CARD: the contract both halves read, and the builders that fill it.
+import type { CollectionSpec } from '@/lib/present/collection';
+import { isListingAsk } from '@/lib/present/listing-ask';
+// WAVE 2 — THE EVENT CARD: one calendar object, the verbs its state allows, nothing fired from here.
+import type { EventSpec } from '@/lib/present/event';
+import { prepareEventActionDefinition, executePrepareEventAction } from '@/lib/tools/prepare-event-action';
 import {
   executeResolveInboxItem, executeResolveCommitment, executeFindFile, executeRememberFact,
   resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition,
 } from '@/lib/tools/item-actions';
-import { getEmailsDefinition, executeGetEmails, getMeetingContextDefinition, executeGetMeetingContext, checkCalendarDefinition, executeCheckCalendar, readActionHistoryDefinition, executeReadActionHistory, type ActionHistoryConfig, runComputeDefinition, executeRunCompute, type ComputeConfig } from '@/lib/tools';
+import { getEmailsDefinition, executeGetEmails, getMeetingContextDefinition, checkCalendarDefinition, readActionHistoryDefinition, executeReadActionHistory, type ActionHistoryConfig, runComputeDefinition, executeRunCompute, type ComputeConfig } from '@/lib/tools';
+// WAVE 1 — the two reads whose executors now hand back BOTH halves (the model's block and the
+// struct the card is built from). The dispatch reads the data function; the thin string wrappers
+// stay for every other caller.
+import { readMeetingContext } from '@/lib/tools/get-meeting-context';
+import { readCalendar } from '@/lib/tools/check-calendar';
 // THE WEEKDAY FLOOR (Wave 1) — deterministic, applied at the one outermost answer seam below.
 import { enforceWeekdayDatePairs } from '@/lib/utils/weekday-floor';
+// THE TASK VERBS' ONE SET OF EXECUTORS (Sep 21) — the chief door calls the SAME functions the
+// coworker door calls; only the scope (agentId null = the user's whole set) and the by-name
+// resolution differ. A second implementation is how two doors start disagreeing.
+import {
+  setTasksStatusDefinition, executeSetTasksStatus, executeListTasks, executeGetTask, executeRunTask,
+  resolveTaskIdByName, spokenIsResumeNotRun,
+} from '@/lib/tools/worker-tasks';
+// THE DEED FLOOR (Sep 21) — the chief's answer is held to the turn's own mutation ledger.
+import { deedFloorVerdict, deedAmendment, type DeedRecord } from '@/lib/work/deed-floor';
+// THE REF IS ITS TAG (Sep 21) — the ask lane's resolver, mounted at this core's ONE exit so the
+// ref-tag floor strips only what nobody resolved.
+import { stripUnresolvedTags } from '@/lib/home/ask-refs';
 // THE REACH VALVE (Sep 18) — the model's own judgment that a question needs a lookup.
 import { REACH_CONTRACT, needsReach, sayInsteadOfSentinel } from '@/lib/converse/reach';
+// HANDS FOR THE SCOPE (Sep 21) — THE OFFER LAW, the forward-motion floor, and the deterministic
+// reply-target ladder. See lib/converse/hands.ts for the incident these three laws answer.
+import {
+  renderOfferLaw, unavailableToolResult, isAffirmation, endsInAnOffer, repeatsTheQuestion,
+  FORWARD_MOTION_DIRECTIVE, pickReplyTarget, looksPasted, pastedAsSourceData,
+  type ReplyCandidate,
+} from '@/lib/converse/hands';
 import { proposeStandingTaskDefinition } from '@/lib/work/standing-spec';
 // EVERY THREAD, EVERY PRODUCER (threads plan, Sep 8): the invite card's producer is ONE tool
 // contract + ONE execution body, shared with the coworker DM. It prepares and never sends — and
@@ -58,10 +91,66 @@ const sendPreparedReplyDefinition = {
   description: 'Send the ALREADY-DRAFTED reply on the current item. Use ONLY when the user explicitly says to send ("send it", "envia"). Never to create a draft.',
   input_schema: { type: 'object', properties: {}, required: [] },
 };
+// HANDS FOR THE SCOPE (Sep 21 — the pilot's dead-ended "yes please"): the Home chat could read a
+// calendar and offer to write to someone, and then had NOTHING that writes to someone. `draft_reply`
+// is that hand. It PREPARES and never sends: a matched inbox item's draft lands on the item (the
+// one redraft lane, versioned + evaluated + composer-served), an unmatched one comes back as plain
+// text the user copies. The send door stays exactly where it was — send_prepared_reply, behind the
+// deterministic explicit-send floor.
+const draftReplyDefinition = {
+  name: 'draft_reply',
+  description:
+    'Draft a reply to a message for the user to review — the reply the CONVERSATION has been about. ' +
+    'Use this whenever the user asks you to reply, respond, answer, write back or offer something to ' +
+    'someone by email, and whenever they agree to an offer you made to do so. It never sends: it ' +
+    'prepares the draft and hands it back.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      to: { type: 'string', description: "who the reply goes to — their name or address, in the user's words" },
+      about: { type: 'string', description: 'the subject or topic of the message being replied to' },
+      instruction: { type: 'string', description: 'what the reply must say or do, in one or two sentences, including any concrete details (times, options, figures) already settled in this conversation' },
+    },
+    required: ['instruction'],
+  },
+};
 const prepareForwardDefinition = {
   name: 'prepare_forward',
   description: 'Prepare forwarding the current email to someone for the user to review & approve. Never sends by itself.',
   input_schema: { type: 'object', properties: { to: { type: 'string', description: 'recipient, when the user names one' } }, required: [] },
+};
+
+// ── THE TASK VERBS REACH THE HOME (Sep 21, CLASS 2 — "a verb has every conversational door").
+// Live incident: the Home chat answered "I don't have a tool to pause workflows" while a coworker
+// DM had been pausing them for months. The chief's slice is deliberately narrow — SEE what is
+// automated, READ one, CHANGE ITS STATUS, RUN it now — and every one of them resolves BY NAME
+// through the one ladder (a raw id is useless in conversation). Creation stays on the confirm card
+// (propose_standing_task) and the full pipeline editor stays with the coworker who owns the task;
+// both exemptions are written on their registry rows as `chiefExempt`. ──
+const listTasksChiefDefinition = {
+  name: 'list_tasks',
+  // THE PRESENTATION LAW (Sep 22): the instruction to the MODEL lives here, in the description,
+  // never inside the result string (that line shipped in an owner's chat bubble verbatim).
+  description: "List the user's automated tasks — what is running, on what schedule, when it last ran, and which coworker owns it. Call whenever they ask what is automated, what is running, or before acting on a task they named. The result is DATA for you, not text to show: write the answer yourself, name tasks by NAME, and never repeat the ids.",
+  input_schema: { type: 'object', properties: {} as Record<string, unknown>, required: [] as string[] },
+};
+const getTaskChiefDefinition = {
+  name: 'get_task',
+  description: "Read one task's full configuration (schedule, steps, output, triggers). Give the task's NAME as the user says it. The result is DATA for you — an internal dump of step ids, raw prompts and config: answer in your own words, and never show ids, prompts or JSON to the user.",
+  input_schema: {
+    type: 'object',
+    properties: { task_name: { type: 'string', description: "the task's name, in the user's own words" } },
+    required: ['task_name'],
+  },
+};
+const runTaskChiefDefinition = {
+  name: 'run_task',
+  description: 'Run an existing task RIGHT NOW. Give the task\'s NAME as the user says it. Only on their explicit ask ("run the weekly briefing"). NOT for "resume" / "unpause" — that turns the schedule back on, which is set_tasks_status.',
+  input_schema: {
+    type: 'object',
+    properties: { task_name: { type: 'string', description: "the task's name, in the user's own words" } },
+    required: ['task_name'],
+  },
 };
 
 // ── THE DISPATCHER + THE SENSIBLE ASK (Aug 8) — production asks reach the team without the user
@@ -128,21 +217,57 @@ const TOOL_PROGRESS: Record<string, string> = {
   create_task_item: 'Creating the task…',
   send_prepared_reply: 'Checking the prepared reply…',
   prepare_forward: 'Preparing the forward…',
+  draft_reply: 'Writing the reply…',
   prepare_calendar_invite: 'Putting the invite together…',
+  prepare_event_action: 'Pulling up that meeting…',
   prepare_bulk_deed: 'Working out exactly what that would do…',
   propose_standing_task: 'Drafting the standing task…',
   steer_standing_task: 'Adjusting how that task runs…',
 };
 const progressLabelFor = (tool: string) => TOOL_PROGRESS[tool] ?? 'Working on it…';
 
-/** Reads whose output is a CONTEXT BLOCK written for the model, not a reply written for the person.
- *  They never take the command fast-path (whose result is served straight as `say`) — they go
- *  through the agent loop, which reads the block as a tool result and composes an answer from it. */
-const RAW_CONTEXT_READS = new Set(['search_knowledge_base', 'check_calendar', 'get_emails', 'get_meeting_context']);
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE PRESENTATION LAW (Sep 22, WAVE 0) — A TOOL RESULT IS DATA, NEVER THE ANSWER.
+//
+// The incident (owner screenshot, Home chat): "what workflows do I have in place?" put the
+// executor's model-facing listing in the assistant's bubble verbatim — bracketed uuids, and the
+// closing instruction "Refer to tasks by NAME when speaking to the user" — and PERSISTED it.
+//
+// The cause was the guard's polarity. The fast path served `dispatchCommand().say` as the answer
+// and excused four tool names by OPT-OUT set; every read tool shipped after it leaked by default.
+// Now the registry says which is which (`resultIs`, absent = 'data' = fail closed) and the return
+// TYPE carries the same law: a data read comes back as `ToolData`, a shape `ConverseTurn` cannot
+// absorb, so no future branch can serve one by accident.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** A read's result: a block written FOR THE MODEL. It reaches a `role:'tool'` message and nowhere
+ *  else — the agent loop composes the answer from it. */
+export type ToolData = {
+  modelText: string;
+  /** WAVE 1 — THE COLLECTION CARD (Sep 22): the same read, STRUCTURED, for the kit to render —
+   *  typed rows and a framing sentence composed by code (lib/present/collection.ts). W0 reserved
+   *  this seam as `{kind, rows}` and left it unpopulated; Wave 1 fills it with the contract's own
+   *  `CollectionSpec`, which is that shape plus the code-written framing and the re-read key.
+   *  Its presence is what lets a pure LISTING ask skip the model entirely (see THE FAST PATH IS
+   *  FAST AGAIN, below).
+   *  WAVE 2 (Sep 22) widens it to the SINGLE-OBJECT card: `{kind:'event', spec}` — same seam, same
+   *  law (it never reaches the model; the model reads `modelText` and nothing else). */
+  present?: CollectionSpec | EventPresent;
+};
+
+/** THE EVENT CARD's half of `present` — one object, its facts, and the verbs code computed for it. */
+export type EventPresent = { kind: 'event'; spec: EventSpec };
+export const isEventPresent = (p: ToolData['present']): p is EventPresent =>
+  !!p && (p as EventPresent).kind === 'event';
+const isToolData = (o: ConverseTurn | ToolData | null): o is ToolData =>
+  !!o && typeof (o as ToolData).modelText === 'string';
 
 export type ConverseTurn = {
   say: string;
-  refs: Array<{ id?: string; kind?: string; label: string; href: string | null }>;
+  /** THE REF IS ITS TAG (Sep 21): a ref the ask lane resolved carries the grounding tag it was
+   *  resolved FROM, so the exit floor below can keep the notation that earned a chip and strip only
+   *  the notation nobody resolved. Optional — most lanes serve refs with no tags at all. */
+  refs: Array<{ id?: string; kind?: string; label: string; href: string | null; tag?: string }>;
   files?: Array<{ id: string; filename: string; source: string }>;
   /** Reversible actions the turn APPLIED (already done, undoable) — the surface confirms them. */
   applied?: Array<{ tool: string; title: string }>;
@@ -163,6 +288,12 @@ export type ConverseTurn = {
    *  and nothing else, so the model can never widen what it previewed. Nothing acts until the
    *  user clicks. */
   bulkDeed?: { id: string; deed: Record<string, unknown> } | null;
+  /** THE EMAIL CARD (Sep 21 — the owner's convergence call). ONE field, two lanes, ONE rendering:
+   *  a matched inbox item rides as `itemId` (the card reads that item's own prepared reply), and a
+   *  STANDALONE draft — a message in no inbox of ours — rides as its stored row's `id` plus the
+   *  payload for the first paint. The Send door reads the store, never these fields, and nothing
+   *  is sent until the user clicks: the model returns a CARD and can never return a commit. */
+  emailDraft?: { id: string; itemId?: string; draft?: Record<string, unknown> } | null;
   /** A verb whose review lives on a stage — the client summons it (forward/invite/reply). */
   openStage?: { stage: 'forward' | 'invite' | 'reply'; itemId: string } | null;
   /** THE SENSIBLE ASK (Aug 8): ONE consequential decision as tappable options — each tap SPEAKS
@@ -174,9 +305,26 @@ export type ConverseTurn = {
   /** ARTIFACTS-INTO-ORIGIN (Aug 9): the dispatched deliverable's REAL artifact rides back into
    *  the conversation that asked — the surface renders its card and opens the viewer, instead of
    *  pointing the user at another conversation. */
-  artifact?: { id: string; title: string; threadId: string; agentName: string } | null;
-  /** MULTI-DELIVERABLE: every file the hand-off produced (a report AND a deck each get a card). */
-  artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string }>;
+  artifact?: { id: string; title: string; threadId: string; agentName: string; type?: string } | null;
+  /** MULTI-DELIVERABLE: every file the hand-off produced (a report AND a deck each get a card).
+   *  THE TYPE IS STATED, NOT GUESSED (W4-C, Sep 22): `type` is THE ONE PRODUCTION DOOR's own
+   *  verdict for the bytes (`document` · `presentation` · `spreadsheet` · `frame`) — it rides from
+   *  `materializeDocument` through the delegation so the card wears the right kind and the right
+   *  word, instead of the chat lane hard-coding "document" over a frame. */
+  artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string; type?: string }>;
+  /** WAVE 1 — THE COLLECTION CARD (Sep 22): the user's OWN objects (workflows · documents ·
+   *  recordings · a day of the calendar), rendered by the kit as ONE card. `id` is a render key;
+   *  the spec carries its own re-read key (`spec.params`), because a persisted card is a POINTER
+   *  and re-derives its rows on reload — never a stale snapshot. On a listing ask the card IS the
+   *  turn (with `say` = the code-written framing); on an analytical one it rides BESIDE the prose. */
+  collection?: { id: string; spec: CollectionSpec } | null;
+  /** WAVE 2 — THE EVENT CARD (Sep 22): ONE meeting already on the user's calendar, rendered by the
+   *  kit with the verbs its own state allows. `id` is the calendar_events id — the card's own
+   *  re-read key (`GET /api/events/<id>/card`) and the address its verbs act through
+   *  (`POST /api/events/<id>/deed`), because a persisted card is a POINTER, never a snapshot.
+   *  NOTHING is fired from here: the spec may carry an ARMED proposal, and the user's click is the
+   *  deed (THE HUMAN-IN-THE-LOOP LAW). */
+  event?: { id: string; spec: EventSpec } | null;
 };
 
 const linkKindOf = (s: Extract<ConverseScope, { kind: 'item' }>): 'inbox_item' | 'commitment' | 'meeting' =>
@@ -369,7 +517,10 @@ type Verdict = {
 async function classifyTurn(client: SupabaseClient, userId: string, scope: ConverseScope, text: string, transcript = ''): Promise<Verdict> {
   // The command list is DERIVED from the chief-of-staff registry slice — the router can only route to
   // what's registered (adding a capability row updates this prompt automatically; the one-truth law).
+  // A capability marked `loopOnly` is NOT offered here: this router invents its own arguments from a
+  // one-line blurb, and some arguments ARE the deed (Sep 21 — see the field's own note).
   const commands = capabilitiesFor('chief_of_staff')
+    .filter((c) => !c.loopOnly)
     .map((c) => `- ${c.tool}: ${c.blurb}`).join('\n');
   const inItem = scope.kind === 'item';
   const prompt =
@@ -391,7 +542,9 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
     `{"project_name":"Admin","item_description":"Acme invoice"}; "start a project called Acme Pilot ` +
     `from this" → create_project {"name":"Acme Pilot"}; "add a task: chase the signed NDA by Friday" → ` +
     `create_task_item {"text":"Chase the signed NDA","due_date":"<that Friday>"}; "send it" / "send the reply" → ` +
-    `send_prepared_reply {}; "forward this to Rita" → prepare_forward {"to":"Rita"}; "set up a meeting with Sam ` +
+    `send_prepared_reply {}; "reply to Sam offering both slots" / "write back and say yes" → draft_reply ` +
+    `{"to":"Sam","instruction":"<what the reply must say, with the concrete details already settled>"} — ` +
+    `it prepares the draft, it never sends; "forward this to Rita" → prepare_forward {"to":"Rita"};"set up a meeting with Sam ` +
     `Thursday 11h" / "book a call with them next week" → prepare_calendar_invite {"request":"<their words>"} — ` +
     `it prepares the card, it never sends); "archive all the notices" / "unsubscribe from the newsletters" → ` +
     `prepare_bulk_deed {"verb":"archive","group":"notices"} — it prepares the card, it never acts). ` +
@@ -425,6 +578,31 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
   } catch { return { command: null, question: false, facts: [], delegate: null, open: true }; }
 }
 
+/** The pool the reply/forward matcher ranks: the user's OPEN inbox work. Deliberately pending-only
+ *  and recency-ordered — a resolved thread is not something the user is being asked to answer. The
+ *  cap is loud in shape (the deck's own saturation lesson): 120 rows is far past what any real
+ *  "reply to X" resolves against, and the ladder refuses rather than guesses when it is crowded. */
+async function loadReplyCandidates(client: SupabaseClient, userId: string): Promise<ReplyCandidate[]> {
+  try {
+    const { data } = await client.from('inbox_items')
+      .select('id, work_title, source_data')
+      .eq('user_id', userId).eq('status', 'pending')
+      .order('last_activity_at', { ascending: false, nullsFirst: false })
+      .limit(120);
+    return ((data ?? []) as Array<Record<string, unknown>>).map((it) => {
+      const sd = (it.source_data ?? {}) as Record<string, unknown>;
+      return {
+        id: String(it.id),
+        title: String(it.work_title ?? ''),
+        fromName: String(sd.from_name ?? ''),
+        fromAddress: String(sd.from_address ?? sd.from ?? ''),
+        subject: String(sd.subject ?? ''),
+        body: String(sd.body ?? ''),
+      };
+    }).filter((c) => c.fromAddress || c.subject || c.title);
+  } catch { return []; }
+}
+
 // THE EXPLICIT-SEND FLOOR (deterministic, Aug 4): chat may fire the send door ONLY when the user's
 // OWN words contain a send verb — a model mis-map must never mail anything. EN/PT/DE/ES forms.
 const EXPLICIT_SEND = /\b(send|ship|fire (it|off)|envi[ae]\w*|manda\w*|schick\w*|verschick\w*)\b/i;
@@ -456,6 +634,18 @@ async function sendTargetOf(
   return null;
 }
 
+/** A collection is an ENHANCEMENT: a builder that fails hands back nothing and the read still
+ *  answers. Never throws (the card can be absent; the answer can not). */
+async function buildCollectionSafe(
+  client: SupabaseClient, userId: string, kind: NonNullable<ReturnType<typeof presentsCollectionKind>>,
+  params?: Record<string, string | number | boolean>,
+): Promise<CollectionSpec | null> {
+  try {
+    const { buildCollection } = await import('@/lib/present/build');
+    return await buildCollection(client, userId, kind, params);
+  } catch { return null; }
+}
+
 // ── Registry dispatch — the ONE place a chat command becomes an execution. Only the chief-of-staff
 // slice is reachable; an unknown/unexposed tool is refused (exposure is enforced here, structurally).
 async function dispatchCommand(
@@ -464,10 +654,63 @@ async function dispatchCommand(
   /** The conversation the turn happens in — a preparer that must read the thread (the invite card)
    *  gets the SAME merged transcript every other reader sees, plus the room it belongs to. */
   convo: { transcript?: string; roomKey?: string | null } = {},
-): Promise<ConverseTurn | null> {
+  /** THE TURN'S DEED LEDGER (Sep 21) — a mutating branch pushes what it OBSERVED, so the loop's
+   *  final answer can be held to a count the code actually measured. */
+  deeds: DeedRecord[] = [],
+): Promise<ConverseTurn | ToolData | null> {
   const allowed = new Set(capabilitiesFor('chief_of_staff').map((c) => c.tool));
   if (!allowed.has(tool)) return null;
   const ctx = { client, userId };
+
+  // ── THE TASK VERBS (Sep 21, CLASS 2). ONE set of executors, shared with the coworker door; the
+  // chief's difference is scope (the user's WHOLE set, agentId null) and BY-NAME resolution.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const admin = client as any;
+  // THE PRESENTATION LAW: the two READS below hand back `modelText` — their executors write a
+  // listing/config dump for the model (ids, raw step prompts, config JSON), never a sentence for
+  // the person. The three DEEDS keep `say`: their lines are hand-written here or in the executor's
+  // own ledger, and a deed confirmation must stay instant.
+  if (tool === 'list_tasks') {
+    // ONE READ, TWO RENDERINGS (Wave 1): the block for the model, and the typed card for the kit.
+    // Both derive from the SAME exported query (`readTaskRows`), so they cannot describe different
+    // sets; the builder's own read also gathers the material-door facts the card's verbs need.
+    const [modelText, spec] = await Promise.all([
+      executeListTasks(null, userId, admin),
+      buildCollectionSafe(client, userId, 'workflows', { scope: 'all' }),
+    ]);
+    return { modelText, ...(spec ? { present: spec } : {}) };
+  }
+  if (tool === 'get_task' || tool === 'run_task') {
+    const spoken = String(args.task_name ?? args.name ?? '').trim();
+    if (!spoken) {
+      const ask = 'Which task? Name it and I\'ll look.';
+      return tool === 'get_task' ? { modelText: ask } : { say: ask, refs: [] };
+    }
+    const hit = await resolveTaskIdByName(spoken, null, userId, admin);
+    if ('error' in hit) return tool === 'get_task' ? { modelText: hit.error } : { say: hit.error, refs: [] };
+    if (tool === 'get_task') return { modelText: await executeGetTask(hit.id, userId, admin) };
+    // "RESUME X" IS A STATUS DEED, NOT A RUN (Sep 21, found live: the model served "resume the X
+    // task" with run_task and STARTED a real run). Code decides from the user's own words.
+    if (spokenIsResumeNotRun(userText)) {
+      const out = await executeSetTasksStatus({ status: 'active', scope: 'named', names: [hit.name] }, null, userId, admin, userText);
+      deeds.push({ tool: 'set_tasks_status', kind: 'status', ok: out.changed > 0, count: out.changed });
+      return { say: out.text, refs: [] };
+    }
+    const say = await executeRunTask(hit.id, userId, admin);
+    deeds.push({ tool: 'run_task', kind: 'run', ok: /is now running|is already running/.test(say), count: /is now running|is already running/.test(say) ? 1 : 0 });
+    return { say, refs: [] };
+  }
+  if (tool === 'set_tasks_status') {
+    const status = args.status === 'active' ? 'active' : 'paused';
+    const out = await executeSetTasksStatus({
+      status,
+      scope: args.scope === 'all' ? 'all' : args.scope === 'named' ? 'named' : undefined,
+      names: Array.isArray(args.names) ? (args.names as string[]) : undefined,
+    }, null, userId, admin, userText);
+    deeds.push({ tool: 'set_tasks_status', kind: 'status', ok: out.changed > 0, count: out.changed });
+    return { say: out.text, refs: [] };
+  }
+
   // ── THE DISPATCHER: a clear-fit production ask ACTS (delegation is reversible — the work
   // reports back; nothing external fires) with visible attribution. ──
   if (tool === 'assign_to_coworker') {
@@ -516,6 +759,19 @@ async function dispatchCommand(
       invite: { id: card.id, invite: card.invite as unknown as Record<string, unknown> },
     };
   }
+  // ── THE EVENT CARD (Wave 2, Sep 22): "decline the 3pm" finally has hands. It RESOLVES the
+  // meeting deterministically, builds the card, and arms a verb only when the user's own words
+  // named one — the calendar's version of the explicit-send floor. Nothing here reaches a provider:
+  // the deed fires from the card, through /api/events/[id]/deed, which re-derives the permission
+  // for itself and claims the commit door.
+  if (tool === 'prepare_event_action') {
+    const out = await executePrepareEventAction(client, userId, {
+      which: typeof args.which === 'string' ? args.which : undefined,
+      verb: typeof args.verb === 'string' ? args.verb : undefined,
+      userText,
+    });
+    return { modelText: out.modelText, ...(out.present ? { present: out.present } : {}) };
+  }
   // ── THE BULK DEED (attention-plan A7's parity clause): the spoken half of the ledger's verb
   // buttons. It routes through the SAME `prepareBulkDeed`, so a said deed and a clicked deed are
   // the same stored row. It PREVIEWS ONLY — `commitBulkDeed` is unreachable from this path.
@@ -532,6 +788,67 @@ async function dispatchCommand(
       say: out.line, refs: [],
       bulkDeed: { id: out.card.id, deed: out.card.deed as unknown as Record<string, unknown> },
     };
+  }
+  // ── THE DRAFT-REPLY DOOR (Sep 21) — deterministic resolution first, the one drafter behind it. ──
+  if (tool === 'draft_reply') {
+    const instruction = (String(args.instruction ?? '').trim() || userText).trim();
+    const to = String(args.to ?? args.recipient ?? '').trim();
+    const about = String(args.about ?? args.subject ?? args.topic ?? '').trim();
+    // On an OPEN email the target is not a question — it is what the user is looking at.
+    if (scope.kind === 'item' && linkKindOf(scope) === 'inbox_item') {
+      const body = await redraftItemDraft(client, userId, scope, instruction, { persist: true }).catch(() => null);
+      return body
+        ? { say: "I've drafted the reply — it's ready to review and send.", refs: [], draft: body }
+        : { say: "I couldn't put a draft together on this one — tell me the angle and I'll try again.", refs: [] };
+    }
+    const pasteSource = looksPasted(userText) ? userText
+      : looksPasted(convo.transcript ?? '') ? String(convo.transcript) : '';
+    const match = pickReplyTarget(await loadReplyCandidates(client, userId), { to, about, pasted: pasteSource || userText });
+    if (match.kind === 'many') {
+      // AMBIGUITY IS A REFUSAL BY LISTING (the house law) — never a guess with the user's mail.
+      return { say: `Which one should I answer: ${match.candidates.map((c) => `"${(c.subject || c.title).slice(0, 60)}"`).join(' · ')}?`, refs: [] };
+    }
+    if (match.kind === 'one') {
+      const c = match.candidate;
+      const body = await redraftItemDraft(client, userId, { kind: 'item', itemKind: 'email', itemId: c.id }, instruction, { persist: true }).catch(() => null);
+      if (body) {
+        return {
+          say: `Drafted the reply to ${c.fromName || c.fromAddress || 'them'} — it's on "${(c.subject || c.title).slice(0, 60)}", ready to review and send.`,
+          refs: [{ id: c.id, kind: 'inbox_item', label: (c.subject || c.title).slice(0, 60), href: `/item/${c.id}?kind=email` }],
+          draft: body,
+          // ONE CARD, EVERY THREAD: the matched item's prepared reply mounts HERE too — the same
+          // component the item room mounts, reading the same draft. The conversation that wrote it
+          // is where it should be reviewable.
+          emailDraft: { id: c.id, itemId: c.id },
+        };
+      }
+    }
+    // NONE — the message is not in our inbox (another mailbox, a paste). The SAME drafter writes it,
+    // and it lands on THE SAME CARD: the standalone lane, whose one extra question is which mailbox
+    // sends. (It used to travel as delimited plain text to copy-paste — a fourth rendering of an
+    // email, and the only one the user could not send. The owner's call, Sep 21.)
+    const sd = pastedAsSourceData(pasteSource);
+    if (sd) {
+      const { generateReplyDraft } = await import('@/lib/inbox/draft-reply');
+      const body = await generateReplyDraft(userId, sd, client,
+        `THE USER'S STEERING NOTE (fold this into the reply — it overrides anything conflicting): ${instruction}`).catch(() => '');
+      if (body?.trim()) {
+        const { prepareStandaloneEmail } = await import('@/lib/prepare/standalone-reply');
+        const card = await prepareStandaloneEmail(client, userId, {
+          body, source: sd, hintText: pasteSource, roomKey: convo.roomKey ?? null,
+        }).catch(() => null);
+        // A card that cannot survive a reload is not offered — the words still reach the user.
+        if (card) {
+          return {
+            say: `Here's the reply${sd.from_name ? ` to ${String(sd.from_name)}` : ''} — check the sender and the wording, then send it from here.`,
+            refs: [],
+            emailDraft: { id: card.id, draft: card.draft as unknown as Record<string, unknown> },
+          };
+        }
+        return { say: `Here's the reply — I couldn't keep it as a card just now, so copy it before you leave:\n\n${body.trim()}`, refs: [] };
+      }
+    }
+    return { say: "I couldn't tell which message to answer — paste it here, or open it and ask me from there.", refs: [] };
   }
   if (tool === 'prepare_forward') {
     if (scope.kind === 'item' && linkKindOf(scope) === 'inbox_item') {
@@ -554,7 +871,21 @@ async function dispatchCommand(
       if (rows.length > 1) return { say: `Which email should I forward: ${rows.map((r) => `"${String(r.work_title ?? '').slice(0, 50)}"`).join(' · ')}?`, refs: [] };
       return { say: 'No open email on this project to forward.', refs: [] };
     }
-    return null;
+    // THE HOME SCOPE IS NOT A DEAD END (Sep 21): this used to `return null` — a silent nothing the
+    // model papered over with "I can't prepare a forward from this view", then re-asked its own
+    // question. The Home resolves its target through the SAME matcher the draft door uses, so a
+    // named email is forwardable from here; only a genuinely unresolvable one speaks, and it speaks
+    // an alternative rather than a refusal.
+    const fwdMatch = pickReplyTarget(await loadReplyCandidates(client, userId), {
+      to: String(args.to ?? ''), about: userText, pasted: userText,
+    });
+    if (fwdMatch.kind === 'one') {
+      return { say: 'Opening the forward for review — approve there and it goes.', refs: [], openStage: { stage: 'forward', itemId: fwdMatch.candidate.id } };
+    }
+    if (fwdMatch.kind === 'many') {
+      return { say: `Which email should I forward: ${fwdMatch.candidates.map((c) => `"${(c.subject || c.title).slice(0, 60)}"`).join(' · ')}?`, refs: [] };
+    }
+    return { say: "I couldn't find that email in your inbox to forward. Open it and say it there, or tell me who it's from and I'll look again — I can also write the message from scratch.", refs: [] };
   }
   if (tool === 'resolve_inbox_item' && scope.kind === 'item' && linkKindOf(scope) === 'inbox_item') {
     const resolution = args.resolution === 'complete' ? 'complete' as const : 'dismiss' as const;
@@ -674,17 +1005,22 @@ async function dispatchCommand(
             `unless provided). Otherwise decline.\nJSON only: {"script":"…"} OR {"skip":"<why>"}`,
         });
         if (res.json?.script?.trim()) cfg.script = res.json.script;
-        else return { say: `That doesn't look like something to compute — ${String(res.json?.skip ?? 'tell me the numbers or the file and I will').slice(0, 140)}.`, refs: [] };
-      } catch { return { say: 'I could not set up that computation right now — try rephrasing with the concrete numbers.', refs: [] }; }
+        // Data tool, data shape — even on the decline path: the loop owns every sentence this
+        // branch can produce, so no half of run_compute can ever be served raw.
+        else return { modelText: `Not a computation — ${String(res.json?.skip ?? 'no numbers or file were given').slice(0, 140)}.` };
+      } catch { return { modelText: 'The computation could not be set up (codegen failed). Say so plainly and ask for the concrete numbers or the file.' }; }
     }
+    // THE PRESENTATION LAW: the digest is written FOR THE MODEL — it carries instructions ("do NOT
+    // estimate the result by hand"), environment variable names, tool names and raw stdout/stderr.
     const digest = await executeRunCompute(cfg, userId, client);
-    return { say: digest, refs: [] };
+    return { modelText: digest };
   }
   if (tool === 'read_action_history') {
     // The history read (one-surface § context controls): "what was sent this week?" answered from
-    // the real ledgers. The digest carries its own boundary line (through-the-platform only).
+    // the real ledgers. The digest carries its own boundary line (through-the-platform only) and an
+    // instruction addressed to the model, so it is DATA — the loop writes the sentence.
     const digest = await executeReadActionHistory(args as ActionHistoryConfig, userId, client);
-    return { say: digest, refs: [] };
+    return { modelText: digest };
   }
   if (tool === 'remember_fact' && scope.kind !== 'global') {
     const r = await executeRememberFact(ctx, scope.kind === 'entity'
@@ -746,32 +1082,70 @@ async function dispatchCommand(
   // READ tools (P7a — retrieval-capable grounding): the chief can GO LOOK like a coworker can.
   if (tool === 'get_emails') {
     const text = await executeGetEmails({ filter: args.filter, from: args.from, since: args.since ?? '30d', mode: 'search' }, userId, client).catch(() => '');
-    return { say: text.slice(0, 3000) || 'No matching emails found.', refs: [] };
+    return { modelText: text.slice(0, 3000) || 'No matching emails found.' };
   }
   if (tool === 'get_meeting_context') {
-    const text = await executeGetMeetingContext({ since: args.since ?? '30d', include: args.include ?? 'summaries', filter: args.filter }, userId, client).catch(() => '');
-    return { say: text.slice(0, 3000) || 'No matching meetings found.', refs: [] };
+    // ONE READ, TWO RENDERINGS: `readMeetingContext` returns the model's block AND the typed rows.
+    const since = String(args.since ?? '30d');
+    const read = await readMeetingContext({ since, include: args.include ?? 'summaries', filter: args.filter }, userId, client)
+      .catch(() => null);
+    const text = (read?.text ?? '').slice(0, 3000);
+    const { recordingSpec } = await import('@/lib/present/build');
+    return {
+      modelText: text || 'No matching meetings found.',
+      ...(read ? { present: recordingSpec(read.meetings, { since }) } : {}),
+    };
   }
   // THE READ-SIDE CALENDAR VERB (Wave 1): every line it returns — busy/free, weekdays, clock times,
   // proposed slots — is CODE's, so the loop relays truth instead of composing availability from memory.
   if (tool === 'check_calendar') {
-    const text = await executeCheckCalendar({
+    // ONE READ, TWO RENDERINGS: `readCalendar` returns the model's block AND the schedule window
+    // the card's rows are built from — so a rendered day and a printed line are the same day.
+    const read = await readCalendar({
       from_date: args.from_date, to_date: args.to_date,
       propose_slots: args.propose_slots, duration_minutes: args.duration_minutes, count: args.count,
-    }, userId, client).catch(() => '');
-    return { say: text.slice(0, 3000) || "I couldn't read the calendar just now.", refs: [] };
+      // THE FRESH READ (Sep 21): the tool has always carried `refresh` and this dispatch dropped
+      // it on the floor — "I just added it, check again" re-read the same stale cache and the
+      // answer was confidently wrong twice. The arg reaches its executor.
+      refresh: args.refresh === true,
+    }, userId, client).catch(() => null);
+    if (!read) return { modelText: "I couldn't read the calendar just now." };
+    if ('refusal' in read) return { modelText: read.refusal };
+    const { calendarSpec } = await import('@/lib/present/build');
+    return {
+      modelText: read.text.slice(0, 3000) || "I couldn't read the calendar just now.",
+      present: calendarSpec(read.win.days, {
+        hasCalendar: read.win.hasCalendar, from: read.fromDayStr, to: read.toDayStr,
+      }),
+    };
   }
   if (tool === 'search_knowledge_base') {
     try {
       const { buildKBContext } = await import('@/lib/knowledge/build-kb-context');
-      const kb = await buildKBContext(userId, String(args.query ?? ''), client, { fileLimit: 4 });
+      const query = String(args.query ?? '');
+      const kb = await buildKBContext(userId, query, client, { fileLimit: 4 });
       const text = typeof kb === 'string' ? kb : ((kb as { context?: string })?.context ?? '');
-      if ((text || '').trim()) return { say: text.slice(0, 3000), refs: [] };
+      if ((text || '').trim()) {
+        // ONE READ, TWO RENDERINGS: the card is built from the groups this very context was
+        // rendered from — never a second search that could rank differently.
+        const { documentSpec } = await import('@/lib/present/build');
+        const groups = typeof kb === 'string' ? [] : (kb.groups ?? []);
+        // THE FLOOR IS NOT ONLY FOR AN EMPTY SHELF (Sep 22, the kiteschool class re-manifested): a
+        // populated KB always returns SOMETHING, so the nearest-neighbour files used to be served as
+        // the answer and the NAMED body of work denied. The registry pointer rides a hit too.
+        const mm = await registryMatches(client, userId, query, scope.kind === 'entity' ? scope.entityId : null);
+        return {
+          modelText: text.slice(0, 3000) + (mm
+            ? `\n\n${mm}\nNone of the files above carry the distinctive part of this query — NAME that match instead of denying you have anything on it.`
+            : ''),
+          ...(groups.length ? { present: documentSpec(groups, query) } : {}),
+        };
+      }
       // The honesty floor (the kiteschool class): an empty KB result still checks the registry.
       const mm = await registryMatches(client, userId, String(args.query ?? ''), scope.kind === 'entity' ? scope.entityId : null);
-      if (mm) return { say: `Nothing in the knowledge base — but this looks like ${mm.replace(/^MEMORY MATCHES[^:]*: /, '')}. Its work lives on that project.`, refs: [] };
-      return { say: 'Nothing matching in the knowledge base.', refs: [] };
-    } catch { return { say: 'Nothing matching in the knowledge base.', refs: [] }; }
+      if (mm) return { modelText: `Nothing in the knowledge base — but this looks like ${mm.replace(/^MEMORY MATCHES[^:]*: /, '')}. Its work lives on that project.` };
+      return { modelText: 'Nothing matching in the knowledge base.' };
+    } catch { return { modelText: 'Nothing matching in the knowledge base.' }; }
   }
   return null;
 }
@@ -883,7 +1257,9 @@ async function runCoworkerDelegation(
       });
       const out = await runDelegation({
         supabase: admin, userId, worker: { id: worker.id as string, name: String(worker.name), worker_role: (worker.worker_role as string) ?? null, is_worker: true },
-        prompt, itemLabel: task.slice(0, 80),
+        // A LABEL IS NOT AN EXCERPT: this raw slice cut the classifier's task mid-word
+        // ("…'Last Week's Highlights' s") and the hand-back quoted OUR cut back at the user.
+        prompt, itemLabel: clipLabel(task, 80),
         firstName: (prof?.full_name as string | undefined)?.split(' ')[0] ?? null,
         ...(themeOverride ? { themeOverride } : {}),
         // THE COMPILER TIER (DH6/DH7): charts, in-place revision, and template-following compile
@@ -925,7 +1301,16 @@ async function runCoworkerDelegation(
 }
 
 // ── The bounded AGENT LOOP (the 20%) — function-calling over the chief-of-staff toolset. ──
-const CHIEF_TOOL_DEFS = [resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, checkCalendarDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, prepareForwardDefinition, prepareCalendarInviteDefinition, prepareBulkDeedDefinition, readActionHistoryDefinition, proposeStandingTaskDefinition, steerStandingTaskDefinition, runComputeDefinition, assignToCoworkerDefinition, offerChoicesDefinition];
+/** THE CHIEF DOOR'S TOOL SET, exported (Sep 21) so the door-parity gate can DERIVE it instead of
+ *  grepping for it — a gate that reads source text is a gate that can be fooled by a rename. */
+export const CHIEF_TOOL_DEFS = [listTasksChiefDefinition, getTaskChiefDefinition, runTaskChiefDefinition, setTasksStatusDefinition,
+  resolveInboxItemDefinition, resolveCommitmentDefinition, findFileDefinition, rememberFactDefinition, getEmailsDefinition, getMeetingContextDefinition, checkCalendarDefinition, searchKnowledgeDefinition, moveItemToProjectDefinition, setProjectStatusDefinition, mergeProjectsDefinition, createProjectDefinition, createTaskItemDefinition, sendPreparedReplyDefinition, draftReplyDefinition, prepareForwardDefinition, prepareCalendarInviteDefinition, prepareEventActionDefinition, prepareBulkDeedDefinition, readActionHistoryDefinition, proposeStandingTaskDefinition, steerStandingTaskDefinition, runComputeDefinition, assignToCoworkerDefinition, offerChoicesDefinition];
+
+/** THE HOLD WINDOW (see THE STREAM NEVER RETYPES, inside the loop). Long enough that a
+ *  preamble-then-tool turn resolves inside it — a model that is about to call a tool emits its
+ *  tool-call deltas within the first second — and short enough that a genuine answer (which takes
+ *  several seconds to write) is still watched being written. */
+const STREAM_HOLD_MS = 1200;
 
 async function agentLoop(
   client: SupabaseClient, userId: string, scope: ConverseScope, text: string, grounding: string,
@@ -965,10 +1350,21 @@ async function agentLoop(
       `TODAY is ${label} — it is ${clock} in the user's local time (${tz}). Reason about "today", "this week" ` +
       `and "next week" from THAT date. Weekday names for dates come from your tools/context — if a date's ` +
       `weekday is not stated there, do not guess it. For anything about availability, free time or ` +
-      `scheduling, call check_calendar first: never state availability from memory.\n\n`;
+      `scheduling, call check_calendar first: never state availability from memory. When the user ` +
+      `says they have just changed, added or deleted something in their calendar, call it with ` +
+      `refresh:true so the read comes from the provider and not from a cached view.\n\n`;
   } catch { /* the clock is an enhancement — an unreadable zone must never break the turn */ }
   const applied: ConverseTurn['applied'] = [];
+  // THE TURN'S DEED LEDGER — what the dispatcher OBSERVED, for the floor at the answer below.
+  const deeds: DeedRecord[] = [];
   const files: NonNullable<ConverseTurn['files']> = [];
+  // SPEAK → SHOW (Wave 1, the opening contract): an ANALYTICAL turn answers in prose AND hands
+  // over the objects it reasoned about. The LAST presenting read wins — it is the one the answer
+  // was composed from; nothing here changes what the model sees (that stays `modelText`).
+  let collection: NonNullable<ConverseTurn['collection']> | null = null;
+  // …and the same for the SINGLE-OBJECT card (Wave 2): an analytical turn about one meeting answers
+  // in prose and hands the event over, verbs and all. The last one built wins, for the same reason.
+  let event: NonNullable<ConverseTurn['event']> | null = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const messages: any[] = [
     { role: 'system', content:
@@ -978,8 +1374,18 @@ async function agentLoop(
       `use them when the user asks. You never CREATE ` +
       `and send anything in one motion: send_prepared_reply fires ONLY the already-drafted reply and ONLY when ` +
       `the user's own words explicitly say send; prepare_forward and prepare_calendar_invite only PREPARE — they ` +
-      `hand the user a card to review, and the approve stays with them. When they ask to set up, schedule or book ` +
+      `hand the user a card to review, and the approve stays with them. When the user asks you to reply to, ` +
+      `answer, write back to or offer something to someone by email — or agrees to your own offer to do so — ` +
+      `call draft_reply with the concrete details this conversation has already settled; it prepares the draft ` +
+      `and sends nothing. When they ask to set up, schedule or book ` +
       `a meeting, call prepare_calendar_invite and keep your line to ONE sentence: the card carries the detail. ` +
+      // WAVE 2 — the calendar verbs are sayable: an EXISTING meeting is an object with its own
+      // actions, and the card computes which ones its state allows. The model chooses the meeting,
+      // never the permission, and nothing fires until the user clicks.
+      `When they talk about a meeting that ALREADY EXISTS — "what's my 3pm?", "decline the standup", ` +
+      `"move my call with Sam to Thursday 10:00", "cancel tomorrow's sync" — call prepare_event_action ` +
+      `with their own words; it shows the meeting with the actions it allows and changes nothing by ` +
+      `itself. Keep your line to ONE sentence; the card carries the rest. ` +
       `When they ask to clear, archive, unsubscribe from or bin a WHOLE GROUP you are holding quiet, call ` +
       `prepare_bulk_deed — it only previews; the card states what would happen and their click is the commit. ` +
       `Ground every claim in the ` +
@@ -998,6 +1404,11 @@ async function agentLoop(
       // very brief the evidence settled (lib/room/ground-evidence.ts). Self-gating: a page with no
       // GROUND EVIDENCE block is untouched by it.
       `${GROUND_EVIDENCE_RULE}\n\n` +
+      // THE OFFER LAW (Sep 21) — DERIVED from the very toolDefs this loop holds, AFTER the
+      // workspace-feature filter above, so the promise the mind is allowed to make and the hands
+      // it actually has are the same list by construction. A hand-written block would drift the
+      // day a tool is added or a feature is switched off; this one cannot.
+      `${renderOfferLaw(toolDefs)}\n\n` +
       `--- CONTEXT ---\n${grounding.slice(0, 4000)}` },
     // THE PANEL CONVERSATION as real turns (Aug 10, the amnesia class): a follow-up ("yes
     // please" · "in bullet points" · "ask Sofia to do it") resolves against what was just
@@ -1009,11 +1420,32 @@ async function agentLoop(
     { role: 'user', content: text },
   ];
   for (let i = 0; i < 4; i++) {
-    // TOKEN STREAMING (Aug 10 — the answer materializes live, the Claude idiom): each iteration
-    // streams; content deltas flow to the client as they land. A message that turns out to be a
-    // tool call streams no content (the models emit one or the other), and the final `done`
-    // payload always replaces the preview — the honesty floor can still amend it. Any streaming
-    // failure falls back to the plain call; streaming is presentation, never correctness.
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    // THE STREAM NEVER RETYPES (Sep 21 — the pilot: "it types the text twice, once, then deletes
+    // it and then writes it again")
+    //
+    // The old design assumed "the models emit content OR a tool call". Current models do both:
+    // they write a near-complete answer and THEN call a tool. The client was told to WIPE its
+    // preview (a NUL sentinel) so the preamble wouldn't linger — so the user watched a whole
+    // answer get typed, erased, and typed again.
+    //
+    // The constraint is real: tool_call deltas arrive at the END of an iteration's content, so
+    // there is no up-front way to know whether what is streaming is the answer or a preamble.
+    // Designs considered: (a) hold everything until the iteration ends — correct, but it kills the
+    // live typing the pilot likes on the common single-iteration answer; (b) a CHARACTER budget —
+    // fails for exactly this incident, whose preamble was hundreds of characters.
+    //
+    // CHOSEN: a TIME-BOXED HOLD plus an APPEND-ONLY law.
+    //   • Content is buffered and NOT forwarded until HOLD_MS has passed with no tool-call delta
+    //     seen. A preamble-then-tool turn resolves well inside that window, so its text NEVER
+    //     enters the answer bubble at all — it surfaces once on the PROGRESS channel, which is
+    //     transient by contract and is retracted by nobody.
+    //   • Once flushing begins, nothing is ever retracted. A tool call arriving after the flush
+    //     leaves the words standing and the later content APPENDS; the `done` frame then replaces
+    //     the preview in place, without a typing animation. Growth and a settle — never an erase.
+    // The NUL sentinel is therefore no longer emitted (the client keeps handling it for any other
+    // producer, and for a client that has not yet reloaded).
+    // ══════════════════════════════════════════════════════════════════════════════════════════
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let msg: any = null;
     try {
@@ -1024,17 +1456,37 @@ async function agentLoop(
       });
       const toolCalls: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> = [];
       let content = '';
+      let held = '';
+      let flushing = false;
+      let sawToolDelta = false;
+      const startedAt = Date.now();
       for await (const chunk of stream) {
         const delta = chunk.choices?.[0]?.delta;
         if (!delta) continue;
-        if (delta.content) { content += delta.content; onToken(delta.content); }
+        if (delta.content) {
+          content += delta.content;
+          if (flushing) onToken(delta.content);
+          else {
+            held += delta.content;
+            if (!sawToolDelta && Date.now() - startedAt >= STREAM_HOLD_MS) { flushing = true; onToken(held); held = ''; }
+          }
+        }
         for (const tc of delta.tool_calls ?? []) {
+          sawToolDelta = true;
           const ti = tc.index ?? 0;
           if (!toolCalls[ti]) toolCalls[ti] = { id: '', type: 'function', function: { name: '', arguments: '' } };
           if (tc.id) toolCalls[ti].id = tc.id;
           if (tc.function?.name) toolCalls[ti].function.name += tc.function.name;
           if (tc.function?.arguments) toolCalls[ti].function.arguments += tc.function.arguments;
         }
+      }
+      // The iteration ended still holding: now we KNOW which it was. No tool call → it is the
+      // answer and it flushes whole. A tool call → the held words were a preamble and they go to
+      // the transient progress channel, never the bubble (nothing to retract, because nothing
+      // was ever shown).
+      if (held) {
+        if (toolCalls.length) onProgress?.(clipForPrompt(held.replace(/\s+/g, ' '), 90));
+        else onToken(held);
       }
       msg = { role: 'assistant', content: content || null, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) };
     } catch {
@@ -1043,28 +1495,56 @@ async function agentLoop(
     }
     if (!msg) break;
     const calls = (msg.tool_calls ?? []) as Array<{ id: string; function: { name: string; arguments: string } }>;
-    // Preamble text before a tool call ("Let me check that…") must not linger under the real
-    // answer — the NUL sentinel tells the client to clear its preview.
-    if (calls.length && msg.content && onToken) onToken('\u0000');
+    // THE SENTINEL IS RETIRED (Sep 21 — see THE STREAM NEVER RETYPES above). Preamble text is now
+    // withheld from the bubble by the hold window instead of being WIPED out of it after the fact,
+    // so there is nothing left to retract and no reset is sent. The non-streaming fallback showed
+    // no preview either, so it owes none.
     if (!calls.length) {
       const raw = (msg.content ?? '').trim() || 'Done.';
       // THE HONESTY FLOOR AT THE ANSWER DOOR (Aug 4, found by the P30 gate; hoisted Sep 13 so the
       // question doors carry it too): no denial leaves ANY answer door without a registry check.
       const say = await honestyFloor(client, userId, raw, text, scope.kind === 'entity' ? scope.entityId : null);
-      return { say, refs: [], applied, files: files.length ? files : undefined };
+      // THE DEED FLOOR AT THE CHIEF'S ANSWER (Sep 21). The same predicate the coworker lane runs,
+      // wired here as an AMENDMENT ONLY — never a corrective round: this loop's streaming law is
+      // "growth and a settle, never an erase" (THE STREAM NEVER RETYPES above), and re-running the
+      // turn would retype an answer the user has already watched arrive. Appending is growth; a
+      // claim the ledger cannot carry ships with the count the code actually measured beside it.
+      const { breach } = deedFloorVerdict(say, deeds);
+      return { say: breach ? say + deedAmendment(breach) : say, refs: [], applied, files: files.length ? files : undefined,
+        ...(collection ? { collection } : {}), ...(event ? { event } : {}) };
     }
     messages.push(msg);
     for (const call of calls) {
       let args: Record<string, unknown> = {};
       try { args = JSON.parse(call.function.arguments || '{}'); } catch { /* empty */ }
       onProgress?.(progressLabelFor(call.function.name));
-      const out = await dispatchCommand(client, userId, scope, call.function.name, args, text, convo);
-      if (out?.applied) applied.push(...out.applied);
-      if (out?.files) files.push(...out.files);
+      const out = await dispatchCommand(client, userId, scope, call.function.name, args, text, convo, deeds);
+      // THE PRESENTATION LAW: a data read has no surface half at all — it only ever becomes the
+      // tool message below, which is exactly what this loop is for.
+      const turn = isToolData(out) ? null : out;
+      if (isToolData(out) && out.present) {
+        if (isEventPresent(out.present)) event = { id: out.present.spec.id, spec: out.present.spec };
+        else collection = { id: crypto.randomUUID(), spec: out.present };
+      }
+      if (turn?.applied) applied.push(...turn.applied);
+      if (turn?.files) files.push(...turn.files);
       // A commit/stage/options/delegation signal ends the loop — the client (or the coworker)
       // owns the next step; the loop never talks past its own hand-off.
-      if (out?.commit || out?.openStage || out?.options || out?.delegated || out?.invite || out?.bulkDeed) return { ...out, applied: applied.length ? applied : out.applied };
-      messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(out ?? { error: 'tool unavailable in this context' }).slice(0, 1500) });
+      if (turn?.commit || turn?.openStage || turn?.options || turn?.delegated || turn?.invite || turn?.bulkDeed || turn?.emailDraft) return { ...turn, applied: applied.length ? applied : turn.applied };
+      // THE NULL IS NEVER SILENT (Sep 21): a dispatcher that cannot serve this scope used to hand
+      // back `{error:'tool unavailable in this context'}` — five words the model improvised over
+      // ("I can't prepare a forward from this view…") before re-asking its own question. The
+      // result now NAMES the actions that ARE available here, derived from the same filtered
+      // toolDefs the mind was given, and forbids both fabrication and the re-ask.
+      // A data read rides as its OWN text (the block the executor wrote for this exact purpose),
+      // clipped under the excerpt law so a cut declares itself; everything else rides as the JSON
+      // of the turn the dispatcher composed.
+      messages.push({
+        role: 'tool', tool_call_id: call.id,
+        content: isToolData(out)
+          ? clipForPrompt(out.modelText, 4000)
+          : JSON.stringify(turn ?? unavailableToolResult(call.function.name, toolDefs)).slice(0, 1500),
+      });
     }
   }
   // Loop exhausted without a final answer: NEVER the bare shrug (found live: "I couldn't finish
@@ -1118,6 +1598,28 @@ function panelTranscript(history: ConverseHistoryTurn[] | undefined): string {
 // resolved into a real link is stripped at the ONE core exit, so no caller can leak it. The
 // negative lookahead spares markdown links; [CONFIRM: …] doesn't match the letter+digits shape.
 const GROUNDING_TAG_RE = /\s?\[(?:[EFLCRKW]\d+)\](?!\()/g;
+
+// ── THE FLOOR'S OWN RULE, NOW EXPRESSIBLE (Sep 21). GROUNDING_TAG_RE was written when NOTHING
+// resolved tags, so "a tag nobody resolved into a real link is stripped" could only be implemented
+// as "strip them all" — and once the ask lane started resolving them (lib/home/ask-refs.ts), the
+// correctly-placed chips were erased on the way out and only MALFORMED brackets survived (which is
+// how the wrong-chip incident became visible at all).
+//
+// Two lanes, stated:
+//   · NO REF CARRIES A TAG (every lane but the ask doors: the agent loop, delegation, item scope,
+//     every command reply) → the ORIGINAL floor runs, byte for byte, lookahead and all. Nothing
+//     resolved, so nothing can be kept, and the REF-TAG FLOOR cannot regress.
+//   · A REF CARRIES ITS TAG → the shared resolver keeps exactly the tags it served and strips the
+//     rest (unknown id, grouped, over-cap). The resolver has no markdown lookahead, so a link's own
+//     bracket `[F3](…)` is PARKED across the strip and put back — a link is never notation.
+const MARKDOWN_TAG_RE = /\[[EFLCRKW]\d+(?:\s*,\s*[EFLCRKW]\d+)*\]\(/g;
+function stripGroundingNotation(say: string, refs: ConverseTurn['refs']): string {
+  if (!refs?.some((r) => r.tag)) return say.replace(GROUNDING_TAG_RE, '');
+  const parked: string[] = [];
+  const guarded = say.replace(MARKDOWN_TAG_RE, (m) => { parked.push(m); return `«md${parked.length - 1}»`; });
+  if (!parked.length) return stripUnresolvedTags(say, refs);
+  return stripUnresolvedTags(guarded, refs).replace(/«md(\d+)»/g, (_m, i) => parked[Number(i)] ?? '');
+}
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // A PREVIEW IS NOT A DEED (Sep 10 — the tab-latency correction)
@@ -1228,7 +1730,16 @@ export async function converse(
   // prompts and our code. If one ever survives to here — the loop was unavailable, a call errored —
   // it is replaced with an honest one-liner. Sitting at the one answer door makes that structural
   // rather than a list of guarded returns.
-  if (turn?.say) turn.say = enforceWeekdayDatePairs(turn.say.replace(GROUNDING_TAG_RE, ''));
+  // THE ANCHOR LAW REACHES THE LANE (Sep 21): the floor's precedence chain needs the USER'S OWN
+  // recent words to know whether a weekday was THEIRS ("either thursday or friday") or the model's
+  // own derivation. Only USER turns ride — an assistant turn would let the model's invented weekday
+  // be read back as a user claim and launder itself into the anchor position.
+  const userWords = [text, ...(opts.history ?? []).filter((h) => h.role === 'user').slice(-3).map((h) => h.text)]
+    .filter(Boolean).join('\n');
+  // THE REF-TAG FLOOR, RE-POINTED (Sep 21): same site, same shape, same weekday floor wrapped
+  // around it — the strip itself now keeps a tag whose ref was SERVED (see stripGroundingNotation
+  // above). Refs empty → identical behaviour to the old `.replace(GROUNDING_TAG_RE, '')`.
+  if (turn?.say) turn.say = enforceWeekdayDatePairs(stripGroundingNotation(turn.say, turn.refs), { userText: userWords });
   if (turn?.say) turn.say = sayInsteadOfSentinel(turn.say);
   return turn;
 }
@@ -1380,25 +1891,98 @@ async function converseInner(
       } catch { /* the classifier's verdict stands */ }
     }
   }
+  // ── THE FORWARD-MOTION LAW, STRUCTURALLY (Sep 21, the pilot's dead-ended "yes please") ──
+  // The assistant offered ("would you like me to offer both options to them?"), the user agreed,
+  // and the turn was routed as if it were a fresh QUESTION — so it answered with a question of its
+  // own. An agreement to the assistant's OWN offer is an INSTRUCTION: it belongs on the path that
+  // has hands. Deterministic and narrow (a bare affirmation, under a turn that ends in a question),
+  // and it never touches the item scope, whose affirmations already mean "rework the draft".
+  const lastAssistant = [...(opts.history ?? [])].reverse().find((h) => h.role === 'assistant')?.text ?? '';
+  const answeringAnOffer = scope.kind !== 'item' && !!lastAssistant
+    && endsInAnOffer(lastAssistant) && isAffirmation(text);
+  if (answeringAnOffer && !verdict.command && !verdict.delegate) { verdict.question = false; verdict.open = true; }
+
   // A hand-off OUTRANKS a command (same bug, second face: the classifier returned BOTH
   // delegate AND create_task_item, and the command fast-path ran first — the addressed
   // work landed on the user's own plate instead of the coworker's).
   if (verdict.delegate) verdict.command = null;
 
+  /** The DATA read the router named and the fast path refused to serve (THE PRESENTATION LAW). It
+   *  is a stated lookup, so it opens the reach valve below — the loop is told to GO AND GET it. */
+  let skippedDataRead: string | null = null;
   // 1 — COMMAND fast-path: direct registry dispatch (~1 extra small call total).
-  // EXCEPT raw-context reads (found via P30's flake): search_knowledge_base returns the RAW KB
-  // block — served straight as `say` it reads as a context dump, not an answer. Reads that need
-  // COMPOSITION go through the agent loop, which reads the block as a tool result and answers.
-  // check_calendar joined the list the day it shipped (found by its own gate, Sep 18): its block is
-  // written FOR THE MODEL — "use these labels verbatim", "BEYOND THIS WINDOW THE CALENDAR IS NOT
-  // VISIBLE TO YOU: say so plainly" — so the fast path handed the user a page of instructions
-  // addressed to someone else instead of an answer to their question. get_emails and
-  // get_meeting_context are the same shape ("## Recent meetings (3)…" is a source dump, not a
-  // sentence) — the whole class rides the set, not a per-tool exception.
-  if (verdict.command && !RAW_CONTEXT_READS.has(verdict.command.tool)) {
+  // THE PRESENTATION LAW (Sep 22, WAVE 0): this path serves the dispatcher's `say` AS the answer,
+  // so it may only run for a tool whose result IS an answer — a line hand-written for the person.
+  // The permission is opt-IN and lives on the registry row (`resultIs: 'prose'`); everything else
+  // is DATA and falls through to the agent loop, which reads it as a tool result and composes.
+  // Before, the guard was an opt-OUT set of four names here, and the read tools shipped after it
+  // leaked their model-facing blocks into the bubble (the list_tasks incident, Sep 21).
+  // A skipped data command is COMPOSITE by definition — marking the turn open keeps it out of the
+  // item-scope correction door below, whose job is reworking a draft, not answering a lookup.
+  if (verdict.command && resultIsProse(verdict.command.tool)) {
     opts.onProgress?.(progressLabelFor(verdict.command.tool));
     const out = await dispatchCommand(client, userId, scope, verdict.command.tool, verdict.command.args, text, { transcript, roomKey: dlg.roomKey });
+    // The type makes the law unbreakable: a data result is not a ConverseTurn and cannot be served.
+    if (out && !isToolData(out)) return out;
+  } else if (verdict.command && resultIsPresentation(verdict.command.tool)) {
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    // THE OBJECT CARD'S FAST PATH (Wave 2, Sep 22).
+    //
+    // A `presentation` result is a CARD plus ONE sentence COMPOSED BY CODE from the object's own
+    // facts (lib/present/event-build.ts `eventFraming`) — arithmetic and the contract's own verb
+    // words, with no model anywhere near it. So it is servable exactly like `prose`, and the
+    // registry says which is which rather than a branch deciding. `modelText` still never reaches
+    // a person on any OTHER path: for a data read it stays a tool message, as before.
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    opts.onProgress?.(progressLabelFor(verdict.command.tool));
+    const out = await dispatchCommand(client, userId, scope, verdict.command.tool, verdict.command.args, text, { transcript, roomKey: dlg.roomKey });
+    if (isToolData(out)) {
+      const present = out.present;
+      if (isEventPresent(present)) {
+        return { say: out.modelText, refs: [], event: { id: present.spec.id, spec: present.spec } };
+      }
+      // A refusal-by-listing (or an unfound object) has no card and is still CODE's sentence.
+      return { say: out.modelText, refs: [] };
+    }
     if (out) return out;
+  } else if (verdict.command) {
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    // THE FAST PATH IS FAST AGAIN — WITHOUT THE LEAK (Wave 1, Sep 22).
+    //
+    // W0's law ("a tool result is DATA, never the answer") sent every data read through the agent
+    // loop, so "what workflows do I have" went from ~1s to a full model round — the right answer,
+    // at the price of the cheapest question in the product. THE COLLECTION CARD pays it back: when
+    // the read ALSO hands back a `CollectionSpec`, a pure LISTING ask is answered by the card
+    // alone — `say` is the framing sentence COMPOSED BY CODE from the rows, the rows are typed,
+    // and NOTHING model-facing exists on this path because no model was asked to compose.
+    //
+    // It is deliberately narrow: an ANALYTICAL ask falls through to the loop (a judgment over the
+    // data is not a list of it), and so does a read that produced no spec. A slower right answer
+    // beats a faster wrong card.
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    const kind = presentsCollectionKind(verdict.command.tool);
+    if (kind && isListingAsk(text)) {
+      opts.onProgress?.(progressLabelFor(verdict.command.tool));
+      const out = await dispatchCommand(client, userId, scope, verdict.command.tool, verdict.command.args, text, { transcript, roomKey: dlg.roomKey });
+      // A COLLECTION, STRUCTURALLY: this branch is reached only for a collection-presenting tool,
+      // and the narrowing says so in the type rather than trusting that (Wave 2 widened `present`).
+      const present = isToolData(out) ? out.present : undefined;
+      const spec = present && !isEventPresent(present) ? present : undefined;
+      // THE FRAMING IS THE ONLY SENTENCE THIS PATH MAY SERVE — never `modelText`, whose whole job
+      // is to be read by a model. An empty collection still answers honestly (its emptyLine is the
+      // card's, the framing is the turn's), so a truthful "nothing yet" is a card too.
+      if (spec) return { say: spec.framing, refs: [], collection: { id: crypto.randomUUID(), spec } };
+    }
+    skippedDataRead = verdict.command.tool;
+    // THE SKIPPED READ IS STILL A LOOKUP (Sep 22, found by the T17 replay the same hour the law
+    // shipped): killing the leak must not make the answer hollow. The router naming a data tool IS
+    // the judgment that this turn needs a registry read — so the turn goes to the tool-bearing loop
+    // and nowhere else. Left as a `question`, it fell to the TOOLLESS answering pass, which read the
+    // brain snapshot, found no workflows in it, and confessed ("I don't have a complete picture of
+    // what workflows you actually have") while the verb to look sat one branch away. The loop reads
+    // the same grounding AND holds the tool; `open` keeps it out of the item-scope redraft door.
+    verdict.question = false;
+    verdict.open = true;
   }
 
   // 2 — DELEGATE: "have Max research X" → the real delegation engine (prepare + report back).
@@ -1420,7 +2004,11 @@ async function converseInner(
   // to the tool-bearing agent loop below — ONE escalation, whose turn is final. THE MODEL decides it
   // needs reach; no code ever reads the user's words to route them. The sentinel check runs BEFORE
   // honestyFloor so the floor never spends a call on — or mutates — a contract token.
-  let escalateToReach = false;
+  // THE SKIPPED READ OPENS THE VALVE (Sep 22, found by the R3 replay the same hour): routing a data
+  // command to the loop is not enough — without the reach note the loop answers from the grounding
+  // it was handed and CONFESSES its edge ("my calendar view runs through the 5th"), exactly the
+  // confinement the valve exists to break. The router naming a read IS the lookup request.
+  let escalateToReach = !!skippedDataRead;
   if (verdict.question) {
     const scopeEntity = scope.kind === 'entity' ? scope.entityId : null;
     const matches = await registryMatches(client, userId, text, scopeEntity);
@@ -1531,8 +2119,10 @@ async function converseInner(
     } catch { /* unreadable features → assume held (the loop's own filter still governs) */ }
   }
   const reachNote = escalateToReach
-    ? `A LOOKUP WAS ALREADY REQUESTED FOR THIS TURN: the answering pass judged that the context below ` +
-      `does NOT cover this question. USE YOUR TOOLS to go and get what it needs before you answer — ` +
+    ? `A LOOKUP WAS ALREADY REQUESTED FOR THIS TURN: ${skippedDataRead
+        ? `this turn was routed here because answering it needs the ${skippedDataRead} read`
+        : 'the answering pass judged that the context below does NOT cover this question'}` +
+      `. USE YOUR TOOLS to go and get what it needs before you answer — ` +
       (reachCalendarHeld
         ? `for anything about the calendar, availability or free time that means calling check_calendar ` +
           `for the dates in question, even when they fall outside any window the context states. `
@@ -1544,13 +2134,29 @@ async function converseInner(
     : '';
   const preamble = [
     ANSWER_HONESTY_RULE, reachNote,
+    // THE FORWARD-MOTION LAW as the mind reads it — the agreement IS the instruction.
+    answeringAnOffer ? FORWARD_MOTION_DIRECTIVE : '',
     dlg.transcript, matches, viewing,
   ].filter(Boolean).join('\n\n');
   // The PANEL conversation rides as REAL messages (not a squeezed grounding block) — a follow-up
   // operates on the prior answer at full fidelity, the way any chat model expects. The room
   // narration transcript stays in the preamble (room callers don't always carry panel history).
-  const loopTurn = await agentLoop(client, userId, scope, text, preamble ? `${preamble}\n\n${grounding}` : grounding,
+  let loopTurn = await agentLoop(client, userId, scope, text, preamble ? `${preamble}\n\n${grounding}` : grounding,
     opts.history, opts.onProgress, material, opts.onToken, { transcript, roomKey: dlg.roomKey });
+  // NEVER RE-ASK WHAT YOU JUST ASKED (Sep 21) — the prompt directive above carries the law; this is
+  // the deterministic floor under it, because a law is only alive while something enforces it. If an
+  // affirmation came back as a near-verbatim repeat of the very question it answered, the turn is
+  // spent ONE more time with the failure named. The retry is TOKENLESS: the first attempt already
+  // streamed, and the `done` frame is what the user finally reads.
+  if (answeringAnOffer && loopTurn.say && repeatsTheQuestion(lastAssistant, loopTurn.say)) {
+    const retry = await agentLoop(client, userId, scope, text,
+      `${FORWARD_MOTION_DIRECTIVE}\nYOU HAVE ALREADY RE-ASKED THIS QUESTION ONCE. Do not ask it again — ` +
+      `act on what the conversation already states, or say in one sentence what you cannot do and what ` +
+      `you are doing instead.\n\n${preamble ? `${preamble}\n\n${grounding}` : grounding}`,
+      opts.history, opts.onProgress, material, undefined, { transcript, roomKey: dlg.roomKey })
+      .catch(() => null);
+    if (retry?.say && !repeatsTheQuestion(lastAssistant, retry.say)) loopTurn = retry;
+  }
   // THE EXHAUSTION HAND-OFF (Aug 10, found live: the loop's old bare "I couldn't finish that
   // one." beside a competitor's finished document): when the inline loop can't land the work,
   // the work — WITH the user's full material and the conversation — goes to the production

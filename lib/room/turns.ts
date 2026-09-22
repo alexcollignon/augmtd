@@ -18,7 +18,10 @@ export type RoomTurn = {
   id?: string;
   role: 'user' | 'system';
   text: string;
-  refs?: Array<{ label: string; href: string | null }>;
+  /** `tag` = the grounding id the turn's own prose placed ([E7], [R2]…). THE REF IS ITS TAG
+   *  (lib/home/ask-refs.ts): a stored ref without it cannot be resolved, only guessed at by
+   *  position — which is the wrong-object-door bug. Optional: rows written before the law. */
+  refs?: Array<{ label: string; href: string | null; tag?: string }>;
   /** An inline component carried by the turn (resolved against the work-component registry, R2). */
   component?: { key: string; refId?: string; state?: Record<string, unknown> } | null;
   /** Coworker attribution — THE ONE-NARRATOR LAW (UX arc): present ONLY when the content is the

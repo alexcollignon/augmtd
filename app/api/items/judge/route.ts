@@ -40,7 +40,10 @@ export async function GET(request: NextRequest) {
             .eq('user_id', uid).eq('room_key', roomKey).eq('dedupe_key', `requires:${id}`)
             .filter('component->>key', 'eq', 'input_checklist').limit(1).maybeSingle();
           if (ask) return; // the ask stands — nothing new until the user answers/attaches
-          const taskIds = requires.map((r) => `require:${r.label.toLowerCase().slice(0, 60)}`);
+          // ONE REQUIREMENT KEY (W4-B, Sep 22 — lib/prepare/supply.ts): a typed fact and a resolved
+          // file stage under the same key, so "everything staged" counts both.
+          const { requireTaskId } = await import('@/lib/prepare/supply');
+          const taskIds = requires.map((r) => requireTaskId(r.label));
           const poolKind = kind === 'commitment' ? 'commitment' : 'email';
           const { data: staged } = await supabase.from('item_deliverables').select('task_id')
             .eq('user_id', uid).eq('kind', poolKind).eq('entity_id', id).in('task_id', taskIds);

@@ -49,7 +49,8 @@ import { ItemRail, pushDealTurn, type RailView } from '@/components/home/item-ra
 // retired into it. The people typeahead it shared with the forward now lives in ONE module.
 import { InviteCard } from '@/components/home/invite-card';
 import { EmailCard } from '@/components/home/email-card';
-import { PeopleSuggestInput } from '@/components/home/people-chips';
+// THE PREPARED FORWARD's kit card + its host (W3-C) — the local ForwardPreviewCard retired into it.
+import ForwardCard from '@/components/home/forward-card';
 import { panelPlan, applyPanelPlan } from '@/lib/room/render-plan';
 import { resolveDecisionObject, type DecisionObject } from '@/lib/room/decision-object';
 import dynamic from 'next/dynamic';
@@ -60,7 +61,11 @@ import dynamic from 'next/dynamic';
 const RunRecordDrawer = dynamic(() => import('@/components/workflows/run-record-drawer'), { ssr: false });
 import type { RecordRunOutputs } from '@/components/workflows/run-record-drawer';
 // THE ONE SUPPLY DEED — shared with the process drawer's input station (see InputStationCard).
-import InputSupplyForm from '@/components/workflows/input-supply-form';
+// THE ASK AND THE GATE ARE HOSTED, NEVER DRAWN (W3-A, Sep 22 — docs/component-map.md §2a): the
+// two hosts own the states, the vocabulary and the doors; the supply form is mounted INSIDE the
+// ask host, so this door no longer knows what a paste box looks like.
+import InputCard from '@/components/home/input-card';
+import ApprovalCard from '@/components/home/approval-card';
 
 // THE STRUCTURAL FRAME (UX arc): the room's two panes mount from frame one — before the view
 // loads, the rail receives this empty shell (+ pending) instead of not existing. Structure never
@@ -437,179 +442,15 @@ function ComposePanel({ kind, entityId, onSent }: { kind: ComposeKind; entityId:
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // PREPARED FORWARD — the S5 second concrete prepared-action type (the proof-of-agnosticism send-type).
 // A [System] step whose intent is "forward this to <someone>" routes here (via `clientRouteActionType`,
-// 1:1 with the server router) instead of the composer: /api/items/prepare returns a GROUNDED forward
-// (the item's REAL email as read-only forwarded content + an editable To + note), the user reviews &
-// adds the recipient, then a single "Review & forward" click → /api/items/execute (type:'forward', the
-// ONLY place the forward fires). It keeps the donor's field shape/tokens — its own card kind is the
-// next wave of THE CARD CONTRACT (doc_draft/email lead the queue).
+// 1:1 with the server router) instead of the composer.
+//
+// THE CARD LEFT THIS FILE (W3-C, Sep 22 — docs/component-map.md §2 item 8). `ForwardPreviewCard`
+// lived here as a local function with its own recipients-chip editor (the repo's FOURTH) and its own
+// `dangerouslySetInnerHTML` rendering of the forwarded body. It is now the kit's `forward` kind
+// behind ONE host, `components/home/forward-card.tsx`: the same two doors (/api/items/prepare reads,
+// /api/items/execute fires through the commit door), the ONE people editor, and the message being
+// forwarded shown in the `source` kind's own card rather than a second thread renderer.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-
-type PreparedForward = { type: 'forward'; to: string[]; subject: string; forwardedBody: string; note: string };
-
-// Reused chips editor for To (same pattern as AttendeeChips — add via input, remove via ✕, never invents).
-function RecipientChips({ recipients, onChange }: { recipients: string[]; onChange: (next: string[]) => void }) {
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {recipients.map((a) => (
-        <span key={a} className="inline-flex items-center gap-1 rounded-full bg-neutral-100 pl-2.5 pr-1.5 py-0.5 text-[11.5px] text-neutral-700">
-          {a}
-          <button onClick={() => onChange(recipients.filter((x) => x !== a))} className="hover:text-rose-500 transition-colors" aria-label={`Remove ${a}`}>
-            <XMarkIcon className="w-3 h-3" />
-          </button>
-        </span>
-      ))}
-      <PeopleSuggestInput
-        placeholder={recipients.length ? 'Add another…' : 'finance@company.com'}
-        onPick={(email) => { if (!recipients.includes(email)) onChange([...recipients, email]); }}
-      />
-    </div>
-  );
-}
-
-function ForwardPreviewCard({ kind, entityId, taskId, itemLevel, onSent, onCancel }: {
-  kind: ItemKind;
-  entityId: string;
-  taskId?: string;
-  // itemLevel — the forward was opened from the item-level action palette (no plan step). We hint the
-  // prepare endpoint (`actionType:'forward'`) so it prepares a forward for the whole item even without
-  // a forward step in the plan.
-  itemLevel?: boolean;
-  onSent?: () => void;
-  onCancel?: () => void;
-}) {
-  const [loading, setLoading] = useState(true);
-  const [to, setTo] = useState<string[]>([]);
-  const [subject, setSubject] = useState('');
-  const [note, setNote] = useState('');
-  const [forwardedBody, setForwardedBody] = useState('');
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  // Pre-fill from the grounded builder (NO side effects — prepare never sends). Recipient stays empty
-  // unless a literal address was evidenced in the step text (never invented — the user fills it in).
-  useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    fetch('/api/items/prepare', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind, entityId, taskId, ...(itemLevel ? { actionType: 'forward' } : {}) }),
-    })
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((d: PreparedForward | { type: string }) => {
-        if (!alive) return;
-        if (d && (d as PreparedForward).type === 'forward') {
-          const f = d as PreparedForward;
-          setTo(Array.isArray(f.to) ? f.to : []);
-          setSubject(f.subject || 'Fwd:');
-          setForwardedBody(f.forwardedBody || '');
-          setNote(f.note || '');
-        }
-      })
-      .catch(() => { if (alive) setErr('Could not prepare the forward — add the recipient below.'); })
-      .finally(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
-  }, [kind, entityId, taskId]);
-
-  const send = async () => {
-    if (sending) return;
-    if (to.length === 0) { setErr('Add at least one recipient.'); return; }
-    setSending(true); setErr(null);
-    try {
-      const res = await fetch('/api/items/execute', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind, entityId, taskId, action: { type: 'forward', to, note } }),
-      });
-      if (res.ok) { setSent(true); onSent?.(); announceDeed(); }
-      else {
-        const d = await res.json().catch(() => ({}));
-        setErr(d.error || 'Could not forward the email.');
-      }
-    } catch {
-      setErr('Could not forward the email.');
-    } finally {
-      setSending(false);
-    }
-  };
-
-  if (sent) {
-    return (
-      <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-4">
-        <div className="flex items-center gap-2">
-          <CheckIcon className="w-4 h-4 text-emerald-600" />
-          <p className="text-[13px] font-medium text-emerald-700">Forwarded{to.length ? ` to ${to[0]}${to.length > 1 ? ` +${to.length - 1}` : ''}` : ''}.</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={CARD}>
-      <div className="flex items-center gap-1.5 px-4 pt-3 pb-2 border-b border-neutral-100">
-        <ArrowUturnRightIcon className="w-3.5 h-3.5 text-violet-500" />
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Forward</span>
-        <span className="ml-auto text-[10.5px] text-amber-600">Review before it sends</span>
-      </div>
-
-      {loading ? (
-        <div className="p-4"><div className="h-40 rounded-lg bg-neutral-100 animate-pulse" /></div>
-      ) : (
-        <div className="p-4 space-y-3">
-          <div>
-            <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">To</label>
-            <div className="rounded-lg border border-neutral-200 px-2.5 py-1.5">
-              <RecipientChips recipients={to} onChange={setTo} />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Subject</label>
-            <input
-              value={subject}
-              readOnly
-              className="w-full rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-[13px] text-neutral-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Note (optional)</label>
-            <textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Add a line above the forwarded message…"
-              rows={2}
-              className="w-full rounded-lg border border-neutral-200 px-3 py-1.5 text-[12.5px] text-neutral-700 placeholder:text-neutral-300 focus:outline-none focus:border-indigo-300 resize-y"
-            />
-          </div>
-
-          {forwardedBody && (
-            <div>
-              <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1">Forwarded message</label>
-              <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 max-h-40 overflow-y-auto text-[12px] leading-relaxed text-neutral-600">
-                <div dangerouslySetInnerHTML={{ __html: forwardedBody }} />
-              </div>
-            </div>
-          )}
-
-          {err && <p className="text-[12px] text-rose-600">{err}</p>}
-
-          <div className="flex items-center gap-3 pt-1">
-            <button
-              onClick={send}
-              disabled={sending}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 text-white px-4 py-2 text-[13px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
-            >
-              <ArrowUturnRightIcon className="w-4 h-4" />{sending ? 'Forwarding…' : 'Review & forward'}
-            </button>
-            {onCancel && (
-              <button onClick={onCancel} className="text-[13px] font-medium text-neutral-500 hover:text-neutral-700">Cancel</button>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ── One action bar — the deep-dive's single primary action ("Draft email" / "Draft follow-up") with
 // optional quiet extras as children. Send always lives in the composer, never duplicated here.
@@ -1266,6 +1107,11 @@ export type ItemKind = 'email' | 'meeting' | 'commitment' | 'followup';
  *  has no rail of its own, so it reports its decision up and the host room mounts it on the room's
  *  rail — instead of the stage growing a second card (found live in the project room). */
 export type ReportedDecision = {
+  /** THE LANE THE DEED ANSWERS ON (W3-C, Sep 22): the decision host owns the steer door, and in a
+   *  project room the rail's own id is the ENTITY — so the decision carries the item it belongs to
+   *  rather than letting the mount guess from its surroundings. */
+  itemKind: ItemKind;
+  itemId: string;
   title: string | null;
   options: Array<{ label: string; tradeoff?: string | null }>;
   recommendation: { label: string; why?: string | null } | null;
@@ -1836,7 +1682,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     }
   };
 
-  // ── Item-level Forward — opens the grounded ForwardPreviewCard for the whole item (approve-before-
+  // ── Item-level Forward — opens the grounded forward CARD for the whole item (approve-before-
   // commit; nothing sends until "Review & forward"). Collapses the composer so there's one send surface.
   const openForward = () => { setForwarding(true); setComposerOpen(false); setInviteOpen(false); };
 
@@ -1888,6 +1734,11 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     ...(verdict?.work === 'forward' ? [{
       key: 'forward', label: 'Forward prepared — review & approve', by: null,
       onOpen: openForward, anchorKey: `prep:${id}`,
+      // THE CARD CONTRACT REACHES THE LAST PREPARED VERB (W3-C, Sep 22 — component-map §2 item 8):
+      // forward arrived as a bare "Open →" row beside a reply and an invite that both arrived AS
+      // themselves. It arrives as itself now — same host, same two doors, same armed commit.
+      node: <ForwardCard kind="email" entityId={id}
+        onSent={() => { setTimeout(() => router.back(), 900); }} />,
     }] : []),
   ];
 
@@ -1903,6 +1754,8 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     !itemDismissed && !decisionCleared && verdict?.work === 'decide'
       && ((decisionBrief?.decision?.options.length ?? 0) >= 2 || (verdict.options?.length ?? 0) >= 2)
       ? {
+        itemKind: 'email' as const,
+        itemId: id,
         title: verdict.reason || null,
         // THE ONE SURFACE for the decision (owner, Aug 12): when THE DECISION BRIEF exists, its
         // options (with trade-offs) SUPERSEDE the judge's bare labels, and its recommendation
@@ -2002,27 +1855,17 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
           // Q5 · the object's ONE deed is REVIEW, and it reads where every prepared thing on this
           // door reads — the drawer's own Prepared section (no second renderer, no screen-hop).
           ...(decisionPayload.object ? { onOpenObject: () => openDrawerAt('prepared') } : {}),
-          onChoose: async (label: string) => {
-            // The word is the deed — AND THE DEED IS VISIBLE (promise fix #3): the choice lands as
-            // a user turn, the steer's answer as the response turn. Silence after a click is a bug.
-            const roomKey = railView?.entity?.id ?? `inbox:${id}`;
-            pushDealTurn(roomKey, label, { role: 'user' });
-            setDecisionCleared(true);
-            const res = await fetch('/api/items/steer', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              // THE FORWARD-MOTION LAW (plan AK): the choice travels WITH its contract — the
-              // core executes the consequence, never re-interprets its own menu label.
-              body: JSON.stringify({ kind: 'email', id, text: label, decision: {
-                option: label,
-                tradeoff: decisionBrief?.decision?.options.find((o) => o.label === label)?.tradeoff ?? null,
-                why: decisionBrief?.decision?.recommendation === label ? decisionBrief?.decision?.why ?? null : null,
-              } }),
-            }).catch(() => null);
-            const d = res && res.ok ? await res.json().catch(() => ({})) : {};
-            if (d.draft) { setDraft(d.draft); setBodyHTML(''); setDraftV((v) => v + 1); setComposerOpen(true); }
-            pushDealTurn(roomKey,
-              String(d.say || d.answer || (d.draft ? 'On it — the draft is on the right, updated for that.' : (res && res.ok ? 'Done.' : "I couldn't do that just now — try again or tell me more."))),
-              { key: `decide:${id}` });
+          // THE DEED LIVES IN THE HOST (W3-C): the steer fetch, its contract and its fallback
+          // sentence were hand-copied here AND in the project room. What is left is what only this
+          // door can do — seat the user's word, and apply the consequence to ITS OWN lane.
+          // The word is the deed — AND THE DEED IS VISIBLE (promise fix #3): the choice lands as
+          // a user turn, the steer's answer as the response turn. Silence after a click is a bug.
+          onChosen: (label: string) => {
+            pushDealTurn(railView?.entity?.id ?? `inbox:${id}`, label, { role: 'user' });
+          },
+          onResolved: (_label: string, outcome: { draft?: string | null; say: string }) => {
+            if (outcome.draft) { setDraft(outcome.draft); setBodyHTML(''); setDraftV((v) => v + 1); setComposerOpen(true); }
+            pushDealTurn(railView?.entity?.id ?? `inbox:${id}`, outcome.say, { key: `decide:${id}` });
           },
           onDismiss: () => setDecisionCleared(true),
         } : null}
@@ -2163,7 +2006,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
         {/* Item-level prepared FORWARD card — embedded-only here; non-embedded raises the
             summoned forward stage below. */}
         {embedded && forwarding && (
-          <ForwardPreviewCard
+          <ForwardCard
             kind="email"
             entityId={id}
             itemLevel
@@ -2268,7 +2111,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
       {/* THE SUMMONED FORWARD STAGE — same grammar; approve-before-commit stays on the card. */}
       {!embedded && forwarding && (
         <StageOverlay title="Review the forward" onClose={() => setForwarding(false)}>
-          <ForwardPreviewCard
+          <ForwardCard
             kind="email"
             entityId={id}
             itemLevel={verdict?.work !== 'forward'}
@@ -2982,11 +2825,13 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
 // place instead of linking here ("why are we sending him to another screen"). What stays here is
 // this surface's own identity: the ask, the provenance line, and the arrived trail — the full-
 // context reading of the same gate. A second paste form anywhere would be a fork of the law.
+// THE CARD IS THE ONE HOST NOW (W3-A, Sep 22 — docs/component-map.md §2a). This file used to draw
+// the station's whole shell by hand beside three other copies of the same object; what survives
+// here is the one thing that is genuinely THIS surface's: the arrived trail's own fold, and the
+// provenance sentence in this door's grammar. The card, the states and the deed are the kit's.
 function InputStationCard({
   title, runId, open, handoff, onDecided,
 }: { title: string; runId: string | null; open: boolean; handoff: HandoffBlock; onDecided: () => void }) {
-  const [sent, setSent] = useState<'supplied' | 'held' | null>(null);
-
   // THE ASK CARRIES ITS CONTEXT — served, never inferred. The trail folds by default: the ask is
   // the headline and the paste box is the deed; the situation is one click away, not in the way.
   const station = handoff.station ?? null;
@@ -2994,71 +2839,62 @@ function InputStationCard({
   const [showArrived, setShowArrived] = useState(false);
 
   // A stale cache knows the source but not the run — say nothing until the refetch lands.
-  if (!runId && open && !sent) return null;
-  const settled = !!sent || !open || !runId;
-  const settledWord = sent === 'supplied' ? 'Sent — the run picked up from there.'
-    : sent === 'held' ? 'Held back — the run stopped here.'
-    : 'This one has already been answered.';
+  if (!runId && open) return null;
 
-  return (
-    <div className={`rounded-xl border px-4 py-3.5 ${settled ? 'border-neutral-200 bg-neutral-50/60' : 'border-indigo-200 bg-indigo-50/40'}`}>
-      <p className="text-[13.5px] font-medium text-neutral-800 leading-snug">{handoff.ask?.trim() || title}</p>
-      {/* THE PROVENANCE LINE — the same grammar the decision card speaks, plus the one fact only a
-          station has: WHAT THE SUPPLY FEEDS. "feeds X" is why this paste matters. */}
-      <p className="mt-0.5 text-[12px] text-neutral-500 leading-relaxed">
-        {handoff.workflowName} stopped here and needs this from you
-        {handoff.runAt ? ` · run of ${fmtDateTime(handoff.runAt)}` : ''}
-        {station?.feeds ? ` · feeds ${station.feeds.label}` : station ? ' · the last step of the run' : ''}
-        {handoff.workerName ? ` · prepared by ${handoff.workerName}` : ''}
-        {settled ? ` · ${settledWord}` : ''}
-      </p>
-
-      {/* WHAT HAS ALREADY ARRIVED — the situation this ask sits in. Served, clipped, excerpt-marked
-          (never a raw dump): the person can see what the run already has before deciding what to
-          add. Absent context renders NOTHING — an empty box would claim a situation we don't hold. */}
-      {arrived.length > 0 && (
-        <div className="mt-3">
-          <button
-            type="button"
-            onClick={() => setShowArrived((v) => !v)}
-            className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 hover:text-neutral-700 transition-colors"
-            aria-expanded={showArrived}
-          >
-            Already in this run
-            <span className="font-normal normal-case tracking-normal text-neutral-400">
-              ({arrived.length}{station!.earlier > 0 ? ` of ${arrived.length + station!.earlier}` : ''})
-            </span>
-            <ChevronDownIcon className={`w-3 h-3 transition-transform motion-reduce:transition-none ${showArrived ? 'rotate-180' : ''}`} />
-          </button>
-          {showArrived && (
-            <div className="mt-1.5 max-h-[260px] overflow-y-auto rounded-lg border border-neutral-200 bg-white divide-y divide-neutral-100">
-              {arrived.map((a, i) => (
-                <div key={`${a.label}-${i}`} className="px-3 py-2">
-                  <p className="text-[11px] font-medium text-neutral-500">{a.label}</p>
-                  <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-neutral-700">{a.text}</pre>
-                </div>
-              ))}
-              {station!.earlier > 0 && (
-                <p className="px-3 py-2 text-[11px] text-neutral-400">
-                  {station!.earlier} earlier step{station!.earlier === 1 ? '' : 's'} not shown — the full trail is in the run&apos;s receipts.
-                </p>
-              )}
+  // WHAT HAS ALREADY ARRIVED — served, clipped, excerpt-marked (never a raw dump): the person can
+  // see what the run already has before deciding what to add. Absent context renders NOTHING — an
+  // empty box would claim a situation we don't hold.
+  const trail = arrived.length > 0 ? (
+    <div>
+      <button
+        type="button"
+        onClick={() => setShowArrived((v) => !v)}
+        className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 hover:text-neutral-700 transition-colors"
+        aria-expanded={showArrived}
+      >
+        Already in this run
+        <span className="font-normal normal-case tracking-normal text-neutral-400">
+          ({arrived.length}{station!.earlier > 0 ? ` of ${arrived.length + station!.earlier}` : ''})
+        </span>
+        <ChevronDownIcon className={`w-3 h-3 transition-transform motion-reduce:transition-none ${showArrived ? 'rotate-180' : ''}`} />
+      </button>
+      {showArrived && (
+        <div className="mt-1.5 max-h-[260px] overflow-y-auto rounded-lg border border-neutral-200 bg-white divide-y divide-neutral-100">
+          {arrived.map((a, i) => (
+            <div key={`${a.label}-${i}`} className="px-3 py-2">
+              <p className="text-[11px] font-medium text-neutral-500">{a.label}</p>
+              <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-neutral-700">{a.text}</pre>
             </div>
+          ))}
+          {station!.earlier > 0 && (
+            <p className="px-3 py-2 text-[11px] text-neutral-400">
+              {station!.earlier} earlier step{station!.earlier === 1 ? '' : 's'} not shown — the full trail is in the run&apos;s receipts.
+            </p>
           )}
         </div>
       )}
-
-      {/* THE DEED — the ONE shared supply form (components/workflows/input-supply-form.tsx), the
-          same component the process drawer's station card mounts. This card owns the identity (the
-          ask, the provenance line, the arrived trail); the answering itself is never forked. */}
-      {!settled && (
-        <InputSupplyForm
-          runId={runId}
-          accepts={handoff.accepts ?? 'both'}
-          onSettled={(outcome) => { setSent(outcome); onDecided(); }}
-        />
-      )}
     </div>
+  ) : null;
+
+  return (
+    <InputCard
+      id={`station-${runId ?? 'x'}`}
+      open={open}
+      onSettled={() => onDecided()}
+      spec={{
+        shape: 'station',
+        runId,
+        ask: handoff.ask?.trim() || title,
+        accepts: handoff.accepts ?? 'both',
+        // THE PROVENANCE LINE — the same grammar the decision card speaks, plus the one fact only a
+        // station has: WHAT THE SUPPLY FEEDS. "feeds X" is why this paste matters.
+        meta: `${handoff.workflowName} stopped here and needs this from you`
+          + (handoff.runAt ? ` · run of ${fmtDateTime(handoff.runAt)}` : '')
+          + (station?.feeds ? ` · feeds ${station.feeds.label}` : station ? ' · the last step of the run' : '')
+          + (handoff.workerName ? ` · prepared by ${handoff.workerName}` : ''),
+        ...(trail ? { contextNode: trail } : {}),
+      }}
+    />
   );
 }
 
@@ -3069,39 +2905,10 @@ function InputStationCard({
 function HandoffDecisionCard({
   title, runId, open, handoff, onDecided,
 }: { title: string; runId: string | null; open: boolean; handoff: HandoffBlock | null; onDecided: () => void }) {
-  const [busy, setBusy] = useState(false);
-  const [settled, setSettled] = useState<'approved' | 'held' | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [note, setNote] = useState('');
   // THE RECEIPTS DOOR — the reused record drawer. `null` = closed; an array = its Log tab's
   // source, read once from the run row when the link is clicked (see openReceipts).
   // null = drawer closed · { outs: null } = open but the read was refused (access, not absence).
   const [receipts, setReceipts] = useState<{ outs: RecordRunOutputs | null } | null>(null);
-
-  const decide = async (approve: boolean) => {
-    if (!runId || busy) return;
-    setBusy(true); setFailed(false);
-    // THE NOTE IS BEST-EFFORT AND NEVER A GATE: it goes to the run's ONE thread before the
-    // decision fires (so the thread reads in the order it happened), but a failed or slow note
-    // must never cost the user their decision — no await-on-error, no early return, nothing here
-    // can throw into the resume below.
-    const said = note.trim();
-    if (said && runId) {
-      try {
-        await fetch(`/api/workflows/runs/${runId}/comments`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: said }),
-        });
-      } catch { /* the decision is what matters — the note is a courtesy */ }
-    }
-    try {
-      const r = await fetch(`/api/workflows/runs/${runId}/resume`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approve }),
-      });
-      if (!r.ok) { setFailed(true); return; }
-      setSettled(approve ? 'approved' : 'held');
-      onDecided();
-    } catch { setFailed(true); } finally { setBusy(false); }
-  };
 
   // THE RECEIPTS DOOR: the run's own Log tab reads `step_outputs`, which this room's payload does
   // not carry — so fetch the run row (the existing GET /api/workflows/[id]/runs/[runId], scoped by
@@ -3126,105 +2933,65 @@ function HandoffDecisionCard({
 
   // A stale localStorage shape (cached before `sourceId` was served) knows the source but not the
   // run — say NOTHING until the refetch lands rather than claim a decision that wasn't made.
-  if (!runId && open && !settled) return null;
+  if (!runId && open) return null;
 
-  const decided = !!settled || !open || !runId;
-  const decidedWord = settled === 'approved' ? 'Approved — the run is delivering.'
-    : settled === 'held' ? 'Held back — nothing was delivered.'
-    : 'This decision has already been made.';
-
-  // No block served (an older payload, a stale cache) — the card as it was: a quiet decided line,
-  // never an empty box pretending to show work it doesn't have.
-  if (!handoff && decided) {
-    return (
-      <div className="rounded-xl border border-neutral-200 bg-neutral-50/60 px-4 py-3">
-        <p className="text-[13px] text-neutral-500">{decidedWord}</p>
-      </div>
-    );
-  }
-
+  // THE CARD IS THE ONE HOST NOW (W3-A, Sep 22 — docs/component-map.md §2a). This function used to
+  // BE the gate: its own optimistic state, its own two `fetch`es, its own `settled: 'approved' |
+  // 'held'` vocabulary, its own "try again" on a run that had in fact already moved on. All of that
+  // is components/home/approval-card.tsx now — the same card the room stream mounts. What is left
+  // is what this door genuinely owns: the run id it deep-linked to, the provenance sentence in its
+  // own grammar, and the receipts drawer.
   const receiptsDrawer = receipts && handoff
     ? <RunRecordDrawer runId={handoff.runId} stepOutputs={receipts.outs} onClose={() => setReceipts(null)} />
     : null;
 
+  // No block served (an older payload, a stale cache) — the honest minimum: a gate we can name but
+  // cannot describe. The host still renders the deed where the gate is live.
+  const meta = handoff
+    ? `From the workflow ${handoff.workflowName}`
+      + (handoff.runAt ? ` · run of ${fmtDateTime(handoff.runAt)}` : '')
+      // SELF-GATE: your own run — the owing grammar ("asked by X") would be a lie about a
+      // counterparty that doesn't exist. Only this card softens; the item header is not ours.
+      + (handoff.selfGate ? ' · your own gate' : handoff.askedByFirst ? ` · asked by ${handoff.askedByFirst}` : '')
+      + (handoff.slaHours ? ` · target ${handoff.slaHours}h` : '')
+      + (handoff.workerName ? ` · prepared by ${handoff.workerName}` : '')
+    // No block served (an older payload, a stale cache): say the one true thing, and ONLY while it
+    // is true — a settled gate is not "parked on your decision", and the card's own settled line
+    // already carries what happened.
+    : open ? 'A run is parked on your decision.' : '';
+
   return (
-    <div className={`rounded-xl border px-4 py-3.5 ${decided ? 'border-neutral-200 bg-neutral-50/60' : 'border-amber-200 bg-amber-50/40'}`}>
-      {/* THE ASK — the gate's own words (the commitment description is the fallback). */}
-      <p className="text-[13.5px] font-medium text-neutral-800 leading-snug">{handoff?.ask?.trim() || title}</p>
-
-      {/* THE PROVENANCE LINE — what this decision belongs to. This is the truth that replaces the
-          old "no linked source to show": a handoff gate's source is the run. */}
-      {handoff ? (
-        <p className="mt-0.5 text-[12px] text-neutral-500 leading-relaxed">
-          From the workflow {handoff.workflowName}
-          {handoff.runAt ? ` · run of ${fmtDateTime(handoff.runAt)}` : ''}
-          {/* SELF-GATE: your own run — the owing grammar ("asked by X") would be a lie about a
-              counterparty that doesn't exist. Only this card softens; the item header is not ours. */}
-          {decided ? ` · ${decidedWord}`
-            : handoff.selfGate ? ' · your own gate'
-            : handoff.askedByFirst ? ` · asked by ${handoff.askedByFirst}` : ''}
-          {handoff.slaHours ? ` · target ${handoff.slaHours}h` : ''}
-          {handoff.workerName ? ` · prepared by ${handoff.workerName}` : ''}
-        </p>
-      ) : (
-        <p className="mt-0.5 text-[12px] text-neutral-500">A run is parked on your decision.</p>
-      )}
-
-      {/* THE OBJECT — the work being gated, in its own bytes. A decision asked without showing
-          what it decides is the whole find; absent a preview the card simply doesn't claim one. */}
-      {handoff?.preview && (
-        <div className="mt-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 mb-1.5">What you&apos;re approving</p>
-          <div className="max-h-[320px] overflow-y-auto rounded-lg border border-neutral-200 bg-white px-3 py-2.5">
-            <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-neutral-700">{handoff.preview.text}</pre>
-          </div>
-          {handoff.preview.truncated && (
-            <p className="mt-1 text-[11px] text-neutral-400">— first 20,000 characters shown; the full output is in the run&apos;s receipts.</p>
-          )}
-        </div>
-      )}
-
-      {!decided && (
-        <>
-          {/* THE NOTE — one line, optional, spoken into the run's thread with the decision. */}
-          <input
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            disabled={busy}
-            placeholder="Add a note for the thread…"
-            className="mt-3 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-[12.5px] text-neutral-800 placeholder:text-neutral-400 focus:border-indigo-300 focus:outline-none disabled:opacity-60"
-          />
-          <div className="mt-2.5 flex items-center gap-3">
-            <button
-              onClick={() => void decide(true)}
-              disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 text-white px-4 py-2 text-[13px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors"
-            >
-              <CheckIcon className="w-4 h-4" />Approve — deliver it
-            </button>
-            <button
-              onClick={() => void decide(false)}
-              disabled={busy}
-              className="inline-flex items-center text-[13px] font-medium text-neutral-500 hover:text-neutral-700 disabled:opacity-60 transition-colors"
-            >
-              Hold back
-            </button>
-          </div>
-        </>
-      )}
-      {failed && <p className="mt-2 text-[12px] text-rose-600">That decision did not land — try again.</p>}
-
-      {/* THE RECORD — quiet, below the deed (it is context, never a competing action). */}
-      {handoff && (
-        <button
-          onClick={() => void openReceipts()}
-          className="mt-3 inline-flex items-center text-[12px] font-medium text-neutral-500 hover:text-indigo-600 transition-colors"
-        >
-          See the run&apos;s receipts →
-        </button>
-      )}
+    <>
+      <ApprovalCard
+        id={`gate-${runId ?? 'x'}`}
+        open={open && !!runId}
+        onDecided={() => onDecided()}
+        spec={{
+          runId: runId ?? '',
+          // THE ASK — the gate's own words (the commitment description is the fallback).
+          title: handoff?.ask?.trim() || title,
+          ...(handoff?.gateKind ? { gateKind: handoff.gateKind } : {}),
+          ...(meta ? { meta } : {}),
+          // THE OBJECT — the work being gated, in its own bytes. A decision asked without showing
+          // what it decides is the whole find; absent a preview the card simply doesn't claim one.
+          ...(handoff?.preview ? { preview: handoff.preview } : {}),
+          // THE NOTE — one line, optional, spoken into the run's thread with the decision.
+          notable: true,
+          // THE RECORD — quiet, below the deed (it is context, never a competing action).
+          ...(handoff ? {
+            footer: (
+              <button
+                onClick={() => void openReceipts()}
+                className="inline-flex items-center text-[12px] font-medium text-neutral-500 hover:text-indigo-600 transition-colors"
+              >
+                See the run&apos;s receipts →
+              </button>
+            ),
+          } : {}),
+        }}
+      />
       {receiptsDrawer}
-    </div>
+    </>
   );
 }
 

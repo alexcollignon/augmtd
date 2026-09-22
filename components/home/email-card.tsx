@@ -12,8 +12,8 @@ import { AttachmentLightbox, type LightboxFile } from '@/components/ui/attachmen
 import { useFeatures } from '@/context/workspace-context';
 import {
   emailCardOf, directionVariantId, emailBodyHTML, emailBodyText, sameBody,
-  EMAIL_BASE_VARIANT, EMAIL_OPEN_VARIANT, EMAIL_USER_VARIANT, EMAIL_TONES,
-  type EmailDirection,
+  EMAIL_BASE_VARIANT, EMAIL_OPEN_VARIANT, EMAIL_USER_VARIANT, EMAIL_TONES, sendFromLabel,
+  type EmailDirection, type StandaloneEmailDraft,
 } from '@/lib/prepare/email-card';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -65,12 +65,18 @@ const PREGEN_MAX = 3;
 /** …and only once the card has been sitting still this long (never during the first paint). */
 const PREGEN_IDLE_MS = 1000;
 
-export function EmailCard({ item, coworker, sourceFiles, onOpenThread, onSent }: {
+export function EmailCard({ item, coworker, standalone, sourceFiles, onOpenThread, onSent }: {
   /** THE ITEM LANE — the prepared reply on a judged inbox item. `to`/`subject` come from the room
    *  when the host already serves them; otherwise the card reads the thread itself. */
   item?: { id: string; to?: string[]; subject?: string };
   /** THE COWORKER LANE — a drafted email that arrived WITH its turn (DM, and the Home thread). */
   coworker?: { threadId: string; agentId: string; draft: CoworkerEmailDraft };
+  /** THE STANDALONE LANE (Sep 21 — the owner's convergence call: "reuse the email draft component,
+   *  and leave the reply-FROM open for the user"). A reply to a message that is in no inbox of
+   *  ours — a paste, another mailbox. The payload arrives already drafted and already stored, so
+   *  the card fetches nothing; Send commits through /api/emails/send, which re-reads THAT row.
+   *  Its one extra fact is the FROM: resolved by the pure ladder, chosen here where several. */
+  standalone?: { emailId: string; draft: StandaloneEmailDraft };
   /** WHAT CAME WITH THE MESSAGE BEING ANSWERED (owner walk, Sep 10: "wasn't considered in the
    *  email context… nor to open/see the document"). The source thread's own attachments, which the
    *  host already holds — read in the email context, not only in the drawer's Files tab. They are
@@ -100,7 +106,11 @@ export function EmailCard({ item, coworker, sourceFiles, onOpenThread, onSent }:
   // workspace drafts and sends coworker mail exactly as any other does.
   const mailboxLane = features.email !== false;
 
-  const [loading, setLoading] = useState(!coworker);
+  // THE LANES, named once. `itemLane` is the only one with a thread behind it — directions, tones,
+  // a typed steer, attachments and Bcc all belong to it, and a lane whose door cannot carry a field
+  // must never render that field (the card never wears a control its send would drop).
+  const itemLane = !!item && !coworker && !standalone;
+  const [loading, setLoading] = useState(!coworker && !standalone);
   // FILLED OR LOADING, NEVER HOLLOW (owner walk round 2, Sep 14). The card was mounted with an id
   // its doors could not resolve (the spine key instead of the row id), so all three fetches came
   // back empty and it rendered an EDITABLE SHELL: placeholder recipients, an empty body under a
@@ -111,11 +121,23 @@ export function EmailCard({ item, coworker, sourceFiles, onOpenThread, onSent }:
   // a draft that does not exist. (A draft with a missing recipient is a different, honest state —
   // `needs_recipient` — and is untouched.)
   const [unfilled, setUnfilled] = useState(false);
-  const [to, setTo] = useState<string[]>(coworker?.draft.to ?? item?.to ?? []);
-  const [cc, setCc] = useState<string[]>(coworker?.draft.cc ?? []);
+  const [to, setTo] = useState<string[]>(coworker?.draft.to ?? standalone?.draft.to ?? item?.to ?? []);
+  const [cc, setCc] = useState<string[]>(coworker?.draft.cc ?? standalone?.draft.cc ?? []);
   const [bcc, setBcc] = useState<string[]>([]);
-  const [subject, setSubject] = useState(coworker?.draft.subject ?? item?.subject ?? '');
-  const [body, setBody] = useState(coworker?.draft.body ?? '');
+  const [subject, setSubject] = useState(coworker?.draft.subject ?? standalone?.draft.subject ?? item?.subject ?? '');
+  const [body, setBody] = useState(coworker?.draft.body ?? standalone?.draft.body ?? '');
+  // THE SENDING MAILBOX — resolved server-side by the pure ladder, the user's to change where they
+  // hold more than one. Purely local until Send: the door re-validates the pick against their own
+  // active connections, so a browser can never widen who a message comes from.
+  const [fromId, setFromId] = useState<string | null>(standalone?.draft.from?.selectedId ?? null);
+  // THE STANDALONE LANE with no connected mailbox falls to the OAuth-free coworker channel — the
+  // same fallback the universal compose door has always had, and the card SAYS so on its From row
+  // rather than substituting a sender silently.
+  // ⚠️ READ FROM THE LIVE SELECTION, not the served draft (Sep 21, review). Derived from the served
+  // payload alone, a draft with mailbox options but no chosen one rendered the From selector AND
+  // claimed the coworker lane — it would have withheld the rich body while POSTing a connectionId.
+  // The lane a card is in is whatever the user is currently pointing at.
+  const viaCoworker = !!standalone && (standalone.draft.from?.viaCoworker === true || !fromId);
   const [directions, setDirections] = useState<EmailDirection[]>([]);
   const [variant, setVariant] = useState<string>(EMAIL_BASE_VARIANT);
   const [variantBodies, setVariantBodies] = useState<Record<string, string>>({});
@@ -133,11 +155,11 @@ export function EmailCard({ item, coworker, sourceFiles, onOpenThread, onSent }:
   // exactly when a variant lands and never remounts under the user's caret while they type.
   const [bodyRev, setBodyRev] = useState(0);
   const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(!!coworker?.draft.sent_at);
+  const [sent, setSent] = useState(!!coworker?.draft.sent_at || !!standalone?.draft.sentAt);
   const [err, setErr] = useState<string | null>(null);
   const typedRef = useRef(false);
   // What the machine last handed the editor — the ONE thing "did they really edit it?" compares to.
-  const servedRef = useRef(coworker?.draft.body ?? '');
+  const servedRef = useRef(coworker?.draft.body ?? standalone?.draft.body ?? '');
   const dirty = userEdit !== null;
 
   // ── THE ATTACH SURFACE — the inbox reply's own model: `{filename, content(base64), mimeType}`
@@ -426,15 +448,28 @@ export function EmailCard({ item, coworker, sourceFiles, onOpenThread, onSent }:
     // The words themselves decide whether there is anything to mail — an empty rich editor still
     // carries markup, and markup is not a message.
     if (!emailBodyText(body).trim()) { setErr('The message is empty.'); return; }
-    // ONE SERIALIZATION: the mailbox door takes the editor's own HTML (what the deep stage sends);
-    // the coworker door escapes its body and lays out paragraphs itself, so it takes the words.
-    const text = coworker ? emailBodyText(body).trim() : body;
+    // ONE SERIALIZATION: a mailbox door takes the editor's own HTML (what the deep stage sends);
+    // a Resend door escapes its body and lays out paragraphs itself, so it takes the words. The
+    // standalone lane is one or the other depending on where it resolved a sender.
+    const text = coworker || viaCoworker ? emailBodyText(body).trim() : body;
     setSending(true); setErr(null);
     try {
       // ONE DEED, THE DOOR THAT OWNS ITS SENDER. The item lane mails AS THE USER through their own
-      // mailbox; the coworker lane mails AS THE COWORKER. Both are approve-before-commit, both are
-      // idempotent at the route, and neither is reachable without this click.
-      const res = coworker
+      // mailbox; the coworker lane mails AS THE COWORKER; the standalone lane mails as whichever
+      // mailbox the From row names (or the coworker channel when they have none). All three are
+      // approve-before-commit, all three are idempotent at the route, and none is reachable
+      // without this click.
+      const res = standalone
+        // THE STANDALONE DOOR: the card's fields are handed over as EDITS; the route writes them to
+        // the stored row and mails what the ROW says, behind the one commit door (exactly-once).
+        ? await fetch('/api/emails/send', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              emailId: standalone.emailId,
+              edits: { to, cc, subject: subject.trim(), body: text, ...(fromId ? { connectionId: fromId } : {}) },
+            }),
+          })
+        : coworker
         ? await fetch(`/api/work/threads/${coworker.threadId}/send-coworker-email`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -522,11 +557,13 @@ export function EmailCard({ item, coworker, sourceFiles, onOpenThread, onSent }:
   // THE MAPPER — one derivation, shared by every mount. Directions ride only where the organ
   // serves them (the item lane, on a workspace that has a mailbox at all).
   const props = emailCardOf(
-    { to, cc, bcc, subject, body, directions: !coworker && mailboxLane ? directions : [], userEdit: dirty },
+    { to, cc, bcc, subject, body, directions: itemLane && mailboxLane ? directions : [], userEdit: dirty },
     { selectedVariantId: variant },
   );
 
-  const live = !sent && (coworker || mailboxLane);
+  // The standalone lane is live wherever its own door can carry it: a connected mailbox, or the
+  // feature-null coworker channel on a workspace with none.
+  const live = !sent && (coworker || standalone || mailboxLane);
   const busy = !!redrafting || sending;
   const chips = (list: string[], set: (v: string[]) => void) => (
     <span className="w-full rounded-lg border border-neutral-200 px-2.5 py-1.5">
@@ -535,7 +572,7 @@ export function EmailCard({ item, coworker, sourceFiles, onOpenThread, onSent }:
   );
   const card: ThreadCard = {
     kind: 'email',
-    id: `email-${coworker?.draft.id ?? item?.id ?? 'card'}`,
+    id: `email-${coworker?.draft.id ?? standalone?.emailId ?? item?.id ?? 'card'}`,
     ...props,
     variants: props.variants.map((v) => ({ ...v, loading: redrafting === v.id })),
     bodyRev: `v${bodyRev}`,
@@ -545,21 +582,34 @@ export function EmailCard({ item, coworker, sourceFiles, onOpenThread, onSent }:
     // the card carries it — a sent card still opens its thread, and no surface grows a second
     // top-of-page button for a door the card already owns.
     ...(openThread ? { onOpenThread: openThread, threadLabel: 'Thread →' } : {}),
-    // Rich authoring only where the door carries HTML (the mailbox reply). The coworker's Resend
-    // door escapes its body, so that lane keeps plain words rather than a toolbar that lies.
-    ...(coworker ? {} : { richBody: true }),
+    // THE FROM ROW — only the standalone lane has a sender to settle. One mailbox states itself;
+    // several offer themselves; none says plainly that the assistant's address will carry it.
+    ...(standalone ? {
+      from: sendFromLabel({ ...standalone.draft, from: { ...standalone.draft.from, selectedId: fromId } }),
+      ...((standalone.draft.from?.options?.length ?? 0) > 1 && !sent ? {
+        fromOptions: standalone.draft.from.options.map((o) => ({ id: o.id, label: o.address })),
+        selectedFromId: fromId ?? undefined,
+        onPickFrom: (id: string) => { setFromId(id); setErr(null); },
+      } : {}),
+    } : {}),
+    // Rich authoring only where the door carries HTML (a mailbox send). A Resend door escapes its
+    // body, so those lanes keep plain words rather than a toolbar that lies.
+    ...(coworker || viaCoworker ? {} : { richBody: true }),
     ...(live ? {
       // NEVER A DEAD CONTROL: the tab handler is unconditional — an edit adds a tab, never removes
       // every handler (the Sep 9 walk's "tabs not clickable").
       onPickVariant: pickVariant,
       // A HOVER IS A QUESTION: it warms the tab's words through the preview lane, never the deed.
-      ...(coworker ? {} : { onWarmVariant: warmVariant }),
+      ...(itemLane ? { onWarmVariant: warmVariant } : {}),
       onEditRecipients: () => setEditingRecipients((v) => !v),
       // Cc rides both doors; BCC ONLY THE MAILBOX ONE — the coworker send route models `to`/`cc`
       // and nothing else, and a field whose door would silently drop it must not render.
       onOpenCc: () => setCcOpen(true),
       ...(ccOpen || cc.length ? { ccEditor: chips(cc, setCc) } : {}),
-      ...(coworker ? {} : {
+      // …and Bcc + attachments ONLY the item lane's `send-reply`, the one door that models them.
+      // The standalone door carries `to`/`cc`/`subject`/`body` and nothing else, so it shows
+      // neither — the card never wears a field its send would silently drop.
+      ...(itemLane ? {
         onOpenBcc: () => setBccOpen(true),
         ...(bccOpen || bcc.length ? { bccEditor: chips(bcc, setBcc) } : {}),
         // Attachments ride the mailbox door too (`send-reply` already takes them); the coworker
@@ -575,7 +625,7 @@ export function EmailCard({ item, coworker, sourceFiles, onOpenThread, onSent }:
             {kbPickerOpen && <KbFilePicker onSelect={onKbSelect} onClose={() => setKbPickerOpen(false)} />}
           </>
         ),
-      }),
+      } : {}),
       // With no recipient the editor LEADS — the missing fact asks plainly, in place, instead of
       // hiding behind an edit mark next to a Send that isn't there.
       ...(editingRecipients || props.state === 'needs_recipient' ? {
@@ -585,14 +635,15 @@ export function EmailCard({ item, coworker, sourceFiles, onOpenThread, onSent }:
           </span>
         ),
       } : {}),
-      // A reply's subject belongs to its thread; a fresh coworker email owns its own.
-      ...(coworker ? { onEditSubject: setSubject } : {}),
+      // A reply's subject belongs to its thread; an email the card itself owns (a coworker's, a
+      // standalone one) carries its own and is editable here.
+      ...(itemLane ? {} : { onEditSubject: setSubject }),
       onEditBody: editBody,
       // The typed steer lands on the OPEN tab itself, so the field stays open and steerable again.
       // These stay live through an edit for the same reason the tabs do: what a redraft lands never
       // destroys the user's version — it sits in its own tab, one click away.
-      ...(item ? { onSteer: (t: string) => void redraft(EMAIL_OPEN_VARIANT, t), steerBusy: !!redrafting } : {}),
-      ...(item ? { toneOptions: EMAIL_TONES.map((t) => ({ id: t.id, label: t.label })),
+      ...(itemLane ? { onSteer: (t: string) => void redraft(EMAIL_OPEN_VARIANT, t), steerBusy: !!redrafting } : {}),
+      ...(itemLane ? { toneOptions: EMAIL_TONES.map((t) => ({ id: t.id, label: t.label })),
         onPickTone: (id: string) => {
           const tone = EMAIL_TONES.find((t) => t.id === id);
           // A tone tweak re-tunes a MACHINE version; asked from the user's own tab it lands on the
@@ -601,7 +652,7 @@ export function EmailCard({ item, coworker, sourceFiles, onOpenThread, onSent }:
         } } : {}),
       // TRUTH BEFORE PRESENTATION at the commit row: with no recipient there is nothing to mail,
       // so the card carries NO Send — it asks for the address and waits.
-      ...(props.state === 'ready' ? { onSend: send, sendLabel: coworker ? 'Send' : 'Send reply', sendDisabled: sending } : {}),
+      ...(props.state === 'ready' ? { onSend: send, sendLabel: itemLane ? 'Send reply' : 'Send', sendDisabled: sending } : {}),
     } : {}),
     // THE MATERIAL IS PART OF THE EMAIL CONTEXT — counted, never claimed: with nothing attached the
     // lane is absent. Independent of `live`: a sent reply still shows what it was answering.
@@ -618,7 +669,7 @@ export function EmailCard({ item, coworker, sourceFiles, onOpenThread, onSent }:
       : undefined,
     error: err ?? undefined,
     receipt: sent ? 'sent' : sending ? 'sending…'
-      : props.state === 'ready' ? (coworker ? 'ready to send' : 'reply ready') : undefined,
+      : props.state === 'ready' ? (itemLane ? 'reply ready' : 'ready to send') : undefined,
   };
 
   return (

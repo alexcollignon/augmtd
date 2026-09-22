@@ -6,7 +6,7 @@
 // "project" everywhere, labels tell the truth (kind = identity, posture = lifecycle, rules outrank).
 // Run per user. 100% required — a failure is a live trust bug, not a flaky test.
 import { config } from 'dotenv'; config({ path: '.env.local' });
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { createClient } from '@supabase/supabase-js';
 import { resolveKind, postureFor, labelNamesFor } from '../lib/inbox/rules/write-back';
 import { isAutomatedSender } from '../lib/inbox/automated';
@@ -180,9 +180,12 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   check('P5 · Timeline lanes are TRACKED-only (the judged-untracked fallback is gone)',
     !src('app/api/home/timeline/route.ts').includes('judgedRows') &&
     src('app/api/home/timeline/route.ts').includes('filter((e) => !!e.tracked)'));
-  check('P5 · the portfolio shows tracked as projects; untracked folds; the strip says "connects to"',
+  // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT): components/room/context-strip.tsx was retired as
+  // unreachable. The untracked wording lives on in the item room's related rows — the one seat that
+  // still says "Connects to" for a recognized-but-not-accepted entity.
+  check('P5 · the portfolio shows tracked as projects; untracked folds; the room says "connects to"',
     src('components/entities/portfolio-view.tsx').includes('inTab.filter((e) => e.tracked)') &&
-    src('components/room/context-strip.tsx').includes("'Connects to'"));
+    src('components/home/item-detail.tsx').includes("'Connects to'"));
 
   // ═══ P6 · LABELS TELL THE TRUTH — kind=identity, posture=lifecycle, rules outrank (real rows) ═══
   for (const [uid, label] of [[A, 'user A'], [B, 'user B']] as const) {
@@ -243,7 +246,9 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   // RE-POINTED (Aug 13, THE MACHINE plan AL): the stage decision card is DELETED — ONE onChoose
   // per door (the deep-dive's rail + the entity room's mirror), each echoing the pick as a user turn.
   check('P8 · choosing a decision option is VISIBLE (the choice + the answer land as room turns)',
-    (detail.match(/pushDealTurn\(roomKey, label, \{ role: 'user' \}\)/g)?.length ?? 0) >= 1 &&
+    // Re-pointed Sep 22 (W3-C, the decision kit kind): the host hands the chosen word back through
+    // `onChosen`; the deep-dive still seats it as the USER's turn on the room it actually shows.
+    (detail.match(/onChosen: \(label: string\) => \{\s*pushDealTurn\([^\n]*label, \{ role: 'user' \}\)/g)?.length ?? 0) >= 1 &&
     src('components/entities/entity-room.tsx').includes("pushDealTurn(entityId, label, { role: 'user' })"));
   check('P8 · engine turns carry their item chip (a shared deal room is never ambiguous)',
     src('lib/prepare/pass.ts').includes('refs: [{ label: w.title.slice(0, 60)') &&
@@ -415,7 +420,10 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     src('components/home/home-view.tsx').includes('trackedLookup'));
   check('P13 · Timeline item tags + lanes carry TRACKED names only (+ stale-cache keys bumped)',
     src('app/api/home/timeline/route.ts').includes('if (!e.tracked) continue;') &&
-    src('components/timeline/timeline-view.tsx').includes('aug-timeline-v3') &&
+    // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT): components/timeline/timeline-view.tsx was retired
+    // as unreachable; the Gantt IS the timeline lens now, so the bumped-cache half of the law sits
+    // on its one key — asserted at BOTH ends (the Home writer and the lens reader).
+    src('components/home/home-view.tsx').includes("saveLS('aug-timeline-gantt-v3'") &&
     src('components/timeline/timeline-gantt.tsx').includes('aug-timeline-gantt-v3'));
   check('P13 · the New-project modal is name+description only (seeding lives in the room)',
     !src('components/entities/portfolio-view.tsx').includes('+ Add work'));
@@ -614,8 +622,11 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   check('P18 · an ask NEVER BLOCKS — the contract says work with what\'s available (delegation prompt + evaluator + a gated one-tap go-ahead)',
     src('lib/home/delegate.ts').includes('WORK WITH WHAT YOU HAVE') &&
     src('lib/prepare/evaluate.ts').includes('incompleteness with honest gaps is a deliverable, not an ask') &&
-    src('components/home/item-rail.tsx').includes('go ahead without it') &&
-    src('components/home/item-rail.tsx').includes('askAllowsGoAhead('));
+    // Re-pointed Sep 22 (W3-A, the ask convergence): the rail mounts the ONE input host; the
+    // go-ahead speech + its askAllowsGoAhead gate live in that host and the kit card, once each.
+    src('lib/room/go-ahead.ts').includes('Go ahead without it') &&
+    src('components/home/input-card.tsx').includes('askAllowsGoAhead(') &&
+    /import InputCard from '@\/components\/home\/input-card'/.test(src('components/home/item-rail.tsx')));
   check('P18 · the item chip hides in the item\'s OWN room (self-referential noise; deal rooms keep it)',
     src('components/home/item-rail.tsx').includes('inRoom || !r.href?.includes(`/item/${id}`)'));
   check('P18 · a meeting card opens the meeting\'s OWN room (never the meetings list)',
@@ -785,6 +796,595 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     } else check('P21 live · forward probe insert failed', false);
   }
 
+  // ═══ P21b · THE DERIVED DOOR-PARITY LAW (Sep 21 — CLASS 2: "a verb has every conversational
+  // door"). Live incident: the Home chat answered "I don't have a tool to pause workflows" while a
+  // coworker DM had been pausing them for months. Cause: NOT ONE task verb was a row in the
+  // CAPABILITY_MAP — the coworker door pushed its list as literals, the chief door derives from the
+  // registry, so the one map every parity gate reads could not see the hole. The fix is structural
+  // (the coworker door now READS the registry) and this gate proves the two halves agree. ═══
+  {
+    const { doorParity, TASK_CLASS_TOOLS, CAPABILITY_MAP, capabilitiesFor, renderCapabilitySet } = await import('../lib/work/surface-registry');
+    const { buildCoworkerTools, COWORKER_CHAT_TOOLS } = await import('../lib/work/chat-tool-defs');
+    const { DEFAULT_FEATURES } = await import('../lib/workspace/types');
+
+    // The coworker door, at its widest: every source on, a seeded worker, every feature on
+    // (meetings is OFF in DEFAULT_FEATURES, and the widest door is what parity is about).
+    const ALL_ON = { ...DEFAULT_FEATURES, meetings: true };
+    const coworker = buildCoworkerTools(['kb', 'inbox', 'calendar', 'web'], true, ALL_ON).map((t) => t.name);
+    // The chief door's real definition list — DERIVED from the module that owns it, never grepped.
+    const chiefSrc = src('lib/converse/index.ts');
+    const { CHIEF_TOOL_DEFS } = await import('../lib/converse');
+    const chief = CHIEF_TOOL_DEFS.map((d) => (d as { name: string }).name);
+
+    const violations = doorParity({ chief, coworker });
+    check('P21b · door parity — every tool BOTH conversational doors offer has a registry row, every row that claims a door is offered there, and no task verb is coworker-only without a written reason',
+      violations.length === 0, violations.join(' · ') || 'lawful');
+
+    // THE SET-EQUALITY PROOF: the derived coworker door offers EXACTLY the tools the old literal
+    // push offered, plus the new bulk verb. (The literal list is transcribed here from the
+    // pre-Sep-21 buildChatTools — this is the before/after equality, frozen as a gate.)
+    const BEFORE = [
+      'search_knowledge_base', 'read_document', 'get_emails', 'get_email_body',
+      'get_meeting_context', 'check_calendar', 'web_search', 'fetch_url', 'run_compute',
+      'request_clarification', 'generate_document',
+      'list_tasks', 'create_task', 'get_task', 'update_task', 'duplicate_task', 'delete_task',
+      'run_task', 'supply_run_input', 'share_task', 'list_team_tasks', 'use_task',
+      'list_worker_documents', 'get_worker_document', 'list_skills', 'apply_skill',
+      'slack_list_channels', 'slack_post_message', 'slack_read_messages', 'slack_list_members',
+      'find_team_work', 'read_team_work', 'compose_email', 'prepare_calendar_invite',
+      'present_linkedin_post',
+    ];
+    // RE-POINTED Sep 22 (Wave 2 — the event card): the law is "the door LOST nothing", and it is
+    // unchanged. Verbs added since the derivation landed are listed here as they arrive, so the
+    // no-loss half keeps biting: `set_tasks_status` (Sep 21) and `prepare_event_action` (Sep 22 —
+    // RSVP / reschedule / cancel, which had no chat door at all before).
+    const expected = new Set([...BEFORE, 'set_tasks_status', 'prepare_event_action']);
+    const got = new Set(coworker);
+    const missing = [...expected].filter((t) => !got.has(t));
+    const extra = [...got].filter((t) => !expected.has(t));
+    check('P21b · the coworker door lost NOTHING when it started reading the registry (before-set === after-set, plus the new bulk verb)',
+      missing.length === 0 && extra.length === 0,
+      `missing=${missing.join(',') || 'none'} extra=${extra.join(',') || 'none'}`);
+
+    check('P21b · a non-worker agent still holds no task/Slack/skill verbs (the pre-registry split, preserved)',
+      !buildCoworkerTools(['kb', 'inbox', 'calendar', 'web'], false, ALL_ON)
+        .some((t) => TASK_CLASS_TOOLS.has(t.name) || t.name.startsWith('slack_')));
+
+    check('P21b · the task verbs are STUDIO-gated on both doors (they sat on "always on" while their propose/steer siblings were gated — a Studio-off workspace could pause through a coworker and not propose through the chief)',
+      [...TASK_CLASS_TOOLS].every((t) => CAPABILITY_MAP[t]?.feature === 'studio') &&
+      !buildCoworkerTools(['kb'], true, { ...ALL_ON, studio: false }).some((t) => TASK_CLASS_TOOLS.has(t.name)));
+
+    check('P21b · the task verbs are conversational rows — excluded from builtCapabilities(), so NO PLAN_VERSION bump is owed (the prepare_calendar_invite precedent)',
+      [...TASK_CLASS_TOOLS].every((t) => CAPABILITY_MAP[t]?.conversational === true) &&
+      !renderCapabilitySet().includes('pause or resume tasks in one go'));
+
+    // THE SCHEMA-LESS ROUTER NEVER FIRES A BULK DEED (Sep 21, found by the live replay: "resume the
+    // X task" came back from the chief's fast-path classifier as {status:'paused'} with no names —
+    // a turn that asked to resume ONE would have paused EVERY task the user owns).
+    check('P21b · a capability whose ARGUMENTS are the deed is served only by the schema-bearing loop (loopOnly, with a written reason), and the router filters it out',
+      !!CAPABILITY_MAP.set_tasks_status?.loopOnly &&
+      src('lib/converse/index.ts').includes('.filter((c) => !c.loopOnly)'));
+
+    check('P21b · the chief holds the four task verbs its seat needs, through the SAME executors (one implementation, two doors)',
+      ['list_tasks', 'get_task', 'run_task', 'set_tasks_status'].every((t) => chief.includes(t)) &&
+      chiefSrc.includes("from '@/lib/tools/worker-tasks'") &&
+      chiefSrc.includes('resolveTaskIdByName') &&
+      COWORKER_CHAT_TOOLS.set_tasks_status?.name === 'set_tasks_status');
+  }
+
+  // ═══ P21c · A DEED'S RESULT MUST BE TRUE (Sep 21 — CLASS 1). The live incident: "pause all
+  // workflows" → "Done. Both active workflows are now paused" with ONE paused. Three causes, three
+  // gates: the constant dedupe key that ate the second write, the write that never looked, and the
+  // completion claim nothing checked. ═══
+  {
+    const { toolDedupeKey, isMutatingTool, mayServeFromCache } = await import('../lib/work/tool-dedupe');
+    const { deedFloorVerdict, deedAmendment, deedFromToolResult } = await import('../lib/work/deed-floor');
+
+    // (A) THE KEY IS THE WHOLE ARGUMENT — the incident's own two calls must be two calls.
+    const a = toolDedupeKey('update_task', { task_id: 'A', status: 'paused' });
+    const b = toolDedupeKey('update_task', { task_id: 'B', status: 'paused' });
+    check('P21c · the dedupe key is the WHOLE argument — update_task(A) and update_task(B) are two different calls (the old `${name}:${query ?? filter ?? ""}` collapsed them into one slot and silently skipped the second write)',
+      a !== b && toolDedupeKey('update_task', { status: 'paused', task_id: 'A' }) === a,
+      `${a} vs ${b}`);
+
+    // (B) A MUTATION IS NEVER SERVED FROM CACHE; an identical READ still dedupes.
+    check('P21c · a mutating tool never serves from the turn cache, an identical read still does, and an UNREGISTERED tool fails closed',
+      isMutatingTool('update_task') && isMutatingTool('set_tasks_status') &&
+      !isMutatingTool('search_knowledge_base') && isMutatingTool('some_tool_with_no_row') &&
+      mayServeFromCache('search_knowledge_base', true) && !mayServeFromCache('update_task', true) &&
+      !mayServeFromCache('search_knowledge_base', false));
+
+    check('P21c · both dispatch sites in the coworker route read the ONE helper, and a skipped call is still RECORDED (never silently dropped from the turn\'s ledger)',
+      (src('app/api/work/threads/[id]/chat/route.ts').match(/toolDedupeKey\(tc\.function\.name, toolInput\)/g) ?? []).length === 2 &&
+      (src('app/api/work/threads/[id]/chat/route.ts').match(/mayServeFromCache\(tc\.function\.name/g) ?? []).length === 2 &&
+      (src('app/api/work/threads/[id]/chat/route.ts').match(/Already retrieved \(identical request\)/g) ?? []).length === 2 &&
+      !src('app/api/work/threads/[id]/chat/route.ts').includes('toolInput.query ?? toolInput.filter'));
+
+    // (C) VERIFY AFTER WRITE — a zero-row update is not a success.
+    check('P21c · the mutators re-read and report the OBSERVED state (a .update().eq() matching zero rows returns cleanly — it is not an error, and it was being claimed)',
+      src('lib/tools/worker-tasks.ts').includes('VERIFY AFTER WRITE') &&
+      src('lib/tools/worker-tasks.ts').includes('it is still ${String(observed.status)}') &&
+      src('lib/tools/worker-tasks.ts').includes('it is still there. Nothing was removed.') &&
+      src('lib/tools/worker-tasks.ts').includes('the ledger counts rows READ BACK at the new status'));
+
+    // (D) THE DEED FLOOR's unit matrix — no model anywhere in it.
+    const one = [{ tool: 'set_tasks_status', kind: 'status' as const, ok: true, count: 1 }];
+    const two = [{ tool: 'set_tasks_status', kind: 'status' as const, ok: true, count: 2 }];
+    const doc = [{ tool: 'generate_document', kind: 'document' as const, ok: true, count: 1 }];
+    const claim = 'Done. Both active workflows are now paused.';
+    check('P21c · the deed floor — "both are paused" over a 1-item ledger is a BREACH; over a 2-item ledger it passes; an empty ledger breaches; the count is the ledger\'s, never the sentence\'s',
+      !!deedFloorVerdict(claim, one).breach && deedFloorVerdict(claim, one).breach?.claimed === 2 &&
+      !deedFloorVerdict(claim, two).breach &&
+      !!deedFloorVerdict(claim, []).breach);
+    check('P21c · the floor NEVER fires on a question, an offer, or a plain state report read off list_tasks (a missed catch costs nothing; a false correction costs the user\'s trust)',
+      !deedFloorVerdict('Should I pause it?', []).breach &&
+      !deedFloorVerdict('Want me to pause both of them?', []).breach &&
+      !deedFloorVerdict("I'll pause them now.", []).breach &&
+      !deedFloorVerdict('Two of them are paused and one is active.', []).breach &&
+      !deedFloorVerdict("They're already paused.", []).breach &&
+      !deedFloorVerdict("I've updated the draft for you.", []).breach);
+    check('P21c · the document lane keeps its Aug-8 behaviour exactly (a claimed document with no artifact breaches; with one it passes)',
+      !!deedFloorVerdict("I've created a focused priorities report for you.", []).breach &&
+      !deedFloorVerdict("I've created a focused priorities report for you.", doc).breach);
+    check('P21c · the floor speaks the other languages this repo already speaks (PT/DE), and a failed deed never covers a claim',
+      !!deedFloorVerdict('Feito. Ambas as tarefas estão agora pausadas.', one).breach &&
+      !!deedFloorVerdict('Erledigt. Beide Aufgaben sind jetzt pausiert.', []).breach &&
+      !!deedFloorVerdict('Done — it is now paused.', [{ tool: 'set_tasks_status', kind: 'status', ok: false, count: 0 }]).breach);
+    check('P21c · the prose reader (the AgentOS lane) reads OUR OWN executor sentences and nothing else',
+      deedFromToolResult('set_tasks_status', 'Paused 2: "A" · "B".')?.count === 2 &&
+      deedFromToolResult('update_task', 'Failed to update "X": still active.')?.ok === false &&
+      deedFromToolResult('search_knowledge_base', 'whatever') === null);
+
+    // (D2) THE BULK DEED'S TWO DANGEROUS ARGUMENTS ARE DECIDED IN CODE, from the user's own words.
+    // ⚠️ RE-POINTED Sep 21 (review): this gate used to pin the floor's SOURCE LINES, which said
+    // nothing about their REACHABILITY — and the floors themselves failed OPEN when no words were
+    // heard (`allWasSaid = !said || …`), which is exactly the AgentOS door's shape. The floors are
+    // now a pure function and the gate walks its whole truth table, plus every door's coverage.
+    const { planTasksStatusDeed } = await import('../lib/tools/worker-tasks');
+    const plan = (o: Parameters<typeof planTasksStatusDeed>[0]) => planTasksStatusDeed(o);
+    const KNOWN = ['Weekly Briefing', 'Client Radar', 'All Hands Digest'];
+    check('P21c · FAIL CLOSED — with NO user words heard (the AgentOS door\'s shape) a bulk over everything REFUSES BY LISTING; it never pauses what nobody named',
+      plan({ status: 'paused', scope: 'all', userText: '', knownNames: KNOWN }).act === false &&
+      plan({ status: 'paused', knownNames: KNOWN }).act === false);
+    const named = plan({ status: 'paused', scope: 'all', names: ['Client Radar'], userText: '', knownNames: KNOWN });
+    check('P21c · …but EXPLICITLY NAMED targets still move with no words heard, and names beat an extracted "all" scope',
+      named.act === true && named.scope === 'named' && named.names.join() === 'Client Radar');
+    const allSaid = plan({ status: 'active', scope: 'all', userText: 'pause all of my workflows please', knownNames: KNOWN });
+    check('P21c · an all-scope deed needs the user\'s OWN all-word AND their own direction word — and the heard direction overrules the model\'s',
+      allSaid.act === true && allSaid.scope === 'all' && allSaid.status === 'paused' &&
+      plan({ status: 'paused', scope: 'all', userText: 'what about my workflows?', knownNames: KNOWN }).act === false);
+    check('P21c · a TWO-DIRECTION line refuses rather than flattening to one status ("pause A and resume B" used to pause both)',
+      plan({ status: 'paused', scope: 'all', userText: 'pause the radar and resume the briefing', knownNames: KNOWN }).act === false);
+    check('P21c · an "all EXCEPT X" refuses (the exception is invisible to {status, scope} — it would pause exactly the one being spared)',
+      plan({ status: 'paused', scope: 'all', userText: 'pause all of them except the radar', knownNames: KNOWN }).act === false &&
+      plan({ status: 'paused', scope: 'all', userText: 'pause everything apart from the briefing', knownNames: KNOWN }).act === false);
+    check('P21c · a NEGATED direction refuses ("don\'t pause everything" is not a pause)',
+      plan({ status: 'paused', scope: 'all', userText: "don't pause all of them", knownNames: KNOWN }).act === false);
+    check('P21c · a TASK\'S OWN NAME is not a command word — "pause All Hands Digest" is a named deed, never a bulk over everything',
+      plan({ status: 'paused', scope: 'all', userText: 'pause All Hands Digest', knownNames: KNOWN }).act === false &&
+      (() => { const p2 = plan({ status: 'paused', names: ['All Hands Digest'], userText: 'pause All Hands Digest', knownNames: KNOWN }); return p2.act && p2.scope === 'named'; })() &&
+      plan({ status: 'paused', scope: 'all', userText: 'pause All', knownNames: [...KNOWN, 'All'] }).act === false);
+    const pt = plan({ status: 'active', scope: 'all', userText: 'pausar todas as tarefas', knownNames: KNOWN });
+    const de = plan({ status: 'active', scope: 'all', userText: 'pausiere bitte alle', knownNames: KNOWN });
+    const fr = plan({ status: 'active', scope: 'all', userText: 'mettre en pause toutes les tâches', knownNames: KNOWN });
+    check('P21c · the floors speak the four languages this repo speaks (PT/DE/FR all-words and direction words)',
+      [pt, de, fr].every((p) => p.act === true && p.scope === 'all' && p.status === 'paused'));
+    check('P21c · the executor runs the deed through the ONE pure planner, with the real set\'s names in hand',
+      src('lib/tools/worker-tasks.ts').includes('const plan = planTasksStatusDeed({') &&
+      src('lib/tools/worker-tasks.ts').includes('knownNames: all.map((r) => r.name)') &&
+      src('lib/tools/worker-tasks.ts').includes('Name them, or say "all".'));
+    // THE DOOR-COVERAGE LAW: every call site either hands the executor the user's words, or is
+    // provably safe under the fail-closed default. (The words ride to the box on dependencies.)
+    check('P21c · every door that can reach the bulk deed passes the user\'s own words — chief loop, coworker chat, and the AgentOS internal door (bridge → dependencies.user_text → Python _call)',
+      src('lib/converse/index.ts').includes('}, null, userId, admin, userText);') &&
+      src('app/api/work/threads/[id]/chat/route.ts').includes('ctx.userText ?? \'\'') &&
+      src('app/api/internal/agentos/tasks/route.ts').includes('}, agent_id ?? null, user_id, ac, userText);') &&
+      src('app/api/internal/agentos/tasks/route.ts').includes("typeof body.user_text === 'string'") &&
+      src('lib/work/agentos-bridge.ts').includes('user_text: message,') &&
+      src('infra/agentos/tools_tasks.py').includes('"user_text": deps.get("user_text") or ""') &&
+      // …and the CENSUS itself: a new door that calls the executor without the words is a build
+      // error here, not a silent bulk deed. (The executor's own file is its definition.)
+      (() => {
+        const seen: string[] = [];
+        const walk = (dir: string) => {
+          for (const e of readdirSync(dir, { withFileTypes: true })) {
+            if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+            const p = `${dir}/${e.name}`;
+            if (e.isDirectory()) walk(p);
+            else if (/\.tsx?$/.test(e.name) && /executeSetTasksStatus\s*\(/.test(src(p))) seen.push(p);
+          }
+        };
+        for (const root of ['lib', 'app', 'components']) walk(root);
+        const KNOWN_SITES = new Set([
+          'lib/tools/worker-tasks.ts',                          // the executor itself
+          'lib/converse/index.ts',                              // chief loop — passes userText
+          'app/api/work/threads/[id]/chat/route.ts',            // coworker chat — passes ctx.userText
+          'app/api/internal/agentos/tasks/route.ts',            // the box — passes the forwarded user_text
+        ]);
+        const strays = seen.filter((p) => !KNOWN_SITES.has(p));
+        if (strays.length) console.log(`      ↳ unaudited set_tasks_status call sites: ${strays.join(', ')}`);
+        return strays.length === 0 && seen.length === KNOWN_SITES.size;
+      })());
+
+    const { spokenIsResumeNotRun } = await import('../lib/tools/worker-tasks');
+    check('P21c · "resume X" is the mirror of pause, never a RUN — code decides it from the user\'s own words (found live: the model served "resume the X task" with run_task and STARTED a real run, which can spend money and send mail)',
+      spokenIsResumeNotRun('resume the Probe Client Radar task') &&
+      spokenIsResumeNotRun('unpause the weekly briefing') &&
+      !spokenIsResumeNotRun('run the weekly briefing now') &&
+      !spokenIsResumeNotRun('resume it and run it right now') &&
+      src('lib/converse/index.ts').includes('if (spokenIsResumeNotRun(userText))') &&
+      src('app/api/work/threads/[id]/chat/route.ts').includes("if (spokenIsResumeNotRun(ctx.userText ?? ''))"));
+
+    // (E) ONE RETRY, THEN AN HONEST AMENDMENT — the floor may never block a reply forever.
+    check('P21c · the floor is wired at every lane that composes a final say: coworker chat (one corrective round, then an amendment), the chief loop and the AgentOS bridge (amendment only — their streams never retype)',
+      src('app/api/work/threads/[id]/chat/route.ts').includes('deedFloorVerdict(cleanText, floorLedger)') &&
+      src('app/api/work/threads/[id]/chat/route.ts').includes('deedCorrection(breach)') &&
+      src('app/api/work/threads/[id]/chat/route.ts').includes('deedAmendment(breach)') &&
+      src('lib/converse/index.ts').includes('deedFloorVerdict(say, deeds)') &&
+      src('lib/work/agentos-bridge.ts').includes('deedFloorVerdict(fullText, deeds)') &&
+      deedAmendment({ kind: 'status', claimed: 2, covered: 1, sentence: '' }).includes('1 of those'));
+  }
+
+  // ═══ P21d · THE PRESENTATION LAW (Sep 22, WAVE 0) — A TOOL RESULT IS DATA, NEVER THE ANSWER.
+  // The incident (owner screenshot, Home chat): "what workflows do I have in place?" put the
+  // executor's model-facing listing in the assistant's bubble verbatim — bracketed uuids and the
+  // closing instruction "Refer to tasks by NAME when speaking to the user" — and PERSISTED it into
+  // room_turns. The cause was the guard's POLARITY: the command fast path served
+  // dispatchCommand().say as the answer and excused four tool names by an OPT-OUT set, so every
+  // read tool shipped after it leaked by default. These gates hold the inversion: the permission is
+  // a registry field, its absence means data, and the return TYPE keeps a data read off the surface.
+  {
+    const { presentationParity, resultIsProse, capabilitiesFor, CAPABILITY_MAP } = await import('../lib/work/surface-registry');
+    const converseSrc = src('lib/converse/index.ts');
+
+    check('P21d · every chief-slice tool DECLARES what its result is (data | prose) — silence is how the class comes back',
+      presentationParity().length === 0, presentationParity().join(' · ') || 'all declared');
+
+    check('P21d · the opt-OUT set is GONE and the permission is the registry\'s (a new read tool can no longer leak by omission)',
+      !converseSrc.includes('RAW_CONTEXT_READS') &&
+      converseSrc.includes('if (verdict.command && resultIsProse(verdict.command.tool))') &&
+      // THE SKIPPED READ IS STILL A LOOKUP: a data command routes to the tool-bearing loop, never
+      // to the toolless answering pass (which would confess to not knowing what a verb can fetch).
+      // WINDOW WIDENED Sep 22 (Wave 1): the collection card's fast path now sits inside this same
+      // branch ahead of the fall-through, so the skipped-read law lives further down it. The law
+      // asserted is unchanged, character for character — only the distance to it grew.
+      /\} else if \(verdict\.command\) \{[\s\S]{0,3000}?verdict\.question = false;[\s\S]{0,80}?verdict\.open = true;/.test(converseSrc) &&
+      // …and it OPENS THE REACH VALVE: routed to the loop with no reach note, the mind answered
+      // from the grounding it was handed and confessed its edge instead of calling the verb.
+      converseSrc.includes('let escalateToReach = !!skippedDataRead;'));
+
+    // THE CLASSIFICATION ITSELF: every read whose executor writes a block FOR THE MODEL is data;
+    // the deeds whose lines are hand-written here stay prose (a confirmation must be instant).
+    const DATA = ['list_tasks', 'get_task', 'run_compute', 'read_action_history',
+      'search_knowledge_base', 'check_calendar', 'get_emails', 'get_meeting_context', 'read_document'];
+    const PROSE = ['run_task', 'set_tasks_status', 'draft_reply', 'prepare_forward', 'prepare_calendar_invite',
+      'prepare_bulk_deed', 'send_prepared_reply', 'resolve_inbox_item', 'resolve_commitment', 'find_file',
+      'remember_fact', 'create_project', 'create_task_item', 'move_item_to_project', 'set_project_status',
+      'merge_projects', 'propose_standing_task', 'steer_standing_task', 'assign_to_coworker', 'offer_choices'];
+    check('P21d · the reads are data and the deeds are prose — and an UNREGISTERED tool fails CLOSED (never servable)',
+      DATA.every((t) => !resultIsProse(t)) && PROSE.every((t) => resultIsProse(t)) &&
+      !resultIsProse('some_tool_shipped_tomorrow'),
+      `data-violations=${DATA.filter(resultIsProse).join(',') || 'none'} prose-violations=${PROSE.filter((t) => !resultIsProse(t)).join(',') || 'none'}`);
+
+    // THE SOURCE CENSUS: no dispatch branch may hand an executor's string back as `say`. The four
+    // executors whose output is a model block are read ONLY into `modelText`.
+    const RAW_EXECUTORS = ['executeListTasks', 'executeGetTask', 'executeRunCompute', 'executeReadActionHistory',
+      'executeGetEmails', 'executeGetMeetingContext', 'executeCheckCalendar'];
+    const leaks = RAW_EXECUTORS.filter((fn) => new RegExp(`say:\\s*(?:await\\s+)?${fn}\\(`).test(converseSrc));
+    check('P21d · no dispatch branch returns a data executor\'s string as `say` — they return { modelText }, a shape ConverseTurn cannot absorb',
+      leaks.length === 0 &&
+      // RE-POINTED Sep 22 (Wave 1, the collection card): the list_tasks branch now returns BOTH
+      // halves of one read — the model's block AND the card's spec. The law under test is
+      // unchanged and asserted at its new seam: the executor's string reaches `modelText` only.
+      /const \[modelText, spec\] = await Promise\.all\(\[\s*executeListTasks\(null, userId, admin\),/.test(converseSrc) &&
+      converseSrc.includes('return { modelText, ...(spec ? { present: spec } : {}) };') &&
+      converseSrc.includes('export type ToolData') &&
+      // A data tool is data on EVERY branch — decline and failure paths included. A half-prose tool
+      // is how the next leak gets written (run_compute's own decline used to return `say`).
+      !converseSrc.slice(converseSrc.indexOf("if (tool === 'run_compute')"), converseSrc.indexOf("if (tool === 'read_action_history')")).includes('say:') &&
+      // RE-POINTED Sep 22 (Wave 1): W0 RESERVED the present seam as `{kind, rows}`; Wave 1 fills it
+      // with the contract's own CollectionSpec (that shape + the code-written framing + the re-read
+      // key). The seam must still EXIST on ToolData and nowhere near ConverseTurn's `say`.
+      // RE-POINTED Sep 22 (Wave 2, the event card): the seam WIDENED to carry a single-object card
+      // beside a collection. The law is unchanged — `present` lives on ToolData, never on
+      // ConverseTurn's `say` — and is asserted at the widened declaration.
+      converseSrc.includes('present?: CollectionSpec | EventPresent;'),
+      leaks.length ? `LEAKS: ${leaks.join(', ')}` : 'clean');
+
+    // THE INSTRUCTION MOVED HOME: an instruction to the model belongs in the tool DESCRIPTION.
+    check('P21d · the "refer to tasks by NAME" instruction left the RESULT and lives in the tool description (both doors + the Python mirror)',
+      !src('lib/tools/worker-tasks.ts').includes('Refer to tasks by NAME when speaking to the user; use the ids only when a tool asks for one.') &&
+      /description:.*refer to tasks by NAME/i.test(src('lib/tools/worker-tasks.ts')) &&
+      /description:.*never repeat the ids/i.test(converseSrc) &&
+      src('infra/agentos/tools_tasks.py').includes('THE PRESENTATION LAW'));
+
+    // ERRORS ARE NEVER RAW: a Postgres/transport message is for a console, not a person.
+    const rawErr = /`[^`]*\$\{(?:[A-Za-z_.?]*[Ee]rr(?:or)?[A-Za-z_.?]*)\.message[^}]*\}/;
+    const errFiles = ['lib/converse/index.ts', 'lib/converse/hands.ts', 'lib/tools/worker-tasks.ts',
+      'lib/tools/project-actions.ts', 'lib/tools/item-actions.ts'];
+    const rawErrFiles = errFiles.filter((f) => rawErr.test(src(f)));
+    check('P21d · no user-reachable sentence interpolates a raw error message (the detail goes to console.error; the line stays ours)',
+      rawErrFiles.length === 0 && src('lib/tools/worker-tasks.ts').includes("console.error('[worker-tasks]"),
+      rawErrFiles.join(', ') || 'clean');
+
+    // ── THE CHIP IS OURS (the second instance): both coworker lanes read ONE table.
+    const { summarizeToolResult, toolLabel, TOOL_LABELS } = await import('../lib/work/tool-summaries');
+    check('P21d · the AgentOS bridge stopped shipping the FIRST RAW LINE of an executor result as the chip — both lanes read the one summary/label module',
+      !src('lib/work/agentos-bridge.ts').includes("text.split('\\n').find(l => l.trim())") &&
+      src('lib/work/agentos-bridge.ts').includes("from '@/lib/work/tool-summaries'") &&
+      src('app/api/work/threads/[id]/chat/route.ts').includes("from '@/lib/work/tool-summaries'") &&
+      !src('app/api/work/threads/[id]/chat/route.ts').includes('const labels: Record<string, string> = {'));
+
+    const leakyResult = 'Tasks (4):\n● [4366060c-0000-4000-8000-000000000000] Weekly Digest — Clara — Every Wednesday at 9am';
+    check('P21d · a summary is text WE wrote — the leaked listing summarises to a COUNT, an unknown tool says its label and never its result, and an empty result never reads as content',
+      summarizeToolResult('list_tasks', leakyResult) === 'Found 4 tasks' &&
+      !summarizeToolResult('list_tasks', leakyResult).includes('4366060c') &&
+      !summarizeToolResult('a_tool_from_tomorrow', 'SECRET INTERNAL BLOCK\nline two').includes('SECRET') &&
+      summarizeToolResult('a_tool_from_tomorrow', 'SECRET INTERNAL BLOCK') === 'Done' &&
+      summarizeToolResult('run_task', 'Failed to start "X" — nothing is running.') === 'Task not started' &&
+      summarizeToolResult('run_task', '"X" is now running. Results will appear in your inbox when it completes.') === 'Task started' &&
+      toolLabel('a_tool_from_tomorrow') === 'a tool from tomorrow' &&
+      TOOL_LABELS.get_meeting_context === 'Checking meetings & calendar');
+
+    // ── THE MARKERS NEVER REACH THE BUBBLE (the third instance): one stripper, both lanes.
+    const { stripChatMarkers, splitStreamableText } = await import('../lib/work/chat-markers');
+    const b64 = Buffer.from(JSON.stringify({ type: 'linkedin_post' })).toString('base64');
+    check('P21d · all four marker families are stripped from the model\'s OWN prose, in both coworker lanes',
+      stripChatMarkers(`Here it is [[artifact:abc|report|Q3 Review]] — have a look.`) === 'Here it is — have a look.' &&
+      stripChatMarkers(`Drafted. [[email_draft:${b64}]]`) === 'Drafted.' &&
+      stripChatMarkers(`Ready. [[workflow_draft:${b64}]]`) === 'Ready.' &&
+      stripChatMarkers(`Here: [[card:${b64}]]`) === 'Here:' &&
+      stripChatMarkers('nothing to strip here') === 'nothing to strip here' &&
+      src('lib/work/agentos-bridge.ts').includes('splitStreamableText(markerHold + content)') &&
+      src('lib/work/agentos-bridge.ts').includes('stripChatMarkers(enforceWeekdayDatePairs(fullText') &&
+      src('app/api/work/threads/[id]/chat/route.ts').includes('stripChatMarkers(enforceWeekdayDatePairs(fullAssistantText'));
+
+    check('P21d · a marker split ACROSS two stream chunks is held, never half-shipped — and a "[[" that never closes is released as prose, never swallowed',
+      (() => {
+        const a = splitStreamableText('Here it is [[artif');
+        if (a.emit !== 'Here it is ' || !a.hold.startsWith('[[artif')) return false;
+        const b = splitStreamableText(a.hold + 'act:abc|report|Q3]] done');
+        if (b.emit !== ' done' && b.emit !== 'done') return false;
+        const long = splitStreamableText('[[' + 'x'.repeat(5000));
+        return long.hold === '' && long.emit.length > 4000;
+      })());
+
+    // ── THE GATE VERDICT NEVER SHIPS AS A DELIVERABLE (the fourth instance).
+    check('P21d · a verify gate that emits the sentinel and NO draft falls back to the PRE-GATE DRAFT, never to `raw` (the sentinel + its JSON can never be part of a delivered artifact)',
+      src('lib/workflows/execute-step.ts').includes('if (!body) return { text: draft, verdict: degraded };') &&
+      src('lib/workflows/execute-step.ts').includes("return { text: body || draft, verdict: degraded };") &&
+      !/return \{ text: (?:body \|\| )?raw, verdict: degraded \};/.test(
+        src('lib/workflows/execute-step.ts').slice(src('lib/workflows/execute-step.ts').indexOf('const cut = raw.lastIndexOf(GATE_SENTINEL);'))
+          .split('const allowedStepLabels')[0].replace(/if \(cut === -1\) return \{ text: raw, verdict: degraded \};/, '')));
+    void capabilitiesFor; void CAPABILITY_MAP;
+  }
+
+  // ═══ P21e · THE COLLECTION CARD (Sep 22, WAVE 1) — the presentation law's payoff.
+  // When the answer to a question is a SET OF THE USER'S OWN OBJECTS, the answer is those objects:
+  // typed rows plus ONE framing sentence composed BY CODE. Two promises are under test here.
+  //   (1) THE CARD IS NEVER A LEAK: the fast path may serve `spec.framing` and nothing else —
+  //       `modelText` stays a thing only a model reads, on every path.
+  //   (2) THE CARD NEVER LIES: framing counts are arithmetic over the rows, an absent fact is
+  //       omitted from a meta line rather than invented, a cap is counted into `more` (never a
+  //       silent truncation), and no uuid is ever rendered to a person.
+  {
+    const { presentsKind, presentsParity, CAPABILITY_MAP } = await import('../lib/work/surface-registry');
+    const { COLLECTION_KINDS, COLLECTION_MAX_ROWS, isCollectionSpec, countByStatus } = await import('../lib/present/collection');
+    const B = await import('../lib/present/build');
+    const { isListingAsk } = await import('../lib/present/listing-ask');
+    const converseSrc = src('lib/converse/index.ts');
+
+    // ── REGISTRY PARITY: every declared kind is a kind the contract knows, and only data reads
+    // present (a card is the DATA half of a read — a prose deed has no set to show).
+    const declared = Object.values(CAPABILITY_MAP).map((c) => c.presents).filter(Boolean) as string[];
+    // RE-POINTED Sep 22 (Wave 2 — the event card): the law is "every declared kind is one the
+    // CONTRACT can actually render, and a presenting tool's result kind matches what it presents".
+    // Wave 2 adds ONE renderable kind that is not a collection: `'event'`, the single-object card
+    // (lib/present/event.ts), whose result kind is `presentation` rather than `data`. Both halves
+    // are asserted below — and `presentsParity()` itself now enforces the kind↔resultIs pairing in
+    // both directions, so a collection declared as a presentation (or the reverse) still fails.
+    check('P21e · every `presents` kind is one the contract can render (a COLLECTION_KIND, or the event card), and its result kind matches',
+      presentsParity().length === 0 &&
+      declared.length > 0 &&
+      declared.every((k) => k === 'event' || (COLLECTION_KINDS as readonly string[]).includes(k)) &&
+      presentsKind('prepare_event_action') === 'event' &&
+      presentsKind('list_tasks') === 'workflows' && presentsKind('check_calendar') === 'calendar' &&
+      presentsKind('get_meeting_context') === 'recordings' && presentsKind('search_knowledge_base') === 'documents' &&
+      // A tool nobody classified presents NOTHING — the same fail-closed default as resultIs.
+      presentsKind('some_tool_shipped_tomorrow') === null,
+      presentsParity().join(' · ') || `kinds=${declared.join(',')}`);
+
+    // ── THE FAST PATH SERVES THE FRAMING, NEVER THE MODEL'S BLOCK (the source census: the leak
+    // this whole wave exists to have killed can only come back through a `say:` on this path).
+    const fastPath = converseSrc.slice(
+      converseSrc.indexOf('THE FAST PATH IS FAST AGAIN'),
+      converseSrc.indexOf('skippedDataRead = verdict.command.tool;'));
+    check('P21e · the fast path serves a collection ONLY as { say: spec.framing, collection: { id, spec } } — no branch puts modelText in `say`',
+      fastPath.includes('if (spec) return { say: spec.framing, refs: [], collection: { id: crypto.randomUUID(), spec } };') &&
+      // RE-POINTED Sep 22 (Wave 2): `modelText` may reach a `say` on EXACTLY ONE path — the
+      // `presentation` branch, whose "modelText" is a sentence COMPOSED BY CODE from the object's
+      // own facts (no model wrote it). The law being kept is the leak's actual shape: a DATA read's
+      // model-facing block must never be served. So the census excludes that branch by name and
+      // holds everywhere else, character for character.
+      !/say:\s*[^,\n]*modelText/.test(
+        converseSrc.replace(/if \(isEventPresent\(present\)\) \{[\s\S]{0,300}?\n\s*\}/, '')
+          .replace(/\/\/ A refusal-by-listing[\s\S]{0,200}?return \{ say: out\.modelText, refs: \[\] \};/, ''),
+      ) &&
+      // …and the two data READERS' text halves never become a `say` either (`set_tasks_status`'s
+      // own `out.text` is a PROSE deed's hand-written ledger line — that one is allowed, and is
+      // exactly why this names the readers rather than any `.text`).
+      !/say:\s*(?:read|kb)\.text/.test(converseSrc) &&
+      // …and it only ever runs behind BOTH conditions: a declared kind AND a listing-shaped ask.
+      // RE-POINTED Sep 22 (Wave 2): the collection fast path reads the NARROWED registry reader, so
+      // the single-object kind can never be handed to a collection builder. Same condition, same
+      // place, one type narrower.
+      fastPath.includes('const kind = presentsCollectionKind(verdict.command.tool);') &&
+      fastPath.includes('if (kind && isListingAsk(text)) {'),
+      fastPath ? 'fast path found' : 'FAST PATH BLOCK NOT FOUND');
+
+    // ── THE PERSISTED CARD IS A POINTER (the bulk-deed precedent): kind + params + framing, and
+    // never the rows — a reloaded collection re-derives, so it cannot paint a dead state.
+    const askSrc = src('app/api/home/ask/route.ts');
+    const persisted = askSrc.slice(askSrc.indexOf("key: 'collection_card'"), askSrc.indexOf("key: 'collection_card'") + 400);
+    check('P21e · the persisted collection component is a POINTER — kind, re-read params, framing; the ROWS are never stored',
+      askSrc.includes("key: 'collection_card'") &&
+      /state: \{ kind: turn\.collection\.spec\.kind, framing: turn\.collection\.spec\.framing,/.test(askSrc) &&
+      !/rows/.test(persisted) &&
+      askSrc.includes('...(turn.collection ? { collection: turn.collection } : {}),'),
+      persisted ? 'pointer only' : 'NOT PERSISTED');
+
+    // ── THE LISTING-VS-ANALYTICAL MATRIX. A listing ask earns the instant card; anything that
+    // wants a JUDGMENT over the data keeps the loop — and so does everything unsure (a slower
+    // right answer beats a fast wrong card). EN + the PT/DE forms this product speaks.
+    const LISTINGS = [
+      'what workflows do I have in place?', 'which tasks are running?', 'show me my workflows',
+      "what's on tomorrow", 'what did I record last week', 'find the pricing deck document',
+      'list my recordings', 'que workflows tenho?', 'mostra-me as minhas tarefas',
+      'welche workflows habe ich?', 'zeig mir meine aufgaben',
+    ];
+    const ANALYTICAL = [
+      'am I free Thursday at 3?', 'which workflow failed and why?',
+      'summarise what we decided in last week’s calls', 'can I fit a call in tomorrow?',
+      'why did the weekly digest stop running', 'should I pause the radar workflow?',
+      'book a call with Sam next week', 'porquê que a tarefa falhou?', 'estou livre na quinta?',
+      'warum läuft der workflow nicht?',
+      'draft a reply to Sam about the deck',           // an instruction is never a listing
+      'what workflows do I have — and which of them should I retire now that the pilot is over, ' +
+      'because I would rather not keep paying for runs nobody reads any more',   // long/composite
+    ];
+    const listFails = LISTINGS.filter((t) => !isListingAsk(t));
+    const analFails = ANALYTICAL.filter((t) => isListingAsk(t));
+    check('P21e · the listing-vs-analytical rule: inventory asks serve the card, judgment asks keep the loop, and the unsure default is the loop',
+      listFails.length === 0 && analFails.length === 0 && !isListingAsk('') && !isListingAsk('hey'),
+      `missed-listings=${listFails.join(' | ') || 'none'} · wrong-cards=${analFails.join(' | ') || 'none'}`);
+
+    // ── THE BUILDERS, PURE (fake rows, no IO): the arithmetic, the joins, the cap, the zone.
+    const wfRows = B.workflowRows([
+      { id: '4366060c-0000-4000-8000-000000000001', name: 'Weekly Digest', status: 'active', trigger: { type: 'schedule', label: 'every Wednesday 09:00' }, last_run_at: new Date(Date.now() - 5 * 86_400_000).toISOString(), ownerName: 'Clara', hasInputStations: false, hasReactionDoors: true, acceptsMaterial: false },
+      { id: '4366060c-0000-4000-8000-000000000002', name: 'Client Radar', status: 'paused', trigger: { type: 'manual' }, last_run_at: null, ownerName: null },
+    ], { schedule: (t) => (t.type === 'manual' ? 'manual trigger only' : t.label ?? 'scheduled'), lastRun: (iso) => (iso ? 'ran 5d ago' : 'never run') });
+    check('P21e · a workflow row joins KNOWN facts only (an unknown owner is omitted, never "unknown"), and carries the material-door facts the host\'s ONE predicate reads',
+      wfRows[0].meta === 'Clara · every Wednesday 09:00 · ran 5d ago' &&
+      wfRows[1].meta === 'manual trigger only · never run' &&
+      wfRows[1].owner === null &&
+      wfRows[0].state === 'active' && wfRows[1].status?.tone === 'paused' &&
+      wfRows[0].facts?.hasReactionDoors === true && wfRows[1].facts?.hasReactionDoors === undefined,
+      `${wfRows[0].meta} // ${wfRows[1].meta}`);
+
+    check('P21e · the framing is ARITHMETIC over the rows — counted, never phrased; an empty set says so honestly',
+      B.framingWorkflows(wfRows) === 'You have 2 workflows — 1 active, 1 paused.' &&
+      B.framingWorkflows([]) === 'No workflows set up yet.' &&
+      countByStatus(wfRows) === '1 active, 1 paused' &&
+      B.framingRecordings([], '7 days') === 'Nothing recorded in the last 7 days.' &&
+      B.framingDocuments([], 'pricing') === 'Nothing in your documents matches "pricing".' &&
+      B.sinceWords('7d') === '7 days' && B.sinceWords('nonsense') === '30 days',
+      B.framingWorkflows(wfRows));
+
+    const many = Array.from({ length: COLLECTION_MAX_ROWS + 7 }, (_, i) => ({
+      id: `4366060c-0000-4000-8000-${String(i).padStart(12, '0')}`, name: `Task ${i}`, status: 'active',
+      trigger: { type: 'manual' }, last_run_at: null, ownerName: null,
+    }));
+    const capped = B.capRows(B.workflowRows(many, { schedule: () => 'manual trigger only', lastRun: () => 'never run' }));
+    check('P21e · a cap is NEVER silent — the rows served stop at COLLECTION_MAX_ROWS and the remainder is counted into `more`, which the framing still totals',
+      capped.kept.length === COLLECTION_MAX_ROWS && capped.more === 7 &&
+      B.framingWorkflows(capped.kept, capped.more) === `You have ${COLLECTION_MAX_ROWS + 7} workflows.`,
+      `kept=${capped.kept.length} more=${capped.more}`);
+
+    // CALENDAR: the weekday–date pairs come from the STRUCT (the schedule window computed them in
+    // the user's zone); this file never derives a weekday from a date. Clock labels ride verbatim.
+    const days = [{
+      dayStr: '2026-09-23', weekday: 'Tuesday',
+      busy: [
+        { start: '10:00', end: '11:00', title: 'Acme sync', allDay: false, id: '4366060c-0000-4000-8000-0000000000aa', startISO: '2026-09-23T09:00:00.000Z', endISO: '2026-09-23T10:00:00.000Z' },
+        { start: '00:00', end: '00:00', title: 'Offsite', allDay: true },
+      ],
+    }];
+    const calRows = B.calendarRows(days);
+    const calSpec = B.calendarSpec(days, { hasCalendar: true, from: '2026-09-23', to: '2026-09-23' });
+    check('P21e · a calendar row speaks the STRUCT\'s own weekday–date pair and clock labels, carries its event id as a FACT (never in the title), and an all-day block is its own state',
+      calRows[0].meta === 'Tue 23 Sep · 10:00–11:00' &&
+      calRows[0].facts?.eventId === '4366060c-0000-4000-8000-0000000000aa' &&
+      calRows[0].state === 'event' && calRows[1].state === 'allday' && calRows[1].meta === 'Tue 23 Sep · all day' &&
+      calSpec.framing === 'Tue 23 Sep: 2 meetings.' &&
+      calSpec.params?.from === '2026-09-23' &&
+      // THE EMPTY-CALENDAR TRUTH survives into the card: unknown is never rendered as "free".
+      B.framingCalendar([], days, { hasCalendar: false }) === "No calendar is connected here, so I can't say what's booked.",
+      `${calRows[0].meta} // ${calSpec.framing}`);
+
+    // NO UUID EVER REACHES A PERSON: ids live on `row.id` / `row.facts`, never in rendered text.
+    const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+    const specs = [
+      calSpec,
+      B.documentSpec([{ fileId: '4366060c-0000-4000-8000-0000000000bb', filename: 'Pricing deck.pdf', summary: 'The 2026 pricing structure and its bands.', similarity: 0.7, topCitation: 'Pricing deck.pdf, p.3' }], 'pricing'),
+      B.recordingSpec([{ id: '4366060c-0000-4000-8000-0000000000cc', title: 'Acme kick-off', dateLabel: 'Mon 21 Sep 2026', duration_minutes: 45, actionItems: ['send the scope'], attendees: [{ email: 'sam@acme-example.com' }] }], { since: '7d' }),
+    ];
+    const rendered = specs.flatMap((s) => [s.framing, s.emptyLine ?? '', ...s.rows.flatMap((r) => [r.title, r.meta ?? '', r.status?.word ?? ''])]);
+    check('P21e · every built spec is structurally valid and NOTHING a person reads carries a uuid (ids ride `id`/`facts`, which is where the doors read them)',
+      specs.every(isCollectionSpec) && !rendered.some((t) => UUID.test(t)) &&
+      specs[1].rows[0].meta === 'The 2026 pricing structure and its bands.' &&
+      specs[2].rows[0].meta === 'Mon 21 Sep 2026 · 45 min · 1 action item · 1 attendee' &&
+      specs[2].framing === '1 recording in the last 7 days.',
+      rendered.find((t) => UUID.test(t)) ?? 'clean');
+
+    // ── ONE READ, TWO RENDERINGS: the executor and the builder share the QUERY, so the card can
+    // never describe a set the model was not shown.
+    check('P21e · each executor and its builder read THE SAME query function (extracted, not copied) — the drift this wave exists to prevent',
+      src('lib/tools/worker-tasks.ts').includes('export async function readTaskRows(') &&
+      /const rows = await readTaskRows\(agentId, userId, adminClient\);/.test(src('lib/tools/worker-tasks.ts')) &&
+      src('lib/tools/get-meeting-context.ts').includes('export async function readMeetingContext(') &&
+      src('lib/tools/get-meeting-context.ts').includes('return (await readMeetingContext(config, userId, supabase)).text;') &&
+      src('lib/tools/check-calendar.ts').includes('export async function readCalendar(') &&
+      src('lib/knowledge/build-kb-context.ts').includes('groups: FileChunkGroup[]') &&
+      src('lib/present/build.ts').includes("const { readTaskRows, formatSchedule, formatLastRun } = await import('@/lib/tools/worker-tasks');"));
+
+    // ── SPEAK → SHOW: an analytical turn keeps its prose AND hands over the objects it read.
+    check('P21e · the agent loop carries the collection onto its FINAL turn (the prose answer arrives WITH its object) — and the model still reads only modelText',
+      // RE-POINTED Sep 22 (Wave 2): the same assignment, now behind the one-line discriminator that
+      // routes a single-object card to its own field. The law — the loop's FINAL turn carries the
+      // object it reasoned about — is asserted on both halves.
+      converseSrc.includes('if (isToolData(out) && out.present) {') &&
+      converseSrc.includes('else collection = { id: crypto.randomUUID(), spec: out.present };') &&
+      converseSrc.includes('if (isEventPresent(out.present)) event = { id: out.present.spec.id, spec: out.present.spec };') &&
+      converseSrc.includes('...(collection ? { collection } : {}), ...(event ? { event } : {}) };') &&
+      converseSrc.includes('? clipForPrompt(out.modelText, 4000)'));
+
+    // ── THE COWORKER DM CARRIES THE SAME LAW (Wave 1, second half). The DM's native loop can now
+    // hand back a collection too — SCOPED TO THAT COWORKER — and the presentation law must hold
+    // there character for character: the executor's block reaches the `role:'tool'` message and
+    // nowhere else, the streamed prose is the model's own, and what persists is a POINTER.
+    const dmSrc = src('app/api/work/threads/[id]/chat/route.ts');
+    check('P21e · the DM route reads BOTH halves of one read per presenting tool, and the card is scoped to THAT coworker (the chief lists all; a DM lists its own)',
+      /buildCollectionSafe\(ctx\.supabase, ctx\.userId, 'workflows', \{ agentId: ctx\.agentId \}\)/.test(dmSrc) &&
+      dmSrc.includes('const read = await readMeetingContext(meetingConfig, ctx.userId, ctx.supabase);') &&
+      dmSrc.includes('const read = await readCalendar(input, ctx.userId, ctx.supabase);') &&
+      dmSrc.includes('collection = documentSpec(kbCtx.groups, query);') &&
+      // …and the `execute*` text-only wrappers for those two readers are gone from this lane, so
+      // no branch can drift back to a block with no card.
+      !dmSrc.includes('executeGetMeetingContext(') && !dmSrc.includes('executeCheckCalendar('));
+
+    check('P21e · the DM never serves a tool\'s raw result as prose or as metadata — the result stays the role:"tool" message, and `collections` carries NO rows',
+      // the executor's string goes to the tool message and to the dedupe cache; never to the bubble
+      dmSrc.includes("toolResultMessages.push({ role: 'tool', tool_call_id: tc.id, content: result });") &&
+      !/send\(\{ type: 'text(_set)?',[^}]*\bresult\b/.test(dmSrc) &&
+      // the persisted collection entry is a POINTER: id + kind + framing + re-read params, no rows
+      /\.\.\.\(allCollections\.length > 0 \? \{ collections: allCollections \} : \{\}\),/.test(dmSrc) &&
+      (() => {
+        const i = dmSrc.indexOf('const takeCollection = (spec?: CollectionSpec) => {');
+        const seg = i === -1 ? '' : dmSrc.slice(i, i + 500);
+        // Re-pointed Sep 22 (W4-C): the pointer is built by the ONE helper lib/present/pointer.ts
+        // (Home, the native DM and the AgentOS bridge share it) — the helper's body carries no rows.
+        const ptr = src('lib/present/pointer.ts');
+        const body = ptr.slice(ptr.indexOf('export function collectionPointer('), ptr.indexOf('export function collectionPointer(') + 400);
+        return !!seg && !/rows|modelText/.test(seg)
+          && /allCollections\.push\(collectionPointer\(id, spec\)\)/.test(seg)
+          && !/rows/.test(body) && /kind: spec\.kind,\s*framing: spec\.framing,/.test(body);
+      })() &&
+      // …and the accumulator's own TYPE forbids a row ever being pushed onto it
+      /const allCollections: CollectionTurnPointer\[\] = \[\];/.test(dmSrc) &&
+      !/^\s*rows\??:/m.test(src('lib/present/pointer.ts')));   // no `rows` FIELD on any pointer type
+    void COLLECTION_KINDS;
+  }
+
   // ═══ P22 · FAILED-TO-JUDGE IS NEVER JUDGED-NONE (proactive-team W2) — an AI outage must not
   // resolve items, strip real work, or cache a day-long "nothing to do". ═══
   check('P22 · the judge marks failure and NEVER caches it (an outage retries, it never becomes a verdict)',
@@ -850,6 +1450,29 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     }
   }
 
+  // ── P23b · THE PARITY LAW, AS IT ACTUALLY STANDS (Sep 21, the owner's convergence call:
+  // "shouldn't we allow the user to do all he can across the board in the different areas of the
+  // tool?"). Irreversible-in-chat is allowed ONLY through a commit-door-mediated send the USER
+  // clicks — a card's Send button IS the human approval (THE HUMAN-IN-THE-LOOP LAW). What the
+  // MODEL may never do is fire one: the chat-born email door returns a CARD, never a commit, and
+  // the only caller of the send route is the card's own click.
+  check('P23b · a chat-born email sends ONLY through the one commit door, and no model-reachable path can fire it',
+    (() => {
+      const door = src('app/api/emails/send/route.ts');
+      const core = src('lib/converse/index.ts');
+      const callers = ['lib/converse/index.ts', 'lib/converse/hands.ts', 'lib/home/ask.ts', 'app/api/home/ask/route.ts']
+        .filter((f) => /fetch\([^)]*emails\/send/.test(src(f)));
+      return door.includes('claimCommit(') && door.includes('releaseCommitClaim(')
+        && door.includes('alreadyExecuted')
+        // the draft door hands back a card; a commit is emitted only behind the explicit-send floor
+        && /emailDraft: \{ id: card\.id/.test(core)
+        && !/tool === 'draft_reply'[\s\S]{0,4000}?commit:/.test(core)
+        && core.includes("if (!EXPLICIT_SEND.test(userText))")
+        && callers.length === 0
+        // …and the deed is recorded where every other prepared send is recorded
+        && door.includes("type: 'message_sent'");
+    })());
+
   // ═══ P24 · AN ASK IS NEVER ROOM-LOCAL AND NEVER A DEAD END (proactive-team W3) — every open ask
   // is globally discoverable (the Home's "Needs your input" ledger), the go-ahead escape exists on
   // ENGINE asks too, and a proceeded ask lifts the block without ever re-asking. ═══
@@ -858,10 +1481,12 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     src('app/api/room/asks/route.ts').includes("action:'proceed'") &&
     // Re-pointed Sep 7 (threads P2d/P4 — the rail rewrote around the kit; the LAW is unchanged:
     // the ENGINE's go-ahead lives in the rail, keyed to the durable turnId, honoring proceeded):
-    src('components/home/item-rail.tsx').includes('proceedEngineAsk(') &&
-    // Re-pointed Sep 14 (the go-ahead law): the engine-ask predicate moved into the chip seats and
-    // the lifted ask's chip is additionally gated by askAllowsGoAhead — proceeded still suppresses.
-    src('components/home/item-rail.tsx').includes('liftedAsk.proceeded || !askAllowsGoAhead(') &&
+    // Re-pointed Sep 22 (W3-A): the engine go-ahead is ONE client door (lib/deeds/gate-doors.ts
+    // proceedAsk) called from the ONE input host, still keyed to the durable turnId and still
+    // suppressed by the served `proceeded` stamp — the rail mounts the host, it no longer fetches.
+    src('lib/deeds/gate-doors.ts').includes("post('/api/room/asks', { turnId, action: 'proceed' })") &&
+    src('components/home/input-card.tsx').includes('proceedAsk(') &&
+    src('components/home/input-card.tsx').includes('!wentAhead && askAllowsGoAhead(') &&
     src('lib/prepare/requirements.ts').includes('proceeded: true') &&
     src('lib/prepare/pass.ts').includes('Do NOT ask for the missing inputs again') &&
     // A Home ASK SECTION was tried and USER-REJECTED (July 29): it duplicated deck rows — the
@@ -1312,7 +1937,11 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       !src('components/ui/anchored-popover.tsx').includes('onMouseLeave'));
     check('P31 · THE LAST-GOOD LAW on the shared portfolio cache — only a valid response replaces state or touches aug-portfolio-v1; "Nothing here" is claimed only after a real fetch confirms it',
       pv.includes('Array.isArray(d.entities)') && pv.includes('fresh') &&
-      src('components/entities/entity-timeline.tsx').includes('Array.isArray(d.entities)'));
+      // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT): components/entities/entity-timeline.tsx was
+      // retired as unreachable. The law needs a SECOND writer of the shared key to have teeth —
+      // work-row's picker warmer is it: it only replaces the cache when the response really carries
+      // entities (`if (d?.entities)`), at both the warm and the mount seam.
+      (src('components/work/work-row.tsx').match(/if \(d\?\.entities\)/g)?.length ?? 0) >= 2);
   }
 
   // ═══ P34 · ASKS LIVE AND DIE WITH THEIR WORK (experience-spec law 3, Aug 2 — found live: the

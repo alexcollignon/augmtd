@@ -75,8 +75,11 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('T4: an untracked entity renders as quiet context with Track (membership chip)',
     src('components/entities/add-to-work-control.tsx').includes('connects to') &&
     src('components/entities/add-to-work-control.tsx').includes("action: 'track'"));
-  check('T4: untracked framed as quiet related context ("Connects to"), never project chrome (one-room R3: the strip)',
-    src('components/room/context-strip.tsx').includes("tracked === false ? 'Connects to' : 'In'") &&
+  // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT): components/room/context-strip.tsx was retired as
+  // unreachable. Its per-anchor context became the item room's RELATED ROWS, which still draw the
+  // untracked/tracked split in words ("Connects to" vs "In this project") rather than chrome.
+  check('T4: untracked framed as quiet related context ("Connects to"), never project chrome (the room\'s related rows)',
+    src('components/home/item-detail.tsx').includes("tracked === false ? 'Connects to' : 'In this project'") &&
     src('lib/entities/room-view.ts').includes('tracked: !!ent.tracked'));
   check('T4: the items/entity GET serves tracked', src('app/api/items/entity/route.ts').includes('tracked: !!(ent as'));
 

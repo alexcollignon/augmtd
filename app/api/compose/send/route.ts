@@ -7,6 +7,7 @@ import { sendOutlookEmail } from '@/lib/microsoft/outlook';
 import { sendCoworkerEmail } from '@/lib/tools/coworker-email';
 import { logActivity } from '@/lib/activity/log';
 import { checkRateLimit } from '@/lib/utils/rate-limit';
+import { sanitizeHeaderValue } from '@/lib/utils/email-headers';
 
 export const maxDuration = 30;
 
@@ -36,7 +37,8 @@ export async function POST(request: NextRequest) {
     const raw = (await request.json()) as { to?: unknown; cc?: unknown; subject?: string; bodyHTML?: string };
     const to = cleanList(raw.to);
     const cc = cleanList(raw.cc);
-    const subject = String(raw.subject ?? '').trim();
+    // THE HEADER FLOOR — one line, no control characters (the same class the chat-born door fixed).
+    const subject = sanitizeHeaderValue(raw.subject, 300);
     const bodyHTML = String(raw.bodyHTML ?? '');
     const plain = bodyHTML.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
 

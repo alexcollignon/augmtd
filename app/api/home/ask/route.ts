@@ -3,6 +3,7 @@ import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdmin } from '@supabase/supabase-js';
 import { converse, type ConverseHistoryTurn, type ConverseAttachment } from '@/lib/converse';
+import { tagOf } from '@/lib/home/ask-refs';
 
 // 180: a production hand-off (delegation runs synchronously, the artifact comes home) must
 // never be killed by the route budget — the 30s cap predates chat-borne production.
@@ -40,7 +41,13 @@ export async function POST(request: NextRequest) {
         const { writeRoomTurn } = await import('@/lib/room/turns');
         await writeRoomTurn(supabase, user.id, roomKey, {
           role: 'system', text: turn.say,
-          refs: turn.refs?.length ? turn.refs.map((r) => ({ label: r.label, href: r.href ?? null })) : undefined,
+          // THE REF IS ITS TAG (Sep 21): the grounding id rides into the store beside the label, so
+          // a REHYDRATED turn resolves its chips exactly as the live one did. Dropping it was half
+          // of the wrong-object-door incident — a stored turn could not be resolved at all, only
+          // guessed at by position, which is the bug (lib/home/ask-refs.ts).
+          refs: turn.refs?.length
+            ? turn.refs.map((r) => ({ label: r.label, href: r.href ?? null, ...(tagOf(r) ? { tag: tagOf(r) } : {}) }))
+            : undefined,
           // A CARD IS A TURN (threads plan — THE CARD CONTRACT): a prepared invite is DURABLE
           // state, so it rides the turn as a component and survives the reload that used to eat
           // it. The payload here is for RENDERING; the send door reads the stored row by id.
@@ -49,6 +56,38 @@ export async function POST(request: NextRequest) {
           // own committed state, so a reloaded card reads the truth rather than a frozen preview
           // that could offer a commit door on a deed that already ran.
           ...(!turn.invite && turn.bulkDeed ? { component: { key: 'bulk_deed_card', refId: turn.bulkDeed.id } } : {}),
+          // …and so does THE EMAIL CARD. A matched item rides as a POINTER (the card re-reads that
+          // item's own prepared reply, so a reload never paints a draft the room has since moved);
+          // a STANDALONE draft carries its payload for the first paint, and its Send door still
+          // reads the stored row by id.
+          // …and THE COLLECTION CARD (Wave 1, Sep 22) rides as a POINTER and nothing else: the
+          // KIND, its re-read params, and the framing sentence the code composed. The ROWS are
+          // deliberately NOT stored — a reloaded collection re-derives them through
+          // `GET /api/collections`, so a card can never paint a set that stopped being true (the
+          // bulk-deed precedent, applied to a read).
+          ...(!turn.invite && !turn.bulkDeed && turn.collection
+            ? { component: { key: 'collection_card', refId: turn.collection.id,
+                state: { kind: turn.collection.spec.kind, framing: turn.collection.spec.framing,
+                  ...(turn.collection.spec.params ? { params: turn.collection.spec.params } : {}) } } }
+            : {}),
+          // …and THE EVENT CARD (Wave 2, Sep 22) rides as a POINTER for the sharpest version of the
+          // same reason: an event's VERBS are computed from its live state (accepted elsewhere,
+          // moved by its organizer, already passed), so a stored spec would offer buttons that have
+          // stopped being true. What persists is the calendar_events id plus the ARMED proposal;
+          // `GET /api/events/[id]/card` re-derives the rest.
+          ...(!turn.invite && !turn.bulkDeed && !turn.collection && turn.event
+            // `refId` IS the calendar_events id — the card's re-read address (`GET /api/events/
+            // <refId>/card`) and the address its verbs act through. `state.eventId` repeats it so a
+            // reader that keys on state alone resolves too.
+            ? { component: { key: 'event_card', refId: turn.event.spec.id,
+                state: { eventId: turn.event.spec.id,
+                  ...(turn.event.spec.proposal ? { proposal: turn.event.spec.proposal } : {}) } } }
+            : {}),
+          ...(!turn.invite && !turn.bulkDeed && !turn.collection && !turn.event && turn.emailDraft
+            ? { component: { key: 'email_draft_card', refId: turn.emailDraft.id,
+                state: { ...(turn.emailDraft.itemId ? { itemId: turn.emailDraft.itemId } : {}),
+                  ...(turn.emailDraft.draft ? { draft: turn.emailDraft.draft } : {}) } } }
+            : {}),
         });
       } catch { /* durability is best-effort — the answer itself still returns */ }
     };
@@ -103,11 +142,13 @@ export async function POST(request: NextRequest) {
     const focusOf = async (): Promise<{ id: string; name: string } | undefined> => {
       if (scope.kind !== 'global') return undefined;
       try {
-        const { findEntityFocus } = await import('@/lib/home/ask');
-        const { data: ents } = await supabase.from('work_entities').select('id, name, aliases')
+        // THE FILING CLAIM (Sep 21): the chip's producer is `suggestFilingFocus` — the strict read
+        // (the user's own words, tracked projects only), so `tracked` must ride the select.
+        const { suggestFilingFocus } = await import('@/lib/home/ask');
+        const { data: ents } = await supabase.from('work_entities').select('id, name, aliases, tracked')
           .eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active')
           .order('last_event_at', { ascending: false }).limit(200);
-        return findEntityFocus(q, (ents ?? []) as Array<{ id: string; name: string; aliases?: string[] | null }>) ?? undefined;
+        return suggestFilingFocus(q, (ents ?? []) as import('@/lib/home/ask').FocusCandidate[]) ?? undefined;
       } catch { return undefined; }
     };
     const payloadOf = (turn: Awaited<ReturnType<typeof converse>>, focus?: { id: string; name: string }) => ({
@@ -125,6 +166,15 @@ export async function POST(request: NextRequest) {
       ...(turn.invite ? { invite: turn.invite } : {}),
       // THE BULK DEED CARD: the previewed deed rides the answer and mounts inline (nothing acted).
       ...(turn.bulkDeed ? { bulkDeed: turn.bulkDeed } : {}),
+      // THE EMAIL CARD: the drafted reply rides the answer and mounts inline (nothing sent).
+      ...(turn.emailDraft ? { emailDraft: turn.emailDraft } : {}),
+      // THE COLLECTION CARD (Wave 1): the user's own objects ride the answer as typed rows. On a
+      // listing ask `answer` IS the spec's code-written framing; on an analytical one the prose
+      // leads and the card sits beneath it.
+      ...(turn.collection ? { collection: turn.collection } : {}),
+      // THE EVENT CARD (Wave 2): one meeting rides the answer with the verbs code computed for it.
+      // Nothing has fired — the card's own click is the deed.
+      ...(turn.event ? { event: turn.event } : {}),
       // The filing nudge never decorates a failed/empty answer (found live: a wrong "File it"
       // chip beside a dead reply compounds the miss).
       ...(focus && turn.say?.trim() ? { focus } : {}),

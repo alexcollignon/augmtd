@@ -407,12 +407,22 @@ function sq7() {
 
   // THE STRUCTURAL HALF: approving sight-unseen is never the recommended path.
   ok('with no object, NOTHING may be recommended', !mayRecommend(null) && mayRecommend(resolveDecisionObject([deliverable])));
-  const card = src('components/work/decision-card.tsx');
-  ok('the ONE card renders the object as its head', /object\.title/.test(card) && /object\.preview/.test(card));
-  ok('   …says so honestly when there is none', /NO_DECISION_OBJECT_LINE/.test(card));
+  // RE-POINTED (W3-C, Sep 22 — docs/component-map.md §2 item 7): the hand-drawn
+  // components/work/decision-card.tsx became a KIT KIND behind ONE host. The three laws below are
+  // unchanged; they are simply asserted at the seam that now owns each — the HOST resolves the
+  // object and the recommendation rule, the KIT renders the head and the honest line.
+  const card = src('components/home/decision-card.tsx');
+  const kitCard = src('components/thread/thread-cards.tsx');
+  ok('the ONE card renders the object as its head',
+    /spec\.object\.title/.test(card) && /spec\.object\.preview/.test(card)
+    && /\{card\.objectNode/.test(kitCard));
+  ok('   …says so honestly when there is none',
+    /NO_DECISION_OBJECT_LINE/.test(card) && /card\.quietLine/.test(kitCard));
   ok('   …and marks no option primary without it',
-    /const recommends = mayRecommend\(object\)/.test(card)
-    && /recommends && i === 0/.test(card) && /recommends && !!recommendation\?\.label/.test(card));
+    /const recommends = mayRecommend\(spec\.object\);/.test(card)
+    && /const rec = recommends && isRec\(o\.label, spec\.recommendation\);/.test(card)
+    // the kit marks ONLY what the host handed it — it holds no recommendation rule of its own
+    && !/mayRecommend\(/.test(kitCard));
 
   // BOTH MOUNTS: the deep-dive's own rail and the room's rail (the reported payload).
   const detail = src('components/home/item-detail.tsx');
@@ -423,7 +433,7 @@ function sq7() {
   ok('   …it travels on the reported decision, so the room\'s rail mounts ask + object together',
     /object: DecisionObject \| null/.test(detail) && /\.\.\.focusDecision/.test(room));
   ok('   …and the rail hands it to the one card',
-    /object=\{decision\.object \?\? null\}/.test(rail));
+    /spec=\{decision\}/.test(rail) && /<DecisionCard/.test(rail));
   ok('the object\'s deed is REVIEW, through a door that already exists (no second renderer)',
     /onOpenObject: \(\) => openDrawerAt\('prepared'\)/.test(detail));
 }
@@ -714,25 +724,26 @@ function sq14() {
     /from '@\/components\/work\/work-row'/.test(deck)
     && /useRowActions\(row\.item, \{/.test(deck)
     && /fetch\(`\/api\/inbox\/\$\{item\.entityId\}\/\$\{kind\}`/.test(row));
-  ok('   …so the deck names NO mutation endpoint of its own but the two it needed',
+  // RE-POINTED (Sep 21, STRICTER — the reply slot is parked by owner call): the item's own
+  // conversation door went with it, so the deck now names TWO endpoints, both of them its own
+  // verbs' (the park and the posture tail). The law is unchanged and the surface reaches less.
+  ok('   …so the deck names NO mutation endpoint of its own but the two its verbs needed',
     (() => {
-      // The park, the posture tail, and the item's OWN conversation door (the reply slot SPEAKS —
-      // /api/items/steer moves nothing). Every other fetch in the file is a template-literal READ
-      // (the thread tail, the stored draft), asserted separately below.
       const calls = deck.match(/fetch\('\/api\/[^']+'/g) ?? [];
-      return calls.length === 3
-        && calls.every((c) => /items\/later|postures\/from-item|items\/steer/.test(c));
+      return calls.length === 2
+        && calls.every((c) => /items\/later|postures\/from-item/.test(c))
+        && !/fetch\('\/api\/items\/steer'/.test(deck);
     })());
   // RE-POINTED (Sep 19, THE OPENING CONTRACT clause 1): the THREAD read left this file — the same
   // tail now serves a decision's object, a room's opening and an ask, so the loader lives in
   // lib/inbox/thread-door.ts and the deck is one of its callers (two caches of one door are two
   // answers to one question). What the deck still fetches by template literal is the stored draft.
-  ok('   …and its template-literal fetch is a READ door only (the stored draft; the tail reads through the ONE thread-door module)',
-    (() => {
-      const reads = deck.match(/fetch\(`\/api\/[^`]+`/g) ?? [];
-      return reads.length === 1 && /inbox\/\$\{itemId\}\/draft/.test(reads[0])
-        && /import \{ loadThreadTail, peekThreadDoor \} from '@\/lib\/inbox\/thread-door'/.test(deck);
-    })());
+  // RE-POINTED (Sep 21, STRICTER): the stored-draft read went with the reply slot, so the deck
+  // holds NO template-literal fetch at all — the tail reads through the ONE thread-door module and
+  // nothing else in this file opens a door by string.
+  ok('   …and it holds no template-literal fetch at all (the tail reads through the ONE thread-door module)',
+    (deck.match(/fetch\(`\/api\/[^`]+`/g) ?? []).length === 0
+    && /import \{ loadThreadTail, peekThreadDoor \} from '@\/lib\/inbox\/thread-door'/.test(deck));
   ok('   …and the outcome fact still writes itself at the ONE resolver, unchanged',
     /logPreparedOutcome/.test(src('lib/tools/item-actions.ts'))
     && !/logPreparedOutcome|learning_signals/.test(deck) && !/learning_signals/.test(later));
@@ -798,10 +809,13 @@ function sq14() {
 
 // ── SQ15 · THE PREPARED WORK IS SHOWN, NEVER COMMITTED HERE ─────────────────────────────────────
 // Q9 mounted the artifact's own renderer (EmailCard / InviteCard) so a draft could be sent inside
-// the deck. Q9v2 REPLACED that with the reply slot: the draft renders as its own words, read-only,
-// and the commit stays where it already lived — the item's room, one ⏎ away. This is STRICTLY
-// STRONGER than the gate it re-points: there is now no send door and no send-capable component in
-// the deck at all, so a mis-keyed arrow cannot reach one.
+// the deck. Q9v2 replaced that with the reply slot: the draft rendered as its own words, read-only.
+// RE-POINTED (Sep 21 — owner call: "remove 'Ask or tell Clara about this…' from the cards for
+// now"): the slot is parked, so the deck now holds no composer, no draft body and no send door at
+// all. The PREPARED FACT still reaches the reader — as the card's own chip, which is information
+// rather than an affordance — and the words live one ⏎ away in the room, the only surface that can
+// send them. STRICTLY STRONGER again than the gate it replaces: the surface has no text input on a
+// card either, so a mis-keyed arrow cannot reach one.
 function sq15() {
   console.log('\nSQ15 · THE PREPARED WORK IS SHOWN, NEVER COMMITTED — one commit door, and it is the room');
   const deck = src('components/triage/triage-deck.tsx');
@@ -809,14 +823,18 @@ function sq15() {
     !/EmailCard|InviteCard|components\/home\/email-card|components\/home\/invite-card/.test(deck));
   ok('   …and names NO send door of its own',
     !/send-reply|send-coworker-email|\/api\/items\/execute|\/api\/invites\/send/.test(deck));
-  ok('   …the prepared draft is asked for ONLY where the serve said one stands',
-    /if \(row\.prepared !== 'reply_draft'\) \{ setDraft\(null\); return; \}/.test(deck)
-    && /function loadDraft\(itemId: string\): Promise<string>/.test(deck));
-  ok('   …and it renders READ-ONLY, pointing at the room for the commit',
-    /if \(draft\) \{/.test(deck)
-    && /ready to send/.test(deck)
-    && /Open it to send or change it →/.test(deck)
-    && !/<textarea/.test(deck) && !/contentEditable/.test(deck));
+  ok('   …the prepared fact reaches the reader as a CHIP, and no draft body is read at all',
+    /const chip = row\.preparedWord \?\?/.test(deck)
+    && /'draft ready'/.test(deck)
+    && !/function loadDraft\(/.test(deck)
+    && !/_draftCache/.test(deck)
+    && !/inbox\/\$\{itemId\}\/draft/.test(deck));
+  ok('   …and the deck mounts NO composer: no input, no textarea, no editable node',
+    !/<textarea/.test(deck) && !/contentEditable=/.test(deck)
+    && !/function ReplySlot\(/.test(deck) && !/<ReplySlot/.test(deck)
+    // The one <input> the frame keeps is L's DATE field — a when for the park, never a message.
+    && (deck.match(/<input/g) ?? []).length === 1
+    && /<input type="date" value=\{customDate\}/.test(deck));
   ok('THE INVARIANT: the ONLY door out of the deck is the item\'s own room',
     (() => {
       // openRoom is the row kit's `open` — the item's address. Nothing else navigates or promotes.
@@ -998,7 +1016,9 @@ function sq17() {
   ok('the component reads THE TABLE, never its own arrow strings',
     /const verb = TRIAGE_KEYS\[e\.key\];/.test(deck)
     && (deck.match(/'Arrow(Right|Left|Up|Down)'/g) ?? []).length === 0);
-  ok('   …and typing inside the card never steers the deck (the date field, the reply slot)',
+  // RE-POINTED (Sep 21): the reply slot is parked, so the only field either guard protects is L's
+  // date input. The law is unchanged — a key typed into a field is not a verdict.
+  ok('   …and typing inside the frame\'s own field never steers the deck (L\'s date)',
     (deck.match(/isContentEditable \|\| \/\^\(INPUT\|TEXTAREA\|SELECT\)\$\/\.test\(t\.tagName\)/g) ?? []).length === 2
     && /onKeyDown=\{\(e\) => \{ e\.stopPropagation\(\);/.test(deck));
   ok('   …the host owns Esc and Z; the station owns the five verbs',
@@ -1041,8 +1061,14 @@ function sq17() {
   ok('   …the shape is read in an EFFECT, never a useState initializer (the hydration law)',
     /useEffect\(\(\) => \{ setShape\(loadShape\(\)\); \}, \[\]\);/.test(lens)
     && !/useState<WaitingShape>\(loadShape/.test(lens));
+  // RE-POINTED (Sep 21 — CLOSE RETURNS WHERE YOU CAME FROM): the exit now consults the RECORDED
+  // ORIGIN first (Home-opened → the Home), and only then ends the session in place. The law this
+  // gate has always held is unchanged and still asserted: closing NEVER demotes the deck for next
+  // time — the shape is a stored choice and the exit writes to no store.
   ok('   …walking away ends the session without demoting the deck for next time',
-    /onExit=\{\(r\) => \{ setReceipt\(r \|\| null\); setExited\(true\); \}\}/.test(lens));
+    /if \(closeReturnsHome\) \{ onBack\(\); return; \}/.test(lens)
+    && /setReceipt\(r \|\| null\); setExited\(true\);/.test(lens)
+    && !/saveLS\([^)]*exited|saveLS\(VIEW_KEY, 'list'\)/.test(lens));
   ok('Watched and Handled stay list-shaped below either view',
     (() => {
       const i = lens.indexOf('BAND 2 · WATCHED');
@@ -1119,7 +1145,12 @@ function sq20() {
 //   1 · THE FRAME OWNS THE VERBS, THE CARD OWNS THE CONTENT.
 //   2 · TRUE FOCUS — the deck takes the room; the prose folds, reachable, and returns on Close.
 //   3 · THE CARD IS THE THING ITSELF — the thread's tail through the EXISTING door, lazily, cached,
-//       clipped by the one clipper; and a reply slot that SPEAKS and never sends.
+//       clipped by the one clipper. (The reply slot it used to end on is PARKED by owner call,
+//       Sep 21 — SQ15 carries that law now, strictly stronger: no composer in the surface at all.)
+//   AMENDED Sep 21 · THE VERBS SIT BELOW THE CARD (owner: "CTA buttons should be below?"). The
+//       frame still owns every verb — only the seat moved — so the ordering is asserted by the
+//       INDEX of each block's own marker, and the card area keeps a floor so the pills do not
+//       bounce from card to card.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 function sq19() {
   console.log('\nSQ19 · Q9v2 — THE FRAME OWNS THE VERBS, THE CARD OWNS THE THING ITSELF');
@@ -1130,11 +1161,11 @@ function sq19() {
   // THE CARD'S OWN SOURCE, sliced out so "no verb inside the card" is a fact about the component
   // rather than a hope about the file. Everything from `function TriageCard(` to the next top-level
   // function is the card; the reply slot is its own component beneath it, also verb-free.
+  // RE-POINTED (Sep 21): the card now ends where the STATION begins — the reply slot that used to
+  // sit between them is parked, so there is no third component in the file to slice out.
   const cardStart = deck.indexOf('function TriageCard(');
-  const cardEnd = deck.indexOf('function ReplySlot(');
+  const cardEnd = deck.indexOf('function TriageStation(');
   const card = cardStart > 0 && cardEnd > cardStart ? deck.slice(cardStart, cardEnd) : '';
-  const slotEnd = deck.indexOf('function TriageStation(');
-  const slot = cardEnd > 0 && slotEnd > cardEnd ? deck.slice(cardEnd, slotEnd) : '';
 
   // ── 1 · FRAME OWNS VERBS ──────────────────────────────────────────────────────────────────────
   ok('the card exists as its own component and renders NOTHING verb-shaped',
@@ -1143,7 +1174,7 @@ function sq19() {
     && !/onClick=\{do(Done|Dismiss|Keep)\}|done\(\)|drop\(\)/.test(card));
   ok('   …and holds no deed door at all (the two it could reach are READS)',
     !/api\/items\/later|api\/postures\/from-item|api\/inbox\/\$\{[^}]+\}\/(complete|dismiss)/.test(card));
-  ok('the two clearing verbs are LARGE PILLS above the stack, rendered from the table\'s rank',
+  ok('the two clearing verbs are LARGE PILLS, rendered from the table\'s rank',
     /const primary = verbsOfRank\('primary'\);/.test(deck)
     && /\{primary\.map\(\(v\) => \(/.test(deck)
     && /min-h-\[44px\] flex-1/.test(deck)
@@ -1157,9 +1188,19 @@ function sq19() {
   ok('   …and no label, key or rank is typed in the component (the table owns them)',
     !/>Dismiss<\/span>/.test(deck) && !/>Done<\/span>/.test(deck) && !/>Keep<\/span>/.test(deck)
     && /\{v\.label\}/.test(deck) && /\{v\.key\}/.test(deck));
-  ok('   …the pill bar does not move when the card does (only the card wears the exit class)',
+  // RE-POINTED (Sep 21) — THE VERBS SIT BELOW THE CARD. The law that survives is the one that
+  // always mattered: the verbs belong to the FRAME and they do not move when the card does. Only
+  // their seat changed, so the ordering assertion inverts and gains the card area's own floor.
+  ok('   …and they sit BELOW the card, in the frame\'s own row (card first, then the verbs)',
+    deck.indexOf('THE STACK, PEEKING') < deck.indexOf('THE PILL BAR — BELOW THE CARD')
+    && deck.indexOf('<TriageCard row={row} />') < deck.indexOf('{primary.map((v) => ('));
+  ok('   …the pill bar does not move when the card does (only the card wears the exit class, and the card area holds a floor)',
     /exiting \? `opacity-0 \$\{CARD_EXIT\[exiting\]\}` : 'opacity-100'/.test(deck)
-    && deck.indexOf('THE STACK, PEEKING') > deck.indexOf('THE PILL BAR — FIXED ABOVE THE STACK'));
+    && /const CARD_MIN_H = 'min-h-\[\d+px\]';/.test(deck)
+    && /<div className=\{`\$\{CARD_MIN_H\} flex flex-col pb-4`\}>/.test(deck));
+  ok('   …and the stack still READS as a stack beneath it (both shoulders survive the move)',
+    (deck.match(/rounded-b-2xl border border-t-0/g) ?? []).length === 2
+    && /\{under && \(/.test(deck));
 
   // L IS THE PARK DOOR, and the park is still the one record.
   ok('L opens the dated park — the same door, demoted to a key and a chip',
@@ -1249,16 +1290,20 @@ function sq19() {
       && !/fetch\(|useState|new Date\(/.test(words.slice(words.indexOf('export function threadTail'), words.indexOf('export function initialOf'))));
   }
 
-  // THE REPLY SLOT — it SPEAKS, and it never sends.
-  ok('the reply slot renders a prepared draft read-only and points at the room to commit',
-    !!slot && /if \(draft\) \{/.test(slot) && /Open it to send or change it →/.test(slot)
-    && !/<textarea|contentEditable|readOnly=\{false\}/.test(slot));
-  ok('   …and typing there reaches the ITEM\'s OWN conversation door, never a send door',
-    /fetch\('\/api\/items\/steer'/.test(slot)
-    && /TRIAGE_STEER_KIND\[row\.item\.source\] \?\? null/.test(slot)
-    && !/send|commit|execute/i.test(slot.replace(/ready to send|Open it to send or change it →|never sends|IT NEVER SENDS|no send door/g, '')));
-  ok('   …a row with no honest item kind gets NO slot rather than one posting to the wrong door',
-    /if \(!steerKind\) return <div className="pb-4" \/>;/.test(slot)
+  // THE REPLY SLOT IS PARKED (owner call, Sep 21). RE-POINTED, STRICTLY STRONGER: where the gate
+  // used to prove the slot could only SPEAK, it now proves the surface has no slot to speak with —
+  // no composer, no steer door, no draft body. The card's chip carries the prepared fact, the room
+  // carries the words, and the parked table stays honest for the day it is reinstated.
+  ok('the deck mounts NO reply slot at all — no composer, no steer door, no draft preview',
+    !/function ReplySlot\(|<ReplySlot/.test(deck)
+    && !/items\/steer/.test(deck)
+    && !/TRIAGE_STEER_KIND/.test(deck)
+    && !/ready to send|Ask or tell/.test(deck));
+  ok('   …and the card ends on the prepared CHIP, which is information and not an affordance',
+    !!card && /const chip = row\.preparedWord \?\?/.test(card)
+    && !/<input|<textarea|onSubmit|placeholder=/.test(card));
+  ok('   …the reinstatement\'s ONE table survives in the pure half, marked parked',
+    /PARKED \(owner call, Sep 21/.test(words)
     && TRIAGE_STEER_KIND['deal'] === undefined
     && TRIAGE_STEER_KIND['reply'] === 'email' && TRIAGE_STEER_KIND['commitment'] === 'commitment');
   ok('   …and the deck writes NO room turn of its own (the room key is resolved server-side)',

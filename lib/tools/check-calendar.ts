@@ -15,8 +15,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getScheduleWindow, renderCalendarWindow, userTimezone, weekdayOf } from '@/lib/calendar/schedule-window';
 import { pickFreeSlots } from '@/lib/prepare/free-slots';
+import { getCalendarFreshness, refreshCalendarIfStale } from '@/lib/calendar/sync-calendar';
 
 const DAY_MS = 86_400_000;
+/** Older than this and the window is RE-READ before the answer is composed — "I changed my
+ *  calendar" deserves a fresh read, not "my view may need a moment to refresh". */
+const STALE_MS = 15 * 60_000;
+/** How long the chat path will WAIT on a provider round-trip before answering from what it holds.
+ *  Freshness is worth a pause, never a hang. */
+const REFRESH_BUDGET_MS = 8_000;
 const DEFAULT_DAYS = 14;
 /** A window wider than this is not a question anyone is really asking — and it is a prompt-budget bomb. */
 const MAX_WINDOW_DAYS = 60;
@@ -33,6 +40,8 @@ export interface CheckCalendarConfig {
   duration_minutes?: number;
   /** How many slots to propose. Default 3, max 5. */
   count?: number;
+  /** Force a live re-read of the provider before answering (the user says they just changed it). */
+  refresh?: boolean;
 }
 
 export const checkCalendarDefinition = {
@@ -48,6 +57,7 @@ export const checkCalendarDefinition = {
       propose_slots: { type: 'boolean', description: 'Also propose free working-hour slots inside the window.' },
       duration_minutes: { type: 'number', description: 'Length of a proposed slot in minutes. Default 30.' },
       count: { type: 'number', description: 'How many slots to propose. Default 3, max 5.' },
+      refresh: { type: 'boolean', description: 'Re-read the calendar from the provider first. Set this when the user says they just changed, added or deleted something.' },
     },
     required: [],
   },
@@ -66,11 +76,42 @@ const dateLabel = (dayStr: string) => {
   catch { return dayStr; }
 };
 
-export async function executeCheckCalendar(
+/** "Last read 4 min ago." — one short line, because the alternative shipped once was a shrug.
+ *  Silent when there is nothing honest to say (no connections at all). */
+export function renderCalendarFreshness(rows: Array<{ provider: string; syncedAt: string | null }>): string {
+  if (!rows.length) return '';
+  const ages = rows.map((r) => {
+    const ms = r.syncedAt ? Date.now() - Date.parse(r.syncedAt) : NaN;
+    return Number.isFinite(ms) ? Math.max(0, Math.round(ms / 60_000)) : null;
+  });
+  if (ages.every((a) => a === null)) {
+    return 'LAST READ: unknown (this calendar has not been read since the connection was set up) — say so if the user asks whether a just-made change is visible.';
+  }
+  const worst = Math.max(...ages.filter((a): a is number => a !== null));
+  const when = worst < 1 ? 'less than a minute ago' : worst < 60 ? `${worst} min ago` : `${Math.round(worst / 60)} h ago`;
+  return `LAST READ from the calendar provider: ${when}. A change made since then is not in the lines above — say that plainly rather than guessing.`;
+}
+
+/** ONE READ, TWO RENDERINGS (Wave 1, Sep 22 — the collection card). `readCalendar` owns the read
+ *  and returns BOTH halves: the block written for the model, and the struct the kit's `calendar`
+ *  collection renders rows from. Everything either half shows — weekday, date, clock — is already
+ *  computed HERE, so the card and the prompt cannot disagree about what day it is. */
+export type CalendarRead = {
+  text: string;
+  win: Awaited<ReturnType<typeof getScheduleWindow>>;
+  tz: string;
+  fromDayStr: string;
+  toDayStr: string;
+  /** Only when slots were asked for AND a calendar exists — an invented slot is the class this
+   *  whole tool exists to end. */
+  slots: Array<{ startISO: string; endISO: string }>;
+};
+
+export async function readCalendar(
   config: Record<string, unknown>,
   userId: string,
   supabase: SupabaseClient,
-): Promise<string> {
+): Promise<CalendarRead | { refusal: string }> {
   const tz = await userTimezone(supabase, userId);
   const todayStr = dayOf(Date.now(), tz);
 
@@ -79,7 +120,7 @@ export async function executeCheckCalendar(
   const raw = { from: config.from_date, to: config.to_date };
   for (const [k, v] of Object.entries(raw)) {
     if (v !== undefined && v !== null && !(typeof v === 'string' && DATE_RE.test(v))) {
-      return `I couldn't read "${k}_date" — give me a date as YYYY-MM-DD (for example ${todayStr}).`;
+      return { refusal: `I couldn't read "${k}_date" — give me a date as YYYY-MM-DD (for example ${todayStr}).` };
     }
   }
   const fromDayStr = (raw.from as string) || todayStr;
@@ -89,13 +130,26 @@ export async function executeCheckCalendar(
   const clamped = span > MAX_WINDOW_DAYS;
   if (clamped) toDayStr = addDays(fromDayStr, MAX_WINDOW_DAYS);
 
+  // ── FRESHNESS FIRST (Sep 21) — a stale read is RE-READ before the answer exists, never explained
+  // away after it. Best-effort by construction: what we could not refresh, we state.
+  // …and TIME-BOXED: a provider round-trip sits on the chat path, and a hanging OAuth call would
+  // hold the whole answer hostage. Past the budget we answer from the stored view — which already
+  // states its own age — and let the refresh land for the next question.
+  await Promise.race([
+    refreshCalendarIfStale(supabase, userId, { maxAgeMs: config.refresh === true ? 0 : STALE_MS }).catch(() => null),
+    new Promise((resolve) => setTimeout(resolve, REFRESH_BUDGET_MS)),
+  ]);
+
   const win = await getScheduleWindow(supabase, userId, { fromDayStr, toDayStr, tz });
   const parts = [renderCalendarWindow(win, { tz })];
+  const freshness = renderCalendarFreshness(await getCalendarFreshness(supabase, userId));
+  if (freshness) parts.push(freshness);
   if (clamped) parts.push(`(I read the first ${MAX_WINDOW_DAYS} days of the range you asked for — ask again for the rest.)`);
 
   // THE EMPTY-CALENDAR TRUTH: with no calendar synced, every "free slot" would be an invention —
   // the picker over an empty busy set proposes everything. The block above already says UNKNOWN;
   // proposals are refused for the same reason, plainly.
+  let proposed: Array<{ startISO: string; endISO: string }> = [];
   if (config.propose_slots === true && !win.hasCalendar) {
     parts.push('FREE SLOTS: none can be proposed — no calendar is synced for this account, so nothing can be verified free.');
   } else if (config.propose_slots === true) {
@@ -112,6 +166,7 @@ export async function executeCheckCalendar(
       // not apply once the user names a window starting today, so the clock does the filtering here.
       .filter((s) => Date.parse(s.startISO) > Date.now())
       .slice(0, count);
+    proposed = slots.map((s) => ({ startISO: s.startISO, endISO: s.endISO }));
     parts.push(slots.length
       ? `FREE SLOTS (${minutes} min each, working hours, business days, ${tz} — offer these verbatim, they collide with nothing above):\n` +
         slots.map((s) => {
@@ -121,5 +176,14 @@ export async function executeCheckCalendar(
         }).join('\n')
       : 'FREE SLOTS: none — there is no free working-hour slot of that length in this window. Say so plainly and offer a different range.');
   }
-  return parts.join('\n\n');
+  return { text: parts.join('\n\n'), win, tz, fromDayStr, toDayStr, slots: proposed };
+}
+
+export async function executeCheckCalendar(
+  config: Record<string, unknown>,
+  userId: string,
+  supabase: SupabaseClient,
+): Promise<string> {
+  const out = await readCalendar(config, userId, supabase);
+  return 'refusal' in out ? out.refusal : out.text;
 }

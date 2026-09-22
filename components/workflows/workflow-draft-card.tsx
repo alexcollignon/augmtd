@@ -7,6 +7,21 @@
 // where entity adoption lives); the card collapses to a receipt linking the ledger. Cards travel,
 // objects don't — the conversation is a door, never the home. Saying prepares, committing stays
 // explicit (Arc-2 law, now enforced on every path incl. coworker create_task).
+//
+// ── THE FORK DIED (W3-B, Sep 22 — component map §2 item 5). The Workflows ledger carried its own
+// copy of this card: no ⧉ subprocess or `case` wording, no receipt, no idempotence token, four of
+// the five step vocabularies missing, and a `...draft` SPREAD at both of its confirm doors. The
+// spread existed for a real reason (F5, Aug 25: this card's old hand-written field list DROPPED
+// triggers/inputs/fire_limit, so a described door died at creation) — but a spread forwards
+// model-invented keys to a write door. The convergence keeps BOTH halves of the law:
+//
+//   ONE CARD · ONE PAYLOAD BUILDER · ONE ALLOWLIST THAT IS COMPLETE BY GATE.
+//
+// `CONFIRM_FIELDS` below is the single send-set, and a zero-AI gate (smoke-relay F5, smoke-compute
+// CS2) asserts it is a SUPERSET of every key POST /api/workflows reads. A new authored field is
+// therefore one row here — and the gate FAILS the day the door reads a key this list omits, which
+// is the protection the spread was standing in for. The ledger mounts this component with
+// `surface="ledger"`; there is no second card. ──
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useState } from 'react';
@@ -54,6 +69,48 @@ export type WorkflowDraft = {
   token?: string;
 };
 
+// ── CONFIRM_FIELDS — THE ONE SEND-SET (W3-B, Sep 22). Every key POST /api/workflows reads, in the
+// door's own spelling. NOT a convenience list: the gate parses the route's own body declaration and
+// fails if this omits anything it reads, so "complete" is proven, never asserted. Nothing outside
+// this list reaches the write door — the note channels (needs_*_note), `overlap_note` and any key a
+// model invented are the card's WORDS, and words are not storage. ──
+export const CONFIRM_FIELDS = [
+  'name', 'description', 'icon', 'color', 'status', 'trigger', 'steps', 'output_config',
+  'agent_id', 'worker_instructions', 'skill_ids', 'triggers', 'inputs', 'fire_limit',
+] as const;
+
+/** Build the creation body: the draft's own values, narrowed to CONFIRM_FIELDS, with the calling
+ *  door's overrides on top (status, the presenter's agent_id, an output_config carrying a stated
+ *  baseline). `undefined` never rides — the door's own `!== undefined` guards decide the defaults. */
+export function pickDraft(
+  draft: WorkflowDraft,
+  overrides: Partial<Record<(typeof CONFIRM_FIELDS)[number], unknown>> = {},
+): Record<string, unknown> {
+  const src = draft as unknown as Record<string, unknown>;
+  const body: Record<string, unknown> = {};
+  for (const k of CONFIRM_FIELDS) {
+    const v = k in overrides ? overrides[k] : src[k];
+    if (v !== undefined) body[k] = v;
+  }
+  return body;
+}
+
+/** THE ONE CREATION BODY — every door that creates a workflow from a draft (this card's Confirm,
+ *  and the ledger's "Adjust in Studio", which creates the same object with `status:'draft'`) builds
+ *  its POST body HERE. One builder, one allowlist; a second door cannot drift from the first. */
+export function buildConfirmBody(
+  draft: WorkflowDraft,
+  opts: { status: 'active' | 'draft'; agentId?: string | null; outputConfig?: Record<string, unknown> },
+): Record<string, unknown> {
+  return pickDraft(draft, {
+    status: opts.status,
+    description: draft.description ?? null,
+    worker_instructions: draft.worker_instructions ?? null,
+    agent_id: opts.agentId !== undefined ? opts.agentId : (draft.agent_id ?? null),
+    ...(opts.outputConfig !== undefined ? { output_config: opts.outputConfig } : {}),
+  });
+}
+
 const HOME_WORD: Record<string, string> = { message: 'a message', document: 'a document', slack: 'Slack', email: 'your inbox' };
 const triggerWord = (t: WorkflowDraft['trigger']): string =>
   t.type === 'schedule' ? (t.label ?? (t.cron ? describeCron(t.cron, t.timezone) : 'On a schedule')) :
@@ -100,13 +157,24 @@ const doorWord = (d: NonNullable<WorkflowDraft['triggers']>[number]): string => 
 const consumedKey = (token: string) => `aug-wfdraft-done:${token}`;
 
 export function WorkflowDraftCard({
-  draft, onCreated, onDiscard, extraActions,
+  draft, onCreated, onDiscard, extraActions, extraFields,
+  surface = 'thread', agentId, outputConfig,
 }: {
   draft: WorkflowDraft;
   onCreated?: (workflowId: string) => void;
   onDiscard?: () => void;
   /** Extra door(s) the hosting surface adds (the ledger passes Adjust in Studio / Redraft). */
   extraActions?: React.ReactNode;
+  /** A field the hosting surface asks for before the deed (the ledger's manual-minutes baseline). */
+  extraFields?: React.ReactNode;
+  /** WHERE this card sits. `ledger` is the standalone review block on the Workflows page (roomier,
+   *  and it hands its own receipt to the host by clearing the draft); `thread` is the inline card a
+   *  conversation renders. ONE component, one vocabulary — never a second copy (W3-B, Sep 22). */
+  surface?: 'thread' | 'ledger';
+  /** The presenter the host picked, overriding the draft's own coworker (the ledger's selector). */
+  agentId?: string | null;
+  /** The output_config the host amended (the ledger's baseline rider). Absent = the draft's own. */
+  outputConfig?: Record<string, unknown>;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [createdId, setCreatedId] = useState<string | null>(null);
@@ -118,21 +186,22 @@ export function WorkflowDraftCard({
     }
   }, [draft.token]);
 
+  /** The creation body for a given status. Exposed to the host through `buildConfirmBody` so a
+   *  second door (the ledger's "Adjust in Studio", which creates the same object as a DRAFT) sends
+   *  byte-identical fields — one builder, never a parallel body. */
+  const confirmBody = (status: 'active' | 'draft'): Record<string, unknown> =>
+    buildConfirmBody(draft, { status, agentId, outputConfig });
+
   const confirm = async () => {
     if (confirming || createdId) return;
     setConfirming(true);
     try {
       const r = await fetch('/api/workflows', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: draft.name, description: draft.description ?? null, trigger: draft.trigger,
-          steps: draft.steps, output_config: draft.output_config, status: 'active',
-          agent_id: draft.agent_id ?? null, worker_instructions: draft.worker_instructions ?? null,
-          ...(draft.skill_ids?.length ? { skill_ids: draft.skill_ids } : {}),
-          ...(draft.triggers?.length ? { triggers: draft.triggers } : {}),
-          ...(draft.inputs ? { inputs: draft.inputs } : {}),
-          ...(typeof draft.fire_limit === 'number' ? { fire_limit: draft.fire_limit } : {}),
-        }),
+        // THE ONE SEND-SET — never a spread (a spread forwards model-invented keys to a write
+        // door), never a hand-written list (the F5 drop class). CONFIRM_FIELDS, gate-proven
+        // complete against the door's own read-set.
+        body: JSON.stringify(confirmBody('active')),
       });
       const j = await r.json();
       if (!r.ok || !j.workflow?.id) { toast.error(j.error ?? 'Could not create it.'); return; }
@@ -148,16 +217,24 @@ export function WorkflowDraftCard({
     return (
       <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 px-4 py-3 text-[13px] text-neutral-700">
         <span className="font-medium">“{draft.name}”</span> is live — {triggerWord(draft.trigger).toLowerCase()}.{' '}
-        <a href="/home?view=workflows" className="text-indigo-600 hover:text-indigo-800 font-medium">See it in Workflows</a>
+        {/* THE RECEIPT points at the object's home — except when you are already standing in it:
+            on the ledger the row below IS the link, and the way on is setting up another. */}
+        {surface === 'ledger' ? (
+          onDiscard && (
+            <button onClick={onDiscard} className="text-indigo-600 hover:text-indigo-800 font-medium">Set up another</button>
+          )
+        ) : (
+          <a href="/home?view=workflows" className="text-indigo-600 hover:text-indigo-800 font-medium">See it in Workflows</a>
+        )}
       </div>
     );
   }
 
   return (
-    <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4">
+    <div className={`rounded-2xl border border-indigo-200 bg-indigo-50/40 ${surface === 'ledger' ? 'p-5' : 'p-4'}`}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="flex items-center gap-1.5 text-[14px] font-semibold text-neutral-900">
+          <div className={`flex items-center gap-1.5 font-semibold text-neutral-900 ${surface === 'ledger' ? 'text-[15px]' : 'text-[14px]'}`}>
             <BoltIcon className="w-4 h-4 text-indigo-500" />{draft.name}
           </div>
           <div className="mt-0.5 text-[12px] text-neutral-500">
@@ -221,6 +298,9 @@ export function WorkflowDraftCard({
           {draft.needs_person_note}
         </div>
       )}
+      {/* A field the host asks for before the deed (the ledger's optional manual-minutes baseline —
+          the only honest source of time saved). It sits with the review, above the one CTA row. */}
+      {extraFields}
       <div className="mt-3 flex items-center gap-3">
         <Button size="sm" onClick={() => void confirm()} disabled={confirming}>
           {confirming ? 'Creating…' : 'Confirm — it goes live'}

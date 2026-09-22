@@ -69,7 +69,9 @@ export function signatureIsEmpty(sig: CampaignSignature | null | undefined): boo
 // ── THE SUBJECT NORMALIZER ───────────────────────────────────────────────────────────────────────
 // Reply/forward prefixes across the languages the corpus actually carries are structural, not
 // semantic — they are stripped so an inbound "Re: <template>" is recognised as its own outbound.
-const REPLY_PREFIX = /^((re|res|rép|rep|fw|fwd|enc|aw|wg|tr|rif|antw|sv|vs)\s*(\[\d+\])?\s*:\s*)+/i;
+// Exported as THE ONE REPLY/FORWARD TABLE for anything that must strip these heads WITHOUT
+// lowercasing (the entity naming floor reuses it — a second table would be a second language list).
+export const REPLY_PREFIX = /^((re|res|rép|rep|fw|fwd|enc|aw|wg|tr|rif|antw|sv|vs)\s*(\[\d+\])?\s*:\s*)+/i;
 
 export function normalizeSubject(subject: string | null | undefined): string {
   let s = String(subject ?? '').trim();

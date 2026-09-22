@@ -1124,28 +1124,18 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
           // turn in the ROOM's conversation, and the answer follows. Silence after a click is a bug.
           decision={focused?.kind === 'email' && focusDecision && focusDecision.options.length >= 2 ? {
             ...focusDecision,
-            onChoose: async (label: string) => {
-              const itemId = focused.id;
-              pushDealTurn(entityId, label, { role: 'user' });
-              setFocusDecision(null);
-              const res = await fetch('/api/items/steer', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ kind: 'email', id: itemId, text: label, decision: {
-                  option: label,
-                  tradeoff: focusDecision.options.find((o) => o.label === label)?.tradeoff ?? null,
-                  why: focusDecision.recommendation?.label === label ? focusDecision.recommendation?.why ?? null : null,
-                } }),
-              }).catch(() => null);
-              const dd = res && res.ok ? await res.json().catch(() => ({})) : {};
+            // THE DEED LIVES IN THE HOST (W3-C, Sep 22): this room and the item deep-dive each
+            // re-typed the same steer fetch, the same contract and the same fallback sentence.
+            // What is left is what only this room can do — seat the word, and inject the draft.
+            onChosen: (label: string) => { pushDealTurn(entityId, label, { role: 'user' }); },
+            onResolved: (_label: string, outcome: { draft?: string | null; say: string }) => {
               // The consequence lands in the item's draft lane — the room re-reads so the focused
               // item's composer shows it (the room owns the reads; the embedded item follows).
               // The consequence must be VISIBLE (forward motion): the fresh draft is injected
               // into the embedded item's composer, which opens on it — a click's work is never
               // a further click away.
-              if (dd.draft) { refresh(); setInjectedDraft((p) => ({ body: String(dd.draft), v: (p?.v ?? 0) + 1 })); }
-              pushDealTurn(entityId,
-                String(dd.say || dd.answer || (dd.draft ? 'On it — the draft is on the right, updated for that.' : (res && res.ok ? 'Done.' : "I couldn't do that just now — try again or tell me more."))),
-                { key: `decide:${itemId}` });
+              if (outcome.draft) { refresh(); setInjectedDraft((p) => ({ body: String(outcome.draft), v: (p?.v ?? 0) + 1 })); }
+              pushDealTurn(entityId, outcome.say, { key: `decide:${focused.id}` });
             },
             onDismiss: () => setFocusDecision(null),
           } : null}

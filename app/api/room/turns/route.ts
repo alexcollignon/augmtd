@@ -113,7 +113,8 @@ export async function POST(request: NextRequest) {
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const body = await request.json() as {
       roomKey?: string; role?: string; text?: string;
-      refs?: Array<{ label: string; href: string | null }>; dedupeKey?: string;
+      // `tag` = the grounding id the prose placed — THE REF IS ITS TAG (lib/home/ask-refs.ts).
+      refs?: Array<{ label: string; href: string | null; tag?: string }>; dedupeKey?: string;
       component?: { key?: string; refId?: string; state?: Record<string, unknown> };
       authorAgentId?: string;
     };
