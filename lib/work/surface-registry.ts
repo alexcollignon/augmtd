@@ -152,6 +152,38 @@ export interface Capability {
    *  says so here and is served ONLY by the agent loop, which holds the real JSON schema. The
    *  string is the reason, written down. */
   loopOnly?: string;
+  /** THE PRESENTATION LAW (Sep 22 — "a tool result is DATA, never the answer"). What this tool's
+   *  executor returns:
+   *    'data'  → a block written FOR THE MODEL (a listing, a config dump, a compute digest, a KB
+   *              context block). It may reach a `role:'tool'` message and NOTHING else — the chief's
+   *              command fast path refuses to serve it, and the dispatcher returns it as
+   *              `{ modelText }`, a shape `ConverseTurn` cannot absorb.
+   *    'prose' → a sentence HAND-WRITTEN FOR THE PERSON in this repo's own voice (a deed
+   *              confirmation, a refusal by listing, an ambiguity question). Only these may be
+   *              served straight as the answer.
+   *  ABSENT = 'data' — the law FAILS CLOSED, so a tool added tomorrow cannot leak by omission. The
+   *  incident this answers: `list_tasks`' model-facing listing (uuids in brackets plus the line
+   *  "Refer to tasks by NAME when speaking to the user") was served verbatim as the assistant's
+   *  bubble and persisted into room_turns, because the old guard was an OPT-OUT set of four names.
+   *  WAVE 2 (Sep 22) adds a third, for the OBJECT CARD lane:
+   *    'presentation' → a CARD plus ONE framing sentence COMPOSED BY CODE from the object's own
+   *              facts (lib/present/event-build.ts `eventFraming`). No model wrote it, so it may be
+   *              served as the answer exactly like 'prose' — the distinction is that it arrives with
+   *              a card beside it, and the registry says so rather than a branch guessing. */
+  resultIs?: 'data' | 'prose' | 'presentation';
+  /** THE COLLECTION SEAM (Wave 1, Sep 22 — docs/component-map.md §6). This read ALSO hands back a
+   *  typed `CollectionSpec` (lib/present/collection.ts + build.ts): the user's own objects, rendered
+   *  as one card instead of described in prose. Only meaningful on a `resultIs:'data'` row — the
+   *  card is the DATA half; the prose half never reaches the person either way. Naming a kind here
+   *  does NOT make the card the whole answer: a pure listing ask serves the card alone, an
+   *  analytical one keeps the agent loop and carries the card beside its prose
+   *  (lib/present/listing-ask.ts).
+   *  WAVE 2 (Sep 22): `'event'` is not a collection — it is the SINGLE-OBJECT card
+   *  (lib/present/event.ts's `EventSpec`), whose rows are one object and whose verbs are computed by
+   *  code from that object's state. It rides the same field because the question a caller asks is
+   *  the same one ("does this tool hand back something the kit can render?"); `presentsCollectionKind`
+   *  below is the narrowed reader for the collection builders. */
+  presents?: 'workflows' | 'documents' | 'recordings' | 'calendar' | 'event';
   /** THE DOOR-PARITY ESCAPE HATCH (Sep 21). A conversational verb a COWORKER holds but the chief
    *  deliberately does not must say WHY, in writing, here — `doorParity()` fails on a silent
    *  asymmetry. The reason is the record of the decision, not a mute exception. */
@@ -175,16 +207,19 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     intent: 'search or read the knowledge base / Drive documents',
     tool: 'search_knowledge_base', built: true, kind: 'atomic', irreversible: false, feature: 'drive', exposure: ['chief_of_staff', 'coworker', 'workflow'],
     blurb: 'search / read the knowledge base (Drive documents we have indexed)',
+    resultIs: 'data', presents: 'documents',
   },
   read_document: {
     intent: 'read a specific document or file we already have',
     tool: 'read_document', built: true, kind: 'atomic', irreversible: false, feature: 'drive', exposure: ['chief_of_staff', 'coworker', 'workflow'],
     blurb: 'read a specific document/file we already have',
+    resultIs: 'data',
   },
   get_emails: {
     intent: 'read emails / look up an email thread in the inbox',
     tool: 'get_emails', built: true, kind: 'atomic', irreversible: false, feature: 'email', exposure: ['chief_of_staff', 'coworker', 'workflow'],
     blurb: 'read the inbox / an email thread we have',
+    resultIs: 'data',
   },
   get_calendar: {
     intent: 'read the calendar / check availability of upcoming meetings',
@@ -201,11 +236,13 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     tool: 'check_calendar', built: true, kind: 'atomic', irreversible: false, feature: 'meetings',
     exposure: ['chief_of_staff', 'coworker'], conversational: true,
     blurb: "read the calendar for a date range (busy/free per day, optional free-slot proposals) — ALWAYS before any availability claim",
+    resultIs: 'data', presents: 'calendar',
   },
   get_meeting_context: {
     intent: 'read a meeting / transcript we recorded',
     tool: 'get_meeting_context', built: true, kind: 'atomic', irreversible: false, feature: 'meetings', exposure: ['chief_of_staff', 'coworker', 'workflow'],
     blurb: 'read a meeting / transcript we recorded',
+    resultIs: 'data', presents: 'recordings',
   },
   web_search: {
     intent: 'search the web / fetch a public web page',
@@ -253,6 +290,7 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     intent: 'compute over files/data with code — parse or reconcile spreadsheets/PDFs/CSVs, verify numbers, transform data, produce a data file',
     tool: 'run_compute', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: null, exposure: ['chief_of_staff', 'coworker', 'workflow'],
     blurb: 'RUN CODE over files/data we have (parse/verify/transform spreadsheets, PDFs, CSVs; compute numbers; produce a data file) — sandboxed, cannot send anything',
+    resultIs: 'data',
   },
 
   // ── THE PRODUCTION ARC step 1 (Aug 8) — the WORKFLOW STEP SPACE joins the one registry.
@@ -323,11 +361,13 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     intent: "hand a production task (report, draft, research, analysis, post) to the best-fit coworker when the user didn't name one",
     tool: 'assign_to_coworker', built: true, kind: 'judgment', irreversible: false, mutates: true, feature: null, exposure: ['chief_of_staff'], conversational: true,
     blurb: 'ASSIGN produced work to the best-fit coworker and start it now (reversible — it reports back here)',
+    resultIs: 'prose',
   },
   offer_choices: {
     intent: 'put one genuinely consequential, non-inferable decision to the user as tappable options',
     tool: 'offer_choices', built: true, kind: 'judgment', irreversible: false, feature: null, exposure: ['chief_of_staff'], conversational: true,
     blurb: 'ASK the user ONE consequential decision as tappable options (sparingly — never to confirm reversible acts)',
+    resultIs: 'prose',
   },
 
   // ── Commit (irreversible → approval gate) ──
@@ -363,36 +403,43 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     intent: 'mark the current email/notice done or dismiss it from the Home',
     tool: 'resolve_inbox_item', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'email',
     blurb: 'mark the current item done / dismiss it (reversible)', exposure: ['chief_of_staff'],
+    resultIs: 'prose',
   },
   resolve_commitment: {
     intent: 'mark the current commitment or follow-up done or dismissed',
     tool: 'resolve_commitment', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: null,
     blurb: 'mark the current commitment done / dismissed (reversible)', exposure: ['chief_of_staff'],
+    resultIs: 'prose',
   },
   find_file: {
     intent: 'find a document/file across the knowledge base, past attachments and connected drives',
     tool: 'find_file', built: true, kind: 'atomic', irreversible: false, feature: 'drive',
     blurb: 'find a file (KB, attachments, connected drives — read-only)', exposure: ['chief_of_staff', 'coworker', 'workflow'],
+    resultIs: 'prose',
   },
   remember_fact: {
     intent: "save a durable fact/constraint onto this deal's memory",
     tool: 'remember_fact', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: null,
     blurb: "remember a durable fact on the deal (future drafts respect it)", exposure: ['chief_of_staff'],
+    resultIs: 'prose',
   },
   propose_standing_task: {
     intent: 'the user asks for a RECURRING deliverable (weekly report, daily digest) — propose the standing task for confirmation',
     tool: 'propose_standing_task', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'studio',
     blurb: 'propose a STANDING task ("weekly report on X") — places the confirm card; creates nothing by itself', exposure: ['chief_of_staff'],
+    resultIs: 'prose',
   },
   steer_standing_task: {
     intent: 'feedback on a standing/recurring task ("less macro, more tenders") — bake it into the method so future runs inherit it',
     tool: 'steer_standing_task', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'studio',
     blurb: 'apply feedback to a STANDING task\'s method (next runs inherit it) — only in the standing task\'s room', exposure: ['chief_of_staff'],
+    resultIs: 'prose',
   },
   read_action_history: {
     intent: 'read the ledger of actions taken — what was sent, committed, done, delegated recently',
     tool: 'read_action_history', built: true, kind: 'atomic', irreversible: false, feature: null,
     blurb: 'read the action ledger ("what was sent this week?", "what did we do on X?") — read-only', exposure: ['chief_of_staff'],
+    resultIs: 'data',
   },
   // ── MEMBERSHIP / PROJECT management (projecthood-plan P4) — the "manage my projects" verbs, in the
   // registry so every chat surface gets them at once. All reversible-or-logged; none send anything.
@@ -400,26 +447,31 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     intent: 'move this item into a different project, or take it out of its project',
     tool: 'move_item_to_project', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: null,
     blurb: "move the open item to another project / out of its project ('this isn't part of X')", exposure: ['chief_of_staff'],
+    resultIs: 'prose',
   },
   set_project_status: {
     intent: "change a project's lifecycle: done, archived, reopened, or not-a-project",
     tool: 'set_project_status', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: null,
     blurb: "mark a project done / archive / reopen / 'not a project'", exposure: ['chief_of_staff'],
+    resultIs: 'prose',
   },
   merge_projects: {
     intent: 'merge two projects that are really one body of work',
     tool: 'merge_projects', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: null,
     blurb: 'merge two projects into one (everything moves to the kept one)', exposure: ['chief_of_staff'],
+    resultIs: 'prose',
   },
   create_project: {
     intent: 'start a new project to track, optionally founded from the item being viewed',
     tool: 'create_project', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: null,
     blurb: 'start a new project ("start a project called X from this")', exposure: ['chief_of_staff'],
+    resultIs: 'prose',
   },
   create_task_item: {
     intent: "add a task to the user's plate, optionally on a project",
     tool: 'create_task_item', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: null,
     blurb: 'add a task ("add a task on Acme: chase the signed NDA, due Friday")', exposure: ['chief_of_staff'],
+    resultIs: 'prose',
   },
   // ── THE PARITY LAW (Aug 4): every verb the UI offers must be SAYABLE. "Send it" typed in the
   // room IS the user's explicit approval — it fires the SAME send door (exactly-once, logged),
@@ -429,6 +481,7 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     intent: 'send the ALREADY-DRAFTED reply on the current item — only when the user explicitly says to send',
     tool: 'send_prepared_reply', built: true, kind: 'atomic', irreversible: true, mutates: true, feature: 'email',
     blurb: 'send the prepared reply ("send it") — fires only on the user\'s own explicit send word', exposure: ['chief_of_staff'],
+    resultIs: 'prose',
   },
   // EVERY THREAD, EVERY PRODUCER (threads plan, Sep 8): the invite card's producer, sayable. It
   // PREPARES the same card the proactive pass prepares and returns it on the turn — the Send stays
@@ -441,6 +494,22 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     // The coworker DM route registers the SAME definition + executor (see the import note in
     // app/api/work/threads/[id]/chat/route.ts); the exposure row now says so (Sep 21, door parity).
     exposure: ['chief_of_staff', 'coworker'], conversational: true,
+    resultIs: 'prose',
+  },
+  // THE EVENT CARD (Wave 2, Sep 22 — docs/component-map.md §4: "RSVP, update and cancel are
+  // UI-button-only: no registry row, no chat tool, no activity log, no commit-door claim"). This is
+  // the row that ends that. It PREPARES one existing meeting as a card wearing the verbs its own
+  // state allows; the deed fires from the card, through /api/events/[id]/deed, which re-derives the
+  // permission and claims the commit door. Reversible by construction here — nothing leaves — which
+  // is exactly why no committing calendar verb is exposed to chat at all.
+  // `conversational: true` keeps it out of `builtCapabilities()` (the item-plan classifier prompt),
+  // so no PLAN_VERSION bump is owed — the precedent stated on prepare_calendar_invite above.
+  prepare_event_action: {
+    intent: 'show one existing calendar event as a card with the actions its state allows — accept/maybe/decline, reschedule, cancel (never acts by itself)',
+    tool: 'prepare_event_action', built: true, kind: 'atomic', irreversible: false, mutates: false, feature: 'meetings',
+    blurb: 'show ONE meeting already on the calendar as a card ("decline the 3pm", "move my call with Sam to Thursday 10:00", "what\'s my 3pm?") — the card carries the verbs; the user\'s click is the deed',
+    exposure: ['chief_of_staff', 'coworker'], conversational: true,
+    resultIs: 'presentation', presents: 'event',
   },
   // THE BULK DEED (attention-plan A7's parity clause): the ledger's natural verbs, sayable. It
   // PREPARES the same stored deed row the ledger's own buttons prepare and returns it on the turn —
@@ -453,6 +522,7 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     tool: 'prepare_bulk_deed', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'email',
     blurb: 'preview a bulk deed ("archive all the notices", "unsubscribe from the newsletters") — the card states what would happen and the user commits it',
     exposure: ['chief_of_staff'], conversational: true,
+    resultIs: 'prose',
   },
   // HANDS FOR THE SCOPE (Sep 21 — the pilot's dead-ended "yes please"): the chat could OFFER to
   // write to someone and held nothing that writes. `draft_reply` prepares the reply and hands it
@@ -464,11 +534,13 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     tool: 'draft_reply', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'email',
     blurb: 'draft a reply ("reply to them offering both slots") — it prepares the draft; sending stays the user\'s explicit word',
     exposure: ['chief_of_staff'], conversational: true,
+    resultIs: 'prose',
   },
   prepare_forward: {
     intent: 'prepare forwarding the current email to someone for review & approval (never sends by itself)',
     tool: 'prepare_forward', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'email',
     blurb: 'prepare a forward ("forward this to Rita") — review & approve on the card before anything sends', exposure: ['chief_of_staff'],
+    resultIs: 'prose',
   },
 
   // ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -494,12 +566,14 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     tool: 'list_tasks', built: true, kind: 'atomic', irreversible: false, feature: 'studio',
     blurb: "list the automated tasks ('what's running?')",
     exposure: ['chief_of_staff', 'coworker'], conversational: true,
+    resultIs: 'data', presents: 'workflows',
   },
   get_task: {
     intent: 'read one task\'s full configuration (schedule, steps, output, doors)',
     tool: 'get_task', built: true, kind: 'atomic', irreversible: false, feature: 'studio',
     blurb: "read one task's configuration ('what does the weekly briefing actually do?')",
     exposure: ['chief_of_staff', 'coworker'], conversational: true,
+    resultIs: 'data',
   },
   // THE BULK DEED OVER TASKS (Sep 21 — the incident's own verb). "Pause all workflows" used to force
   // an N-call model loop with NOTHING reconciling N intents to N results; one round got eaten by the
@@ -514,12 +588,14 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     exposure: ['chief_of_staff', 'coworker'], conversational: true,
     loopOnly: 'its arguments (which direction, and whether "all" was meant) carry the whole deed — ' +
       'they need the tool schema, not a blurb. The executor keeps its own user-words floors as well.',
+    resultIs: 'prose',
   },
   run_task: {
     intent: 'run an existing task right now',
     tool: 'run_task', built: true, kind: 'atomic', irreversible: false, mutates: true, feature: 'studio',
     blurb: "run an existing task now ('run the weekly briefing')",
     exposure: ['chief_of_staff', 'coworker'], conversational: true,
+    resultIs: 'prose',
   },
 
   // ── Tasks: the coworker-only slice. Each says WHY the chief does not hold it.
@@ -713,6 +789,59 @@ export function doorParity(doors: { chief: readonly string[]; coworker: readonly
     if (!cap.conversational || !TASK_CLASS_TOOLS.has(cap.tool)) continue;
     if (chief.has(cap.tool)) continue;
     if (!cap.chiefExempt?.trim()) out.push(`task verb "${cap.tool}" has a coworker door and no chief door, with no written chiefExempt reason`);
+  }
+  return out;
+}
+
+// ── THE PRESENTATION LAW (Sep 22, WAVE 0 — "a tool result is DATA, never the answer") ──────────
+// The guard that let the incident through was an OPT-OUT Set of four tool names living in the
+// conversation core; every read tool added after it leaked by default. The registry is the agnostic
+// home, and the default is the SAFE one: a row that says nothing returns data.
+
+/** Is this tool's result a sentence written for the PERSON? Absent row / absent field = no —
+ *  the law fails closed, so a tool nobody classified can never be served as an answer. */
+export const resultIsProse = (tool: string): boolean => CAPABILITY_MAP[tool]?.resultIs === 'prose';
+
+/** WAVE 2 (Sep 22): does this tool return an OBJECT CARD plus a code-written framing sentence?
+ *  Like `prose` it may be served as the answer (no model wrote the sentence); unlike prose it also
+ *  carries a card. Absent row / absent field = no — the same fail-closed default. */
+export const resultIsPresentation = (tool: string): boolean => CAPABILITY_MAP[tool]?.resultIs === 'presentation';
+
+/** Every chief-slice tool must SAY which it returns — silence is how the class comes back. */
+export function presentationParity(): string[] {
+  return capabilitiesFor('chief_of_staff')
+    .filter((c) => c.resultIs !== 'data' && c.resultIs !== 'prose' && c.resultIs !== 'presentation')
+    .map((c) => `chief-slice tool "${c.tool}" declares no resultIs (data | prose | presentation)`);
+}
+
+/** THE COLLECTION SEAM (Wave 1, Sep 22): which collection this tool can ALSO hand back as a card —
+ *  null for every tool that has none. Read by the conversation core's fast path and by nothing else. */
+export const presentsKind = (tool: string): Capability['presents'] | null =>
+  CAPABILITY_MAP[tool]?.presents ?? null;
+
+/** The COLLECTION kinds only (Wave 2, Sep 22) — the narrowed reader the collection builders take,
+ *  so adding the single-object `event` kind above cannot widen `buildCollection`'s input by type. */
+export const presentsCollectionKind = (
+  tool: string,
+): 'workflows' | 'documents' | 'recordings' | 'calendar' | null => {
+  const k = CAPABILITY_MAP[tool]?.presents;
+  return !k || k === 'event' ? null : k;
+};
+
+/** A presenting tool must be a read whose kind the contract actually knows, and its result kind must
+ *  match what it presents: a COLLECTION is the data half of a read (`resultIs:'data'`), an OBJECT
+ *  CARD is a presentation (`resultIs:'presentation'` — a card plus a code-written sentence). A kind
+ *  the builders cannot build is a promise the product can't keep. The known-kind half is asserted in
+ *  the gate (which holds the contract's own lists). */
+export function presentsParity(): string[] {
+  const out: string[] = [];
+  for (const c of Object.values(CAPABILITY_MAP)) {
+    if (!c.presents) continue;
+    if (c.presents === 'event') {
+      if (c.resultIs !== 'presentation') out.push(`tool "${c.tool}" presents an object card but declares resultIs="${c.resultIs ?? 'absent'}" (an object card is a PRESENTATION)`);
+      continue;
+    }
+    if (c.resultIs !== 'data') out.push(`tool "${c.tool}" presents a collection but declares resultIs="${c.resultIs ?? 'absent'}" (a card is the DATA half of a read)`);
   }
   return out;
 }

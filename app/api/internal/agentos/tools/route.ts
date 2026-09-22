@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import {
-  executeGetEmails, executeGetMeetingContext, executeCheckCalendar,
+  executeGetEmails,
   executeWebSearch, executeFetchUrl, executeDeepResearch,
   executeSlackListChannels, executeSlackPostMessage, executeSlackReadMessages, executeSlackListMembers,
   executeFindTeamWork, executeReadTeamWork,
@@ -11,6 +11,20 @@ import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { generateThreadDocument } from '@/lib/work/generate-thread-document';
 import { getWorkspaceFeatures } from '@/lib/workspace/features';
 import { TOOL_FEATURE } from '@/lib/workspace/tool-capabilities';
+// ── THE PRESENTATION SIDE-CHANNEL (W4-C, Sep 22) ──────────────────────────────
+// These reads produce TWO halves (docs/component-map.md §6): `result`, which is all the model ever
+// sees, and a typed spec for the kit. A tool's return string is the only channel back to the box,
+// and rows must never ride a model's context — so the DATA half is written to the per-thread
+// channel here and the bridge emits it as the same `{type:'collection'|'event'}` frames the native
+// DM route emits. The wrappers (`execute*`) return only the text, so the present lanes below read
+// through the SAME readers the native route reads — never a second query that could rank
+// differently than the block the coworker was shown.
+import { readCalendar } from '@/lib/tools/check-calendar';
+import { readMeetingContext } from '@/lib/tools/get-meeting-context';
+import { executePrepareEventAction, eventToolResult } from '@/lib/tools/prepare-event-action';
+import { pushDmPresent } from '@/lib/present/dm-channel';
+import type { CollectionSpec } from '@/lib/present/collection';
+import type { EventSpec } from '@/lib/present/event';
 
 export const maxDuration = 60;
 
@@ -37,6 +51,12 @@ interface ToolRequest {
   agent_id?: string;
   thread_id?: string;
   config?: Record<string, unknown>;
+  /** THE USER'S OWN WORDS (Sep 21 idiom, extended here): deeds and arming floors decided in code
+   *  read the person's sentence, never the model's extraction. Absent → the floors fail closed. */
+  user_text?: string;
+  /** THE BRIDGE'S PER-RUN TOKEN (W4-C): stamped on anything this call leaves in the presentation
+   *  side-channel, so a card can only ever be served to the turn that made it. */
+  turn_id?: string;
 }
 
 export async function POST(request: NextRequest) {
@@ -62,6 +82,11 @@ export async function POST(request: NextRequest) {
 
   const ac = admin();
   const sb = ac as unknown as Parameters<typeof executeGetEmails>[2];
+  const userText = typeof body.user_text === 'string' ? body.user_text.slice(0, 4000) : '';
+  const turnId = typeof body.turn_id === 'string' ? body.turn_id.slice(0, 64) : null;
+  /** The DATA half this call produced, if any. Written to the channel AFTER the switch — it is an
+   *  ENHANCEMENT: a failure here can never change what the model is told. */
+  let present: { collection?: CollectionSpec; event?: EventSpec } | null = null;
 
   // Feature gate (single source: tool-capabilities map) — parity with the native loop's
   // tool filter. Off-feature tools return a short "unavailable" string so the worker adapts.
@@ -141,18 +166,54 @@ export async function POST(request: NextRequest) {
         result = await executeGetEmails(config, user_id, sb);
         break;
 
-      case 'get_meeting_context':
+      case 'get_meeting_context': {
         if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });
-        result = await executeGetMeetingContext(config, user_id, sb);
+        // ONE READ, TWO RENDERINGS (parity with the native DM loop): the block for the model AND
+        // the typed rows the recordings card is built from.
+        const read = await readMeetingContext(config, user_id, sb);
+        result = read.text;
+        try {
+          const { recordingSpec } = await import('@/lib/present/build');
+          present = { collection: recordingSpec(read.meetings, { since: String(config.since ?? '30d') }) };
+        } catch { /* the card is an enhancement — the answer stands without it */ }
         break;
+      }
 
       // THE COWORKER LANE REACHES THE CALENDAR (Sep 18) — the AgentOS mirror of the native case.
       // get_meeting_context reads meetings we RECORDED; this reads the CALENDAR for a date range,
       // and every busy/free line, weekday label and proposed slot in the block is code's output.
-      case 'check_calendar':
+      case 'check_calendar': {
         if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });
-        result = await executeCheckCalendar(config, user_id, sb);
+        // ONE READ, TWO RENDERINGS: `readCalendar` returns that block AND the schedule window the
+        // card's rows are built from — a rendered day and a printed line are one day.
+        const read = await readCalendar(config, user_id, sb);
+        if ('refusal' in read) { result = read.refusal; break; }
+        result = read.text;
+        try {
+          const { calendarSpec } = await import('@/lib/present/build');
+          present = { collection: calendarSpec(read.win.days, {
+            hasCalendar: read.win.hasCalendar, from: read.fromDayStr, to: read.toDayStr,
+          }) };
+        } catch { /* the card is an enhancement — the answer stands without it */ }
         break;
+      }
+
+      // WAVE 2 ON THE BOX LANE (W4-C): ONE meeting already on the calendar, with the verbs its own
+      // state permits. It PREPARES and never writes — the deed fires from the card, through
+      // /api/events/[id]/deed. The model gets a description of the card, never its data.
+      case 'prepare_event_action': {
+        if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });
+        const out = await executePrepareEventAction(sb, user_id, {
+          which: typeof config.which === 'string' ? config.which : undefined,
+          verb: typeof config.verb === 'string' ? config.verb : undefined,
+          // THE ARMING FLOOR reads the USER'S own words — forwarded across the box on
+          // `dependencies.user_text`. Without them nothing arms (the floor fails closed).
+          userText,
+        });
+        result = eventToolResult(out);
+        if (out.present?.spec) present = { event: out.present.spec };
+        break;
+      }
 
       case 'search_knowledge_base': {
         if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });
@@ -180,6 +241,14 @@ export async function POST(request: NextRequest) {
         const { driveSupplementLine } = await import('@/lib/knowledge/resolve');
         const driveLine = await driveSupplementLine(ac, user_id, query);
         result = (kbCtx.context || 'No relevant documents found in your knowledge base.') + driveLine;
+        // ONE READ, TWO RENDERINGS: the card is built from the groups THIS context was rendered
+        // from — never a second search that could rank differently.
+        if (kbCtx.groups?.length) {
+          try {
+            const { documentSpec } = await import('@/lib/present/build');
+            present = { collection: documentSpec(kbCtx.groups, query) };
+          } catch { /* the card is an enhancement — the answer stands without it */ }
+        }
         break;
       }
 
@@ -227,6 +296,12 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
     }
 
+    // THE DATA HALF NEVER TRAVELS THROUGH THE MODEL: the spec goes to the per-thread side-channel,
+    // the bridge emits it as a live card frame, and the response body carries `result` ONLY —
+    // exactly what the model's `role:'tool'` message may hold (THE PRESENTATION LAW).
+    if (present && user_id && thread_id) {
+      await pushDmPresent(ac, user_id, thread_id, { turn: turnId, ...present });
+    }
     return NextResponse.json({ result });
   } catch (err) {
     console.error(`[internal/agentos/tools] ${action} failed:`, err);

@@ -266,8 +266,25 @@ async function main() {
       for (const m of src.matchAll(/fetch\(\s*[`'"]([^`'"]+)[`'"]/g)) urls.push({ file: name, url: m[1] });
     }
     const resumeCalls = urls.filter((u) => u.url.includes('/resume'));
-    ok('at least TWO callers post to the resume route (the drawer + the decision card)', resumeCalls.length >= 2,
-      `${resumeCalls.length}: ${resumeCalls.map((u) => u.file).join(', ')}`);
+    // RE-POINTED (W3-A, Sep 22 — docs/component-map.md §2a): ONE DEED ONE DOOR was already law;
+    // what was never true was ONE CALLER. The route is posted to from exactly one client module
+    // (lib/deeds/gate-doors.ts `resumeRun`) and the surfaces IMPORT it, so counting `fetch` URLs
+    // here would now count zero and pin nothing. The law is asserted in its stronger form: at
+    // least two surfaces reach the door, and none of them holds the route string itself.
+    const doorsSrc = readFileSync('lib/deeds/gate-doors.ts', 'utf8');
+    // The two HOSTS are where the room-shaped surfaces reach the door from (W3-A); the drawer,
+    // being a drawer and not a thread, reaches it directly. All three, one module.
+    const doorReachers: Array<[string, string]> = [
+      ...files,
+      ['approval-card.tsx', readFileSync('components/home/approval-card.tsx', 'utf8')],
+      ['input-supply-form.tsx', readFileSync('components/workflows/input-supply-form.tsx', 'utf8')],
+    ];
+    const doorCallers = doorReachers.filter(([, src]) => /resumeRun\(/.test(src));
+    ok('at least TWO callers reach the resume route (the drawer + the decision card), through the ONE door module',
+      doorCallers.length >= 2 && /\/api\/workflows\/runs\/\$\{runId\}\/resume/.test(doorsSrc),
+      `${doorCallers.length}: ${doorCallers.map(([n]) => n).join(', ')}`);
+    ok('…and NO surface holds the resume route string of its own', resumeCalls.length === 0,
+      resumeCalls.map((u) => `${u.file}:${u.url}`).join(', '));
     ok('the LEDGER itself has zero resume callers (the WAITING ON YOU section stays dead)',
       !resumeCalls.some((u) => u.file === 'workflows-ledger.tsx'), '');
     ok('every /resume call is the literal /api/workflows/runs/<runId>/resume shape',
@@ -676,7 +693,11 @@ async function main() {
       mounts.length === 2 && guarded, `${mounts.length} mounts`);
   }
   {
-    const fn = drawerCode.slice(drawerCode.indexOf('function GateObject('));
+    // RE-POINTED (W3-A, Sep 22): GateObject moved OUT of this drawer into the shared pieces
+    // (components/workflows/gate-pieces.tsx) precisely so the room and the deep-dive stop drawing
+    // their own. The law is unchanged; it is asserted where the component now lives.
+    const piecesCode = stripComments(readFileSync('components/workflows/gate-pieces.tsx', 'utf8'));
+    const fn = piecesCode.slice(piecesCode.indexOf('export function GateObject('));
     const body = fn.slice(0, fn.indexOf('\n}\n') + 2);
     ok('…and GateObject wires NO decision (it shows the object; Approve never waits on it)',
       !/decide\(|resume|onApprove|Approve|Reject/.test(body));
@@ -802,8 +823,11 @@ async function main() {
     ok('the provenance line names the workflow AND what the supply feeds',
       /\{handoff\.workflowName\} stopped here and needs this from you/.test(itemDetailSrc)
       && /station\?\.feeds \? ` · feeds \$\{station\.feeds\.label\}`/.test(itemDetailSrc));
+    // RE-POINTED (W3-A, Sep 22): the trail became the card's `contextNode`, so the guard is a
+    // ternary instead of a JSX `&&`. Same law, same file, one expression over.
     ok('the arrived trail renders ONLY when something arrived (an empty box claims a situation)',
-      /\{arrived\.length > 0 && \(/.test(itemDetailSrc));
+      /const trail = arrived\.length > 0 \? \(/.test(itemDetailSrc)
+      && /\.\.\.\(trail \? \{ contextNode: trail \} : \{\}\)/.test(itemDetailSrc));
     ok('…folded by default — the ask is the headline and the paste box is the deed',
       /const \[showArrived, setShowArrived\] = useState\(false\);/.test(itemCode));
     ok('…and its disclosure honours reduced motion',
@@ -814,11 +838,16 @@ async function main() {
     // and the pin door MOVED OUT of this file into the ONE shared form, so asserting their literals
     // here would now pin the fork instead of the law. The replacement is stronger: the card must
     // MOUNT the shared deed, and the literals are asserted once, at the form (P7n below).
-    ok('the card mounts the ONE shared supply form (the deed is never re-implemented here)',
-      /<InputSupplyForm$/m.test(itemCode) || /<InputSupplyForm\b/.test(itemCode));
+    // RE-POINTED (W3-A, Sep 22 — docs/component-map.md §2a): the station card converged onto the
+    // kit. This file mounts the ONE ask host, which mounts the ONE shared supply form — one hop
+    // further from the deed, and one fewer rendering of the object. The facts it must still pass
+    // (the run, the station's accepts) are asserted on the spec it hands over.
+    ok('the card mounts the ONE ask host (which mounts the ONE shared supply form)',
+      /<InputCard\b/.test(itemCode) && /shape: 'station'/.test(itemCode)
+      && /<InputSupplyForm\b/.test(stripComments(readFileSync('components/home/input-card.tsx', 'utf8'))));
     ok('…passing the run and the station\'s own accepts, and settling on its callback',
-      /runId=\{runId\}/.test(itemCode) && /accepts=\{handoff\.accepts \?\? 'both'\}/.test(itemCode)
-      && /onSettled=\{\(outcome\) => \{ setSent\(outcome\); onDecided\(\); \}\}/.test(itemCode));
+      /runId,/.test(itemCode) && /accepts: handoff\.accepts \?\? 'both'/.test(itemCode)
+      && /onSettled=\{\(\) => onDecided\(\)\}/.test(itemCode));
   }
 
   console.log('\nP7n — THE GATE CARRIES ITS DEED (one supply form, mounted at both doors):');
@@ -843,10 +872,13 @@ async function main() {
       && /if \(!runId \|\| busy \|\| uploading\) return;/.test(formCode));
     ok('Hold it back is always there (a park nobody can answer must not be a dead end)',
       /Hold it back/.test(formCode));
+    // RE-POINTED (W3-A, Sep 22): the form's two hand-written `fetch`es became two calls to the ONE
+    // client door module. The payloads are unchanged (the supply shape and the bare reject).
     ok('BOTH deeds go through the ONE resume door',
-      (formCode.match(/fetch\(`\/api\/workflows\/runs\/\$\{runId\}\/resume`/g) ?? []).length === 2
-      && /body: JSON\.stringify\(\{ input: \{/.test(formCode)
-      && /body: JSON\.stringify\(\{ approve: false \}\)/.test(formCode));
+      (formCode.match(/resumeRun\(runId, \{/g) ?? []).length === 2
+      && /import \{ resumeRun \} from '@\/lib\/deeds\/gate-doors'/.test(formCode)
+      && /input: \{ \.\.\.\(said \? \{ text: said \} : \{\}\)/.test(formCode)
+      && /resumeRun\(runId, \{ approve: false \}\)/.test(formCode));
     ok('THE OVERLAY LAW is not touched: the picker paints in the consumer\'s own flow, no popover',
       !/AnchoredPopover|createPortal/.test(formCode));
     ok('a caller without a run renders NOTHING (never a form that cannot post)',
@@ -854,7 +886,13 @@ async function main() {
 
     // BOTH MOUNTS — the whole point of the extraction.
     ok('the process drawer mounts it', /import InputSupplyForm/.test(drawerCode2) && /<InputSupplyForm\b/.test(drawerCode2));
-    ok('the commitment deep-dive mounts it', /import InputSupplyForm/.test(itemCode2) && /<InputSupplyForm\b/.test(itemCode2));
+    // RE-POINTED (W3-A, Sep 22): the deep-dive reaches the form through the ONE ask host — it no
+    // longer knows what a paste box looks like, which is the point.
+    {
+      const askHostCode = stripComments(readFileSync('components/home/input-card.tsx', 'utf8'));
+      ok('the commitment deep-dive mounts it', /import InputCard/.test(itemCode2) && /<InputCard\b/.test(itemCode2)
+        && /import InputSupplyForm/.test(askHostCode) && /<InputSupplyForm\b/.test(askHostCode));
+    }
 
     // NO SECOND IMPLEMENTATION — a repo-wide grep, because a fork is the failure this law names.
     {
@@ -894,7 +932,12 @@ async function main() {
     ok('…and the form is wired to it (a callback nobody passes is not a refresh)',
       /onSettled=\{onSupplied\}/.test(drawerCode2));
     ok('a SUPPLY is never called an approval on the settled banner',
-      /decided === 'supplied'/.test(drawerCode2) && /Sent — the run picked up from there\./.test(drawerSrc));
+      /decided === 'supplied'/.test(drawerCode2)
+      // RE-POINTED (W3-A, Sep 22): the sentence is the ONE vocabulary's now (GATE_OUTCOME_WORDS
+      // .supplied.line) — so it is asserted at the table, and the drawer is asserted to read it.
+      && /supplied: \{ chip: 'sent',\s*line: 'Sent — the run picked up from there\.' \}/
+        .test(readFileSync('lib/workflows/process-state.ts', 'utf8'))
+      && /Sent — "\$\{process\.workflowName\}" picked up from there\./.test(drawerSrc));
 
     // ── P7o — THE ATTACH DOOR (THE WAVE, Aug 25). The third way to answer: a file off this
     // person's machine. It must be ONE input, ONE upload route, and then the SAME resume door
@@ -913,7 +956,8 @@ async function main() {
       && /new FormData\(\)/.test(formCode) && /fd\.append\('file', f\)/.test(formCode));
     ok('THE UPLOAD IS NOT THE SEND: it only seats a kbFileId — the run still moves on the resume door',
       /setDoc\(\{ id: j\.kbFileId, name: j\.name \|\| f\.name \}\)/.test(formCode)
-      && (formCode.match(/fetch\(`\/api\/workflows\/runs\/\$\{runId\}\/resume`/g) ?? []).length === 2);
+      // RE-POINTED (W3-A, Sep 22): the two sends are the two `resumeRun` calls (see above).
+      && (formCode.match(/resumeRun\(runId, \{/g) ?? []).length === 2);
     ok('an attached file rides the SAME `{ kbFileId, pin }` shape a pinned one does (no second payload)',
       (formCode.match(/kbFileId: doc\.id, pin/g) ?? []).length === 1);
     ok('the upload speaks an honest waiting state, reduced-motion respected',

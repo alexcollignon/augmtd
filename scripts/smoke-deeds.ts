@@ -363,7 +363,11 @@ console.log('\nBD6 · PARITY — the same deed is sayable, and the spoken door c
     !!converse && /bulkDeed\?: \{ id: string; deed: Record<string, unknown> \} \| null;/.test(converse)
     // RE-POINTED (Sep 21): the email card joined the same early return. The law is the channel —
     // a card-bearing turn must survive the loop — and it now carries one more kind.
-    && /out\?\.invite \|\| out\?\.bulkDeed \|\| out\?\.emailDraft\) return/.test(converse));
+    // RE-POINTED (Sep 22): the binding was renamed (`out` → `turn`) when a dispatch result became
+    // `ConverseTurn | ToolData`, and the early return keeps gaining card kinds. The law is
+    // MEMBERSHIP — the bulk card is one of the fields that lets a turn leave the loop — not the
+    // binding's name or its neighbours.
+    && /if \([^\n]*\?\.bulkDeed[^\n]*\) return \{/.test(converse));
   gate('BD6.10 the router prompt and the system prompt both name it (an unmentioned tool is an unused tool)',
     !!converse && /prepare_bulk_deed \{"verb":"archive","group":"notices"\}/.test(converse)
     && /call \` \+\n      \`prepare_bulk_deed — it only previews/.test(converse));

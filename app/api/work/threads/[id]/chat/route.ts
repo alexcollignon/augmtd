@@ -26,8 +26,6 @@ import { DEFAULT_FEATURES, type WorkspaceFeatures } from '@/lib/workspace/types'
 import {
   executeWebSearch, executeFetchUrl,
   executeGetEmails,
-  executeGetMeetingContext,
-  executeCheckCalendar,
   deepResearchDefinition, executeDeepResearch,
   executeSlackListChannels, executeSlackPostMessage, executeSlackReadMessages, executeSlackListMembers,
   executeFindTeamWork, executeReadTeamWork,
@@ -37,6 +35,21 @@ import {
 import { buildConnectedIntegrationsBlock } from '@/lib/integrations/connection';
 // THE WEEKDAY FLOOR (Wave 1) — deterministic, applied at the assistant-message persist seam below.
 import { enforceWeekdayDatePairs } from '@/lib/utils/weekday-floor';
+// THE MARKERS NEVER REACH THE BUBBLE + THE CHIP IS OURS (Sep 22, WAVE 0) — one implementation each,
+// shared with the AgentOS bridge so the two coworker lanes cannot disagree.
+import { stripChatMarkers } from '@/lib/work/chat-markers';
+import { TOOL_LABELS, toolResultOk } from '@/lib/work/tool-summaries';
+import { buildTrace } from '@/lib/work/trace';
+// THE ONE COLLECTION CARD (docs/component-map.md §6, Wave 1) — the DM's half. A read that can ALSO
+// hand back typed rows does so here exactly as the chief's lane does: `modelText` stays the model's
+// (it reaches a role:'tool' message and nowhere else), and the SAME contract's spec rides the
+// stream to the kit. Both halves come from ONE read per tool — never a second query that could
+// rank differently than the block the coworker was shown.
+import type { CollectionSpec } from '@/lib/present/collection';
+// …and the two readers whose block the DM used to take through their `execute*` wrappers: the
+// wrapper returns only the text, and this lane now needs both halves of the SAME read.
+import { readMeetingContext } from '@/lib/tools/get-meeting-context';
+import { readCalendar } from '@/lib/tools/check-calendar';
 import {
   executeSupplyRunInput,
   executeListTasks, executeCreateTask, executeGetTask, executeUpdateTask, executeDuplicateTask, executeDeleteTask, executeRunTask,
@@ -49,6 +62,13 @@ import { executeListSkills, executeApplySkill } from '@/lib/tools/worker-skills'
 // never sends. ⚠️ The AgentOS (Python) runtime has no `prepare_calendar_invite` @tool yet — see the
 // note in lib/tools/prepare-calendar-invite.ts; a worker on that runtime prepares invites only here.
 import { executePrepareCalendarInvite, inviteCardLine, type PreparedInviteCard } from '@/lib/tools/prepare-calendar-invite';
+// WAVE 2 — THE EVENT CARD: one meeting already on the calendar, with the verbs its state allows.
+// It prepares and never writes; the deed fires from the card, through /api/events/[id]/deed.
+import { executePrepareEventAction, eventToolResult } from '@/lib/tools/prepare-event-action';
+import type { EventSpec } from '@/lib/present/event';
+// THE POINTER IS ONE SHAPE (W4-C, Sep 22): what a presented card persists as, written the same way
+// by this route, the AgentOS bridge and the Home ask door.
+import { collectionPointer, eventPointer, type CollectionTurnPointer, type EventTurnPointer } from '@/lib/present/pointer';
 // THE ONE COWORKER TOOL TABLE (Sep 21, CLASS 2) — the door's list is DERIVED from the capability
 // registry there, never pushed as literals here.
 import { buildCoworkerTools } from '@/lib/work/chat-tool-defs';
@@ -848,6 +868,10 @@ export async function POST(
     // ── Stream ────────────────────────────────────────────────────────────────
     let fullAssistantText = '';
     const allToolCalls: Array<{ name: string; summary: string; citations?: string[]; clarification?: object }> = [];
+    // THE TRACE — the turn's receipt (lib/work/trace.ts). Execution order, outcome only: what
+    // persists is `{tool, ok}` and nothing else, because a receipt that carries the payload is a
+    // second copy of the payload. `buildTrace` is THE ONE WRITER, shared with the AgentOS bridge.
+    const traceCalls: Array<{ name: string; ok: boolean }> = [];
     const allArtifactIds: string[] = [];
     const allArtifactMeta: Record<string, { title: string; type: string }> = {};
     const allWorkflowDrafts: Array<Record<string, unknown>> = [];
@@ -856,6 +880,15 @@ export async function POST(
     // reload finds the card standing (a deliverable that dies with the tab is not one).
     const allInviteCards: PreparedInviteCard[] = [];
     const allArtifacts: Record<string, unknown>[] = [];
+    // THE COLLECTION CARD — POINTERS ONLY (the bulk-deed precedent): what persists is `{id, kind,
+    // params, framing}`, and the rows are re-derived through `GET /api/collections` on the next
+    // open. A stored row set is exactly the thing a reload would lie about (a paused workflow
+    // resumed elsewhere, a document since deleted).
+    const allCollections: CollectionTurnPointer[] = [];
+    // THE EVENT CARD — a POINTER too, for the same reason and more sharply: an event's VERBS depend
+    // on its live state (accepted elsewhere, moved by its organizer, already passed). What persists
+    // is `{id, eventId, proposal}`; the next open re-derives through `GET /api/events/[id]/card`.
+    const allEventCards: EventTurnPointer[] = [];
     // Accumulated across every streamed call this exchange makes (the tool loop can call the
     // model multiple times) — logged once at the end. Native-loop chat only; AgentOS-routed
     // worker chat reports no usage today (see lib/ai/log-usage.ts doc comment).
@@ -867,6 +900,28 @@ export async function POST(
         const encoder = new TextEncoder();
         const send = (data: object) => {
           try { controller.enqueue(encoder.encode(SSE(data))); } catch { /* stream closed */ }
+        };
+
+        // SPEAK → SHOW: a read that hands back typed rows streams them BESIDE the coworker's prose
+        // (the DM stays conversational — the card never replaces what they say). ONE seam for both
+        // loops below: the live frame carries the served spec, the accumulator keeps the pointer.
+        const takeCollection = (spec?: CollectionSpec) => {
+          if (!spec) return;
+          const id = crypto.randomUUID();
+          // THE POINTER IS ONE SHAPE (W4-C): the same reading the AgentOS bridge and the Home ask
+          // door write, so the two coworker lanes rehydrate through one contract.
+          allCollections.push(collectionPointer(id, spec));
+          send({ type: 'collection', collection: { id, spec } });
+        };
+
+        // …and the same seam for the SINGLE-OBJECT card. The live frame carries the served spec
+        // (verbs included); the accumulator keeps only the pointer.
+        const takeEvent = (spec?: EventSpec) => {
+          if (!spec) return;
+          // The live frame's `id` is a RENDER key; the pointer keeps the calendar_events id, which
+          // is the card's re-read address and the address its verbs act through.
+          allEventCards.push(eventPointer(spec));
+          send({ type: 'event', event: { id: crypto.randomUUID(), spec } });
         };
 
         // SSE heartbeat — keeps connection alive during long tool executions
@@ -883,7 +938,8 @@ export async function POST(
         // Research ran before the stream — emit UI events now so the step chip appears
         if (ranPreResearch) {
           send({ type: 'tool_start', name: 'deep_research', id: 'pre-research', label: 'Deep research' });
-          send({ type: 'tool_result', name: 'deep_research', id: 'pre-research', summary: 'Research complete', ...(preResearchCitations.length ? { citations: preResearchCitations } : {}) });
+          traceCalls.push({ name: 'deep_research', ok: true });
+          send({ type: 'tool_result', name: 'deep_research', id: 'pre-research', summary: 'Research complete', ok: true, ...(preResearchCitations.length ? { citations: preResearchCitations } : {}) });
         }
 
         // ── Deep research: run directly before AI loop, don't rely on model to invoke it ──
@@ -898,13 +954,15 @@ export async function POST(
             // Parse source URLs from the result to show as citations
             const citationMatches = [...researchResult.matchAll(/https?:\/\/[^\s)\]]+/g)];
             const citations = [...new Set(citationMatches.map(m => m[0]))].slice(0, 10);
-            send({ type: 'tool_result', name: 'deep_research', id: 'pre-research', summary: 'Research complete', ...(citations.length ? { citations } : {}) });
+            traceCalls.push({ name: 'deep_research', ok: true });
+            send({ type: 'tool_result', name: 'deep_research', id: 'pre-research', summary: 'Research complete', ok: true, ...(citations.length ? { citations } : {}) });
             // Inject research findings into the system context so AI synthesises from them
             systemFinal = systemFinal + '\n\n' +
               'DEEP RESEARCH FINDINGS (use these as the primary source for your answer — cite specific facts):\n\n' +
               researchResult;
           } catch (err) {
-            send({ type: 'tool_result', name: 'deep_research', id: 'pre-research', summary: 'Research unavailable' });
+            traceCalls.push({ name: 'deep_research', ok: false });
+            send({ type: 'tool_result', name: 'deep_research', id: 'pre-research', summary: 'Research unavailable', ok: false });
             console.error('[deep_research] pre-loop execution failed:', err);
           }
         }
@@ -1085,9 +1143,11 @@ export async function POST(
                     calledTools.add(dedupeKey);
 
                     send({ type: 'tool_start', name: tc.function.name, id: tc.id, label: toolLabel(tc.function.name) });
-                    const { result, summary, artifact, citations, clarification, stopStream, emailDraft, cardArtifact, workflowDraft, inviteCard, deed } = await executeChatTool(tc.function.name, toolInput, sources, runContext);
+                    const { result, summary, artifact, citations, clarification, stopStream, emailDraft, cardArtifact, workflowDraft, inviteCard, collection, eventCard, deed } = await executeChatTool(tc.function.name, toolInput, sources, runContext);
                     if (deed) deedLedger.push(deed);
-                    send({ type: 'tool_result', name: tc.function.name, id: tc.id, summary, ...(citations?.length ? { citations } : {}) });
+                    const ok = toolResultOk(tc.function.name, result);
+                    traceCalls.push({ name: tc.function.name, ok });
+                    send({ type: 'tool_result', name: tc.function.name, id: tc.id, summary, ok, ...(citations?.length ? { citations } : {}) });
                     allToolCalls.push({ name: tc.function.name, summary, ...(citations?.length ? { citations } : {}) });
                     if (clarification) send({ type: 'clarification_request', ...(clarification as object) });
                     if (artifact?.id) { allArtifactIds.push(artifact.id); allArtifactMeta[artifact.id] = { title: artifact.title, type: artifact.type }; send({ type: 'artifact_ready', artifact: { id: artifact.id, type: artifact.type, title: artifact.title } }); }
@@ -1095,6 +1155,9 @@ export async function POST(
                     if (inviteCard) { allInviteCards.push(inviteCard); send({ type: 'invite_card', card: inviteCard }); }
                     if (workflowDraft) { allWorkflowDrafts.push(workflowDraft); send({ type: 'workflow_draft', draft: workflowDraft }); }
                     if (cardArtifact) { allArtifacts.push(cardArtifact); send({ type: 'artifact', artifact: cardArtifact }); }
+                    // The DATA half rides to the kit; the model's half stays in the tool message below.
+                    takeCollection(collection);
+                    takeEvent(eventCard);
                     toolResultMessages.push({ role: 'tool', tool_call_id: tc.id, content: result });
                     toolResultCache.set(dedupeKey, result);
                     if (stopStream) { continueLoop = false; break; }
@@ -1188,7 +1251,7 @@ export async function POST(
 
                   send({ type: 'tool_start', name: tc.function.name, id: tc.id, label: toolLabel(tc.function.name) });
 
-                  const { result, summary, artifact, citations, clarification, stopStream, retryCorrection, emailDraft, cardArtifact, workflowDraft, inviteCard, deed } = await executeChatTool(
+                  const { result, summary, artifact, citations, clarification, stopStream, retryCorrection, emailDraft, cardArtifact, workflowDraft, inviteCard, collection, eventCard, deed } = await executeChatTool(
                     tc.function.name,
                     toolInput,
                     sources,
@@ -1213,7 +1276,9 @@ export async function POST(
                     break;
                   }
 
-                  send({ type: 'tool_result', name: tc.function.name, id: tc.id, summary, ...(citations?.length ? { citations } : {}) });
+                  const ok = toolResultOk(tc.function.name, result);
+                  traceCalls.push({ name: tc.function.name, ok });
+                  send({ type: 'tool_result', name: tc.function.name, id: tc.id, summary, ok, ...(citations?.length ? { citations } : {}) });
                   allToolCalls.push({ name: tc.function.name, summary, ...(citations?.length ? { citations } : {}) });
 
                   if (clarification) {
@@ -1230,6 +1295,9 @@ export async function POST(
                   if (inviteCard) { allInviteCards.push(inviteCard); send({ type: 'invite_card', card: inviteCard }); }
                   if (workflowDraft) { allWorkflowDrafts.push(workflowDraft); send({ type: 'workflow_draft', draft: workflowDraft }); }
                   if (cardArtifact) { allArtifacts.push(cardArtifact); send({ type: 'artifact', artifact: cardArtifact }); }
+                  // The DATA half rides to the kit; the model's half stays in the tool message below.
+                  takeCollection(collection);
+                  takeEvent(eventCard);
 
                   toolResultMessages.push({
                     role: 'tool',
@@ -1353,19 +1421,33 @@ export async function POST(
             // THE ANCHOR LAW (Sep 21): the user's own words ride along, so a weekday THEY asked for
             // outranks a date the model derived — the floor must never "correct" a weekday the user
             // stated and launder a miscount into a confident wrong day.
-            const persistedAssistantText = enforceWeekdayDatePairs(fullAssistantText, { userText: content });
+            // THE MARKERS NEVER REACH THE BUBBLE (Sep 22, WAVE 0) — the same stripper the AgentOS
+            // lane mounts: a model that has seen `[[artifact:…]]` / `[[card:…]]` in its context
+            // writes one back in its own prose, and machinery is never something a person reads.
+            const persistedAssistantText = stripChatMarkers(enforceWeekdayDatePairs(fullAssistantText, { userText: content }));
+            const trace = buildTrace(traceCalls);
             await adminClient.from('work_messages').insert({
               thread_id: threadId,
               role: 'assistant',
               content: persistedAssistantText,
               metadata: {
                 tool_calls: allToolCalls,
+                // THE TRACE (Sep 22) — the turn's receipt, through THE ONE WRITER both coworker
+                // runtimes use. `{tool, ok}` only: no arguments, no results. A reload shows the
+                // FOLDED line ("Checked the calendar · searched Knowledge"), which is what a
+                // receipt is for — the per-call lines belong to the minute the work was running.
+                ...(trace.length > 0 ? { trace } : {}),
                 artifact_ids: allArtifactIds,
                 ...(Object.keys(allArtifactMeta).length > 0 ? { artifact_meta: allArtifactMeta } : {}),
                 ...(allEmailDrafts.length > 0 ? { email_drafts: allEmailDrafts } : {}),
                 ...(allInviteCards.length > 0 ? { invite_cards: allInviteCards } : {}),
                 ...(allWorkflowDrafts.length > 0 ? { workflow_drafts: allWorkflowDrafts } : {}),
                 ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
+                // A POINTER, NEVER THE ROWS: the next open re-derives through the one re-read door.
+                ...(allCollections.length > 0 ? { collections: allCollections } : {}),
+                // A POINTER, NEVER THE SPEC: the next open re-derives through GET /api/events/[id]/card,
+                // so a reloaded card can never offer a verb the event's live state has stopped allowing.
+                ...(allEventCards.length > 0 ? { events: allEventCards } : {}),
                 ...(clarificationCall?.clarification ? { clarification: clarificationCall.clarification } : {}),
               },
             });
@@ -1445,34 +1527,9 @@ function buildChatTools(sources: string[], _provider: string, _modelFamily: stri
 }
 
 function toolLabel(name: string): string {
-  const labels: Record<string, string> = {
-    search_knowledge_base: 'Searching knowledge base',
-    read_document: 'Reading document',
-    get_emails: 'Checking emails',
-    get_email_body: 'Reading email',
-    get_meeting_context: 'Checking meetings & calendar',
-    check_calendar: 'Checking the calendar',
-    deep_research: 'Researching…',
-    web_search: 'Searching the web',
-    fetch_url: 'Reading page',
-    request_clarification: 'Preparing options',
-    generate_document: 'Generating document',
-    list_tasks: 'Checking tasks',
-    create_task: 'Building task pipeline…',
-    get_task: 'Reading task config',
-    update_task: 'Updating task',
-    delete_task: 'Deleting task',
-    run_task: 'Running task…',
-    share_task: 'Sharing task with team',
-    list_team_tasks: 'Checking team tasks',
-    use_task: 'Adding task from team…',
-    list_worker_documents: 'Checking documents',
-    get_worker_document: 'Retrieving document…',
-    compose_email: 'Drafting email…',
-    prepare_calendar_invite: 'Putting the invite together…',
-    present_linkedin_post: 'Preparing LinkedIn post…',
-  };
-  return labels[name] ?? name;
+  // ONE TABLE (Sep 22): the labels live in lib/work/tool-summaries.ts, read by this lane and the
+  // AgentOS bridge alike — the two copies had already drifted on get_meeting_context.
+  return TOOL_LABELS[name] ?? name;
 }
 
 interface RunContext {
@@ -1532,12 +1589,34 @@ function serializeDocContent(doc: import('@/lib/types/inbox').DocContent): strin
 
 // ── Tool execution ────────────────────────────────────────────────────────────
 
+/** A collection is an ENHANCEMENT (the chief lane's law, one door over): a builder that fails hands
+ *  back nothing and the read still answers. Never throws — the card can be absent; the answer can
+ *  not. It reads through the USER'S client, the same one `GET /api/collections` re-reads with, so a
+ *  card that paints live is a card that comes back on reload. */
+async function buildCollectionSafe(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  client: any, userId: string, kind: CollectionSpec['kind'],
+  params?: Record<string, string | number | boolean>,
+): Promise<CollectionSpec | null> {
+  try {
+    const { buildCollection } = await import('@/lib/present/build');
+    return await buildCollection(client, userId, kind, params);
+  } catch { return null; }
+}
+
 async function executeChatTool(
   name: string,
   input: Record<string, unknown>,
   sources: string[],
   ctx: RunContext
 ): Promise<{ result: string; summary: string; artifact?: DocumentArtifact; citations?: string[]; clarification?: object; stopStream?: boolean; retryCorrection?: string; emailDraft?: EmailDraft; cardArtifact?: Record<string, unknown>; workflowDraft?: Record<string, unknown>; inviteCard?: PreparedInviteCard;
+  /** THE COLLECTION CARD (Wave 1): the DATA half of this read, typed for the kit. `result` stays
+   *  the model's block — this never replaces it and is never read by a model. */
+  collection?: CollectionSpec;
+  /** THE EVENT CARD (Wave 2): the object half of this read — one meeting, its facts, and the verbs
+   *  CODE computed for its state. `result` stays the model's line; this is never read by a model,
+   *  and nothing on it has fired. */
+  eventCard?: EventSpec;
   /** THE DEED LEDGER (Sep 21): a MUTATING tool reports what it OBSERVED — never parsed back out of
    *  its own prose. The deed floor checks the final reply against these. */
   deed?: DeedRecord }> {
@@ -1559,6 +1638,28 @@ async function executeChatTool(
           ` NOT sent. Reply with one short line, e.g. "${inviteCardLine(card.invite)}"`,
         summary: 'Prepared a calendar invite',
         inviteCard: card,
+      };
+    }
+    case 'prepare_event_action': {
+      if (!ctx.features.meetings) {
+        return { result: 'Calendar and meetings access is not enabled for this workspace.', summary: 'Meetings module disabled' };
+      }
+      // PREPARE ONLY — the card carries the verbs its state allows; the user's click is the deed,
+      // through /api/events/[id]/deed. Nothing here reaches a calendar.
+      const out = await executePrepareEventAction(ctx.supabase, ctx.userId, {
+        which: typeof input.which === 'string' ? input.which : undefined,
+        verb: typeof input.verb === 'string' ? input.verb : undefined,
+        // THE VERB FLOOR reads the user's OWN words — this turn's message, verbatim (the same
+        // channel the bulk-status deed's direction floor uses).
+        userText: ctx.userText ?? '',
+      });
+      const spec = out.present?.spec;
+      return {
+        // ONE VOCABULARY, BOTH COWORKER LANES (W4-C): the AgentOS internal route hands the model
+        // this same sentence, from the same pure composer.
+        result: eventToolResult(out),
+        summary: spec ? 'Pulled up the meeting' : 'Meeting not found',
+        ...(spec ? { eventCard: spec } : {}),
       };
     }
     case 'compose_email': {
@@ -1661,7 +1762,16 @@ async function executeChatTool(
           ? `${ctx.kbContext}\n\n${kbCtx.context}`
           : kbCtx.context;
       }
-      return { result, summary, citations: filenames };
+      // ONE READ, TWO RENDERINGS (Wave 1): the card is built from the groups THIS context was
+      // rendered from — never a second search that could rank differently.
+      let collection: CollectionSpec | undefined;
+      if (kbCtx.groups?.length) {
+        try {
+          const { documentSpec } = await import('@/lib/present/build');
+          collection = documentSpec(kbCtx.groups, query);
+        } catch { /* the card is an enhancement — the answer stands without it */ }
+      }
+      return { result, summary, citations: filenames, ...(collection ? { collection } : {}) };
     }
 
     case 'read_document': {
@@ -1754,9 +1864,17 @@ async function executeChatTool(
       }
       // Default include_upcoming=true for work chat (calendar awareness is the primary use case)
       const meetingConfig: Record<string, unknown> = { include_upcoming: true, ...input };
-      const result = await executeGetMeetingContext(meetingConfig, ctx.userId, ctx.supabase);
+      // ONE READ, TWO RENDERINGS (Wave 1): `readMeetingContext` returns the model's block AND the
+      // typed rows the recordings card is built from.
+      const read = await readMeetingContext(meetingConfig, ctx.userId, ctx.supabase);
+      const result = read.text;
       const summary = result.startsWith('No processed') ? 'No meetings found' : 'Meeting context retrieved';
-      return { result, summary };
+      let collection: CollectionSpec | undefined;
+      try {
+        const { recordingSpec } = await import('@/lib/present/build');
+        collection = recordingSpec(read.meetings, { since: String(meetingConfig.since ?? '30d') });
+      } catch { /* the card is an enhancement — the answer stands without it */ }
+      return { result, summary, ...(collection ? { collection } : {}) };
     }
 
     case 'check_calendar': {
@@ -1768,8 +1886,18 @@ async function executeChatTool(
       }
       // EVERYTHING IN THIS BLOCK IS CODE'S OUTPUT — busy/free lines, weekday labels, clock times and
       // proposed slots. The coworker relays it; it never derives a weekday or invents a slot.
-      const result = await executeCheckCalendar(input, ctx.userId, ctx.supabase);
-      return { result, summary: 'Calendar checked' };
+      // ONE READ, TWO RENDERINGS (Wave 1): `readCalendar` returns that block AND the schedule
+      // window the card's rows are built from — a rendered day and a printed line are one day.
+      const read = await readCalendar(input, ctx.userId, ctx.supabase);
+      if ('refusal' in read) return { result: read.refusal, summary: 'Calendar checked' };
+      let collection: CollectionSpec | undefined;
+      try {
+        const { calendarSpec } = await import('@/lib/present/build');
+        collection = calendarSpec(read.win.days, {
+          hasCalendar: read.win.hasCalendar, from: read.fromDayStr, to: read.toDayStr,
+        });
+      } catch { /* the card is an enhancement — the answer stands without it */ }
+      return { result: read.text, summary: 'Calendar checked', ...(collection ? { collection } : {}) };
     }
 
     case 'deep_research': {
@@ -1841,9 +1969,17 @@ async function executeChatTool(
     // ── Worker task management tools ────────────────────────────────────────────
     case 'list_tasks': {
       if (!ctx.agentId) return { result: 'No worker context available.', summary: 'No worker' };
-      const result = await executeListTasks(ctx.agentId, ctx.userId, ctx.adminClient);
+      // ONE READ, TWO RENDERINGS (Wave 1): the block for the model AND the typed card for the kit,
+      // SCOPED TO THIS COWORKER (the chief lists the whole set; a DM lists what THIS coworker runs)
+      // — the builder reads the same `readTaskRows` the executor does, with the same agentId, so
+      // the card and the block can never describe different sets.
+      const [result, collection] = await Promise.all([
+        executeListTasks(ctx.agentId, ctx.userId, ctx.adminClient),
+        buildCollectionSafe(ctx.supabase, ctx.userId, 'workflows', { agentId: ctx.agentId }),
+      ]);
       const count = parseInt(result.match(/^Tasks \((\d+)\)/)?.[1] ?? '0', 10);
-      return { result, summary: count > 0 ? `Found ${count} task${count !== 1 ? 's' : ''}` : 'No tasks found' };
+      return { result, summary: count > 0 ? `Found ${count} task${count !== 1 ? 's' : ''}` : 'No tasks found',
+        ...(collection ? { collection } : {}) };
     }
 
     case 'create_task': {

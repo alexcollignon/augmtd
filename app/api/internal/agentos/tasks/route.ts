@@ -7,6 +7,10 @@ import {
   executeSupplyRunInput, executeSetTasksStatus,
 } from '@/lib/tools/worker-tasks';
 import { executeListSkills, executeApplySkill } from '@/lib/tools/worker-skills';
+// THE PRESENTATION SIDE-CHANNEL (W4-C, Sep 22 — lib/present/dm-channel.ts): a listing read hands
+// back typed rows as well as its block; the rows never ride the model's context.
+import { pushDmPresent } from '@/lib/present/dm-channel';
+import type { CollectionSpec } from '@/lib/present/collection';
 
 export const maxDuration = 60;
 
@@ -39,6 +43,10 @@ interface TaskRequest {
    *  extraction — the bridge puts it on `dependencies.user_text` and the Python `_call` forwards
    *  it. Absent (an older box, or a run with no human turn) the executor's floors FAIL CLOSED. */
   user_text?: string;
+  /** The DM thread this run belongs to — the presentation side-channel's key (W4-C). */
+  thread_id?: string;
+  /** THE BRIDGE'S PER-RUN TOKEN (W4-C): stamped on anything left in the side-channel. */
+  turn_id?: string;
 }
 
 export async function POST(request: NextRequest) {
@@ -69,15 +77,29 @@ export async function POST(request: NextRequest) {
   // The executors take a "supabase" arg only for reads (tenant_configs,
   // company_members) and AI client resolution — the admin client satisfies both.
   const sb = ac as unknown as Parameters<typeof executeCreateTask>[3];
+  const threadId = typeof body.thread_id === 'string' ? body.thread_id : '';
+  const turnId = typeof body.turn_id === 'string' ? body.turn_id.slice(0, 64) : null;
+  /** THE DATA HALF (W4-C) — never in the response body, never in the model's context. */
+  let present: { collection?: CollectionSpec } | null = null;
 
   try {
     let result: string;
 
     switch (action) {
-      case 'list_tasks':
+      case 'list_tasks': {
         if (!agent_id) return NextResponse.json({ error: 'agent_id required' }, { status: 400 });
+        // ONE READ, TWO RENDERINGS (W4-C — parity with the native DM loop): the block for the
+        // model AND the typed card for the kit, SCOPED TO THIS COWORKER. The builder reads the
+        // same rows the executor does, with the same agentId, so the card and the block can never
+        // describe different sets. The card goes to the side-channel; the model sees only `result`.
         result = await executeListTasks(agent_id, user_id, ac);
+        try {
+          const { buildCollection } = await import('@/lib/present/build');
+          const spec = await buildCollection(ac, user_id, 'workflows', { agentId: agent_id });
+          if (spec) present = { collection: spec };
+        } catch { /* the card is an enhancement — the answer stands without it */ }
         break;
+      }
 
       case 'create_task':
         if (!agent_id) return NextResponse.json({ error: 'agent_id required' }, { status: 400 });
@@ -183,6 +205,11 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
     }
 
+    // THE PRESENTATION SIDE-CHANNEL (W4-C): the typed card goes to the per-thread channel the
+    // bridge drains; the response body carries `result` ONLY.
+    if (present && threadId) {
+      await pushDmPresent(ac, user_id, threadId, { turn: turnId, ...present });
+    }
     return NextResponse.json({ result });
   } catch (err) {
     console.error(`[internal/agentos/tasks] ${action} failed:`, err);

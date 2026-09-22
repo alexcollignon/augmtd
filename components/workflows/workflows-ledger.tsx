@@ -29,13 +29,11 @@ import { runDeliverable, useDeliverableDoor } from '@/components/workflows/deliv
 import { useLiveRefresh } from '@/components/workflows/use-live-refresh';
 import { ExpandableRows } from '@/components/home/expandable-rows';
 import ProcessDrawer, { GateChip, GateFindings } from '@/components/workflows/process-drawer';
-import { describeCron } from '@/lib/workflows/schedule';
+// THE ONE CREATION CARD — this page mounts it, it does not re-draw it (W3-B, Sep 22).
+import { WorkflowDraftCard, buildConfirmBody, type WorkflowDraft } from '@/components/workflows/workflow-draft-card';
 import RunMaterialSheet, { asksForMaterial, type RunMaterial } from '@/components/workflows/run-material-sheet';
 import { WorkflowMark } from '@/components/workflows/workflow-detail';
 import { PROCESS_BUCKETS, GATE_WORDS } from '@/lib/workflows/process-state';
-import { FIRE_LIMIT_DEFAULT } from '@/lib/workflows/fire-limit';
-import { doorLabel } from '@/lib/workflows/trigger-sources';
-import type { ReactionDoor } from '@/lib/workflows/trigger-sources';
 import type { ProcessRow } from '@/lib/workflows/process-state';
 import type { GateVerdict } from '@/lib/workflows/types';
 
@@ -91,53 +89,20 @@ type LedgerPayload = {
   workers: Worker[]; team?: Array<{ id: string; name: string; scheduleLabel: string | null; ownerName: string }>; emailFeature?: boolean;
 };
 
-type DraftStep = { type: string; label?: string; tool?: string; ask?: string };
-type Draft = {
-  name: string; description: string | null;
-  trigger: { type: string; cron?: string; label?: string; timezone?: string; when?: string };
-  steps: DraftStep[]; output_config: Record<string, unknown>;
-  worker_instructions?: string | null; overlap_note?: string | null;
-  // ── THE FOUR-DOOR PARITY LAW (F5, found live): everything the describe door AUTHORS must reach
-  // creation from EVERY confirm door — the doors, the pinned documents, the throttle. This page's
-  // Confirm used to POST a hand-written field list that predated the relay-canvas arc, so a pilot
-  // pasting a power prompt HERE got a workflow with no doors, no pinned material and no pace.
-  // The bodies below now SPREAD the authored draft (the worker-tasks-tab discipline) — a new
-  // authored field reaches creation the day generate-config emits it, with no second allowlist
-  // to drift. ──
-  triggers?: ReactionDoor[];
-  inputs?: { docs: Array<{ kbFileId: string; name: string }>; acceptMaterial: boolean } | null;
-  fire_limit?: number | null;
-  // ── THE NOTE CHANNELS — every gap the authoring code refused is SPOKEN, never silently absent
-  // (the needs_person_note idiom). Five siblings; a surface that renders four is a surface that
-  // drops one class of refusal on the floor. ──
-  needs_door_note?: string | null;
-  needs_input_note?: string | null;
-  needs_step_note?: string | null;
-  needs_person_note?: string | null;
-};
-
-const triggerWord = (t: Draft['trigger']): string =>
-  t.type === 'schedule' ? (t.label ?? (t.cron ? describeCron(t.cron, t.timezone) : 'On a schedule')) :
-  t.type === 'reaction' ? (t.label ?? (t.when ? `When ${t.when}` : 'On event')) :
-  'Runs on demand';
+// ── THE FORK IS GONE (W3-B, Sep 22 — component map §2 item 5). This page used to carry its OWN
+// copy of the draft review card: a narrower step vocabulary (no ⧉ subprocess, no `case` station),
+// no receipt, no idempotence token, and a `...draft` spread at both of its confirm doors. It now
+// mounts THE shared card (`surface="ledger"`), which owns the review, the five note channels and
+// the ONE send-set (`CONFIRM_FIELDS` — gate-proven complete against the create door's read-set, so
+// the four-door parity the spread protected is now proven instead of hoped). This page keeps only
+// what is genuinely its own: the describe composer, the baseline question, and the Studio door. ──
+type Draft = WorkflowDraft;
 
 const LS_KEY = 'aug-wf-ledger-v1';
 /** How fresh a cache has to be before it may claim something is live right now (the stamped law). */
 const ACTIVE_MAX_AGE_MS = 60_000;
 const HOME_WORD: Record<string, string> = { message: 'a message', document: 'a document', slack: 'Slack', email: 'your inbox' };
 
-const stepWord = (s: DraftStep): string => {
-  if (s.type === 'verify') return 'Verify against sources';
-  if (s.type === 'approval') return 'Your approval';
-  // THE INPUT STATION (relay canvas, THE WAVE): the card promises a PAUSE, so it says what will be
-  // asked for — a station whose question the reader can't see is a surprise, not a plan.
-  if (s.type === 'input') {
-    const ask = typeof s.ask === 'string' ? s.ask.trim() : '';
-    const head = ask.length > 40 ? `${ask.slice(0, 40).trimEnd()}…` : ask;
-    return head ? `It asks you for — ${head}` : 'It asks you for something';
-  }
-  return s.label || s.tool || s.type;
-};
 const shortDate = (at: string | null) => (at ? new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
 
 // ── THE TEMPLATE GALLERY (outcome-worded, one click → drafted for review — never live unseen). ──
@@ -302,31 +267,12 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
     return { ...base, estimated_manual_minutes: minutes };
   }, [draft?.output_config, baselineDraft]);
 
-  // ── Review → confirm (the word is the deed: Confirm CREATES, active, adopted). ──
-  const confirmDraft = useCallback(async () => {
-    if (!draft || confirming) return;
-    setConfirming(true);
-    try {
-      const r = await fetch('/api/workflows', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        // THE WHOLE AUTHORED CONFIG RIDES (four-door parity): spread first — triggers, inputs,
-        // fire_limit and anything generate-config adds later — then the fields this door owns.
-        // POST /api/workflows inserts an explicit column allowlist, so the note channels riding
-        // along are inert (they are the card's words, never storage).
-        body: JSON.stringify({
-          ...draft,
-          name: draft.name, description: draft.description, trigger: draft.trigger,
-          steps: draft.steps, output_config: outputConfigWithBaseline(), status: 'active',
-          agent_id: presenterId, worker_instructions: draft.worker_instructions ?? null,
-        }),
-      });
-      const j = await r.json().catch(() => null);
-      if (!r.ok || !j?.workflow) { toast.error(j?.error ?? 'Could not create it.'); return; }
-      toast.success(`"${draft.name}" is live — ${draft.trigger.type === 'schedule' ? (draft.trigger.label ?? 'on its schedule') : draft.trigger.type === 'reaction' ? 'it fires when the condition is met' : 'run it anytime'}.`);
-      setDraft(null); setDescribe(''); setBaselineDraft('');
-      void refresh(true);
-    } catch { toast.error('Could not create it — try again.'); } finally { setConfirming(false); }
-  }, [draft, confirming, presenterId, refresh, outputConfigWithBaseline]);
+  // ── Review → confirm (the word is the deed: Confirm CREATES, active, adopted). The DEED itself
+  // now lives in the shared card — this page only says what happens after it lands. ──
+  const onCreated = useCallback(() => {
+    setDescribe(''); setBaselineDraft('');
+    void refresh(true);
+  }, [refresh]);
 
   // ── THE STUDIO DOORS (owner, Aug 9): "Adjust in Studio" saves the draft AS A DRAFT (nothing
   // live) and opens the builder on it; "build from scratch" creates an empty draft and opens
@@ -337,14 +283,12 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
     try {
       const r = await fetch('/api/workflows', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        // Same parity here — the Studio door must open on the FULL authored config, or "Adjust"
-        // would quietly become "lose the doors you just described".
-        body: JSON.stringify({
-          ...draft,
-          name: draft.name, description: draft.description, trigger: draft.trigger,
-          steps: draft.steps, output_config: outputConfigWithBaseline(), status: 'draft',
-          agent_id: presenterId, worker_instructions: draft.worker_instructions ?? null,
-        }),
+        // THE SAME BODY AS CONFIRM, one status apart — built by the card's own `buildConfirmBody`,
+        // so "Adjust" can never quietly become "lose the doors you just described" (F5), and no
+        // model-invented key rides a spread into a write door (W3-B).
+        body: JSON.stringify(buildConfirmBody(draft, {
+          status: 'draft', agentId: presenterId, outputConfig: outputConfigWithBaseline(),
+        })),
       });
       const j = await r.json().catch(() => null);
       if (!r.ok || !j?.workflow?.id) { toast.error('Could not open it in Studio.'); return; }
@@ -528,98 +472,49 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
             or <button onClick={() => void startFromScratch()} className="text-neutral-500 underline decoration-neutral-300 underline-offset-2 hover:text-indigo-600">build one from scratch in Studio</button>
           </div>
         )}
+        {/* THE ONE CREATION CARD (W3-B, Sep 22) — the same component the Home chief and a coworker
+            conversation render, in its ledger surface. The review, the step vocabulary (⧉ subprocess
+            · case station · input station), the five note channels, the idempotence token and the
+            receipt all live THERE; this page adds only its own two doors and the baseline it asks
+            for at birth. */}
         {draft && (
-          <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-5">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-[15px] font-semibold text-neutral-900">{draft.name}</div>
-                <div className="mt-0.5 text-[12px] text-neutral-500">
-                  {triggerWord(draft.trigger)}
-                  {/* The authored doors / pinned documents / stated pace SAY themselves here, in the
-                      same words the shared creation card uses — a config that rides the Confirm but
-                      never appears on the review is a config the user confirmed unseen. */}
-                  {(draft.triggers?.length ?? 0) > 0 && (
-                    <> · runs when {draft.triggers!.map(doorLabel).join(' · when ')}</>
-                  )}
-                  {(draft.inputs?.docs.length ?? 0) > 0 && (
-                    <> · reads {draft.inputs!.docs.map((d) => d.name).join(' · ')}</>
-                  )}
-                  {draft.inputs?.acceptMaterial && <> · takes material at run time</>}
-                  {typeof draft.fire_limit === 'number' && draft.fire_limit !== FIRE_LIMIT_DEFAULT && (
-                    <> · up to {draft.fire_limit} event runs a day</>
-                  )}
-                  {' · delivers to '}{HOME_WORD[String((draft.output_config as { destination?: string }).destination ?? 'message')] ?? 'a message'}
-                </div>
+          <WorkflowDraftCard
+            draft={draft}
+            surface="ledger"
+            agentId={presenterId}
+            outputConfig={outputConfigWithBaseline()}
+            onCreated={onCreated}
+            onDiscard={() => { setDraft(null); setBaselineDraft(''); }}
+            extraFields={
+              /* THE BASELINE, ASKED AT BIRTH — optional, and the only honest source of time saved. */
+              <div className="mt-3 flex items-center gap-2 flex-wrap">
+                <label htmlFor="wf-baseline" className="text-[12px] text-neutral-500">
+                  How long does this take you manually?
+                </label>
+                <input
+                  id="wf-baseline"
+                  type="number"
+                  min={1}
+                  inputMode="numeric"
+                  value={baselineDraft}
+                  onChange={(e) => setBaselineDraft(e.target.value)}
+                  placeholder="minutes"
+                  className="w-24 rounded-lg border border-neutral-200 bg-white px-2.5 py-1 text-[12.5px] focus:outline-none focus:border-indigo-300"
+                />
+                <span className="text-[11.5px] text-neutral-400">optional — it powers the Metrics tab</span>
               </div>
-              <button onClick={() => { setDraft(null); setBaselineDraft(''); }} className="text-[12px] text-neutral-400 hover:text-neutral-600">Discard</button>
-            </div>
-            <ol className="mt-3 space-y-1">
-              {draft.steps.map((s, i) => (
-                <li key={i} className="flex items-center gap-2 text-[13px] text-neutral-700">
-                  <span className="w-4 text-right text-[11px] text-neutral-400">{i + 1}</span>
-                  {s.type === 'verify' && <ShieldCheckIcon className="w-3.5 h-3.5 text-emerald-600" />}
-                  {s.type === 'approval' && <CheckIcon className="w-3.5 h-3.5 text-amber-600" />}
-                  <span>{stepWord(s)}</span>
-                </li>
-              ))}
-            </ol>
-            {draft.overlap_note && (
-              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-                {draft.overlap_note}
-              </div>
-            )}
-            {/* THE FIVE NOTE CHANNELS — a door the sanitiser refused, a document the resolver could
-                not find, a subprocess station it refused, a person it could not resolve. Each is its
-                own sentence in the same amber block: a gap is STATED, never silently shipped. */}
-            {draft.needs_door_note && (
-              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-                {draft.needs_door_note}
-              </div>
-            )}
-            {draft.needs_input_note && (
-              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-                {draft.needs_input_note}
-              </div>
-            )}
-            {draft.needs_step_note && (
-              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-                {draft.needs_step_note}
-              </div>
-            )}
-            {draft.needs_person_note && (
-              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-                {draft.needs_person_note}
-              </div>
-            )}
-            {/* THE BASELINE, ASKED AT BIRTH — optional, and the only honest source of time saved. */}
-            <div className="mt-3 flex items-center gap-2 flex-wrap">
-              <label htmlFor="wf-baseline" className="text-[12px] text-neutral-500">
-                How long does this take you manually?
-              </label>
-              <input
-                id="wf-baseline"
-                type="number"
-                min={1}
-                inputMode="numeric"
-                value={baselineDraft}
-                onChange={(e) => setBaselineDraft(e.target.value)}
-                placeholder="minutes"
-                className="w-24 rounded-lg border border-neutral-200 bg-white px-2.5 py-1 text-[12.5px] focus:outline-none focus:border-indigo-300"
-              />
-              <span className="text-[11.5px] text-neutral-400">optional — it powers the Metrics tab</span>
-            </div>
-            <div className="mt-4 flex items-center gap-3">
-              <Button size="sm" onClick={() => void confirmDraft()} disabled={confirming}>
-                {confirming ? 'Creating…' : 'Confirm — it goes live'}
-              </Button>
-              <button onClick={() => void adjustInStudio()} className="text-[12px] text-neutral-500 hover:text-neutral-700" disabled={confirming}>
-                Adjust in Studio
-              </button>
-              <button onClick={() => { setDraft(null); void draftIt(); }} className="text-[12px] text-neutral-500 hover:text-neutral-700" disabled={drafting}>
-                Redraft
-              </button>
-            </div>
-          </div>
+            }
+            extraActions={
+              <>
+                <button onClick={() => void adjustInStudio()} className="text-[12px] text-neutral-500 hover:text-neutral-700" disabled={confirming}>
+                  Adjust in Studio
+                </button>
+                <button onClick={() => { setDraft(null); void draftIt(); }} className="text-[12px] text-neutral-500 hover:text-neutral-700" disabled={drafting}>
+                  Redraft
+                </button>
+              </>
+            }
+          />
         )}
       </div>
 

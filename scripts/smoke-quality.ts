@@ -407,12 +407,22 @@ function sq7() {
 
   // THE STRUCTURAL HALF: approving sight-unseen is never the recommended path.
   ok('with no object, NOTHING may be recommended', !mayRecommend(null) && mayRecommend(resolveDecisionObject([deliverable])));
-  const card = src('components/work/decision-card.tsx');
-  ok('the ONE card renders the object as its head', /object\.title/.test(card) && /object\.preview/.test(card));
-  ok('   …says so honestly when there is none', /NO_DECISION_OBJECT_LINE/.test(card));
+  // RE-POINTED (W3-C, Sep 22 — docs/component-map.md §2 item 7): the hand-drawn
+  // components/work/decision-card.tsx became a KIT KIND behind ONE host. The three laws below are
+  // unchanged; they are simply asserted at the seam that now owns each — the HOST resolves the
+  // object and the recommendation rule, the KIT renders the head and the honest line.
+  const card = src('components/home/decision-card.tsx');
+  const kitCard = src('components/thread/thread-cards.tsx');
+  ok('the ONE card renders the object as its head',
+    /spec\.object\.title/.test(card) && /spec\.object\.preview/.test(card)
+    && /\{card\.objectNode/.test(kitCard));
+  ok('   …says so honestly when there is none',
+    /NO_DECISION_OBJECT_LINE/.test(card) && /card\.quietLine/.test(kitCard));
   ok('   …and marks no option primary without it',
-    /const recommends = mayRecommend\(object\)/.test(card)
-    && /recommends && i === 0/.test(card) && /recommends && !!recommendation\?\.label/.test(card));
+    /const recommends = mayRecommend\(spec\.object\);/.test(card)
+    && /const rec = recommends && isRec\(o\.label, spec\.recommendation\);/.test(card)
+    // the kit marks ONLY what the host handed it — it holds no recommendation rule of its own
+    && !/mayRecommend\(/.test(kitCard));
 
   // BOTH MOUNTS: the deep-dive's own rail and the room's rail (the reported payload).
   const detail = src('components/home/item-detail.tsx');
@@ -423,7 +433,7 @@ function sq7() {
   ok('   …it travels on the reported decision, so the room\'s rail mounts ask + object together',
     /object: DecisionObject \| null/.test(detail) && /\.\.\.focusDecision/.test(room));
   ok('   …and the rail hands it to the one card',
-    /object=\{decision\.object \?\? null\}/.test(rail));
+    /spec=\{decision\}/.test(rail) && /<DecisionCard/.test(rail));
   ok('the object\'s deed is REVIEW, through a door that already exists (no second renderer)',
     /onOpenObject: \(\) => openDrawerAt\('prepared'\)/.test(detail));
 }

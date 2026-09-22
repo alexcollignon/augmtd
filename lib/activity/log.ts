@@ -17,6 +17,8 @@ export type ActivityType =
   | 'invite_sent'
   | 'delegated_to_coworker'
   | 'file_attached'
+  /** W4-B, Sep 22 — THE TYPE-IT DOOR: a missing thing answered by typing the fact, not a file. */
+  | 'input_supplied'
   | 'initiative_muted'
   | 'initiative_tracked'
   | 'project_status'

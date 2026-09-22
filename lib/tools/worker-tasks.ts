@@ -46,7 +46,9 @@ const FILTER_ARG = {
 
 export const listTasksDefinition = {
   name: 'list_tasks',
-  description: "List this worker's scheduled tasks. Call when the user asks what's automated, what tasks are running, what's scheduled, or wants to manage existing automations.",
+  // THE PRESENTATION LAW (Sep 22): the "refer to tasks by NAME" instruction lives HERE, in the
+  // description the model reads, and no longer inside the result string a surface could display.
+  description: "List this worker's scheduled tasks. Call when the user asks what's automated, what tasks are running, what's scheduled, or wants to manage existing automations. The result is DATA for you, not text to show: refer to tasks by NAME when speaking to the user, and use the ids only when another tool asks for one.",
   input_schema: {
     type: 'object',
     properties: {} as Record<string, unknown>,
@@ -483,12 +485,12 @@ export async function executeSupplyRunInput(
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatSchedule(trigger: { type: string; cron?: string; label?: string }): string {
+export function formatSchedule(trigger: { type: string; cron?: string; label?: string }): string {
   if (trigger.type === 'manual') return 'manual trigger only';
   return trigger.label ?? trigger.cron ?? 'scheduled';
 }
 
-function formatLastRun(iso: string | null): string {
+export function formatLastRun(iso: string | null): string {
   if (!iso) return 'never run';
   const diff = Date.now() - new Date(iso).getTime();
   const h = Math.floor(diff / 3_600_000);
@@ -530,6 +532,41 @@ async function readDoors(
 
 // ─── Executors ────────────────────────────────────────────────────────────────
 
+/** ONE READ, TWO RENDERINGS (Wave 1, Sep 22 — the collection card). The task listing has two
+ *  consumers now: the model (the block below) and the kit's collection card (typed rows). They read
+ *  THE SAME query through this function, so the card can never describe a set the model was not
+ *  shown — the drift this extraction exists to make impossible. */
+export type TaskListRow = {
+  id: string;
+  name: string;
+  status: string;
+  trigger: { type: string; cron?: string; label?: string };
+  last_run_at: string | null;
+  agent_id: string | null;
+  /** The coworker who owns it, resolved — null on the coworker door (it is always the asker's own). */
+  ownerName: string | null;
+};
+
+export async function readTaskRows(
+  agentId: string | null,
+  userId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+): Promise<TaskListRow[]> {
+  let q = adminClient
+    .from('workflows')
+    .select('id, name, status, trigger, last_run_at, agent_id')
+    .eq('user_id', userId);
+  if (agentId) q = q.eq('agent_id', agentId);
+  const { data, error } = await q.order('created_at', { ascending: true });
+  if (error || !data) return [];
+  const rows = data as Array<Omit<TaskListRow, 'ownerName'>>;
+  // THE OWNER RIDES THE ROW on the chief's door — "pause the weekly briefing" is answerable only if
+  // the answer can say whose it is.
+  const owners = agentId ? {} : await agentNames(rows.map((r) => r.agent_id), adminClient);
+  return rows.map((r) => ({ ...r, ownerName: (!agentId && r.agent_id && owners[r.agent_id]) || null }));
+}
+
 /** THE CHIEF'S SEAT (Sep 21, CLASS 2): `agentId` is now OPTIONAL. A coworker asks for its own
  *  tasks; the chief of staff asks for the user's WHOLE set and needs each row to name the coworker
  *  who owns it — same executor, same user scope, one filter's difference. */
@@ -539,39 +576,26 @@ export async function executeListTasks(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   adminClient: any,
 ): Promise<string> {
-  let q = adminClient
-    .from('workflows')
-    .select('id, name, status, trigger, last_run_at, agent_id')
-    .eq('user_id', userId);
-  if (agentId) q = q.eq('agent_id', agentId);
-  const { data, error } = await q.order('created_at', { ascending: true });
+  const rows = await readTaskRows(agentId, userId, adminClient);
 
-  if (error || !data || data.length === 0) {
+  if (rows.length === 0) {
     return agentId
       ? 'No tasks found for this worker. Use create_task to set one up.'
       : 'No tasks set up yet. Ask one of your coworkers to build one.';
   }
 
-  const rows = data as Array<{
-    id: string;
-    name: string;
-    status: string;
-    trigger: { type: string; cron?: string; label?: string };
-    last_run_at: string | null;
-    agent_id: string | null;
-  }>;
-
-  // THE OWNER RIDES THE ROW on the chief's door — "pause the weekly briefing" is answerable only if
-  // the answer can say whose it is.
-  const owners = agentId ? {} : await agentNames(rows.map((r) => r.agent_id), adminClient);
-
   const lines = rows.map(t => {
     const dot = t.status === 'active' ? '●' : '○';
-    const owner = !agentId && t.agent_id && owners[t.agent_id] ? ` — ${owners[t.agent_id]}` : '';
+    const owner = t.ownerName ? ` — ${t.ownerName}` : '';
     return `${dot} [${t.id}] ${t.name}${owner} — ${formatSchedule(t.trigger)} — ${formatLastRun(t.last_run_at)} [${t.status}]`;
   });
 
-  return `Tasks (${rows.length}):\n${lines.join('\n')}\n\nRefer to tasks by NAME when speaking to the user; use the ids only when a tool asks for one.`;
+  // THE PRESENTATION LAW (Sep 22): this listing is DATA — it carries ids because the id-taking
+  // tools need them, and it is never served to a person (the chief dispatcher returns it as
+  // `modelText`; see lib/converse/index.ts). The instruction that used to close it ("Refer to tasks
+  // by NAME when speaking to the user…") shipped in an owner's chat bubble verbatim: an instruction
+  // to the model belongs in the TOOL DESCRIPTION, never in a string a surface might display.
+  return `Tasks (${rows.length}):\n${lines.join('\n')}`;
 }
 
 /** agent_id → coworker name, for the chief's listing. Best-effort: a missing name just omits it. */
@@ -1074,7 +1098,9 @@ export async function executeUpdateTask(
       .eq('id', taskId)
       .eq('user_id', userId);
 
-    if (error) return `Failed to update "${row.name}": ${error.message}`;
+    // ERRORS ARE NEVER RAW (Sep 22): a transport/Postgres message is written for an engineer's
+    // console, not for the person — the detail goes to console.error, the sentence stays ours.
+    if (error) { console.error('[worker-tasks] update_task failed', error); return `Failed to update "${row.name}" — nothing was changed. Try again in a moment.`; }
 
     const { data: after } = await adminClient
       .from('workflows')
@@ -1129,7 +1155,7 @@ export async function resolveTaskIdByName(
   let q = adminClient.from('workflows').select('id, name').eq('user_id', userId);
   if (agentId) q = q.eq('agent_id', agentId);
   const { data, error } = await q.order('created_at', { ascending: true });
-  if (error) return { error: `I couldn't read your tasks: ${error.message}` };
+  if (error) { console.error('[worker-tasks] resolveTaskIdByName read failed', error); return { error: "I couldn't read your tasks just now — try again in a moment." }; }
   const rows = ((data ?? []) as Array<{ id: string; name: string | null }>)
     .filter((r) => !!r.id && !!r.name)
     .map((r) => ({ id: r.id, name: (r.name as string).trim() }));
@@ -1279,7 +1305,8 @@ export async function executeSetTasksStatus(
   if (agentId) q = q.eq('agent_id', agentId);
   const { data, error } = await q.order('created_at', { ascending: true });
   if (error) {
-    return { text: `I couldn't read your tasks: ${error.message}. Nothing was changed.`, changed: 0, alreadyThere: 0, failed: 0, refused: true };
+    console.error('[worker-tasks] set_tasks_status read failed', error);
+    return { text: "I couldn't read your tasks just now, so nothing was changed. Try again in a moment.", changed: 0, alreadyThere: 0, failed: 0, refused: true };
   }
 
   type Row = { id: string; name: string; status: string; trigger: { type?: string; cron?: string; timezone?: string } | null; next_run_at: string | null };
@@ -1348,7 +1375,7 @@ export async function executeSetTasksStatus(
     }
     const { error: upErr } = await adminClient
       .from('workflows').update(update).eq('id', row.id).eq('user_id', userId);
-    if (upErr) { failed.push(`${row.name} (${upErr.message})`); continue; }
+    if (upErr) { console.error('[worker-tasks] status write failed', row.id, upErr); failed.push(`${row.name} (the write did not go through)`); continue; }
     // VERIFY AFTER WRITE — the ledger counts rows READ BACK at the new status, never rows we asked to move.
     const { data: after } = await adminClient
       .from('workflows').select('status').eq('id', row.id).eq('user_id', userId).maybeSingle();
@@ -1418,7 +1445,8 @@ export async function executeRunTask(
     .single();
 
   if (runErr || !run) {
-    return `Failed to start "${row.name}": ${runErr?.message ?? 'unknown error'}`;
+    console.error('[worker-tasks] run_task insert failed', runErr);
+    return `I couldn't start "${row.name}" just now — nothing is running. Try again in a moment.`;
   }
 
   const runId = (run as { id: string }).id;
@@ -1613,7 +1641,7 @@ export async function executeDuplicateTask(
     .select('id, name')
     .single();
 
-  if (error || !copy) return `Failed to duplicate "${row.name}": ${error?.message ?? 'unknown error'}`;
+  if (error || !copy) { console.error('[worker-tasks] duplicate_task failed', error); return `Failed to duplicate "${row.name}" — nothing was created. Try again in a moment.`; }
 
   const c = copy as { id: string; name: string };
   return `Duplicated as **"${c.name}"** (ID: ${c.id}) — paused. Tell me what to change and I'll update it right away.`;
@@ -1654,7 +1682,7 @@ export async function executeShareTask(
       .eq('id', taskId)
       .eq('user_id', userId);
 
-    if (error) return `Failed to share "${name}": ${error.message}`;
+    if (error) { console.error('[worker-tasks] share_task failed', error); return `I couldn't share "${name}" just now — it is still private.`; }
     return `"${name}" is now shared with your team. They can find it in their Tasks tab under "From the team" and copy it to their workers.`;
   } else {
     const { error } = await adminClient
@@ -1663,7 +1691,7 @@ export async function executeShareTask(
       .eq('id', taskId)
       .eq('user_id', userId);
 
-    if (error) return `Failed to unshare "${name}": ${error.message}`;
+    if (error) { console.error('[worker-tasks] unshare_task failed', error); return `I couldn't make "${name}" private just now — it is still shared.`; }
     return `"${name}" is now private. It will no longer appear for teammates.`;
   }
 }
@@ -1728,7 +1756,8 @@ export async function executeUseTask(
   try {
     clonedId = await forkTaskForWorker(adminClient, sourceTaskId, userId, agentId);
   } catch (err) {
-    return `Could not use task: ${(err as Error).message}`;
+    console.error('[worker-tasks] use_task fork failed', err);
+    return 'I could not copy that team task across just now — nothing was added.';
   }
 
   const { data: copy } = await adminClient
@@ -1762,7 +1791,7 @@ export async function executeDeleteTask(
     .eq('id', taskId)
     .eq('user_id', userId);
 
-  if (error) return `Failed to delete task: ${error.message}`;
+  if (error) { console.error('[worker-tasks] delete_task failed', error); return 'I could not delete that task just now — it is still there.'; }
 
   // VERIFY AFTER WRITE (Sep 21) — the same discipline as update: a delete that matched nothing is
   // not an error, so the claim is grounded in a re-read, never in the absence of one.

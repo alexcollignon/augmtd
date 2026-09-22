@@ -64,6 +64,36 @@ const CLIP_WITHOUT_RULE: Record<string, string> = {
   'app/api/drive/upload/confirm/route.ts':
     'A HAND-OFF SEAM, not an assembler: it clips into ReactionEvent.gist/material and assembles no '
     + 'prompt — triggerBlock (lib/workflows/reactions.ts) declares the cut where the prompt is built.',
+
+  // ── HAND-OFF SEAMS (the clipped text is assembled into a prompt that declares the rule) ────────
+  'lib/inbox/refresh-understanding.ts':
+    'A HAND-OFF SEAM, not an assembler: it clips the message\'s OWN words (topMessageOf) into the '
+    + '`body` field of computeUnderstanding — lib/ai/email-processor.ts builds that prompt and carries '
+    + 'EXCERPT_RULE above the Body line, where the body\'s own tail cannot strip it.',
+  'lib/inbox/thread-now.ts':
+    'A HAND-OFF SEAM, not an assembler: THE WATERMARK READ clips only ThreadNow.gist, which two '
+    + 'assemblers consume and both declare — lib/entities/state.ts (the entity ledger\'s NOW clause) '
+    + 'and lib/room/ground-evidence.ts, whose GROUND_EVIDENCE_RULE carries EXCERPT_RULE to every '
+    + 'reasoner that reads the page (ONE constant, N importers — never N hand-copies).',
+
+  // ── USER-FACING EXCERPT PANES (the reader is a PERSON; the marker is the honesty, not a leak) ──
+  // A LABEL gets clipLabel (no marker — chrome in a title reads as a defect). A quoted EXCERPT a
+  // human reads is the other half of the same law: the marker TELLS THEM there is more, and there
+  // is no prompt here to carry a rule into. Both sites below are asserted by smoke-quality, which
+  // requires the marker — so the rule these files owe is owed to a reader, and it is paid in words.
+  'lib/home/attention.ts':
+    'NO PROMPT IS ASSEMBLED HERE: the clip is HeldBandRow.excerpt, served to the triage card and '
+    + 'rendered to a person (components/triage/triage-deck.tsx). smoke-quality gates the marker on '
+    + 'this exact call — the excerpt-honesty law here is owed to a human reader, not a model.',
+  'lib/triage/words.ts':
+    'NO PROMPT IS ASSEMBLED HERE: `threadTail` builds the card\'s own message tail, rendered to a '
+    + 'person in the triage deck. smoke-quality gates the marker on each tail body — the card must '
+    + 'not lie about its own length any more than a prompt may.',
+  'app/api/commitments/[id]/route.ts':
+    'NO PROMPT IS ASSEMBLED HERE: `arrivedText` clips already-arrived step outputs into the INPUT '
+    + 'STATION card\'s served context, which a person reads and scrolls (components/home/item-detail'
+    + '.tsx). The route\'s own header states the law; the marker is what tells the reader the pane '
+    + 'holds only the first 480 chars of the run\'s bytes.',
 };
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -148,6 +178,87 @@ console.log('\nTHE FIRE CONTEXT — LIVE ASSEMBLY (the production function itsel
     mail.includes('Please find my CV attached') && mail.includes('[Attached: cv-sam-rivera.pdf]'), '');
   ok('…and a context with nothing clipped stays silent about clipping (no rule where there is no cut)',
     !mail.includes(EXCERPT_RULE) && !mail.includes(EXCERPT_MARK), '');
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE LAW'S FOURTH MANIFESTATION (Sep 21 — found by the T2 replay, mis-read as live-AI variance for
+// days). Nobody broke the excerpt law either: the two seams that produced the lie are seams the law
+// never covered, because neither is a prompt excerpt.
+//   (a) A LABEL IS NOT AN EXCERPT — `itemLabel: task.slice(0, 80)` cut a classifier task mid-word
+//       ("…'Last Week's Highlights' s"), the report-back's FACTS block quoted it as `Task: "…"`, and
+//       the coworker reported to the user that the work "stops at 'Last Week's Highlights' s".
+//   (b) THE TRUNCATION FLOOR IS A GUESS — `evaluateDeliverable`'s mechanical test read "no terminal
+//       punctuation" as "cut off", so a bullet list (the format the user asked for IN WORDS) was
+//       condemned, retried, condemned again, and handed back as "regenerate it, it's truncated".
+// Both floors are pure and testable, so they are tested here, on live values.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+console.log('\nTHE LABEL SEAM (a title is clipped for display — at a boundary, and without a marker):');
+{
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const { clipLabel, EXCERPT_MARK } = require('../lib/utils/clip-for-prompt') as {
+    clipLabel: (t: string, m: number) => string; EXCERPT_MARK: string;
+  };
+  const task = "Reformat the weekly meeting brief into bullet points: 'Last Week's Highlights' section and 'This Week's Strategic Priorities' section";
+  const label = clipLabel(task, 80);
+  ok('the incident\'s own value no longer ends mid-word', !/\bs$/.test(label.replace(/…$/, '')) && label.endsWith('…'), label);
+  ok('a label never carries the prompt marker (chrome inside a title reads as a defect)',
+    !label.includes(EXCERPT_MARK), label);
+  ok('a short label passes through untouched', clipLabel('Weekly brief', 80) === 'Weekly brief', '');
+  ok('the delegation door clips its label (no raw slice on the task)',
+    conv.includes('clipLabel(task, 80)') && !conv.includes('itemLabel: task.slice(0, 80)'), '');
+  ok('the delegation module clips its run labels too',
+    !/workflowName: `Delegation[^`]*`\.slice\(/.test(dele), '');
+}
+
+console.log('\nTHE TRUNCATION FLOOR (a structured ending is a boundary — a heuristic may not destroy finished work):');
+{
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const { looksMechanicallyTruncated } = require('../lib/prepare/evaluate') as {
+    looksMechanicallyTruncated: (c: string) => boolean;
+  };
+  const filler = 'Detail line about the item that was agreed and who owes it next. '.repeat(8);
+  const bulleted = `## Last Week's Highlights\n\n- **Engagement letter signed** (Aug 7)\n- ${filler}\n\n## This Week's Strategic Priorities\n\n- **Kick-off call** — availability confirmation needed\n- **Amended assessment questions** — 4 days overdue, send immediately`;
+  ok('THE INCIDENT: a complete bullet list is NOT truncated (it ends like a list, not a paragraph)',
+    looksMechanicallyTruncated(bulleted) === false, '');
+  ok('…and a complete table row is not either',
+    looksMechanicallyTruncated(`${filler}\n\n| Item | Owner |\n| --- | --- |\n| Proposal | the analyst`.concat(' team')) === false, '');
+  ok('A REAL PROSE CUT STILL FIRES (the original class is not weakened)',
+    looksMechanicallyTruncated(`${filler}Gap: Cloud-native da`) === true, '');
+  ok('…and a cut INSIDE a list item fires (unclosed emphasis)',
+    looksMechanicallyTruncated(`${bulleted.slice(0, bulleted.length - 30)}\n- **Amended assessment que`) === true, '');
+  ok('…and a list item cut at a connector fires',
+    looksMechanicallyTruncated(`${bulleted}\n- Four items due for the programme,`) === true, '');
+  ok('a short artifact is never judged by this floor', looksMechanicallyTruncated('- one bullet') === false, '');
+  const ev = readFileSync('lib/prepare/evaluate.ts', 'utf8');
+  ok('THE RECEIPT OUTRANKS THE GUESS — a producer-confirmed complete output skips the heuristic',
+    /sourceComplete/.test(ev) && ev.includes("args.sourceComplete !== true && looksMechanicallyTruncated"), '');
+  const ex = readFileSync('lib/workflows/execute-step.ts', 'utf8');
+  ok('…and the producer actually reads its own finish_reason (and retries a budget cut once)',
+    /finish_reason === 'length'/.test(ex) && /executeAgentStepDetailed/.test(ex), '');
+}
+
+console.log('\nTHE HAND-BACK LAW (our own repair is never a chore for the principal):');
+{
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const { stripRegenerationAsk, readerFacingProblem } = require('../lib/workflows/report-back') as {
+    stripRegenerationAsk: (t: string) => string; readerFacingProblem: (o: string) => string;
+  };
+  const said = 'Hey — I reformatted the weekly brief, but it got cut off at the end. Could you regenerate it so it\'s complete? I left what I have in the thread.';
+  ok('THE INCIDENT: the regeneration ask is removed from the hand-back',
+    !/regenerate/i.test(stripRegenerationAsk(said)) && stripRegenerationAsk(said).includes('I left what I have'), stripRegenerationAsk(said));
+  ok('…and a hand-back that is ONLY an ask degrades to an honest line, never an empty one',
+    stripRegenerationAsk('Could you please regenerate it?').length >= 20, '');
+  ok('a clean report passes through untouched',
+    stripRegenerationAsk('Done — the brief is reformatted into bullets.') === 'Done — the brief is reformatted into bullets.', '');
+  ok('a reviewer objection is stripped of its system-facing instruction before the reader sees it',
+    !/regenerate/i.test(readerFacingProblem('The deliverable appears CUT OFF mid-sentence at the end — regenerate it complete; never hand over a truncated document.')), '');
+  const rb = readFileSync('lib/workflows/report-back.ts', 'utf8');
+  ok('the composed report is swept deterministically (a prompt rule alone coin-flips)',
+    /return stripRegenerationAsk\(linkifyReport\(/.test(rb), '');
+  ok('…and the prompt states the law beside it',
+    rb.includes('NEVER ask them to regenerate'), '');
+  ok('the report FACTS clip the gist honestly and declare the cut',
+    rb.includes('clipForPrompt(f.deliverableGist, 500)') && rb.includes('EXCERPT_RULE'), '');
 }
 
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed`);

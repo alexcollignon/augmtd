@@ -49,12 +49,16 @@ def _call(action: str, run_context: RunContext, **args) -> str:
     # decided in code — which direction a status change goes, whether "all" was really meant — read
     # the person's sentence, never only the model's extraction. The bridge puts it on dependencies;
     # a run without one simply sends nothing and the TS floors fail closed.
+    # `thread_id` + `turn_id` (W4-C, Sep 22) are the presentation side-channel's key and stamp:
+    # a listing read's typed rows go to that channel, never through this return string.
     payload = {
         "action": action,
         "user_id": user_id,
         "agent_id": agent_id,
         "args": args,
         "user_text": deps.get("user_text") or "",
+        "thread_id": deps.get("thread_id") or "",
+        "turn_id": deps.get("turn_id") or "",
     }
     try:
         resp = httpx.post(
@@ -73,7 +77,11 @@ def _call(action: str, run_context: RunContext, **args) -> str:
 @tool
 def list_tasks(run_context: RunContext) -> str:
     """List this worker's scheduled tasks. Call when the user asks what's automated,
-    scheduled, or running, or wants to manage existing automations."""
+    scheduled, or running, or wants to manage existing automations.
+
+    THE PRESENTATION LAW (Sep 22): the result is DATA for you, not text to show. Refer to
+    tasks by NAME when speaking to the user; use the ids only when another tool asks for one.
+    """
     return _call("list_tasks", run_context)
 
 

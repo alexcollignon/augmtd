@@ -53,7 +53,21 @@
 //
 // Run: npx tsx --env-file=.env.local scripts/smoke-relay.ts
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync, statSync } from 'fs';
+
+// ── THE ONE SEND-SET, asserted per field (W3-B, Sep 22). The creation card's Confirm body used to
+// be a chain of conditional spreads, one per authored carrier; it is now ONE exported allowlist
+// (`CONFIRM_FIELDS`) that `pickDraft` narrows the draft to. A field "reaches creation" when it is
+// on that list AND the card's Confirm posts the builder's output — checked together, so neither
+// half can go missing quietly. The list's COMPLETENESS against the create door's read-set is its
+// own gate in section D (door 5). ──
+const sendsConfirmField = (field: string): boolean => {
+  const card = readFileSync('components/workflows/workflow-draft-card.tsx', 'utf8');
+  const list = card.match(/export const CONFIRM_FIELDS = \[([\s\S]*?)\] as const/)?.[1] ?? '';
+  return new RegExp(`'${field}'`).test(list)
+    && /body: JSON\.stringify\(confirmBody\('active'\)\)/.test(card)
+    && /export function pickDraft\(/.test(card);
+};
 import { randomUUID } from 'crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { resolveProbeUser } from './probe-user';
@@ -815,8 +829,12 @@ async function main() {
   ok('DOOR 4 (serving): the workflow GET and the ledger both serve doorsForServing',
     /doorsForServing\(\{ trigger: data\.trigger, triggers: data\.triggers \}\)/.test(wfPatch)
     && stripComments(readFileSync('app/api/workflows/ledger/route.ts', 'utf8')).includes('doorsForServing('));
+  // RE-POINTED (W3-B, Sep 22): the Confirm body was a chain of conditional spreads; it is now ONE
+  // allowlist (`CONFIRM_FIELDS`) that a superset gate proves complete against the create door's own
+  // read-set. The law is unchanged — a said door must survive creation — so the assertion moves to
+  // the list that carries it, and gains the proof that the list can never fall behind the door.
   ok('THE CREATION CARD carries `triggers` into the Confirm body (a said door survives creation)',
-    /\.\.\.\(draft\.triggers\?\.length \? \{ triggers: draft\.triggers \} : \{\}\)/.test(draftCard));
+    sendsConfirmField('triggers'));
   ok('…and it SPEAKS a refused door (the needs-note law, not a silent absence)',
     /draft\.needs_door_note && \(/.test(draftCard) && /\{draft\.needs_door_note\}/.test(draftCard));
   ok('…and it renders the doors beside the trigger (the card says how the work starts)',
@@ -826,9 +844,16 @@ async function main() {
     // The four-door law was whole everywhere EXCEPT the door a pilot actually uses: this page's
     // Confirm POSTed a hand-written field list that predated the relay-canvas arc, so a described
     // door / pinned document / stated pace died silently at creation, and four of the five note
-    // channels were never rendered. The floor is STRUCTURAL — the body must SPREAD the authored
-    // draft (no second allowlist to drift), and every note channel must reach a render site.
-    // Windows are brace-matched from the callback's own declaration, never char offsets. ──
+    // channels were never rendered. The fix then was a `...draft` SPREAD at both of its doors.
+    //
+    // RE-POINTED (W3-B, Sep 22 — component map §2 item 5). The page's card was a FORK of the one
+    // creation card: narrower step vocabulary (no ⧉ subprocess, no `case` station), no receipt, no
+    // idempotence token, and a spread that forwards model-invented keys to a write door. The law is
+    // unchanged and now STRONGER — everything the describe door authors must reach creation from
+    // every confirm door — but it is kept by ONE card whose ONE send-set (`CONFIRM_FIELDS`) is
+    // gate-proven a SUPERSET of the create door's own read-set, rather than by a spread that could
+    // only be hoped complete. The gates below assert the fork is gone, the send-set is complete,
+    // and no spread reaches the write door from anywhere in components/. ──
     const ledgerP = stripComments(readFileSync('components/workflows/workflows-ledger.tsx', 'utf8'));
     const cbBody = (name: string) => {
       const at = ledgerP.indexOf(`const ${name} = useCallback(`);
@@ -840,33 +865,86 @@ async function main() {
       }
       return '';
     };
-    const confirmBody = cbBody('confirmDraft');
     const adjustBody = cbBody('adjustInStudio');
-    ok('DOOR 5 (the Workflows page): confirmDraft POSTs to the ONE create door',
-      confirmBody.includes("fetch('/api/workflows'") && /status: 'active'/.test(confirmBody),
-      'confirmDraft body not found');
-    ok('…and it SPREADS the authored draft (no second allowlist — a new authored field rides free)',
-      /body: JSON\.stringify\(\{\s*\.\.\.draft,/.test(confirmBody),
-      'the confirm body enumerates fields — triggers/inputs/fire_limit die at creation');
-    ok('…Adjust in Studio carries the SAME whole config (Adjust never means "lose the doors")',
-      /body: JSON\.stringify\(\{\s*\.\.\.draft,/.test(adjustBody) && /status: 'draft'/.test(adjustBody),
-      'adjustInStudio drops the authored config');
-    ok('…and the page\'s Draft type DECLARES the arc\'s three carriers (they are typed, not accidental)',
-      /triggers\?: ReactionDoor\[\];/.test(ledgerP)
-      && /inputs\?: \{ docs: Array<\{ kbFileId: string; name: string \}>; acceptMaterial: boolean \} \| null;/.test(ledgerP)
-      && /fire_limit\?: number \| null;/.test(ledgerP));
+    ok('DOOR 5 (the Workflows page): its Confirm is THE shared creation card, mounted — not a fork',
+      /<WorkflowDraftCard/.test(ledgerP) && /surface="ledger"/.test(ledgerP)
+      && ledgerP.includes("from '@/components/workflows/workflow-draft-card'"),
+      'the ledger does not mount the shared card');
+    ok('…and the page draws NO review card of its own (one component defines the draft card)',
+      // The fork's own vocabulary is gone: no local step/trigger wording, no second Confirm button.
+      !/const stepWord =/.test(ledgerP) && !/const triggerWord =/.test(ledgerP)
+      && !/Confirm — it goes live/.test(ledgerP),
+      'a second draft-card rendering survives on the Workflows page');
+    ok('…and the card component is defined in exactly ONE file repo-wide',
+      (() => {
+        const hits: string[] = [];
+        const walk = (dir: string) => {
+          for (const e of readdirSync(dir)) {
+            if (e === 'node_modules' || e === '.next' || e === '.next-dev' || e.startsWith('.')) continue;
+            const p = `${dir}/${e}`;
+            if (statSync(p).isDirectory()) walk(p);
+            else if (/\.tsx$/.test(p) && /export function WorkflowDraftCard/.test(readFileSync(p, 'utf8'))) hits.push(p);
+          }
+        };
+        walk('components');
+        return hits.length === 1 && hits[0].endsWith('workflows/workflow-draft-card.tsx');
+      })(), 'WorkflowDraftCard is declared in more than one file');
+    ok('…THE ONE SEND-SET: the card\'s Confirm POSTs the allowlist, never a spread',
+      /fetch\('\/api\/workflows'/.test(draftCard)
+      && /body: JSON\.stringify\(confirmBody\('active'\)\)/.test(draftCard)
+      && /export const CONFIRM_FIELDS = \[/.test(draftCard),
+      'the one creation card no longer sends CONFIRM_FIELDS');
+    ok('…Adjust in Studio builds its body with the SAME builder, one status apart',
+      /buildConfirmBody\(draft, \{[\s\S]{0,120}?status: 'draft'/.test(adjustBody)
+      && adjustBody.includes("fetch('/api/workflows'"),
+      'adjustInStudio drops the authored config or forks the body');
+    ok('…and NO `...draft` spread reaches the create door from anywhere in components/',
+      (() => {
+        const bad: string[] = [];
+        const walk = (dir: string) => {
+          for (const e of readdirSync(dir)) {
+            if (e === 'node_modules' || e.startsWith('.')) continue;
+            const p = `${dir}/${e}`;
+            if (statSync(p).isDirectory()) walk(p);
+            else if (/\.tsx?$/.test(p)) {
+              const s = stripComments(readFileSync(p, 'utf8'));
+              if (s.includes("fetch('/api/workflows'") && /JSON\.stringify\(\{\s*\.\.\.draft\b/.test(s)) bad.push(p);
+            }
+          }
+        };
+        walk('components');
+        return bad.length === 0;
+      })(), 'a spread forwards model-invented keys to POST /api/workflows');
+    ok('…and CONFIRM_FIELDS is a SUPERSET of every key the create door actually reads',
+      (() => {
+        const declared = [...draftCard.matchAll(/export const CONFIRM_FIELDS = \[([\s\S]*?)\] as const/g)]
+          .flatMap((m) => [...m[1].matchAll(/'([a-z_]+)'/g)].map((x) => x[1]));
+        const read = [...new Set([...wfPost.matchAll(/\bbody\.([a-z_]+)/g)].map((m) => m[1]))];
+        const missing = read.filter((k) => !declared.includes(k));
+        if (missing.length) console.log(`      door reads, card never sends: ${missing.join(', ')}`);
+        return declared.length > 0 && read.length > 0 && missing.length === 0;
+      })(), 'the create door reads a key the one send-set omits — the F5 drop class, again');
+    ok('…and the card\'s draft type DECLARES the arc\'s three carriers (typed, not accidental)',
+      /triggers\?: Array<\{/.test(draftCard)
+      && /inputs\?: \{ docs: Array<\{ kbFileId: string; name: string \}>; acceptMaterial: boolean \} \| null;/.test(draftCard)
+      && /fire_limit\?: number \| null;/.test(draftCard));
     ok('…and the review SAYS what it will create (doors · pinned docs · stated pace)',
-      /draft\.triggers!\.map\(doorLabel\)/.test(ledgerP)
-      && /draft\.inputs!\.docs\.map\(/.test(ledgerP)
-      && /draft\.fire_limit !== FIRE_LIMIT_DEFAULT/.test(ledgerP));
+      /draft\.triggers!\.map\(doorWord\)/.test(draftCard)
+      && /draft\.inputs!\.docs\.map\(/.test(draftCard)
+      && /draft\.fire_limit !== FIRE_LIMIT_DEFAULT/.test(draftCard));
+    ok('…and the ledger surface inherits the RECEIPT and the idempotence token (what the fork lacked)',
+      /token\?: string;/.test(draftCard) && /consumedKey\(draft\.token\)/.test(draftCard)
+      && /surface === 'ledger'/.test(draftCard),
+      'the ledger path re-offers Confirm on an already-created workflow');
+    ok('…and the ⧉ subprocess and `case` stations speak on that one surface too (the fork was mute)',
+      /⧉ \$\{s\.label \|\| 'a process'\}/.test(draftCard)
+      && /File each under its record/.test(draftCard));
     // THE FIVE NOTE CHANNELS — one per class of refusal. A surface rendering four drops a whole
-    // class of gap on the floor, which is exactly what both draft surfaces were doing.
+    // class of gap on the floor, which is exactly what both draft surfaces were doing. One card
+    // now, so one render site — and both doors wear it.
     const NOTES = ['overlap_note', 'needs_door_note', 'needs_input_note', 'needs_step_note', 'needs_person_note'];
-    const unrenderedLedger = NOTES.filter((n) => !ledgerP.includes(`{draft.${n}}`));
     const unrenderedCard = NOTES.filter((n) => !draftCard.includes(`{draft.${n}}`));
-    ok('…and ALL FIVE note channels reach a render site on the Workflows page (no silent refusal)',
-      unrenderedLedger.length === 0, `unrendered: ${unrenderedLedger.join(', ')}`);
-    ok('…and all five reach one on THE ONE CREATION CARD too (both draft surfaces speak the same gaps)',
+    ok('…and ALL FIVE note channels reach a render site on THE ONE CREATION CARD (no silent refusal)',
       unrenderedCard.length === 0, `unrendered: ${unrenderedCard.join(', ')}`);
   }
 
@@ -1509,8 +1587,9 @@ async function main() {
         /const res = await writeWorkflowInputs\(supabase, user\.id, id, inputsBody\);/.test(wfPatch)
         && /delete update\.inputs;/.test(wfPatch));
     }
+    // RE-POINTED (W3-B, Sep 22) — see the `triggers` sibling: one allowlist, superset-proven.
     ok('THE CREATION CARD carries `inputs` into the Confirm body (a pinned doc survives creation)',
-      /\.\.\.\(draft\.inputs \? \{ inputs: draft\.inputs \} : \{\}\)/.test(draftCard));
+      sendsConfirmField('inputs'));
   } finally {
     for (const id of inputWfIds) {
       await admin.from('work_threads').delete().eq('workflow_id', id);
@@ -2685,8 +2764,9 @@ async function main() {
       ok('THE DRAFT CARD speaks it ONLY when it is not the default (never restate the settled)',
         /typeof draft\.fire_limit === 'number' && draft\.fire_limit !== FIRE_LIMIT_DEFAULT/.test(cardNow)
         && /up to \{draft\.fire_limit\} event runs a day/.test(cardNow));
+      // RE-POINTED (W3-B, Sep 22) — see the `triggers` sibling: one allowlist, superset-proven.
       ok('…and the Confirm body carries it to the create route (the draft\'s pace becomes the task\'s)',
-        /\.\.\.\(typeof draft\.fire_limit === 'number' \? \{ fire_limit: draft\.fire_limit \} : \{\}\)/.test(cardNow));
+        sendsConfirmField('fire_limit'));
 
       ok('THE DISPATCHER DRAINS BEFORE IT BACKSTOPS (a drained run gets its own honest start first)',
         dispatchNow.indexOf('drainDeferredFires') > 0
@@ -5308,18 +5388,25 @@ async function main() {
       // at the form's own home now, plus the mount that seats it on the deck's card.
       const cardSrc = stripComments(readFileSync('components/home/item-detail.tsx', 'utf8'));
       const formSrc = stripComments(readFileSync('components/workflows/input-supply-form.tsx', 'utf8'));
+      // ⟲ RE-POINTED AGAIN (W3-A, Sep 22 — docs/component-map.md §2a): the form's own `fetch` became
+      // a call to the ONE client resume-door module (lib/deeds/gate-doors.ts), which is now the only
+      // holder of that route string in the product. The laws are unchanged: the card is still the
+      // door, the supply payload is still the same shape, and it still reaches the same route.
+      const doorsSrc = stripComments(readFileSync('lib/deeds/gate-doors.ts', 'utf8'));
       ok('THE DECK\'S CARD IS THE DOOR — the paste box and the pin option post to the ONE resume route',
         /handoff\?\.gateKind === 'input' \? \(/.test(cardSrc)
         && /<InputStationCard/.test(cardSrc)
-        && /body: JSON\.stringify\(\{ input: \{/.test(formSrc)
-        && /\/api\/workflows\/runs\/\$\{runId\}\/resume/.test(formSrc));
+        && /input: \{ \.\.\.\(said \? \{ text: said \} : \{\}\)/.test(formSrc)
+        && /resumeRun\(runId, \{/.test(formSrc)
+        && /const door = `\/api\/workflows\/runs\/\$\{runId\}\/resume`;/.test(doorsSrc));
       ok('…reusing the ONE knowledge door (no second KB endpoint for the pin picker)',
         /\/api\/workers\/mentions\?types=document/.test(formSrc));
       ok('THE PIN LINE CLAIMS ONLY WHAT PINNING DOES (read every run — never "won\'t ask again")',
         /read on every run/.test(formSrc) && !/won&apos;t ask for this again/.test(formSrc));
       ok('THE ATTACH HAND RIDES THE SAME FORM — upload first, then the SAME resume door sends it',
         /\/api\/workflows\/runs\/\$\{runId\}\/supply-upload/.test(formSrc)
-        && formSrc.indexOf('supply-upload') < formSrc.indexOf('body: JSON.stringify({ input: {')
+        // (the ORDER law, measured against the send call the upload now feeds)
+        && formSrc.indexOf('supply-upload') < formSrc.indexOf('input: { ...(said ?')
         && /kbFileId: doc\.id, pin/.test(formSrc));
       const ctxSrc = stripComments(readFileSync('lib/workflows/handoff-context.ts', 'utf8'));
       ok('THE ROOM KNOWS WHICH GATE IT HOLDS — the served block carries gateKind, not the source word',

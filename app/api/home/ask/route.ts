@@ -60,7 +60,30 @@ export async function POST(request: NextRequest) {
           // item's own prepared reply, so a reload never paints a draft the room has since moved);
           // a STANDALONE draft carries its payload for the first paint, and its Send door still
           // reads the stored row by id.
-          ...(!turn.invite && !turn.bulkDeed && turn.emailDraft
+          // …and THE COLLECTION CARD (Wave 1, Sep 22) rides as a POINTER and nothing else: the
+          // KIND, its re-read params, and the framing sentence the code composed. The ROWS are
+          // deliberately NOT stored — a reloaded collection re-derives them through
+          // `GET /api/collections`, so a card can never paint a set that stopped being true (the
+          // bulk-deed precedent, applied to a read).
+          ...(!turn.invite && !turn.bulkDeed && turn.collection
+            ? { component: { key: 'collection_card', refId: turn.collection.id,
+                state: { kind: turn.collection.spec.kind, framing: turn.collection.spec.framing,
+                  ...(turn.collection.spec.params ? { params: turn.collection.spec.params } : {}) } } }
+            : {}),
+          // …and THE EVENT CARD (Wave 2, Sep 22) rides as a POINTER for the sharpest version of the
+          // same reason: an event's VERBS are computed from its live state (accepted elsewhere,
+          // moved by its organizer, already passed), so a stored spec would offer buttons that have
+          // stopped being true. What persists is the calendar_events id plus the ARMED proposal;
+          // `GET /api/events/[id]/card` re-derives the rest.
+          ...(!turn.invite && !turn.bulkDeed && !turn.collection && turn.event
+            // `refId` IS the calendar_events id — the card's re-read address (`GET /api/events/
+            // <refId>/card`) and the address its verbs act through. `state.eventId` repeats it so a
+            // reader that keys on state alone resolves too.
+            ? { component: { key: 'event_card', refId: turn.event.spec.id,
+                state: { eventId: turn.event.spec.id,
+                  ...(turn.event.spec.proposal ? { proposal: turn.event.spec.proposal } : {}) } } }
+            : {}),
+          ...(!turn.invite && !turn.bulkDeed && !turn.collection && !turn.event && turn.emailDraft
             ? { component: { key: 'email_draft_card', refId: turn.emailDraft.id,
                 state: { ...(turn.emailDraft.itemId ? { itemId: turn.emailDraft.itemId } : {}),
                   ...(turn.emailDraft.draft ? { draft: turn.emailDraft.draft } : {}) } } }
@@ -145,6 +168,13 @@ export async function POST(request: NextRequest) {
       ...(turn.bulkDeed ? { bulkDeed: turn.bulkDeed } : {}),
       // THE EMAIL CARD: the drafted reply rides the answer and mounts inline (nothing sent).
       ...(turn.emailDraft ? { emailDraft: turn.emailDraft } : {}),
+      // THE COLLECTION CARD (Wave 1): the user's own objects ride the answer as typed rows. On a
+      // listing ask `answer` IS the spec's code-written framing; on an analytical one the prose
+      // leads and the card sits beneath it.
+      ...(turn.collection ? { collection: turn.collection } : {}),
+      // THE EVENT CARD (Wave 2): one meeting rides the answer with the verbs code computed for it.
+      // Nothing has fired — the card's own click is the deed.
+      ...(turn.event ? { event: turn.event } : {}),
       // The filing nudge never decorates a failed/empty answer (found live: a wrong "File it"
       // chip beside a dead reply compounds the miss).
       ...(focus && turn.say?.trim() ? { focus } : {}),

@@ -33,6 +33,7 @@ import {
 } from '@/lib/tools/worker-tasks';
 import { listSkillsDefinition, applySkillDefinition } from '@/lib/tools/worker-skills';
 import { prepareCalendarInviteDefinition } from '@/lib/tools/prepare-calendar-invite';
+import { prepareEventActionDefinition } from '@/lib/tools/prepare-event-action';
 import { doorToolIds } from '@/lib/work/surface-registry';
 import { isToolAllowed } from '@/lib/workspace/tool-capabilities';
 import type { WorkspaceFeatures } from '@/lib/workspace/types';
@@ -199,6 +200,7 @@ export const COWORKER_CHAT_TOOLS: Record<string, NeutralTool> = {
   read_team_work: readTeamWorkDefinition as NeutralTool,
   compose_email: composeEmailDefinition as NeutralTool,
   prepare_calendar_invite: prepareCalendarInviteDefinition as NeutralTool,
+  prepare_event_action: prepareEventActionDefinition as NeutralTool,
   present_linkedin_post: presentLinkedinPostDefinition,
 };
 
@@ -218,7 +220,7 @@ export const WORKER_ONLY_CHAT_TOOLS: ReadonlySet<string> = new Set([
   'list_worker_documents', 'get_worker_document', 'list_skills', 'apply_skill',
   'slack_list_channels', 'slack_post_message', 'slack_read_messages', 'slack_list_members',
   'find_team_work', 'read_team_work', 'compose_email', 'prepare_calendar_invite',
-  'present_linkedin_post',
+  'prepare_event_action', 'present_linkedin_post',
 ]);
 
 /**

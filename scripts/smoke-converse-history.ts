@@ -24,13 +24,50 @@ async function main() {
   // TURN 2 — the reformat request (failed live: "I don't have a structured weekly summary in that exact bullet format yet")
   const t2 = await converse(admin as never, userId, { kind: 'global' }, "I need it in bullet points like this: Last Week's Highlights ... --- This Week's Strategic Priorities ...", { history: history1 });
   // The promise: the reformat is DELIVERED — inline bullets OR a delegated deliverable whose
-  // hand-back speaks the conversation's facts — never a can't-see-it refusal, and the
-  // honesty-floor pointer never rides a format exchange.
-  const t2refused = /exact bullet format yet|known body of work|lives on that project|don't have enough context/i.test(t2.say);
-  const t2inline = /last week/i.test(t2.say) && /this week|priorit/i.test(t2.say) && /•|\n- /.test(t2.say);
-  const t2handed = !!t2.delegated && /acme|northwind|jordan|sam|weekly|bullet/i.test(t2.say);
-  const t2ok = !t2refused && (t2inline || t2handed);
-  console.log(`T2 reformat: ${t2ok ? 'PASS' : 'FAIL'}\n---\n${t2.say.slice(0, 700)}\n---\n`);
+  // CONTENT carries both requested sections as bullets — never a can't-see-it refusal, never a
+  // claim that the work is cut off, and never a chore handed back to the user.
+  //
+  // ⚠️ OUTCOME-STRICT SINCE Sep 21. The old check for the delegated lane was a word match on the
+  // hand-back (`/acme|northwind|jordan|sam|weekly|bullet/`), and for days it passed an answer that
+  // was CONSTANTLY WRONG: the coworker claimed its own deliverable "got cut off mid-sentence" and
+  // asked the user to regenerate it, and the word "weekly" in that sentence carried the gate ~2
+  // runs in 3. The flapping read as live-AI variance; the product defect underneath was constant
+  // (the evaluator's truncation floor condemning a bullet list for ending like a list). A gate that
+  // can be satisfied by a word in a refusal is not a gate. Phrasing stays free; the OUTCOME does not.
+  const norm = (s: string) => s.replace(/[’‘`]/g, "'");
+  const t2say = norm(t2.say);
+  const t2refused = /exact bullet format yet|known body of work|lives on that project|don't have enough context/i.test(t2say);
+  // THE HAND-BACK LAW: a claim of truncation, or an ask to regenerate/resend, is a FAIL outright.
+  const t2disowns = /cut off|cuts off|truncat|got clipped|incomplete at the end/i.test(t2say)
+    || /\b(can|could|would|will)\s+you\s+(please\s+)?(re-?generate|re-?run|re-?do|re-?send|re-?create|complete|finish)\b|\bplease\s+(re-?generate|re-?run|re-?send|re-?do)\b/i.test(t2say);
+  const hasSections = (s: string) => /last week'?s?\s+highlights/i.test(s) && /this week'?s?\s+(strategic\s+)?priorities/i.test(s);
+  const bulletCount = (s: string) => (s.match(/^\s*([-*•]|\d+[.)])\s+\S/gm) ?? []).length;
+  // A finished document ends at a boundary: terminal punctuation, or a COMPLETE final line (a list
+  // item with its emphasis closed). Asserted independently of the product's own floor.
+  const endsWhole = (s: string) => {
+    const t = s.trimEnd();
+    const last = t.slice(t.lastIndexOf('\n') + 1).trim();
+    return /[.!?…)"'\]]$/.test(t) || (/^([-*•]|\d+[.)]|#{1,6}|\|)/.test(last) && (last.split('**').length - 1) % 2 === 0 && !/[,\-–—]$/.test(last));
+  };
+  const t2inline = hasSections(t2say) && bulletCount(t2say) >= 4 && endsWhole(t2say);
+  // The delegated lane is judged on the DELIVERED WORK, read back from the coworker's hand-off
+  // thread (the deliverable of record whether or not it also materialized as a document).
+  let t2delivered = '';
+  if (t2.delegated) {
+    const { data: th } = await admin.from('work_threads').select('id')
+      .eq('user_id', userId).eq('title', `Handed to ${t2.delegated.agentName}`)
+      .order('updated_at', { ascending: false }).limit(1).maybeSingle();
+    if (th?.id) {
+      const { data: msgs } = await admin.from('work_messages').select('content, role, created_at')
+        .eq('thread_id', th.id).eq('role', 'assistant').order('created_at', { ascending: false }).limit(1);
+      t2delivered = norm(String(msgs?.[0]?.content ?? ''));
+    }
+  }
+  const t2handed = !!t2.delegated && hasSections(t2delivered) && bulletCount(t2delivered) >= 4 && endsWhole(t2delivered);
+  const t2ok = !t2refused && !t2disowns && (t2inline || t2handed);
+  console.log(`T2 reformat DELIVERED (no truncation claim, no regeneration ask): ${t2ok ? 'PASS' : 'FAIL'}` +
+    ` [refused=${t2refused} disowns=${t2disowns} inline=${t2inline} handed=${t2handed} deliveredChars=${t2delivered.length}]` +
+    `\n---\n${t2.say.slice(0, 700)}\n---\n${t2delivered ? `DELIVERED:\n${t2delivered.slice(0, 600)}\n---\n` : ''}`);
 
   // TURN 3 — "yes please" after an assistant offer (failed live: "I don't have enough context")
   const history2 = [...history1,
@@ -324,7 +361,9 @@ async function main() {
   // DM had been pausing them for months; and when a coworker DID pause, it paused one of two and
   // said both. Both halves are replayed here on SEEDED FAKE workflows on the probe host — outcome
   // strict (the DB must actually move), wording tolerant. Nothing real is ever touched.
-  let t15ok = false, t16ok = false;
+  let t15ok = false, t16ok = false, t17ok = false, t18ok = false;
+  // WAVE 1 — the collection card's replays (T19-T22), declared out here so the exit code sees them.
+  let t19ok = false, t20ok_ = false, t21ok_ = false, t22ok_ = false;
   const seeded: string[] = [];
   try {
     const mk = async (name: string, status: 'active' | 'paused') => {
@@ -345,6 +384,86 @@ async function main() {
       return Object.fromEntries(((data ?? []) as Array<{ name: string; status: string }>).map((w) => [w.name, w.status]));
     };
 
+    // ── T17 / T18 — THE PRESENTATION LAW (Sep 22, WAVE 0). The incident (owner screenshot): "what
+    // workflows do I have in place?" put the executor's model-facing listing in the bubble verbatim
+    // — bracketed uuids and the line "Refer to tasks by NAME when speaking to the user" — and
+    // persisted it. Read-only, so they run BEFORE T15 pauses the seeded set. Outcome-strict on what
+    // must NEVER appear; wording free.
+    const MODEL_FACING =
+      /\[[0-9a-f]{8}-[0-9a-f]{4}-|Refer to tasks by NAME|^\s*Tasks \(\d+\):|\bid:[a-z0-9-]+\b|Steps \(\d+\):|\[tool\]|\[ai\]|===GATE_VERDICT===|\[\[(?:artifact|card|email_draft|workflow_draft):/im;
+
+    const t17 = await converse(admin as never, userId, { kind: 'global' }, 'what workflows do I have in place?', { history: [] });
+    // RE-POINTED Sep 22 (Wave 1, the collection card): the promise — "the user is TOLD what they
+    // have, and nothing model-facing reaches them" — is unchanged; the half that names the
+    // workflows moved from prose into the card's TYPED ROWS, which is stricter (a row is the
+    // object, not a sentence about it). The answer is read AS SERVED: prose OR rows.
+    const t17served = `${t17.say}\n${(t17.collection?.spec.rows ?? []).map((r) => r.title).join('\n')}`;
+    const t17names = /Probe (?:Weekly Digest|Client Radar|Dormant Sweep)/i.test(t17served);
+    const t17clean = !MODEL_FACING.test(t17served);
+    t17ok = t17names && t17clean;
+    console.log(`T17 "what workflows do I have?" → an ANSWER, never the listing: ${t17ok ? 'PASS' : 'FAIL'} names=${t17names} clean=${t17clean}\n---\n${t17.say.slice(0, 500)}\n---`);
+
+    // T18 — the config read. Its executor dumps step ids, raw prompts and config JSON; none of that
+    // is a person's to read.
+    const t18 = await converse(admin as never, userId, { kind: 'global' }, "what's the status of the Probe Weekly Digest task?", { history: [] });
+    const t18clean = !MODEL_FACING.test(t18.say) && !/"?prompt"?\s*:/i.test(t18.say);
+    const t18answers = /weekly digest/i.test(t18.say);
+    t18ok = t18clean && t18answers;
+    console.log(`T18 "what's the status of <name>?" → no step ids / raw prompts / config JSON: ${t18ok ? 'PASS' : 'FAIL'} clean=${t18clean} answers=${t18answers}\n---\n${t18.say.slice(0, 500)}\n---`);
+
+    // ── T19 / T20 / T21 — THE COLLECTION CARD (Sep 22, WAVE 1). The presentation law's payoff:
+    // a pure LISTING ask is answered by the CARD — typed rows and a framing sentence composed by
+    // code — with no model composition at all, while an ANALYTICAL ask keeps the agent loop.
+    // Read-only, so they run before T15 pauses the seeded set.
+    const t19 = await converse(admin as never, userId, { kind: 'global' }, 'what workflows do I have in place?', { history: [] });
+    const t19spec = t19.collection?.spec;
+    const t19rows = (t19spec?.rows ?? []).map((r) => r.title);
+    // THE ROWS ARE THE SEEDED SET, the `say` IS the framing (not a word more), and nothing
+    // model-facing is anywhere near it.
+    t19ok = !!t19spec && t19spec.kind === 'workflows'
+      && seeded.length === 3
+      && ['Probe Weekly Digest', 'Probe Client Radar', 'Probe Dormant Sweep'].every((n) => t19rows.includes(n))
+      && t19.say === t19spec.framing
+      && /^You have \d+ workflows?/.test(t19.say)
+      && !MODEL_FACING.test(t19.say)
+      // THE RE-READ KEY rides the spec — a persisted card re-derives instead of freezing.
+      && !!t19spec.params
+      // …and no uuid is rendered anywhere a person reads.
+      && !t19rows.some((t) => /[0-9a-f]{8}-[0-9a-f]{4}-/i.test(t));
+    console.log(`T19 listing ask → THE CARD (say === framing, rows typed): ${t19ok ? 'PASS' : 'FAIL'} ` +
+      `kind=${t19spec?.kind ?? 'none'} rows=${t19rows.length}\n---\n${t19.say.slice(0, 300)}\n---`);
+
+    // T20 — THE CARD COSTS NO COMPOSITION. The fast path makes exactly ONE model call (the
+    // router's classification); the loop path makes several and streams an answer. Timing is the
+    // honest proxy available from here: a composed answer cannot come back in router-time alone.
+    const t20start = Date.now();
+    const t20 = await converse(admin as never, userId, { kind: 'global' }, 'show me my workflows', { history: [] });
+    const t20ms = Date.now() - t20start;
+    const t20ok = !!t20.collection && t20.say === t20.collection.spec.framing && t20ms < 6000;
+    console.log(`T20 the listing ask is INSTANT again (no composition round): ${t20ok ? 'PASS' : 'FAIL'} ms=${t20ms} card=${!!t20.collection}`);
+
+    // T21 — THE ANALYTICAL ASK KEEPS THE LOOP. A judgment over the data is not a list of it: the
+    // turn names a presenting read (check_calendar), and the answer must still be COMPOSED prose —
+    // never the card's framing line standing in for a verdict. A card may ride beside it; it may
+    // never replace it.
+    const t21 = await converse(admin as never, userId, { kind: 'global' },
+      'check my calendar and tell me whether tomorrow afternoon is clear enough for a two-hour block', { history: [] });
+    const t21ok = t21.say.trim().length > 60
+      && t21.say.trim() !== (t21.collection?.spec.framing ?? '').trim()
+      && !MODEL_FACING.test(t21.say);
+    console.log(`T21 analytical ask → the LOOP answers (card may ride along, never replaces): ${t21ok ? 'PASS' : 'FAIL'} card=${!!t21.collection}\n---\n${t21.say.slice(0, 300)}\n---`);
+
+    // T22 — THE CALENDAR ASK ON A CALENDAR-LESS ACCOUNT. The probe host has no calendar connected,
+    // so the promise under test is the EMPTY-CALENDAR TRUTH surviving into the card lane: an
+    // honest "no calendar", never a day of manufactured "free".
+    const t22 = await converse(admin as never, userId, { kind: 'global' }, "what's on tomorrow", { history: [] });
+    const t22says = `${t22.say} ${t22.collection?.spec.framing ?? ''}`;
+    const t22ok = !MODEL_FACING.test(t22.say)
+      && (/no calendar|isn'?t set up|not connected|nothing booked/i.test(t22says) || (t22.collection?.spec.rows.length ?? 0) > 0);
+    console.log(`T22 "what's on tomorrow" on a calendar-less account → honest: ${t22ok ? 'PASS' : 'FAIL'} ` +
+      `card=${t22.collection?.spec.kind ?? 'none'}\n---\n${t22.say.slice(0, 300)}\n---`);
+    t20ok_ = t20ok; t21ok_ = t21ok; t22ok_ = t22ok;
+
     // T15 — "pause all my workflows" from the HOME. The promise: they are ACTUALLY paused in the
     // database, and the say names them. The old answer ("I don't have a tool for that") fails.
     const t15 = await converse(admin as never, userId, { kind: 'global' }, 'pause all my workflows', { history: [] });
@@ -363,7 +482,7 @@ async function main() {
       && after16['Probe Dormant Sweep'] === 'paused';
     console.log(`T16 resume ONE by name (the others stay put): ${t16ok ? 'PASS' : 'FAIL'} db=${JSON.stringify(after16)}\n---\n${t16.say.slice(0, 400)}\n---`);
   } catch (e) {
-    console.log(`T15-T16 threw: ${String((e as Error).message).slice(0, 200)}`);
+    console.log(`T15-T22 threw: ${String((e as Error).message).slice(0, 200)}`);
   } finally {
     if (seeded.length) await admin.from('workflows').delete().in('id', seeded);
   }
@@ -382,6 +501,7 @@ async function main() {
     }
   } catch (e) { console.log(`T8 cleanup warning: ${String((e as Error).message).slice(0, 120)}`); }
 
-  process.exit(t2ok && t3ok && t4ok && t5ok && t6ok && t7ok && t8ok && hnOk && t15ok && t16ok ? 0 : 1);
+  process.exit(t2ok && t3ok && t4ok && t5ok && t6ok && t7ok && t8ok && hnOk && t15ok && t16ok && t17ok && t18ok
+    && t19ok && t20ok_ && t21ok_ && t22ok_ ? 0 : 1);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

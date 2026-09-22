@@ -31,7 +31,16 @@ const DEFAULT_MINUTES = 60;
 /** A hard iteration ceiling so a malformed window can never walk the calendar forever. */
 const MAX_DAYS = 120;
 
-export type WindowBusy = { start: string; end: string; title: string; allDay: boolean };
+export type WindowBusy = {
+  start: string; end: string; title: string; allDay: boolean;
+  /** THE DOOR'S HALF (Wave 1, Sep 22 — the collection card): the row's own event id and its real
+   *  instants, so a rendered day can open its event and a verb can name it. Never rendered, never
+   *  read by the prompt block (which stays exactly the clamped clock labels above) — additive by
+   *  construction, so nothing that reads a busy block today changes. */
+  id?: string;
+  startISO?: string;
+  endISO?: string;
+};
 export type WindowDay = { dayStr: string; weekday: string; busy: WindowBusy[] };
 export type ScheduleWindow = {
   days: WindowDay[];
@@ -118,12 +127,12 @@ export async function getScheduleWindow(
   const winEnd = zonedTimeToUtc(addDays(to, 1), '00:00', tz);
 
   const busyBlocks: BusyBlock[] = [];
-  const events: Array<{ startMs: number; endMs: number; title: string; allDay: boolean; dayFrom?: string; dayToExcl?: string }> = [];
+  const events: Array<{ id: string; startMs: number; endMs: number; title: string; allDay: boolean; dayFrom?: string; dayToExcl?: string }> = [];
   let hasCalendar = false;
   try {
     const { data } = await supabase.from('calendar_events')
       // EXPLICIT select (the silent-column law: a bad column returns data:null and no error).
-      .select('title, start_time, end_time, is_all_day, status, timezone')
+      .select('id, title, start_time, end_time, is_all_day, status, timezone')
       .eq('user_id', userId)
       // Cancelled/declined events are NOT busy — parity with today-schedule.ts.
       .eq('status', 'confirmed')
@@ -132,8 +141,9 @@ export async function getScheduleWindow(
       .gte('start_time', new Date(winStart - LOOKBACK_DAYS * DAY_MS).toISOString())
       .lte('start_time', new Date(winEnd).toISOString())
       .order('start_time', { ascending: true }).limit(400);
-    for (const e of (data ?? []) as Array<{ title: string | null; start_time: string; end_time: string | null; is_all_day: boolean | null; timezone: string | null }>) {
+    for (const e of (data ?? []) as Array<{ id: string; title: string | null; start_time: string; end_time: string | null; is_all_day: boolean | null; timezone: string | null }>) {
       const title = clipTitle(String(e.title || ''));
+      const id = String(e.id ?? '');
       // ── THE ALL-DAY LAW (Sep 21) — AN ALL-DAY EVENT IS CALENDAR DAYS, NOT AN INSTANT. Both
       // providers write an all-day block as a date pair with an EXCLUSIVE end (Sep 24 → Sep 28
       // means Thu–Sun), and both anchor it at midnight. Read as instants, that midnight lands on
@@ -152,7 +162,7 @@ export async function getScheduleWindow(
         const s = zonedTimeToUtc(dayFrom, '00:00', tz);
         const en = zonedTimeToUtc(dayToExcl, '00:00', tz);
         if (!Number.isFinite(s) || !Number.isFinite(en) || en <= winStart || s >= winEnd) continue;
-        events.push({ startMs: s, endMs: en, title, allDay: true, dayFrom, dayToExcl });
+        events.push({ id, startMs: s, endMs: en, title, allDay: true, dayFrom, dayToExcl });
         busyBlocks.push({ startMs: s, endMs: en });
         continue;
       }
@@ -161,7 +171,7 @@ export async function getScheduleWindow(
       const parsedEnd = e.end_time ? Date.parse(String(e.end_time)) : NaN;
       const en = Number.isNaN(parsedEnd) ? s + DEFAULT_MINUTES * 60_000 : parsedEnd;
       if (en <= winStart || s >= winEnd) continue;   // no overlap with the asked window
-      events.push({ startMs: s, endMs: en, title, allDay: false });
+      events.push({ id, startMs: s, endMs: en, title, allDay: false });
       busyBlocks.push({ startMs: s, endMs: en });
     }
     // In-window events prove a calendar; an empty window needs the cheap existence probe — a user
@@ -191,6 +201,11 @@ export async function getScheduleWindow(
         title: e.title,
         // A block spanning the whole day IS an all-day block for the reader, whatever the flag says.
         allDay: e.allDay || (e.startMs <= dayStart && e.endMs >= dayEnd),
+        // The door's half — the event's own id and its UNCLAMPED instants (the labels above are
+        // clamped to the day on purpose; a door must open the whole event).
+        ...(e.id ? { id: e.id } : {}),
+        startISO: new Date(e.startMs).toISOString(),
+        endISO: new Date(e.endMs).toISOString(),
       }));
     days.push({ dayStr: day, weekday: weekdayOf(day), busy });
     if (day === to) break;

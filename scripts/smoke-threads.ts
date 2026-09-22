@@ -306,28 +306,36 @@ console.log('\nT2 · THE NO-MUTATION LAW — a served surface never changes unde
     && !/statusTab/.test(pv) && /const flat = searching;/.test(pv));
 
   // THE TIMELINE — both lenses over the same payload; a bar or a card must not move under the reader.
-  const tv = read('components/timeline/timeline-view.tsx');
-  gate('T2.20 the station timeline holds a background arrival (cards append, never re-lay)',
-    !!tv && tv.includes("from '@/lib/room/no-mutation'")
-    && /mayReplaceInPlace\(reason, !!painted\)/.test(tv)
-    && /freezeRows\(painted\.items, nextItems, \(w\) => w\.id\)/.test(tv)
-    && /freezeMap\(painted\.projectMap, nextTags\)/.test(tv)
-    && /useLiveRefresh\(\(\) => load\('background'\)\)/.test(tv));
+  // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT): components/timeline/timeline-view.tsx was proven
+  // unreachable and retired; the Gantt is the only timeline lens left (T2.21 below). The law —
+  // a background arrival may never re-lay what the reader is already reading — is asserted here on
+  // the PORTFOLIO, the other list that paints rows and refreshes underneath them, so the gate still
+  // covers two independent implementations of the freeze, not one.
+  const pvm = read('components/entities/portfolio-view.tsx');
+  gate('T2.20 a painted list holds a background arrival (rows append, never re-lay)',
+    !!pvm && pvm.includes("from '@/lib/room/no-mutation'")
+    && /mayReplaceInPlace\(reason, !!painted\)/.test(pvm)
+    && /freezeRows\(painted\.entities, d\.entities, \(e\) => e\.id\)/.test(pvm)
+    && /useLiveRefresh\(\(\) => load\('background'\)\)/.test(pvm));
   const tg = read('components/timeline/timeline-gantt.tsx');
   gate('T2.21 the Gantt holds a background arrival (lanes append; a painted lane freezes whole)',
     !!tg && tg.includes("from '@/lib/room/no-mutation'")
     && /freezeRows\(painted!\.ganttGroups, next\.ganttGroups, \(g\) => g\.id\)/.test(tg)
     && /useLiveRefresh\(\(\) => load\('background'\)\)/.test(tg));
 
-  // THE DAILY REPORT — its lines ARE the composed prose; painted words stay for the open.
-  const dr = read('components/home/daily-report.tsx');
-  gate('T2.22 the report freezes its lanes on a background arrival (painted lines keep their words)',
-    !!dr && dr.includes("from '@/lib/room/no-mutation'")
-    && /function freezeForOpen\(prev: Report, next: Report\)/.test(dr)
-    && /needsYou: lane\(prev\.needsYou, next\.needsYou\)/.test(dr)
-    && /useLiveRefresh\(\(\) => load\('background'\)\)/.test(dr));
-  gate('T2.23 the report’s own ✓/✕ refetch still replaces (the reader asked for it)',
-    !!dr && /load\('user'\), 4000/.test(dr));
+  // THE DAY'S LANES — composed words; painted lines stay for the open.
+  // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT): components/home/daily-report.tsx was proven
+  // unreachable and retired. THE DECK is the day's report now, and it carries the same law at more
+  // seams than the report ever did — one freezeForOpen, lane by lane, every lane keyed.
+  const hv2 = read('components/home/home-view.tsx');
+  gate('T2.22 the day’s lanes freeze on a background arrival (painted rows keep their words)',
+    !!hv2 && hv2.includes("from '@/lib/room/no-mutation'")
+    && /function freezeForOpen\(prev: Brief, next: Brief\)/.test(hv2)
+    && /freezeRows\(prev\.commitments, next\.commitments, \(c\) => c\.id\)/.test(hv2)
+    && (hv2.match(/freezeRows\(/g)?.length ?? 0) >= 6
+    && /useLiveRefresh\(\(\) => load\(true\)\)/.test(hv2));
+  gate('T2.23 a reader-asked refetch still REPLACES (the freeze guards BACKGROUND arrivals only)',
+    !!hv2 && /return background \? freezeForOpen\(prev, merged\) : merged;/.test(hv2));
 }
 
 // ── T3 · THE ONE THREAD COMPONENT (P2a) ─────────────────────────────────────────────────────────
@@ -362,7 +370,12 @@ console.log('\nT3 · THE ONE THREAD COMPONENT — one kit, three kinds, presenta
   // avatar state + one quiet line — the constitution's grammar table; a card form rendered a
   // doubled face inside its own bubble, caught by the browser walk).
   {
-    const GRAMMAR = ['deliverable', 'approval', 'input', 'routine', 'frame', 'proposal', 'invite', 'bulk', 'doc', 'custom'];
+    // RE-POINTED (W4-A, Sep 22 — never weakened): `routine` RETIRED from the grammar. It was the
+    // one kind with no producer in the product (smoke-threads T38.1, the inverse gate); a standing
+    // responsibility renders as its standing-spec proposal card and in the `collection` kind's
+    // list. The law is unchanged — every kind the contract declares has a render — it simply names
+    // one kind fewer.
+    const GRAMMAR = ['deliverable', 'approval', 'input', 'frame', 'proposal', 'invite', 'bulk', 'doc', 'custom'];
     const missingType = GRAMMAR.filter((k) => !types || !new RegExp(`kind: '${k}'`).test(types));
     const missingRender = GRAMMAR.filter((k) => !cards || !new RegExp(`case '${k}':`).test(cards));
     gate('T3.3 the type surface declares the FULL card grammar', missingType.length === 0, missingType.join(', '));
@@ -480,67 +493,81 @@ console.log('\nT3 · THE ONE THREAD COMPONENT — one kit, three kinds, presenta
 // survives as a `custom` card rather than being rebuilt, that the composer it shares with the home
 // box took the composer SEAT whole through the one slot, and that the seat stayed a SLOT (the kit
 // still falls back to its own composer, so no second composer implementation was born).
-console.log('\nT4 · THE COWORKER DM PORT — the DM renders through the ONE thread component');
+// ⚠️ RE-POINTED WHOLESALE (W4-D, Sep 22 — THE RETIREMENT). The donor this section read,
+// components/workers/tabs/worker-chat-tab.tsx, was proven unreachable by a real import graph (the
+// whole /workers island is behind redirects) and retired with it. THE DM DID NOT DIE WITH ITS OLD
+// RENDER — it is a MODE of the one live conversation surface, components/home/home-ask.tsx, which
+// T5 already gates as a surface. So these gates keep only what is DM-SPECIFIC and would otherwise
+// go unasserted: that the DM mode exists in the one surface at all, that the coworker's rich SSE
+// payloads still reach a card, and that the DM's own doors (thread find-or-create, the painted
+// turn cache, attach, mentions) are untouched. T4.5's honest successor records the ONE thing the
+// retirement actually removed — see the DM gap in docs/retirement-census.md.
+console.log('\nT4 · THE COWORKER DM — a MODE of the one surface, not a surface of its own');
 {
-  const dm = read('components/workers/tabs/worker-chat-tab.tsx');
+  const dm = read('components/home/home-ask.tsx');
   const shell = read('components/thread/thread-shell.tsx');
 
-  gate('T4.1 the DM surface mounts the kit (ThreadShell, in its `dm` configuration)',
-    !!dm && /from '@\/components\/thread'/.test(dm) && /<ThreadShell/.test(dm) && /kind="dm"/.test(dm));
+  gate('T4.1 the DM is a CONFIGURATION of the one kit, never a second surface',
+    !!dm && /from '@\/components\/thread'/.test(dm) && /<ThreadShell/.test(dm)
+    && /kind=\{dmActor \? 'dm' : 'home'\}/.test(dm));
 
-  // The bespoke message column is gone: the surface no longer lays out, orders or scrolls its own
-  // bubbles — it derives ThreadItem[] and hands them over.
-  gate('T4.2 the surface derives ThreadItem[] instead of laying out its own bubble list',
+  // The DM has no message column of its own — it derives ThreadItem[] like every other mode.
+  gate('T4.2 the DM derives ThreadItem[] instead of laying out its own bubble list',
     !!dm && /useMemo<ThreadItem\[\]>/.test(dm)
     && /type: 'user_bubble'/.test(dm) && /type: 'actor_bubble'/.test(dm));
-  gate('T4.3 the bespoke message column is gone (no hand-rolled list, no sentinel scroller)',
-    !!dm && !/messagesEndRef/.test(dm) && !/max-w-\[660px\]/.test(dm)
-    && !/messages\.map\(\(msg, idx, arr\)/.test(dm));
+  gate('T4.3 no second DM renderer was left behind (the retired island defines nothing)',
+    !fs.existsSync(path.join(ROOT, 'components/workers/tabs/worker-chat-tab.tsx'))
+    && !fs.existsSync(path.join(ROOT, 'components/workers/worker-profile.tsx'))
+    && !fs.existsSync(path.join(ROOT, 'app/workers/workers-page-client.tsx')));
 
-  // THE SLACK GROUPING is now the kit's job — a private copy here is how the law forks.
-  gate('T4.4 grouping/attribution is the timeline’s (the surface holds no showHeader logic)',
-    !!dm && !/showHeader/.test(dm) && /actorId: worker\.id/.test(dm) && /actorName: worker\.name/.test(dm));
+  // THE SLACK GROUPING is the kit's job — a private copy is how the law forks.
+  gate('T4.4 grouping/attribution is the timeline’s, and the DM speaks in the COWORKER’s name',
+    !!dm && !/showHeader/.test(dm) && /authorId: agentId/.test(dm));
 
-  // A MOUNT, NEVER A REWRITE — every rich render rides the card slot, unchanged.
+  // A MOUNT, NEVER A REWRITE — the coworker's rich payloads ride the card slot.
   {
     const RICH: [string, RegExp][] = [
-      ['the assistant body (tool chips · markdown · artifact + frame cards · citations)', /node: \(\s*<ChatMessageBubble/],
-      // RE-POINTED Sep 8 (THE EMAIL CARD): the donor `EmailDraftCard` retired into the kit's
-      // `email` kind; the law — a rich render is MOUNTED, never rebuilt — is unchanged.
-      ['the editable email card', /node: <EmailCard coworker=/],
+      ['the editable email card (the coworker draft the DM produces)', /node: <EmailCard coworker=/],
       ['the workflow draft card', /node: <WorkflowDraftCard/],
-      ['typed artifacts (the render registry)', /node: <ArtifactRenderer/],
-      ['the in-flight streaming renderer', /node: \(\s*<StreamingMessage/],
+      ['the prepared invite card', /node: <InviteCard/],
     ];
     const missing = RICH.filter(([, re]) => !dm || !re.test(dm)).map(([label]) => label);
-    gate('T4.5 every rich render is MOUNTED through the custom card slot, not rebuilt',
+    gate('T4.5 the coworker’s rich payloads are MOUNTED through the card slot, not rebuilt',
       missing.length === 0, missing.join('; '));
-    gate('T4.6 the mounts ride `custom` cards on the coworker’s own bubble',
-      !!dm && /const cards: ThreadCard\[\] = \[\{\s*kind: 'custom'/.test(dm));
+    // THE ONE THING THE RETIREMENT REMOVED, stated rather than hidden: the typed render registry
+    // (components/work/artifacts/registry.tsx) had exactly one reachable mount — the retired DM —
+    // so an `artifact` frame now lands as a LINK card into the thread that holds it. That is the
+    // live surface's DELIBERATE choice (its own comment says so), not an accident, and this gate
+    // pins it so a future registry rebuild is a decision, never a silent regression.
+    gate('T4.6 a typed `artifact` frame lands as a LINK card by design (the render registry has no live mount)',
+      !!dm && /event\.type === 'artifact' && event\.artifact/.test(dm)
+      && /no identity of its own in this/.test(dm)
+      && !fs.existsSync(path.join(ROOT, 'components/work/artifacts/registry.tsx')));
   }
 
   // THE ANSWER STREAMS INTO THE VISIBLE BUBBLE, wearing the working face.
-  gate('T4.7 the in-flight reply is the coworker’s own working bubble (status: working)',
+  gate('T4.7 the in-flight reply is a WORKING bubble in the coworker’s own seat',
     !!dm && /id: 'streaming'/.test(dm) && /status: 'working'/.test(dm));
 
-  // THE COMPOSER STAYS — one composer, shared with the home box, seated through the ONE slot.
+  // THE COMPOSER STAYS — one composer, seated through the ONE slot.
   gate('T4.8 the composer seat exists in the shell and is a SLOT (the kit still falls back)',
     !!shell && /composerNode\?: React\.ReactNode/.test(shell)
     && /\{composerNode \?\? \(/.test(shell) && /<ThreadComposer placeholder=/.test(shell));
-  gate('T4.9 the DM takes the seat with the composer it already shared with the home box',
-    !!dm && /composerNode=\{/.test(dm) && /<WorkerMentionInput/.test(dm));
+  gate('T4.9 the DM takes that seat with the ONE composer, defined once',
+    !!dm && /composerNode=\{composerBlock\}/.test(dm)
+    && (dm.match(/<WorkerMentionInput/g) ?? []).length === 1);
 
-  // PARITY ANCHORS — the doors the port must not have disturbed (route, persistence, uploads).
+  // PARITY ANCHORS — the DM's own doors, which no render change may disturb.
   {
     const ANCHORS: [string, RegExp][] = [
-      ['send + stream (POST the chat route, read its SSE frames)', /threads\/\$\{thread\.id\}\/chat`, \{\s*\n?\s*method: 'POST'/],
+      ['send + stream (POST the coworker thread\'s chat route)', /await fetch\(`\/api\/work\/threads\/\$\{tid\}\/chat`, \{/],
       ['attach (the chat-attach upload door)', /chat-attach`, \{ method: 'POST'/],
-      ['@mention metadata rides the send', /mentions && mentions\.length \? \{ mentions \}/],
-      ['mention chips rehydrate from saved metadata', /\?\.mentions as ChatMessage\['mentions'\]/],
-      ['the thread cache (instant re-open on switch)', /threadCache\.current\.set\(thread\.id/],
+      ['@mention metadata rides the send', /extra\?\.mentions\?\.length \? \{ mentions: extra\.mentions \}/],
+      ['the coworker→thread mapping (find-or-create skipped on reopen)', /saveLS\(dmKey\(agentId\), tid\)/],
+      ['the painted-turn cache (the reopen paints before the fetch)', /loadLS<Turn\[\]>\(DM_TURNS_LS\(agentId\)\)/],
     ];
     const broken = ANCHORS.filter(([, re]) => !dm || !re.test(dm)).map(([label]) => label);
-    gate('T4.10 the engine seams are untouched (send · stream · attach · mentions · cache)',
+    gate('T4.10 the DM engine seams are untouched (send · stream · attach · mentions · thread + turn caches)',
       broken.length === 0, broken.join('; '));
   }
 }
@@ -699,12 +726,24 @@ console.log('\nT6 · THE ROOM’S CONVERSATION — the rail, through the ONE kit
   gate('T6.3 the composed brief IS the room’s opening message (one seat, wearing a face, no badge)',
     !!rail && /type: 'pinned', id: 'brief'/.test(rail) && !/badge: 'Pinned'/.test(rail)
     && /const openingText = composed \?\?/.test(rail));
-  gate('T6.4 THE MOVE is the pinned CTA row (board-validated target, the stage intent preserved)',
-    !!rail && /const pinnedActions: ThreadAction\[\] = \[\]/.test(rail)
-    && /pinnedActions\.push\(\{ label: resp\.move\.label, tone: 'primary'/.test(rail)
-    && /stageOfArtifactKey\(mergedArt\.key\), respMoveTargetId/.test(rail));
+  // ⚠️ RE-POINTED (W4-A, Sep 22 — never weakened): THE MOVE IS THE KIT'S `proposal` CARD. It used
+  // to be a bare ThreadAction pushed into the pinned bubble's action row — the last room object
+  // with no kind of its own (docs/component-map.md §2). Every clause of the law is asserted on the
+  // new seat: the target is still board-validated, the move's own words are still the deed, the
+  // stage intent still rides the click ladder, and the card is seated in the pinned opening.
+  gate('T6.4 THE MOVE is the pinned seat’s ONE deed, as the kit’s `proposal` card (board-validated target, the stage intent preserved)',
+    !!rail && /const moveCard: ThreadCard \| null = \(\(\) => \{/.test(rail)
+    && /kind: 'proposal', id: 'move'/.test(rail)
+    && /confirmLabel: resp\.move\.label/.test(rail)
+    && /\{moveCard && <div className="pt-0\.5"><ThreadCardView card=\{moveCard\} \/><\/div>\}/.test(rail)
+    && /stageOfArtifactKey\(mergedArt\.key\), respMoveTargetId/.test(rail)
+    // …and the old seat is really gone (no second move renderer anywhere in the rail)
+    && !/pinnedActions/.test(rail));
   gate('T6.5 the pre-compose fallback rides the SAME pinned seat (no second opening anywhere)',
+    // RE-POINTED (W4-A, Sep 22): the same seat, now the same CARD — the fallback builds a
+    // `proposal` too, so neither path can grow a renderer of its own.
     !!rail && /Pre-compose fallback/.test(rail) && /label: `Next: \$\{ent\.nextMove\}`/.test(rail)
+    && /confirmLabel: fallbackMove\.move\.label/.test(rail)
     && !/AssistantRow/.test(rail));
   // ⚠️ RE-POINTED (owner walk, Sep 14: "I think I had told you to remove the chips here too" — the
   // SAME call the calm Home took on Sep 13, now applied to rooms). The claim this gate held — the
@@ -742,12 +781,17 @@ console.log('\nT6 · THE ROOM’S CONVERSATION — the rail, through the ONE kit
     && /const endArtifacts = streamArts\.filter/.test(rail));
   {
     const MOUNTED: [string, RegExp][] = [
-      ['the decision card', /node: \(\s*<DecisionCard/],
+      // RE-POINTED (W3-C, Sep 22 — docs/component-map.md §2 item 7): the hand-drawn
+      // components/work/decision-card.tsx is gone; the rail mounts the decision's ONE HOST, which
+      // mounts the kit's `decision` card. Same seat, same seam — the law is unchanged.
+      ['the decision card (the ONE host, firing the ONE steer door)', /node: \(\s*<DecisionCard/],
       ['the workflow draft card', /<WorkflowDraftCard draft=\{t\.workflowDraft\}/],
       ['the standing-spec card (ONE Confirm)', /Confirm — start it/],
-      ['the approval gate (Approve · Hold back through the ONE resume door)',
-        /runs\/\$\{runId\}\/resume`[\s\S]{0,200}approve: true/],
-      ['the engine ask’s checklist + its never-blocking door', /checklistBlock\(liftedAsk\.checklist!/],
+      // RE-POINTED (W3-A, Sep 22 — docs/component-map.md §2a): both objects converged onto the kit.
+      // The rail no longer DRAWS a gate or an ask, so "mounted whole" is now literally true of them:
+      // it mounts the two hosts, which mount the kit's `approval` / `input` cards.
+      ['the approval gate (the ONE host, firing the ONE resume door)', /<ApprovalCard\s/],
+      ['the engine ask (the ONE host, carrying its never-blocking door)', /askCard\(\{ \.\.\.liftedAsk, text: '' \}, 'lifted-ask'\)/],
       ['a prepared artifact as the grammar’s own deliverable card', /kind: 'deliverable', id: `card-\$\{art\.key\}`/],
     ];
     const missing = MOUNTED.filter(([, re]) => !rail || !re.test(rail)).map(([l]) => l);
@@ -808,7 +852,10 @@ console.log('\nT6 · THE ROOM’S CONVERSATION — the rail, through the ONE kit
       !!types && /refs\?: Array<\{ label: string; onClick\?: \(\) => void \}>/.test(types)
       // RE-POINTED (Sep 19, clause 5): the renderer drops blank-labelled refs BEFORE it joins their
       // separators — the dangling " ·" class. The gate asserts the filter, never just a map.
-      && !!timeline && /item\.refs\?\.filter\(\(r\) => !!r\.label\?\.trim\(\)\)\.map/.test(timeline)
+      // RE-POINTED AGAIN (Sep 22, T41): the muted line was extracted into the kit's ONE `EventLine`
+      // piece so the trace line renders through it too — the filter-before-join moved WITH it, and
+      // the law is unchanged (a blank-labelled ref never joins its separator).
+      && !!timeline && /refs\?\.filter\(\(r\) => !!r\.label\?\.trim\(\)\)\.map/.test(timeline)
       && !!rail && /lineRefs/.test(rail) && /onClick: \(\) => go\(r\.href as string\)/.test(rail));
   }
 }
@@ -1630,6 +1677,9 @@ console.log('\nT13 · THE ASK SPEAKS CONSEQUENCE — one accent, named faces');
   const req = read('lib/prepare/requirements.ts');
   const pass = read('lib/prepare/pass.ts');
   const rail = read('components/home/item-rail.tsx');
+  // W3-A (Sep 22): the seats these laws moved to — the two hosts and the kit itself.
+  const askHost = read('components/home/input-card.tsx');
+  const kit = read('components/thread/thread-cards.tsx');
   const room = read('components/entities/entity-room.tsx');
   const avatar = read('components/thread/avatar-status.tsx');
 
@@ -1670,14 +1720,32 @@ console.log('\nT13 · THE ASK SPEAKS CONSEQUENCE — one accent, named faces');
   // 2 — THE CHAT FEEL: one accent per room, the kit's own input-card grammar.
   gate('T13.10 NO amber/orange anywhere in the rail’s markup (the ask was a second focus point)',
     !!rail && !/(?:border|bg|text|from|to|ring)-(?:amber|orange)-/.test(rail));
-  gate('T13.11 the ask wears the KIT’s input-card grammar — neutral card, quiet chips, no form widget',
-    !!rail && /rounded-xl border border-neutral-200\/80 bg-white p-3\.5/.test(rail)
-    && /border border-neutral-200\/80 px-3 py-1\.5 text-\[12px\] font-medium text-neutral-600/.test(rail));
+  // RE-POINTED (W3-A, Sep 22): the ask stopped WEARING the kit's grammar and became the kit's own
+  // card — so the grammar is asserted where it now lives (thread-cards.tsx `case 'input'`), and the
+  // rail is asserted to draw NONE of it. The law is unchanged and strictly harder to break.
+  gate('T13.11 the ask IS the kit’s input card — neutral card, quiet chips, no form widget, and the room draws none of it',
+    !!kit && /case 'input': \{/.test(kit)
+    && /SHELL, MAX_W, 'flex flex-col gap-2\.5 p-3\.5'/.test(kit)
+    && !!rail && /<InputCard/.test(rail)
+    // the room keeps no checklist markup, no chip markup and no ask shell of its own
+    && !/const checklistBlock/.test(rail) && !/Point me to it<\/button>/.test(rail));
+  // RE-POINTED Sep 22 (W4-B, THE TYPE-IT DOOR — window only, law untouched): the `input` case grew
+  // by the per-row doors, pushing the go-ahead link past a 3200-char read window. 3200 → 4200 now
+  // covers the whole case again — which makes the `bg-indigo-600` half of this gate and of T13.13
+  // STRICTER (more of the case is swept), never weaker.
   gate('T13.12 the never-blocking door is the kit’s quiet indigo TEXT link, never a filled button',
-    !!rail && /const proceedChip = \(labels: string\[\], onClick: \(\) => void\) => \([\s\S]{0,400}text-\[12px\] font-medium text-indigo-600 hover:text-indigo-700/.test(rail)
-    && !/const proceedChip[\s\S]{0,500}bg-indigo-600/.test(rail));
-  gate('T13.13 the ask block carries ZERO filled primary CTAs (the room’s one accent is the pinned actions)',
-    !!rail && !/const checklistBlock[\s\S]{0,1400}bg-indigo-600/.test(rail));
+    !!kit && (() => {
+      const i = kit!.indexOf("case 'input': {");
+      const seg = kit!.slice(i, i + 4200);
+      return /text-\[12px\] font-medium text-indigo-600 hover:text-indigo-700/.test(seg)
+        && !/bg-indigo-600/.test(seg);
+    })());
+  gate('T13.13 the ask card carries ZERO filled primary CTAs (the room’s one accent is the pinned actions)',
+    !!kit && (() => {
+      const i = kit!.indexOf("case 'input': {");
+      return !/bg-indigo-600/.test(kit!.slice(i, i + 4200)); // RE-POINTED Sep 22 — see T13.12
+    })()
+    && !!rail && !/const checklistBlock/.test(rail));
   gate('T13.14 answering happens IN the conversation — "Point me to it" opens the ONE composer (no second widget, no lying door)',
     !!rail && /setComposerPrefill\(/.test(rail) && /prefill=\{composerPrefill\}/.test(rail)
     && /onPrefillConsumed=\{\(\) => setComposerPrefill\(null\)\}/.test(rail));
@@ -2323,7 +2391,10 @@ console.log('\nT17 · THE PROMPTED INVITE — one producer, one card, two stores
   const sendDoor = read('app/api/invites/send/route.ts');
   const homeAsk = read('components/home/home-ask.tsx');
   const dmRoute = read('app/api/work/threads/[id]/chat/route.ts');
-  const dmTab = read('components/workers/tabs/worker-chat-tab.tsx');
+  // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT): the coworker DM's render moved into the ONE
+  // conversation surface when components/workers/tabs/worker-chat-tab.tsx was retired as
+  // unreachable. The DM is a MODE of home-ask now, so the DM half of these laws reads there.
+  const dmTab = homeAsk;
   const host = read('components/home/invite-card.tsx');
 
   // ── the tool: it exists, it is feature-gated, and it structurally cannot send
@@ -2399,15 +2470,23 @@ console.log('\nT17 · THE PROMPTED INVITE — one producer, one card, two stores
     && !!homeAsk && /t\.component\?\.key === 'invite_card'/.test(homeAsk));
   gate('T17.9 DURABLE ON THE COWORKER DM — the prepared card persists on the message metadata, and the reload mounts it from there',
     !!dmRoute && /invite_cards: allInviteCards/.test(dmRoute)
-    && !!dmTab && /invite_cards\?: Array</.test(dmTab) && /<InviteCard chat=\{\{ inviteId: iv\.id/.test(dmTab));
+    // RE-POINTED (W4-D, Sep 22): the DM reload rehydrates `invite_cards` off the message metadata
+    // into its own ref list and mounts them through the same host — same law, the live seat.
+    && !!dmTab && /invite_cards\?: Array</.test(dmTab)
+    && /invite_cards\.map\(\(iv\) => \(\{ inviteId: iv\.id, invite: iv\.invite \}\)\)/.test(dmTab)
+    && /<InviteCard chat=/.test(dmTab));
   gate('T17.10 ONE RENDERING PER KIND — every producer mounts the SAME host component (no second invite renderer anywhere)',
     (() => {
       const defs = sourceFiles('components').filter((f) => /export function InviteCard\(/.test(read(f) || ''));
       const mounts = sourceFiles('components').filter((f) => /<InviteCard\b/.test(read(f) || ''));
+      // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT): the third mount was the retired DM tab. The
+      // law is stated in its strongest form instead — ONE definer, and EVERY mount in the tree
+      // points at it, so a second renderer cannot appear anywhere rather than at three named spots.
       return defs.length === 1 && defs[0] === 'components/home/invite-card.tsx'
         && mounts.includes('components/home/home-ask.tsx')
-        && mounts.includes('components/workers/tabs/worker-chat-tab.tsx')
-        && mounts.includes('components/home/item-detail.tsx');
+        && mounts.includes('components/home/item-detail.tsx')
+        && mounts.every((f) => f === 'components/home/invite-card.tsx'
+          || /^components\/home\//.test(f) || /^components\/(thread|room)\//.test(f));
     })());
 
   // ── the commit: two stores, ONE executor, the door reads the row
@@ -2458,8 +2537,10 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
   const host = read('components/home/email-card.tsx');
   const detail = read('components/home/item-detail.tsx');
   const rail = read('components/home/item-rail.tsx');
-  const dmTab = read('components/workers/tabs/worker-chat-tab.tsx');
   const homeAsk = read('components/home/home-ask.tsx');
+  // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT): the coworker DM is a MODE of the one conversation
+  // surface now; its old tab (components/workers/tabs/worker-chat-tab.tsx) was retired unreachable.
+  const dmTab = homeAsk;
   const featureMap = read('lib/workspace/tool-capabilities.ts');
 
   // ── the kit kind
@@ -2597,10 +2678,13 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
     (() => {
       const defs = sourceFiles('components').filter((f) => /export function EmailCard\(/.test(read(f) || ''));
       const mounts = sourceFiles('components').filter((f) => /<EmailCard\b/.test(read(f) || ''));
+      // RE-POINTED (W4-D, Sep 22): the DM mount moved into home-ask with the DM itself; the law is
+      // stated harder — ONE definer, and no mount anywhere outside the live conversation surfaces.
       return defs.length === 1 && defs[0] === 'components/home/email-card.tsx'
         && mounts.includes('components/home/item-detail.tsx')
-        && mounts.includes('components/workers/tabs/worker-chat-tab.tsx')
-        && mounts.includes('components/home/home-ask.tsx');
+        && mounts.includes('components/home/home-ask.tsx')
+        && mounts.includes('components/entities/entity-room.tsx')
+        && mounts.every((f) => /^components\/(home|thread|room|entities)\//.test(f));
     })()
     // the card's own chrome (recipient chips, the direction tabs, the tone menu) exists in the KIT alone
     && (() => {
@@ -3083,6 +3167,9 @@ console.log('\nT22 · THE GROUND EVIDENCE + ONE AGENDA AT THE RENDER — the roo
   const now = read('lib/inbox/thread-now.ts');
   const state = read('lib/entities/state.ts');
   const rail = read('components/home/item-rail.tsx');
+  // W3-A (Sep 22): the seats these laws moved to — the two hosts and the kit itself.
+  const askHost = read('components/home/input-card.tsx');
+  const kit = read('components/thread/thread-cards.tsx');
 
   // (a) THE GROUND EVIDENCE
   gate('T22.1 THE EVIDENCE EXISTS AS FACTS — one module gathers what a person would check (thread + calendar)',
@@ -3188,21 +3275,26 @@ console.log('\nT22 · THE GROUND EVIDENCE + ONE AGENDA AT THE RENDER — the roo
     // RE-POINTED (Sep 18, Q6): the pinned seat gained one more way of speaking — the CoS's OFFER
     // line, which stands where an unstaged move's button used to. The test is unchanged: DOES THE
     // PINNED SEAT SPEAK? An offer speaks, so the ask folds behind it exactly as a CTA made it.
-    !!rail && /const pinnedSpeaks = !!\(composed \|\| openingText \|\| pinnedActions\.length > 0[^)]*\);/.test(rail)
+    // RE-POINTED AGAIN (W4-A, Sep 22): the CTA became the `proposal` card, so the fact the test
+    // reads is `moveCard` rather than a non-empty action row. The question is identical.
+    !!rail && /const pinnedSpeaks = !!\(composed \|\| openingText \|\| moveCard[^)]*\);/.test(rail)
     && /const foldedAsk = pinnedSpeaks && liftedAsk\?\.checklist\?\.length \? liftedAsk : null;/.test(rail)
     && /if \(liftedAsk && !foldedAsk\) \{/.test(rail)
     // …and the fold no longer loses the ask's own sentence where no brief names the gap
     && /\{foldedAsk && !composed && foldedAsk\.text && \(/.test(rail));
   gate('T22.11 …it folds INTO the pinned card (one delivery, one primary CTA)',
-    !!rail && /\|\| mergedArt \|\| foldedAsk[^)]*\) \? \(/.test(rail)
-    && /\{foldedAsk && checklistBlock\(/.test(rail));
-  gate('T22.12 THE DEED IS MOVED, NEVER ORPHANED — the same block and the same handlers answer it in its new seat',
-    !!rail && (() => {
-      const i = rail.indexOf('{foldedAsk && checklistBlock(');
-      const seg = rail.slice(i, i + 420);
-      return /foldedAsk\.checklist!/.test(seg)
-        && /proceedChip\(foldedAsk\.checklist!, \(\) => void proceedEngineAsk\(foldedAsk\.turnId!\)\)/.test(seg);
-    })());
+    // RE-POINTED (W3-A, Sep 22): the fold mounts the ONE ask host instead of the rail's own block.
+    !!rail && /\|\| moveCard \|\| mergedArt \|\| foldedAsk[^)]*\) \? \(/.test(rail)
+    && /\{foldedAsk && askCard\(/.test(rail));
+  gate('T22.12 THE DEED IS MOVED, NEVER ORPHANED — the same host and the same handlers answer it in its new seat',
+    // RE-POINTED (W3-A, Sep 22): "the same block with the same handlers" is now ONE host used at
+    // all three seats, so the test is that all three pass through it — a stronger claim than the
+    // old one, which could only compare one seat's inline arguments.
+    !!rail && /\{foldedAsk && askCard\(\{ \.\.\.foldedAsk, text: '' \}, 'folded-ask'\)\}/.test(rail)
+    && (rail.match(/askCard\(\{ \.\.\./g) ?? []).length === 3
+    // …and the host is the ONE place the go-ahead law and the proceed door are consulted
+    && !!askHost && /askAllowsGoAhead\(spec\.items, spec\.context\)/.test(askHost)
+    && /proceedAsk\(turnId\)/.test(askHost));
   gate('T22.13 the ask keeps its OWN voice when no composed position exists (the law is one agenda, not a hidden ask)',
     !!rail && /const liftedAsk = turns\.find\(/.test(rail)
     && /id: 'lifted-ask'/.test(rail));
@@ -3210,10 +3302,15 @@ console.log('\nT22 · THE GROUND EVIDENCE + ONE AGENDA AT THE RENDER — the roo
     !!rail && (() => {
       // Every `actions:` the timeline builder emits — the pinned brief's is the only one, and the
       // MOVE still yields to a rendered decision through the ONE placement table.
+      // RE-POINTED (W4-A, Sep 22 — STRENGTHENED, never weakened): the one CTA row became the one
+      // `proposal` CARD, so the rail now pushes NO `actions` on any timeline item at all. "One CTA
+      // row survives" is asserted as "exactly one move renderer, and zero action rows".
       const i = rail.indexOf('const items: ThreadItem[] = [];');
       const seg = rail.slice(i);
-      return (seg.match(/^\s*\.\.\.\(pinnedActions\.length \? \{ actions: pinnedActions \} : \{\}\),/m) || []).length === 1
+      return !/^\s*\.\.\.\(.*actions:/m.test(seg)
         && !/type: 'actor_bubble'[\s\S]{0,400}?actions:/.test(seg)
+        && (rail.match(/kind: 'proposal', id: 'move'/g) ?? []).length === 2
+        && (rail.match(/<ThreadCardView card=\{moveCard\} \/>/g) ?? []).length === 1
         && /panelPlan\(\{ hasDecision: decisionIsPrimary \}\)/.test(rail);
     })());
 }
@@ -3515,7 +3612,16 @@ console.log('\nT24 · THE CARD EDITOR — content-truth, live controls, one comp
     // THE INTERACTIVE KINDS DECLARE THE WORKING STATE AND NOBODY ELSE DOES. Three of them since
     // the attention arc's bulk deed (A7) joined the invite and the email — the count moves with the
     // grammar, honestly, rather than the law being loosened to a >= .
-    && !!types && (types.match(/busy\?: boolean;/g) ?? []).length === 3);
+    // RE-POINTED (Sep 22, never weakened — the same "count moves with the grammar" law): the
+    // collection card's ROW VERB declares its own working state, so the honest count is 4.
+    // RE-POINTED AGAIN (Wave 2): the EVENT card's verb is the fifth — an outward deed in flight
+    // must be able to say so, or a second click lands on a provider call already running.
+    // RE-POINTED AGAIN (W3-C, Sep 22): the FORWARD card is the sixth, for exactly that reason —
+    // its commit leaves the building, so an in-flight send has to stand the card down.
+    // RE-POINTED AGAIN (W4-A, Sep 22): the PROPOSAL card is the seventh — the room's one primary
+    // deed can be in flight (its click sends or navigates), and a card that cannot say so lets the
+    // reader fire it twice. The count keeps moving with the grammar rather than becoming a >=.
+    && !!types && (types.match(/busy\?: boolean;/g) ?? []).length === 7);
   // ── (e) THE DOOR BELONGS TO THE CARD ──
   gate('T24.10 THE THREAD DOOR RENDERS WHEREVER A HOST HANDS ONE — even on a sent card, never gated on liveness',
     // ⚠️ RE-POINTED (Sep 14): the door stopped depending on a host remembering the prop — on the
@@ -4065,6 +4171,9 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
 {
   console.log('\nT28 · THE PROJECT THREAD IS A THREAD — the card, the door, the honest go-ahead');
   const rail = read('components/home/item-rail.tsx');
+  // W3-A (Sep 22): the seats these laws moved to — the two hosts and the kit itself.
+  const askHost = read('components/home/input-card.tsx');
+  const kit = read('components/thread/thread-cards.tsx');
   const room = read('components/entities/entity-room.tsx');
   const detail = read('components/home/item-detail.tsx');
   const drawer = read('components/room/filed-drawer.tsx');
@@ -4221,8 +4330,13 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
   gate('T28.12 with no context to judge against, the door is ABSENT (never offered on faith)',
     !!goAhead && /if \(!ctx\) return false;/.test(goAhead));
   gate('T28.13 EVERY ask seat consults it — the folded ask, the lifted ask, a coworker’s own ask',
-    !!rail && (rail.match(/askAllowsGoAhead\(/g) ?? []).length === 3
-    && /const askContext = \(t: Extract<Turn, \{ role: 'system' \}>\)/.test(rail));
+    // RE-POINTED (W3-A, Sep 22 — docs/component-map.md §2a): the three seats now reach the law
+    // through the ONE host, which calls it exactly once. So the gate asserts BOTH halves: three
+    // seats, one call site. (The old form counted three calls in one file, which was the drift.)
+    !!rail && (rail.match(/askCard\(\{ \.\.\./g) ?? []).length === 3
+    && !/askAllowsGoAhead\(/.test(rail)
+    && !!askHost && (askHost.match(/askAllowsGoAhead\(/g) ?? []).length === 1
+    && /const askContext = \(t: Pick<Extract<Turn, \{ role: 'system' \}>, 'refs'>\)/.test(rail));
   gate('T28.14 the context is the WORK’s own names — the ask’s item ref, the room’s move, the item anchor',
     !!rail && (() => {
       const i = rail!.indexOf('const askContext = ');
@@ -4240,8 +4354,9 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     && sourceFiles('components').concat(sourceFiles('app/api/room'))
       .every((f) => !/go ahead with what's available/i.test((read(f) ?? '').replace(/^\s*\/\/.*$/gm, ''))));
   gate('T28.16 the coworker go-ahead is speech a PERSON would say (no engine instruction in the user’s bubble)',
-    !!rail && /go ahead without it — use what you have and tell me what's missing\./.test(rail)
-    && !/work with what I've shared and note any gaps/.test(rail)
+    // RE-POINTED (W3-A, Sep 22): the utterance is composed in the ONE ask host, not at the seat.
+    !!askHost && /o ahead without it — use what you have and tell me what’s missing\./.test(askHost)
+    && !/work with what I've shared and note any gaps/.test(askHost)
     && (() => {
       const asks = read('app/api/room/asks/route.ts') ?? '';
       return /go\` : 'Go'\} ahead without it — use what you have and tell me what's missing\./.test(asks);
@@ -4302,14 +4417,24 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
         && !!room && /import \{ roomDetailKey, roomRailKey \} from '@\/lib\/room\/warm-room'/.test(room);
     })());
 
-  gate('T28.18 ONE IMPLEMENTATION, EVERY ASK SURFACE — the Home’s global ask block asks the SAME module (a law with two spellings is the site-list decay class), and the kit decides nothing',
+  // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT): components/home/waiting-on-you.tsx (the Home's
+  // global ask band) was already orphaned at HEAD — no surface has mounted it since the threads
+  // arc — and the import graph proved it, so it retired. The LAW is not about that band: it is
+  // that the go-ahead test has ONE implementation and every ask host asks IT. The live ask host is
+  // components/home/input-card.tsx (mounted by the rail AND the deep-dive), so the gate reads
+  // there — and adds the class form: NO other UI file may spell the test for itself.
+  gate('T28.18 ONE IMPLEMENTATION, EVERY ASK SURFACE — every ask host asks the SAME module (a law with two spellings is the site-list decay class), and the kit decides nothing',
     (() => {
-      const w = read('components/home/waiting-on-you.tsx') ?? '';
+      const host = read('components/home/input-card.tsx') ?? '';
       const cards = read('components/thread/thread-cards.tsx') ?? '';
       const types = read('components/thread/types.ts') ?? '';
-      return /import \{ askAllowsGoAhead, goAheadLabel \} from '@\/lib\/room\/go-ahead'/.test(w)
-        && /askAllowsGoAhead\(a\.items, \[a\.label, a\.text\]\) && \(/.test(w)
-        && /goAheadLabel\(a\.items\)/.test(w)
+      const UIFiles = sourceFiles('components').concat(sourceFiles('app'));
+      const spellers = UIFiles.filter((f) => /askAllowsGoAhead\(|goAheadLabel\(/.test(read(f) ?? ''));
+      return /from '@\/lib\/room\/go-ahead'/.test(host)
+        && /askAllowsGoAhead\(spec\.items, spec\.context\)/.test(host)
+        && /goAheadLabel\(spec\.items\)/.test(host)
+        // exactly ONE host spells the test; a second speller is the decay this gate exists to catch
+        && spellers.length === 1 && spellers[0] === 'components/home/input-card.tsx'
         // the kit renders the door it is GIVEN — the omission is the host's decision, not its own
         && /\{card\.onProceed && \(/.test(cards)
         && /The kit renders the door it is given; it never decides\./.test(types);
@@ -4495,8 +4620,12 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
       return !/addTurn\(\{ role: 'system', text: d\.error/.test(seg)
         && /setTurns\(\(prev\) => \[\.\.\.prev, \{ role: 'system', text: d\.error \|\| "That didn't go through/.test(seg);
     })()
-    // …and the engine proceed answers instead of dying silently
-    && /else setTurns\(\(prev\) => \[\.\.\.prev, \{ role: 'system', text: "That didn't go through/.test(rail));
+    // …and the engine proceed answers instead of dying silently.
+    // RE-POINTED (W3-A, Sep 22): the proceed door moved into the ONE ask host, and its apology moved
+    // with it — onto the CARD, which is strictly better than a system turn: the card is render-only
+    // by construction, so a failure now CANNOT persist into the room's record.
+    && !!askHost && /setError\('That didn’t go through — try it again in a moment\.'\)/.test(askHost)
+    && !/addTurn/.test(askHost) && !/persistTurn/.test(askHost));
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -4551,7 +4680,9 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
   gate('T29.4 THE AGENDA LAWS LIVE IN THE SHARED RAIL ONLY (both doors mount it; neither re-implements it)',
     !!rail && /const pinnedSpeaks = /.test(rail) && /const foldedAsk = pinnedSpeaks/.test(rail)
     && ALL.filter((f) => /const foldedAsk = /.test(read(f) ?? '')).length === 1
-    && ALL.filter((f) => /const pinnedActions: ThreadAction\[\] = \[\];/.test(read(f) ?? '')).length === 1
+    // RE-POINTED (W4-A, Sep 22): the pinned seat's ONE deed is the `proposal` card now — the law
+    // is unchanged (exactly one implementation of it, in the shared rail).
+    && ALL.filter((f) => /const moveCard: ThreadCard \| null = /.test(read(f) ?? '')).length === 1
     && !!room && /<ItemRail kind="entity"/.test(room)
     && !!detail && /<ItemRail kind="email"/.test(detail));
 
@@ -4992,10 +5123,20 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
   gate('T30.13 THE KEY IS FOR IDEMPOTENCE, NOT DURABILITY — the go-ahead is still written once, as the user, and a reset can now clear it (so the opener can see a fresh room)',
     (() => {
       const asks = read('app/api/room/asks/route.ts') ?? '';
-      const i = asks.indexOf("role: 'user',");
-      if (i < 0) return false;
-      const seg = asks.slice(i - 400, i + 300);
-      return /dedupeKey: `proceed:\$\{turn\.id\}`/.test(seg)
+      // RE-POINTED Sep 22 (W4-B, THE TYPE-IT DOOR — STRENGTHENED, not moved): this route now
+      // writes TWO user turns (the go-ahead, and the typed fact — a supply is speech too), so the
+      // first `role: 'user',` in the file is no longer necessarily the go-ahead's. The gate reads
+      // the go-ahead's own seam BY ITS KEY, and then holds the same law over EVERY user turn the
+      // route writes: keyed for idempotence, authorless, componentless — chat, not record.
+      // The unit is THE TURN ITSELF — the object literal handed to writeRoomTurn, not a window of
+      // surrounding lines (the route legitimately edits the ask's `component` right beside the
+      // supply's turn, and proximity would read that as the turn carrying one).
+      const segs = [...asks.matchAll(/writeRoomTurn\([\s\S]*?\n\s*\}\)/g)].map((m) => m[0])
+        .filter((s) => /role: 'user',/.test(s));
+      if (!segs.length) return false;
+      const seg = segs.find((s) => /dedupeKey: `proceed:\$\{turn\.id\}`/.test(s)) ?? '';
+      return segs.every((s) => /dedupeKey: `/.test(s) && !/author:/.test(s) && !/component:/.test(s))
+        && /dedupeKey: `proceed:\$\{turn\.id\}`/.test(seg)
         // it stays user speech with no author and no component — the two handles that DO mean record
         && !/author:/.test(seg) && !/component:/.test(seg)
         // …and the rail's freshness test is the reader's own words, so clearing them opens the room
@@ -5017,6 +5158,15 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
 {
   const types31 = read('components/thread/types.ts') ?? '';
   const kit31 = read('components/thread/thread-cards.tsx') ?? '';
+  // THE DOC CARD'S OWN SOURCE — bounded by the NEXT top-level function, not by the switch far
+  // below it (TIGHTENED Wave 2, never weakened: the old slice swallowed every card kind declared
+  // after the doc card, so the event card's note field tripped a law about DOCUMENTS. A gate must
+  // assert its own subject).
+  const docCard31 = (() => {
+    const start = kit31.indexOf('function DocCardView(');
+    const next = kit31.indexOf('\nfunction ', start + 1);
+    return kit31.slice(start, next === -1 ? kit31.indexOf('// \u2500\u2500 the card renders') : next);
+  })();
   const resolver31 = read('lib/documents/doc-card.ts') ?? '';
   const panel31 = read('components/work/chat-artifact-panel.tsx') ?? '';
   const route31 = read('app/api/work/threads/[id]/artifacts/[artifactId]/preview/route.ts') ?? '';
@@ -5036,7 +5186,7 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
       // no content-carrying field may exist on the contract at all — a host cannot pass what the
       // type does not have, so "docs can get big" is solved by construction, not by discipline
       if (/\b(body|preview|excerpt|content|html|firstPage)\??:/.test(seg)) return false;
-      const v = kit31.slice(kit31.indexOf('function DocCardView('), kit31.indexOf('// ── the card renders'));
+      const v = docCard31;
       return !/dangerouslySetInnerHTML/.test(v) && !/card\.(body|preview|content|excerpt)/.test(v);
     })());
 
@@ -5052,7 +5202,7 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
 
   gate('T31.4 THE COMMIT DOOR ONLY WHERE A SEND-DEED EXISTS — no handler, no button (the kit\'s standing law, one kind over)',
     (() => {
-      const v = kit31.slice(kit31.indexOf('function DocCardView('), kit31.indexOf('// ── the card renders'));
+      const v = docCard31;
       return /\{\(card\.onSend \|\| card\.receipt\) && \(/.test(v) && /\{card\.onSend && \(/.test(v)
         // …and no host in the repo wires a doc send it does not have: the Home mounts Review only
         && /kind: 'doc', id: `\$\{key\}-doc-\$\{j\}`/.test(host31) && !/kind: 'doc'[\s\S]{0,400}onSend:/.test(host31);
@@ -5070,8 +5220,16 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
       const files = sourceFiles('components').concat(sourceFiles('app'));
       const definers = files.filter((f) => /function DocumentPlayer\(/.test(read(f) ?? ''));
       const mounts = files.filter((f) => /<DocumentPlayer\b/.test(read(f) ?? ''));
+      // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT): the second mount was the /workers island's own
+      // components/workers/artifact-panel.tsx, proven unreachable and retired. ONE panel is left,
+      // so the law is asserted where it now bites: one definer, one mount, and every HOST reaches
+      // the player only by mounting that one panel — never by defining a player of its own.
+      const hosts = files.filter((f) => /ThreadArtifactsPanel/.test(read(f) ?? '')
+        && f !== 'components/work/chat-artifact-panel.tsx');
       return definers.length === 1 && definers[0].replace(/\\/g, '/') === 'components/work/chat-artifact-panel.tsx'
-        && mounts.length >= 2;
+        && mounts.length === 1 && mounts[0] === definers[0]
+        && hosts.length >= 2
+        && hosts.every((f) => /from '@\/components\/work\/chat-artifact-panel'/.test(read(f) ?? ''));
     })());
 
   gate('T31.7 A REVISION LANDS ON THE SAME CARD — the fold reads the STORED chain (one version-utils), keeps ONE card per chain, and repoints it at the current version',
@@ -5091,7 +5249,7 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
   // ── D3 · THE EDIT LADDER ──
   gate('T31.9 NEVER AN EDITOR OVER PIXELS — no contentEditable/editable surface anywhere in the doc card or the player',
     (() => {
-      const v = kit31.slice(kit31.indexOf('function DocCardView('), kit31.indexOf('// ── the card renders'));
+      const v = docCard31;
       const p = panel31.slice(panel31.indexOf('export function DocumentPlayer('), panel31.indexOf('// ── QA report panel'));
       return !/contentEditable/i.test(v) && !/<textarea|<input/.test(v)
         && !/contentEditable/i.test(p) && !/<textarea|<input/.test(p)
@@ -5167,7 +5325,12 @@ console.log('\nT32 · THE ONE OBJECT CARD — the ask and the thing asked about,
   const mount32 = read('components/room/source-object.tsx') ?? '';
   const deck32 = read('components/triage/triage-deck.tsx') ?? '';
   const rail32 = read('components/home/item-rail.tsx') ?? '';
-  const dcard32 = read('components/work/decision-card.tsx') ?? '';
+  // RE-POINTED (W3-C, Sep 22 — docs/component-map.md §2 item 7): the hand-drawn
+  // components/work/decision-card.tsx converged into the kit's `decision` kind behind ONE host.
+  // The LAW is unchanged — a decision still shows its source where the honest line used to stand —
+  // so the gate follows the seam rather than the file.
+  const dcardKit32 = read('components/thread/thread-cards.tsx') ?? '';
+  const dcardHost32 = read('components/home/decision-card.tsx') ?? '';
   const room32 = read('components/entities/entity-room.tsx') ?? '';
   const timeline32 = read('components/thread/thread-timeline.tsx') ?? '';
 
@@ -5213,11 +5376,13 @@ console.log('\nT32 · THE ONE OBJECT CARD — the ask and the thing asked about,
 
   // ── clause 2 · THE THREE SEATS ──
   gate('T32.7 THE DECISION SHOWS ITS SOURCE — the card takes an objectNode and renders it where the honest line used to stand',
-    /objectNode\?: ReactNode;/.test(dcard32)
-    && /\) : objectNode \? \(/.test(dcard32)
-    && /<div className="mx-3 mb-2 mt-1">\{objectNode\}<\/div>/.test(dcard32)
-    // …and a SOURCE never makes anything recommendable: the structural test still reads `object`
-    && /const recommends = mayRecommend\(object\)/.test(dcard32));
+    /objectNode\?: ReactNode;/.test(read('components/thread/types.ts') ?? '')
+    && /\{card\.objectNode\s*\n?\s*\? <div className="mx-4 mb-2 mt-1">\{card\.objectNode\}<\/div>/.test(dcardKit32)
+    && /: card\.quietLine/.test(dcardKit32)
+    // …and a SOURCE never makes anything recommendable: the structural test still reads the
+    // PREPARED object, which the host holds and the mounted node is never mistaken for
+    && /const recommends = mayRecommend\(spec\.object\);/.test(dcardHost32)
+    && /\.\.\.\(preparedNode \? \{ objectNode: preparedNode \}/.test(dcardHost32));
 
   gate('T32.8 "ask me to pull it together" IS DEAD COPY — the string survives nowhere in components/ or lib/',
     sourceFiles('components').concat(sourceFiles('lib')).concat(sourceFiles('app'))
@@ -5290,9 +5455,1582 @@ console.log('\nT32 · THE ONE OBJECT CARD — the ask and the thing asked about,
         && (seg.match(/text-\[13px\] leading-\[1\.5\] text-neutral-500/g) ?? []).length >= 4;
     })());
 
+  // RE-POINTED (Sep 22, T41): the filter lives in the kit's ONE `EventLine` piece now (the trace
+  // line renders through the same renderer). Same law, same single seat, new spelling.
   gate('T32.14 A SEPARATOR BELONGS TO A WORD — a blank-labelled ref never renders its own " ·"',
-    /item\.refs\?\.filter\(\(r\) => !!r\.label\?\.trim\(\)\)/.test(timeline32));
+    /refs\?\.filter\(\(r\) => !!r\.label\?\.trim\(\)\)/.test(timeline32));
 }
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// T33 · THE ONE COLLECTION CARD (docs/component-map.md §6, Wave 1 — the CLIENT half)
+//
+// "What workflows do I have" · "find the document about X" · "what did I record last week" · "what's
+// on tomorrow" all answered in prose, and the owner asked for interactive components — with one
+// constraint that is the gates' shape: "I don't want us to have multiple components for the same
+// thing in different ways." So: ONE kit kind for every set of the user's own objects, ONE host that
+// owns the verbs, and the verbs go through the doors those objects ALREADY have.
+//
+//   (a) the kit owns the kind — contract, grammar, enumeration, the one switch
+//   (b) NO LYING DOORS, and at most TWO verbs a row — enforced in the RENDERER, not asked of hosts
+//   (c) the host derives verbs from `state`, never from a label; every deed is a door that existed
+//   (d) a persisted card is a POINTER — rehydrate re-reads, never a stored snapshot
+//   (e) `isCollectionSpec` guards BOTH mounts (live and rehydrated)
+//   (f) calendar is READ-ONLY in this wave, by design
+//   (g) the harness carries the fixtures
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+console.log('\nT33 · THE ONE COLLECTION CARD — a set of the user’s own objects, as one card');
+{
+  const types33 = read('components/thread/types.ts') ?? '';
+  const kit33 = read('components/thread/thread-cards.tsx') ?? '';
+  const contract33 = read('lib/present/collection.ts') ?? '';
+  const host33 = read('components/home/collection-card.tsx') ?? '';
+  const route33 = read('app/api/collections/route.ts') ?? '';
+  const ask33 = read('components/home/home-ask.tsx') ?? '';
+  const harness33 = read('app/(main)/dev/thread-preview/preview-client.tsx') ?? '';
+
+  // ── (a) THE KIND ──
+  gate('T33.1 the `collection` card joins the grammar (contract · enumeration · the ONE switch · its own view)',
+    /kind: 'collection';/.test(types33)
+    // MEMBERSHIP, never the neighbour list (the BD7.1 re-pointing lesson, Sep 21)
+    && /THREAD_CARD_KINDS[\s\S]{0,400}'collection'/.test(types33)
+    && /export interface CollectionRow \{/.test(types33) && /export interface CollectionRowVerb \{/.test(types33)
+    && /case 'collection':/.test(kit33) && /<CollectionCardView card=\{card\} \/>/.test(kit33)
+    && /function CollectionCardView\(/.test(kit33) && /function CollectionRowView\(/.test(kit33));
+
+  gate('T33.2 ONE CONTRACT BETWEEN THE HALVES — the pure leaf both sides import, and the client half never edits its shapes',
+    /export const COLLECTION_KINDS/.test(contract33)
+    && /export function isCollectionSpec/.test(contract33)
+    && !/\bfetch\(|supabase/i.test(contract33) && !/^import /m.test(contract33)
+    && /from '@\/lib\/present\/collection'/.test(kit33)
+    && /from '@\/lib\/present\/collection'/.test(host33));
+
+  // ── (b) NO LYING DOORS · THE CAP IS THE RENDERER'S ──
+  gate('T33.3 NO LYING DOORS — a verb with no handler renders as plain text, and so does the title and the "and N more" line',
+    /if \(!verb\.onClick\) return <span/.test(kit33)
+    && /row\.onOpen \? \([\s\S]{0,260}<button type="button" onClick=\{row\.onOpen\}[\s\S]{0,400}\) : \([\s\S]{0,200}<span/.test(kit33)
+    // the cap's door is OpenLink, which is already the kit's no-handler-is-text affordance
+    && /<OpenLink label=\{card\.more\.label \?\? `and \$\{card\.more\.count\} more →`\} onClick=\{card\.more\.onOpen\} \/>/.test(kit33));
+
+  gate('T33.4 AT MOST TWO VERBS A ROW, ENFORCED IN THE RENDERER — the cap is one exported number, sliced by the kit, never a rule hosts are asked to keep',
+    /export const COLLECTION_ROW_MAX_VERBS = 2;/.test(types33)
+    && /\(row\.verbs \?\? \[\]\)\.slice\(0, COLLECTION_ROW_MAX_VERBS\)/.test(kit33));
+
+  gate('T33.5 THE TWO-STEP IS IN PLACE — the verb swaps itself for a confirm + a way out; no modal, no native confirm()',
+    /verb\.confirm && armed/.test(kit33)
+    && /\{verb\.confirm\.label\}/.test(kit33) && /Cancel<\/button>/.test(kit33)
+    && !/window\.confirm|globalThis\.confirm|createPortal/.test(kit33));
+
+  gate('T33.6 THE KIT STAYS PRESENTATIONAL and forks nothing — no fetch/router/supabase, ONE expander idiom, ONE fold number',
+    !/\bfetch\(/.test(kit33) && !/useRouter|supabase/i.test(kit33)
+    && /import \{ ExpandableRows \} from '@\/components\/home\/expandable-rows'/.test(kit33)
+    && /<ExpandableRows\s+items=\{card\.rows\}/.test(kit33)
+    && /card\.foldAfter \?\? COLLECTION_INLINE_ROWS/.test(kit33)
+    // …and an empty set says so plainly rather than wearing row-shaped ghosts
+    && /card\.rows\.length === 0 \?/.test(kit33) && /\{card\.emptyLine \?\? 'Nothing here yet\.'\}/.test(kit33));
+
+  // ── (c) THE HOST OWNS THE VERBS, AND EVERY DEED IS A DOOR THAT ALREADY EXISTED ──
+  gate('T33.7 THE STATE DECIDES, NEVER THE LABEL — the verb map reads `state` and never a status word',
+    /const state = live\.state \?\? row\.state;/.test(host33)
+    && /if \(state === 'active'\)[\s\S]{0,200}'pause'/.test(host33)
+    && /else if \(state === 'paused'\)[\s\S]{0,200}'resume'/.test(host33)
+    // a status LABEL never reaches a verb decision anywhere in the host
+    && !/row\.status/.test(host33));
+
+  gate('T33.8 EVERY DEED IS THE LEDGER’S OWN DOOR — pause/resume is its PATCH, run is its run door, the material predicate is imported not re-written',
+    /fetch\(`\/api\/workflows\/\$\{row\.id\}`, \{\s*\n?\s*method: 'PATCH'/.test(host33)
+    && /body: JSON\.stringify\(\{ status: to \}\)/.test(host33)
+    && /fetch\(`\/api\/workflows\/\$\{row\.id\}\/run`, \{/.test(host33)
+    && /import \{ asksForMaterial \} from '@\/components\/workflows\/run-material-sheet'/.test(host33)
+    // …and the ledger still owns those doors (they are not this wave's invention)
+    && (() => {
+      const ledger = read('components/workflows/workflows-ledger.tsx') ?? '';
+      return /fetch\(`\/api\/workflows\/\$\{w\.id\}`, \{ method: 'PATCH'/.test(ledger)
+        && /fetch\(`\/api\/workflows\/\$\{w\.id\}\/run`/.test(ledger);
+    })());
+
+  gate('T33.9 THE RE-READ DOOR IS GET-ONLY — no mutation route was minted under /api/collections',
+    !!route33 && /export async function GET\(/.test(route33)
+    && !/export async function (POST|PATCH|PUT|DELETE)\(/.test(route33)
+    && sourceFiles('app/api/collections').every((f) => !/export async function (POST|PATCH|PUT|DELETE)\(/.test(read(f) ?? ''))
+    // …and it is authed, user-scoped and zero-AI: it re-derives through the ONE builder
+    && /supabase\.auth\.getUser\(\)/.test(route33)
+    && /buildCollection\(supabase, user\.id, kind, params\)/.test(route33)
+    && !/getAIClient|aiCall/.test(route33));
+
+  gate('T33.10 AN OPTIMISTIC FLIP ROLLS BACK — a failed deed restores the state it found and says so in one quiet line',
+    /patch\(row\.id, \{ state: to, busy: true, error: undefined \}\);/.test(host33)
+    && /patch\(row\.id, \{ state: from, busy: false, settled: undefined, error: 'That could not be changed — try again\.' \}\);/.test(host33)
+    && /error: 'The run could not start — try again\.'/.test(host33));
+
+  gate('T33.17 THE CHIP FOLLOWS THE FLIP, AND NO WORD LANDS TWICE — a paused row says "paused" once, and keeps only the way back',
+    /const WORKFLOW_CHIP: Record<string, \{ word: string; tone: 'active' \| 'paused' \| 'draft' \}>/.test(host33)
+    && /live\.state && live\.state !== r\.state && WORKFLOW_CHIP\[live\.state\]/.test(host33)
+    // the settle flag is what the verb map reads — the receipt word is never load-bearing state
+    && /settled\?: 'paused' \| 'resumed' \| 'ran';/.test(host33)
+    && /if \(live\.settled === 'paused'\)/.test(host33) && /if \(live\.settled\) return \[\];/.test(host33)
+    // …and a RUN, which has no chip, keeps its receipt and no button that would spend twice
+    && /settled: 'ran', receipt: 'running'/.test(host33));
+
+  // ── (d) A PERSISTED CARD IS A POINTER ──
+  gate('T33.11 A PERSISTED COLLECTION IS A POINTER — the stored component carries `{kind, params}` and the host RE-READS; no stored row snapshot is ever mounted',
+    /t\.component\?\.key === 'collection_card'/.test(ask33)
+    && (() => {
+      const i = ask33.indexOf("t.component?.key === 'collection_card'");
+      const seg = ask33.slice(i, i + 900);
+      // the rehydrated turn gets a POINTER and nothing else — no `spec:` off the stored state
+      return /pointer: \{/.test(seg) && /kind: \(t\.component\.state as/.test(seg) && !/spec:/.test(seg);
+    })()
+    && /fetch\(`\/api\/collections\?\$\{qs\.toString\(\)\}`\)/.test(host33)
+    // the live turn paints from the SERVED spec (no round-trip for a fresh answer)
+    && /d\.collection && isCollectionSpec\(d\.collection\.spec\)/.test(ask33));
+
+  // ── (e) THE GUARD, BOTH MOUNTS ──
+  gate('T33.12 `isCollectionSpec` GUARDS BOTH MOUNTS — a malformed spec renders nothing, live or rehydrated',
+    /isCollectionSpec\(seed\)/.test(host33)
+    && /isCollectionSpec\(json\?\.spec\)/.test(host33)
+    && /isCollectionSpec\(d\.collection\.spec\)/.test(ask33)
+    // …and while it is still reading it shows NOTHING, never a skeleton of rows it has not read
+    && /if \(!spec\) \{/.test(host33) && !/animate-pulse/.test(host33));
+
+  // ── (f) READ-ONLY WHERE A VERB WOULD LIE ──
+  gate('T33.13 CALENDAR CARRIES NO VERBS IN THIS WAVE — RSVP/reschedule/cancel have no registry row, no chat door and no commit-door claim, so they are not offered',
+    !/'calendar'[\s\S]{0,400}verbs/.test(host33)
+    && /CALENDAR IS READ-ONLY IN THIS WAVE/.test(host33)
+    // the verb map's last word for any other kind is the empty set
+    && /\n    return \[\];\n  \}, \[onAsk, router, runWorkflow, setWorkflowStatus\]\);/.test(host33));
+
+  gate('T33.14 "Ask about it" IS A WORD, NOT A DEED — it prefills the ONE composer, and without that seam the set is read-only',
+    /if \(!onAsk\) return \[\];/.test(host33)
+    && /onAsk\(`About "\$\{row\.title\}": `\)/.test(host33)
+    && /onAsk=\{\(text\) => \{ setPrefill\(text\); focusComposer\(\); \}\}/.test(ask33));
+
+  gate('T33.15 ONE VIEWER, ONE ADDRESS — a document opens in the library’s own lightbox, a recording at THE ONE note address, and no second previewer is drawn',
+    /import \{ AttachmentLightbox, type LightboxFile \} from '@\/components\/ui\/attachment-lightbox'/.test(host33)
+    && /ref: \{ kind: 'kb', id: r\.id \}/.test(host33)
+    && /router\.push\(`\/meetings\/\$\{str\(row\.facts\?\.eventId\) \?\? row\.id\}`\)/.test(host33)
+    && /router\.push\(`\/workflows\/\$\{row\.id\}`\)/.test(host33));
+
+  // ── (g) THE HARNESS ──
+  gate('T33.16 the harness carries the fixtures — workflows (active · paused-with-undo · running-receipt · draft · a handler-less verb · a confirm) · documents (capped) · recordings · a calendar day · an empty set',
+    /WORKFLOWS_COLLECTION/.test(harness33) && /DOCUMENTS_COLLECTION/.test(harness33)
+    && /RECORDINGS_COLLECTION/.test(harness33) && /CALENDAR_COLLECTION/.test(harness33)
+    && /EMPTY_COLLECTION/.test(harness33)
+    && /confirm: \{ label: 'Run it' \}/.test(harness33)
+    && /receipt: 'running'/.test(harness33)
+    && /\{ id: 'pause', label: 'Pause', tone: 'quiet' \}/.test(harness33)   // no handler ⇒ plain text
+    && /more: \{ count: 12, onOpen: noop \}/.test(harness33)
+    && /emptyLine: 'No workflows yet\.'/.test(harness33)
+    && /cards: \[WORKFLOWS_COLLECTION\]/.test(harness33) && /cards: \[DOCUMENTS_COLLECTION\]/.test(harness33));
+
+  // ── (h) THE COWORKER DM IS THE SAME CARD, NOT A SECOND ONE ──
+  // The DM was deferred in the first pass because its seams sat in two agents' files. Wired now,
+  // under the constraint that motivated the whole wave: ONE host, ONE re-read door, and a stored
+  // card that is a pointer. A second mount or a second fetch path here IS the fork the owner asked
+  // us not to build ("multiple components for the same thing in different ways").
+  const dm33 = read('app/api/work/threads/[id]/chat/route.ts') ?? '';
+  gate('T33.18 THE DM MOUNTS THE ONE HOST THROUGH THE ONE RE-READ DOOR — live spec or stored pointer, no second card and no second fetch path',
+    // the client half: exactly ONE CollectionCard mount and ONE /api/collections reader in the app
+    (ask33.match(/<CollectionCard\b/g) ?? []).length === 1
+    && !/\/api\/collections\?/.test(ask33)
+    && /import CollectionCard, \{ type CollectionPointer \} from '@\/components\/home\/collection-card'/.test(ask33)
+    // the DM's LIVE frame paints from the served spec, guarded by the one validator
+    && /event\.type === 'collection' && event\.collection\?\.id && isCollectionSpec\(event\.collection\.spec\)/.test(ask33)
+    && /collections\.push\(\{ collectionId: event\.collection\.id, spec: event\.collection\.spec \}\)/.test(ask33)
+    // …and the RELOAD hands the host a pointer off the DM message's own metadata — never a spec
+    && (() => {
+      // the LAST occurrence is the mapping (the first is the keep-this-message filter above it)
+      const i = ask33.lastIndexOf('m.metadata?.collections?.length');
+      if (i === -1) return false;
+      const seg = ask33.slice(i, i + 700);
+      return /pointer: \{/.test(seg) && /isCollectionKind\(c\.kind\)/.test(seg) && !/spec:/.test(seg);
+    })());
+
+  gate('T33.19 THE PERSISTED DM COLLECTION IS A POINTER — kind, re-read params, framing; the ROWS are never stored, and the card rides BESIDE the coworker’s prose',
+    // RE-POINTED (W4-C, Sep 22): the shape moved into the ONE shared helper
+    // (lib/present/pointer.ts) because THREE producers now write it. The law is unchanged and the
+    // check is strictly stronger — it now reads the helper itself, so no producer can widen it.
+    /const allCollections: CollectionTurnPointer\[\] = \[\];/.test(dm33)
+    && (() => {
+      const ptr = read('lib/present/pointer.ts') ?? '';
+      const i = ptr.indexOf('export function collectionPointer(');
+      if (i === -1) return false;
+      const body = ptr.slice(i, i + 400);
+      return /kind: spec\.kind/.test(body) && /framing: spec\.framing/.test(body)
+        && /params: spec\.params/.test(body) && !/rows/.test(body);
+    })()
+    && /\.\.\.\(allCollections\.length > 0 \? \{ collections: allCollections \} : \{\}\),/.test(dm33)
+    && (() => {
+      const i = dm33.indexOf('const takeCollection = (spec?: CollectionSpec) => {');
+      if (i === -1) return false;
+      const seg = dm33.slice(i, i + 500);
+      // the pointer carries no rows, and the LIVE frame carries the spec
+      return !/rows/.test(seg)
+        && /allCollections\.push\(collectionPointer\(id, spec\)\);/.test(seg)
+        && /send\(\{ type: 'collection', collection: \{ id, spec \} \}\);/.test(seg);
+    })()
+    // …and the coworker's own prose still streams (the card is an addition, never a replacement)
+    && /event\.type === 'text'\) \{ acc \+= event\.delta \?\? ''; patchLast\(acc\); \}/.test(ask33));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// T34 · THE EVENT CARD (docs/component-map.md §6, Wave 2 — the CLIENT half)
+//
+// The first card whose verbs depend on WHO the user is to the object and WHEN it is. That is what
+// makes it the seat of the gen-UI rule — REASONED SELECTION, DETERMINISTIC RENDERING — and these
+// gates are that rule's client half:
+//
+//   (a) the kit owns the kind — contract, enumeration, the ONE switch, its own view
+//   (b) THE CLIENT NEVER RE-DERIVES THE LADDER: `spec.verbs` IS the permitted set, served; no
+//       component imports `validEventVerbs`, and the words come from `EVENT_VERB_WORDS`
+//   (c) THE SECOND CLICK IS THE APPROVAL — arming fires nothing; a proposal arms, it never sends
+//   (d) AN IRREVERSIBLE VERB SAYS WHAT IT COSTS, for exactly `IRREVERSIBLE_VERBS`
+//   (e) a persisted card is a POINTER — the host re-reads on mount, and again on a 409
+//   (f) `isEventSpec` guards BOTH mounts; every deed is the ONE door
+//   (g) the harness carries every state the card can be in
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+console.log('\nT34 · THE EVENT CARD — one calendar event, and only the verbs its state permits');
+{
+  const types34 = read('components/thread/types.ts') ?? '';
+  const kit34 = read('components/thread/thread-cards.tsx') ?? '';
+  const contract34 = read('lib/present/event.ts') ?? '';
+  const host34 = read('components/home/event-card.tsx') ?? '';
+  const ask34 = read('components/home/home-ask.tsx') ?? '';
+  const coll34 = read('components/home/collection-card.tsx') ?? '';
+  const harness34 = read('app/(main)/dev/thread-preview/preview-client.tsx') ?? '';
+
+  // ── (a) THE KIND ──
+  gate('T34.1 the `event` card joins the grammar (contract · enumeration · the ONE switch · its own view)',
+    /kind: 'event';/.test(types34)
+    && /export interface EventCard extends CardBase \{/.test(types34)
+    && /export interface EventCardVerb \{/.test(types34)
+    // MEMBERSHIP, never the neighbour list (the BD7.1 re-pointing lesson)
+    && /THREAD_CARD_KINDS[\s\S]{0,400}'event'/.test(types34)
+    && /case 'event':/.test(kit34) && /<EventCardView card=\{card\} \/>/.test(kit34)
+    && /function EventCardView\(/.test(kit34));
+
+  gate('T34.2 ONE CONTRACT BETWEEN THE HALVES — the pure leaf both sides import, and the client half never edits its shapes',
+    /export const EVENT_VERBS/.test(contract34)
+    && /export function isEventSpec/.test(contract34)
+    && /export function validEventVerbs/.test(contract34)
+    && !/\bfetch\(|supabase/i.test(contract34) && !/^import /m.test(contract34)
+    && /from '@\/lib\/present\/event'/.test(host34));
+
+  // ── (b) THE CLIENT NEVER RE-DERIVES THE LADDER ──
+  gate('T34.3 `spec.verbs` IS THE PERMITTED SET — no component imports or calls the ladder, and the host renders the served order untouched',
+    // no client file pulls the ladder or the sanitizer out of the contract…
+    sourceFiles('components').every((f) => {
+      const src = read(f) ?? '';
+      const imports = [...src.matchAll(/import\s+(?:type\s+)?\{([\s\S]*?)\}\s+from\s+'@\/lib\/present\/event'/g)]
+        .map((m) => m[1]).join(',');
+      return !/validEventVerbs|sanitizeProposal/.test(imports) && !/validEventVerbs\(|sanitizeProposal\(/.test(src);
+    })
+    // …and the host maps the SERVED array, in place, wording it from the contract's own table
+    && /spec\.verbs\.map\(\(v\) => \(\{/.test(host34)
+    && /label: EVENT_VERB_WORDS\[v\]\.label,/.test(host34)
+    && /armedLabel: EVENT_VERB_WORDS\[v\]\.armed,/.test(host34)
+    // …and a rehydrated proposal is honoured ONLY while the served ladder still permits it
+    && /pointer\?\.proposal && spec\.verbs\.includes\(pointer\.proposal\.verb\)/.test(host34));
+
+  gate('T34.4 THE LOUDEST VERB IS NEVER THE COSTLIEST ONE — at rest every verb is quiet text; the primary appears only on the ARMED step, wearing the contract’s armed word',
+    // the resting button is the muted one…
+    /onClick=\{\(\) => setArmed\(v\.id\)\}[\s\S]{0,260}text-neutral-400/.test(kit34)
+    // …and the armed one is the single filled button, saying `EVENT_VERB_WORDS[verb].armed`
+    && /bg-indigo-600[\s\S]{0,200}\{v\.busy \? `\$\{v\.armedLabel\}…` : v\.armedLabel\}/.test(kit34)
+    && /EVENT_VERB_WORDS: Record<EventVerb, \{ label: string; armed: string; done: string \}>/.test(contract34));
+
+  // ── (c) THE SECOND CLICK IS THE APPROVAL ──
+  gate('T34.5 THE FIRST CLICK ARMS, THE SECOND COMMITS — arming calls nothing, the deed is reached from exactly one place, and a way out is always rendered',
+    // the un-armed branch ONLY arms
+    /onClick=\{\(\) => setArmed\(v\.id\)\}/.test(kit34)
+    // the armed branch is the ONLY caller of the host's hands, through the one `fire`
+    && (kit34.match(/v\.onConfirm\?\.\(/g) ?? []).length === 1
+    && /const fire = \(v: EventCardVerb\) => \{/.test(kit34)
+    && /onClick=\{\(\) => fire\(v\)\}/.test(kit34)
+    // Escape and a click away disarm — a two-step's way out is never only a button
+    && /if \(e\.key === 'Escape'\) setArmed\(null\)/.test(kit34)
+    && /document\.addEventListener\('mousedown', onDown\)/.test(kit34)
+    && /Cancel<\/button>/.test(kit34)
+    // …and no modal, no native confirm()
+    && !/window\.confirm|globalThis\.confirm|createPortal/.test(kit34));
+
+  gate('T34.6 A PROPOSAL ARMS, IT NEVER SENDS — the served selection seats the armed verb on the first paint and nothing else moves',
+    /React\.useState<string \| null>\(card\.armedVerbId \?\? null\)/.test(kit34)
+    && /React\.useEffect\(\(\) => \{ setArmed\(card\.armedVerbId \?\? null\); \}, \[card\.armedVerbId\]\);/.test(kit34)
+    && /armedVerbId: proposal\.verb/.test(host34)
+    // the proposal's own arguments arrive editable — the note prefilled, the window stated
+    && /\.\.\.\(proposal\?\.note \? \{ note: proposal\.note \} : \{\}\)/.test(host34)
+    && /\.\.\.\(proposal\?\.newLabel \? \{ proposedLabel: proposal\.newLabel \} : \{\}\)/.test(host34));
+
+  // ── (d) WHAT IT COSTS, WHILE IT CAN STILL BE STOPPED ──
+  gate('T34.7 EXACTLY THE IRREVERSIBLE VERBS CARRY A CONSEQUENCE LINE — the set is the contract’s, not a list this file keeps',
+    (() => {
+      const block = host34.match(/const CONSEQUENCE: Partial<Record<EventVerb, string>> = \{([\s\S]*?)\n\};/);
+      if (!block) return false;
+      const keys = [...block[1].matchAll(/^\s*(\w+):/gm)].map((m) => m[1]).sort();
+      const irreversible = (contract34.match(/export const IRREVERSIBLE_VERBS[^=]*=\s*\[([^\]]*)\]/) ?? [])[1] ?? '';
+      const want = [...irreversible.matchAll(/'(\w+)'/g)].map((m) => m[1]).sort();
+      return want.length > 0 && JSON.stringify(keys) === JSON.stringify(want);
+    })()
+    // the host gates the line on the contract's own predicate, and the kit prints only what it is given
+    && /IRREVERSIBLE_VERBS\.includes\(v\) && CONSEQUENCE\[v\]/.test(host34)
+    && /armedVerb\?\.consequence && \(/.test(kit34));
+
+  // ── (e) THE KIT DERIVES NOTHING, AND THE HOST OWNS THE CLOCK ──
+  gate('T34.8 THE KIT READS NO CLOCK AND COMPOSES NO ISO — the picked wall time leaves as the three fields the user touched; the host turns it into a deed',
+    !/new Date\(|Date\.now\(|toISOString/.test(kit34)
+    && !/\bfetch\(/.test(kit34) && !/useRouter|supabase/i.test(kit34)
+    && /pick\?: \{ date: string; time: string; durationMin: number \};/.test(types34)
+    && /function windowFromPick\(/.test(host34)
+    && /newStartISO: start\.toISOString\(\), newEndISO: end\.toISOString\(\)/.test(host34)
+    // the picker starts on THE EVENT'S OWN window, never today and never a guess
+    && /function pickerDefaultsOf\(spec: EventSpec\)/.test(host34)
+    && /pickerDefaults: pickerDefaultsOf\(spec\)/.test(host34));
+
+  // ── (f) THE RE-READ, THE ONE DOOR, THE GUARD ──
+  gate('T34.9 A PERSISTED CARD IS A POINTER — the stored component carries `{eventId, proposal?}` and the host RE-READS the event through its own door',
+    /export type EventPointer = \{ eventId: string; proposal\?: EventProposal \| null \};/.test(host34)
+    && /fetch\(`\/api\/events\/\$\{id\}\/card`\)/.test(host34)
+    && /if \(spec \|\| !pointer\?\.eventId\) return;/.test(host34)
+    // the chief room's rehydrate hands over a POINTER and never a stored spec
+    && /t\.component\?\.key === 'event_card'/.test(ask34)
+    && (() => {
+      const i = ask34.indexOf("t.component?.key === 'event_card'");
+      const seg = ask34.slice(i, i + 900);
+      return /pointer: \{/.test(seg) && !/\bspec:/.test(seg);
+    })()
+    // …and so does the DM's
+    && (() => {
+      const i = ask34.lastIndexOf('m.metadata?.events?.length');
+      if (i === -1) return false;
+      const seg = ask34.slice(i, i + 600);
+      return /pointer: \{ eventId: e\.id/.test(seg) && !/\bspec:/.test(seg);
+    })());
+
+  gate('T34.10 THE 409 IS AN HONEST CORRECTION, NOT A RETRY — a withdrawn verb re-reads the event and says so in one quiet line',
+    /if \(res\.status === 409\) \{/.test(host34)
+    && /const fresh = await reread\(spec\.id\);/.test(host34)
+    && /setError\('That’s no longer possible/.test(host34)
+    // a plain failure restores the card and speaks once — never a toast
+    && /setError\('That didn’t go through — try again\.'\);/.test(host34)
+    && !/toast\(/.test(host34));
+
+  gate('T34.11 `isEventSpec` GUARDS EVERY MOUNT — live, rehydrated, and the deed’s own reply; a malformed spec renders nothing',
+    /isEventSpec\(seed\)/.test(host34)
+    && /isEventSpec\(json\?\.spec\)/.test(host34)
+    && /!isEventSpec\(json\?\.spec\)\) throw new Error\('deed'\)/.test(host34)
+    && /isEventSpec\(d\.event\.spec\)/.test(ask34)
+    && /isEventSpec\(event\.event\?\.spec \?\? event\.card\?\.spec\)/.test(ask34)
+    // still-reading shows NOTHING rather than a skeleton of facts it has not read
+    && /if \(!spec\) \{/.test(host34) && !/animate-pulse/.test(host34));
+
+  gate('T34.12 EVERY DEED IS THE ONE DOOR — one POST to /api/events/<id>/deed, and the host mints no provider call of its own',
+    /fetch\(`\/api\/events\/\$\{spec\.id\}\/deed`, \{\s*\n?\s*method: 'POST'/.test(host34)
+    && (host34.match(/method: 'POST'/g) ?? []).length === 1
+    && !/googleapis|graph\.microsoft|\/api\/invites\/|\/api\/calendar\//.test(host34)
+    // …and the HOST is mounted once per surface, never a second card for the same object
+    && (ask34.match(/<EventCard\b/g) ?? []).length === 1
+    && /import EventCard, \{ type EventPointer \} from '@\/components\/home\/event-card'/.test(ask34));
+
+  // ── (g) THE ROW OPENS IN PLACE, AND THE HARNESS HOLDS EVERY STATE ──
+  gate('T34.13 THE CALENDAR ROW OPENS ITS EVENT IN PLACE — the row’s own door raises THE ONE event card under it, and the row still carries no RSVP verb of its own',
+    /import EventCard from '@\/components\/home\/event-card'/.test(coll34)
+    && /<EventCard pointer=\{\{ eventId: ev \}\} \/>/.test(coll34)
+    && /expanded\?: ReactNode;/.test(types34)
+    && /\{row\.expanded && <div className="px-4 pb-3">\{row\.expanded\}<\/div>\}/.test(kit34)
+    // ONE STAGE AT A TIME — at most one row stands open
+    && /setOpenRow\(\(cur\) => \(cur === row\.id \? null : row\.id\)\)/.test(coll34));
+
+  gate('T34.14 the harness carries every state the card can be in — the three invitee sets · the organizer pair · an armed refusal with its note · an armed move with its window · a spent deed · a move’s receipt · a past event · a read-only calendar · an honest failure · DM mode',
+    [
+      'EVENT_INVITEE_NO_REPLY', 'EVENT_INVITEE_ACCEPTED', 'EVENT_ORGANIZER', 'EVENT_ARMED_DECLINE',
+      'EVENT_ARMED_RESCHEDULE', 'EVENT_DONE', 'EVENT_MOVED', 'EVENT_PAST', 'EVENT_READ_ONLY', 'EVENT_FAILED',
+    ].every((f) => harness34.includes(f))
+    && /armedVerbId: 'decline'/.test(harness34) && /armedVerbId: 'reschedule'/.test(harness34)
+    && /proposedLabel: 'Thu 25 Sep · 10:00–10:30'/.test(harness34)
+    && /quietLine: 'This one’s in the past\.'/.test(harness34)
+    && /quietLine: 'Read-only calendar\.'/.test(harness34)
+    && /done: 'Declined'/.test(harness34)
+    && /verbs: \[\]/.test(harness34)
+    // the Event tab exists, and the SAME card also stands in DM mode (one card, every surface)
+    && /\{ value: 'event', label: 'Event' \}/.test(harness34)
+    && /items=\{EVENT_ITEMS\}/.test(harness34)
+    && /cards: \[EVENT_ORGANIZER\][\s\S]{0,4000}RECORDINGS_COLLECTION/.test(harness34));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// T35 · THE CONVERGENCE OF THE ASK AND THE GATE (W3-A — docs/component-map.md §2a, Sep 22)
+//
+// THE LAW OF THE WAVE: ONE OBJECT, ONE RENDERING. Every THREAD-SHAPED surface mounts the kit kind
+// through one of two hosts; every NON-thread surface shares the same PIECES and the same DEED
+// MODULE; and there is exactly ONE state vocabulary per object.
+//
+// Zero-AI and source-level, like the rest of this suite.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+console.log('\nT35 · THE ASK AND THE GATE — one object, one rendering, one vocabulary');
+{
+  const kit = read('components/thread/thread-cards.tsx') ?? '';
+  const types = read('components/thread/types.ts') ?? '';
+  const rows = read('components/thread/ask-rows.tsx') ?? '';
+  const gateHost = read('components/home/approval-card.tsx') ?? '';
+  const askHost = read('components/home/input-card.tsx') ?? '';
+  const doors = read('lib/deeds/gate-doors.ts') ?? '';
+  const pieces = read('components/workflows/gate-pieces.tsx') ?? '';
+  const vocab = read('lib/workflows/process-state.ts') ?? '';
+  const rail = read('components/home/item-rail.tsx') ?? '';
+  const detail = read('components/home/item-detail.tsx') ?? '';
+  const drawer = read('components/workflows/process-drawer.tsx') ?? '';
+  const form = read('components/workflows/input-supply-form.tsx') ?? '';
+  const harness = read('app/(main)/dev/thread-preview/preview-client.tsx') ?? '';
+
+  /** Every source file that could plausibly draw a card — the sweep's universe. */
+  const UI = sourceFiles('components').concat(sourceFiles('app'));
+  /** The two files allowed to compose an approval/input card, plus the kit and the harness. */
+  const CARD_AUTHORS = new Set([
+    'components/home/approval-card.tsx',
+    'components/home/input-card.tsx',
+    'components/thread/thread-cards.tsx',
+    'components/thread/types.ts',
+    'app/(main)/dev/thread-preview/preview-client.tsx',
+    // RE-POINTED Sep 22 (THE CATALOGUE, T37 — never weakened): the dev harness's fixtures moved
+    // into a second file when the index was added. Both harness files are the SAME carve-out, and
+    // for the same reason: a preview's job is to render the states a reader meets, so it composes
+    // card literals on purpose. Every PRODUCT surface still mounts a host.
+    'app/(main)/dev/thread-preview/preview-catalogue.tsx',
+  ]);
+
+  // ── 1 · THE KIT EXPRESSES EVERY STATE THE COPIES EXPRESSED ────────────────────────────────────
+  // RE-POINTED (W3-C, Sep 22 — never weakened): the judged DECISION is the THIRD kind whose whole
+  // existence is a question put to the reader, so it carries the same lifecycle. The count moves
+  // with the grammar, honestly, rather than the law being loosened to a >=.
+  gate('T35.1 every answerable kind carries a LIFECYCLE — open · busy · settled — declared once, in the contract',
+    /export type AnswerableState = 'open' \| 'busy' \| 'settled';/.test(types)
+    && /state\?: AnswerableState;/.test(types)
+    && (types.match(/state\?: AnswerableState;/g) ?? []).length === 3
+    // …and the kit actually branches on it, on EVERY one of them
+    && /const aState = card\.state \?\? 'open';/.test(kit)
+    && /const iState = card\.state \?\? 'open';/.test(kit)
+    && /const state = card\.state \?\? 'open';/.test(kit));
+
+  gate('T35.2 A SETTLED CARD KEEPS NO VERBS — one receipt line stands where the deed stood, on both kinds',
+    (() => {
+      for (const k of ["case 'approval': {", "case 'input': {"]) {
+        const i = kit.indexOf(k);
+        if (i < 0) return false;
+        const seg = kit.slice(i, i + 3400);
+        // the verbs live strictly on the NOT-settled branch
+        if (!/\{aSettled \? \(|\{iSettled \? \(/.test(seg)) return false;
+        if (!/settledLine/.test(seg)) return false;
+      }
+      const a = kit.slice(kit.indexOf("case 'approval': {"), kit.indexOf("case 'input': {"));
+      // Approve/Reject are inside the else-branch only
+      return a.indexOf('aSettled ? (') < a.indexOf('onClick={card.onApprove}') + 1
+        || /\) : \(\s*<>[\s\S]{0,1400}card\.onApprove/.test(a);
+    })());
+
+  gate('T35.3 AN ERROR IS A LINE, NEVER A STATE — the question it was asking is still the question',
+    /error\?: string;/.test(types)
+    && (kit.match(/card\.error && <div className="text-\[12px\] text-rose-600">/g) ?? []).length === 2
+    && /There is deliberately no `error` state/.test(types));
+
+  gate('T35.4 THE APPROVAL EXPRESSES EVERYTHING ITS COPIES DID — gate word · provenance · standing line · markdown object · the note · a footer',
+    ['gateWord?: string;', 'meta?: string;', 'standingNode?: ReactNode;', 'previewNode?: ReactNode;',
+      'noteValue?: string;', 'onNote?: (v: string) => void;', 'footer?: ReactNode;', 'statusChip?: string;']
+      .every((f) => types.includes(f))
+    // the markdown half is the SHARED renderer, mounted by the host — the kit renders no markdown
+    && /<GateObject preview=\{spec\.preview\}/.test(gateHost)
+    && !/MarkdownText/.test(kit));
+
+  gate('T35.5 THE ASK EXPRESSES EVERYTHING ITS COPIES DID — the concrete rows · the station’s own supply form · the arrived trail',
+    ['items?: string[];', 'supplyNode?: ReactNode;', 'contextNode?: ReactNode;'].every((f) => types.includes(f))
+    // RE-POINTED Sep 22 (W4-B, THE TYPE-IT DOOR): the rows mount now forwards the per-row doors.
+    // The LAW is unchanged and still exactly what is read — the kit mounts THE ONE rows leaf with
+    // the card's own items, and draws no rows of its own.
+    && /<AskRows rows=\{card\.items\}/.test(kit)
+    && !/w-1 h-1 rounded-full bg-neutral-300/.test(kit)
+    // the station's deed is the ONE shared form, mounted by the host — the kit draws no paste box
+    && /<InputSupplyForm/.test(askHost)
+    && !/textarea/.test(kit.slice(kit.indexOf("case 'input': {"), kit.indexOf("case 'input': {") + 3400)));
+
+  gate('T35.6 THE SUPPLY FORM AND THE CHIPS ARE NEVER BOTH OFFERED (two doors to one deed)',
+    /\{!card\.supplyNode && \(card\.onAttach \|\| card\.onPaste \|\| card\.onPickFile \|\| card\.onProceed\)/.test(kit));
+
+  // ── 2 · ONE HOST PER OBJECT, AND IT IS THE ONLY THREAD-SHAPED RENDERING ────────────────────────
+  gate('T35.7 NO FILE OUTSIDE THE KIT AND THE TWO HOSTS COMPOSES AN approval/input CARD',
+    UI.filter((f) => !CARD_AUTHORS.has(f))
+      .every((f) => {
+        const src = (read(f) ?? '').replace(/^\s*\/\/.*$/gm, '');
+        // a CARD literal (`kind: 'approval',`) — not a step-kind type union, which is a different
+        // object and legitimately names the same word (run-record-drawer's `'approval' | 'handoff'`).
+        return !/kind: 'approval',/.test(src) && !/kind: 'input',/.test(src);
+      }),
+    UI.filter((f) => !CARD_AUTHORS.has(f) && /kind: '(approval|input)',/.test((read(f) ?? '').replace(/^\s*\/\/.*$/gm, ''))).join(', '));
+
+  gate('T35.8 THE OLD COPIES ARE GONE — the room’s hand-drawn gate and checklist, the deep-dive’s own optimistic gate, the band’s amber rows',
+    // the room rail: no checklist block, no proceed chip, no inline resume fetch, no hand-typed chips
+    !/const checklistBlock/.test(rail) && !/const proceedChip/.test(rail) && !/const proceedEngineAsk/.test(rail)
+    && !/approved — delivering/.test(rail) && !/waiting on you/.test(rail)
+    // the deep-dive: no gate state machine of its own
+    && !/setSettled\('approved'/.test(detail) && !/const decidedWord =/.test(detail) && !/const settledWord =/.test(detail)
+    // RE-POINTED (W4-D, Sep 22): the band whose amber checklist idiom this clause chased was
+    // retired; the negative is now swept over EVERY UI file, so no surface can reintroduce it.
+    && sourceFiles('components').concat(sourceFiles('app'))
+      .every((f) => !/border-amber-100 bg-amber-50\/40/.test(read(f) ?? '')));
+
+  gate('T35.9 EVERY THREAD-SHAPED SURFACE MOUNTS A HOST — the room stream, the pinned fold, the lifted ask, and both deep-dive gates',
+    /import ApprovalCard from '@\/components\/home\/approval-card';/.test(rail)
+    && /import InputCard from '@\/components\/home\/input-card';/.test(rail)
+    && /<ApprovalCard/.test(rail) && /<InputCard/.test(rail)
+    && /import ApprovalCard from '@\/components\/home\/approval-card';/.test(detail)
+    && /import InputCard from '@\/components\/home\/input-card';/.test(detail)
+    && /<ApprovalCard/.test(detail) && /<InputCard/.test(detail)
+    // and the deep-dive no longer knows what a paste box looks like
+    && !/import InputSupplyForm/.test(detail));
+
+  gate('T35.10 A DRAWER IS NOT A THREAD — the process drawer shares the PIECES, and mounts no kit card',
+    /import \{ GateStandingLine, GateAsk, GateObject \} from '@\/components\/workflows\/gate-pieces';/.test(drawer)
+    && !/function GateStandingLine\(/.test(drawer) && !/function GateAsk\(/.test(drawer) && !/function GateObject\(/.test(drawer)
+    && !/ThreadCardView/.test(drawer));
+
+  gate('T35.11 ONE IMPLEMENTATION OF EVERY SHARED PIECE, across the whole tree',
+    ['function GateStandingLine(', 'function GateAsk(', 'function GateObject(', 'function GateOutcomeChip(']
+      .every((sig) => UI.filter((f) => (read(f) ?? '').includes(`export ${sig}`) || (read(f) ?? '').includes(sig)).length === 1)
+    && /export function AskRows\(/.test(rows)
+    && UI.filter((f) => /function AskRows\(/.test(read(f) ?? '')).length === 1);
+
+  // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT): the "Needs your input" band this named
+  // (components/home/waiting-on-you.tsx) had been unmounted since the threads arc and was retired
+  // as unreachable — so the gate can no longer read the law off one instance. It reads the CLASS
+  // instead, which is what the law always meant: the ask leaf and the proceed door each have ONE
+  // implementation, and no surface anywhere draws its own rows or its own proceed fetch.
+  gate('T35.12 EVERY ASK LIST SHARES THE LEAF AND THE DOOR, NOT A COPY (the class, not one band)',
+    (() => {
+      const UIFiles = sourceFiles('components').concat(sourceFiles('app'));
+      const leafDefs = UIFiles.filter((f) => /export function AskRows\(/.test(read(f) ?? ''));
+      const ownRows = UIFiles.filter((f) => f !== 'components/thread/ask-rows.tsx'
+        && /function AskRows\(/.test(read(f) ?? ''));
+      const ownProceed = UIFiles.filter((f) => /fetch\(['`]\/api\/room\/asks/.test(
+        (read(f) ?? '').replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')));
+      return leafDefs.length === 1 && leafDefs[0] === 'components/thread/ask-rows.tsx'
+        && ownRows.length === 0 && ownProceed.length === 0
+        && /export async function proceedAsk\(/.test(doors)
+        && /import \{ proceedAsk, supplyAskText \} from '@\/lib\/deeds\/gate-doors';/
+             .test(read('components/home/input-card.tsx') ?? '');
+    })());
+
+  // ── 3 · EXACTLY ONE CLIENT MODULE PER DOOR ────────────────────────────────────────────────────
+  gate('T35.13 ONE CLIENT RESUME-DOOR MODULE — every approve/reject/supply in the product goes through it',
+    /export async function resumeRun\(/.test(doors)
+    && UI.filter((f) => /export async function resumeRun\(/.test(read(f) ?? '')).length === 0
+    && (() => {
+      const callers = UI.filter((f) => /\/api\/workflows\/runs\/\$\{[^}]+\}\/resume/.test((read(f) ?? '').replace(/^\s*\/\/.*$/gm, '')));
+      return callers.length === 0;
+    })()
+    // …and the three surfaces that used to hold their own fetch now import it
+    && /import \{ resumeRun/.test(drawer)
+    && /import \{ resumeRun \} from '@\/lib\/deeds\/gate-doors';/.test(form)
+    && /import \{ resumeRun, outcomeOf \} from '@\/lib\/deeds\/gate-doors';/.test(gateHost));
+
+  // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT): one of the two callers was the Home's ask band
+  // (components/home/waiting-on-you.tsx), unmounted since the threads arc and now retired. The law
+  // is unchanged and the count follows the live seats: the ONE ask host fires the ONE door, and no
+  // surface anywhere holds a raw fetch of its own.
+  gate('T35.14 ONE CLIENT PROCEED-DOOR MODULE — the go-ahead is fired from the ask host alone, through it',
+    /export async function proceedAsk\(/.test(doors)
+    && UI.filter((f) => /fetch\('\/api\/room\/asks'/.test((read(f) ?? '').replace(/^\s*\/\/.*$/gm, ''))).length === 0
+    && (() => {
+      const callers = UI.filter((f) => /proceedAsk\(/.test(read(f) ?? ''));
+      return callers.length === 1 && callers[0] === 'components/home/input-card.tsx';
+    })());
+
+  gate('T35.15 THE CONFLICT IS A FACT, NOT A RETRY — 409 is its own reason, and every caller reads it',
+    /reason: 'conflict'/.test(doors) && /res\.status === 409/.test(doors)
+    && /res\.reason === 'conflict'/.test(gateHost)
+    && /res\.reason === 'conflict'/.test(askHost)
+    && /res\.reason === 'conflict'/.test(drawer)
+    // RE-POINTED (W4-D, Sep 22): the retired ask band was the fourth caller; the law is asserted as
+    // the class instead — EVERY file that calls the door reads its conflict reason.
+    && /res\.reason === 'conflict'/.test(read('components/home/input-card.tsx') ?? '')
+    // the host does NOT roll back on a conflict (the gate really is closed)
+    && /setElsewhere\(res\.message \?\? GATE_SETTLED_ELSEWHERE\)/.test(gateHost));
+
+  gate('T35.16 THE NOTE RIDES THE DEED AND NEVER GATES IT — one implementation, best-effort, before the decision',
+    /await fetch\(`\/api\/workflows\/runs\/\$\{runId\}\/comments`/.test(doors)
+    && /catch \{ \/\* the decision is what matters — the note is a courtesy \*\//.test(doors)
+    && /notable: true/.test(detail)
+    // the deep-dive no longer posts the comment itself
+    && !/runs\/\$\{runId\}\/comments/.test(detail));
+
+  // ── 4 · ONE STATE VOCABULARY ──────────────────────────────────────────────────────────────────
+  gate('T35.17 THE ONE GATE-OUTCOME VOCABULARY lives beside GATE_WORDS and nowhere else',
+    /export type GateOutcome = 'approved' \| 'rejected' \| 'supplied';/.test(vocab)
+    && /export const GATE_OUTCOME_WORDS: Record<GateOutcome/.test(vocab)
+    && /export const GATE_SETTLED_ELSEWHERE =/.test(vocab)
+    && /export const GATE_WAITING_CHIP =/.test(vocab)
+    && sourceFiles('lib').concat(UI).filter((f) => /export const GATE_OUTCOME_WORDS/.test(read(f) ?? '')).length === 1);
+
+  gate('T35.18 NO SURFACE DECLARES A GATE-STATE UNION OF ITS OWN — `decided`/`settled` derive from the one type or die',
+    UI.every((f) => {
+      const src = (read(f) ?? '').replace(/^\s*\/\/.*$/gm, '');
+      // the three retired spellings, as TYPE unions (the drift the census found)
+      return !/'approved' \| 'held'/.test(src)
+        && !/'supplied' \| 'held' \| null/.test(src)
+        && !/useState<'approved' \| 'rejected' \| 'supplied' \| null>/.test(src);
+    }),
+    UI.filter((f) => /'approved' \| 'held'|useState<'approved' \| 'rejected' \| 'supplied' \| null>/.test((read(f) ?? '').replace(/^\s*\/\/.*$/gm, ''))).join(', '));
+
+  gate('T35.19 THE OUTCOME WORDS ARE READ, NEVER TYPED — no surface hand-writes a settle sentence',
+    // The HARNESS types them deliberately: its whole job is to show the RENDERED state, so its
+    // fixtures are the words as a reader meets them. Every PRODUCT surface reads the table.
+    // (RE-POINTED Sep 22, THE CATALOGUE — the harness is TWO files now, the walks and the index;
+    //  the carve-out follows the harness, not one filename. The law is unchanged.)
+    UI.filter((f) => !f.startsWith('app/(main)/dev/thread-preview/'))
+      .every((f) => {
+        const src = (read(f) ?? '').replace(/^\s*\/\/.*$/gm, '');
+        return !/'Approved — the run is delivering\.'/.test(src)
+          && !/'Held back — nothing was delivered\.'/.test(src)
+          && !/'This one has already been answered\.'/.test(src);
+      })
+    && /GATE_OUTCOME_WORDS\[outcome\]\.line/.test(gateHost)
+    && /GATE_OUTCOME_WORDS\[outcome\]\.chip/.test(gateHost)
+    && /GATE_OUTCOME_WORDS\.rejected\.line/.test(drawer));
+
+  gate('T35.20 THE GATE WORD IS STILL GATE_WORDS’ — the host reads the kind table, it types no station word',
+    /GATE_WORDS\[kind\]\.station/.test(gateHost)
+    && !/'Your approval'/.test(gateHost) && !/'Needs input from you'/.test(gateHost));
+
+  // ── 5 · THE BEHAVIOURS THE WAVE MUST NOT LOSE ─────────────────────────────────────────────────
+  gate('T35.21 THE NEXT GATE ARMS — a fresh park at a LATER station still clears the decision state in place',
+    // (CLAUDE.md, Sep 1 pilot wave (a): found ONLY by the browser walk — the polls refreshed
+    //  everything except the gate cards, and sticky `decided` kept later gates 'upcoming'.)
+    /if \(!decided\) return;/.test(drawer)
+    && /process\.stepsDone > decidedStepsRef\.current/.test(drawer)
+    && /setDecided\(null\);/.test(drawer)
+    && /decidedStepsRef\.current = process\.stepsDone;/.test(drawer));
+
+  gate('T35.22 A GO-AHEAD DOES NOT CLOSE AN ASK — it withdraws the door it used, and the missing things stay missing',
+    /const wentAhead =/.test(askHost)
+    && /const settled = settledAs === 'supplied' \|\| settledAs === 'held'/.test(askHost)
+    && /!settled && !wentAhead && askAllowsGoAhead\(/.test(askHost));
+
+  // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT): the second caller was the retired ask band. The
+  // law's point is that the test is not spelled at a seat — now literally one caller, the host.
+  gate('T35.23 THE GO-AHEAD LAW HAS ONE CALLER AMONG THE ASK SEATS, and it is the host',
+    UI.filter((f) => /askAllowsGoAhead\(/.test((read(f) ?? '').replace(/^\s*\/\/.*$/gm, ''))).length === 1
+    && /askAllowsGoAhead\(/.test(askHost));
+
+  gate('T35.24 THE STATION’S DEED IS STILL THE ONE SHARED FORM, mounted in exactly the places that can answer it',
+    UI.filter((f) => /<InputSupplyForm/.test(read(f) ?? '')).length === 2
+    && /<InputSupplyForm/.test(askHost) && /<InputSupplyForm/.test(drawer)
+    // …and there is still exactly ONE paste box in the product
+    && UI.filter((f) => /placeholder="Paste it here…"/.test(read(f) ?? '')).length === 1);
+
+  gate('T35.25 THE HOSTS ARE HOSTS — they fetch through the door module and hold no route string of their own',
+    !/fetch\(/.test(gateHost)
+    && (askHost.match(/fetch\(/g) ?? []).length === 0
+    && /THE CONFLICT IS NOT A ROLLBACK/.test(gateHost));
+
+  // RE-POINTED Sep 22 (W4-B, THE TYPE-IT DOOR — narrowed, not relaxed). The rows leaf's blanket
+  // `no useState` was a PROXY for presentational purity. A row now carries an inline field (typing
+  // the fact is the whole door), and the draft text has to live somewhere: lifting it to the host
+  // would put a text buffer in four surfaces — the exact fork this leaf exists to prevent. So the
+  // law is now stated instead of proxied: the leaf may hold the EPHEMERAL FIELD and nothing else —
+  // no fetch, no router, no supabase, and NO LIFECYCLE AT ALL (no effect, no ref, no timer), so it
+  // still cannot observe, subscribe to, or mutate anything outside its own render.
+  gate('T35.26 PRESENTATIONAL PURITY SURVIVES — the kit still fetches nothing and routes nowhere; the rows leaf holds the ephemeral field and no lifecycle',
+    !/fetch\(/.test(kit) && !/useRouter/.test(kit) && !/supabase/i.test(kit)
+    && !/fetch\(/.test(rows) && !/useRouter|next\/navigation/.test(rows) && !/supabase/i.test(rows)
+    && !/useEffect|useLayoutEffect|useRef|setTimeout|setInterval/.test(rows)
+    && (rows.match(/useState/g) ?? []).length <= 4);
+
+  // ── 6 · THE HARNESS STOPS PROMISING MORE THAN THE PRODUCT ─────────────────────────────────────
+  gate('T35.27 the harness mounts THE PRODUCT’S OWN HOSTS for the live states (not a fixture of a card nobody ships)',
+    /import ApprovalCard from '@\/components\/home\/approval-card';/.test(harness)
+    && /import InputCard from '@\/components\/home\/input-card';/.test(harness)
+    && /<ApprovalCard/.test(harness) && /<InputCard/.test(harness)
+    && /\{ value: 'gates', label: 'Gates & asks' \}/.test(harness));
+
+  gate('T35.28 the harness carries EVERY state the two kinds can be in — open (gate · station · engine ask · a no-go-ahead ask) · busy · approved · held back · answered elsewhere · an honest failure',
+    ['GATE_OPEN_HOST', 'GATE_STATION_HOST', 'ASK_ENGINE_HOST', 'ASK_NO_GO_AHEAD',
+      'GATE_BUSY', 'GATE_SETTLED_APPROVED', 'GATE_SETTLED_REJECTED', 'GATE_SETTLED_ELSEWHERE', 'GATE_ERROR',
+      'ASK_BUSY', 'ASK_SETTLED', 'ASK_ERROR'].every((f) => harness.includes(f))
+    && /state: 'busy'/.test(harness) && /state: 'settled'/.test(harness)
+    && /items=\{GATE_ITEMS\}/.test(harness));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// T36 · THE DECISION AND THE FORWARD BECOME KIT KINDS (W3-C — docs/component-map.md §2 items 7–8)
+//
+// The last two interactive room objects with no kind of their own: the judged DECISION (a kit-less
+// component in components/work/, whose DEED was hand-copied into two callers) and the prepared
+// FORWARD (a local function inside item-detail.tsx, with the repo's FOURTH recipients editor and
+// its own HTML thread rendering, whose artifact row degraded to "Open →").
+//
+// THE LAW OF THE WAVE, again: ONE OBJECT, ONE RENDERING — the kit renders, ONE host owns the door,
+// and every state the old component could express survives in the contract.
+//
+// Zero-AI and source-level, like the rest of this suite.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+console.log('\nT36 · THE DECISION AND THE FORWARD — the last two room objects join the grammar');
+{
+  const types36 = read('components/thread/types.ts') ?? '';
+  const kit36 = read('components/thread/thread-cards.tsx') ?? '';
+  const decHost = read('components/home/decision-card.tsx') ?? '';
+  const fwdHost = read('components/home/forward-card.tsx') ?? '';
+  const rail36 = read('components/home/item-rail.tsx') ?? '';
+  const detail36 = read('components/home/item-detail.tsx') ?? '';
+  const room36 = read('components/entities/entity-room.tsx') ?? '';
+  const harness36 = read('app/(main)/dev/thread-preview/preview-client.tsx') ?? '';
+
+  // ── 1 · THE TWO KINDS JOIN THE GRAMMAR ────────────────────────────────────────────────────────
+  gate('T36.1 the `decision` and `forward` kinds join the grammar (contract · enumeration · the ONE switch · their own views)',
+    /kind: 'decision';/.test(types36) && /export interface DecisionCard extends CardBase \{/.test(types36)
+    && /export interface DecisionOption \{/.test(types36)
+    && /kind: 'forward';/.test(types36) && /export interface ForwardCard extends CardBase \{/.test(types36)
+    // MEMBERSHIP, never the neighbour list (the BD7.1 re-pointing lesson)
+    && /THREAD_CARD_KINDS[\s\S]{0,500}'decision'/.test(types36)
+    && /THREAD_CARD_KINDS[\s\S]{0,500}'forward'/.test(types36)
+    && /case 'decision':/.test(kit36) && /<DecisionCardView card=\{card\} \/>/.test(kit36)
+    && /case 'forward':/.test(kit36) && /<ForwardCardView card=\{card\} \/>/.test(kit36)
+    && /function DecisionCardView\(/.test(kit36) && /function ForwardCardView\(/.test(kit36));
+
+  gate('T36.2 THE HAND-DRAWN COPIES ARE GONE — no `DecisionCard`/`ForwardPreviewCard` component is defined anywhere but the kit and its two hosts',
+    !fs.existsSync(path.join(ROOT, 'components/work/decision-card.tsx'))
+    && sourceFiles('components').every((f) => {
+      const src = read(f) ?? '';
+      // A DEFINITION, not a mention: the kit's own view functions and the two hosts are the only
+      // places either name may be declared.
+      const defines = /function (DecisionCard|ForwardPreviewCard|ForwardCard)\b/.test(src)
+        || /(const|let) (DecisionCard|ForwardPreviewCard|ForwardCard)\s*[:=]/.test(src);
+      if (!defines) return true;
+      return /components\/home\/(decision-card|forward-card)\.tsx$/.test(f);
+    })
+    // …and the retired local one leaves no orphan behind in the deep-dive
+    && !/ForwardPreviewCard\s*[({]/.test(detail36));
+
+  // ── 2 · ONE DOOR PER DEED, AND IT LIVES AT THE HOST ───────────────────────────────────────────
+  gate('T36.3 THE DECISION’S ONE DOOR — the host is the only client caller of the steer door for a decision, and it carries THE FORWARD-MOTION LAW’s contract',
+    /fetch\('\/api\/items\/steer'/.test(decHost)
+    && (decHost.match(/fetch\(/g) ?? []).length === 1
+    && /decision: \{\s*\n?\s*option: label,/.test(decHost)
+    && /tradeoff: opt\?\.tradeoff \?\? null,/.test(decHost)
+    // …and NEITHER caller re-types it any more (the two hand-copies this wave killed)
+    && !/\/api\/items\/steer[\s\S]{0,400}decision:/.test(detail36)
+    && !/\/api\/items\/steer[\s\S]{0,400}decision:/.test(room36)
+    && /onChosen:/.test(detail36) && /onResolved:/.test(detail36)
+    && /onChosen:/.test(room36) && /onResolved:/.test(room36));
+
+  gate('T36.4 THE SECOND CLICK IS THE DEED (decision) — the un-armed click only arms, and every confirm call sits inside the armed branch',
+    /isArmed \? \(setArmed\(null\), card\.onConfirm\?\.\(o\.label\)\) : setArmed\(o\.id\)/.test(kit36)
+    && /\{isArmed && card\.onConfirm && \(/.test(kit36)
+    // Escape and a click away disarm — a two-step's way out is never only a button
+    && /if \(e\.key === 'Escape'\) setArmed\(null\)/.test(kit36)
+    && /Never mind<\/button>/.test(kit36)
+    && !/window\.confirm|globalThis\.confirm/.test(kit36));
+
+  gate('T36.5 WITH NO OBJECT, NOTHING IS RECOMMENDED — the host reads the structural predicate and the kit only prints the mark it is handed',
+    /import \{[\s\S]{0,160}mayRecommend/.test(decHost)
+    && /const recommends = mayRecommend\(spec\.object\);/.test(decHost)
+    && /const rec = recommends && isRec\(o\.label, spec\.recommendation\);/.test(decHost)
+    // the kit derives nothing: it marks `recommended` and prints `why` only on a marked route
+    && !/mayRecommend\(|\.recommendation\b/.test(kit36)
+    && /\{o\.recommended && o\.why && \(/.test(kit36)
+    // …and with no object at all, the honest sentence (ONE copy, from the law's own module)
+    && /NO_DECISION_OBJECT_LINE/.test(decHost)
+    && /quietLine: NO_DECISION_OBJECT_LINE/.test(decHost));
+
+  gate('T36.6 OPTIMISTIC, WITH A ROLLBACK AND AN HONEST REFUSAL — the decision settles at once, a 409 stays settled, and only a real failure puts the question back',
+    /setChosen\(label\);\s*\/\/ optimistic/.test(decHost)
+    && /if \(res && res\.status === 409\) \{/.test(decHost)
+    && /setElsewhere\(DECISION_WORDS\.settledElsewhere\);/.test(decHost)
+    && /setChosen\(null\);\s*\/\/ rollback/.test(decHost)
+    && /setError\(DECISION_WORDS\.failed\);/.test(decHost)
+    // ONE VOCABULARY: the settled word is composed from the host's own table, never typed at a kit
+    && /export const DECISION_WORDS = \{/.test(decHost)
+    && /settledLine: elsewhere \?\? \(chosen \? DECISION_WORDS\.chosen\(chosen\) : undefined\)/.test(decHost)
+    && !/toast\(/.test(decHost));
+
+  // ── 3 · THE FORWARD: TWO DOORS, ONE ARMED COMMIT ──────────────────────────────────────────────
+  gate('T36.7 THE FORWARD FIRES ONE DOOR, AND ONLY FROM THE ARMED CONFIRM — prepare READS, execute SENDS through the commit door, and the kit’s resting button only arms',
+    // the host holds exactly two doors: the grounded read and the one commit
+    /fetch\('\/api\/items\/prepare'/.test(fwdHost)
+    && /fetch\('\/api\/items\/execute'/.test(fwdHost)
+    && (fwdHost.match(/fetch\(/g) ?? []).length === 2
+    && !/googleapis|graph\.microsoft|\/api\/emails\/send|\/api\/invites\//.test(fwdHost)
+    && /action: \{ type: 'forward', to, note \}/.test(fwdHost)
+    // the kit: resting arms, armed fires, and the deed is reached from exactly one place
+    && /onClick=\{\(\) => setArmed\(true\)\}/.test(kit36)
+    && (kit36.match(/card\.onSend!\(\)/g) ?? []).length === 1
+    && /\{card\.armedLabel \?\? 'Confirm forward'\}/.test(kit36)
+    // …and the host's only wiring of it
+    && /onSend: \(\) => void send\(\)/.test(fwdHost));
+
+  gate('T36.8 THE RECIPIENTS EDITOR IS THE ONE EDITOR — the forward mounts the shared people chips, and no fourth chips editor survives in the deep-dive',
+    /import \{ AttendeeChips \} from '@\/components\/home\/people-chips'/.test(fwdHost)
+    && /<AttendeeChips attendees=\{to\}/.test(fwdHost)
+    // the local copy (and its private typeahead import) left item-detail with the card
+    && !/function RecipientChips\(/.test(detail36)
+    && !/PeopleSuggestInput/.test(detail36)
+    // ONE COMPONENT NAME across the repo's people fields
+    && sourceFiles('components').filter((f) => /export function AttendeeChips\(/.test(read(f) ?? '')).length === 1);
+
+  gate('T36.9 THE MESSAGE BEING FORWARDED RIDES THE `source` KIND — one object rendering, folded, and no second thread renderer or HTML lane anywhere on this card',
+    /import \{ SourceObjectMount \} from '@\/components\/room\/source-object'/.test(fwdHost)
+    && /sourceNode: <SourceObjectMount itemId=\{entityId\} \/>/.test(fwdHost)
+    && /\{showSource && card\.sourceNode\}/.test(kit36)
+    // the retired card's own body renderer is gone from both the kit and the host
+    && !/__html/.test(fwdHost)
+    // …and the forward VIEW draws no HTML of its own (the email card's own lane is untouched)
+    && !/dangerouslySetInnerHTML/.test((kit36.match(/function ForwardCardView\([\s\S]*?\n\}/) ?? [''])[0])
+    && !/forwardedBody/.test(fwdHost)
+    && !/forwardedBody/.test(detail36));
+
+  gate('T36.10 TRUTH BEFORE PRESENTATION ON THE COMMIT ROW — no recipient carries no Send, and a sent forward keeps only its receipt',
+    /state: sent \? 'sent' : to\.length === 0 \? 'needs_recipient' : 'ready'/.test(fwdHost)
+    && /\{!sent && ready && card\.onSend && \(armed \? \(/.test(kit36)
+    && /\.\.\.\(sent \? \{\} : \{ onSend: \(\) => void send\(\) \}\)/.test(fwdHost)
+    && /receipt: sent \? FORWARD_WORDS\.sentLine\(to\)/.test(fwdHost)
+    && /export const FORWARD_WORDS = \{/.test(fwdHost));
+
+  gate('T36.11 THE PREPARED FORWARD ARRIVES AS ITSELF — its artifact row mounts the card instead of degrading to "Open →", and both deep-dive seats mount the same host',
+    /key: 'forward', label: 'Forward prepared/.test(detail36)
+    && /node: <ForwardCard kind="email" entityId=\{id\}/.test(detail36)
+    && (detail36.match(/<ForwardCard\b/g) ?? []).length === 3
+    && /import ForwardCard from '@\/components\/home\/forward-card'/.test(detail36));
+
+  // ── 4 · PRESENTATIONAL PURITY, AND THE HARNESS ────────────────────────────────────────────────
+  gate('T36.12 the kit still fetches nothing and routes nowhere (the two new kinds included)',
+    !/fetch\(/.test(kit36) && !/useRouter/.test(kit36) && !/supabase/i.test(kit36)
+    && !/new Date\(|Date\.now\(/.test(kit36));
+
+  gate('T36.13 the harness carries every state both cards can be in — the decision open · with nothing to review · armed · in flight · settled · failed, and the forward ready · with no recipient · sending · sent · failed',
+    ['DECISION_OPEN', 'DECISION_NO_OBJECT', 'DECISION_ARMED', 'DECISION_BUSY', 'DECISION_SETTLED', 'DECISION_ERROR',
+      'FORWARD_READY', 'FORWARD_NEEDS_RECIPIENT', 'FORWARD_SENDING', 'FORWARD_SENT', 'FORWARD_ERROR',
+    ].every((f) => harness36.includes(f))
+    && /armedOptionId: 'o1'/.test(harness36)
+    && /settledLine: 'Chosen: Advance all four to interviews'/.test(harness36)
+    && /quietLine: 'Nothing is attached to review yet\.'/.test(harness36)
+    && /state: 'needs_recipient'/.test(harness36)
+    // both live cards stand on the PROJECT thread, and the rest on the HOME one
+    && /cards: \[DECISION_OPEN\]/.test(harness36) && /cards: \[FORWARD_READY\]/.test(harness36)
+    && /cards: \[DECISION_NO_OBJECT, DECISION_BUSY, DECISION_SETTLED, DECISION_ERROR\]/.test(harness36)
+    && /cards: \[FORWARD_NEEDS_RECIPIENT, FORWARD_SENDING, FORWARD_SENT, FORWARD_ERROR\]/.test(harness36));
+}
+
+// ── T37 · THE CATALOGUE (owner, Sep 22: "update the dev/threads with all components we have") ───
+// The harness's five tabs are WALKS — stories that happen to contain cards — and they were never a
+// promise of coverage: `bulk` had no fixture at all, and email · doc · deliverable · invite · frame ·
+// proposal each had exactly one state on screen while their contracts carried three to seven. So the
+// harness gained an INDEX (app/(main)/dev/thread-preview/preview-catalogue.tsx): one section per kind
+// of THREAD_CARD_KINDS, every state of each, then the pieces that are not cards.
+//
+// THE GATE THAT MATTERS IS T37.2: it reads the state unions OUT OF THE CONTRACT and demands a
+// fixture per literal — so the day a state is added to a card's union without a specimen, this
+// suite says so. A catalogue nobody gates goes stale in a week, and a stale catalogue is worse than
+// none: it is a claim about the product that stopped being true.
+//
+// (RE-POINTED note, Sep 22: T33/T34/T36's harness gates still read preview-client.tsx — the five
+// walks and their fixtures stayed exactly where they were. The catalogue is additive by design, so
+// no existing tab-or-fixture count moved.)
+console.log('\nT37 · THE CATALOGUE — every kind the kit owns, in every state its contract can be in');
+{
+  const cat = read('app/(main)/dev/thread-preview/preview-catalogue.tsx') ?? '';
+  const client37 = read('app/(main)/dev/thread-preview/preview-client.tsx') ?? '';
+  const types37 = read('components/thread/types.ts') ?? '';
+
+  // THE KIND LIST COMES FROM THE CONTRACT, never from a list typed into this suite.
+  const kindsBlock = (types37.match(/export const THREAD_CARD_KINDS: ThreadCardKind\[\] = \[[\s\S]*?\];/) ?? [''])[0];
+  const KINDS = [...kindsBlock.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+
+  // Each section of the catalogue is one object carrying `section: '<kind>'`; a section's block runs
+  // to the next marker, so a fixture is attributed to the kind whose section it stands in.
+  const marks = [...cat.matchAll(/\n    section: '([a-z_]+)',/g)];
+  const block = new Map<string, string>();
+  marks.forEach((m, i) => {
+    const start = m.index ?? 0;
+    const end = i + 1 < marks.length ? (marks[i + 1].index ?? cat.length) : cat.length;
+    block.set(m[1], cat.slice(start, end));
+  });
+
+  gate('T37.0 the Catalogue is the harness’s LAST tab and its fixtures live in their own file',
+    cat.length > 0
+    && /import \{ ThreadCatalogue \} from '\.\/preview-catalogue'/.test(client37)
+    && /\{ value: 'catalogue', label: 'Catalogue' \}/.test(client37)
+    && /\{tab === 'catalogue' && <ThreadCatalogue \/>\}/.test(client37)
+    // …last: the gates tab is declared before it
+    && client37.indexOf("value: 'catalogue'") > client37.indexOf("value: 'gates'"));
+
+  // (1) EVERY KIND HAS A SEAT — a kind the kit owns that the index cannot show is a kind nobody
+  // can review, which is how `bulk` went un-previewed for a whole arc.
+  {
+    const missing = KINDS.filter((k) => !block.has(k) || !new RegExp(`kind: '${k}'`).test(block.get(k) ?? ''));
+    gate('T37.1 every kind of THREAD_CARD_KINDS has a catalogue section with at least one real fixture',
+      // RE-POINTED (W4-A, Sep 22): 16 → 15. `routine` was retired — it had no producer in the
+      // product (T38.1). The law is unchanged: EVERY kind the contract declares has a specimen.
+      KINDS.length === 15 && missing.length === 0,
+      missing.length ? `missing: ${missing.join(', ')}` : `${KINDS.length} kinds`);
+  }
+
+  // (2) EVERY STATE OF EVERY STATEFUL KIND — read out of the contract's own unions.
+  {
+    const answerable = [...((types37.match(/export type AnswerableState =[^;]+;/) ?? [''])[0])
+      .matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+    const bodies = [...types37.matchAll(/export interface \w+ extends CardBase \{([\s\S]*?)\n\}/g)].map((m) => m[1]);
+    const expected: Array<[string, string[]]> = [];
+    for (const body of bodies) {
+      const k = (body.match(/\n  kind: '([a-z_]+)';/) ?? [])[1];
+      const st = body.match(/\n  state\??: ([^;]+);/);
+      if (!k || !st) continue;
+      const raw = st[1].trim();
+      const lits = raw === 'AnswerableState'
+        ? answerable
+        : [...raw.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+      if (lits.length) expected.push([k, lits]);
+    }
+    const holes: string[] = [];
+    for (const [k, lits] of expected) {
+      const b = block.get(k) ?? '';
+      for (const lit of lits) if (!new RegExp(`state: '${lit}'`).test(b)) holes.push(`${k}·${lit}`);
+    }
+    gate('T37.2 EVERY STATE LITERAL OF EVERY CARD UNION HAS A FIXTURE (parsed from types.ts, so a new state fails this)',
+      answerable.length === 3 && expected.length === 7 && holes.length === 0,
+      holes.length ? `no fixture for: ${holes.join(', ')}`
+        : `${expected.length} stateful kinds · ${expected.reduce((n, [, l]) => n + l.length, 0)} states`);
+  }
+
+  // (3) THE PIECES ARE MOUNTED, NEVER COPIED — the index must not grow a second drawing of the
+  // header, the avatar, the composer or the mark (the whole reason a catalogue is trustworthy).
+  {
+    const MOUNTS: [string, RegExp, RegExp][] = [
+      ['the header', /<ThreadHeader\b/, /function ThreadHeader\(/],
+      ['the avatar ring', /<AvatarStatus\b/, /function AvatarStatus\(/],
+      ['the composer', /<ThreadComposer\b/, /function ThreadComposer\(/],
+      ['the timeline items', /<ThreadTimeline\b/, /function ThreadTimeline\(/],
+      ['the eyes mark', /<AliveMark\b/, /function AliveMark\(/],
+    ];
+    const bad = MOUNTS.filter(([, use, copy]) => !use.test(cat) || copy.test(cat)).map(([l]) => l);
+    gate('T37.3 the Pieces block MOUNTS the kit’s own pieces by import (header · avatar · composer · timeline · mark), and redefines none',
+      bad.length === 0
+      && /from '@\/components\/thread'/.test(cat)
+      && /import \{ AliveMark \} from '@\/components\/home\/alive-mark'/.test(cat)
+      && /import \{ OrbSeat, type OrbEntrance \} from '@\/components\/home\/orb-entrance'/.test(cat)
+      // …and the product's own composer takes the seat, rather than a lookalike of it
+      && /import \{ WorkerMentionInput \} from '@\/components\/workers\/worker-mention-input'/.test(cat),
+      bad.join(', '));
+  }
+
+  // (3b) THE HOSTS ARE REAL WHERE A HOST EXISTS — a state seen here is a state the product has.
+  gate('T37.3b the kinds a HOST owns mount that host (gate · ask · decision · collection · event)',
+    /<ApprovalCard\b/.test(cat) && /<InputCard\b/.test(cat) && /<DecisionCard\b/.test(cat)
+    && /<CollectionCard\b/.test(cat) && /<EventCard\b/.test(cat)
+    // the forward host READS its artifact on mount, so the index says so instead of faking an id
+    && /it READS its prepared artifact on mount/.test(cat));
+
+  // (4) NO REAL NAMES ANYWHERE — the standing hard rule, swept on the fixtures themselves.
+  {
+    // The deny list itself must never live in the repo (that would be the violation it guards
+    // against): it is read from the gitignored `.smoke-names.local` (one name per line, `#` comments).
+    let REAL: RegExp | null = null;
+    try {
+      const names = fs.readFileSync(path.join(ROOT, '.smoke-names.local'), 'utf8').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+      if (names.length) REAL = new RegExp(names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'i');
+    } catch { /* no local list — the gate states it and passes */ }
+    const hit = REAL ? cat.match(REAL) : null;
+    gate('T37.4 the catalogue’s fixtures carry NO real person or company names',
+      !hit, hit ? `found "${hit[0]}"` : (REAL ? '' : 'no .smoke-names.local — sweep skipped'));
+  }
+
+  // (5) THE WALKS SURVIVE — the index is additive; the five scenario tabs are still there by label.
+  {
+    const LABELS = ['Project', 'Coworker DM', 'Home', 'Event', 'Gates & asks'];
+    const gone = LABELS.filter((l) => !client37.includes(`label: '${l}'`));
+    gate('T37.5 the five scenario tabs still stand (the catalogue is an index, never a replacement)',
+      gone.length === 0, gone.join(', '));
+  }
+}
+
+// ── T38 · THE PREVIEW IS THE PRODUCT (W4-A, Sep 22) ─────────────────────────────────────────────
+// Owner, Sep 22: "in dev/threads I'd like to have the up to date working components, if that means
+// retiring the sketches and including the actual ones and using them where they should be used, so
+// be it."
+//
+// T37 proved the catalogue shows every kind the kit OWNS. It could not say whether anything in the
+// PRODUCT ever builds one — so three kinds (`routine`, `frame`, `proposal`) sat in the contract, in
+// the switch and in the harness while the product drew their objects by hand somewhere else. A kit
+// kind nobody produces is a promise the preview makes on the product's behalf.
+//
+// T38.1 is the INVERSE of T37.1: for every kind of THREAD_CARD_KINDS, at least one PRODUCT file
+// (components/ lib/ app/, excluding the kit itself and the dev harness) constructs `kind: '<k>'`.
+// The day a kind is added to the contract without a producer, this suite says so.
+console.log('\nT38 · THE PREVIEW IS THE PRODUCT — every kind the kit owns has a producer in the product');
+{
+  const types38 = read('components/thread/types.ts') ?? '';
+  const kindsBlock38 = (types38.match(/export const THREAD_CARD_KINDS: ThreadCardKind\[\] = \[[\s\S]*?\];/) ?? [''])[0];
+  const KINDS38 = [...kindsBlock38.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+
+  // THE PRODUCT = everything but the kit's own presentational files and the dev harness. (The kit
+  // may not produce its own cards — that is what made the three sketches invisible.)
+  const files38 = [...sourceFiles('components'), ...sourceFiles('lib'), ...sourceFiles('app')]
+    .filter((f) => !f.startsWith(path.join('components', 'thread'))
+      && !f.includes(path.join('dev', 'thread-preview')));
+  const producers = new Map<string, string[]>();
+  for (const f of files38) {
+    const s = read(f) ?? '';
+    if (!/kind: '/.test(s)) continue;
+    // …and it must SPEAK THE KIT: a file with a private union of its own that happens to share a
+    // word is not a producer (the orphaned worker-activity-tab has its own `kind: 'routine'`).
+    if (!/from '@\/components\/thread'/.test(s)) continue;
+    for (const m of s.matchAll(/kind: '([a-z_]+)'(?: as const)?[,\s}]/g)) {
+      if (!KINDS38.includes(m[1])) continue;
+      const list = producers.get(m[1]) ?? [];
+      if (!list.includes(f)) list.push(f);
+      producers.set(m[1], list);
+    }
+  }
+  const orphans = KINDS38.filter((k) => !(producers.get(k) ?? []).length);
+  gate('T38.1 THE INVERSE GATE — every kind of THREAD_CARD_KINDS is CONSTRUCTED by at least one product file',
+    KINDS38.length > 0 && orphans.length === 0,
+    orphans.length ? `no producer for: ${orphans.join(', ')}` : `${KINDS38.length} kinds, all produced`);
+
+  // T38.2 · ONE SANDBOX, ONE PRIMITIVE. Converging `frame` onto the kit must not grow a second
+  // iframe: the srcdoc sandbox lives in components/frames/frame-card.tsx and nowhere else, and
+  // `allow-same-origin` (which would hand a frame OUR origin) appears in no source file at all.
+  {
+    const withIframe = [...sourceFiles('components'), ...sourceFiles('lib'), ...sourceFiles('app')]
+      .filter((f) => /<iframe/.test(read(f) ?? ''));
+    const sandboxed = withIframe.filter((f) => /sandbox=/.test(read(f) ?? ''));
+    // …in a real sandbox ATTRIBUTE, never in the prose that forbids it (frame-card.tsx's own
+    // header documents the law in words, and that documentation is the point).
+    const sameOrigin = [...sourceFiles('components'), ...sourceFiles('lib'), ...sourceFiles('app')]
+      .filter((f) => /sandbox=["'{][^"'\n]*allow-same-origin/.test(read(f) ?? ''));
+    gate('T38.2 THE ONE FRAME PRIMITIVE — the sandboxed iframe lives only in components/frames/frame-card.tsx, and allow-same-origin nowhere',
+      sandboxed.length === 1 && sandboxed[0] === path.join('components', 'frames', 'frame-card.tsx')
+      && sameOrigin.length === 0,
+      `sandboxed: ${sandboxed.join(', ') || 'none'}${sameOrigin.length ? ` · allow-same-origin: ${sameOrigin.join(', ')}` : ''}`);
+  }
+
+  // T38.3 · THE MOVE IS A CARD. The room's one primary deed used to be a bare ThreadAction pushed
+  // into the pinned bubble's action row; it is the kit's `proposal` kind now, and no second
+  // hand-drawn move row survives in the rail.
+  {
+    const rail38 = read('components/home/item-rail.tsx') ?? '';
+    gate('T38.3 THE RAIL PRODUCES `proposal` — the MOVE is the kit kind, its target still code-validated against the board, and no bespoke move action row is left',
+      /kind: 'proposal'/.test(rail38)
+      && rail38.includes('THE MOVE + THE OFFERS')
+      // the ref validation the MOVE has always carried (an invented ref renders no door)
+      && /moveTargetId\(/.test(rail38)
+      // …and the old seat is gone: nothing pushes the move into the pinned ACTION row any more
+      && !/pinnedActions\.push\(\{ label: resp\.move\.label/.test(rail38),
+      '');
+  }
+
+  // T38.4 · OFFERS ARE WORDS. The proposal's secondary offers carry a `say` and reach the room's
+  // ONE composer door (`send`) — a chip that navigates instead of speaking is a different object.
+  {
+    const rail38 = read('components/home/item-rail.tsx') ?? '';
+    const typ38 = read('components/thread/types.ts') ?? '';
+    const propBody = (typ38.match(/export interface ProposalCard extends CardBase \{[\s\S]*?\n\}/) ?? [''])[0];
+    gate('T38.4 THE OFFERS STAY UTTERANCES — the contract carries `say`, and the rail sends them through its one composer door',
+      /offers\?: Array<\{ label: string; say: string \}>/.test(propBody)
+      && /onSay\?: /.test(propBody)
+      && /onSay: \(say: string\) => \{ void send\(say\); \}/.test(rail38));
+  }
+
+  // T38.5 · THE SKETCH IS RETIRED. `routine` had no producer and never will: a standing
+  // responsibility is rendered by the standing-spec card (its proposal) and by the collection card
+  // (the list of them). The kind is gone from the contract, the enumeration, the switch and the
+  // catalogue — a dead kind in a union is a promise nobody keeps.
+  {
+    const typ38 = read('components/thread/types.ts') ?? '';
+    const cards38 = read('components/thread/thread-cards.tsx') ?? '';
+    const cat38 = read('app/(main)/dev/thread-preview/preview-catalogue.tsx') ?? '';
+    gate('T38.5 `routine` IS RETIRED from the contract, the switch and the catalogue (the standing-spec card and the collection card are its rendering)',
+      !/'routine'/.test(typ38) && !/RoutineCard/.test(typ38)
+      && !/case 'routine'/.test(cards38)
+      && !/section: 'routine'/.test(cat38)
+      && (read('components/home/item-rail.tsx') ?? '').includes('Confirm — start it'));
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// T39 · THE TYPE-IT DOOR (W4-B, Sep 22 — owner: "banking details for example could just be typed if
+// IBAN only? we should try to allow to be as easy as possible to the user (typing short info easier
+// than finding attachment) but keeping options open")
+//
+// An ask's two doors both sent the reader hunting for a FILE. Most of what an ask is missing is a
+// fact — a reference, an IBAN, an amount, an address — and for those, typing it is the cheapest
+// honest answer in the product. The laws this section holds:
+//
+//   ONE DOOR        the typed supply posts to exactly one route, through exactly one client caller.
+//   ONE KEY         a typed fact and a resolved file stage under the SAME `require:<label>`, so
+//                   artifactTruth, the judge route's "everything staged" count and the D3 re-open
+//                   cannot tell them apart.
+//   FAIL-CLOSED     a label the ask does not carry is a 404, decided BEFORE anything is written.
+//   ONE SETTLE      the ask settles through settleAsksForItem — never a second covers/settle.
+//   ONE RE-OPEN     the typed door and the attach funnel call the same re-open.
+//   OPTIONS OPEN    all three doors on every row, always; `lead` only REORDERS them.
+//   THEIR CLICK     a line already typed in the composer is OFFERED, never consumed (the
+//                   ask-direction floor, in the other direction).
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+console.log('\nT39 · THE TYPE-IT DOOR — an ask answered by saying the fact');
+{
+  const asksRoute = read('app/api/room/asks/route.ts') ?? '';
+  const doors = read('lib/deeds/gate-doors.ts') ?? '';
+  const supplyLib = read('lib/prepare/supply.ts') ?? '';
+  const reqs = read('lib/prepare/requirements.ts') ?? '';
+  const ingest = read('app/api/items/ingest/route.ts') ?? '';
+  const judgeRoute = read('app/api/items/judge/route.ts') ?? '';
+  const rows = read('components/thread/ask-rows.tsx') ?? '';
+  const host = read('components/home/input-card.tsx') ?? '';
+  const cards = read('components/thread/thread-cards.tsx') ?? '';
+  const typ = read('components/thread/types.ts') ?? '';
+
+  gate('T39.1 THE DOOR EXISTS AND IS THE ONE CALLER — the asks route takes action:"supply", gate-doors owns the only client post of it, and nothing else in the app posts a typed supply',
+    /action !== 'proceed' && body\.action !== 'supply'|body\.action === 'supply'/.test(asksRoute)
+    && /export async function supplyAskText\(/.test(doors)
+    && /action: 'supply'/.test(doors)
+    && (() => {
+      const others = [...sourceFiles('components'), ...sourceFiles('app'), ...sourceFiles('hooks')]
+        .filter((f) => !f.endsWith('api/room/asks/route.ts'))
+        .filter((f) => /action:\s*'supply'/.test(fs.readFileSync(path.join(ROOT, f), 'utf8')));
+      return others.length === 0;
+    })());
+
+  gate('T39.2 FAIL-CLOSED ON AN UNKNOWN LABEL — the row must be one the ask is CARRYING (exact match, not a prefix), and the 404 is decided BEFORE anything is staged',
+    /const row = items\.find\(\(i\) => i === wanted\)/.test(asksRoute)
+    && /if \(!row\) return NextResponse\.json\(\{ error: 'ask not found' \}, \{ status: 404 \}\)/.test(asksRoute)
+    && asksRoute.indexOf("if (!row) return NextResponse.json({ error: 'ask not found' }") < asksRoute.indexOf('await stageTypedSupply(')
+    && /SUPPLY_TEXT_MAX/.test(asksRoute));
+
+  gate('T39.3 ONE REQUIREMENT KEY — `require:<label>` is spelled ONCE (lib/prepare/supply.ts), and the resolver, the judge route and the typed door all read it through that one function',
+    /export function requireTaskId\(label: string\): string \{\s*return `require:\$\{String\(label \?\? ''\)\.toLowerCase\(\)\.slice\(0, 60\)\}`/.test(supplyLib)
+    && /taskId: requireTaskId\(label\)/.test(reqs)
+    && /requires\.map\(\(r\) => requireTaskId\(r\.label\)\)/.test(judgeRoute)
+    // No hand-spelled copy survives anywhere in lib/ or app/ but the one definition.
+    && (() => {
+      const hand = [...sourceFiles('lib'), ...sourceFiles('app')]
+        .filter((f) => !f.endsWith('lib/prepare/supply.ts'))
+        .filter((f) => /`require:\$\{/.test(fs.readFileSync(path.join(ROOT, f), 'utf8')));
+      return hand.length === 0;
+    })());
+
+  gate('T39.4 THE STAGED ROW IS THE SAME FACT AS A RESOLVED FILE — same key, same item scope, same `metadata.requirement` and the same `source: requirement_resolution` the resolver stamps (the drafter cannot tell a typed fact from a found one)',
+    /taskId: requireTaskId\(args\.label\)/.test(supplyLib)
+    && /source: 'requirement_resolution'/.test(supplyLib)
+    && /requirement: args\.label/.test(supplyLib)
+    && /source: 'requirement_resolution', requirement: label/.test(reqs)
+    // …and the honest difference: a typed fact is a `text` deliverable, whose body renders inline.
+    && /type: 'text'/.test(supplyLib));
+
+  gate('T39.5 ONE SETTLE — the ask settles through the shared covers-aware settleAsksForItem, only when the LAST row is covered, and the route defines no settle of its own',
+    /if \(!remaining\.length\) \{[\s\S]{0,200}settleAsksForItem/.test(asksRoute)
+    && /const \{ settleAsksForItem \} = await import\('@\/lib\/room\/turns'\)/.test(asksRoute)
+    && !/archived_at: new Date\(\)\.toISOString\(\)/.test(asksRoute)
+    // the ONE implementation still lives in lib/room/turns.ts and nowhere else
+    && (() => {
+      const impls = [...sourceFiles('lib'), ...sourceFiles('app')]
+        .filter((f) => /export async function settleAsksForItem/.test(fs.readFileSync(path.join(ROOT, f), 'utf8')));
+      return impls.length === 1 && impls[0].endsWith('lib/room/turns.ts');
+    })());
+
+  gate('T39.6 ONE RE-OPEN — the typed door and the rail’s attach funnel call the SAME reopenAfterSupply, and the ingest route no longer drops `generated_at` by hand',
+    /export async function reopenAfterSupply\(/.test(supplyLib)
+    && /reopenAfterSupply\(supabase, userId, \{ itemKind: item\.kind, itemId: item\.id \}\)/.test(asksRoute)
+    && /reopenAfterSupply\(supabase, user\.id/.test(ingest)
+    && !/draft: \{ \.\.\.dr, generated_at: undefined \}/.test(ingest)
+    && /draft: \{ \.\.\.dr, generated_at: undefined \}/.test(supplyLib));
+
+  gate('T39.7 ZERO AI ON THE SUPPLY LANE — the door reasons about nothing: it stages what it was given',
+    !/aiCall|getAIClient|aiCreate/.test(asksRoute) && !/aiCall|getAIClient|aiCreate/.test(supplyLib));
+
+  // ── THE DEFAULT DOOR: the truth table, run against the REAL predicate ────────────────────────
+  {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { askItemShape, saidItLabels } = require('../lib/room/go-ahead') as typeof import('../lib/room/go-ahead');
+    const DOCS: Array<[string, string]> = [
+      ['EN', 'The signed addendum'], ['EN', 'Last quarter’s statement'], ['EN', 'The candidate’s CV'],
+      ['PT', 'O extrato bancário'], ['PT', 'O contrato assinado'], ['PT', 'A fatura de Julho'],
+      ['DE', 'Der unterschriebene Vertrag'], ['DE', 'Der Kontoauszug'], ['DE', 'Die Rechnung'],
+      ['FR', 'Le contrat signé'], ['FR', 'Le relevé bancaire'], ['FR', 'La facture'],
+    ];
+    const FACTS: Array<[string, string]> = [
+      ['EN', 'The IBAN'], ['EN', 'The account reference'], ['EN', 'The delivery address'],
+      ['PT', 'O IBAN da conta'], ['PT', 'A morada de entrega'], ['PT', 'O número de contribuinte'],
+      ['DE', 'Die IBAN'], ['DE', 'Die Lieferadresse'], ['DE', 'Der Ansprechpartner'],
+      ['FR', 'L’IBAN'], ['FR', 'Le montant exact'], ['FR', 'La date de livraison'],
+    ];
+    const wrongDoc = DOCS.filter(([, l]) => askItemShape(l) !== 'document').map(([g, l]) => `${g}:${l}`);
+    const wrongFact = FACTS.filter(([, l]) => askItemShape(l) !== 'fact').map(([g, l]) => `${g}:${l}`);
+    gate(`T39.8 THE DEFAULT DOOR IS DETERMINISTIC AND FOUR-LANGUAGE — ${DOCS.length} document-shaped and ${FACTS.length} fact-shaped labels across EN · PT · DE · FR lead with the right door`,
+      wrongDoc.length === 0 && wrongFact.length === 0,
+      [...wrongDoc.map((x) => `doc→fact ${x}`), ...wrongFact.map((x) => `fact→doc ${x}`)].join(' · '));
+
+    gate('T39.9 THE SAID-IT OFFER IS NARROW BY CONSTRUCTION — a short fact-shaped line on a small fact-shaped ask offers; a question, a paragraph, a long line, a document gap or a crowded ask offers nothing',
+      saidItLabels(['The IBAN'], 'PT50 0000 0000 0000 0000 0000 0').length === 1
+      && saidItLabels(['The IBAN', 'The account reference'], 'REF-0000').length === 2
+      && saidItLabels(['The IBAN'], 'what IBAN do you mean?').length === 0
+      && saidItLabels(['The IBAN'], 'line one\nline two').length === 0
+      && saidItLabels(['The IBAN'], 'x'.repeat(400)).length === 0
+      && saidItLabels(['The signed addendum'], 'REF-0000').length === 0
+      && saidItLabels(['The IBAN', 'The reference', 'The amount'], 'REF-0000').length === 0
+      && saidItLabels(['The IBAN'], '').length === 0);
+  }
+
+  gate('T39.10 OPTIONS STAY OPEN — `lead` only REORDERS: Attach and Type it are in BOTH branches of the row’s door list, and nothing in the leaf can drop a door the host handed over',
+    (() => {
+      const list = (rows.match(/const doorList = [\s\S]*?\: \[\];/) ?? [''])[0];
+      const fact = (list.match(/d\.lead === 'fact'[\s\S]*?\]\s*\n\s*\/\/ A DOCUMENT/) ?? [''])[0];
+      const doc = list.slice(list.indexOf('// A DOCUMENT'));
+      return /canType \?/.test(fact) && /d\.onAttach \?/.test(fact)
+        && /canType \?/.test(doc) && /d\.onAttach \?/.test(doc)
+        && /d\.onPointToIt \?/.test(fact) && /d\.onPointToIt \?/.test(doc);
+    })());
+
+  gate('T39.11 THE DOORS RIDE THE ROW, AND ONLY ONCE — the contract carries `rowDoors`, the kit hands them to the ONE rows leaf, and a card with rows never ALSO wears the card-level chips (one deed, one door)',
+    /rowDoors\?: Array<AskRowDoors \| null>/.test(typ)
+    && /<AskRows rows=\{card\.items\} \{\.\.\.\(card\.rowDoors \? \{ doors: card\.rowDoors \} : \{\}\)\} \/>/.test(cards)
+    && /spec\.items\.length\s*\?\s*\{ rowDoors \}/.test(host)
+    // the host still hands a shaped lead per row, from the ONE predicate
+    && /lead: askItemShape\(label\)/.test(host));
+
+  gate('T39.12 THE ROWS LEAF STAYS PRESENTATIONAL — a field and a callback, never a fetch, a router or a client of its own',
+    !/fetch\(|supabase|useRouter|next\/navigation/.test(rows)
+    && /onType\?: \(text: string\) => void \| Promise<boolean \| void>/.test(rows)
+    // …and a failure never destroys what was typed: the field keeps it.
+    && /if \(ok === false\) return;/.test(rows));
+
+  gate('T39.13 THE RECEIPT IS THE ROW AND THE LAST ROW SETTLES — a supplied row shows what was typed, and the card settles as `supplied` once every row is covered',
+    /supplied\?: string \| null/.test(rows)
+    && /d\?\.supplied &&/.test(rows)
+    && /if \(Object\.keys\(next\)\.length >= total\) settle\('supplied'\)/.test(host)
+    // a conflict stays a FACT here too — the ask was answered elsewhere, not a retry
+    && /res\.reason === 'conflict'[\s\S]{0,120}setElsewhere/.test(host));
+
+  gate('T39.14 THE HARNESS CARRIES THE NEW ROW STATES — fact-led · document-led · mid-deed · refused · supplied ✓ · the said-it offer, and the Gates tab mounts the product’s own host with all three doors',
+    (() => {
+      const cat = read('app/(main)/dev/thread-preview/preview-catalogue.tsx') ?? '';
+      const cli = read('app/(main)/dev/thread-preview/preview-client.tsx') ?? '';
+      return /fact-led: Type it leads/.test(cat)
+        && /document-led: Attach leads/.test(cat)
+        && /supplied: 'PT50 0000 0000/.test(cat)
+        && /saidIt: \{ label: 'Use this as/.test(cat)
+        && /busy: true/.test(cat)
+        && /error: 'That’s longer than this door takes/.test(cat)
+        && /ASK_TYPE_IT/.test(cli) && /recentUserText: 'REF-0000-2026'/.test(cli);
+    })());
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// T40 · THE LIVE CARDS REACH THE LANES THAT HAD NONE (W4-C, Sep 22 — docs/component-map.md §6)
+//
+// Three seats where the product BUILT a card and then could not show it:
+//
+//   THE AGENTOS DM   a coworker on the box calls a Python @tool → our own internal route → the SAME
+//                    executor the native loop runs, which already returns BOTH halves. Only
+//                    `modelText` could get home: a tool's return STRING is the only channel back to
+//                    the box, and rows in a model's context are the leak THE PRESENTATION LAW ends.
+//                    So the DATA half takes a SIDE-CHANNEL (lib/present/dm-channel.ts) — written by
+//                    the internal route, drained by the bridge, emitted as the SAME frames the
+//                    native route emits. NOTHING model-facing changes.
+//   THE ROOMS        the one core already handed rooms `collection` / `event`; nothing wrote the
+//                    turn, so nothing rendered. A CARD IS A TURN — the pointer rides
+//                    `room_turns.component` in the SAME shape the Home chat stores.
+//   THE DELEGATION   the artifact lane hard-coded the word "document" over every deliverable,
+//                    including frames. THE TYPE IS STATED, NOT GUESSED: the production door's own
+//                    verdict rides up with the id.
+//
+// ONE POINTER SHAPE across all of it: `{id, kind, framing, params}` / `{eventId, proposal}`, from
+// lib/present/pointer.ts — never the rows, never the verb ladder, because those are exactly what a
+// reload would lie about.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+console.log('\nT40 · THE LIVE CARDS, WHERE THEY WERE MISSING');
+{
+  const bridge = read('lib/work/agentos-bridge.ts') ?? '';
+  const channel = read('lib/present/dm-channel.ts') ?? '';
+  const pointer = read('lib/present/pointer.ts') ?? '';
+  const nativeDM = read('app/api/work/threads/[id]/chat/route.ts') ?? '';
+  const toolsRoute = read('app/api/internal/agentos/tools/route.ts') ?? '';
+  const tasksRoute = read('app/api/internal/agentos/tasks/route.ts') ?? '';
+  const pyData = read('infra/agentos/tools_data.py') ?? '';
+  const pyTasks = read('infra/agentos/tools_tasks.py') ?? '';
+  const rail = read('components/home/item-rail.tsx') ?? '';
+  const steer = read('app/api/items/steer/route.ts') ?? '';
+  const ask = read('components/home/home-ask.tsx') ?? '';
+  const delegate = read('lib/home/delegate.ts') ?? '';
+
+  gate('T40.1 THE BRIDGE EMITS THE NATIVE ROUTE’S OWN FRAMES — the AgentOS lane drains the side-channel and sends byte-identical `{type:collection}` / `{type:event}` shapes, on presenting tools and once more at the end',
+    /clearDmPresents\(adminClient, userId, threadId\)/.test(bridge)
+    && /const drainPresents = async \(\)/.test(bridge)
+    && /PRESENTING_TOOLS\.includes\(name\)\) await drainPresents\(\)/.test(bridge)
+    // the last drain runs on the completion path, not only inside the tool branch
+    && /thinking_done' \}\)\n\s*\/\/[\s\S]{0,260}?await drainPresents\(\)/.test(bridge)
+    && /send\(\{ type: 'collection', collection: \{ id, spec: e\.collection \} \}\)/.test(bridge)
+    && /send\(\{ type: 'event', event: \{ id: crypto\.randomUUID\(\), spec: e\.event \} \}\)/.test(bridge)
+    // …and the native route still emits exactly those two shapes (the comparison this gate makes)
+    && /send\(\{ type: 'collection', collection: \{ id, spec \} \}\)/.test(nativeDM)
+    && /send\(\{ type: 'event', event: \{ id: crypto\.randomUUID\(\), spec \} \}\)/.test(nativeDM));
+
+  gate('T40.2 ONE POINTER, ONE HELPER — both coworker lanes persist `collections`/`events` through collectionPointer/eventPointer, and NEITHER hand-types the pointer object',
+    /export function collectionPointer\(/.test(pointer) && /export function eventPointer\(/.test(pointer)
+    && /allCollections\.push\(collectionPointer\(id, spec\)\)/.test(nativeDM)
+    && /allEventCards\.push\(eventPointer\(spec\)\)/.test(nativeDM)
+    && /allCollections\.push\(collectionPointer\(id, e\.collection\)\)/.test(bridge)
+    && /allEventCards\.push\(eventPointer\(e\.event\)\)/.test(bridge)
+    // the record carries the pointer on BOTH lanes, under the same metadata names
+    && [nativeDM, bridge].every((s) =>
+      /\{ collections: allCollections \}/.test(s) && /\{ events: allEventCards \}/.test(s))
+    // nobody rebuilds the shape by hand beside the helper
+    && !/allCollections\.push\(\{\s*id/.test(bridge) && !/allEventCards\.push\(\{\s*eventId/.test(bridge));
+
+  gate('T40.3 THE MODEL NEVER HOLDS THE DATA — the internal routes answer with `result` ONLY (the spec goes to the side-channel), and the Python tool list now carries prepare_event_action',
+    // both internal doors return exactly one body shape, and it is the model's half
+    /return NextResponse\.json\(\{ result \}\);/.test(toolsRoute)
+    && /return NextResponse\.json\(\{ result \}\);/.test(tasksRoute)
+    && !/NextResponse\.json\(\{[^}]*present/.test(toolsRoute)
+    && !/NextResponse\.json\(\{[^}]*spec/.test(toolsRoute)
+    && !/NextResponse\.json\(\{[^}]*rows/.test(tasksRoute)
+    // the present lanes exist on both doors and write ONLY to the channel
+    && /pushDmPresent\(ac, user_id, thread_id, \{ turn: turnId/.test(toolsRoute)
+    && /pushDmPresent\(ac, user_id, threadId, \{ turn: turnId/.test(tasksRoute)
+    // the box's own vocabulary carries the verb, and the thread/turn keys reach both doors
+    && /^def prepare_event_action\(/m.test(pyData)
+    && /prepare_event_action,/.test(pyData)
+    && /"turn_id": deps\.get\("turn_id"\)/.test(pyData)
+    && /"thread_id": deps\.get\("thread_id"\)/.test(pyTasks)
+    // the drain table names every presenting tool the routes can leave a card for
+    && ['list_tasks', 'search_knowledge_base', 'get_meeting_context', 'check_calendar', 'prepare_event_action']
+      .every((t) => new RegExp(`'${t}'`).test(channel)));
+
+  gate('T40.4 THE ROOMS MOUNT THE TWO HOSTS — the rail reads both component keys back as POINTERS and mounts the SAME CollectionCard / EventCard the Home chat mounts; the room door writes the turn',
+    /import CollectionCard, \{ type CollectionPointer \}/.test(rail)
+    && /import EventCard, \{ type EventPointer \}/.test(rail)
+    && /t\.component\?\.key === 'collection_card'/.test(rail)
+    && /t\.component\?\.key === 'event_card'/.test(rail)
+    && /<CollectionCard/.test(rail) && /<EventCard/.test(rail)
+    // the rehydrated turn hands over the POINTER, never a stored spec
+    && /turn\.collection = \{[\s\S]{0,200}?pointer: \{\s*\n?\s*kind:/.test(rail)
+    && !/turn\.collection = \{[\s\S]{0,200}?rows:/.test(rail)
+    // …and the room's converse door persists it through the ONE shared component builder
+    && /collectionTurnComponent, eventTurnComponent/.test(steer)
+    && /component: collectionTurnComponent\(turn\.collection\.id, turn\.collection\.spec\)/.test(steer)
+    && /component: eventTurnComponent\(turn\.event\.spec\)/.test(steer)
+    && /export function collectionTurnComponent\(/.test(pointer)
+    && /export function eventTurnComponent\(/.test(pointer)
+    // the stored shape is the one home-ask already reads (same key, same state fields)
+    && /key: 'collection_card', refId: p\.id/.test(pointer)
+    && /key: 'event_card', refId: p\.eventId/.test(pointer));
+
+  gate('T40.5 THE ARTIFACT LANE READS A STATED TYPE — the production door’s own verdict rides from materialize through the delegation to the card, and the chat lane no longer hard-codes "document"',
+    /artifacts\.push\(\{ id: artifactId, title, threadId: artifactThread, type: m\.type \}\)/.test(delegate)
+    && /artifacts\?: Array<\{ id: string; title: string; threadId: string; type\?: string \}>/.test(delegate)
+    && /const at = String\(a\.type \?\? 'document'\)/.test(ask)
+    && /if \(at === 'frame'\)/.test(ask)
+    && /frame: \{ artifactId: a\.id \}/.test(ask)
+    && /docCardTypeOf\(at, null\)/.test(ask)
+    && !/docCardTypeOf\('document', null\)/.test(ask));
+
+  gate('T40.6 THE SIDE-CHANNEL IS A TRANSPORT, NOT A RECORD — cleared before the run, deleted the moment it is read, capped, turn-stamped, and never allowed to break a chat',
+    /export const DM_PRESENT_KIND = 'dm_present'/.test(channel)
+    && /export async function clearDmPresents/.test(channel)
+    && /await clearDmPresents\(admin, userId, threadId\);/.test(channel)   // the drain deletes
+    && /DM_PRESENT_MAX/.test(channel)
+    && /e\.turn == null \|\| turn == null \|\| e\.turn === turn/.test(channel)
+    // every door is best-effort: a channel failure can never change what the model was told
+    && (channel.match(/catch \{/g) ?? []).length >= 3
+    && /catch \{ return \[\]; \}/.test(channel));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// T41 · THE TRACE LINE + THE CITATIONS (Sep 22 — the coworker DM's receipt layer)
+//
+// THE GAP, named by the retirement census ("Harvested" §1): tool chips and KB citation chips
+// reached the user through ONE render — the /workers chat tab's five SSE branches — and that file
+// is gone. Retiring it did not create the gap, it made it visible: a coworker could read your
+// calendar, your Knowledge and your inbox and say nothing about having done so.
+//
+// THE RECEIPT IS NOT A WIDGET. Two laws close it, and neither adds a kind:
+//
+//   THE TRACE LINE      is the timeline's MUTED EVENT LINE — "deltas, not events", no author, no
+//                       affordance. One line per call while the work runs, folded to ONE once the
+//                       answer lands. Its WORDS come only from lib/work/trace.ts; a tool absent
+//                       from that table renders NOTHING (never its id, never the model's prose —
+//                       the drift lib/work/tool-summaries.ts was written to end). What persists is
+//                       `{tool, ok}`: a receipt carrying arguments or results is a second copy of
+//                       the user's data.
+//   THE CITATIONS       are a `documents` COLLECTION — the card the product already has, through
+//                       the host it already has, with `cited` as the rows' status word. No new
+//                       kind, no new host, no bespoke chip. Built from the groups the answer was
+//                       GROUNDED IN (one read, two renderings); nothing cited ⇒ no card at all.
+//
+// ONE HELPER ON BOTH RUNTIMES: `buildTrace` is the only producer of `metadata.trace`, and
+// `toolResultOk` the only reader of an outcome, so the native DM route and the AgentOS bridge
+// cannot disagree about what happened or how to say it.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+console.log('\nT41 · THE TRACE LINE + THE CITATIONS');
+{
+  const trace = read('lib/work/trace.ts') ?? '';
+  const summaries = read('lib/work/tool-summaries.ts') ?? '';
+  const timeline = read('components/thread/thread-timeline.tsx') ?? '';
+  const threadTypes = read('components/thread/types.ts') ?? '';
+  const nativeDM = read('app/api/work/threads/[id]/chat/route.ts') ?? '';
+  const bridge = read('lib/work/agentos-bridge.ts') ?? '';
+  const ask = read('components/home/home-ask.tsx') ?? '';
+  const build = read('lib/present/build.ts') ?? '';
+  const toolsRoute = read('app/api/internal/agentos/tools/route.ts') ?? '';
+  const cat = read('app/(main)/dev/thread-preview/preview-catalogue.tsx') ?? '';
+  const cli = read('app/(main)/dev/thread-preview/preview-client.tsx') ?? '';
+
+  // ── the behavioural half: the REAL module, on fixtures ────────────────────────────────────────
+  // (pure + leaf by construction — T41.2 asserts that property, which is what lets this run here)
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const T = require('../lib/work/trace') as typeof import('../lib/work/trace');
+
+  gate('T41.1 THE WORDING IS THE TABLE’S, AND SILENCE IS THE FALLBACK — an unknown tool composes to NOTHING (never its id, never a de-underscored guess), and a line made only of unknown tools is null',
+    T.traceWording('check_calendar') !== null
+    && T.traceWording('some_future_tool') === null
+    && T.tracePhrase({ tool: 'some_future_tool', ok: true }) === null
+    && T.traceLine([{ tool: 'some_future_tool', ok: true }]) === null
+    && T.traceLine([]) === null
+    // the id itself can never appear in what a person reads
+    && !String(T.traceLine([{ tool: 'check_calendar', ok: true }, { tool: 'some_future_tool', ok: true }]) ?? '').includes('_')
+    && T.traceLine([{ tool: 'check_calendar', ok: true }, { tool: 'some_future_tool', ok: true }]) === 'Checked the calendar');
+
+  gate('T41.2 THREE TENSES, ONE ROW — doing while the call is open, past when it settled, the HONEST word when it failed; and the module is PURE and leaf (no IO, no React, no imports) so both the server and the kit can read it',
+    T.tracePhrase({ tool: 'check_calendar' }) === 'Checking the calendar…'
+    && T.tracePhrase({ tool: 'check_calendar', ok: true }) === 'Checked the calendar'
+    && T.tracePhrase({ tool: 'check_calendar', ok: false }) === 'Couldn’t reach the calendar'
+    // every row carries all three words — a table with a hole would fall back to silence mid-turn
+    && Object.values(T.TRACE_WORDING).every((w) => !!w.doing && !!w.done && !!w.failed)
+    // …and covers the whole live tool vocabulary (TOOL_LABELS is the one in-flight label table)
+    && Object.keys(T.TRACE_WORDING).length >= 35
+    // PURE + LEAF: no import statement, no require, no module specifier of any kind, and no React
+    // or Supabase symbol used (the words appear in its own doc comment, so the check is on USE).
+    && !/^import |require\(|from '/m.test(trace)
+    && !/useState|useMemo|createClient|supabase\./.test(trace) && !/<[A-Z]/.test(trace));
+
+  gate('T41.3 THE FOLD IS EXECUTION ORDER, DEDUPED, CAPPED — repeats fold, a FAILURE never folds into a success (the thing a dedupe must not swallow), the cap counts the rest, and nothing is ever re-sorted',
+    T.traceLine([{ tool: 'check_calendar', ok: true }, { tool: 'search_knowledge_base', ok: true }, { tool: 'check_calendar', ok: true }])
+      === 'Checked the calendar · searched Knowledge'
+    // the same tool, two outcomes, two phrases
+    && T.traceLine([{ tool: 'check_calendar', ok: true }, { tool: 'check_calendar', ok: false }])
+      === 'Checked the calendar · couldn’t reach the calendar'
+    // alphabetical would have put "Checked" first — execution order does not
+    && String(T.traceLine([{ tool: 'web_search', ok: true }, { tool: 'check_calendar', ok: true }]))
+      .startsWith('Searched the web')
+    && T.traceLine(
+      ['check_calendar', 'search_knowledge_base', 'get_emails', 'web_search', 'read_document', 'list_tasks', 'fetch_url']
+        .map((tool) => ({ tool, ok: true })),
+    )?.endsWith('· and 2 more') === true
+    && T.TRACE_LINE_CAP === 5);
+
+  gate('T41.4 WHAT PERSISTS IS `{tool, ok}` AND NOTHING ELSE — buildTrace strips every other field, drops what has no word (unsayable ⇒ unstored), dedupes, and caps; a receipt that carried arguments or results would be a second copy of the user’s data',
+    (() => {
+      const out = T.buildTrace([
+        // deliberately over-fed: the extra fields must not survive
+        { name: 'check_calendar', ok: true, args: { from: '2026-09-22' }, result: 'Wednesday 10:00 with Sam' },
+        { name: 'check_calendar', ok: true },
+        { name: 'some_future_tool', ok: true },
+        { name: 'search_knowledge_base', ok: false },
+      ] as Array<{ name: string; ok: boolean }>);
+      const keys = new Set(out.flatMap((e) => Object.keys(e)));
+      return out.length === 2
+        && [...keys].sort().join(',') === 'ok,tool'
+        && out[0].tool === 'check_calendar' && out[0].ok === true
+        && out[1].tool === 'search_knowledge_base' && out[1].ok === false
+        && T.buildTrace(Array.from({ length: 40 }, (_, i) => ({ name: i % 2 ? 'web_search' : 'check_calendar', ok: !!(i % 3) }))).length <= T.TRACE_MAX
+        // …and the TYPE itself admits nothing else — a third field is the door a payload walks in
+        && /export type TraceEntry = \{ tool: string; ok\?: boolean \};/.test(trace);
+    })());
+
+  gate('T41.5 ONE WRITER, ONE OUTCOME READ, BOTH RUNTIMES — the native DM route and the AgentOS bridge each accumulate `{name, ok}` from the SHARED toolResultOk and persist through the SHARED buildTrace; neither hand-types a trace entry, and nothing else in the app writes `metadata.trace`',
+    /import \{ buildTrace \} from '@\/lib\/work\/trace'/.test(nativeDM)
+    && /import \{ buildTrace \} from '@\/lib\/work\/trace'/.test(bridge)
+    && /toolResultOk/.test(nativeDM) && /toolResultOk/.test(bridge)
+    && /const traceCalls: Array<\{ name: string; ok: boolean \}> = \[\]/.test(nativeDM)
+    && /const traceCalls: Array<\{ name: string; ok: boolean \}> = \[\]/.test(bridge)
+    && /const trace = buildTrace\(traceCalls\)/.test(nativeDM)
+    && /const trace = buildTrace\(traceCalls\)/.test(bridge)
+    && /\.\.\.\(trace\.length > 0 \? \{ trace \} : \{\}\)/.test(nativeDM)
+    && /\.\.\.\(trace\.length > 0 \? \{ trace \} : \{\}\)/.test(bridge)
+    // the outcome predicate lives ONCE, beside the chip table that reads the same sentences
+    && /export function toolResultOk/.test(summaries)
+    && (() => {
+      const writers = [...sourceFiles('app'), ...sourceFiles('lib'), ...sourceFiles('components')]
+        .filter((f) => /\.\.\.\(trace\.length > 0 \? \{ trace \} : \{\}\)|buildTrace\(/.test(read(f) ?? ''))
+          .filter((f) => !/agentos-bridge\.ts$|chat[\\/]route\.ts$|lib[\\/]work[\\/]trace\.ts$/.test(f));
+      return writers.length === 0;
+    })());
+
+  gate('T41.6 THE TRACE IS AN ITEM, NOT A CARD, AND IT REUSES THE ONE MUTED LINE — `trace_line` is in the ThreadItem union and NOT in ThreadCardKind; the timeline renders it through the SAME EventLine piece the event line uses, composing the words itself; a line that composes to nothing renders nothing',
+    /\| TraceLineItem;/.test(threadTypes)
+    && /interface TraceLineItem \{\n\s*type: 'trace_line';/.test(threadTypes)
+    && !/'trace_line'/.test((threadTypes.match(/export type ThreadCardKind =[\s\S]*?;/) ?? [''])[0])
+    && !/kind: 'trace/.test(threadTypes)
+    // ONE muted-line renderer, used twice — never a second component with its own grey
+    && /function EventLine\(\{ text, refs \}/.test(timeline)
+    && (timeline.match(/<EventLine /g) ?? []).length === 2
+    && /import \{ traceLine \} from '@\/lib\/work\/trace'/.test(timeline)
+    && /const line = traceLine\(item\.entries\);/.test(timeline)
+    && /return line \? <EventLine key=\{item\.id\} text=\{line\} \/> : null;/.test(timeline)
+    // THE HOST HANDS OVER FACTS, NEVER WORDS: it cannot even reach the vocabulary (no import of
+    // traceLine / tracePhrase / TRACE_WORDING), and no trace phrase exists as a string literal in
+    // it. Composition lives in the kit, over `{tool, ok}` — that is the whole point of the item.
+    && !/traceLine|tracePhrase|TRACE_WORDING/.test(ask)
+    && !/['"`]Check(ing|ed) the /.test(ask));
+
+  gate('T41.7 THE LINE LIVES AND FOLDS AT THE HOST — the DM accumulates `{tool, ok}` from the stream’s own frames, mounts one line PER CALL while the work runs and ONE folded line after, and reads the stored trace back on the next open; the old "· Checking…" text typed INTO the coworker’s own bubble is gone',
+    // the retired hack: machinery wearing a person's voice, wiped the moment it settled
+    !/patchLast\(`\$\{acc\}\$\{acc \? '\\n\\n' : ''\}· /.test(ask)
+    && /event\.type === 'tool_start' && event\.name/.test(ask)
+    && /trace\.push\(\{ tool: event\.name \}\)/.test(ask)
+    && /trace\[at\] = \{ tool: event\.name, ok \}/.test(ask)
+    && /if \(inFlight\) t\.trace\.forEach\(\(e, j\) => out\.push\(\{ type: 'trace_line', id: `\$\{key\}-trace-\$\{j\}`, entries: \[e\] \}\)\);/.test(ask)
+    && /out\.push\(\{ type: 'trace_line', id: `\$\{key\}-trace`, entries: t\.trace \}\)/.test(ask)
+    // the reload path, structurally validated (a malformed entry never renders half-read)
+    && /m\.metadata\.trace\.filter\(isTraceEntry\)/.test(ask)
+    // …and both runtimes put `ok` on the wire so the line can settle in place
+    && /type: 'tool_result'[^}]*summary, ok/.test(nativeDM)
+    && /send\(\{ type: 'tool_result', name, id: tool\.tool_call_id \?\? name, summary, ok \}\)/.test(bridge));
+
+  gate('T41.8 THE CITATIONS ARE A `documents` COLLECTION, THROUGH THE ONE POINTER AND THE ONE HOST — both coworker lanes build it from the SAME documentSpec over the groups the answer was grounded in, the rows say `cited`, the framing names the source in CODE, and NOTHING CITED PRODUCES NO CARD',
+    // one builder, two lanes — the native executor and the AgentOS internal route
+    /const \{ documentSpec \} = await import\('@\/lib\/present\/build'\)/.test(nativeDM)
+    && /documentSpec\(kbCtx\.groups, query\)/.test(nativeDM)
+    && /const \{ documentSpec \} = await import\('@\/lib\/present\/build'\)/.test(toolsRoute)
+    && /documentSpec\(kbCtx\.groups, query\)/.test(toolsRoute)
+    // an empty group set never becomes a pointer, on EITHER lane
+    && /if \(kbCtx\.groups\?\.length\) \{/.test(nativeDM)
+    && /if \(kbCtx\.groups\?\.length\) \{/.test(toolsRoute)
+    // the pointer is the shared one (never hand-typed) and the persisted half is a pointer
+    && /collectionPointer\(id, spec\)/.test(nativeDM)
+    && /collectionPointer\(id, e\.collection\)/.test(bridge)
+    // the row's word, and the framing composed by code from the rows + the user's own query
+    && /status: \{ word: 'cited', tone: 'neutral' as RowTone \}/.test(build)
+    && /From your Knowledge — \$\{plural\(total, 'document'\)\} mention/.test(build)
+    // NO BESPOKE CITATION CHIP IS REBORN. The /workers tab's chip row died with it; the ONE
+    // remnant is `CitationChip` inside components/work/chat-message.tsx, which survives only
+    // because `MarkdownText` lives in the same file — it is unreachable (nothing imports
+    // ChatMessageBubble) and must stay that way. The kit and every live thread host carry none.
+    && [...sourceFiles('app'), ...sourceFiles('lib'), ...sourceFiles('components')]
+      .filter((f) => /CitationChip|citation-chip|KbCitation|kbCitationChip/.test(read(f) ?? ''))
+      .join('|') === 'components/work/chat-message.tsx'
+    && [...sourceFiles('app'), ...sourceFiles('lib'), ...sourceFiles('components')]
+      .filter((f) => f !== 'components/work/chat-message.tsx' && /ChatMessageBubble/.test(read(f) ?? '')).length === 0);
+
+  gate('T41.9 THE CATALOGUE CARRIES THE THREE STATES AND THE DM CARRIES THE RECEIPT — the Pieces block shows in-progress · one receipt · the fold WITH A FAILURE INSIDE, all as machine facts through the real timeline; and the Coworker DM tab shows a real answer with its folded trace and its citations collection under it',
+    /trace · in progress/.test(cat) && /trace · one receipt/.test(cat)
+    && /trace · the fold, with a failure inside/.test(cat)
+    && /entries: \[\{ tool: 'check_calendar' \}\]/.test(cat)
+    && /entries: \[\{ tool: 'check_calendar', ok: true \}\]/.test(cat)
+    && /\{ tool: 'slack_read_messages', ok: false \}/.test(cat)
+    // the specimens run through the REAL timeline, not a hand-drawn picture of one
+    && /PIECE_TRACE\.map\(\(t\) => \(/.test(cat) && /<ThreadTimeline items=\{t\.items\} \/>/.test(cat)
+    // the DM walk: the citations card, and the folded receipt beneath the answer
+    && /type: 'trace_line', id: 'dm4-trace'/.test(cli)
+    && /\{ tool: 'search_knowledge_base', ok: true \}, \{ tool: 'read_document', ok: true \}/.test(cli)
+    && /status: \{ word: 'cited', tone: 'neutral' \}/.test(cli));
+}
+
 
 // ── THE ID-UNIQUENESS GUARD (Sep 14) ────────────────────────────────────────────────────────────
 // Two agents in one day added gates under ids the suite already used — both sets ran, both passed,

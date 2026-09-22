@@ -24,6 +24,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { personForms } from '@/lib/entities/recognize';
+import { EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 
 /** The boundary — the composer is told exactly where the world's record starts and stops. */
 export const GROUND_EVIDENCE_HEADER =
@@ -54,7 +55,12 @@ export const GROUND_EVIDENCE_RULE =
   `already did a thing the page still asks for, that debt is SETTLED — say it is done in ONE short ` +
   `clause, or say nothing at all, and NEVER demand it again. Where evidence and board disagree, ` +
   `believe the evidence, and you may note the discrepancy in one clause. Never invent a settlement ` +
-  `the evidence does not show, and never treat the user's own last word as the counterparty's answer.`;
+  `the evidence does not show, and never treat the user's own last word as the counterparty's answer. ` +
+  // THE EXCERPT-HONESTY LAW, at the evidence seam: each thread line quotes a gist the WATERMARK READ
+  // (lib/inbox/thread-now.ts) clipped at 110 chars — so the marker arrives here, in quotation marks,
+  // beside the words "sent the last message". Unexplained, that reads as "their message was cut off"
+  // — the law's own failure mode. One rule, carried by the one constant every reasoner already imports.
+  + EXCERPT_RULE;
 
 /** How far around today the calendar is worth checking for a room's own people. */
 const CAL_BACK_DAYS = 14;

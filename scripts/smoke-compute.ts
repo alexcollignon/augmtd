@@ -3,7 +3,7 @@
 //   C1 registry truth · C2 failure honesty · C3 one picker truth · C4 the locked room ·
 //   C5 (env-gated) a real end-to-end job through the deployed service.
 import { config } from 'dotenv'; config({ path: '.env.local' });
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, readdirSync } from 'fs';
 
 const out: Array<[string, boolean, string]> = [];
 const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
@@ -921,7 +921,10 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/converse/index.ts').includes('assignToCoworkerDefinition, offerChoicesDefinition]') &&
     src('lib/converse/index.ts').includes("tool === 'assign_to_coworker'") &&
     src('lib/converse/index.ts').includes("tool === 'offer_choices'") &&
-    src('lib/converse/index.ts').includes('out?.options || out?.delegated') &&
+    // RE-POINTED Sep 22 (WAVE 0, THE PRESENTATION LAW): the loop's early-return now reads the
+    // TURN half of the dispatch result — a data read (`{ modelText }`) has no surface half at all,
+    // so it is narrowed to `turn` before these fields are touched. Same law, renamed binding.
+    src('lib/converse/index.ts').includes('turn?.options || turn?.delegated') &&
     src('lib/converse/index.ts').includes('Asking for the sake of asking is a failure') &&
     src('app/api/home/ask/route.ts').includes('turn.options?.length') &&
     src('components/home/home-ask.tsx').includes('options: undefined } : x)));') &&
@@ -982,8 +985,11 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/workflows/standing.ts').includes('narrateApprovalAsk') &&
     src('lib/workflows/standing.ts').includes("key: 'approval'") &&
     src('app/api/workflows/runs/[id]/resume/route.ts').includes("run.status !== 'awaiting_approval'") &&
-    src('components/home/item-rail.tsx').includes('Approve — deliver it') &&
-    src('components/home/item-rail.tsx').includes('Hold back') &&
+    // Re-pointed Sep 22 (W3-A, the approval convergence): the approval words live in the ONE host
+    // the rail mounts, never in the rail itself — the rail mounting the host is the second half.
+    src('components/home/approval-card.tsx').includes('Approve — deliver it') &&
+    src('components/home/approval-card.tsx').includes('Hold back') &&
+    /import ApprovalCard from '@\/components\/home\/approval-card'/.test(src('components/home/item-rail.tsx')) &&
     src('lib/workflows/generate-config.ts').includes('"type": "approval"') &&
     src('lib/workflows/generate-config.ts').includes('ONE GATE, CODE-ENFORCED') && // found live: a generated pipeline carried two approval gates
     existsSync('supabase/migrations/20260808_workflow_runs_approval_status.sql'));
@@ -1018,8 +1024,13 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('components/home/view-switcher.tsx').includes("'workflows'") &&
     src('components/home/home-view.tsx').includes("view === 'workflows'") &&
     src('components/workflows/workflows-ledger.tsx').includes('generate-from-description') &&
-    src('components/workflows/workflows-ledger.tsx').includes('overlap_note') &&
-    src('components/workflows/workflows-ledger.tsx').includes('Confirm — it goes live') &&
+    // RE-POINTED (W3-B, Sep 22): the page's own forked review card DIED — it mounts THE shared
+    // creation card now (component map §2 item 5). DESCRIBE→DRAFT→REVIEW→CONFIRM is unchanged and
+    // the deed is still the word; the review grammar (overlap note, the plain step wording) and
+    // the Confirm button simply live in the one component the Home chief renders too.
+    src('components/workflows/workflows-ledger.tsx').includes('<WorkflowDraftCard') &&
+    src('components/workflows/workflow-draft-card.tsx').includes('{draft.overlap_note}') &&
+    src('components/workflows/workflow-draft-card.tsx').includes('Confirm — it goes live') &&
     // RE-POINTED (Sep 13): the decide surface is the PROCESS DRAWER (the processes arc, Aug 18–20)
     // — the ledger raises it, and its Approve/Reject post to the SAME `/resume` route. ONE DEED,
     // ONE DOOR is unchanged; only which file renders the button moved.
@@ -1195,8 +1206,19 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('app/api/home/ask/route.ts').includes('turn.workflowDraft') &&
     src('components/workflows/workflow-draft-card.tsx').includes('Confirm — it goes live') &&
     src('components/workflows/workflow-draft-card.tsx').includes('aug-wfdraft-done') &&
+    // RE-POINTED (W3-B, Sep 22): the third mount used to be components/workers/tabs/worker-chat-tab.tsx,
+    // which is UNREACHABLE (its routes are pure redirects — component map §1). The gate now names the
+    // surfaces a user can actually reach: the Home chief / DM lane, the item+project room rail, and
+    // THE WORKFLOWS LEDGER — whose own forked copy died this day, so "one card" is literal there too.
     src('components/home/home-ask.tsx').includes('WorkflowDraftCard') &&
-    src('components/workers/tabs/worker-chat-tab.tsx').includes('WorkflowDraftCard'));
+    src('components/home/item-rail.tsx').includes('WorkflowDraftCard') &&
+    src('components/workflows/workflows-ledger.tsx').includes('<WorkflowDraftCard') &&
+    src('components/workflows/workflows-ledger.tsx').includes('surface="ledger"') &&
+    // …and the ledger keeps NO second rendering of its own (the fork's vocabulary is gone).
+    !src('components/workflows/workflows-ledger.tsx').includes('Confirm — it goes live') &&
+    // THE ONE SEND-SET — the allowlist, never a spread into a write door.
+    src('components/workflows/workflow-draft-card.tsx').includes('export const CONFIRM_FIELDS') &&
+    !/JSON\.stringify\(\{\s*\.\.\.draft\b/.test(src('components/workflows/workflows-ledger.tsx')));
 
   check('CS3: THE TEAM FACEPILE (coherence slice #4, Aug 10) — presence in the sidebar FOOTER (global chrome; deliberately NOT the island — views-of-here — and NOT nav): facepile → ONE popover with a line of REAL state per coworker (read from run checkpoints: "Running X · step 3 of 13" / "Delivered N today" / "Ready"), a Chat verb (opens the DM conversation through the same door as addressing by name), and the Settings→Team door; Settings→Team already carries roster + per-worker Tools + Knowledge&skills + the library (slice #3, verified standing)',
     src('app/api/workers/presence/route.ts').includes('step ') &&
@@ -1434,9 +1456,23 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
   check('SV5: THE MEETING ASSISTANT (auto-join bot) UI RETIRED (owner call, Aug 10 — "we no longer use it") — the Settings card is gone (component deleted), the meeting page\'s Send-assistant affordance and state chips are gone, both platform-admin toggles (per-company, per-user) and their handlers are gone. KEPT DELIBERATELY: the bot API routes and Hetzner infra stay dormant (the SAME service runs in-person recording — the product), bot_manager\'s insight generation serves the recording pipeline, and DB columns (attendee_enabled) stay for stored data',
     !fileExists('components/settings/meeting-assistant-card.tsx') &&
     !src('app/(main)/settings/page.tsx').includes('MeetingAssistantCard') &&
-    !src('app/meetings/[id]/meeting-detail-client.tsx').includes('Send assistant') &&
     !src('app/platform-admin/platform-admin-client.tsx').includes('MeetingAssistant') &&
-    src('app/meetings/[id]/meeting-detail-client.tsx').includes('UI RETIRED'));
+    // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT): the gate used to read the affordance's absence
+    // off ONE orphaned page client (app/meetings/[id]/meeting-detail-client.tsx), which the import
+    // graph then proved unreachable and which is now deleted — so the law is asserted in its
+    // STRONGEST form instead: NO live meeting surface carries the bot affordance at all. Swept
+    // across every meeting component and every meeting route, not one file.
+    (() => {
+      const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+        e.isDirectory() ? walk(`${d}/${e.name}`) : /\.tsx?$/.test(e.name) ? [`${d}/${e.name}`] : []);
+      const files = [...walk('components/meetings'), ...walk('app/(main)/meetings')];
+      return files.length > 10 && files.every((f) => {
+        const s = src(f);
+        return !/Send assistant|Send the assistant|MeetingAssistantCard/.test(s);
+      });
+    })() &&
+    // …and the recording pipeline the bot service ALSO runs stays untouched (the deliberate keep).
+    fileExists('app/api/meetings/recordings/confirm/route.ts'));
 
   check('SV6: THE TEAM ARRIVES WITH THE MEMBERSHIP (found live: an iScore joiner had ZERO coworkers — seeding was coupled to the email bootstrap a sovereign user never triggers, and the retired /workers page had been the backstop) — (1) /api/company/join seeds the team in after() (joining IS "set up your agents"); (2) the presence route SELF-HEALS an empty roster on any authed visit (idempotent ensureWorkers; the facepile can never show a dead no-team again); (3) THE SOVEREIGN GALLERY: mailbox-READING workflow templates + their category chip hide when the email feature is off (email DELIVERY via Resend stays — the boundary is auth connections only); generate-config already excludes mailbox tools by feature. Live repair: the real iScore user seeded (Clara, Sofia, Luca, Max)',
     src('app/api/company/join/route.ts').includes('ensureWorkers') &&
@@ -1623,7 +1659,9 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/workflows/typed-output.ts').includes('its OWN fenced block') &&
     src('lib/home/delegate.ts').includes('parseTypedDeliverables') &&
     src('lib/home/delegate.ts').includes('candidates.length >= 2 ? candidates') &&      // fence+prose = two files
-    src('lib/home/delegate.ts').includes('artifacts?: Array<{ id: string; title: string; threadId: string }>') &&
+    // Re-pointed Sep 22 (W4-C): the artifact carries its STATED type (frame/document/…) so the
+    // thread mounts the right kit kind — the multi-deliverable shape is unchanged.
+    /artifacts\?: Array<\{ id: string; title: string; threadId: string; type\?: string \}>/.test(src('lib/home/delegate.ts')) &&
     src('lib/converse/index.ts').includes('out.artifacts && out.artifacts.length > 1') &&
     src('app/api/home/ask/route.ts').includes('turn.artifacts?.length') &&
     src('components/home/home-ask.tsx').includes('d.artifacts?.length ? d.artifacts : d.artifact'));
@@ -1665,8 +1703,14 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/prepare/read.ts').includes('decision?: { options: Array<{ label: string; tradeoff?: string | null }>') &&
     src('lib/prepare/read.ts').includes('meta.decisionBrief ? { decision:') &&
     src('app/api/items/view/route.ts').includes('...(a.decision ? { decision: a.decision } : {})') &&
-    src('components/work/decision-card.tsx').includes('tradeoff?: string | null') &&
-    src('components/work/decision-card.tsx').includes('recommended') &&
+    // RE-POINTED (W3-C, Sep 22 — docs/component-map.md §2 item 7): the DecisionCard became the
+    // kit's `decision` kind behind ONE host. The LAW is unchanged (the brief's depth renders IN
+    // the one card — the trade-off under each option, the quiet "recommended" chip and the
+    // grounded why); the trade-off now lives in the kit's contract as the route's `consequence`
+    // and the host maps the brief's own `tradeoff` onto it.
+    src('components/thread/types.ts').includes('consequence?: string | null') &&
+    src('components/home/decision-card.tsx').includes('{ consequence: o.tradeoff }') &&
+    src('components/thread/thread-cards.tsx').includes('recommended') &&
     src('components/home/item-detail.tsx').includes('decisionBrief?.decision?.options.length') &&
     src('components/home/item-detail.tsx').includes('!p.decision') &&                    // the strip filter
     src('lib/prepare/pass.ts').includes('PLAIN TEXT') &&
@@ -1704,8 +1748,13 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('app/api/items/steer/route.ts').includes('DECISION MADE — the user picked an option') &&
     src('app/api/items/steer/route.ts').includes('NEVER ask the user what they meant') &&
     src('app/api/items/steer/route.ts').includes('THE DELIVERABLE IS THE MESSAGE ITSELF') &&
-    src('components/home/item-detail.tsx').includes('decision: {') &&
-    src('components/home/item-detail.tsx').includes('tradeoff: decisionBrief?.decision?.options.find') &&
+    // RE-POINTED (W3-C, Sep 22 — docs/component-map.md §2 item 7): fix (1) is unchanged — a menu
+    // click still executes its contract — but the contract is now BUILT ONCE, in the decision's
+    // ONE host, instead of being hand-typed in the deep-dive AND the project room. The deep-dive
+    // still supplies the brief's own options (with their trade-offs) that the contract rides on.
+    src('components/home/decision-card.tsx').includes('decision: {') &&
+    src('components/home/decision-card.tsx').includes('tradeoff: opt?.tradeoff ?? null') &&
+    src('components/home/item-detail.tsx').includes('decisionBrief!.decision!.options') &&
     src('lib/converse/index.ts').includes('GROUNDING_TAG_RE') &&
     // RE-POINTED (Sep 18): the chat-lane clock wave wrapped the one-exit strip in
     // enforceWeekdayDatePairs — same site, same strip, one more floor on the way out.

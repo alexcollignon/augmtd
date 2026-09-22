@@ -9,7 +9,19 @@ import ReplyEditor from '@/components/inbox/reply-editor';
 import { AttachmentChip } from '@/components/ui/attachment-lightbox';
 // THE ONE OBJECT CARD — the source half of the grammar, in its own file (one component, one law).
 import { SourceObjectCard } from './source-object-card';
-import type { BulkCard, DocCard, EmailCard, InviteCard, ThreadCard, ThreadCardIcon, ThreadCardOption } from './types';
+import { AskRows } from './ask-rows';
+// ONE EXPANDER IDIOM — the same "N more" fold every other list in the app uses (never a fork).
+import { ExpandableRows } from '@/components/home/expandable-rows';
+import { Badge } from '@/components/ui';
+import { AvatarStatus } from './avatar-status';
+// ONE NUMBER, NOT TWO: the inline-rows default lives with the contract both halves read.
+import { COLLECTION_INLINE_ROWS } from '@/lib/present/collection';
+import { COLLECTION_ROW_MAX_VERBS } from './types';
+import type {
+  BulkCard, CollectionCard, CollectionRow, CollectionRowTone, CollectionRowVerb,
+  DecisionCard, DocCard, EmailCard, EventCard, EventCardVerb, EventVerbArgs, ForwardCard,
+  InviteCard, ThreadCard, ThreadCardIcon, ThreadCardOption,
+} from './types';
 
 /**
  * ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -832,6 +844,515 @@ function DocCardView({ card }: { card: DocCard }) {
   );
 }
 
+/**
+ * THE COLLECTION CARD (docs/component-map.md §6) — the user's own objects, as rows.
+ *
+ * ONE CALM LINE PER OBJECT: face · title (the door) · status chip · muted meta · at most TWO quiet
+ * verbs at the right. The cap is enforced HERE, not asked of hosts — a row is a line, never a
+ * toolbar. A verb with no handler renders as plain text, like every other affordance in this kit.
+ *
+ * The two-step lives in the row: a `confirm` verb swaps itself, IN PLACE, for "<confirm.label> ·
+ * Cancel" and fires on the second click. No modal; no native confirm().
+ *
+ * ONE TYPE SCALE — 13px title, 12px meta, 11px chip; hierarchy is weight and spacing. The verbs
+ * sit after a `min-w`'d title block, so on a narrow screen they WRAP under the row rather than
+ * clipping it.
+ */
+const CHIP_TONE: Record<CollectionRowTone, 'neutral' | 'indigo' | 'emerald' | 'amber' | 'red' | 'blue'> = {
+  active: 'emerald', paused: 'amber', draft: 'neutral', attention: 'red', done: 'blue', neutral: 'neutral',
+};
+
+function RowVerb({ verb, armed, onArm, onDisarm }: {
+  verb: CollectionRowVerb; armed: boolean; onArm: () => void; onDisarm: () => void;
+}) {
+  const cls = cn('aug-focus rounded text-[12px] font-medium transition-colors',
+    verb.tone === 'quiet' ? 'text-neutral-400 hover:text-neutral-600' : 'text-indigo-600 hover:text-indigo-700');
+  // NO LYING DOORS: a verb the host gave no hands renders as the word it is.
+  if (!verb.onClick) return <span className={cn('text-[12px] font-medium text-neutral-400')}>{verb.label}</span>;
+  if (verb.confirm && armed) {
+    return (
+      <span className="flex items-center gap-2">
+        {/* THE EMPHASIS ARRIVES WITH THE CONFIRMATION: a costly verb rests quiet and only its
+            armed second step is primary — so the loudest word on a resting row is never the one
+            that spends something. */}
+        <button type="button" disabled={verb.busy} onClick={() => { onDisarm(); verb.onClick!(); }}
+          className="aug-focus rounded text-[12px] font-medium text-indigo-600 transition-colors hover:text-indigo-700 disabled:cursor-default disabled:opacity-60">
+          {verb.confirm.label}
+        </button>
+        <button type="button" onClick={onDisarm}
+          className="aug-focus rounded text-[12px] font-medium text-neutral-400 hover:text-neutral-600">Cancel</button>
+      </span>
+    );
+  }
+  return (
+    <button type="button" disabled={verb.busy}
+      onClick={() => (verb.confirm ? onArm() : verb.onClick!())}
+      className={cn(cls, 'disabled:cursor-default disabled:opacity-60')}>
+      {verb.busy ? `${verb.label}…` : verb.label}
+    </button>
+  );
+}
+
+function CollectionRowView({ row }: { row: CollectionRow }) {
+  // The armed verb, if any — the two-step is local chrome, never state the host has to carry.
+  const [armed, setArmed] = React.useState<string | null>(null);
+  const verbs = (row.verbs ?? []).slice(0, COLLECTION_ROW_MAX_VERBS);
+
+  return (
+    <div className="flex flex-col border-t border-neutral-200/55 first:border-t-0">
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 px-4 py-[9px]">
+        {row.face && <AvatarStatus name={row.face.name} actorId={row.face.id} size={20} />}
+        {/* TWO LINES, NOTHING CUT (owner walk, Sep 22 — on one line the name lost its tail AND the
+            schedule lost everything after the owner, with a third of the column standing empty):
+            the name and its chip own the first line; the meta owns the second, whole. Each still
+            truncates at a true overflow (a very long name on a phone), but they no longer compete
+            with each other or with the verbs for one line's width. */}
+        <span className="flex min-w-0 flex-grow basis-[55%] flex-col gap-[1px]">
+          <span className="flex min-w-0 items-center gap-2">
+            {row.onOpen ? (
+              <button type="button" onClick={row.onOpen}
+                className="aug-focus min-w-0 truncate rounded text-left text-[13px] font-medium text-neutral-800 transition-colors hover:text-indigo-600">
+                {row.title}
+              </button>
+            ) : (
+              <span className="min-w-0 truncate text-[13px] font-medium text-neutral-800">{row.title}</span>
+            )}
+            {row.status?.word && (
+              <Badge tone={CHIP_TONE[row.status.tone] ?? 'neutral'} className="flex-shrink-0">{row.status.word}</Badge>
+            )}
+          </span>
+          {row.meta && <span className="min-w-0 truncate text-[12px] text-neutral-400">{row.meta}</span>}
+        </span>
+        {/* THE DEED'S RIGHT EDGE — the receipt word stands where the deed stood; whatever verb
+            survives it (the undo, and nothing else) reads on from there. */}
+        {(row.receipt || verbs.length > 0) && (
+          <span className="ml-auto flex flex-shrink-0 items-center gap-2">
+            {row.receipt && <span className="text-[11px] font-medium text-indigo-600">{row.receipt}</span>}
+            {row.receipt && verbs.length > 0 && <span aria-hidden className="text-neutral-300">·</span>}
+            {verbs.map((v) => (
+              <RowVerb key={v.id} verb={v} armed={armed === v.id}
+                onArm={() => setArmed(v.id)} onDisarm={() => setArmed(null)} />
+            ))}
+          </span>
+        )}
+      </div>
+      {row.error && <div className="px-4 pb-2 text-[12px] text-rose-600">{row.error}</div>}
+      {/* THE ROW OPENS IN PLACE — what the row's door raised sits UNDER the row, inside the set,
+          so the answer never costs the reader their place in the list. */}
+      {row.expanded && <div className="px-4 pb-3">{row.expanded}</div>}
+    </div>
+  );
+}
+
+/** A LIST NEEDS ITS LINE: a collection row carries a name, a chip, a meta line and up to two verbs —
+ *  at the single-object width (480) the name lost its tail with a third of the column empty. A set
+ *  takes the wider seat the mounted host cards use. */
+const COLLECTION_MAX_W = 'w-full max-w-[640px]';
+
+function CollectionCardView({ card }: { card: CollectionCard }) {
+  const fold = card.foldAfter ?? COLLECTION_INLINE_ROWS;
+  return (
+    <div className={cn(SHELL, COLLECTION_MAX_W, 'flex flex-col overflow-hidden')}>
+      {card.title && (
+        <div className="px-4 pt-3 text-[13px] font-semibold text-neutral-900">{card.title}</div>
+      )}
+      {card.rows.length === 0 ? (
+        // TRUTH BEFORE PRESENTATION: nothing to list is said plainly, never a row-shaped ghost.
+        <div className="px-4 py-3 text-[12px] text-neutral-400">{card.emptyLine ?? 'Nothing here yet.'}</div>
+      ) : (
+        <div className="flex flex-col">
+          <ExpandableRows
+            items={card.rows} limit={fold}
+            render={(r) => <CollectionRowView key={r.id} row={r} />}
+            toggleClass="border-t border-neutral-200/55 px-4 py-2"
+          />
+        </div>
+      )}
+      {/* A CAP IS NEVER SILENT — what the server did not serve says so, with a door where one exists. */}
+      {card.more && card.more.count > 0 && (
+        <div className="flex items-center border-t border-neutral-200/55 px-4 py-2">
+          <OpenLink label={card.more.label ?? `and ${card.more.count} more →`} onClick={card.more.onOpen} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * ════════════════════════════════════════════════════════════════════════════════════════════════
+ * THE EVENT CARD (docs/component-map.md §6, Wave 2 — "a single calendar event as an object card")
+ *
+ * REASONED SELECTION, DETERMINISTIC RENDERING — from the RENDERER'S side of that rule: this
+ * component does not know what an RSVP is. It receives the verbs the event's own facts PERMIT
+ * (`validEventVerbs` → `spec.verbs`, worded by `EVENT_VERB_WORDS`) and its whole job is to arm one
+ * at a time and hand the second click back.
+ *
+ *   · NOTHING IS DERIVED HERE. No clock, no seat, no ladder, no ISO arithmetic — a picked wall
+ *     time leaves as the three fields the user touched, and the HOST turns it into a deed.
+ *   · THE SECOND CLICK IS THE APPROVAL (THE HUMAN-IN-THE-LOOP LAW). A verb the machine PROPOSED
+ *     arrives armed — armed is not fired; it is the first click already made, in public.
+ *   · THE LOUDEST VERB IS NEVER THE COSTLIEST ONE (the collection card's law, one kind over):
+ *     at rest every verb is quiet; the primary appears only on the armed step.
+ *   · AN IRREVERSIBLE VERB SAYS WHAT IT COSTS, at the moment it can still be stopped.
+ *   · A SPENT DEED KEEPS NO BUTTON: `done` replaces the verb row whole.
+ * ════════════════════════════════════════════════════════════════════════════════════════════════
+ */
+/** A single object's card at the SET's width — an event carries a who-line and a verb row, and at
+ *  the 480 single-object width the attendees lost their tail (the collection card's own find). */
+const EVENT_MAX_W = 'w-full max-w-[640px]';
+
+/** The durations the in-card picker offers. The event's OWN length is always among them. */
+const EVENT_DURATIONS = [15, 30, 45, 60, 90, 120];
+const PICKER_FIELD = 'aug-focus rounded-lg border border-neutral-200 bg-white px-2 py-1 text-[12px] text-neutral-800 focus:border-indigo-300 focus:outline-none';
+
+function EventCardView({ card }: { card: EventCard }) {
+  const verbs = card.verbs ?? [];
+  // THE ARMED VERB is local chrome — except on the FIRST paint, where a served proposal has
+  // already made the first click in public. A re-read that moves the proposal moves this with it.
+  const [armed, setArmed] = React.useState<string | null>(card.armedVerbId ?? null);
+  React.useEffect(() => { setArmed(card.armedVerbId ?? null); }, [card.armedVerbId]);
+  // The note the user will actually send — seeded from the proposal's, then theirs.
+  const [note, setNote] = React.useState(card.note ?? '');
+  React.useEffect(() => { setNote(card.note ?? ''); }, [card.note]);
+  const [pick, setPick] = React.useState(card.pickerDefaults ?? { date: '', time: '', durationMin: 30 });
+  React.useEffect(() => { if (card.pickerDefaults) setPick(card.pickerDefaults); }, [card.pickerDefaults]);
+
+  const root = React.useRef<HTMLDivElement | null>(null);
+  // ESCAPE AND A CLICK AWAY DISARM — the way out of a two-step is never only a button.
+  React.useEffect(() => {
+    if (!armed) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setArmed(null); };
+    const onDown = (e: MouseEvent) => {
+      if (root.current && e.target instanceof Node && !root.current.contains(e.target)) setArmed(null);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onDown);
+    return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('mousedown', onDown); };
+  }, [armed]);
+
+  const armedVerb = verbs.find((v) => v.id === armed) ?? null;
+  const busy = verbs.some((v) => v.busy);
+  const showPicker = !!armedVerb?.needsWindow && !card.proposedLabel;
+
+  const fire = (v: EventCardVerb) => {
+    const args: EventVerbArgs = {
+      ...(v.notable && note.trim() ? { note: note.trim() } : {}),
+      ...(v.needsWindow && !card.proposedLabel ? { pick } : {}),
+    };
+    setArmed(null);
+    v.onConfirm?.(args);
+  };
+
+  return (
+    <div ref={root} className={cn(SHELL, EVENT_MAX_W, 'flex flex-col overflow-hidden')}>
+      <div className={cn('flex items-start gap-3 px-4 py-3.5', workingClass(busy))}>
+        <IconTile icon="calendar" />
+        <span className="flex min-w-0 flex-grow flex-col gap-[3px]">
+          <span className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="min-w-0 truncate text-[15px] font-semibold text-neutral-900">{card.title}</span>
+            {/* ONE QUIET WORD FOR WHERE THE USER STANDS — never a second claim, never a colour
+                that competes with the deed. */}
+            {card.standing && <Badge tone="neutral" className="flex-shrink-0">{card.standing}</Badge>}
+          </span>
+          {(card.dayLabel || card.timeLabel) && (
+            <span className="text-[12.5px] text-neutral-600">
+              {[card.dayLabel, card.timeLabel].filter(Boolean).join(' · ')}
+            </span>
+          )}
+          {card.attendeesLine && <span className="truncate text-[12px] text-neutral-400">{card.attendeesLine}</span>}
+          {card.location && <span className="truncate text-[12px] text-neutral-400">{card.location}</span>}
+        </span>
+      </div>
+
+      {card.error && <div className="border-t border-neutral-200/55 px-4 py-2 text-[12px] text-rose-600">{card.error}</div>}
+
+      {/* A SPENT DEED KEEPS NO BUTTON — the word stands where the verbs stood. */}
+      {card.done ? (
+        <div className="flex items-center gap-1.5 border-t border-neutral-200/70 bg-neutral-50 px-4 py-2.5 text-[12px] font-medium text-indigo-600">
+          <span>{card.done}</span>
+          <svg aria-hidden width="12" height="12" viewBox="0 0 16 16" fill="none">
+            <path d="m3.5 8.4 3 3 6-6.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+      ) : verbs.length === 0 ? (
+        // TRUTH BEFORE PRESENTATION: an event that permits nothing says why, and offers nothing.
+        card.quietLine ? <div className="border-t border-neutral-200/70 px-4 py-2.5 text-[12px] text-neutral-400">{card.quietLine}</div> : null
+      ) : (
+        <div className="flex flex-col gap-2 border-t border-neutral-200/70 bg-neutral-50 px-4 py-2.5">
+          {/* THE ARMED STEP CARRIES ITS OWN ARGUMENTS — the note goes with the refusal, the new
+              window with the move. Both edited HERE, where the deed still can be stopped. */}
+          {armedVerb?.notable && (
+            <input
+              type="text" value={note} onChange={(e) => setNote(e.target.value)}
+              placeholder="Add a line for them (optional)"
+              className="aug-focus w-full rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[12.5px] text-neutral-800 placeholder:text-neutral-300 focus:border-indigo-300 focus:outline-none"
+            />
+          )}
+          {showPicker && (
+            <span className="flex flex-wrap items-center gap-2">
+              <input type="date" value={pick.date} onChange={(e) => setPick({ ...pick, date: e.target.value })} className={PICKER_FIELD} />
+              <input type="time" value={pick.time} onChange={(e) => setPick({ ...pick, time: e.target.value })} className={PICKER_FIELD} />
+              <select
+                value={String(pick.durationMin)}
+                onChange={(e) => setPick({ ...pick, durationMin: Number(e.target.value) })}
+                className={PICKER_FIELD}
+              >
+                {[...new Set([...EVENT_DURATIONS, pick.durationMin])].sort((a, b) => a - b).map((m) => (
+                  <option key={m} value={m}>{m} min</option>
+                ))}
+              </select>
+            </span>
+          )}
+          <span className="flex flex-wrap items-center gap-2.5">
+            {verbs.map((v) => (v.id === armed ? (
+              <React.Fragment key={v.id}>
+                <button
+                  type="button" disabled={v.busy} onClick={() => fire(v)}
+                  className="aug-focus rounded-lg bg-indigo-600 px-3 py-[6px] text-[12px] font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-default disabled:opacity-60">
+                  {v.busy ? `${v.armedLabel}…` : v.armedLabel}
+                </button>
+                {/* The proposed window reads BESIDE its confirmation — what you are agreeing to. */}
+                {v.needsWindow && card.proposedLabel && (
+                  <span className="text-[12px] text-neutral-600">{card.proposedLabel}</span>
+                )}
+              </React.Fragment>
+            ) : (
+              <button
+                key={v.id} type="button" disabled={v.busy || !v.onConfirm}
+                onClick={() => setArmed(v.id)}
+                className="aug-focus rounded text-[12px] font-medium text-neutral-400 transition-colors hover:text-neutral-600 disabled:cursor-default disabled:opacity-60">
+                {v.label}
+              </button>
+            )))}
+            {armedVerb && (
+              <button type="button" onClick={() => setArmed(null)}
+                className="aug-focus rounded text-[12px] font-medium text-neutral-400 hover:text-neutral-600">Never mind</button>
+            )}
+          </span>
+          {/* WHAT IT COSTS, WHILE IT CAN STILL BE STOPPED. */}
+          {armedVerb?.consequence && (
+            <span className="text-[11px] text-neutral-400">{armedVerb.consequence}</span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * ════════════════════════════════════════════════════════════════════════════════════════════════
+ * THE DECISION CARD (docs/component-map.md §2 item 7 — converged in W3-C, Sep 22)
+ *
+ * The numbered-routes idiom, unchanged in every fact it could already express (the question line,
+ * the object on the same surface, the marked recommendation and its why, the trade-off under each
+ * route, "Leave it with me" always last) — plus the three the hand-drawn card had nowhere to put:
+ *
+ *   · THE ARMED STEP. A decision spends real work downstream (a redraft, a send prepared against
+ *     the chosen route), so the route arms on the first click and fires on the second, in the
+ *     event card's own grammar. Escape or a click away disarms.
+ *   · THE SETTLED STATE. The answerable-card lifecycle (`open · busy · settled`): a chosen
+ *     decision keeps its question and its object — a decision you made is still worth reading —
+ *     and replaces the routes ENTIRELY with one quiet line.
+ *   · THE ERROR LINE. A door that did not answer says so ON the card; the question it was asking
+ *     is still the question.
+ *
+ * PRESENTATIONAL: it recommends nothing of its own (the host decides what MAY be recommended, from
+ * whether the object is on the page) and a route without a confirm handler is a fact, not a door.
+ * ════════════════════════════════════════════════════════════════════════════════════════════════
+ */
+function DecisionCardView({ card }: { card: DecisionCard }) {
+  const state = card.state ?? 'open';
+  const settled = state === 'settled';
+  const busy = state === 'busy';
+  const [armed, setArmed] = React.useState<string | null>(card.armedOptionId ?? null);
+  React.useEffect(() => { setArmed(card.armedOptionId ?? null); }, [card.armedOptionId]);
+  const root = React.useRef<HTMLDivElement | null>(null);
+  // ESCAPE AND A CLICK AWAY DISARM — the way out of a two-step is never only a button.
+  React.useEffect(() => {
+    if (!armed) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setArmed(null); };
+    const onDown = (e: MouseEvent) => {
+      if (root.current && e.target instanceof Node && !root.current.contains(e.target)) setArmed(null);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onDown);
+    return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('mousedown', onDown); };
+  }, [armed]);
+
+  if (!card.options.length && !settled) return null;
+
+  return (
+    <div ref={root} className={cn(SHELL, MAX_W, 'flex flex-col overflow-hidden', settled && 'bg-neutral-50/60')}>
+      {card.question && (
+        <p className="px-4 pb-1 pt-3 text-[12px] leading-snug text-neutral-500">{card.question}</p>
+      )}
+      {/* THE OBJECT — the thing being decided, on the same surface as the ask (clause 2). With
+          nothing on the page, the honest sentence, and (by the host's rule) nothing recommended. */}
+      {card.objectNode
+        ? <div className="mx-4 mb-2 mt-1">{card.objectNode}</div>
+        : card.quietLine
+          ? <p className="mx-4 mb-2 mt-1 text-[12px] leading-snug text-neutral-400">{card.quietLine}</p>
+          : null}
+
+      {card.error && <div className="border-t border-neutral-200/55 px-4 py-2 text-[12px] text-rose-600">{card.error}</div>}
+
+      {settled ? (
+        card.settledLine
+          ? <div className="border-t border-neutral-200/70 px-4 py-2.5 text-[12.5px] text-neutral-500">{card.settledLine}</div>
+          : null
+      ) : (
+        <div className={cn('flex flex-col', busy && 'pointer-events-none opacity-60')}>
+          {card.options.map((o, i) => {
+            const isArmed = o.id === armed;
+            return (
+              <div key={o.id} className="flex flex-col border-t border-neutral-200/55 first:border-t-0">
+                <button
+                  type="button" disabled={!card.onConfirm}
+                  onClick={() => (isArmed ? (setArmed(null), card.onConfirm?.(o.label)) : setArmed(o.id))}
+                  className={cn('w-full px-4 py-2 text-left transition-colors disabled:cursor-default',
+                    isArmed ? 'bg-indigo-50/70' : 'hover:bg-indigo-50/60')}
+                >
+                  <span className="flex items-center gap-2.5 text-[13px] text-neutral-700">
+                    <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md bg-neutral-100 text-[11px] font-semibold text-neutral-500">{i + 1}</span>
+                    <span className={o.recommended ? 'font-medium text-neutral-900' : ''}>{o.label}</span>
+                    {o.recommended && (
+                      <span className="flex-shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-[10.5px] font-semibold text-indigo-600">recommended</span>
+                    )}
+                  </span>
+                  {o.consequence && (
+                    <span className="mt-0.5 block pl-[30px] text-[12px] leading-snug text-neutral-400">{o.consequence}</span>
+                  )}
+                  {/* THE WHY LIVES WITH ITS ROUTE — never a block between the options and the way out. */}
+                  {o.recommended && o.why && (
+                    <span className="mt-1 block pl-[30px] text-[12px] leading-snug text-indigo-900/60">{o.why}</span>
+                  )}
+                </button>
+                {/* THE SECOND CLICK IS THE DEED — and until it lands, the way out is right beside it. */}
+                {isArmed && card.onConfirm && (
+                  <div className="flex items-center gap-2.5 bg-indigo-50/70 px-4 pb-2.5 pl-[54px]">
+                    <button type="button" onClick={() => { setArmed(null); card.onConfirm!(o.label); }}
+                      className="aug-focus rounded-lg bg-indigo-600 px-3 py-[6px] text-[12px] font-medium text-white transition-colors hover:bg-indigo-700">
+                      {card.confirmLabel ?? 'Go with this'}
+                    </button>
+                    <button type="button" onClick={() => setArmed(null)}
+                      className="aug-focus rounded text-[12px] font-medium text-neutral-400 hover:text-neutral-600">Never mind</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {/* THE DECLINE THE READER NEVER HAS TO HUNT FOR — always last, always quiet. */}
+          {card.onDismiss && (
+            <button type="button" onClick={card.onDismiss}
+              className="flex w-full items-center gap-2.5 border-t border-neutral-200/55 px-4 py-2 text-left text-[13px] text-neutral-400 transition-colors hover:bg-neutral-50">
+              <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md bg-neutral-100 text-[11px] font-semibold text-neutral-400">{card.options.length + 1}</span>
+              {card.dismissLabel ?? 'Leave it with me'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * ════════════════════════════════════════════════════════════════════════════════════════════════
+ * THE FORWARD CARD (docs/component-map.md §2 item 8 — converged in W3-C, Sep 22)
+ *
+ * Forward was the last prepared verb with no card: its artifact row said "Open →" beside a reply
+ * and an invite that both arrived AS themselves. It arrives as itself now, in the email card's own
+ * anatomy — address row, quiet subject at its right, the note, and ONE commit row at the bottom
+ * edge — with two things only a forward needs:
+ *
+ *   · THE OBJECT IS FOLDED, NOT REDRAWN. The message being forwarded renders in the `source`
+ *     kind's own card, mounted by the host behind a disclosure. There is no second thread renderer
+ *     in this file and no HTML lane: what actually goes out is composed at the commit door.
+ *   · SEND ARMS. A forward is irreversible and leaves the building, so the first click arms and the
+ *     second fires (the event card's law). A sent forward keeps only its receipt.
+ * ════════════════════════════════════════════════════════════════════════════════════════════════
+ */
+function ForwardCardView({ card }: { card: ForwardCard }) {
+  const [showSource, setShowSource] = React.useState(false);
+  const [armed, setArmed] = React.useState(false);
+  const sent = card.state === 'sent';
+  const ready = card.state === 'ready';
+  React.useEffect(() => { if (!ready) setArmed(false); }, [ready]);
+
+  return (
+    <div className={cn(SHELL, MAX_W, 'flex flex-col overflow-hidden')}>
+      <div className={cn('flex flex-col gap-2 px-4 py-3', workingClass(card.busy || card.loading))}>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] text-neutral-400">To</span>
+          {card.recipientsEditor ?? (
+            <>
+              {card.to.map((a) => <RecipientChip key={a} address={a} />)}
+              {card.to.length === 0 && <span className="text-[12px] text-neutral-300">nobody yet</span>}
+            </>
+          )}
+          {card.subject && (
+            // Quiet at the right, read-only: a forward's subject belongs to the thread it carries.
+            <span className="ml-auto flex min-w-0 max-w-[46%] items-baseline text-[11px] text-neutral-400">
+              <span className="truncate">{card.subject}</span>
+            </span>
+          )}
+        </div>
+
+        {sent ? (
+          card.note ? <p className="whitespace-pre-wrap text-[13px] leading-[1.6] text-neutral-700">{card.note}</p> : null
+        ) : card.onEditNote ? (
+          <textarea
+            value={card.note ?? ''} rows={2}
+            onChange={(e) => card.onEditNote!(e.target.value)}
+            placeholder={card.notePlaceholder ?? 'Add a line above the forwarded message…'}
+            className="aug-focus w-full resize-y rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[12.5px] leading-[1.5] text-neutral-700 placeholder:text-neutral-300 focus:border-indigo-300 focus:outline-none"
+          />
+        ) : card.note ? (
+          <p className="whitespace-pre-wrap text-[13px] leading-[1.6] text-neutral-700">{card.note}</p>
+        ) : null}
+
+        {/* THE OBJECT, FOLDED — the `source` card whole, never a second excerpt markup. */}
+        {card.sourceNode && (
+          <div className="flex flex-col gap-1.5">
+            <button type="button" onClick={() => setShowSource((v) => !v)}
+              className="aug-focus self-start rounded text-[11px] text-neutral-400 transition-colors hover:text-neutral-600">
+              {showSource ? '▾ ' : '▸ '}{card.sourceLabel ?? 'The message you’re forwarding'}
+            </button>
+            {showSource && card.sourceNode}
+          </div>
+        )}
+      </div>
+
+      {card.error && <div className="border-t border-neutral-200/55 px-4 py-2 text-[12px] text-rose-600">{card.error}</div>}
+
+      {/* THE COMMIT ROW — the card's bottom edge. A sent forward keeps only its receipt; a card with
+          no recipient carries NO Send (the email card's `needs_recipient` law, one kind over). */}
+      {(sent || ready || card.onCancel) && (
+        <div className="flex items-center gap-2.5 border-t border-neutral-200/70 bg-neutral-50 px-4 py-2.5">
+          {!sent && ready && card.onSend && (armed ? (
+            <>
+              <button type="button" onClick={() => { setArmed(false); card.onSend!(); }} disabled={card.busy}
+                className="aug-focus rounded-lg bg-indigo-600 px-3.5 py-[7px] text-[12.5px] font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-default disabled:opacity-60">
+                {card.armedLabel ?? 'Confirm forward'}
+              </button>
+              <CardButton label="Never mind" onClick={() => setArmed(false)} tone="quiet" />
+            </>
+          ) : (
+            <button type="button" onClick={() => setArmed(true)} disabled={card.busy}
+              className="aug-focus rounded-lg border border-neutral-200/80 bg-white px-3.5 py-[7px] text-[12.5px] font-medium text-neutral-600 transition-colors hover:bg-neutral-50 disabled:cursor-default disabled:opacity-60">
+              {card.sendLabel ?? 'Forward it'}
+            </button>
+          ))}
+          {!sent && card.onCancel && !armed && (
+            <CardButton label={card.cancelLabel ?? 'Cancel'} onClick={card.onCancel} tone="quiet" />
+          )}
+          <span className="flex-grow" />
+          {card.receipt && <span className="text-[11px] font-medium text-indigo-600">{card.receipt}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── the card renders ────────────────────────────────────────────────────────────────────────────
 
 export function ThreadCardView({ card }: { card: ThreadCard }) {
@@ -850,48 +1371,138 @@ export function ThreadCardView({ card }: { card: ThreadCard }) {
       );
 
     // 2 · APPROVAL — a gate is a coworker asking, answered in place. Reject stays quiet.
-    case 'approval':
+    // THE THREE STATES ARE THE SAME CARD (W3-A): `settled` keeps the title, the provenance and the
+    // object — a decision you made is still worth reading — and replaces the verb row ENTIRELY with
+    // one receipt line. `busy` stands the verbs down rather than letting the card move twice.
+    case 'approval': {
+      const aState = card.state ?? 'open';
+      const aSettled = aState === 'settled';
+      const aBusy = aState === 'busy';
       return (
-        <div className={cn(SHELL, MAX_W, 'flex flex-col gap-2.5 p-3.5')}>
-          <div className="text-[13px] font-semibold text-neutral-900">{card.title}</div>
+        <div className={cn(SHELL, MAX_W, 'flex flex-col gap-2.5 p-3.5', aSettled && 'bg-neutral-50/60')}>
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-neutral-900">{card.title}</span>
+            {card.gateWord && <span className="flex-shrink-0 text-[11.5px] text-neutral-400">{card.gateWord}</span>}
+            {card.statusChip && (
+              <span className="flex-shrink-0 rounded-full bg-neutral-100 px-2 py-0.5 text-[10.5px] font-semibold text-neutral-500">{card.statusChip}</span>
+            )}
+          </div>
+          {card.meta && <div className="text-[12px] leading-relaxed text-neutral-500">{card.meta}</div>}
+          {card.standingNode}
           {card.preview && (
             <div className="border-l-2 border-neutral-200/80 pl-2.5 text-[12px] leading-[1.5] text-neutral-500 whitespace-pre-wrap">
               {card.preview}
             </div>
           )}
-          <div className="flex items-center gap-2.5">
-            <CardButton label={card.approveLabel ?? 'Approve'} onClick={card.onApprove} />
-            {(card.onOpen || card.openLabel) && <CardButton label={card.openLabel ?? 'Open'} onClick={card.onOpen} tone="secondary" />}
-            <CardButton label={card.rejectLabel ?? 'Reject'} onClick={card.onReject} tone="quiet" />
-          </div>
+          {card.previewNode}
+          {card.error && <div className="text-[12px] text-rose-600">{card.error}</div>}
+          {aSettled ? (
+            card.settledLine ? <div className="text-[12.5px] text-neutral-500">{card.settledLine}</div> : null
+          ) : (
+            <>
+              {card.onNote && (
+                <input
+                  value={card.noteValue ?? ''}
+                  onChange={(e) => card.onNote?.(e.target.value)}
+                  disabled={aBusy}
+                  placeholder={card.notePlaceholder ?? 'Add a note for the thread…'}
+                  className="aug-focus w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-[12.5px] text-neutral-800 placeholder:text-neutral-400 disabled:opacity-60"
+                />
+              )}
+              <div className={cn('flex items-center gap-2.5', aBusy && 'pointer-events-none opacity-60')}>
+                <CardButton label={card.approveLabel ?? 'Approve'} onClick={card.onApprove} />
+                {(card.onOpen || card.openLabel) && <CardButton label={card.openLabel ?? 'Open'} onClick={card.onOpen} tone="secondary" />}
+                <CardButton label={card.rejectLabel ?? 'Reject'} onClick={card.onReject} tone="quiet" />
+              </div>
+            </>
+          )}
+          {card.footer}
         </div>
       );
+    }
 
     // 3 · INPUT NEEDED — the ask carries its own answer door, and NEVER blocks.
-    case 'input':
+    // TWO SHAPES, ONE CARD (W3-A): an ENGINE ask brings `items` (the concrete missing things) and
+    // the three chips; an INPUT STATION brings `supplyNode` (the ONE shared supply form) and no
+    // chips at all — the form already carries paste, pin and attach, and offering both would be two
+    // doors to one deed.
+    case 'input': {
+      const iState = card.state ?? 'open';
+      const iSettled = iState === 'settled';
+      const iBusy = iState === 'busy';
       return (
-        <div className={cn(SHELL, MAX_W, 'flex flex-col gap-2.5 p-3.5')}>
-          <div className="text-[13px] leading-[1.5] text-neutral-800">{card.ask}</div>
-          <div className="flex flex-wrap items-center gap-2">
-            <SupplyChip label="Attach" onClick={card.onAttach} icon={
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-                <path d="m13.2 7.4-5 5a3.2 3.2 0 0 1-4.6-4.6l5.6-5.6a2.2 2.2 0 0 1 3.2 3.2l-5.5 5.5a1.2 1.2 0 0 1-1.8-1.8l4.8-4.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-              </svg>
-            } />
-            <SupplyChip label="Paste" onClick={card.onPaste} />
-            <SupplyChip label="Pick a file" onClick={card.onPickFile} />
-            {card.onProceed && (
-              <button type="button" onClick={card.onProceed} className="aug-focus rounded text-[12px] font-medium text-indigo-600 hover:text-indigo-700">
-                {card.proceedLabel ?? 'Go ahead without it →'}
-              </button>
+        <div className={cn(SHELL, MAX_W, 'flex flex-col gap-2.5 p-3.5', iSettled && 'bg-neutral-50/60')}>
+          {/* THE ASK MAY ALREADY HAVE BEEN SPOKEN. In a room the ask's sentence is the bubble the
+              card hangs under (or the pinned position's own words) — repeating it inside the card
+              is the second-delivery class. An empty `ask` renders no line, and the rows are the
+              whole card. */}
+          {(card.ask || card.statusChip) && (
+          <div className="flex items-baseline justify-between gap-2">
+            {card.ask && <span className="min-w-0 flex-1 text-[13px] leading-[1.5] text-neutral-800">{card.ask}</span>}
+            {card.statusChip && (
+              <span className="flex-shrink-0 rounded-full bg-neutral-100 px-2 py-0.5 text-[10.5px] font-semibold text-neutral-500">{card.statusChip}</span>
             )}
           </div>
+          )}
+          {card.meta && <div className="text-[12px] leading-relaxed text-neutral-500">{card.meta}</div>}
+          {card.standingNode}
+          {/* THE DOORS RIDE THE ROW (W4-B, Sep 22 — THE TYPE-IT DOOR): with `rowDoors` each missing
+              thing carries its own Type it · Attach · Point me to it, ordered by what the row IS,
+              and the card-level chips below stand down (one deed, one door). Without them the rows
+              are the plain list they always were. */}
+          {card.items && card.items.length > 0 && (
+            <AskRows rows={card.items} {...(card.rowDoors ? { doors: card.rowDoors } : {})} />
+          )}
+          {card.contextNode}
+          {card.error && <div className="text-[12px] text-rose-600">{card.error}</div>}
+          {iSettled ? (
+            card.settledLine ? <div className="text-[12.5px] text-neutral-500">{card.settledLine}</div> : null
+          ) : (
+            <div className={cn(iBusy && 'pointer-events-none opacity-60')}>
+              {card.supplyNode}
+              {/* THE SUPPLY FORM ALREADY IS THESE DOORS — a station that mounts it never also wears
+                  the chips (two doors to one deed). And a door with no handler is NOT rendered:
+                  an ask surface that has no file picker must not print "Pick a file" at a reader
+                  who cannot pick one (no lying doors — the law the whole kit is built on). */}
+              {!card.supplyNode && (card.onAttach || card.onPaste || card.onPickFile || card.onProceed) && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {card.onAttach && <SupplyChip label={card.attachLabel ?? 'Attach'} onClick={card.onAttach} icon={
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                      <path d="m13.2 7.4-5 5a3.2 3.2 0 0 1-4.6-4.6l5.6-5.6a2.2 2.2 0 0 1 3.2 3.2l-5.5 5.5a1.2 1.2 0 0 1-1.8-1.8l4.8-4.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                    </svg>
+                  } />}
+                  {card.onPaste && <SupplyChip label={card.pasteLabel ?? 'Paste'} onClick={card.onPaste} />}
+                  {card.onPickFile && <SupplyChip label={card.pickFileLabel ?? 'Pick a file'} onClick={card.onPickFile} />}
+                  {card.onProceed && (
+                    <button type="button" onClick={card.onProceed} className="aug-focus rounded text-[12px] font-medium text-indigo-600 hover:text-indigo-700">
+                      {card.proceedLabel ?? 'Go ahead without it →'}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       );
+    }
 
-    // 4 · ROUTINE DELIVERY — a standing responsibility, owned by a face.
-    case 'routine':
-      return (
+    // (4 · ROUTINE DELIVERY was retired on Sep 22 — W4-A. It had no producer in the product: a
+    //  standing responsibility is rendered by its standing-spec proposal card and by the
+    //  `collection` kind's list of them. A kind nobody builds is a promise the preview makes.)
+
+    // 5 · FRAME — the living deliverable, IN the thread, through THE ONE RENDERER.
+    // THE KIT COMPOSES, IT DOES NOT DRAW (frames plan law 2): the host mounts
+    // components/frames/frame-card.tsx as `preview` — the only srcdoc sandbox in the repo — and
+    // that renderer's own header already carries the title, the structural provenance chip and the
+    // Open door. A second header here would be two titles for one object, so with a preview the
+    // kit adds only its quiet provenance line. Without one, the card is the handle idiom.
+    case 'frame':
+      return card.preview ? (
+        <div className={cn(MAX_W, 'flex flex-col gap-1')}>
+          {card.preview}
+          {card.meta && <span className="px-0.5 text-[11.5px] text-neutral-500">{card.meta}</span>}
+        </div>
+      ) : (
         <div className={cn(SHELL, MAX_W, 'flex items-center gap-3 px-3.5 py-3')}>
           <IconTile icon="document" />
           <span className="flex min-w-0 flex-grow flex-col gap-0.5">
@@ -902,41 +1513,47 @@ export function ThreadCardView({ card }: { card: ThreadCard }) {
         </div>
       );
 
-    // 5 · FRAME — a living deliverable, previewed inline; Open raises the side panel (the Claude idiom).
-    case 'frame':
-      return (
-        <div className={cn(SHELL, MAX_W, 'flex flex-col overflow-hidden')}>
-          <div className="h-[110px] border-b border-neutral-200/80 bg-neutral-50">{card.preview}</div>
-          <div className="flex items-center gap-3 px-3.5 py-2.5">
-            <span className="flex min-w-0 flex-grow flex-col gap-0.5">
-              <span className="truncate text-[13px] font-semibold text-neutral-900">{card.title}</span>
-              {card.meta && <span className="truncate text-[12px] text-neutral-500">{card.meta}</span>}
-            </span>
-            <OpenLink label={card.openLabel ?? 'Open →'} onClick={card.onOpen} />
-          </div>
-        </div>
-      );
-
     // (Heavy work in flight is NOT a card — it is the `working_line` timeline item: the walk
     // caught the card form doubling the face inside its own actor bubble.)
 
-    // 8 · A ROUTINE IS BORN IN CONVERSATION — saying prepares, committing stays explicit.
-    case 'proposal':
+    // 8 · THE PROPOSAL — THE ROOM'S MOVE (W4-A): ONE primary deed, board-validated by its producer,
+    // and its offers as UTTERANCES. A deed with no handler still SPEAKS (the move is true even when
+    // the board could not confirm somewhere to go) — it just is not a button (no lying doors).
+    case 'proposal': {
+      const offers = card.onSay ? (card.offers ?? []) : [];
       return (
         <div className={cn(SHELL, MAX_W, 'flex flex-col gap-2.5 p-3.5')}>
-          <div className="flex items-center gap-2">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-indigo-600">
-              <path d="M8.8 1.8 3.2 9h4l-.8 5.2L12 7H8l.8-5.2Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-            </svg>
-            <div className="text-[13px] font-semibold text-neutral-900">{card.title}</div>
-          </div>
+          {card.title && (
+            <div className="flex items-center gap-2">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-indigo-600 flex-shrink-0">
+                <path d="M8.8 1.8 3.2 9h4l-.8 5.2L12 7H8l.8-5.2Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+              </svg>
+              <div className="min-w-0 text-[13px] font-semibold text-neutral-900">{card.title}</div>
+            </div>
+          )}
           {card.detail && <div className="text-[12px] leading-[1.5] text-neutral-500">{card.detail}</div>}
-          <div className="flex items-center gap-2.5">
-            <CardButton label={card.confirmLabel ?? 'Confirm'} onClick={card.onConfirm} />
-            <CardButton label={card.dismissLabel ?? 'Not now'} onClick={card.onDismiss} tone="quiet" />
+          <div className={cn('flex flex-wrap items-center gap-2.5', card.busy && 'pointer-events-none opacity-60')}>
+            {card.onConfirm
+              ? <CardButton label={card.confirmLabel ?? 'Confirm'} onClick={card.onConfirm} />
+              : card.confirmLabel
+                ? <span className="text-[12.5px] font-medium text-neutral-500">{card.confirmLabel}</span>
+                : null}
+            {card.onDismiss && <CardButton label={card.dismissLabel ?? 'Not now'} onClick={card.onDismiss} tone="quiet" />}
           </div>
+          {/* THE OFFERS ARE WORDS: each chip SAYS its sentence through the host's composer door. */}
+          {offers.length > 0 && (
+            <div className={cn('flex flex-wrap items-center gap-2', card.busy && 'pointer-events-none opacity-60')}>
+              {offers.map((o, i) => (
+                <button key={`${o.label}:${i}`} type="button" onClick={() => card.onSay?.(o.say)}
+                  className="aug-focus rounded-full border border-neutral-200/80 bg-white px-3 py-[5px] text-[12px] font-medium text-neutral-600 transition-colors hover:border-neutral-300 hover:text-neutral-800">
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       );
+    }
 
     // 9 · THE INVITE — the first INTERACTIVE card: filled, editable, its grounded alternatives in
     // the in-card selector, its commit at the bottom edge. The card IS the workspace.
@@ -962,6 +1579,26 @@ export function ThreadCardView({ card }: { card: ThreadCard }) {
     // what the ask, the decision or the brief is ABOUT, in one rendering on every surface.
     case 'source':
       return <SourceObjectCard card={card} />;
+
+    // 14 · THE COLLECTION — a set of the user's OWN objects as typed rows (component-map §6):
+    // name · status · one meta line · a door · at most two verbs. ONE card for every such set.
+    case 'collection':
+      return <CollectionCardView card={card} />;
+
+    // 15 · THE EVENT — ONE calendar event as an object (component-map §6, Wave 2): when · who ·
+    // where · where the user stands, and THE VERBS ITS OWN FACTS PERMIT, served by the ladder.
+    case 'event':
+      return <EventCardView card={card} />;
+
+    // 16 · THE DECISION — the judged question with its routes, their consequences and the marked
+    // recommendation (component-map §2 item 7): armed, confirmed, and settled in place.
+    case 'decision':
+      return <DecisionCardView card={card} />;
+
+    // 17 · THE FORWARD — the prepared forward as itself (component-map §2 item 8): recipients,
+    // a note, the folded source in the `source` kind's own card, and ONE armed commit.
+    case 'forward':
+      return <ForwardCardView card={card} />;
 
     // THE CARD SLOT — a host's own rich component, mounted whole.
     case 'custom':

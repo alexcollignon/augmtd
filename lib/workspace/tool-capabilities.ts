@@ -32,6 +32,10 @@ export const TOOL_FEATURE: Record<string, FeatureKey | null> = {
   // calendar verb, so a workspace without meetings never sees it offered (the tier law: capability
   // shapes content; a chip is a claim).
   prepare_calendar_invite: 'meetings',
+  // The EVENT CARD's producer (Wave 2, Sep 22) — same reasoning, one object over: it prepares a
+  // card over a meeting that already exists and never writes; a workspace without meetings has no
+  // calendar for it to read, so it is never offered there.
+  prepare_event_action: 'meetings',
 
   // ── Bulk deeds over the held-quiet ledger (attention-plan A7) ──
   // The deed PREVIEWS and never acts; the commit is the user's click. Gated on `email` because

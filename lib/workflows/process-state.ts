@@ -74,6 +74,34 @@ export const GATE_WORDS: Record<GateKind, { station: string; waiting: string }> 
   subprocess: { station: 'Another process',      waiting: 'waiting on another process' },
 };
 
+// ─── THE ONE GATE-OUTCOME VOCABULARY (W3-A, Sep 22) ─────────────────────────────────────────────
+// WHAT A PERSON DID AT A GATE had FIVE spellings across eight renderings (docs/component-map.md
+// §2a): `'approved'|'rejected'`, `'approved'|'held'`, `'supplied'|'held'`, a bare `decided`
+// boolean, and a per-surface `decidedWord`/chip string typed by hand. The same deed therefore read
+// "Held back", "held back" and "Hold it back" on three surfaces, and a supply read as an approval
+// in one of them.
+//
+// This is that fact's ONE home, seated beside GATE_WORDS on purpose: GATE_WORDS says what KIND of
+// gate this is, GATE_OUTCOME_WORDS says what HAPPENED to it. A surface that types either word
+// itself is the drift class both tables exist to kill (the STATE_WORDS discipline — a new word is
+// a spec change, made here, never in a component).
+export type GateOutcome = 'approved' | 'rejected' | 'supplied';
+
+/** `chip` = the quiet word standing where the verbs stood · `line` = the same fact as a sentence. */
+export const GATE_OUTCOME_WORDS: Record<GateOutcome, { chip: string; line: string }> = {
+  approved: { chip: 'approved — delivering', line: 'Approved — the run is delivering.' },
+  rejected: { chip: 'held back',             line: 'Held back — nothing was delivered.' },
+  supplied: { chip: 'sent',                  line: 'Sent — the run picked up from there.' },
+};
+
+/** The chip a LIVE gate wears (nobody has answered it yet). */
+export const GATE_WAITING_CHIP = 'waiting on you';
+
+/** A gate this reader did not answer, that is no longer answerable — the honest, claimless line.
+ *  It is deliberately NOT one of the outcome lines: we know the gate closed, not who closed it or
+ *  how (truth before presentation). The resume door's 409 is exactly this case. */
+export const GATE_SETTLED_ELSEWHERE = 'This one has already been answered.';
+
 export interface RunLike {
   id: string;
   workflow_id: string;

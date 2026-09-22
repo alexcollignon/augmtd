@@ -17,10 +17,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { resolveFileUniversal, type UniversalCandidate } from '@/lib/knowledge/resolve';
 import { clip } from '@/lib/room/turns';
-import { clipForPrompt } from '@/lib/utils/clip-for-prompt';
+import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 import { detectLanguage } from '@/lib/inbox/detect-language';
 import { GENERIC_WORK_WORDS } from '@/lib/entities/recognize';
 import type { WorkVerb } from '@/lib/work/surface-registry';
+import { requireTaskId } from '@/lib/prepare/supply';
 
 export type RequirementResolution = {
   label: string;
@@ -359,6 +360,9 @@ export async function composeAskSpeech(
       prompt:
         `You are the user's chief of staff, speaking to them in their work room. You prepared this work ` +
         `and one thing is missing, so you are asking them for it — briefly, like a colleague, out loud.\n\n` +
+        // THE EXCERPT-HONESTY LAW: the title and the filenames below are clipped by US. The rule rides
+        // the HEADER, above the facts, so no clipped fact's own tail can carry it away.
+        `${EXCERPT_RULE}\n\n` +
         `THE FACTS (these are ALL you know — never add any other fact, name, date, place or promise):\n` +
         `- the work: "${title || 'this work'}"\n` +
         `- what happens the moment you get it: you can ${consequence.replace(/\s+on$/, '')} this work\n` +
@@ -452,7 +456,9 @@ export async function resolveRequirements(
         // Idempotent staging: one pool row per (item, requirement) — a re-resolve replaces nothing
         // it doesn't have to (writeDeliverable dedupes on task_id).
         await writeDeliverable(admin, userId, {
-          kind: poolKind, entityId: args.itemId, taskId: `require:${label.toLowerCase().slice(0, 60)}`,
+          // ONE REQUIREMENT KEY (W4-B, Sep 22): the resolver's own staging and the type-it door's
+          // typed fact land under the same `require:<label>` — lib/prepare/supply.ts.
+          kind: poolKind, entityId: args.itemId, taskId: requireTaskId(label),
           type: 'file', title: cand.filename.slice(0, 100),
           content: cand.snippet.slice(0, 2000), gist: `staged for: ${label}`.slice(0, 120),
           metadata: { source: 'requirement_resolution', requirement: label, attachment: { fileId: cand.id, filename: cand.filename, source: cand.source } },

@@ -47,6 +47,12 @@ const src = (p: string) => readFileSync(p, 'utf8');
       const { data: it } = await sb.from('inbox_items').select('source_data').eq('id', w.entityId).maybeSingle();
       const sd = (it?.source_data ?? {}) as Record<string, unknown>;
       if (isAutomatedSenderStrong((sd.from_address as string) ?? null, (sd.from_name as string) ?? null, (sd.subject as string) ?? null)) continue;
+      // THE PROBE MUST PICK AN ASK, NOT AN ACKNOWLEDGEMENT (Sep 22, found live): a counterparty's
+      // last word can be a closure ("I'll come back to you the week of the 5th") — the brain already
+      // says so (ownership 'awaiting') and `none` is then CORRECT. An item with no understanding
+      // still qualifies; only the case the brain has already ruled on is refused.
+      const u = (sd.understanding ?? null) as { ownership?: string } | null;
+      if (u?.ownership && u.ownership !== 'you_owe') continue;
       // Skip threads the user has ALREADY answered — the judge's structural floor rightly says
       // none there (the same shared reply-state computation, imported not re-implemented).
       if (sd.thread_id) {
@@ -154,8 +160,14 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('J2: the deep-dive fetches THE verdict and mounts from it (composer open only on reply; decide mounts the DecisionCard in the rail)',
     detail.includes('/api/items/judge?kind=inbox') && detail.includes("d.verdict.work === 'reply'")
     && src('components/home/item-rail.tsx').includes('<DecisionCard'));
-  check('J2: the DecisionCard is the ONE shared component (decline always last; choosing speaks via steer)',
-    src('components/work/decision-card.tsx').includes('Leave it with me') && detail.includes("kind: 'email', id, text: label"));
+  // RE-POINTED (W3-C, Sep 22 — docs/component-map.md §2 item 7): the shared component became a KIT
+  // KIND with ONE host. The law is unchanged — one rendering, the decline always last, and the
+  // choice spoken through the steer door — but the decline now lives in the kit and the steer call
+  // in the host, so neither caller can re-type it (the two hand-copies this wave deleted).
+  check('J2: the decision is the ONE kit kind behind ONE host (decline always last; choosing speaks via steer)',
+    src('components/thread/thread-cards.tsx').includes('Leave it with me')
+    && src('components/thread/types.ts').includes("kind: 'decision';")
+    && src('components/home/decision-card.tsx').includes("kind: spec.itemKind, id: spec.itemId, text: label"));
   check('J4: the pass prepares FROM the judged verdict (same cached judgment as the surface)',
     src('lib/prepare/pass.ts').includes('judgeWork(admin, userId') && src('lib/prepare/pass.ts').includes("verdict.work === 'send_file'"));
   // RE-POINTED (Sep 14, THE PROACTIVE REACH ARC): the sent narration moved SERVER-side — the Sep 8
@@ -201,9 +213,14 @@ const src = (p: string) => readFileSync(p, 'utf8');
     room.includes("from '@/components/home/item-detail'") && room.includes('embedded') && !room.includes('<ThreadMessages'));
   // Structural: tracked = project chrome; untracked = quiet "Connects to"; loose = founding chip.
   // (One-room R3 moved this per-anchor context OUT of the conversation into the STAGE's strip.)
-  const strip = src('components/room/context-strip.tsx');
-  check('J5 · tracked/untracked/loose parity — same shell, only the CONTEXT STRIP changes (Connects-to vs project vs founding chip)',
-    strip.includes("tracked === false ? 'Connects to' : 'In'") && strip.includes('Start a project from this'));
+  // RE-POINTED (W4-D, Sep 22 — THE RETIREMENT; this gate was NOT in the census list and would have
+  // died silently): context-strip.tsx was retired as unreachable. The per-anchor variance now lives
+  // in the item room's drawer — RelatedRows words the tracked/untracked split, and the ONE picker
+  // grammar carries the founding door. Same shell either way; only the context changes.
+  check('J5 · tracked/untracked/loose parity — same shell, only the CONTEXT changes (Connects-to vs project vs founding door)',
+    detail.includes("tracked === false ? 'Connects to' : 'In this project'") &&
+    detail.includes('AddToProjectControl') &&
+    src('components/entities/add-to-work-control.tsx').includes('Start a new project…'));
   // Structural: a meeting's proposed tasks gate through Accept/Reject (never on the board until accepted).
   check('J5 · meeting → proposals gate through Accept/Reject in the room',
     room.includes('Accept all') && room.includes("setProposedStatus(p.id, 'open')"));

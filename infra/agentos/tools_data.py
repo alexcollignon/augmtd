@@ -29,11 +29,17 @@ def _call(action: str, run_context: RunContext, config: dict, needs_user: bool =
     if needs_user and not user_id:
         return "No user context for this run."
 
+    # THE USER'S OWN WORDS + THE TURN TOKEN ride to the internal door (W4-C, Sep 22).
+    # `user_text` is what arming/deed floors decided in code read — never the model's extraction
+    # (absent, those floors fail closed). `turn_id` stamps anything this call leaves in the
+    # presentation side-channel, so a card is only ever served to the turn that made it.
     payload = {
         "action": action,
         "user_id": user_id,
         "agent_id": deps.get("agent_id"),
         "thread_id": deps.get("thread_id"),
+        "user_text": deps.get("user_text") or "",
+        "turn_id": deps.get("turn_id") or "",
         "config": config,
     }
     try:
@@ -129,6 +135,35 @@ def check_calendar(
     if to_date:
         config["to_date"] = to_date
     return _call("check_calendar", run_context, config)
+
+
+@tool
+def prepare_event_action(
+    run_context: RunContext,
+    which: Optional[str] = None,
+    verb: Optional[str] = None,
+) -> str:
+    """Show ONE meeting already on the user's calendar as a card, with the actions its own state
+    allows (accept / maybe / decline an invitation · reschedule or cancel a meeting they organize).
+    Call this whenever the user talks about a specific existing meeting — "what's my 3pm with
+    Sam?", "decline the standup", "move my call to Thursday 10:00", "cancel tomorrow's sync".
+    It NEVER changes anything: it prepares the card and the user's click is the deed. Use
+    prepare_calendar_invite instead when there is no such meeting yet and one must be created.
+
+    THE PRESENTATION LAW (Sep 22): the result describes the card the user can now SEE. Reply with
+    one short line — do not restate the meeting's details; the card carries them.
+
+    Args:
+        which: Which meeting, in the user's own words ("the 3pm with Sam", "tomorrow's sync").
+        verb: The action the user asked for, if they asked for one — accept, tentative, decline,
+            reschedule or cancel. Omit when they only asked about the meeting.
+    """
+    config: dict = {}
+    if which:
+        config["which"] = which
+    if verb:
+        config["verb"] = verb
+    return _call("prepare_event_action", run_context, config)
 
 
 @tool
@@ -261,7 +296,7 @@ def read_team_work(run_context: RunContext, id: str) -> str:
 
 # Data + web tools — assigned to every worker (matches all_tools in native loop).
 DATA_TOOLS = [
-    get_emails, get_meeting_context, check_calendar, search_knowledge_base,
+    get_emails, get_meeting_context, check_calendar, prepare_event_action, search_knowledge_base,
     web_search, fetch_url, deep_research, generate_document,
     run_compute, find_team_work, read_team_work,
 ]

@@ -13,8 +13,18 @@ export const maxDuration = 120; // a proceed re-runs the ONE preparation engine 
 //   POST { turnId, action:'proceed' } — "go ahead with what's available": stamps the ask
 //   `proceeded` (it leaves the waiting list, the record stays in the room), writes the user's
 //   visible go-ahead turn (choices are turns — the P8 law), and re-runs the ONE preparation engine
-//   for the item in after() under the work-with-what-you-have contract. Answering an ask stays the
-//   ingest funnel's job (attach in the room); this is only the never-blocks escape hatch.
+//   for the item in after() under the work-with-what-you-have contract.
+//
+//   POST { turnId, action:'supply', label, text } — THE TYPE-IT DOOR (W4-B, Sep 22; owner: "banking
+//   details for example could just be typed if IBAN only? … typing short info easier than finding
+//   attachment, but keeping options open"). One missing thing, answered by SAYING it. The typed
+//   fact stages as that requirement's HAVE through the ONE key (lib/prepare/supply.ts), so the
+//   drafter reads it exactly as it reads a file the resolver found; the row leaves the checklist;
+//   the ask settles through the ONE shared settle (settleAsksForItem) when its LAST row is covered;
+//   and the work re-opens through the same re-open the attach funnel calls. Zero AI.
+//
+//   FAIL-CLOSED: a label this ask does not carry is a 404. A door that would stage arbitrary text
+//   under an arbitrary key is a write door with no object.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 type AskRow = {
@@ -75,14 +85,113 @@ function itemOfAsk(dedupeKey: string | null, refs: AskRow['refs']): { kind: 'inb
   return { kind: href.includes('kind=commitment') ? 'commitment' : 'inbox', id: m[1] };
 }
 
+type AskTurn = {
+  id: string; room_key: string; dedupe_key: string | null;
+  refs: AskRow['refs']; author: { name?: string } | null;
+};
+
+/** Re-run THE ONE preparation engine for the item, in the background. Both actions end here. */
+function reprepareInBackground(userId: string, item: { kind: 'inbox' | 'commitment'; id: string }) {
+  after(async () => {
+    try {
+      const admin = createAdminClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+      const { buildWorkItems } = await import('@/lib/work-items/model');
+      const { prepareOneItem } = await import('@/lib/prepare/pass');
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const items = await buildWorkItems(admin, userId, { todayStr, skipReconcile: true });
+      const w = items.find((x) => x.id === `${item.kind === 'commitment' ? 'commit' : 'inbox'}:${item.id}`);
+      if (w) await prepareOneItem(admin, userId, w);
+    } catch (e) { console.error('[room/asks] re-prepare failed:', e); }
+  });
+}
+
+// ── THE TYPE-IT DOOR ──────────────────────────────────────────────────────────────────────────
+// ONE row of ONE ask, answered by typing the fact. Zero AI, fail-closed, and every consequence the
+// attach funnel has: staged as the HAVE, the row leaves the checklist, the ask settles through the
+// ONE shared settle when nothing is left, and the work re-opens.
+async function supplyTypedFact(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any, userId: string, turn: AskTurn,
+  comp: AskRow['component'], rawLabel?: string, rawText?: string,
+): Promise<NextResponse> {
+  const { requireTaskId, stageTypedSupply, reopenAfterSupply, SUPPLY_TEXT_MAX } = await import('@/lib/prepare/supply');
+  const wanted = String(rawLabel ?? '').trim();
+  const said = String(rawText ?? '').replace(/\r\n/g, '\n').trim();
+  if (!wanted || !said) return NextResponse.json({ error: 'label and text required' }, { status: 400 });
+  if (said.length > SUPPLY_TEXT_MAX) {
+    // The server's own sentence is the honest one (the deed module renders whatever we say here).
+    return NextResponse.json({ error: 'That’s longer than this door takes — attach it as a file instead.' }, { status: 400 });
+  }
+
+  // FAIL-CLOSED: only a label THIS ask is actually carrying may be staged. A 404 (never a 403)
+  // because a refusal must not confirm what a turn does or does not hold.
+  const state = ((comp?.state ?? {}) as Record<string, unknown>);
+  const items = Array.isArray(state.items) ? (state.items as unknown[]).map((i) => String(i)) : [];
+  const row = items.find((i) => i === wanted) ?? null;
+  if (!row) return NextResponse.json({ error: 'ask not found' }, { status: 404 });
+
+  const item = itemOfAsk(turn.dedupe_key, turn.refs);
+  if (!item) return NextResponse.json({ error: 'this ask has no work to stage against' }, { status: 400 });
+
+  // 1. THE HAVE — the same key, the same item scope the resolver's own staging uses.
+  const staged = await stageTypedSupply(supabase, userId, {
+    itemKind: item.kind, itemId: item.id, label: row, text: said,
+  });
+  if (!staged) return NextResponse.json({ error: 'That didn’t land — try it again in a moment.' }, { status: 500 });
+
+  const { writeRoomTurn, clip } = await import('@/lib/room/turns');
+
+  // 2. The row leaves the checklist; what was typed is kept ON the ask as its receipt, so a reader
+  //    arriving later sees WHICH gap closed and with what, not a row that silently vanished.
+  const supplied = { ...((state.supplied ?? {}) as Record<string, string>), [row]: clip(said, 160) };
+  const remaining = items.filter((i) => i !== row);
+  await supabase.from('room_turns').update({
+    component: { ...(comp ?? {}), state: { ...state, items: remaining, supplied } },
+  }).eq('id', turn.id).eq('user_id', userId);
+
+  // 3. THE WORD IS THE DEED — what the person typed is their own turn in the room (P8: a choice is
+  //    never silent), which is also how every room-grounded reader gets the fact in their words.
+  await writeRoomTurn(supabase, userId, turn.room_key, {
+    role: 'user',
+    text: `${row}: ${clip(said, 400)}`,
+    dedupeKey: `supply:${turn.id}:${requireTaskId(row)}`,
+  }).catch(() => {});
+
+  // 4. THE ONE SHARED SETTLE, only when the LAST row is covered. settleAsksForItem is covers-aware:
+  //    an ask a sibling item still rides keeps standing, minus this beneficiary.
+  let settled = false;
+  if (!remaining.length) {
+    const { settleAsksForItem } = await import('@/lib/room/turns');
+    await settleAsksForItem(supabase, userId, item.kind === 'commitment' ? 'commitment' : 'inbox_item', item.id);
+    settled = true;
+  }
+
+  // 5. THE SAME RE-OPEN the attach funnel calls — work prepared without this fact is not the answer.
+  await reopenAfterSupply(supabase, userId, { itemKind: item.kind, itemId: item.id });
+
+  const { logActivity } = await import('@/lib/activity/log');
+  await logActivity(supabase, userId, {
+    // Its own honest type: nothing was attached. It is not in the reversible set (a typed fact is
+    // re-typed, never "undone"), and an unmapped type renders on the timeline's default meta.
+    type: 'input_supplied',
+    title: `Supplied: ${clip(row, 80)}`,
+    entityType: item.kind === 'commitment' ? 'commitment' : 'inbox_item',
+    entityId: item.id,
+    metadata: { via: 'typed_supply', label: row, chars: said.length },
+  });
+
+  reprepareInBackground(userId, item);
+  return NextResponse.json({ ok: true, settled, remaining: remaining.length });
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    const body = (await request.json()) as { turnId?: string; action?: string };
-    if (!body.turnId || body.action !== 'proceed') {
-      return NextResponse.json({ error: 'turnId and action:"proceed" required' }, { status: 400 });
+    const body = (await request.json()) as { turnId?: string; action?: string; label?: string; text?: string };
+    if (!body.turnId || (body.action !== 'proceed' && body.action !== 'supply')) {
+      return NextResponse.json({ error: 'turnId and action:"proceed"|"supply" required' }, { status: 400 });
     }
 
     const { data: turn } = await supabase.from('room_turns')
@@ -91,6 +200,10 @@ export async function POST(request: NextRequest) {
     const comp = (turn?.component ?? null) as AskRow['component'];
     if (!turn || comp?.key !== 'input_checklist') {
       return NextResponse.json({ error: 'ask not found' }, { status: 404 });
+    }
+
+    if (body.action === 'supply') {
+      return await supplyTypedFact(supabase, user.id, turn as AskTurn, comp, body.label, body.text);
     }
 
     // 1. The lifecycle stamp — the ask leaves the waiting list; the turn stays as the room record.
@@ -113,19 +226,7 @@ export async function POST(request: NextRequest) {
 
     // 3. Re-run THE ONE preparation engine for the item under the work-with-what-you-have contract.
     const item = itemOfAsk(turn.dedupe_key as string | null, turn.refs as AskRow['refs']);
-    if (item) {
-      after(async () => {
-        try {
-          const admin = createAdminClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-          const { buildWorkItems } = await import('@/lib/work-items/model');
-          const { prepareOneItem } = await import('@/lib/prepare/pass');
-          const todayStr = new Date().toISOString().slice(0, 10);
-          const items = await buildWorkItems(admin, user.id, { todayStr, skipReconcile: true });
-          const w = items.find((x) => x.id === `${item.kind === 'commitment' ? 'commit' : 'inbox'}:${item.id}`);
-          if (w) await prepareOneItem(admin, user.id, w);
-        } catch (e) { console.error('[room/asks] proceed prepare failed:', e); }
-      });
-    }
+    if (item) reprepareInBackground(user.id, item);
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error('[room/asks] POST error:', e);

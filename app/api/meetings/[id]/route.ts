@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { updateGmailEvent, updateOutlookEvent, deleteGmailEvent, deleteOutlookEvent } from '@/lib/calendar/invite-sender';
+// ONE CALENDAR WRITE PATH (Wave 2, Sep 22) — see lib/calendar/event-writes.ts. The load/token/
+// refresh/provider-branch block these two handlers each carried is now shared with the RSVP route
+// and the event card's deeds door. Behaviour unchanged.
+import {
+  loadEventWriteTarget, isWriteTargetError, applyEventUpdate, applyCancel,
+} from '@/lib/calendar/event-writes';
+
+const targetError = (error: 'event_not_found' | 'connection_not_found' | 'no_tokens') =>
+  error === 'event_not_found' ? 'Event not found' : error === 'connection_not_found' ? 'Connection not found' : 'No tokens';
 
 export async function DELETE(
   _request: NextRequest,
@@ -12,43 +20,16 @@ export async function DELETE(
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { data: calEvent } = await supabase
-      .from('calendar_events')
-      .select('id, event_id, connection_id, provider')
-      .eq('id', id)
-      .eq('user_id', user.id)
-      .single();
-
-    if (!calEvent) return NextResponse.json({ error: 'Event not found' }, { status: 404 });
-
-    const { data: connection } = await supabase
-      .from('connections')
-      .select('id, provider, metadata')
-      .eq('id', calEvent.connection_id)
-      .eq('user_id', user.id)
-      .single();
-
-    if (!connection) return NextResponse.json({ error: 'Connection not found' }, { status: 404 });
-
-    const encryptedTokens: string = connection.metadata?.tokens;
-    if (!encryptedTokens) return NextResponse.json({ error: 'No tokens' }, { status: 400 });
+    const target = await loadEventWriteTarget(supabase, user.id, id);
+    if (isWriteTargetError(target)) {
+      return NextResponse.json({ error: targetError(target.error) }, { status: target.status });
+    }
 
     try {
-      if (connection.provider === 'gmail') {
-        const onTokenRefresh = async (newEncrypted: string) => {
-          await supabase.from('connections').update({ metadata: { ...connection.metadata, tokens: newEncrypted } }).eq('id', connection.id);
-        };
-        await deleteGmailEvent({ encryptedTokens, onTokenRefresh, eventId: calEvent.event_id });
-      } else {
-        const onTokenRefresh = async (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }) => {
-          const newEncrypted = Buffer.from(JSON.stringify(newTokens)).toString('base64');
-          await supabase.from('connections').update({ metadata: { ...connection.metadata, tokens: newEncrypted } }).eq('id', connection.id);
-        };
-        await deleteOutlookEvent({ encryptedTokens, onTokenRefresh, eventId: calEvent.event_id });
-      }
+      await applyCancel(target);
     } catch (err: any) {
       if (err?.code === 'calendar_scope_required') {
-        return NextResponse.json({ error: 'calendar_scope_required', provider: connection.provider }, { status: 403 });
+        return NextResponse.json({ error: 'calendar_scope_required', provider: target.provider }, { status: 403 });
       }
       throw err;
     }
@@ -92,44 +73,18 @@ export async function PATCH(
       return NextResponse.json({ error: 'No valid attendee email addresses' }, { status: 400 });
     }
 
-    // Fetch the calendar event + connection
-    const { data: calEvent } = await supabase
-      .from('calendar_events')
-      .select('id, event_id, connection_id, provider')
-      .eq('id', id)
-      .eq('user_id', user.id)
-      .single();
-
-    if (!calEvent) return NextResponse.json({ error: 'Event not found' }, { status: 404 });
-
-    const { data: connection } = await supabase
-      .from('connections')
-      .select('id, provider, metadata')
-      .eq('id', calEvent.connection_id)
-      .eq('user_id', user.id)
-      .single();
-
-    if (!connection) return NextResponse.json({ error: 'Connection not found' }, { status: 404 });
-
-    const encryptedTokens: string = connection.metadata?.tokens;
-    if (!encryptedTokens) return NextResponse.json({ error: 'No tokens' }, { status: 400 });
+    const target = await loadEventWriteTarget(supabase, user.id, id);
+    if (isWriteTargetError(target)) {
+      return NextResponse.json({ error: targetError(target.error) }, { status: target.status });
+    }
 
     try {
-      if (connection.provider === 'gmail') {
-        const onTokenRefresh = async (newEncrypted: string) => {
-          await supabase.from('connections').update({ metadata: { ...connection.metadata, tokens: newEncrypted } }).eq('id', connection.id);
-        };
-        await updateGmailEvent({ encryptedTokens, onTokenRefresh, eventId: calEvent.event_id, title, startTime, endTime, timezone, attendees: validAttendees, notes });
-      } else {
-        const onTokenRefresh = async (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }) => {
-          const newEncrypted = Buffer.from(JSON.stringify(newTokens)).toString('base64');
-          await supabase.from('connections').update({ metadata: { ...connection.metadata, tokens: newEncrypted } }).eq('id', connection.id);
-        };
-        await updateOutlookEvent({ encryptedTokens, onTokenRefresh, eventId: calEvent.event_id, title, startTime, endTime, timezone, attendees: validAttendees, notes });
-      }
+      await applyEventUpdate(target, {
+        title, startISO: startTime, endISO: endTime, timezone, attendees: validAttendees, notes,
+      });
     } catch (err: any) {
       if (err?.code === 'calendar_scope_required') {
-        return NextResponse.json({ error: 'calendar_scope_required', provider: connection.provider }, { status: 403 });
+        return NextResponse.json({ error: 'calendar_scope_required', provider: target.provider }, { status: 403 });
       }
       throw err;
     }

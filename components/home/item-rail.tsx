@@ -23,15 +23,16 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { DocumentIcon } from '@heroicons/react/24/outline';
 import { WorkerMentionInput } from '@/components/workers/worker-mention-input';
-import { ThreadShell } from '@/components/thread';
-import type { ThreadAction, ThreadCard, ThreadItem } from '@/components/thread';
+import { ThreadShell, ThreadCardView } from '@/components/thread';
+import type { ThreadCard, ThreadItem } from '@/components/thread';
 import { useCosSeat } from '@/hooks/use-cos-seat';
 import { moveTargetId, mergedArtifactKey, stageOfArtifactKey } from '@/lib/room/presentation';
-import { DecisionCard } from '@/components/work/decision-card';
+// THE DECISION'S ONE HOST (W3-C, Sep 22) — the kit's `decision` card with the steer door behind
+// it. `components/work/decision-card.tsx` (the hand-drawn one) is gone.
+import DecisionCard, { type DecisionSpec, type DecisionOutcome } from '@/components/home/decision-card';
 // THE ONE OBJECT CARD's host mount — the room shows WHAT IT IS TALKING ABOUT (THE OPENING
 // CONTRACT, clause 1): one read of the thread door, one kit card, one viewer, every seat.
 import { SourceObjectMount } from '@/components/room/source-object';
-import type { DecisionObject } from '@/lib/room/decision-object';
 import { panelPlan } from '@/lib/room/render-plan';
 import { enforceCtaLaw, shapingOffer } from '@/lib/room/cta-law';
 // THE OPENING'S SPEECH LAWS, imported — the pre-compose stitch obeys exactly what the composed
@@ -44,8 +45,18 @@ import { ROOM_CACHE_MAX_AGE_MS } from '@/lib/room/no-mutation';
 // ONE KEY PRODUCER, shared with the warm that fills the envelope this mount reads.
 import { roomTurnsKey } from '@/lib/room/warm-room';
 import { WorkflowDraftCard, type WorkflowDraft } from '@/components/workflows/workflow-draft-card';
-// THE GO-AHEAD IS NOT ALWAYS A DOOR (owner, Sep 14) — the structural test lives in ONE pure module.
-import { askAllowsGoAhead, goAheadLabel } from '@/lib/room/go-ahead';
+// THE ASK AND THE GATE ARE HOSTED, NEVER DRAWN (W3-A, Sep 22 — docs/component-map.md §2a): this
+// room mounts the two hosts, which mount the kit's `input` / `approval` cards. The go-ahead law
+// (lib/room/go-ahead.ts) and the resume/proceed doors (lib/deeds/gate-doors.ts) live inside them.
+import InputCard from '@/components/home/input-card';
+import ApprovalCard from '@/components/home/approval-card';
+// THE PRESENTED OBJECT IS THE SAME CARD EVERYWHERE (W4-C, Sep 22 — docs/component-map.md §6): the
+// room mounts the SAME two hosts the Home chat and the coworker DM mount. A room that reads the
+// user's own objects shows them; it does not describe them in prose a second time.
+import CollectionCard, { type CollectionPointer } from '@/components/home/collection-card';
+import EventCard, { type EventPointer } from '@/components/home/event-card';
+import { isCollectionKind, isCollectionSpec, type CollectionSpec } from '@/lib/present/collection';
+import { isEventSpec, type EventProposal, type EventSpec } from '@/lib/present/event';
 import { useLiveRefresh } from '@/components/workflows/use-live-refresh';
 import { announceDeed, DEED_EVENT } from '@/lib/room/deed-echo';
 // HISTORY LEAVES THE STREAM — the record's seat is the ONE drawer, at every door.
@@ -126,7 +137,16 @@ type Turn =
       workflowDraft?: WorkflowDraft;
       /** THE APPROVAL ASK (production arc step 2): a run parked at its approval step — Approve
        *  resumes it (the guarded send fires through the normal path), Hold back ends it. */
-      approval?: { runId: string; name: string; instruction?: string; preview?: string; decided?: 'approved' | 'rejected' } };
+      approval?: { runId: string; name: string; instruction?: string; preview?: string; decided?: 'approved' | 'rejected' };
+      /** THE COLLECTION CARD IN A ROOM (W4-C, Sep 22): a set of the user's own objects the room's
+       *  converse door just read. A LIVE turn carries the served `spec`; a REHYDRATED one carries
+       *  the POINTER only and the host re-reads through `GET /api/collections` — the rows are
+       *  exactly what a frozen copy would lie about. */
+      collection?: { collectionId: string; spec?: CollectionSpec; pointer?: CollectionPointer };
+      /** THE EVENT CARD IN A ROOM (W4-C): one meeting with the verbs ITS state permits. Same two
+       *  shapes, and the same reason, sharper: a stored verb ladder goes stale the moment the
+       *  organizer moves the meeting. */
+      event?: { eventId: string; spec?: EventSpec; pointer?: EventPointer } };
 
 // THE ROOM (P7c-c1 → one-room R1): the conversation is PER-DEAL, not per-item — navigating between
 // a deal's artifacts keeps the chat. The module store is now only the LIVE RENDER CACHE; the durable
@@ -210,7 +230,9 @@ type ServerTurnRow = {
   id?: string; key?: string; role: 'user' | 'system'; text: string; createdAt?: string;
   refs?: Array<{ label: string; href: string | null }>;
   author?: { name: string; role?: string | null } | null;
-  component?: { key?: string; state?: { targetId?: string; options?: Array<{ label: string; sourceId: string }>; items?: string[]; proceeded?: boolean } } | null;
+  component?: { key?: string; refId?: string; state?: { targetId?: string; options?: Array<{ label: string; sourceId: string }>; items?: string[]; proceeded?: boolean;
+    /** THE PRESENTED POINTER (W4-C) — `lib/present/pointer.ts` writes both of these shapes. */
+    kind?: string; params?: Record<string, string | number | boolean>; eventId?: string; proposal?: EventProposal } } | null;
 };
 
 function mapServerTurns(rows: ServerTurnRow[]): Turn[] {
@@ -247,6 +269,34 @@ function mapServerTurns(rows: ServerTurnRow[]): Turn[] {
       const st = t.component.state as unknown as { runId: string; name?: string; instruction?: string; preview?: string };
       turn.approval = { runId: String(st.runId), name: String(st.name ?? 'this run'), instruction: st.instruction || undefined, preview: st.preview || undefined };
       turn.turnId = t.id;
+    }
+    // THE COLLECTION CARD comes back as a POINTER and nothing else (W4-C): the stored component
+    // carries `{kind, params}` and the host re-derives the rows through the ONE re-read door. A
+    // set of live objects is exactly the thing a frozen copy would lie about.
+    if (turn.role === 'system' && t.component?.key === 'collection_card' && t.component.refId
+      && isCollectionKind(t.component.state?.kind)) {
+      turn.collection = {
+        collectionId: String(t.component.refId),
+        pointer: {
+          kind: t.component.state.kind as CollectionSpec['kind'],
+          ...(t.component.state.params && typeof t.component.state.params === 'object'
+            ? { params: t.component.state.params } : {}),
+        },
+      };
+    }
+    // …and THE EVENT CARD, for the sharper version of the same reason: the verbs a reloaded card
+    // offers are the ones the event permits NOW, never the ones it permitted when it was spoken.
+    if (turn.role === 'system' && t.component?.key === 'event_card'
+      && (typeof t.component.refId === 'string' || typeof t.component.state?.eventId === 'string')) {
+      const evId = String(t.component.refId ?? t.component.state?.eventId);
+      turn.event = {
+        eventId: evId,
+        pointer: {
+          eventId: evId,
+          ...(t.component.state?.proposal && typeof t.component.state.proposal === 'object'
+            ? { proposal: t.component.state.proposal } : {}),
+        },
+      };
     }
     if (turn.role === 'system' && t.component?.key === 'standing_spec' && t.component.state) {
       const st = t.component.state as unknown as { name?: string; deliverable?: string; cadenceLabel?: string; ownerName?: string; firstRun?: string | null; status?: string; workflowId?: string | null };
@@ -319,11 +369,19 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   pending?: boolean;
   onDraft?: (draft: string) => void;
   /** One-room R2 — the judged DECISION mounts INLINE in the stream (surface:'inline' per the
-   *  registry). The caller wires onChoose through steer; "Leave it with me" clears. */
-  /** Q5 · A DECISION SHOWS ITS OBJECT: `object` is the thing being decided (resolved by
+   *  registry), as the kit's `decision` card through its ONE host (W3-C, Sep 22: the host owns the
+   *  steer door, so neither caller re-types the fetch it used to hand down as `onChoose`).
+   *  Q5 · A DECISION SHOWS ITS OBJECT: `object` is the thing being decided (resolved by
    *  lib/room/decision-object from the door's OWN prepared artifacts). The card renders it as its
    *  head and, with none, says so — and recommends nothing. */
-  decision?: { title: string | null; options: Array<{ label: string; tradeoff?: string | null }>; recommendation?: { label: string; why?: string | null } | null; object?: DecisionObject | null; onOpenObject?: () => void; onChoose: (label: string) => void | Promise<void>; onDismiss: () => void } | null;
+  decision?: (DecisionSpec & {
+    /** The user's word, the moment they confirm — the caller seats it as their own turn. */
+    onChosen?: (label: string) => void;
+    /** What the door answered — the caller applies it to its own lane (draft, narration). */
+    onResolved?: (label: string, outcome: DecisionOutcome) => void;
+    /** "Leave it with me" — clears the card without acting. */
+    onDismiss?: () => void;
+  }) | null;
   /** One-room R2 → the PREPARED-ACTION GRAMMAR (Aug 4): EVERY prepared thing — reply draft,
    *  calendar invite, forward — is an ARTIFACT CARD in the conversation that summons its own
    *  stage (onOpen). The words and the deed are ONE element (law 8).
@@ -786,6 +844,13 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           refs: [...artRef, ...(Array.isArray(d.refs) ? d.refs.map((r: { label?: string; href?: string | null }) => ({ label: String(r.label ?? ''), href: r.href ?? null })) : [])],
           files: Array.isArray(d.files) ? d.files : undefined,
           ...(d.workflowDraft ? { workflowDraft: d.workflowDraft as WorkflowDraft } : {}),
+          // THE PRESENTED OBJECT PAINTS AT ONCE (W4-C): the served spec rides the answer, so the
+          // live card needs no round-trip. The DURABLE copy is the component turn the steer door
+          // wrote server-side — the next open re-reads it as a pointer.
+          ...(d.collection && isCollectionSpec(d.collection.spec)
+            ? { collection: { collectionId: String(d.collection.id), spec: d.collection.spec as CollectionSpec } } : {}),
+          ...(d.event && isEventSpec(d.event.spec)
+            ? { event: { eventId: String(d.event.spec.id), spec: d.event.spec as EventSpec } } : {}),
         }]);
       }
     } catch {
@@ -921,72 +986,57 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   // A port is a MOUNT, never a rewrite: every rich render below is the markup the rail already had.
   // ══════════════════════════════════════════════════════════════════════════════════════════════
 
-  // ONE CHECKLIST GRAMMAR — an ask's rows plus its never-blocking door, written once and mounted
-  // wherever an ask speaks (the room's lifted engine ask · a coworker's own ask in the stream).
+  // ── THE ASK IS THE ONE HOST NOW (W3-A, Sep 22 — docs/component-map.md §2a) ─────────────────────
+  // This file used to carry `checklistBlock` + `proceedChip` + `proceedEngineAsk`: the rows, the
+  // never-blocking door and the /api/room/asks fetch, hand-drawn beside three other copies of the
+  // same object. All three are gone. The room mounts `components/home/input-card.tsx`, which mounts
+  // the kit's `input` card — one rendering of an ask, on every surface, with the go-ahead law
+  // (lib/room/go-ahead.ts) applied in exactly one place and the door fired through the one deed
+  // module (lib/deeds/gate-doors.ts).
   //
-  // THE CHAT FEEL, ONE ACCENT PER ROOM (owner walk, Sep 7: "different focus points… not in the
-  // nature of the chat feel"). The ask used to wear an AMBER card with an orange "Attach →" verb —
-  // a second focus point competing with the pinned brief's ONE indigo CTA, and a form widget in the
-  // middle of a conversation. It now speaks the KIT'S OWN input-card grammar (thread-cards.tsx case
-  // 'input' · docs/design/threads/Cards.dc.html §3): a NEUTRAL bordered card, the judged labels as
-  // quiet rows, quiet neutral chips for the answer doors, and the go-ahead as a quiet indigo TEXT
-  // link — never a filled button. No amber, no orange: the room's only accent is the pinned CTA.
-  const checklistBlock = (rows: string[], proceed?: React.ReactNode) => (
-    <div className="mt-1.5 w-full max-w-[480px] rounded-xl border border-neutral-200/80 bg-white p-3.5 space-y-2.5">
-      <div className="space-y-1">
-        {rows.map((m, j) => (
-          <div key={j} className="flex items-start gap-2">
-            <span className="mt-[6px] flex-shrink-0 w-1 h-1 rounded-full bg-neutral-300" aria-hidden />
-            <span className="min-w-0 flex-1 text-[13px] leading-[1.5] text-neutral-800">{/^[a-z0-9_]+(\s|$)/.test(m) ? m.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()) : m}</span>
-          </div>
-        ))}
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          onClick={() => fileRef.current?.click()}
-          disabled={busy}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200/80 px-3 py-1.5 text-[12px] font-medium text-neutral-600 transition-colors hover:bg-neutral-50 disabled:opacity-50"
-        >
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
-            <path d="m13.2 7.4-5 5a3.2 3.2 0 0 1-4.6-4.6l5.6-5.6a2.2 2.2 0 0 1 3.2 3.2l-5.5 5.5a1.2 1.2 0 0 1-1.8-1.8l4.8-4.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-          </svg>
-          Attach
-        </button>
-        <button
-          onClick={() => setComposerPrefill('It’s in ')}
-          disabled={busy}
-          className="inline-flex items-center rounded-lg border border-neutral-200/80 px-3 py-1.5 text-[12px] font-medium text-neutral-600 transition-colors hover:bg-neutral-50 disabled:opacity-50"
-        >Point me to it</button>
-        {proceed}
-      </div>
+  // THE CHAT FEEL SURVIVES INTACT (owner walk, Sep 7): the kit's input card IS the neutral bordered
+  // card this room adopted — quiet rows, quiet chips, the go-ahead as a quiet indigo TEXT link.
+  // No amber, no orange: the room's only accent is still the pinned CTA.
+  // THE SAID-IT OFFER (W4-B, Sep 22): the reader's most recent line in this room. When it plainly
+  // could BE the fact an ask is missing, the ask's row offers to use it — a click, never a guess
+  // (the ask-direction floor: our ask, their words, their click). The host decides whether any
+  // offer is warranted; this only hands over what was last said.
+  const lastUserText = (() => {
+    for (let i = turns.length - 1; i >= 0; i--) if (turns[i].role === 'user') return turns[i].text ?? null;
+    return null;
+  })();
+  const askCard = (
+    a: Pick<Extract<Turn, { role: 'system' }>, 'turnId' | 'checklist' | 'proceeded' | 'author' | 'refs'> & { text?: string },
+    key: string,
+  ) => (
+    <div className="mt-1.5">
+      <InputCard
+        id={key}
+        held={busy}
+        spec={{
+          shape: 'engine',
+          ...(a.turnId ? { turnId: a.turnId } : {}),
+          ask: a.text ?? '',
+          items: a.checklist ?? [],
+          context: askContext(a),
+          ...(a.proceeded ? { proceeded: true } : {}),
+          onAttach: () => fileRef.current?.click(),
+          onPointToIt: () => setComposerPrefill('It’s in '),
+          ...(lastUserText ? { recentUserText: lastUserText } : {}),
+          // WHOSE ASK IT IS decides what the go-ahead does: a coworker's is answered by SPEAKING to
+          // them; the engine's own stamps the lifecycle through the asks door.
+          ...(a.author?.name
+            ? { onSpeak: (t: string) => void send(t), speakerFirstName: a.author.name.split(' ')[0] }
+            : {}),
+        }}
+        // The room's local record keeps up with the deed: a proceeded ask stops offering the door.
+        onSettled={() => {
+          const tid = a.turnId;
+          if (tid) setTurns((prev) => prev.map((x) => (x.role === 'system' && x.turnId === tid ? { ...x, proceeded: true } : x)));
+        }}
+      />
     </div>
   );
-  // The never-blocking door — a quiet indigo TEXT link, exactly the kit's input-card affordance.
-  //
-  // IT SPEAKS PLAINLY ABOUT WHAT IS BEING SKIPPED (owner walk, Sep 14: the old "Go ahead with
-  // what's available →" was a slogan — it never said what "available" meant, and on an ask whose
-  // one missing item WAS the work it meant nothing at all). The words now name the gap; WHETHER the
-  // door renders is decided one level up by `askAllowsGoAhead` (lib/room/go-ahead.ts).
-  const proceedChip = (labels: string[], onClick: () => void) => (
-    <button
-      onClick={onClick}
-      disabled={busy}
-      className="rounded text-[12px] font-medium text-indigo-600 hover:text-indigo-700 transition-colors disabled:opacity-50"
-    >{goAheadLabel(labels)}</button>
-  );
-  // The ENGINE's own ask stamps the lifecycle directly (/api/room/asks proceed) and re-runs the one
-  // preparation engine. The server writes the visible go-ahead turn; the local flip hides the button.
-  // A DEAD CLICK IS A BUG (Sep 14): a failure used to do NOTHING AT ALL — the button stayed, the
-  // room stayed silent, and the reader had no way to know. It now says so, in a line that is
-  // RENDER-ONLY (an error is not history — it must never persist into the room's record).
-  const proceedEngineAsk = async (tid: string) => {
-    const res = await fetch('/api/room/asks', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ turnId: tid, action: 'proceed' }),
-    }).catch(() => null);
-    if (res?.ok) setTurns((prev) => prev.map((x) => (x.role === 'system' && x.turnId === tid ? { ...x, proceeded: true } : x)));
-    else setTurns((prev) => [...prev, { role: 'system', text: "That didn't go through — try it again in a moment." }]);
-  };
 
   // ── THE PINNED BRIEF (the room's composed opening as its FIRST message) ───────────────────────
   // THE ONE-VOICE BRIEF: when the responder has spoken, the paragraph IS the opening. The stitched
@@ -1116,24 +1166,57 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
     ? enforceCtaLaw({ label: `Next: ${ent.nextMove}`, ref: ent.nextMoveHref ?? null },
       { targetPrepared: roomHasStagedWork })
     : null;
-  const pinnedActions: ThreadAction[] = [];
   // THE CoS's OFFER LINE — what stands in the CTA's place when the deed is not staged. One seat,
   // whether the demotion happened at composition or here.
   const ctaOffer: string | null = resp?.move?.offer
     ? (resp.move.offerText ?? shapingOffer(resp.move.label))
     : (fallbackMove?.demoted ? fallbackMove.offerText : null);
-  if (resp?.move && !resp.move.offer) {
-    // A CARD IN THE THREAD IS A LIVE DESTINATION (Sep 14) — the CTA is clickable whenever it has
-    // somewhere real to go, and its own card counts first.
-    const live = (cardForMove || moveHref || selfTarget || mergedArt) && moveClick;
-    pinnedActions.push({ label: resp.move.label, tone: 'primary', ...(live ? { onClick: moveClick! } : {}) });
-  } else if (fallbackMove?.move && !fallbackMove.demoted) {
-    // Pre-compose fallback, staged: the legacy next-move line, deed-only, in the SAME seat.
-    const target = ent!.nextMoveHref && !(!inRoom && ent!.nextMoveHref!.includes(`/item/${id}`)) ? ent!.nextMoveHref! : null;
-    pinnedActions.push(target
-      ? { label: fallbackMove.move.label, tone: 'primary', onClick: () => go(target) }
-      : { label: fallbackMove.move.label, tone: 'quiet' });
-  }
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  // THE MOVE IS THE KIT'S `proposal` CARD (W4-A, Sep 22 — docs/component-map.md §2).
+  //
+  // It used to be a bare `ThreadAction` pushed into the pinned bubble's action row, with the object
+  // it was about printed as a loose sentence one line above it — a deed and its object rendered by
+  // two different mechanisms in one bubble, and the only room object with no kind of its own.
+  //
+  // NOTHING ABOUT THE LAW MOVED: the target is still model-picked and CODE-VALIDATED against the
+  // board (`respMoveTargetId` ← `moveTargetId`), the click ladder is still `moveClick` (the card
+  // first, then the merged stage, then the thread), an unvalidated move still renders its WORDS
+  // with no door (a CTA that goes nowhere is never a button), and the demoted move still speaks as
+  // the CoS's offer SENTENCE rather than wearing a button costume (`ctaOffer`, untouched).
+  //
+  // THE OFFERS' SEAT STAYS EMPTY BY LAW (owner walk, Sep 14 — "I think I had told you to remove the
+  // chips here too"): the card CAN carry them and the composer door is wired (`onSay`), but the
+  // room passes none. A room states ONE thing.
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  const moveCard: ThreadCard | null = (() => {
+    if (resp?.move && !resp.move.offer) {
+      // A CARD IN THE THREAD IS A LIVE DESTINATION (Sep 14) — the CTA is clickable whenever it has
+      // somewhere real to go, and its own card counts first.
+      const live = (cardForMove || moveHref || selfTarget || mergedArt) && moveClick;
+      return {
+        kind: 'proposal', id: 'move',
+        // ONE DEED, ONE OBJECT: the merged artifact rides IN the card it is the deed for.
+        ...(mergedArt ? { title: mergedArt.label } : {}),
+        ...(mergedArt?.by ? { detail: `by ${mergedArt.by.split(' ')[0]}` } : {}),
+        confirmLabel: resp.move.label,
+        ...(live ? { onConfirm: moveClick! } : {}),
+        onSay: (say: string) => { void send(say); },
+        ...(busy ? { busy: true } : {}),
+      };
+    }
+    if (fallbackMove?.move && !fallbackMove.demoted) {
+      // Pre-compose fallback, staged: the legacy next-move line, deed-only, in the SAME seat.
+      const target = ent!.nextMoveHref && !(!inRoom && ent!.nextMoveHref!.includes(`/item/${id}`)) ? ent!.nextMoveHref! : null;
+      return {
+        kind: 'proposal', id: 'move',
+        confirmLabel: fallbackMove.move.label,
+        ...(target ? { onConfirm: () => go(target) } : {}),
+        onSay: (say: string) => { void send(say); },
+        ...(busy ? { busy: true } : {}),
+      };
+    }
+    return null;
+  })();
   // (No chip-row seat any more — see THE CHIPS ARE RETIRED FROM THE ROOM, at the composer below.
   //  `resp.offers` stays served and deduped at composition; the room renders none of them.)
 
@@ -1151,7 +1234,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   // COHERENCE rule already names the gap in its own words; the rows carry the concrete items). ONE
   // pinned message, ONE primary CTA, the ask's quiet answer doors under it.
   //
-  // THE DEED MOVES, NEVER ORPHANS: this mounts the SAME `checklistBlock` with the SAME handlers —
+  // THE DEED MOVES, NEVER ORPHANS: this mounts the SAME ask host with the SAME handlers —
   // attach, point-me-to-it and go-ahead all keep working, just in one seat instead of two.
   //
   // ⚠️ THE LAW WAS DOOR-BLIND; ITS CONDITION WAS NOT (owner, Sep 14: "not sure you're walking the
@@ -1167,14 +1250,16 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   // the law is "one agenda", never "hide the ask". Without a composed brief the ask's own sentence
   // rides into the pinned card with its rows, because nothing above it names the gap.
   // ══════════════════════════════════════════════════════════════════════════════════════════════
-  const pinnedSpeaks = !!(composed || openingText || pinnedActions.length > 0 || ctaOffer);
+  const pinnedSpeaks = !!(composed || openingText || moveCard || ctaOffer);
   const foldedAsk = pinnedSpeaks && liftedAsk?.checklist?.length ? liftedAsk : null;
 
   // WHAT THE WORK ITSELF IS CALLED — the context the go-ahead test judges a missing item against:
   // the ask's own item ref (every ask carries it), the room's stated move, and the item anchor's
   // ask. If the gap's own words are in there, the gap IS the deliverable and there is nothing to
   // proceed with (lib/room/go-ahead.ts).
-  const askContext = (t: Extract<Turn, { role: 'system' }>): Array<string | null | undefined> => [
+  // (It reads ONE field of the turn, so it takes one field — the ask host is handed the same narrow
+  // shape at all three seats, and a seat cannot accidentally widen what the test judges against.)
+  const askContext = (t: Pick<Extract<Turn, { role: 'system' }>, 'refs'>): Array<string | null | undefined> => [
     ...((t.refs ?? []).map((r) => r.label)),
     resp?.move?.label ?? ent?.nextMove ?? null,
     view.anchor?.ask ?? null,
@@ -1222,7 +1307,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   const askSeatsObject = !!objectCard && !decisionSeatsObject && !!liftedAsk && !foldedAsk;
   const pinnedSeatsObject = !!objectCard && !decisionSeatsObject && !askSeatsObject;
 
-  const pinnedNode = (showShimmer || secondarySummary || owesYou || owesThem || view.gap || mergedArt || foldedAsk || ctaOffer || pinnedSeatsObject) ? (
+  const pinnedNode = (showShimmer || secondarySummary || owesYou || owesThem || view.gap || moveCard || mergedArt || foldedAsk || ctaOffer || pinnedSeatsObject) ? (
     <div className="space-y-1.5">
       {showShimmer && (
         <div className="space-y-1.5 py-0.5" aria-hidden>
@@ -1248,7 +1333,12 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
       {/* SHOW, between the speech and the offer: the thing the position is ABOUT — the source
           object, in the ONE object card, directly under the words that ask about it. */}
       {pinnedSeatsObject && <div className="pt-0.5">{objectCard}</div>}
-      {mergedArt && (
+      {/* THE MOVE, AS THE KIT'S `proposal` CARD (W4-A) — the ONE primary deed, carrying the object
+          it is the deed for. The merged artifact used to print here as a loose sentence, one line
+          above a button in the pinned ACTION row; it rides IN the card now (ONE DEED ONE OBJECT). */}
+      {moveCard && <div className="pt-0.5"><ThreadCardView card={moveCard} /></div>}
+      {/* …and when no move stands, a merged artifact still says what is on the board. */}
+      {!moveCard && mergedArt && (
         <p className="text-[13px] leading-[1.5] text-neutral-500">
           <span className="font-medium">{mergedArt.label}</span>
           {mergedArt.by && <span className="ml-1.5 font-medium text-indigo-500">by {mergedArt.by.split(' ')[0]}</span>}
@@ -1261,12 +1351,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
       {foldedAsk && !composed && foldedAsk.text && (
         <p className="text-[13px] leading-[1.5] text-neutral-500">{foldedAsk.text}</p>
       )}
-      {foldedAsk && checklistBlock(
-        foldedAsk.checklist!,
-        foldedAsk.proceeded || !askAllowsGoAhead(foldedAsk.checklist!, askContext(foldedAsk))
-          ? undefined
-          : proceedChip(foldedAsk.checklist!, () => void proceedEngineAsk(foldedAsk.turnId!)),
-      )}
+      {foldedAsk && askCard({ ...foldedAsk, text: '' }, 'folded-ask')}
     </div>
   ) : undefined;
 
@@ -1306,26 +1391,39 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   // card on the speaking bubble.
   const turnExtras = (t: Extract<Turn, { role: 'system' }>): React.ReactNode => {
     const shownRefs = (t.refs ?? []).filter((r) => inRoom || !r.href?.includes(`/item/${id}`));
-    const has = !!(t.checklist?.length || t.workflowDraft || t.standingSpec || t.approval || t.actions?.length || shownRefs.length || t.files?.length);
+    const has = !!(t.checklist?.length || t.workflowDraft || t.standingSpec || t.approval || t.collection || t.event || t.actions?.length || shownRefs.length || t.files?.length);
     if (!has) return null;
     return (
       <div className="min-w-0 space-y-1.5 text-[13px] text-neutral-800 leading-relaxed">
         {/* A coworker's ASK as an inline checklist: each row a concrete thing they need. Attach
             opens the one ingest funnel; answering in the composer is equally valid. NEVER BLOCKING. */}
-        {t.checklist && t.checklist.length > 0 && checklistBlock(t.checklist,
-          // THE DOOR RENDERS ONLY WHERE PROCEEDING PRODUCES THE WORK (Sep 14) — same test, same
-          // module, both seats. And a coworker's go-ahead is now PLAIN SPEECH a person would
-          // actually say: the old utterance read like an engine instruction pasted into the user's
-          // own bubble ("…work with what I've shared…" — his word for it was meaningless).
-          !t.proceeded && askAllowsGoAhead(t.checklist, askContext(t))
-            ? (t.author?.name
-              ? proceedChip(t.checklist, () => void send(`${t.author!.name.split(' ')[0]}, go ahead without it — use what you have and tell me what's missing.`))
-              : t.turnId
-                ? proceedChip(t.checklist, () => void proceedEngineAsk(t.turnId!))
-                : undefined)
-            : undefined)}
+        {t.checklist && t.checklist.length > 0 && askCard({ ...t, text: '' }, `ask-${t.turnId ?? t.dkey ?? 'x'}`)}
         {/* THE ONE CREATION CARD: a drafted workflow reviews inline; Confirm fires the one door. */}
         {t.workflowDraft && <div className="mt-1.5"><WorkflowDraftCard draft={t.workflowDraft} /></div>}
+        {/* THE COLLECTION — the SAME one card for every set of the user's own objects, on every
+            surface. A live turn hands over the served spec; a rehydrated one hands over the
+            pointer and the host re-reads. "Ask about it" speaks through THIS room's composer
+            (clicks are words — the utterance lands as the reader's own turn). */}
+        {t.collection && (
+          <div className="mt-1.5">
+            <CollectionCard
+              {...(t.collection.spec ? { spec: t.collection.spec } : {})}
+              {...(t.collection.pointer ? { pointer: t.collection.pointer } : {})}
+              onAsk={(text) => setComposerPrefill(text)}
+            />
+          </div>
+        )}
+        {/* THE EVENT — ONE card for one calendar event, with exactly the verbs its own state
+            permits. Every confirm goes through the ONE deeds door; nothing here has fired. */}
+        {t.event && (
+          <div className="mt-1.5">
+            <EventCard
+              {...(t.event.spec
+                ? { spec: t.event.spec, ...(t.event.pointer ? { pointer: t.event.pointer } : {}) }
+                : { pointer: t.event.pointer ?? { eventId: t.event.eventId } })}
+            />
+          </div>
+        )}
         {/* THE SPEC CARD: the standing-task proposal — explicit fields, ONE Confirm. Saying prepared
             it; only this click creates anything. Confirmed → the card flips in place as the record. */}
         {t.standingSpec && (
@@ -1364,47 +1462,32 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
             )}
           </div>
         )}
-        {/* THE APPROVAL CARD: a parked run's human gate — Approve RESUMES it (the guarded delivery
-            fires through the normal path), Hold back ends it honestly. Both routes speak. */}
+        {/* THE APPROVAL CARD IS THE ONE HOST (W3-A, Sep 22). This was a hand-drawn gate with its own
+            two inline `fetch`es, its own three chip words and a rollback that silently put the
+            question back when the run had in fact already moved on. It is now
+            components/home/approval-card.tsx — the same card the deep-dive mounts, wearing the one
+            gate vocabulary and firing the one resume door. The rail keeps only what it owns: the
+            turn's record of what was decided. */}
         {t.approval && (
-          <div className="mt-1.5 rounded-xl border border-neutral-200/80 bg-white px-3.5 py-2.5">
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="text-[12.5px] font-semibold text-neutral-800 truncate">{t.approval.name}</span>
-              {t.approval.decided === 'approved' && <span className="flex-shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-semibold text-emerald-700">✓ approved — delivering</span>}
-              {t.approval.decided === 'rejected' && <span className="flex-shrink-0 rounded-full bg-neutral-100 px-2 py-0.5 text-[10.5px] font-semibold text-neutral-500">held back</span>}
-              {!t.approval.decided && <span className="flex-shrink-0 rounded-full bg-neutral-100 px-2 py-0.5 text-[10.5px] font-semibold text-neutral-500">waiting on you</span>}
-            </div>
-            {t.approval.instruction && <p className="mt-0.5 text-[12px] text-neutral-500">{t.approval.instruction}</p>}
-            {t.approval.preview && !t.approval.decided && (
-              <p className="mt-1 text-[11.5px] text-neutral-400 line-clamp-3">{t.approval.preview}</p>
-            )}
-            {!t.approval.decided && (
-              <div className="mt-2 flex items-center gap-2">
-                <button
-                  onClick={async () => {
-                    const runId = t.approval!.runId;
-                    setTurns((prev) => prev.map((x) => (x.role === 'system' && x.approval?.runId === runId ? { ...x, approval: { ...x.approval!, decided: 'approved' as const } } : x)));
-                    const res = await fetch(`/api/workflows/runs/${runId}/resume`, {
-                      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approve: true }),
-                    }).catch(() => null);
-                    if (!res?.ok) setTurns((prev) => prev.map((x) => (x.role === 'system' && x.approval?.runId === runId ? { ...x, approval: { ...x.approval!, decided: undefined } } : x)));
-                  }}
-                  disabled={busy}
-                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-indigo-700 transition-colors disabled:opacity-50"
-                >Approve — deliver it</button>
-                <button
-                  onClick={async () => {
-                    const runId = t.approval!.runId;
-                    setTurns((prev) => prev.map((x) => (x.role === 'system' && x.approval?.runId === runId ? { ...x, approval: { ...x.approval!, decided: 'rejected' as const } } : x)));
-                    await fetch(`/api/workflows/runs/${runId}/resume`, {
-                      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approve: false }),
-                    }).catch(() => null);
-                  }}
-                  disabled={busy}
-                  className="rounded-lg px-3 py-1.5 text-[12px] font-medium text-neutral-500 hover:text-neutral-700 hover:bg-white/70 transition-colors disabled:opacity-50"
-                >Hold back</button>
-              </div>
-            )}
+          <div className="mt-1.5">
+            <ApprovalCard
+              id={`approval-${t.approval.runId}`}
+              spec={{
+                runId: t.approval.runId,
+                title: t.approval.name,
+                ...(t.approval.instruction ? { meta: t.approval.instruction } : {}),
+                // The room's compact seat is served a CLIPPED preview string, not the run's bytes —
+                // it shows it as the plain excerpt it is and leaves the full object to the gate's
+                // own surfaces (no second opinion about what markdown means).
+                ...(t.approval.preview ? { preview: { text: t.approval.preview, truncated: false } } : {}),
+              }}
+              outcome={t.approval.decided ?? null}
+              onDecided={(outcome) => {
+                const runId = t.approval!.runId;
+                setTurns((prev) => prev.map((x) => (x.role === 'system' && x.approval?.runId === runId
+                  ? { ...x, approval: { ...x.approval!, decided: outcome === 'rejected' ? 'rejected' as const : 'approved' as const } } : x)));
+              }}
+            />
           </div>
         )}
         {/* O5: the commit line is a DECISION, not buttons. ≥2 routes → the numbered options idiom
@@ -1471,7 +1554,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
     type: 'pinned', id: 'brief', actorId: seatId, actorName: seatName, actorRoleLabel: seatLabel,
     ...(openingText ? { text: openingText } : {}),
     ...(pinnedNode ? { node: pinnedNode } : {}),
-    ...(pinnedActions.length ? { actions: pinnedActions } : {}),
+    // (No `actions` here any more — the ONE primary deed is the `proposal` card inside the node.)
   });
 
   // THE CoS OPENS — the invitation, in the seat's own first-person voice, directly under the
@@ -1507,13 +1590,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
         // SHOW, WITH THE ASK (clause 2): an ask about an inbox-backed item carries the message it
         // is asking about — the reader is never asked to act on something they must remember.
         ...(askSeatsObject ? [{ kind: 'custom' as const, id: 'lifted-ask-object', node: objectCard }] : []),
-        {
-          kind: 'custom' as const, id: 'lifted-ask-card',
-          node: checklistBlock(liftedAsk.checklist!,
-            liftedAsk.proceeded || !askAllowsGoAhead(liftedAsk.checklist!, askContext(liftedAsk))
-              ? undefined
-              : proceedChip(liftedAsk.checklist!, () => void proceedEngineAsk(liftedAsk.turnId!))),
-        },
+        { kind: 'custom' as const, id: 'lifted-ask-card', node: askCard({ ...liftedAsk, text: '' }, 'lifted-ask') },
       ],
     });
   }
@@ -1527,18 +1604,15 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
         kind: 'custom', id: 'decision-card',
         node: (
           <DecisionCard
-            title={decision.title}
-            options={decision.options}
-            recommendation={decision.recommendation ?? null}
             // Q5 · the object rides INTO the one card — the ask and the thing asked about on the
             // same surface, in the handle grammar (never the document inlined).
-            object={decision.object ?? null}
+            spec={decision}
             // …and with NO prepared object, the SOURCE one (clause 2): the machine pulls the thing
             // being decided — the inbound message — instead of the card telling the reader to ask.
             {...(decisionSeatsObject && !decision.object ? { objectNode: objectCard } : {})}
-            {...(decision.object && decision.onOpenObject ? { onOpenObject: decision.onOpenObject } : {})}
-            onChoose={decision.onChoose}
-            onDismissCard={decision.onDismiss}
+            {...(decision.onChosen ? { onChosen: decision.onChosen } : {})}
+            {...(decision.onResolved ? { onResolved: decision.onResolved } : {})}
+            {...(decision.onDismiss ? { onDismiss: decision.onDismiss } : {})}
           />
         ),
       }],
@@ -1567,7 +1641,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
     // ONE PREP CLASS at the render too (Sep 8): `anticipate:` narrations are prep narrations.
     if ((((artifacts?.length ?? 0) > 0) || composed) && t.dkey && /^(prep:|meeting-prep:|anticipate:)/.test(t.dkey)) return;
     // A component turn is never narration — it carries a live affordance, so it speaks with a face.
-    const hasComponent = !!(t.checklist?.length || t.actions?.length || t.standingSpec || t.workflowDraft || t.approval || t.key === 'founding-proposal');
+    const hasComponent = !!(t.checklist?.length || t.actions?.length || t.standingSpec || t.workflowDraft || t.approval || t.collection || t.event || t.key === 'founding-proposal');
     if (!t.author?.name && !hasComponent) {
       // THE EVENT LINE — the narrator's muted one-liner: system, NO author, NO affordance. Its
       // refs survive as quiet inline words (law 8 — the P2d wall, closed kit-side same day),

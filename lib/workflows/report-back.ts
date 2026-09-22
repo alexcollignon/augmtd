@@ -6,6 +6,7 @@
 
 import type { OpenAI } from 'openai';
 import { aiCreate } from '@/lib/ai/factory';
+import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 import type { OutputHome } from './types';
 
 export interface ReportFacts {
@@ -45,10 +46,39 @@ export function linkifyReport(text: string, link?: string | null): string {
   return text.replace(new RegExp(`(?<!\\]\\()${esc}(?!\\))`, 'g'), `[Open it](${link})`);
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE HAND-BACK NEVER HANDS THE FIX BACK (Sep 21, found by the T2 replay). A reviewer's objection
+// is written FOR THE SYSTEM ("…regenerate it complete; never hand over a truncated document") — it
+// was being passed verbatim as the report's PROBLEM fact, under a prompt that says "lead with the
+// problem and what would fix it", so the coworker dutifully asked the PRINCIPAL to regenerate the
+// coworker's own work. Producing the deliverable is our job; the user is told honestly only after
+// our own repair has failed, and never given a chore. Two deterministic halves, because a prompt
+// rule alone coin-flips: the objection is stripped of its system-facing instruction before it is
+// ever shown, and the composed report is swept for a regeneration ask.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** The reader's half of a reviewer objection: what is wrong, never the instruction to the machine. */
+export function readerFacingProblem(objection: string): string {
+  const said = String(objection ?? '').trim();
+  const cut = said.split(/\s+[—–-]\s+|;\s+/).filter(Boolean)[0] ?? said;
+  return (cut.trim() || said).replace(/[.\s]+$/, '');
+}
+
+const REGENERATION_ASK =
+  /\b(can|could|would|will)\s+you\s+(please\s+)?(re-?generate|re-?run|re-?do|re-?create|re-?send|re-?write|regenerate|generate|complete|finish|redo)\b|\bplease\s+(re-?generate|re-?run|re-?do|re-?create|re-?send|re-?write|regenerate)\b|\byou'?(ll| will)\s+need\s+to\s+(re-?generate|re-?run|re-?do|re-?create|re-?send)\b/i;
+
+/** Drop any sentence that asks the reader to produce or re-produce the work themselves. With
+ *  nothing left to say, say the honest thing — a hand-back with no ask in it at all. */
+export function stripRegenerationAsk(text: string): string {
+  const kept = String(text ?? '').split(/(?<=[.!?])\s+/).filter((s) => !REGENERATION_ASK.test(s));
+  const out = kept.join(' ').replace(/\s+/g, ' ').trim();
+  return out.length >= 20 ? out : "I couldn't get this one into a state worth handing over yet.";
+}
+
 /** Plain factual fallback if the model call fails — never block a run on the report. */
 export function fallbackReport(f: ReportFacts): string {
   const who = f.firstName ? `${f.firstName}, ` : '';
-  if (f.problem) return `${who}I finished "${f.taskName}" but couldn't deliver it — ${f.problem}`;
+  if (f.problem) return stripRegenerationAsk(`${who}I finished "${f.taskName}" but couldn't deliver it — ${f.problem}`);
   const where =
     f.home === 'document' ? `it's in your Documents${f.link ? ` (${f.link})` : ''}` :
     f.home === 'slack'    ? `posted to ${f.channel ?? 'Slack'}` :
@@ -66,11 +96,13 @@ You just finished a task and you're sending ${f.firstName || 'the person you wor
 
 FACTS (this is all you know — do not invent anything beyond it):
 - Task: "${f.taskName}"
-- What you did: ${didLine(f)}${f.link ? `\n- Link to it: ${f.link}` : ''}${f.alsoNote ? `\n- Also: ${f.alsoNote}` : ''}${f.gateNote ? `\n- Quality check: ${f.gateNote}` : ''}${f.nextRun ? `\n- Next run: ${f.nextRun}` : ''}${f.problem ? `\n- PROBLEM: ${f.problem}` : ''}${f.deliverableGist ? `\n- Gist of the output: ${f.deliverableGist.slice(0, 500)}` : ''}
+- What you did: ${didLine(f)}${f.link ? `\n- Link to it: ${f.link}` : ''}${f.alsoNote ? `\n- Also: ${f.alsoNote}` : ''}${f.gateNote ? `\n- Quality check: ${f.gateNote}` : ''}${f.nextRun ? `\n- Next run: ${f.nextRun}` : ''}${f.problem ? `\n- PROBLEM: ${readerFacingProblem(f.problem)}` : ''}${f.deliverableGist ? `\n- Gist of the output: ${clipForPrompt(f.deliverableGist, 500)}\n- ${EXCERPT_RULE}` : ''}
 
 Write 1–3 short sentences, first person, warm and human — a colleague's DM, not a status report.
 - Say what you did and where it is (include the link naturally if there is one).
-${f.problem ? '- Lead with the problem, plainly, and what would fix it.' : '- If a genuinely useful next step or question fits, offer it briefly. Don\'t force one.'}
+${f.problem ? '- Lead with the problem, plainly, in your own words, and say what YOU will do about it.' : '- If a genuinely useful next step or question fits, offer it briefly. Don\'t force one.'}
+- NEVER ask them to regenerate, re-run, redo or re-send the work — producing it is your job, not theirs. A question about a FACT only they hold is fine; a chore is not.
+- Never say the work was cut off, truncated or is incomplete unless the PROBLEM above says so — the task name and the gist above are clipped by this system for length, which is never evidence about the work itself.
 ${f.gateNote ? '- Mention the quality check naturally, in ONE clause, using only what it says — never as a list and never as a claim of your own.' : ''}
 ${f.firstName ? `- You can address ${f.firstName} by name if it feels natural.` : ''}
 - No "I noticed", no "I wanted to let you know", no corporate phrasing. Don't restate the whole output.`;
@@ -92,7 +124,7 @@ ${f.firstName ? `- You can address ${f.firstName} by name if it feels natural.` 
     const choice = res.choices[0];
     const text = choice?.message?.content?.trim();
     if (!text) return fallbackReport(f);
-    return linkifyReport(choice?.finish_reason === 'length' ? endAtBoundary(text) : text, f.link);
+    return stripRegenerationAsk(linkifyReport(choice?.finish_reason === 'length' ? endAtBoundary(text) : text, f.link));
   } catch {
     return fallbackReport(f);
   }

@@ -92,11 +92,26 @@ export function renderCalendarFreshness(rows: Array<{ provider: string; syncedAt
   return `LAST READ from the calendar provider: ${when}. A change made since then is not in the lines above — say that plainly rather than guessing.`;
 }
 
-export async function executeCheckCalendar(
+/** ONE READ, TWO RENDERINGS (Wave 1, Sep 22 — the collection card). `readCalendar` owns the read
+ *  and returns BOTH halves: the block written for the model, and the struct the kit's `calendar`
+ *  collection renders rows from. Everything either half shows — weekday, date, clock — is already
+ *  computed HERE, so the card and the prompt cannot disagree about what day it is. */
+export type CalendarRead = {
+  text: string;
+  win: Awaited<ReturnType<typeof getScheduleWindow>>;
+  tz: string;
+  fromDayStr: string;
+  toDayStr: string;
+  /** Only when slots were asked for AND a calendar exists — an invented slot is the class this
+   *  whole tool exists to end. */
+  slots: Array<{ startISO: string; endISO: string }>;
+};
+
+export async function readCalendar(
   config: Record<string, unknown>,
   userId: string,
   supabase: SupabaseClient,
-): Promise<string> {
+): Promise<CalendarRead | { refusal: string }> {
   const tz = await userTimezone(supabase, userId);
   const todayStr = dayOf(Date.now(), tz);
 
@@ -105,7 +120,7 @@ export async function executeCheckCalendar(
   const raw = { from: config.from_date, to: config.to_date };
   for (const [k, v] of Object.entries(raw)) {
     if (v !== undefined && v !== null && !(typeof v === 'string' && DATE_RE.test(v))) {
-      return `I couldn't read "${k}_date" — give me a date as YYYY-MM-DD (for example ${todayStr}).`;
+      return { refusal: `I couldn't read "${k}_date" — give me a date as YYYY-MM-DD (for example ${todayStr}).` };
     }
   }
   const fromDayStr = (raw.from as string) || todayStr;
@@ -134,6 +149,7 @@ export async function executeCheckCalendar(
   // THE EMPTY-CALENDAR TRUTH: with no calendar synced, every "free slot" would be an invention —
   // the picker over an empty busy set proposes everything. The block above already says UNKNOWN;
   // proposals are refused for the same reason, plainly.
+  let proposed: Array<{ startISO: string; endISO: string }> = [];
   if (config.propose_slots === true && !win.hasCalendar) {
     parts.push('FREE SLOTS: none can be proposed — no calendar is synced for this account, so nothing can be verified free.');
   } else if (config.propose_slots === true) {
@@ -150,6 +166,7 @@ export async function executeCheckCalendar(
       // not apply once the user names a window starting today, so the clock does the filtering here.
       .filter((s) => Date.parse(s.startISO) > Date.now())
       .slice(0, count);
+    proposed = slots.map((s) => ({ startISO: s.startISO, endISO: s.endISO }));
     parts.push(slots.length
       ? `FREE SLOTS (${minutes} min each, working hours, business days, ${tz} — offer these verbatim, they collide with nothing above):\n` +
         slots.map((s) => {
@@ -159,5 +176,14 @@ export async function executeCheckCalendar(
         }).join('\n')
       : 'FREE SLOTS: none — there is no free working-hour slot of that length in this window. Say so plainly and offer a different range.');
   }
-  return parts.join('\n\n');
+  return { text: parts.join('\n\n'), win, tz, fromDayStr, toDayStr, slots: proposed };
+}
+
+export async function executeCheckCalendar(
+  config: Record<string, unknown>,
+  userId: string,
+  supabase: SupabaseClient,
+): Promise<string> {
+  const out = await readCalendar(config, userId, supabase);
+  return 'refusal' in out ? out.refusal : out.text;
 }
