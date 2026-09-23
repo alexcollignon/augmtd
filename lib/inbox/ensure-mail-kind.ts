@@ -4,10 +4,14 @@
 // The sync's noise fast-path never runs computeUnderstanding, and transactional mail (a Canva
 // invoice) carries no List-Unsubscribe header — so resolveKind had NOTHING and the mail sat
 // unlabeled forever ("the sweep tops up once the understanding lands" — but nothing made it land).
-// This computes the reasoned kind and merges ONLY `mailKind` into the stored understanding —
-// ROUTING-INERT by construction (every routing consumer goes through coerceUnderstanding, which
-// returns null without role+relevance; only the label resolver reads the raw field).
-// Consumers: the label-sweep (ambient backstop) + scripts/backfill-mail-kind.ts (manual batch).
+// This computes the reasoned kind and merges ONLY `mailKind` into the stored understanding (the
+// coerced understanding still needs role+relevance, so the router's full reading is unchanged).
+// W10 — IN-APP CONSUMERS read the raw kind, which is why this stays when mailbox kind labels are
+// retired: the held/deck notice floors (`rawMailKindOf` → lib/home/attention.ts,
+// lib/home/deck-floors.ts), the judge's kind floor (lib/work/judge.ts) and the not-judged lane
+// (lib/work/judgment-sweep.ts). It feeds NO mailbox label any more.
+// Callers: the label-sweep's kind completer (every account, labels on or off) +
+// scripts/backfill-mail-kind.ts (manual batch).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { SupabaseClient } from '@supabase/supabase-js';
 

@@ -15,13 +15,18 @@
 //  2. THE PARSE IS CODE-VALIDATED — the reasoned pass PROPOSES; `validatePrimitives` disposes
 //     against the engine's real vocabulary. Anything outside it refuses WITH A REASON; a silently
 //     wrong rule is never written.
-//  3. THE EGRESS FLOOR — `forward_to` is deliberately NOT in the sentence-authoring vocabulary.
-//     A sentence must never open a path that mails a user's correspondence to a third party; that
-//     outcome stays behind the advanced (explicit, field-by-field) editor.
+//  3. THE EGRESS FLOOR — `forward_to` is deliberately NOT in the authoring vocabulary. A rule must
+//     never open a path that mails a user's correspondence to a third party. W10: it is not in the
+//     advanced editor either, and nothing executes it — no surface claims it.
+//  4. W10 NO LYING DOORS — the authorable vocabulary IS the executed set (lib/inbox/rules/label-name.ts
+//     EXECUTED_OUTCOME_KEYS; the executor is lib/inbox/rules/execute.ts). `auto_draft` and
+//     `escalate` were authorable and executed by nothing — they are refused now, and the renderer
+//     never speaks a verb nothing performs.
 
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import { matchesFilters } from '@/lib/inbox/rules/evaluate';
+import { AUTHORABLE_RULE_OUTCOME_KEYS, MAILBOX_OUTCOME_KEYS, UNEXECUTED_OUTCOME_KEYS, validateUserLabelName } from '@/lib/inbox/rules/label-name';
 import type { Condition, ConditionField, InboxRule, MatchMode, RuleEmail, RuleLabel, RuleOutcome, RuleTrigger } from '@/lib/inbox/rules/types';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -71,8 +76,9 @@ export const CONDITION_FIELDS: ConditionField[] = [
 export const RULE_LABELS: RuleLabel[] = ['needs_reply', 'to_do', 'waiting_on', 'meeting', 'fyi', 'notifications', 'marketing', 'done'];
 export const RULE_KINDS = ['receipt', 'newsletter', 'notification', 'calendar', 'cold_outreach', 'customer', 'team', 'personal'] as const;
 
-/** Outcome keys a SENTENCE may author. `forward_to` is absent by design — the egress floor. */
-export const AUTHORABLE_OUTCOME_KEYS = ['set_type', 'set_kind', 'auto_draft', 'mark_read', 'archive', 'escalate', 'trash'] as const;
+/** Outcome keys a SENTENCE may author — exactly the EXECUTED set (W10). `forward_to` is absent by
+ *  design (the egress floor); `auto_draft` / `escalate` are absent because nothing executes them. */
+export const AUTHORABLE_OUTCOME_KEYS = AUTHORABLE_RULE_OUTCOME_KEYS;
 
 const LABEL_WORD: Record<RuleLabel, string> = {
   needs_reply: 'Needs reply', to_do: 'To do', waiting_on: 'Waiting on', meeting: 'Meeting',
@@ -142,12 +148,12 @@ function outcomeVerbs(outcome: RuleOutcome, subject: string): string[] {
   const o = outcome ?? {};
   if (o.set_type && LABEL_WORD[o.set_type]) push(`Label ${subject} as ${LABEL_WORD[o.set_type]}`, `label it ${LABEL_WORD[o.set_type]}`);
   if (o.set_kind && KIND_WORD[o.set_kind]) push(`Treat ${subject} as ${KIND_WORD[o.set_kind]}`, `treat it as ${KIND_WORD[o.set_kind]}`);
-  if (o.auto_draft?.enabled) push(`Draft a reply to ${subject}`, 'draft a reply');
-  if (o.archive) push(`Archive ${subject}`, 'archive it');
-  if (o.trash) push(`Move ${subject} to trash`, 'move it to trash');
+  if (o.apply_label && typeof o.apply_label === 'string') push(`File ${subject} under my label ${quote(o.apply_label)}`, `file it under ${quote(o.apply_label)}`);
   if (o.mark_read) push(`Mark ${subject} as read`, 'mark it read');
-  if (o.escalate?.enabled) push(`Flag ${subject} to me`, 'flag it to me');
-  if (o.forward_to) push(`Forward ${subject} to ${o.forward_to}`, `forward it to ${o.forward_to}`);
+  if (o.trash) push(`Move ${subject} to trash`, 'move it to trash');
+  else if (o.archive) push(`Archive ${subject}`, 'archive it');
+  // W10 — NO LYING VERB: auto_draft / escalate / forward_to may sit on legacy rows, but nothing
+  // executes them, so the sentence never says them (the executed set is label-name.ts's).
   return verbs;
 }
 
@@ -236,10 +242,17 @@ export function validatePrimitives(raw: unknown): ValidationResult {
   for (const key of Object.keys(rawOut)) {
     if (rawOut[key] == null || rawOut[key] === false) continue;
     if (key === 'forward_to') {
-      return { ok: false, reason: 'I won’t set up forwarding your mail to someone else from a sentence — that one stays in the advanced editor, on purpose.' };
+      return { ok: false, reason: 'I won’t forward your mail to someone else from a rule — sending anything anywhere stays your own click, on purpose.' };
+    }
+    if ((UNEXECUTED_OUTCOME_KEYS as readonly string[]).includes(key)) {
+      const o = rawOut[key];
+      if (typeof o === 'object' && (o as Record<string, unknown>).enabled !== true) continue; // switched off — says nothing
+      return key === 'auto_draft'
+        ? { ok: false, reason: 'I don’t draft per rule — whether I draft replies is set once, in Settings → Drafting.' }
+        : { ok: false, reason: 'I can’t flag or notify you from a rule yet — I won’t promise something I don’t do.' };
     }
     if (!(AUTHORABLE_OUTCOME_KEYS as readonly string[]).includes(key)) {
-      return { ok: false, reason: `I can’t do “${key}”. I can label mail, treat it as a kind, draft a reply, archive it, mark it read, flag it to you, or trash it.` };
+      return { ok: false, reason: `I can’t do “${key}”. I can sort mail, treat it as a kind, file it under your own label, mark it read, archive it, or trash it.` };
     }
     const v = rawOut[key];
     switch (key) {
@@ -251,16 +264,10 @@ export function validatePrimitives(raw: unknown): ValidationResult {
         if (!isStr(v) || !(RULE_KINDS as readonly string[]).includes(v)) return { ok: false, reason: `“${String(v)}” isn’t one of my mail kinds (${RULE_KINDS.join(', ')}).` };
         outcome.set_kind = v as RuleOutcome['set_kind'];
         break;
-      case 'auto_draft': {
-        const o = typeof v === 'object' ? (v as Record<string, unknown>) : { enabled: v === true };
-        if (o.enabled !== true) continue;
-        outcome.auto_draft = { enabled: true, ...(isStr(o.instructions) && o.instructions.trim() ? { instructions: o.instructions.trim() } : {}) };
-        break;
-      }
-      case 'escalate': {
-        const o = typeof v === 'object' ? (v as Record<string, unknown>) : { enabled: v === true };
-        if (o.enabled !== true) continue;
-        outcome.escalate = { enabled: true, ...(isStr(o.instructions) && o.instructions.trim() ? { instructions: o.instructions.trim() } : {}) };
+      case 'apply_label': {
+        const v2 = validateUserLabelName(v);
+        if (!v2.ok) return { ok: false, reason: v2.reason };
+        outcome.apply_label = v2.name;
         break;
       }
       case 'mark_read': outcome.mark_read = true; break;
@@ -269,6 +276,11 @@ export function validatePrimitives(raw: unknown): ValidationResult {
     }
   }
   if (!Object.keys(outcome).length) return { ok: false, reason: "I understood which mail you mean, but not what you want done with it." };
+  // W10 — mailbox deeds act on mail as it ARRIVES; a sent-mail rule carrying one would be a promise
+  // the executor never keeps (lib/inbox/rules/execute.ts plans mailbox deeds for 'received' only).
+  if (trigger === 'sent' && (MAILBOX_OUTCOME_KEYS as readonly string[]).some((k) => (outcome as Record<string, unknown>)[k])) {
+    return { ok: false, reason: 'I act on your mailbox as mail arrives — I can’t label, archive, mark read or trash mail you send.' };
+  }
 
   return { ok: true, value: { trigger, match_mode, conditions: finalConditions, ai_match, outcome } };
 }
@@ -297,12 +309,14 @@ ai_match — a short natural-language description, used INSTEAD of conditions wh
 outcome — one or more of:
   set_type: needs_reply | to_do | waiting_on | meeting | fyi | notifications | marketing | done
   set_kind: receipt | newsletter | notification | calendar | cold_outreach | customer | team | personal
-  auto_draft: {"enabled":true}      archive: true      mark_read: true
-  escalate: {"enabled":true}        trash: true
+  apply_label: "<the person's OWN label name, exactly as they said it, e.g. Clients/Acme>"
+               (a Gmail label / Outlook category; "/" nests; never invent a name they did not say)
+  archive: true      mark_read: true      trash: true
+  (apply_label / archive / mark_read / trash act on mail as it ARRIVES — trigger "received" only)
 
 NOT SUPPORTED — refuse if asked: forwarding mail to another address, sending messages anywhere
-(SMS, WhatsApp, Slack), deleting permanently, snoozing, moving to a custom folder, replying
-automatically without review, anything outside email triage.
+(SMS, WhatsApp, Slack), drafting or replying per rule, flagging/notifying/escalating, deleting
+permanently, snoozing, anything outside email triage.
 
 Quote-then-verify: only assert a condition value the person's own sentence contains or plainly
 implies. Never invent a sender, a domain, or a keyword they did not state.

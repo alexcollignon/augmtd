@@ -685,7 +685,7 @@ console.log('\nWD3 · ONE HOME — the ledger, the deed and the door read ONE de
   gate('WD3.3 the deed engine reads the SAME function, so a class deed acts on what the ledger shows',
     !!bulk && /import \{ deriveHeldMembers \} from '\.\/held-members';/.test(bulk)
     && !!heldMembers && /export async function deriveHeldMembers\(/.test(heldMembers)
-    && /return \(await deriveHeld\(client, userId, selfEmail\)\)\.membersByClass;/.test(heldMembers));
+    && /const byClass = \(await deriveHeld\(client, userId, selfEmail\)\)\.membersByClass;/.test(heldMembers));
 
   gate('WD3.4 …and so does the door\'s count (countHeld delegates, it never re-derives)',
     !!heldMembers && /export async function countHeld\(/.test(heldMembers)

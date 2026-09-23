@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 // Per-user Drafting + Todo Capture preferences (the Email tab toggles).
 const DEFAULTS = {
   auto_draft: true,      // draft replies in the user's voice
-  auto_label: true,      // write triage labels back to Gmail/Outlook (default-on, opt-out)
+  auto_label: false,     // W10: AUGMTD's own posture labels in Gmail/Outlook — OFF unless explicitly chosen
   cc_bcc_new: false,     // allow new CC/BCC recipients in auto-drafts
   todo_auto: true,       // capture commitments
   todo_internal: false,  // include internal-org todos
@@ -28,9 +28,14 @@ export async function PUT(request: NextRequest) {
 
   const body = await request.json();
   const { data: existing } = await supabase.from('profiles').select('email_settings').eq('id', user.id).maybeSingle();
-  const merged = { ...DEFAULTS, ...((existing?.email_settings as object) ?? {}), ...body };
-  const { error: upErr } = await supabase.from('profiles').update({ email_settings: merged }).eq('id', user.id);
+  // W10 — store ONLY what the user chose (existing choices + this change), never the defaults: the
+  // old merge wrote every default into the row, so one toggle of ANY setting silently recorded
+  // `auto_label: true` as if the user had chosen it. Unset must stay unset so the default can speak.
+  const ALLOWED = new Set(Object.keys(DEFAULTS));
+  const patch = Object.fromEntries(Object.entries((body ?? {}) as Record<string, unknown>).filter(([k]) => ALLOWED.has(k)));
+  const stored = { ...((existing?.email_settings as object) ?? {}), ...patch };
+  const { error: upErr } = await supabase.from('profiles').update({ email_settings: stored }).eq('id', user.id);
   if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 });
 
-  return NextResponse.json({ settings: merged });
+  return NextResponse.json({ settings: { ...DEFAULTS, ...stored } });
 }

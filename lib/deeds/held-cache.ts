@@ -33,7 +33,9 @@ type DBClient = {
   } & Record<string, unknown>;
 };
 
-/** THE ONE PAYLOAD SHAPE the lens reads — built from facts already derived, never from a new read. */
+/** THE ONE PAYLOAD SHAPE the lens reads — built from facts already derived, never from a new read.
+ *  (The derivation is body-free — the caller hydrates the rendered rows' words first through
+ *  `hydrateHeldBodies`, lib/deeds/held-members.ts, with the SAME perClass/offset.) */
 export function buildHeldPayload(
   derived: HeldDerivation, todayISO: string,
   opts: { perClass?: number; offset?: number; filedThisMonth?: number } = {},

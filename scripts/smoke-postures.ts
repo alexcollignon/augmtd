@@ -200,8 +200,10 @@ const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
   const es = src('components/settings/email-settings.tsx');
   check('PS7a: the label mirror is surfaced as one plain sentence toggle on the postures page',
     es.includes('Mirror my triage into Gmail / Outlook labels') && es.includes('<PosturesSection'));
+  // ⟲ RE-POINTED (W10): the toggle now also offers the AUGMTD-label cleanup when turned off, so it
+  // writes through toggleAugmtdLabels — still the SAME email_settings.auto_label, no new flag.
   check('PS7b: it reads and writes the EXISTING email_settings.auto_label — no new flag',
-    es.includes("setSetting('auto_label', !settings.auto_label)") &&
+    es.includes("setSetting('auto_label', next)") && es.includes('on={settings.auto_label}') &&
     es.includes("fetch('/api/inbox/email-settings'"));
   check('PS7c: ONE HOME — the mirror toggle is not duplicated in the drafting section',
     (es.match(/Mirror my triage into Gmail \/ Outlook labels/g) ?? []).length === 1 &&

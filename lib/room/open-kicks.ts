@@ -19,7 +19,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { preparedState, isLiveArtifact, type PreparedArtifact } from '@/lib/prepare/read';
-import { anchorOf, linkKindOf, looseRoomKeyOf, looseTitleOf, ANCHOR_ROW_SELECT } from '@/lib/room/item-anchor';
+import { anchorOf, linkKindOf, looseRoomKeyOf, looseTitleOf, ANCHOR_ROW_SELECT, foldAnchorRow } from '@/lib/room/item-anchor';
 
 type LinkKind = 'inbox_item' | 'commitment' | 'meeting';
 
@@ -84,7 +84,7 @@ export async function kickOpenedItem(
     client.from('entity_links').select('entity_id').eq('user_id', uid).eq('item_kind', linkKind).eq('item_id', id).not('entity_id', 'is', null).maybeSingle(),
   ]);
   if (rowRes.error || !rowRes.data) return { composed: false, recognized: false, tripped: false };
-  const row = rowRes.data as unknown as Record<string, unknown>;
+  const row = foldAnchorRow(linkKind, rowRes.data) as Record<string, unknown>;
   const arts: PreparedArtifact[] = st?.all ?? [];
   const recognize = !verdictRes.error && !verdictRes.data;
   const trip = arts.some((a) => !isLiveArtifact(a));

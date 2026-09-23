@@ -34,6 +34,7 @@ import { NextResponse, after, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { HELD_MEMBERS_PER_CLASS } from '@/lib/home/attention';
 import { deriveHeld } from '@/lib/deeds/held-members';
+import { hydrateHeldBodies } from '@/lib/deeds/held-members';
 // THE ONE PAYLOAD SHAPE + THE ONE WRITER, shared with the brief's primer (lib/deeds/held-cache).
 import { HELD_CACHE_KIND, HELD_CACHE_MS, HELD_CACHE_MAX_MS, buildHeldPayload, storeHeldCache } from '@/lib/deeds/held-cache';
 import { countGraduatedThisMonth } from '@/lib/work/graduation';
@@ -80,6 +81,8 @@ export async function GET(req: NextRequest) {
     // Q9 · THE DECK'S OWN DAY rides the payload: the triage deck composes its ← LATER whens from a
     // date, and a client that reads its own clock offers "tomorrow" for yesterday at 23:58 in the
     // wrong zone. `buildHeldPayload` stamps the day it was computed against.
+    // THE HOT-PATH LAW: the derivation read no bodies; the rows this payload RENDERS get theirs now.
+    await hydrateHeldBodies(supabase, user.id, derived, todayISO, { perClass, offset });
     return buildHeldPayload(derived, todayISO, { perClass, offset, filedThisMonth });
   };
 

@@ -238,7 +238,8 @@ console.log('\nAT5 · ZERO AI — the classifier and the ledger route reach no A
     /supabase\.auth\.getUser\(\)/.test(h) && /status: 401/.test(h)
     && /deriveHeld\(supabase, user\.id/.test(h) && /\.eq\('user_id', userId\)/.test(hm));
   ok('   …and every full listing is PAGED (the 1000-row ceiling)',
-    /fetchAllRows/.test(hm) && (hm.match(/fetchAllRows/g) ?? []).length >= 2);
+    // (the pool pages its ids, then projects once per row — lib/home/lean-source `readLeanPool`)
+    /fetchAllRows|readLeanPool/.test(hm) && (hm.match(/fetchAllRows|readLeanPool/g) ?? []).length >= 2);
   ok('   …it shares the deck\'s own floors, never a second derivation',
     /deckEligible\(/.test(hm) && /from '@\/lib\/home\/deck-floors'/.test(hm)
     && !/deckEligible\(/.test(h));

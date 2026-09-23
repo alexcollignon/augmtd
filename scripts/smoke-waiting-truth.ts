@@ -206,11 +206,13 @@ console.log('\nH · THE FYI POOL — a declared window read whole, a reported bo
 {
   const brief = code('app/api/home/brief/route.ts');
   gate('H1 the FYI read is no longer `.limit(FYI_POOL_LIMIT)`', !/\.limit\(FYI_POOL_LIMIT\)/.test(brief));
-  gate('H2 …it pages the declared window through fetchAllRows under FYI_POOL_MAX',
+  // (event-spine P0: the window is paged by id then projected once — readLeanPool — under the same bound)
+  gate('H2 …it pages the declared window (fetchAllRows / readLeanPool) under FYI_POOL_MAX',
     /const FYI_WINDOW_DAYS = \d+;/.test(brief) && /const FYI_POOL_MAX = FYI_POOL_LIMIT \* 10;/.test(brief)
-    && /fetchAllRows<Record<string, unknown>>\(\(from, to\) => withoutMirrors\(supabase\.from\('inbox_items'\)/.test(brief)
+    && (/fetchAllRows<Record<string, unknown>>\(\(from, to\) => withoutMirrors\(supabase\.from\('inbox_items'\)/.test(brief)
+      || /readLeanPool\(supabase, user\.id, \(from, to\) => withoutMirrors\(supabase\.from\('inbox_items'\)\.select\('id'\)\)[\s\S]{0,500}maxRows: FYI_POOL_MAX/.test(brief))
     && /\.gte\('last_activity_at', new Date\(now\.getTime\(\) - FYI_WINDOW_DAYS \* DAY\)\.toISOString\(\)\)/.test(brief)
-    && /\{ maxRows: FYI_POOL_MAX \}/.test(brief));
+    && /maxRows: FYI_POOL_MAX \}/.test(brief));
   gate('H3 …and the saturation line names its bound and window, never "evicted by recency"',
     /FYI pool hit its bound — \$\{FYI_POOL_MAX\}/.test(brief) && !/FYI pool SATURATED at/.test(brief));
 }

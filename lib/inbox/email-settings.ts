@@ -16,7 +16,10 @@ export type EmailSettings = {
 
 export const EMAIL_SETTINGS_DEFAULTS: EmailSettings = {
   auto_draft: true,
-  auto_label: true,
+  // W10 THE MAILBOX IS THE USER'S (owner call, Sep 23): AUGMTD's own mailbox labels are OFF unless
+  // the account explicitly chose them (auto_label === true). Unset → off. Governs AUGMTD's POSTURE
+  // labels only — a user rule's own label/deeds apply regardless (lib/inbox/rules/label-name.ts).
+  auto_label: false,
   cc_bcc_new: false,
   todo_auto: true,
   todo_internal: false,

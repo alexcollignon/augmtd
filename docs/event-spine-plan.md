@@ -611,6 +611,12 @@ migration lands** (table-existence checks: a missing table means the flag reads 
   which a census shows as a deck diff. Mitigation: a parity check on served payloads before and
   after.
 
+**P0 PROGRESS (Sep 23, built, uncommitted — stabilization PART VI row ES-P0; registry `hot-path-law`):**
+- DONE — JSON-path projection on the hot listings through ONE helper (`lib/home/lean-source.ts`): held pool (`CLASSIFY_KEYS`, ids paged then projected once — `readLeanPool`), brief deck pool (`DECK_KEYS` + `body` for its snippets), FYI pool (`FYI_KEYS`), open commitments by column, THE ONE READER (batch `PREPARED_KEYS`, single `ONE_READER_KEYS`), the anchor row (`ANCHOR_KEYS`), room board (`BOARD_KEYS`), user-grounding door (`CLASSIFY_KEYS`), deck-context (bodies for the chosen emails only). Served rows hydrate what they render (`hydrateSource`, bounded, reported).
+- MEASURED (`scripts/bench-hot-paths.ts`, heaviest account, read-only, 2 rounds): Home-open reads 87.7 MB → 4.3 MB; held door 76 MB/~3.4–3.7 s → 3.0 MB/~1.5 s; FYI 7.95 MB → 0.19 MB; deck-context 12.2 MB → 0.8 MB; deck pool 3.4 MB → 0.87 MB but ~+250 ms (runs beside the held walk, off the critical path). Shadow check: held counts + ledger payload, deck per-row derivation + prepared/work states, FYI, commitments, view anchor, board, deck-context — all IDENTICAL.
+- FINDING that amends C.3: Postgres de-toasts the whole jsonb once PER PATH EXPRESSION (~28 µs per 20 KB row; ~40 paths ≈ the whole column) and evaluates paths BEFORE sort + OFFSET — so a reader names its SMALLEST set and a multi-page pool pages ids first. The Phase 5 body strip makes every path cheap.
+- NOT DONE in P0: the `after()` heal rate-limit and the `HOME_TIMING` census script; `lib/work/machine.ts` refetch and `lib/work-items/model.ts` (timeline) stay whole (allowlisted debt, outside the fence). Acceptance "Home p50 < 3 s" awaits a dev-server slow-log walk.
+
 ### P1 · THE QUEUE (≈1 week)
 
 - Migration: `work_events` + the 3 RPCs + `event_drainers`. Code: `lib/events/emit.ts`,

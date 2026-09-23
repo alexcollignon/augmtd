@@ -24,6 +24,7 @@
 // Adding a user-global knowledge source = one section here, visible to EVERY user-scope reasoner.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
+import { leanSelect, foldLeanRows, rulesReadBody, CLASSIFY_KEYS } from '@/lib/home/lean-source';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { clipForPrompt, clipLabel, EXCERPT_MARK, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 import { projectHref } from '@/lib/room/project-href';
@@ -167,11 +168,15 @@ async function readOwedFromSpine(
       ]);
       const floors = { judgedNone, isEcho: (it: { id: string }) => echo.isCampaignEcho(it as never, sig) };
       const CHUNK = 100;
+      // THE HOT-PATH LAW (event-spine P0): the classification facts only — the deck door's floors
+      // read nothing else; a user rule with a `body_*` condition brings `body` back.
+      const withBody = rulesReadBody(rules);
       for (let i = 0; i < ids.length; i += CHUNK) {
-        const { data } = await client.from('inbox_items')
-          .select('id, user_id, work_title, work_state, rule_type, type_override, status, source, source_data')
+        const { data: raw } = await client.from('inbox_items')
+          .select(leanSelect('id, user_id, work_title, work_state, rule_type, type_override, status, source', { keys: CLASSIFY_KEYS, withBody }))
           .eq('user_id', userId).in('id', ids.slice(i, i + CHUNK));
-        for (const row of (data ?? []) as Array<{ id: string }>) {
+        const data = foldLeanRows((raw ?? []) as unknown as Array<Record<string, unknown>>, { keys: CLASSIFY_KEYS, withBody });
+        for (const row of data as unknown as Array<{ id: string }>) {
           const w = inboxLive.find((x) => x.entityId === row.id);
           if (!w) continue;
           // A reply/action row must pass the whole deck door; a waiting row (its own deck lane,
