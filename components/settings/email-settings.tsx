@@ -302,7 +302,7 @@ export default function EmailSettings({ connections, section = 'connections' }: 
           </div>
         )}
 
-        <PosturesSection connectionId={activeConnId} />
+        <PosturesSection connectionId={activeConnId} mirrorOn={settings?.auto_label === true} />
 
         {/* The old rule editor, demoted — for the tail a sentence can't reach. */}
         <button

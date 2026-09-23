@@ -56,7 +56,7 @@ import { parseWho, type PersonEntity } from '@/lib/entities/people';
 import { fetchAllRows } from '@/lib/utils/fetch-all';
 import { isToolAllowed } from '@/lib/workspace/tool-capabilities';
 import type { WorkspaceFeatures } from '@/lib/workspace/types';
-import { actorRole } from './actor';
+import { actorRole, teammateAddressesOf } from './actor';
 import { addressesOf, chunked } from './identity';
 import type { ActorContext, EvidenceEvent, EvidenceLoadScope, EvidenceParty, EvidenceSourceDef } from './types';
 
@@ -220,7 +220,8 @@ async function loadScopedEmails(client: SupabaseClient, userId: string, scope: E
     if (rows.length >= room) capped = true;
     for (const r of rows) { const m = toPoolEmail(r); if (!seen.has(m.id)) seen.set(m.id, m); }
   };
-  const mates = scope.actors.teammates;
+  // members + the WORKING CIRCLE (W11.2) — the ladder's own address set, never a copy.
+  const mates = teammateAddressesOf(scope.actors);
   for (const addrs of chunked(scope.addresses, SCOPE_CHUNK)) {
     await lane((q) => q.eq('is_from_user', true).overlaps('to_addresses', addrs));
     await lane((q) => q.eq('is_from_user', true).overlaps('cc_addresses', addrs));

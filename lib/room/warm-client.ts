@@ -59,6 +59,23 @@ export function kickOpenedItem(kind: ItemViewKind, id: string): void {
   } catch { /* non-fatal — the next open schedules it */ }
 }
 
+// ── W11.4 THE ITEM OPENS NOW — the open's read starts AT THE CLICK ───────────────────────────────
+// The route's loading frame (app/(main)/@modal/(.)item/[id]/loading.tsx → components/home/
+// item-open-frame.tsx) paints the room's frame the instant the address changes and STARTS the open's
+// reads right there — before the route's server segment and the deep-dive's chunk have arrived. The
+// deep-dive mounting a moment later must not ask again: while the frame's flight is in the air it
+// JOINS it (as ever); once it has LANDED, the open takes that landing ONCE, inside OPEN_HANDOFF_MS
+// (the frame → mount gap), instead of a second request. Consumed on use: a later open reads afresh.
+export const OPEN_HANDOFF_MS = 5_000;
+type Landed = { at: number; d: ViewPayload };
+const _openLanded = new Map<string, Landed>();
+const takeLanded = (m: Map<string, Landed>, key: string): ViewPayload | null => {
+  const l = m.get(key);
+  if (!l) return null;
+  m.delete(key);
+  return Date.now() - l.at <= OPEN_HANDOFF_MS ? l.d : null;
+};
+
 /** GET the room's outcome read; a caller arriving while one is in flight JOINS it. Writes the cache
  *  (the next open's first paint) on every successful landing. `warm` = a hover/intent prefetch. */
 export function fetchItemView(kind: ItemViewKind, id: string, opts: { warm?: boolean } = {}): Promise<ViewPayload | null> {
@@ -69,16 +86,55 @@ export function fetchItemView(kind: ItemViewKind, id: string, opts: { warm?: boo
     if (!opts.warm && flying.warm) { flying.warm = false; kickOpenedItem(kind, id); }
     return flying.p;
   }
-  const p = fetch(`/api/items/view?kind=${kind}&id=${id}${opts.warm ? '&warm=1' : ''}`)
+  // An OPEN whose frame already landed this open's read takes it (one request per open, W11.4).
+  if (!opts.warm) {
+    const landed = takeLanded(_openLanded, key);
+    if (landed) return Promise.resolve(landed);
+  }
+  const flight: ViewFlight = { p: Promise.resolve(null), warm: !!opts.warm };
+  flight.p = fetch(`/api/items/view?kind=${kind}&id=${id}${opts.warm ? '&warm=1' : ''}`)
     .then((r) => (r.ok ? r.json() : null))
     .then((d: ViewPayload | null) => {
       if (!d || d.error) return null;
       try { saveLS(key, d); } catch { /* private mode */ }
+      // Only an OPEN's landing (a real open, or a warm an open joined) is handed to the mount.
+      if (!flight.warm) _openLanded.set(key, { at: Date.now(), d });
       return d;
     })
     .catch(() => null)
     .finally(() => { _viewFlight.delete(key); });
-  _viewFlight.set(key, { p, warm: !!opts.warm });
+  _viewFlight.set(key, flight);
+  return flight.p;
+}
+
+/** The open's view read, settled — the deep-dive's AFTER-PAINT enrichments (the judge) wait on it,
+ *  bounded, so they never compete with the first paint's one read. Resolves at once with none. */
+export function viewSettled(kind: ItemViewKind, id: string, capMs = 2_500): Promise<void> {
+  const flying = _viewFlight.get(itemViewKey(kind, id));
+  if (!flying) return Promise.resolve();
+  return Promise.race([flying.p.then(() => undefined, () => undefined), new Promise<void>((r) => setTimeout(r, capMs))]);
+}
+
+// THE OPEN'S OBJECT READ (the commitment door's facts) — the same one-flight + one-handoff shape,
+// keyed by URL; writes the kind's instant-load cache key on landing (the hover warm's key).
+const _objFlight = new Map<string, Promise<ViewPayload | null>>();
+const _objLanded = new Map<string, Landed>();
+export function fetchOpenObject(url: string, lsKey: string): Promise<ViewPayload | null> {
+  const flying = _objFlight.get(url);
+  if (flying) return flying;
+  const landed = takeLanded(_objLanded, url);
+  if (landed) return Promise.resolve(landed);
+  const p = fetch(url)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d: ViewPayload | null) => {
+      if (!d || d.error) return null;
+      try { saveLS(lsKey, d); } catch { /* private mode */ }
+      _objLanded.set(url, { at: Date.now(), d });
+      return d;
+    })
+    .catch(() => null)
+    .finally(() => { _objFlight.delete(url); });
+  _objFlight.set(url, p);
   return p;
 }
 

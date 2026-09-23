@@ -36,21 +36,47 @@ function bodyOf(e: SentRow): string {
   return t.length > MAX_SAMPLE_CHARS ? t.slice(0, MAX_SAMPLE_CHARS) + '…' : t;
 }
 
+// ── THE MAILBOX SCOPE (stabilization W11.1 · connection-scoped voice + signature) ─────────────────
+// Found live (owner walk, Sep 23): a draft on a client thread signed with the user's OTHER identity —
+// a company unrelated to the thread. The exemplars (the few-shot the model copies its sign-off from)
+// were the user's most recent sent mail from ANY connected mailbox. A draft is written FROM the
+// mailbox its thread lives in, so its exemplars come from THAT mailbox only: the connection the mail
+// synced through, or (rows synced before `connection_id` existed) mail sent FROM that mailbox's own
+// address. Scoped, there is NO global fallback — fewer examples beat another identity's signature.
+export type VoiceScope = { connectionId?: string | null; address?: string | null };
+
+/** The PostgREST `or` filter that confines exemplars to one mailbox — null when the scope names none
+ *  (then the legacy, unscoped read applies). Pure; the gate holds it. */
+export function voiceScopeFilter(scope: VoiceScope | null | undefined): string | null {
+  const parts: string[] = [];
+  const id = String(scope?.connectionId ?? '').trim();
+  if (/^[0-9a-f-]{36}$/i.test(id)) parts.push(`connection_id.eq.${id}`);
+  const addr = String(scope?.address ?? '').trim().toLowerCase();
+  // An address with a comma/paren would break the filter grammar — such a form is never a mailbox.
+  if (/^[^\s@,()]+@[^\s@,()]+$/.test(addr)) parts.push(`from_address.ilike.${addr}`);
+  return parts.length ? parts.join(',') : null;
+}
+
 export async function buildVoiceBlock(
   userId: string,
   recipientEmail: string | null,
   client: DBClient,
+  /** W11.1 — the mailbox the draft is written FROM (the thread's connection). Absent → unscoped. */
+  scope?: VoiceScope | null,
 ): Promise<string> {
   const rcpt = recipientEmail?.toLowerCase().trim() || null;
+  const scoped = voiceScopeFilter(scope);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const inMailbox = (q: any) => (scoped ? q.or(scoped) : q);
   // NB: the inbox voice is NOT tied to a (deletable) skill. Its durable foundation is the
   // user's real sent emails (exemplars below) + relationship. A distilled voice profile in
   // Memory (context_profiles) is layered in separately by the drafter when present.
   const [recipientRes, relRes] = await Promise.all([
     rcpt
-      ? client.from('emails')
+      ? inMailbox(client.from('emails')
           .select('subject, body, html_body, received_at')
           .eq('user_id', userId).eq('is_from_user', true)
-          .contains('to_addresses', [rcpt])
+          .contains('to_addresses', [rcpt]))
           .order('received_at', { ascending: false }).limit(MAX_SAMPLES)
       : Promise.resolve({ data: [] as SentRow[] }),
     // Relationship signal — who this is + how much they matter, so the draft's care level
@@ -64,10 +90,11 @@ export async function buildVoiceBlock(
 
   let exemplars: SentRow[] = (recipientRes?.data as SentRow[]) ?? [];
   // Not enough recipient-specific samples → fall back to the user's most recent sent emails.
+  // W11.1: scoped → the fallback stays INSIDE the mailbox (never another identity's mail).
   if (exemplars.length < 2) {
-    const { data } = await client.from('emails')
+    const { data } = await inMailbox(client.from('emails')
       .select('subject, body, html_body, received_at')
-      .eq('user_id', userId).eq('is_from_user', true)
+      .eq('user_id', userId).eq('is_from_user', true))
       .order('received_at', { ascending: false }).limit(MAX_SAMPLES);
     if ((data?.length ?? 0) > exemplars.length) exemplars = (data as SentRow[]) ?? exemplars;
   }

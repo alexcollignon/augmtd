@@ -30,6 +30,8 @@ import { denotesUser, partyDisplay, type UserForms } from '@/lib/commitments/ext
 import { sameAttendee, nameTokens, emailLocalpart } from '@/lib/projects/identity';
 import { parseWho, findPersonEntity, type PersonEntity } from '@/lib/entities/people';
 import { isEmail, normalizeEmail, firstEmailIn } from '@/lib/core/email';
+import { isAutomatedSender } from '@/lib/inbox/automated';
+import { PUBLIC_MAIL_DOMAINS } from '@/lib/prepare/truth';
 
 export type AddresseeVia = 'counterparty' | 'email_source' | 'meeting' | 'entity' | 'sender' | 'title';
 
@@ -44,7 +46,42 @@ export type AddresseeResolution = {
   recipients: Addressee[];
   /** Candidates the ladder SAW but may not claim (several people on a project) — offered, never sent. */
   suggestions: Addressee[];
+  /** W11.1 · REPLY-ALL: the thread's other participants, kept on Cc (never the user, never a To
+   *  recipient, never an automated address). Present only where a thread was read. */
+  cc?: Addressee[];
 };
+
+// ── REPLY-ALL ON A SHARED THREAD (stabilization W11.1 · ONE COHERENT ITEM, owner walk Sep 23) ──────
+// Found live: the draft on a client thread had an EMPTY Cc although the user's teammate was on the
+// thread — the draft would have quietly dropped a colleague from the conversation. A reply on a
+// thread keeps the thread's participants: whoever wrote, was addressed or copied on the message
+// being answered (the thread's newest, else the source) stays on Cc — EXCEPT the user (any form, any
+// connected mailbox), the To recipients (they are already addressed), and automated addresses (a
+// no-reply or notifications mailbox has no reader). Pure; the gate holds it.
+export const REPLY_ALL_CC_MAX = 10;
+export function replyAllCc(args: {
+  /** Raw participant forms — "Name <addr>", bare addresses — from the message being answered. */
+  participants: Array<string | null | undefined>;
+  /** Who the draft already goes To. */
+  to: Array<Pick<Addressee, 'name' | 'email'>>;
+  user: UserForms;
+  /** The user's authoritative addresses (profile + connected mailboxes). */
+  userAddresses?: string[];
+}): Addressee[] {
+  const own = new Set((args.userAddresses ?? []).map((a) => normalizeEmail(String(a ?? ''))).filter(Boolean));
+  const out: Addressee[] = [];
+  for (const raw of args.participants) {
+    const a = raw ? attendeeOf(raw, 'email_source') : null;
+    if (!a?.email) continue;                              // Cc needs an address — a bare name cannot be copied
+    if (own.has(normalizeEmail(a.email)) || addresseeIsUser(a, args.user)) continue;
+    if (args.to.some((t) => samePerson(a, t))) continue;
+    if (isAutomatedSender(a.email, a.name, '')) continue;
+    if (out.some((b) => samePerson(a, b))) continue;
+    out.push(a);
+    if (out.length >= REPLY_ALL_CC_MAX) break;
+  }
+  return out;
+}
 
 export type AddresseeFacts = {
   counterparty: string | null;
@@ -67,7 +104,7 @@ export type AddresseeFacts = {
 };
 
 /** Public mail providers — a shared domain here says nothing about who is a colleague. */
-const PUBLIC_DOMAINS = new Set(['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'yahoo.com', 'icloud.com', 'me.com', 'proton.me', 'protonmail.com', 'aol.com', 'gmx.com', 'gmx.de', 'mail.com']);
+const PUBLIC_DOMAINS = PUBLIC_MAIL_DOMAINS; // ONE list (lib/prepare/truth.ts — the signature floor reads it too)
 
 // Diacritics ("Zoé" is "Zoe") are folded by THE ONE shared normalizer now (lib/projects/identity
 // foldAccents, W7.5) — the local fold this law carried in W7.3 retired into it.
@@ -332,12 +369,14 @@ export async function resolveCommitmentAddressee(
   const meetingAttendees: unknown[] = [];
   let entityPeople: string[] = [];
   let registry: PersonEntity[] = [];
+  let threadOfSource: string | null = null;        // W11.1: the source email's own thread (reply-all)
+  let sourceParticipants: string[] | null = null;  // W11.1: the source email's participants (fallback)
   try {
     const { getPersonEntities } = await import('@/lib/entities/people');
     const [reg, srcEmail, mt, link] = await Promise.all([
       getPersonEntities(client, userId).catch(() => [] as PersonEntity[]),
       row.source === 'email' && row.source_id
-        ? client.from('emails').select('from_address, from_name, to_addresses, is_from_user').eq('id', row.source_id).eq('user_id', userId).maybeSingle()
+        ? client.from('emails').select('from_address, from_name, to_addresses, cc_addresses, is_from_user, thread_id').eq('id', row.source_id).eq('user_id', userId).maybeSingle()
         : Promise.resolve({ data: null }),
       row.source === 'meeting' && row.source_id
         ? client.from('meeting_transcripts').select('attendees, calendar_event_id').eq('id', row.source_id).eq('user_id', userId).maybeSingle()
@@ -348,6 +387,10 @@ export async function resolveCommitmentAddressee(
     registry = reg;
     const e = srcEmail.data as { from_address?: string | null; from_name?: string | null; to_addresses?: string[] | null; is_from_user?: boolean | null } | null;
     if (e) emailSource = { fromAddress: e.from_address ?? null, fromName: e.from_name ?? null, to: (e.to_addresses ?? []).map(String), isFromUser: !!e.is_from_user };
+    if (e) {
+      threadOfSource = ((e as { thread_id?: string | null }).thread_id) ?? null;
+      sourceParticipants = participantsOf(e as ParticipantRow);
+    }
     const m = mt.data as { attendees?: unknown; calendar_event_id?: string | null } | null;
     if (Array.isArray(m?.attendees)) meetingAttendees.push(...(m!.attendees as unknown[]));
     const [ev, ent] = await Promise.all([
@@ -367,5 +410,28 @@ export async function resolveCommitmentAddressee(
     counterparty: row.counterparty ?? null, emailSource, meetingAttendees, entityPeople, registry,
     title: row.description ?? null, user, userAddresses,
   });
-  return { ...r, user, row };
+  // W11.1 · REPLY-ALL: the thread's other participants ride Cc — read off the thread's NEWEST message
+  // (the one a reply answers), else the source email. Bounded: one row. Unreadable → no Cc (never a guess).
+  let cc: Addressee[] = [];
+  try {
+    const threadId = row.thread_id ?? threadOfSource;
+    let participants: string[] = [];
+    if (threadId) {
+      const { data: last, error } = await client.from('emails').select('from_address, from_name, to_addresses, cc_addresses')
+        .eq('user_id', userId).eq('thread_id', threadId).order('received_at', { ascending: false }).limit(1).maybeSingle();
+      if (!error && last) participants = participantsOf(last as ParticipantRow);
+    }
+    if (!participants.length && sourceParticipants) participants = sourceParticipants;
+    cc = replyAllCc({ participants, to: r.recipients, user, userAddresses });
+  } catch { cc = []; }
+  return { ...r, cc, user, row };
+}
+
+type ParticipantRow = { from_address?: string | null; from_name?: string | null; to_addresses?: unknown; cc_addresses?: unknown };
+/** A message's participants as raw forms (sender first, then To, then Cc). */
+export function participantsOf(m: ParticipantRow | null | undefined): string[] {
+  if (!m) return [];
+  const list = (x: unknown) => (Array.isArray(x) ? x.map((v) => String(v ?? '')).filter(Boolean) : []);
+  const from = m.from_address ? (m.from_name ? `${m.from_name} <${m.from_address}>` : m.from_address) : null;
+  return [...(from ? [from] : []), ...list(m.to_addresses), ...list(m.cc_addresses)];
 }

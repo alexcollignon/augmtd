@@ -22,6 +22,7 @@ import { DRAFT_LAW_VERSION as DRAFT_LAW_VERSION_C } from '@/lib/inbox/attachment
 import type { TaskRoute } from '@/lib/prepare/route-suggestion';
 import type { PreparedKind } from '@/lib/prepare/read';
 import { evaluateDeliverable, type EvalVerdict } from '@/lib/prepare/evaluate';
+import { chaseInvertsObligation, CHASE_INVERSION_REFUSAL } from '@/lib/prepare/truth';
 import { aiCall } from '@/lib/ai/call';
 
 // ── O4: the CoS EVALUATOR wraps every generated draft — review, ONE capped revision on a substantive
@@ -33,12 +34,15 @@ async function reviewAndRevise(
   regenerate: (objection: string) => Promise<string | null>,
 ): Promise<{ body: string; review: EvalVerdict }> {
   let body = args.body;
-  let review = await evaluateDeliverable(admin, userId, { content: body, task: args.task, recipient: args.recipient, entityId: args.entityId, kind: args.kind });
+  // W11.1 · THE ATTACHMENT FLOOR's fact: a NUDGE never carries a file (the nudge lanes stage none),
+  // so its words may never say "attached". Other kinds state nothing here (the floor stays silent).
+  const staged = args.kind === 'nudge' ? { staged: false } : {};
+  let review = await evaluateDeliverable(admin, userId, { content: body, task: args.task, recipient: args.recipient, entityId: args.entityId, kind: args.kind, ...staged });
   if (review.verdict === 'revise' && review.objection) {
     const revised = await regenerate(review.objection).catch(() => null);
     if (revised) {
       body = revised;
-      review = await evaluateDeliverable(admin, userId, { content: body, task: args.task, recipient: args.recipient, entityId: args.entityId, kind: args.kind });
+      review = await evaluateDeliverable(admin, userId, { content: body, task: args.task, recipient: args.recipient, entityId: args.entityId, kind: args.kind, ...staged });
     }
     if (review.verdict === 'revise') review = { verdict: 'flag', objection: review.objection }; // the cap: surface annotated
   }
@@ -187,6 +191,10 @@ export async function prepareOneItem(
       }
     }
     if (verdict.work === 'send_file') return await done(await prepareDocSend(admin, userId, w, verdict));
+    // ── W11.1 · THE DIRECTION FLOOR, at the lane (belt to the judge's own floor): a chase on work the
+    // USER owes is refused here, never written — a hand-routed or pre-floor verdict cannot reach the
+    // nudge drafter. prepareNudge re-asks the same predicate on its own facts. ──
+    if (verdict.work === 'chase' && await chaseInvertedFor(admin, userId, w)) return { did: 'none', reason: CHASE_INVERSION_REFUSAL };
     if (verdict.work === 'chase' && (w.who || w.blockedOn)) return await done(await prepareNudge(admin, userId, { ...w, blockedOn: w.blockedOn ?? w.who ?? null }, nonLive));
     // ── W1: THE JUDGE'S NEW HANDS — schedule and forward were judged-but-never-prepared (the
     // registry mapped them, the pass fell through to none). Both prepare an EDITABLE artifact and
@@ -501,8 +509,25 @@ async function prepareReplyDraft(admin: SupabaseClient, userId: string, w: WorkI
   return { did: 'draft', worker: pa?.name };
 }
 
+// ── W11.1 · WHO OWES, read for the lane (the ONE predicate: lib/prepare/truth chaseInvertsObligation).
+// A commitment's direction · an inbox item's understanding ownership. Unreadable → false (the judge's
+// floor already stood; this is the belt). ──
+async function chaseInvertedFor(admin: SupabaseClient, userId: string, w: WorkItem): Promise<boolean> {
+  try {
+    if (w.id.startsWith('commit:')) {
+      const { data } = await admin.from('commitments').select('direction').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
+      return chaseInvertsObligation({ direction: (data?.direction as string | null) ?? null });
+    }
+    const { data } = await admin.from('inbox_items').select('source_data->understanding').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
+    const u = ((data as { understanding?: { ownership?: string } } | null)?.understanding) ?? null;
+    return chaseInvertsObligation({ ownership: u?.ownership ?? null });
+  } catch { return false; }
+}
+
 // ── The nudge branch (slice 1) — inbox waits land on source_data, commitment waits in the pool. ──
 async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem, nonLive?: Set<PreparedKind>): Promise<PrepareOneResult> {
+  // W11.1 · A NUDGE IS FOR WHAT THEY OWE — refuse, never write, on work the user owes.
+  if (await chaseInvertedFor(admin, userId, w)) return { did: 'none', reason: CHASE_INVERSION_REFUSAL };
   // W5c: an untrue nudge/draft (a false completion claim, a superseded ground) is never "fresh".
   const untrueNudge = !!nonLive && (nonLive.has('nudge_draft') || nonLive.has('reply_draft'));
   const ageDays = Math.max(0, Math.round((Date.now() - Date.parse(w.startAt)) / 86_400_000));
@@ -529,11 +554,12 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem, 
     const { parseWho } = await import('@/lib/entities/people');
     const pw = parseWho(w.blockedOn);
     const inboxAddressee = (pw.name || pw.email) ? { name: pw.name, email: pw.email, via: 'counterparty' as const } : null;
-    const raw = await generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays, mirrorText }, admin);
+    const nudgeThread = (sd.thread_id as string | null | undefined) ?? null; // W11.1: the mailbox scope
+    const raw = await generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays, mirrorText, threadId: nudgeThread }, admin);
     if (!raw) return { did: 'none', reason: 'could not draft the nudge' };
     const { body, review } = await reviewAndRevise(admin, userId, // O4 review
       { body: raw, task: w.title, recipient: w.blockedOn, entityId: w.entity?.id ?? null, kind: 'nudge' },
-      (objection) => generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays, mirrorText, instructions: `REVIEWER'S OBJECTION — fix this: ${objection}` }, admin));
+      (objection) => generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays, mirrorText, threadId: nudgeThread, instructions: `REVIEWER'S OBJECTION — fix this: ${objection}` }, admin));
     const pa = await getDraftingAssistant(admin, userId); // O3a attribution
     await admin.from('inbox_items')
       .update({ source_data: { ...sd, nudge_draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', prepared_from: currentGround, ...(inboxAddressee ? { addressee: inboxAddressee } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) } })
@@ -563,8 +589,10 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem, 
     if (decision.action === 'keep') return { did: 'none', reason: decision.reason };
     // THE LANGUAGE MIRROR: the counterparty's last inbound message on the commitment's thread.
     let mirrorText: string | null = null;
+    let commitThreadId: string | null = null; // W11.1: the conversation's MAILBOX scopes voice + signature
     try {
       const { data: c } = await admin.from('commitments').select('thread_id').eq('id', w.entityId).maybeSingle();
+      commitThreadId = (c?.thread_id as string | null) ?? null;
       if (c?.thread_id) {
         const { data: last } = await admin.from('emails').select('body, received_at').eq('user_id', userId)
           .eq('thread_id', c.thread_id as string).eq('is_from_user', false)
@@ -583,11 +611,11 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem, 
     const greet = recipientsLabel(addr.recipients);
     const { data: dirRow } = await admin.from('commitments').select('direction').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
     const direction: 'you' | 'them' = dirRow?.direction === 'you_owe' ? 'you' : 'them';
-    const raw = await generateNudgeDraft(userId, { counterparty: greet, description: w.title, ageDays, mirrorText, direction }, admin);
+    const raw = await generateNudgeDraft(userId, { counterparty: greet, description: w.title, ageDays, mirrorText, direction, threadId: commitThreadId }, admin);
     if (!raw) return { did: 'none', reason: 'could not draft the nudge' };
     const { body, review } = await reviewAndRevise(admin, userId, // O4 review
       { body: raw, task: w.title, recipient: greet, entityId: w.entity?.id ?? null, kind: 'nudge' },
-      (objection) => generateNudgeDraft(userId, { counterparty: greet, description: w.title, ageDays, mirrorText, direction, instructions: `REVIEWER'S OBJECTION — fix this: ${objection}` }, admin));
+      (objection) => generateNudgeDraft(userId, { counterparty: greet, description: w.title, ageDays, mirrorText, direction, threadId: commitThreadId, instructions: `REVIEWER'S OBJECTION — fix this: ${objection}` }, admin));
     const pa = await getDraftingAssistant(admin, userId); // O3a attribution
     // The superseded nudge FILES into the version chain (the reader skips `version_of` rows) —
     // the past folds, never deletes.
@@ -1075,7 +1103,7 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
     // TRUE ADDRESSEES (W7.3): the send is addressed by THE ONE LADDER and stamped with it.
     const { resolveCommitmentAddressee: resolveC, recipientsLabel: labelC, addresseeStamp: stampC } = await import('@/lib/prepare/addressee');
     const cAddr = await resolveC(admin, userId, w.entityId);
-    const cBody = await generateNudgeDraft(userId, { counterparty: labelC(cAddr.recipients), description: `${w.title} — the document "${cTop.filename}" will be attached.`, direction: 'you' }, admin).catch(() => null);
+    const cBody = await generateNudgeDraft(userId, { counterparty: labelC(cAddr.recipients), description: `${w.title} — the document "${cTop.filename}" will be attached.`, direction: 'you', threadId: cAddr.row?.thread_id ?? null }, admin).catch(() => null);
     if (!cBody) return { did: 'none', reason: 'could not draft the send' };
     const { writeDeliverable } = await import('@/lib/home/deliverable-pool');
     const paC = await getDraftingAssistant(admin, userId); // O3a attribution

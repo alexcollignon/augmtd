@@ -12,7 +12,8 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { clipForPrompt } from '@/lib/utils/clip-for-prompt';
+// W11.3 · a source card's excerpt is a DISPLAY clip — EXCERPT_MARK never renders.
+import { clipForDisplay } from '@/lib/utils/clip-for-prompt';
 
 /** The source card's excerpt budget — clipped by THE ONE CLIPPER, the cut declared. */
 export const MEETING_SOURCE_EXCERPT_CHARS = 280;
@@ -94,7 +95,57 @@ export async function meetingSourceOf(
       id: String(mt.id),
       addressId: String(mt.calendar_event_id ?? mt.id),
       title, startISO, attendees,
-      excerpt: summary ? clipForPrompt(summary, MEETING_SOURCE_EXCERPT_CHARS) : null,
+      excerpt: summary ? clipForDisplay(summary, MEETING_SOURCE_EXCERPT_CHARS) : null,
     };
+  } catch { return null; }
+}
+
+// ── A COMMITMENT'S SOURCE MESSAGE IS ITS OWN (stabilization W11.1 · ONE OBJECT, ONE DOOR) ─────────
+// Found live (owner walk, Sep 23): a commitment extracted from an Aug 28 email on a long client
+// thread showed, as its source card, the thread's LATEST message (Sep 17) — the room mounted the
+// thread's inbox item (`inboxItemForEmail` → the newest item on the thread) and the thread door serves
+// that item's newest tail. The promise came from ONE message; the card shows THAT message, read by
+// `source_id` here, and "later in this conversation" is the thread drawer's (the card's one door).
+
+/** The excerpt budget for a source message's own words — the same budget as a meeting source. */
+export const EMAIL_SOURCE_EXCERPT_CHARS = MEETING_SOURCE_EXCERPT_CHARS;
+
+/** An email-born commitment's source MESSAGE, as its card needs it — all served, nothing composed by
+ *  the kit. `excerpt` is the message's OWN words (quoted tails stripped), display-clipped. */
+export type EmailSource = {
+  id: string;
+  threadId: string | null;
+  subject: string | null;
+  from: string | null;
+  receivedAt: string | null;
+  excerpt: string | null;
+};
+
+/** The pure shaping half (the gate holds it): an `emails` row → the source message facts. */
+export function emailSourceFromRow(row: Record<string, unknown> | null | undefined, ownWords: (body: string) => string): EmailSource | null {
+  if (!row || !row.id) return null;
+  const body = typeof row.body === 'string' ? ownWords(row.body) : '';
+  const text = body.replace(/\s+/g, ' ').trim();
+  return {
+    id: String(row.id),
+    threadId: (row.thread_id as string | null) ?? null,
+    subject: (row.subject as string | null) || null,
+    from: (row.from_name as string | null) || (row.from_address as string | null) || null,
+    receivedAt: (row.received_at as string | null) ?? null,
+    excerpt: text ? clipForDisplay(text, EMAIL_SOURCE_EXCERPT_CHARS) : null,
+  };
+}
+
+/** THE ONE READ of an email-born commitment's source message: `commitments.source_id` IS the
+ *  `emails.id` (see the header). One bounded SELECT, zero AI; unreadable → null. */
+export async function emailSourceOf(client: SupabaseClient, userId: string, emailId: string | null | undefined): Promise<EmailSource | null> {
+  if (!emailId) return null;
+  try {
+    const { data, error } = await client.from('emails')
+      .select('id, thread_id, subject, body, from_name, from_address, received_at')
+      .eq('id', emailId).eq('user_id', userId).maybeSingle();
+    if (error || !data) return null;
+    const { topMessageOf } = await import('@/lib/inbox/top-message');
+    return emailSourceFromRow(data as Record<string, unknown>, (b) => topMessageOf(b) || b);
   } catch { return null; }
 }

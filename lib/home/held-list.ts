@@ -38,26 +38,29 @@ export function foldKeyOf(who: string | null | undefined, subject: string | null
   return `${String(who ?? '').trim().toLowerCase()}\u0000${foldSubject(subject)}`;
 }
 
-export type HeldFold<T> = { key: string; lead: T; members: T[] };
+export type HeldFold<T> = { key: string; lead: T; members: T[]; /** W11.2: the fold is ONE CONVERSATION (not a who+subject echo) */ conversation?: boolean };
 
 /** Fold rows sharing a who + subject under ONE row. The lead is the FIRST in the served order (the
  *  server's order is the order), `members` holds every row of the group including the lead. A row
  *  with no subject never folds (an empty key would swallow unrelated rows). */
-export function foldHeldRows<T>(rows: T[], keyOf: (r: T) => { who: string | null; subject: string | null }): HeldFold<T>[] {
+export function foldHeldRows<T>(rows: T[], keyOf: (r: T) => { who: string | null; subject: string | null; conversation?: string | null }): HeldFold<T>[] {
   const out: HeldFold<T>[] = [];
   const at = new Map<string, number>();
   rows.forEach((r, i) => {
-    const { who, subject } = keyOf(r);
-    const key = foldSubject(subject) ? foldKeyOf(who, subject) : `\u0001${i}`;
+    const { who, subject, conversation } = keyOf(r);
+    // W11.2 · ONE ROW PER CONVERSATION: a served conversation key outranks the who+subject echo key —
+    // three commitments on one client thread (three different asks) are ONE row with their count.
+    const key = conversation ? `\u0002${conversation}` : foldSubject(subject) ? foldKeyOf(who, subject) : `\u0001${i}`;
     const idx = at.get(key);
-    if (idx === undefined) { at.set(key, out.length); out.push({ key, lead: r, members: [r] }); }
+    if (idx === undefined) { at.set(key, out.length); out.push({ key, lead: r, members: [r], ...(conversation ? { conversation: true } : {}) }); }
     else out[idx].members.push(r);
   });
   return out;
 }
 
 /** THE WORDS OF A FOLD — the rest of the group counted once, beneath the lead (the lead is shown). */
-export const foldCountWord = (n: number): string | null => (n > 1 ? `+${n - 1} more like this` : null);
+export const foldCountWord = (n: number, conversation = false): string | null =>
+  (n > 1 ? (conversation ? `+${n - 1} more open on this thread` : `+${n - 1} more like this`) : null);
 
 /** THE LIST'S HANDED ROWS. The warm stack (the Home's own held atoms, there so the deck opens
  *  before the account is read) is the list's content ONLY while the ledger has not landed; once it

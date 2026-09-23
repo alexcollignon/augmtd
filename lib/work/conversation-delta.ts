@@ -80,6 +80,13 @@ export type DeltaMessage = {
   at: string | null;
   /** True = the user wrote it; false = the counterparty; null = unknown (a meeting). */
   authoredByUser: boolean | null;
+  /** W11.2 THE WORKING CIRCLE — the author's rung on THE ONE ACTOR LADDER (lib/evidence/actor.ts
+   *  `actorRole`) for a message the user did NOT write. `teammate` = a workspace member, the user's own
+   *  corporate domain, or a working-circle collaborator: THE USER'S SIDE — their delivery is the
+   *  debtor side's delivery for work the user owes (still only NOMINATED; the one judge decides). */
+  authorRole?: 'teammate' | 'counterparty' | 'unknown' | null;
+  authorAddress?: string | null;
+  authorName?: string | null;
   subject?: string | null;
 };
 export type DeltaInput = {
@@ -181,6 +188,10 @@ export function keepAll(input: Pick<DeltaInput, 'open' | 'candidates'>, failed =
 
 const label = (s: unknown): string => String(s ?? '').trim().toUpperCase();
 
+/** W11.2 — is the message's author on the USER'S side (the user, or a teammate by the one ladder)? */
+export const authorOnUserSide = (m: Pick<DeltaMessage, 'authoredByUser' | 'authorRole'>): boolean =>
+  m.authoredByUser === true || (m.authoredByUser === false && m.authorRole === 'teammate');
+
 /**
  * Turn the model's labelled answer into a plan the code can stand behind. Every floor of the law
  * lives HERE (and the gates exercise it directly): unknown labels ignored, quotes verified in the
@@ -237,7 +248,9 @@ export function validateDelta(raw: RawDelta | null | undefined, input: DeltaInpu
       // The fulfillment judge is told WHO wrote the evidence — a message by the other side is not
       // the debtor's delivery (their acknowledgement is the nominator's business, not this pass's).
       const debtorIsUser = item.direction !== 'awaiting';
-      if (message.authoredByUser !== null && message.authoredByUser !== debtorIsUser) { down(l, 'delivered', 'the message was not written by the debtor'); continue; }
+      // W11.2: the user's SIDE is the user or a teammate (the ladder's rung, handed in) — a working-
+      // circle colleague's "we've implemented the changes" is the debtor side's delivery.
+      if (message.authoredByUser !== null && authorOnUserSide(message) !== debtorIsUser) { down(l, 'delivered', 'the message was not written by the debtor'); continue; }
       plan.set(item.id, { id: item.id, action: 'delivered', quote });
     } else if (verdict === 'moot') {
       plan.set(item.id, { id: item.id, action: 'moot', quote });
@@ -295,6 +308,8 @@ export function buildDeltaPrompt(input: DeltaInput): string {
   const who = message.kind === 'meeting'
     ? 'a MEETING (its summary and action items below)'
     : message.authoredByUser === true ? 'an EMAIL written BY THE USER'
+      // W11.2: rendered only when the ladder named the author a teammate (legacy lines unchanged).
+      : message.authoredByUser === false && message.authorRole === 'teammate' ? 'an EMAIL written BY A TEAMMATE OF THE USER (on the user\'s side — their delivery counts as the user\'s side delivering)'
       : message.authoredByUser === false ? 'an EMAIL written BY THE OTHER PARTY' : 'an EMAIL';
   const fmt = (o: DeltaOpenItem, i: number) =>
     `[C${i + 1}] ${o.direction === 'awaiting' ? 'THEY OWE the user' : 'THE USER OWES'}${o.counterparty ? ` (${clipForPrompt(o.counterparty, 60)})` : ''}: "${clipForPrompt(o.description, 200)}"` +
@@ -564,13 +579,17 @@ export async function applyDeltaPlan(
       const f = await import('@/lib/commitments/fulfillment');
       const judge = deps.judgeFulfillment ?? f.judgeFulfillmentFromEvidence;
       const applyV = deps.applyFulfillment ?? f.applyFulfillmentVerdict;
+      // W11.2: a teammate's message reaches the judge WITH its actor stated (THE TEAMMATE CLAUSE) and
+      // a close it earns is stamped `evidence:teammate` — the same attribution every settle door uses.
+      const byMate = ctx.message.kind === 'email' && ctx.message.authoredByUser === false && ctx.message.authorRole === 'teammate';
       const candidate = ctx.message.kind === 'email'
-        ? { type: 'email' as const, id: ctx.message.id, at: stampAt, title: ctx.message.subject ?? '', body: ctx.message.text }
+        ? { type: 'email' as const, id: ctx.message.id, at: stampAt, title: ctx.message.subject ?? '', body: ctx.message.text,
+          ...(byMate ? { actor: { role: 'teammate' as const, ...(ctx.message.authorName || ctx.message.authorAddress ? { name: String(ctx.message.authorName || ctx.message.authorAddress) } : {}) } } : {}) }
         : { type: 'transcript' as const, id: ctx.message.id, at: stampAt, title: ctx.message.subject ?? 'meeting' };
       const verdict = await judge(client, userId,
         { kind: 'commitment', id: item.id, description: item.description, due_date: item.due_date, created_at: item.created_at },
         [candidate], item.direction !== 'awaiting');
-      const reason = `evidence:${candidate.type}`;
+      const reason = byMate ? 'evidence:teammate' : `evidence:${candidate.type}`;
       const closed = await applyV(client, userId, { id: item.id, description: item.description, due_date: item.due_date }, verdict, async () => {
         const nowIso = new Date().toISOString();
         const { data, error } = await client.from('commitments')
@@ -589,6 +608,16 @@ export async function applyDeltaPlan(
     } catch { report.kept++; } // never close on an error path
   }
   return report;
+}
+
+/** The author's work-free rung (user rung folded to null — a non-authored message is never the
+ *  user's, the authorship law). One actor-context load per call; non-fatal. */
+async function authorRoleFor(client: DBClient, userId: string, address: string): Promise<DeltaMessage['authorRole']> {
+  try {
+    const { loadActorContext, actorRole } = await import('@/lib/evidence/actor');
+    const role = actorRole({ address }, await loadActorContext(client, userId));
+    return role === 'teammate' ? 'teammate' : role === 'user' ? null : 'unknown';
+  } catch { return null; }
 }
 
 /**
@@ -622,6 +651,14 @@ export async function conversationDelta(
   }
   if (!text.trim()) return passthrough;
   const message: DeltaMessage = { ...args.message, text, at, subject };
+  // W11.2 THE WORKING CIRCLE: a message the user did not write, on a conversation where the user OWES
+  // open work, is placed on the ladder ONCE (lib/evidence/actor.ts `actorRole` — the one function;
+  // members + corporate domain + the working circle). Only then can a colleague's delivery count as
+  // the user's side. A failed load leaves the role unknown — which only NARROWS (legacy behaviour).
+  if (message.kind === 'email' && message.authoredByUser === false && message.authorRole == null && message.authorAddress
+    && conv.open.some((o) => o.direction !== 'awaiting')) {
+    message.authorRole = await authorRoleFor(client, userId, message.authorAddress);
+  }
   const input: DeltaInput = { open: conv.open, candidates, message, inboxContext: conv.inboxContext, todayIso: new Date().toISOString().slice(0, 10) };
   const plan = await judgeConversationDelta(input, args.judge ?? factoryJudge(client, userId));
   if (conv.leftBehind.length) console.log(`[conversation-delta] ${conv.leftBehind.length} open item(s) left behind by the cap (${DELTA_MAX_OPEN})`);

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
@@ -13,6 +13,10 @@ import { MOMENTUM as MOMENTUM_TOKENS } from '@/lib/work-items/states';
 import { WorkRow as DoRow, useExit, useCommitmentAct, useRowActions, ctaFor, RowControls, RowHoverRail, EffortDate, InitiativeTag, prefetchItem, fmtDue, exitCls, DO_META } from '@/components/work/work-row';
 // THE CALM HOME (docs/threads-plan.md) — the pick, the words, the receipts, all pure.
 import { pickWhispers, toWhisper, sortDoorRows, servedWho, whisperBody, whisperProject, CALM_MAX_WHISPERS, type Whisper } from '@/lib/home/calm';
+// W11.2 · ONE ROW PER CONVERSATION — the served groups, worded by the one fold module (pure, client-safe).
+import { foldedIntoOf, conversationSentence } from '@/lib/home/conversation-fold';
+// W11.2 · "looks done — confirm" — the machine's word, from its one client-safe home.
+import { LOOKS_DONE_WORD } from '@/lib/evidence/looks-done-word';
 import { cardFacts } from '@/lib/triage/deck-context';
 import { createClient } from '@/lib/supabase/client';
 import {
@@ -149,6 +153,9 @@ type Brief = {
     /** THE CATCHING-UP FACT, when the serve carries one: the backlog pass filing right now. The
      *  CoS's line speaks it; ABSENT MEANS SILENT — never inferred, never guessed from a count. */
     catchUp?: { filing?: number | null } | null;
+    /** W11.2 · ONE ROW PER CONVERSATION: conversations holding ≥2 live rows — the lead takes the
+     *  one seat and speaks for every member ("Sam — 3 open on this thread: …"). */
+    conversations?: Array<{ key: string; lead: string; memberIds: string[] }>;
   } | null;
 };
 // A deal the verdict flags as SLIPPING (gone-quiet/stalled with something open on you) — surfaced proactively
@@ -1148,6 +1155,16 @@ function CalmGreeting({ name, greeting: hello, next, entrance, loading }: {
   );
 }
 
+/** W11.2 · "Not yet" on a looks-done row — the user's sticky refusal for the evidence standing now
+ *  (POST /api/work/looks-done). Kept OUTSIDE the whisper so the whisper's doors stay the deck's own. */
+async function refuseLooksDoneOnRow(item: DoItem): Promise<boolean> {
+  try {
+    const r = await fetch('/api/work/looks-done', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: item.source === 'commitment' ? 'commitment' : 'inbox', id: item.entityId, action: 'not_yet' }) });
+    return r.ok;
+  } catch { return false; }
+}
+
 /** ONE WHISPERED LINE — the row's own sentence + its receipt, on the deck's OWN doors
  *  (useRowActions/ctaFor from the row kit: same href, same ✓/✕ endpoints, same prefetch). */
 function WhisperLine({ w, whyNow, handlers }: {
@@ -1166,6 +1183,15 @@ function WhisperLine({ w, whyNow, handlers }: {
 }) {
   const { item } = w;
   const { removed, exiting, busy, done, drop, open, prefetch } = useRowActions(item, handlers);
+  // W11.2 · LOOKS DONE — ONE click each way, on the row itself: Done is the row's OWN resolution
+  // door (logged, undoable — the same ✓ every row carries); Not yet is the sticky refusal for the
+  // evidence standing now (POST /api/work/looks-done), after which the row reads as plain work.
+  const [notYet, setNotYet] = useState(false);
+  const looksDone = !notYet && String(item.stateWord ?? '').includes(LOOKS_DONE_WORD) && (item.source === 'commitment' || item.source === 'reply' || item.source === 'notice');
+  const refuse = (e: React.MouseEvent) => {
+    e.stopPropagation(); setNotYet(true);
+    refuseLooksDoneOnRow(item).then((ok) => { if (!ok) setNotYet(false); });
+  };
   if (removed) return null;
   const { Icon } = DO_META[item.source];
   return (
@@ -1195,6 +1221,14 @@ function WhisperLine({ w, whyNow, handlers }: {
               itself, and it rides inside the one truncating line — it never wears a chip. */}
           {w.project && <span className="text-neutral-400"> · {w.project}</span>}
         </p>
+        {looksDone && (
+          <span className="flex-shrink-0 flex items-center gap-2 text-[12px]">
+            <button type="button" disabled={busy} onClick={(e) => { e.stopPropagation(); done(e); }}
+              className="font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-50">Done</button>
+            <button type="button" disabled={busy} onClick={refuse}
+              className="text-neutral-400 hover:text-neutral-600 disabled:opacity-50">Not yet</button>
+          </span>
+        )}
       </div>
       {/* THE HOVER FLOOR (owner walk, Sep 7 — "the hover expand disappeared"): the whisper mounts
           THE ROW KIT'S OWN cluster (RowControls — each control expands its label on its own hover,
@@ -1247,11 +1281,17 @@ function CalmDoor({ waiting, onOpen }: {
   // composer and TODAY: no rows, no door, no way to the account. The door is the LEDGER'S ONE ENTRY;
   // zero rows above it is fine, a missing entrance is not. So it renders unconditionally within the
   // dashboard lens and only its WORDS depend on what is known.
+  // ── W11.4 THE DOOR ANSWERS AT THE CLICK (owner live walk, Sep 23 — "the first click appeared
+  // dead; the held page arrived seconds later"). Opening the lens re-renders the whole Home into
+  // the held deck — a long render the click used to sit behind with no sign it had landed. The lens
+  // switch now runs as a TRANSITION: the door's own pending word paints on the click's frame, and
+  // the lens lands when it is ready. A second click while pending is refused (never a double open).
+  const [opening, startOpening] = useTransition();
   return (
     <div className="flex items-center gap-3 px-3 py-2.5">
-      <button onClick={onOpen}
-        className="text-[12px] text-neutral-400 hover:text-indigo-600 transition-colors">
-        {typeof waiting === 'number' && waiting > 0 ? `When you're ready · ${waiting} →` : "When you're ready →"}
+      <button onClick={() => { if (!opening) startOpening(onOpen); }} aria-busy={opening} disabled={opening}
+        className={`text-[12px] transition-colors ${opening ? 'text-indigo-600' : 'text-neutral-400 hover:text-indigo-600'}`}>
+        {opening ? 'Opening…' : typeof waiting === 'number' && waiting > 0 ? `When you're ready · ${waiting} →` : "When you're ready →"}
       </button>
     </div>
   );
@@ -2092,8 +2132,27 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
     ? served.map((s) => itemByAtom.get(s.entityId)).filter((i): i is DoItem => !!i)
     : pickWhispers(flatRows.map((r) => r.item), CALM_MAX_WHISPERS)
   ).filter((i) => !heldBackIds.has(i.entityId) && !anchoredIds.has(i.entityId));
+  // ── W11.2 · ONE ROW PER CONVERSATION (the serve folded them; the Home words the lead's ONE row).
+  //    A member folded under a lead never takes a line of its own; the lead's row names how many are
+  //    open on the conversation and opens the conversation's own mail room when one of its members
+  //    is the thread's mail item (else the lead's room). Counted over the members PRESENT after this
+  //    session's clears — a conversation cleared down to one reads as a plain row again.
+  const convGroups = b?.attention?.conversations ?? [];
+  const foldedInto = foldedIntoOf(convGroups);
+  const groupOfLead = new Map(convGroups.map((g) => [g.lead, g]));
+  const convKeyOfAtom = new Map(convGroups.flatMap((g) => g.memberIds.map((id) => [id, g.key] as const)));
+  const toRowWhisper = (i: DoItem): Whisper => {
+    const w = toWhisper(i);
+    const g = groupOfLead.get(i.entityId);
+    if (!g) return w;
+    const members = g.memberIds.map((id) => itemByAtom.get(id)).filter((m): m is DoItem => !!m);
+    if (members.length < 2) return w;
+    const mail = members.find((m) => m.source === 'reply' || m.source === 'notice');
+    return { ...w, item: mail && mail.entityId !== i.entityId ? { ...i, href: mail.href } : i,
+      sentence: conversationSentence(servedWho(i), members.map((m) => whisperBody(m)), members.length) };
+  };
   const whisperKeys = new Set(whisperItems.map((i) => i.key));
-  const whispers: Whisper[] = whisperItems.map((i) => toWhisper(i));
+  const whispers: Whisper[] = whisperItems.map((i) => toRowWhisper(i));
   const dealKeyOf = new Map(flatRows.filter((r) => r.dealKey).map((r) => [r.item.key, r.dealKey!]));
   // THE REMAINDER IS SORTED, IN ONE STATED ORDER (owner, Sep 8; re-seated Sep 17). The calm module's
   // ONE order (fires · asks · due today · dated ahead · the deck's own order) still decides it — what
@@ -2101,8 +2160,12 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
   // This list is the door's COUNT and the source of the non-mail rows the ledger cannot see itself.
   // (An ANCHORED row is SERVED, not held — it is already rendering under its meeting, so it is not
   //  part of the door's remainder either. One row, one home, one count.)
+  // (W11.2: a member whose conversation's lead is SEATED rides that lead's one row — it is neither
+  //  the door's remainder nor a held row of its own; a held lead keeps its members beside it.)
+  const seatedAtoms = new Set([...whisperItems.map((i) => i.entityId), ...anchoredIds]);
   const restRows = sortDoorRows(
-    flatRows.filter((r) => !whisperKeys.has(r.item.key) && !anchoredIds.has(r.item.entityId)),
+    flatRows.filter((r) => !whisperKeys.has(r.item.key) && !anchoredIds.has(r.item.entityId)
+      && !seatedAtoms.has(foldedInto.get(r.item.entityId) ?? '')),
     (r) => r.item,
   );
   // THE LEDGER'S SCOPE GAP, closed honestly: /api/home/held accounts for PENDING MAIL, so a held
@@ -2142,6 +2205,8 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
       // token: mounting an artifact card off a word the Home never promised would be a second,
       // guessing renderer. The word is a chip; the artifact stays the ledger's own fact.
       preparedWord: w.receipt ?? null,
+      // W11.2 · the conversation it belongs to (served groups only) — the held list folds by it.
+      conversationKey: convKeyOfAtom.get(it.entityId) ?? null,
     };
   };
   const deckHeldRows: DeckHeldRow[] = restRows
@@ -2182,8 +2247,8 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
     // (`Array.from` deliberately, not `restRows.map` — THE WALL IS STILL GONE, and the gate that
     //  says so reads that literal as the wall's own render. This is a handful of rows, not a deck.)
     : Array.from(restRows, (r) => r.item)
-  ).filter((i) => !whisperKeys.has(i.key)).slice(0, NEXT_UP_MAX);
-  const nextUp: Whisper[] = nextUpItems.map((i) => toWhisper(i));
+  ).filter((i) => !whisperKeys.has(i.key) && !foldedInto.has(i.entityId)).slice(0, NEXT_UP_MAX);
+  const nextUp: Whisper[] = nextUpItems.map((i) => toRowWhisper(i));
   // (THE DAY SHAPE + THE ONE SENTENCE retired here, Sep 13 — the "free until …" clause existed only
   //  as the sentence's tail, and the calendar's own home is /meetings. The composed briefing still
   //  powers ordering + de-dup via `sentencedIds`; it simply never speaks on this page.)

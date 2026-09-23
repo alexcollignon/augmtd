@@ -39,6 +39,8 @@ const CONCURRENCY = Math.max(1, Math.min(4, Number(val('--concurrency') ?? 2) ||
 const BUDGET_MS = Math.max(1, Number(val('--budget-min') ?? 20) || 20) * 60_000;
 
 async function main() {
+  // W11.2: a DRY RUN writes nothing — not even the working circle's recomputed inference cache.
+  if (!APPLY) { const { setCirclePersistence } = await import('../lib/evidence/circle'); setCirclePersistence(false); }
   if (APPLY && !ALL && !USER) {
     console.error('REFUSED: --apply needs an explicit scope — --all or --user <id>. (Dry run needs neither.)');
     process.exit(2);

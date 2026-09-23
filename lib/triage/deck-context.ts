@@ -14,7 +14,8 @@
 // facts through `cardFacts`. Both live here so a CLI gate can import them.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import { clipForPrompt, clipLabel } from '@/lib/utils/clip-for-prompt';
+// W11.3 · the founding line is a DISPLAY clip — EXCERPT_MARK never renders on a card.
+import { clipForDisplay, clipLabel } from '@/lib/utils/clip-for-prompt';
 import { topMessageOf } from '@/lib/inbox/top-message';
 import { decodeEntities } from '@/lib/core/text';
 
@@ -58,7 +59,7 @@ export function shapeDeckContext(f: DeckContextFacts): DeckContext {
     // "wasn&#39;t" on the card).
     const raw = decodeEntities(String(f.lastEmail.body ?? ''));
     const own = raw.trim() ? topMessageOf(raw) : '';
-    const line = clipForPrompt(String(own ?? '').replace(/\s+/g, ' ').trim(), FOUNDING_EXCERPT_CHARS);
+    const line = clipForDisplay(String(own ?? '').replace(/\s+/g, ' ').trim(), FOUNDING_EXCERPT_CHARS);
     const who = f.lastEmail.is_from_user ? 'You'
       : (f.lastEmail.from_name?.trim() || f.lastEmail.from_address?.trim() || null);
     if (line) founding = { who, line, at: f.lastEmail.received_at ?? null };

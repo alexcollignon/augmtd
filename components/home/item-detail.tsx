@@ -43,7 +43,7 @@ import KbFilePicker from '@/components/inbox/kb-file-picker';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 // THE NO-MUTATION LAW — the one mechanism a loader consults before replacing what is painted.
 import { mayReplaceInPlace, ROOM_CACHE_MAX_AGE_MS, type ArrivalReason } from '@/lib/room/no-mutation';
-import { fetchItemView, itemViewKey } from '@/lib/room/warm-client';
+import { fetchItemView, fetchOpenObject, itemViewKey, viewSettled } from '@/lib/room/warm-client';
 import { loadThreadRaw } from '@/lib/inbox/thread-door';
 import { fmtMonthDay, fmtDateTime, fmtWeekdayDate } from '@/lib/utils/format-date';
 import AddToProjectControl from '@/components/entities/add-to-work-control';
@@ -52,7 +52,7 @@ import { ItemRail, pushDealTurn, type RailView } from '@/components/home/item-ra
 // retired into it. The people typeahead it shared with the forward now lives in ONE module.
 import { InviteCard } from '@/components/home/invite-card';
 import { EmailCard } from '@/components/home/email-card';
-import { MeetingSourceMount, type MeetingSourceFacts } from '@/components/room/source-object';
+import { MeetingSourceMount, SourceObjectMount, type MeetingSourceFacts } from '@/components/room/source-object';
 // THE PREPARED FORWARD's kit card + its host (W3-C) — the local ForwardPreviewCard retired into it.
 import ForwardCard from '@/components/home/forward-card';
 import { panelPlan, applyPanelPlan } from '@/lib/room/render-plan';
@@ -533,6 +533,10 @@ type RoomChrome = {
   title: string;
   /** The quiet fact line beside the title (who · when · due). Chrome, never prose. */
   meta?: React.ReactNode;
+  /** W11.1 · LOOKS DONE — CONFIRM: the served evidence line + the ONE Done / Not yet pair, under the
+   *  header word. Done = the item's own resolution door (logged, undoable); Not yet = the sticky
+   *  refusal (POST /api/work/looks-done). Absent unless the machine's state is `looks_done`. */
+  confirm?: LooksDoneConfirm | null;
   /** THE MACHINE'S ONE WORD — the same vocabulary the deck and the deep-dive already speak. */
   stateWord: string | null;
   stateTone?: string;
@@ -576,6 +580,46 @@ function clipTitle(text: string, max: number): string {
   const cut = t.slice(0, max);
   const at = cut.lastIndexOf(' ');
   return `${(at > max * 0.6 ? cut.slice(0, at) : cut).replace(/[\s,;:—-]+$/, '')}…`;
+}
+
+// ── W11.1 · LOOKS DONE — CONFIRM, in the room ────────────────────────────────────────────────────
+// W11.2's machine state `looks_done` (the user's own side shows the work delivered, the judge did not
+// close it). The room shows the SERVED evidence line under the header word and ONE CTA row: Done
+// (the item's existing resolution door — logged, undoable) · Not yet (the sticky refusal, until new
+// evidence). The words' one home is lib/evidence/looks-done-word.ts / the served line — nothing here
+// composes them.
+type LooksDoneConfirm = { line: string | null; kind: 'commitment' | 'inbox'; id: string; onDone: () => void | Promise<void> };
+export const LOOKS_DONE_NOT_YET_ROUTE = '/api/work/looks-done';
+function looksDoneConfirmOf(view: ItemViewData | null, kind: 'commitment' | 'inbox', id: string, onDone: () => void | Promise<void>): LooksDoneConfirm | null {
+  const m = view?.machineState;
+  if (m?.state !== 'looks_done') return null;
+  return { line: m.line ?? null, kind, id, onDone };
+}
+function LooksDoneStrip({ confirm }: { confirm: LooksDoneConfirm }) {
+  const { kind, id } = confirm;
+  const [busy, setBusy] = useState<null | 'done' | 'not_yet'>(null);
+  const [answered, setAnswered] = useState(false);
+  if (answered) return null;
+  const notYet = async () => {
+    setBusy('not_yet');
+    try {
+      const res = await fetch(LOOKS_DONE_NOT_YET_ROUTE, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, id, action: 'not_yet' }) });
+      if (res.ok) setAnswered(true);
+    } finally { setBusy(null); }
+  };
+  const done = async () => { setBusy('done'); try { await confirm.onDone(); } finally { setBusy(null); } };
+  return (
+    <div className="flex-shrink-0 flex items-center gap-3 px-5 py-2 bg-white border-b border-neutral-200/80">
+      {confirm.line && <p className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-600">{confirm.line}</p>}
+      {!confirm.line && <div className="flex-1" />}
+      <div className="flex-shrink-0 flex items-center gap-2">
+        <button onClick={done} disabled={!!busy}
+          className="aug-focus inline-flex items-center rounded-lg h-8 px-3 text-[12px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 transition-colors">Done</button>
+        <button onClick={notYet} disabled={!!busy}
+          className="aug-focus inline-flex items-center rounded-lg h-8 px-3 text-[12px] font-medium text-neutral-600 border border-neutral-200 hover:border-neutral-300 disabled:opacity-60 transition-colors">Not yet</button>
+      </div>
+    </div>
+  );
 }
 
 function ItemRoomFrame({ room, rail, stage }: { room: RoomChrome; rail: React.ReactNode; stage: React.ReactNode }) {
@@ -669,6 +713,8 @@ function ItemRoomFrame({ room, rail, stage }: { room: RoomChrome; rail: React.Re
           </div>
         )}
       </header>
+      {/* W11.1 · LOOKS DONE — CONFIRM: the evidence line under the header word + ONE CTA row. */}
+      {room.confirm && <LooksDoneStrip confirm={room.confirm} />}
 
       <div className="flex-1 min-h-0">
         {/* ONE-ROOM R2 — THE INVERSION via THE ONE shared shell: the CONVERSATION is the room; the
@@ -764,7 +810,7 @@ type ItemViewData = {
   itemSource?: string | null;
   /** THE MACHINE'S ONE WORD (experience-spec Part "THE MACHINE") — absent on meetings and on any
    *  view cached before the field existed. */
-  machineState?: { state: string; word: string | null } | null;
+  machineState?: { state: string; word: string | null; /** W11.1 · on looks_done: the evidence line (served) */ line?: string | null } | null;
   briefAt?: string | null;
   /** W3.5 (a): the server's compose outran its paint budget — one re-check appends the arrival. */
   briefPending?: boolean;
@@ -797,6 +843,7 @@ function machineWordOf(view: ItemViewData | null): string | null {
 const MACHINE_TONE: Record<string, string> = {
   awaiting_input: 'text-amber-600',
   awaiting_decision: 'text-amber-600',
+  looks_done: 'text-amber-600', // W11.1 — it wants the person's confirmation
   ready: 'text-indigo-500',
   awaiting_approval: 'text-indigo-500',
 };
@@ -1473,7 +1520,9 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
   }, [id]);
   useEffect(() => {
     let alive = true;
-    fetch(`/api/items/judge?kind=inbox&id=${id}`).then((r) => r.json()).then((d) => {
+    // W11.4 · THE JUDGE IS AN AFTER-PAINT ENRICHMENT: it asks once the open's ONE view read has
+    // settled (bounded — lib/room/warm-client viewSettled), so it never competes with the first paint.
+    viewSettled('email', id).then(() => (alive ? fetch(`/api/items/judge?kind=inbox&id=${id}`) : Promise.reject())).then((r) => r.json()).then((d) => {
       if (!alive || !d.verdict) return;
       setVerdict(d.verdict);
       saveLS(`aug-item-verdict-inbox-${id}`, d.verdict);
@@ -1896,6 +1945,8 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     ),
     stateWord: machineWordOf(view),
     stateTone: machineToneOf(view),
+    // W11.1 · LOOKS DONE — Done is this item's own resolution door (markHandled: logged, undoable).
+    confirm: itemDismissed ? null : looksDoneConfirmOf(view, 'inbox', id, markHandled),
     faces: facesOf(view, thread?.fromName ?? thread?.fromAddress),
     membership: <AddToProjectControl kind="inbox" id={id} projectId={thread?.projectId ?? null} projectName={thread?.projectName ?? null} suggestName={thread?.initiative ?? null} compact />,
     // THE PROJECT DOOR rides the ONE band (the rail's second name row died with it).
@@ -2550,7 +2601,8 @@ type CommitmentData = {
   sourceId?: string | null;
   status?: string | null;
   createdAt: string | null;
-  sourceContext: { kind: 'email' | 'meeting'; subject: string | null; snippet: string | null; from: string | null; when: string | null } | null;
+  /** W11.1: an email source carries its OWN message id + thread (lib/commitments/source.ts emailSourceOf). */
+  sourceContext: { kind: 'email' | 'meeting'; subject: string | null; snippet: string | null; from: string | null; when: string | null; emailId?: string | null; threadId?: string | null } | null;
   /** THE GATED WORK (lib/workflows/handoff-context.ts `HandoffContext`) — served ONLY on a
    *  source='handoff' commitment whose run reads; null everywhere else. Additive: the card
    *  degrades to its pre-block form when it's absent (a stale localStorage shape, an older
@@ -2611,8 +2663,10 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   const [decisionCleared, setDecisionCleared] = useState(false);
   useEffect(() => {
     let alive = true;
-    fetch(`/api/items/judge?kind=commitment&id=${id}`)
-      .then((r) => (r.ok ? r.json() : null))
+    // W11.4 · AFTER-PAINT: the judge asks once the open's view read has settled (bounded).
+    viewSettled('commitment', id)
+      .then(() => (alive ? fetch(`/api/items/judge?kind=commitment&id=${id}`) : null))
+      .then((r) => (r && r.ok ? r.json() : null))
       .then((d) => {
         if (!alive || !d?.verdict) return;
         setVerdict({ work: String(d.verdict.work ?? ''), options: d.verdict.options });
@@ -2624,10 +2678,18 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   const [reload, setReload] = useState(0);
   useEffect(() => {
     let alive = true;
-    fetch(`/api/commitments/${id}`)
-      .then(r => (r.ok ? r.json() : Promise.reject()))
-      .then((d: CommitmentData) => { if (alive) { setData(d); saveLS(`aug-item-commitment-${id}`, d); } })
-      .catch(() => { if (alive) setErr(true); });
+    // W11.4 · ONE READ PER OPEN: the open JOINS the read the route's frame started at the click (or
+    // takes its landing) — lib/room/warm-client fetchOpenObject. A reload after the reader's own
+    // deed reads the post-deed world afresh (never a landing from before the deed).
+    const read: Promise<CommitmentData | null> = reload === 0
+      ? (fetchOpenObject(`/api/commitments/${id}`, `aug-item-commitment-${id}`) as Promise<CommitmentData | null>)
+      : fetch(`/api/commitments/${id}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    read
+      .then((d) => {
+        if (!alive) return;
+        if (!d) { setErr(true); return; }
+        setData(d); saveLS(`aug-item-commitment-${id}`, d);
+      });
     return () => { alive = false; };
   }, [id, reload]);
 
@@ -2784,6 +2846,8 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
     ),
     stateWord: machineWordOf(view),
     stateTone: machineToneOf(view),
+    // W11.1 · LOOKS DONE — Done is THIS commitment's own resolution door (act('done'): logged, undoable).
+    confirm: isHandoff || done ? null : looksDoneConfirmOf(view, 'commitment', id, () => act('done')),
     faces: facesOf(view, data?.counterparty),
     membership: <AddToProjectControl kind="commitment" id={id} compact />,
     // THE PROJECT DOOR rides the ONE band (the rail's second name row died with it).
@@ -2801,7 +2865,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
     tabs: commonRoomTabs('commitment', id, view, railView, {
       history: historyLines,
       threadLabel: 'Source',
-      thread: !isHandoff && (src || view?.sourceMeeting) ? <CommitmentSourceSection src={src ?? null} meeting={view?.sourceMeeting ?? null} /> : null,
+      thread: !isHandoff && (src || view?.sourceMeeting) ? <CommitmentSourceSection src={src ?? null} meeting={view?.sourceMeeting ?? null} laterItemId={view?.sourceItemId ?? null} /> : null,
     }),
     stageOpen,
     onLowerStage: lowerStage,
@@ -2821,6 +2885,12 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
       sourceItemId={view?.sourceItemId ?? null}
       // W7.3: a meeting-born commitment's source object is its MEETING (the kit's `source` card).
       sourceMeeting={view?.sourceMeeting ?? null}
+      // W11.1 · THE COMMITMENT'S OWN SOURCE MESSAGE (commitments.source_id → emailSourceOf, served on
+      // the commitment's payload) — the object card, never the thread's newest message.
+      sourceEmail={src?.kind === 'email' && src.emailId ? {
+        id: src.emailId, threadId: src.threadId ?? null, subject: src.subject, from: src.from,
+        receivedAt: src.when, excerpt: src.snippet,
+      } : null}
       decision={commitDecision ? {
         ...commitDecision,
         // The word is the deed, and the deed is visible: the choice lands as the user's turn, the
@@ -3302,6 +3372,12 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
     meta: who ? <span className="truncate">Waiting on {who.split('<')[0].trim()}</span> : undefined,
     stateWord: machineWordOf(view),
     stateTone: machineToneOf(view),
+    // W11.1 · LOOKS DONE — Done is the inbox item's own resolution door (the complete route the email
+    // room's "Already handled" fires: logged, undoable from Activity).
+    confirm: sent ? null : looksDoneConfirmOf(view, 'inbox', id, async () => {
+      const res = await fetch(`/api/inbox/${id}/complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resolution_reason: 'already_handled' }) });
+      if (res.ok) setTimeout(() => router.back(), 700);
+    }),
     faces: facesOf(view, who),
     membership: <AddToProjectControl kind="inbox" id={id} compact />,
     // THE PROJECT DOOR rides the ONE band (the rail's second name row died with it).
@@ -3488,10 +3564,26 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
 // ── W7.3 · THE COMMITMENT'S SOURCE, IN THE DRAWER (the email door's Thread idiom): the meeting it
 // was made in as the kit's `source` card (one tap to the meeting page), else the email it came from.
 // Read-only filed truth — never a composer, never a stage.
-function CommitmentSourceSection({ src, meeting }: { src: CommitmentData['sourceContext']; meeting: MeetingSourceFacts | null }) {
+function CommitmentSourceSection({ src, meeting, laterItemId }: { src: CommitmentData['sourceContext']; meeting: MeetingSourceFacts | null; laterItemId?: string | null }) {
   const router = useRouter();
   if (meeting) return <MeetingSourceMount meeting={meeting} onOpen={() => router.push(`/meetings/${meeting.addressId}`)} />;
   if (!src) return null;
+  // W11.1 · ONE OBJECT, ONE DOOR: the source message FIRST (the one the promise came from), then — in
+  // this same drawer — the rest of the conversation, read through the thread's own door.
+  return (
+    <div className="space-y-3">
+      <CommitmentSourceMessage src={src} />
+      {src.kind === 'email' && laterItemId ? (
+        <div>
+          <p className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400">Later in this conversation</p>
+          <SourceObjectMount itemId={laterItemId} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CommitmentSourceMessage({ src }: { src: NonNullable<CommitmentData['sourceContext']> }) {
   return (
     <div className={`${CARD} px-4 py-3.5`}>
       <div className="flex items-center gap-1.5 text-[10px] font-medium text-neutral-400 mb-1.5">

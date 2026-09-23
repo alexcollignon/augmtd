@@ -351,7 +351,10 @@ export function whisperSentence(item: DoItem): string {
 }
 
 export function toWhisper(item: DoItem, today?: Date): Whisper {
-  const receipt = receiptOf(item);
+  // W11.1 · THE MACHINE'S BLOCKED-ON-USER WORD OUTRANKS A RECEIPT (lib/work/machine.ts
+  // BLOCKED_ON_USER_STATES / rowWordOf): a row whose machine says "needs one thing from you" never
+  // prints "ready to send" — the room header and this row speak ONE word for one item.
+  const receipt = ASK_STATE_WORDS.has((item.stateWord ?? '').trim()) ? null : receiptOf(item);
   const sentence = whisperSentence(item);
   return {
     item,
@@ -359,7 +362,8 @@ export function toWhisper(item: DoItem, today?: Date): Whisper {
     project: whisperProject(item, sentence),
     urgency: urgencyOf(item, today),
     receipt,
-    // ONE CLAIM: a receipt outranks the state word (the prepared thing IS the state).
+    // ONE CLAIM: a receipt outranks the state word (the prepared thing IS the state) — unless the
+    // machine is blocked on the user (above), where the state word is the claim.
     note: receipt ? null : stateNoteOf(item),
   };
 }

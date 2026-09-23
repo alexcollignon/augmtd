@@ -71,9 +71,11 @@ console.log('\nDC3 · FOUNDING CONTEXT');
     inboxItemId: 'i1', meeting: null,
   });
   ok('an email-born commitment carries its source, its thread\'s inbox item and the newest message', e.source === 'email' && e.inboxItemId === 'i1' && e.founding?.who === 'Sam');
-  ok('   …the line is the message\'s OWN words, clipped by THE ONE CLIPPER with its marker',
-    !!e.founding && e.founding.line.endsWith(EXCERPT_MARK) && !e.founding.line.includes('the chain')
-    && e.founding.line.length <= FOUNDING_EXCERPT_CHARS + EXCERPT_MARK.length + 2);
+  // ⟲ RE-POINTED (W11.3 — THE MARKER NEVER RENDERS): the card's line is a DISPLAY clip (boundary +
+  // "…"); the prompt-side EXCERPT_MARK must never reach a surface.
+  ok('   …the line is the message\'s OWN words, clipped for display — "…", never the prompt marker',
+    !!e.founding && e.founding.line.endsWith('…') && !e.founding.line.includes(EXCERPT_MARK) && !e.founding.line.includes('the chain')
+    && e.founding.line.length <= FOUNDING_EXCERPT_CHARS + 2);
   // ⟲ RE-POINTED (W8.3 — THE NO-INTERNAL-TEXT LAW reaches the triage card): the judge's reason no
   // longer rides the context at all — it printed raw on the card ("The stated deadline … passed 47
   // days ago…"). The gate now asserts its ABSENCE, which is the stronger statement.

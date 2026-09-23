@@ -196,3 +196,170 @@ export function completionObjection(claim: string): string {
   return `The message claims work already done ("${claim.slice(0, 80)}") but the obligation is still open and nothing is attached or staged — ` +
     `rewrite it to state where things actually stand and the next step (or ask what is needed); never announce a deed that has not happened.`;
 }
+
+// ── THE CHASE DIRECTION (stabilization W11.1 · ONE COHERENT ITEM) ─────────────────────────────────
+
+/**
+ * Does a CHASE on this item invert the obligation? A nudge asks the other side for what THEY owe;
+ * on work the USER owes (a you_owe commitment, an inbox item whose understanding says you_owe) it
+ * chases the counterparty for the user's own debt. Found live (owner walk, Sep 23): "Just a quick
+ * nudge on the small edit we discussed …" addressed to the CLIENT on a commitment the user owed.
+ * The judge coerces the verb (lib/work/judge.ts directionFloor); the nudge lane REFUSES on this
+ * predicate, so a cached or hand-routed chase can never write one either. Pure.
+ */
+export function chaseInvertsObligation(facts: { direction?: string | null; ownership?: string | null }): boolean {
+  return String(facts.direction ?? '') === 'you_owe' || String(facts.ownership ?? '') === 'you_owe';
+}
+
+/**
+ * THE CHASE WORDS — narrow (the floor doctrine): the nudge/reminder shapes that ask the OTHER side to
+ * move ("just a quick nudge", "gentle reminder", "any update on", "have you had a chance",
+ * "let me know when you've had a chance"). On an OPEN obligation the USER owes, words of this shape
+ * chase the counterparty for the user's own debt — the reader withdraws them (never live). Pure.
+ */
+export const CHASE_WORD_PATTERNS: ReadonlyArray<RegExp> = [
+  /\b(?:quick|gentle|friendly|small|little|polite)\s+(?:nudge|reminder)\b/i,
+  /\bjust\s+(?:a\s+)?(?:quick\s+)?(?:nudge|reminder|nudging|following up|checking in)\b/i,
+  /\bany\s+(?:updates?|news|progress)\s+on\b/i,
+  /\bhave you\s+(?:had a chance|managed|been able)\b/i,
+  /\blet me know (?:when|once|if) you(?:'ve| have)\s+had a chance\b/i,
+];
+
+/** The first chase shape a text makes, or null. Pure. */
+export function chaseWordsIn(text: string | null | undefined): string | null {
+  const t = String(text ?? '');
+  if (!t.trim()) return null;
+  for (const re of CHASE_WORD_PATTERNS) {
+    const m = re.exec(t);
+    if (m) return m[0].trim();
+  }
+  return null;
+}
+
+/** The nudge lane's refusal reason — one wording, spoken into the prep_outcome ledger. */
+export const CHASE_INVERSION_REFUSAL = 'the user owes this — a nudge to the counterparty would invert the obligation; nothing written';
+
+// ── THE ATTACHMENT CLAIM (stabilization W11.1) ───────────────────────────────────────────────────
+
+/**
+ * THE ATTACHMENT VOCABULARY — words that say something RIDES WITH THIS MESSAGE ("the attached interim
+ * report", "please find attached", "I've attached", "attaching", "enclosed is", "in the attachment").
+ * Found live: a prepared draft read "…in the second tab of the attached interim report…" with
+ * nothing attached. The completion net above catches "attached is" / "I've attached"; this net is
+ * the wider class — ANY claim that a file rides along — and it is independent of who owes what: a
+ * message may never say "attached" unless an attachment is STAGED with it.
+ *
+ * Fail-safe (the floor doctrine): the COUNTERPARTY's attachment is excluded by construction —
+ * "your attached …", "the attached … you sent/shared", "thanks for the attached …" — a reply may
+ * truthfully speak about the document they sent. Four corpus languages, like the completion net.
+ */
+export const ATTACHMENT_CLAIM_PATTERNS: ReadonlyArray<RegExp> = [
+  // EN — "the/my/our attached X" (not "your attached", not "…you sent"), "attached (is|are|please…)",
+  // "please find/see attached", "I('ve| have)? attached", "I am/I'm attaching", "enclosed (is|are)",
+  // "in/see the attachment", "attaching (the|a|my|our)".
+  /(?<!\b(?:for|thanks|thank you for|received)\s)\b(?:the|my|our|this)\s+attached\s+(?!(?:\w+\s+){0,4}(?:you|they|he|she)\s+(?:sent|shared|attached|forwarded|provided)\b)\w+/i,
+  /\b(?:please\s+)?(?:find|see)\s+(?:attached|enclosed)\b/i,
+  /\bI(?:'ve| have)?\s+(?:now\s+|just\s+|also\s+)?(?:attached|enclosed)\b(?!\s+(?:yet|once|when|after)\b)/i,
+  /\bI(?:'m| am)\s+(?:also\s+)?(?:attaching|enclosing)\b/i,
+  /(?:^|[.!?]\s+|\n)\s*(?:attaching|attached|enclosed)\s+(?:is|are|the|a|my|our|you(?:'ll| will) find)\b/i,
+  /\b(?:in|see)\s+the\s+attach(?:ment|ed file)\b(?!\s+(?:you|they)\s+sent)/i,
+  // PT · DE · FR (letter-bounded under `u`, as above).
+  /(?<!\p{L})(?:em\s+anexo|segue\s+(?:em\s+)?anexo|anexei|anexo\s+(?:o|a|os|as)\s)(?!\p{L})/iu,
+  /(?<!\p{L})(?:anbei|im\s+anhang\s+(?:finden|sende|schicke)|angehängt\s+(?:ist|sind|finden))(?!\p{L})/iu,
+  /(?<!\p{L})(?:ci-joint|en\s+pièce\s+jointe|je\s+joins|vous\s+trouverez\s+ci-joint)(?!\p{L})/iu,
+];
+
+/** The first claim that a file rides with this message (the matched phrase), or null. Pure. */
+export function attachmentClaimIn(text: string | null | undefined): string | null {
+  const t = String(text ?? '');
+  if (!t.trim()) return null;
+  for (const re of ATTACHMENT_CLAIM_PATTERNS) {
+    const m = re.exec(t);
+    if (m) return m[0].trim();
+  }
+  return null;
+}
+
+/**
+ * THE ATTACHMENT FLOOR: the attachment claim these words make with NOTHING staged, or null. Speaks
+ * regardless of who owes what — an attachment either rides with the message or it does not.
+ */
+export function claimsUnstagedAttachment(text: string | null | undefined, facts: { staged: boolean }): string | null {
+  if (facts.staged) return null;
+  return attachmentClaimIn(text);
+}
+
+/** The evaluator's objection for a tripped attachment floor — one wording. */
+export function attachmentObjection(claim: string): string {
+  return `The message says a file is attached ("${claim.slice(0, 80)}") but nothing is attached to it — ` +
+    `rewrite it without claiming an attachment (say what will be sent, or ask for what is missing).`;
+}
+
+// ── THE MAILBOX SIGNS (stabilization W11.1 · the targeted re-draft, coordinator decision Sep 23) ──
+// W11.1 scoped every NEW draft's voice + signature to the mailbox its thread lives in. The drafts
+// already STORED under the old global voice keep another identity's sign-off until their ground
+// moves — and DRAFT_LAW_VERSION is deliberately NOT bumped (that would re-draft every stored draft at
+// the conversation tier). So the reader detects exactly the wrong ones: a MACHINE-written draft whose
+// sign-off block names ANOTHER of the user's mailboxes (its address, or its organisation's domain
+// label) and does NOT name the thread's own mailbox is withdrawn as untrue — the pass's existing
+// re-prepare trip (decideRegeneration honours `nonLive`) re-drafts only those. The user's own edit
+// is never judged (the hand wins). Pure, zero AI, FAIL-SAFE: both named, or neither, → no claim.
+
+/** Public mail providers — a shared or matching domain here names no organisation. ONE list
+ *  (lib/prepare/addressee.ts reads it too). */
+export const PUBLIC_MAIL_DOMAINS: ReadonlySet<string> = new Set(['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'yahoo.com', 'icloud.com', 'me.com', 'proton.me', 'protonmail.com', 'aol.com', 'gmx.com', 'gmx.de', 'mail.com']);
+
+/** One of the user's mailboxes as the signature floor sees it. */
+export type MailboxIdentity = { address: string; domainLabel: string | null };
+
+/** A mailbox address → its identity forms: the address + the organisation's domain label ("acme"
+ *  from sam@mail.acme.co.uk); a public provider carries no label. null for a non-address. Pure. */
+export function mailboxIdentityOf(address: string | null | undefined): MailboxIdentity | null {
+  const a = String(address ?? '').trim().toLowerCase();
+  const m = /^[^\s@]+@([^\s@]+\.[^\s@]+)$/.exec(a);
+  if (!m) return null;
+  const domain = m[1];
+  if (PUBLIC_MAIL_DOMAINS.has(domain)) return { address: a, domainLabel: null };
+  const labels = domain.split('.');
+  const n = labels.length;
+  const label = n >= 3 && labels[n - 2].length <= 3 && labels[n - 1].length === 2 ? labels[n - 3] : labels[n - 2];
+  return { address: a, domainLabel: label && label.length >= 3 ? label : null };
+}
+
+const SIGN_OFF_CUE = /^(?:best(?: regards| wishes)?|kind regards|warm regards|regards|many thanks|thanks(?: again)?|thank you|cheers|sincerely|all the best|obrigad[oa]|cumprimentos|melhores cumprimentos|atenciosamente|abraço|mit freundlichen grüßen|viele grüße|beste grüße|lg|cordialement|bien à vous|bien cordialement)\b[,.!]?\s*$/iu;
+
+/** The sign-off block: from the last sign-off cue line to the end, else the last 4 non-empty lines. */
+export function signOffBlockOf(text: string | null | undefined): string {
+  const lines = String(text ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return '';
+  for (let i = lines.length - 1; i >= Math.max(0, lines.length - 10); i--) {
+    if (SIGN_OFF_CUE.test(lines[i])) return lines.slice(i).join('\n');
+  }
+  return lines.slice(-4).join('\n');
+}
+
+const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const namesIdentity = (block: string, id: MailboxIdentity): boolean =>
+  block.toLowerCase().includes(id.address)
+  || (!!id.domainLabel && new RegExp(`(?<![\\p{L}\\p{N}])${escRe(id.domainLabel)}(?![\\p{L}\\p{N}])`, 'iu').test(block));
+
+/**
+ * THE SIGNATURE FLOOR: the other identity these words sign as (its address or domain label), or
+ * null. Speaks only when the sign-off names ANOTHER mailbox and NOT the thread's own — anything
+ * ambiguous (both, neither, a label shared by both mailboxes) is left alone.
+ */
+export function signsAsOtherIdentity(
+  text: string | null | undefined,
+  mailboxes: { own: MailboxIdentity; others: MailboxIdentity[] },
+): string | null {
+  const block = signOffBlockOf(text);
+  if (!block) return null;
+  if (namesIdentity(block, mailboxes.own)) return null;
+  for (const o of mailboxes.others) {
+    if (o.address === mailboxes.own.address) continue;
+    const shared = !!o.domainLabel && o.domainLabel === mailboxes.own.domainLabel;
+    const other: MailboxIdentity = { address: o.address, domainLabel: shared ? null : o.domainLabel };
+    if (namesIdentity(block, other)) return block.toLowerCase().includes(o.address) ? o.address : other.domainLabel;
+  }
+  return null;
+}

@@ -21,6 +21,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { readPlan, readPlans, asRawResult } from '@/lib/store/item-plans';
 import { isLiveArtifact, type PreparedArtifact, type PreparedState } from '@/lib/prepare/read';
 import { askIsMoot, isEngineAskKey } from '@/lib/room/ask-mootness';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
+import { LOOKS_DONE_WORD as LOOKS_DONE_WORD_LITERAL } from '@/lib/evidence/looks-done-word'; // W11.2
 
 export type WorkLifecycle =
   | 'unjudged'          // spotted, no verdict — may deck, claims nothing
@@ -31,6 +33,7 @@ export type WorkLifecycle =
   | 'awaiting_approval' // a send-shaped artifact is staged — Send is the primary (the commit door)
   | 'committed'         // sent/booked, awaiting settle
   | 'parked'            // deliberately set aside with a date (revisit)
+  | 'looks_done'        // W11.2 — user-side evidence the judge did not close on: confirm Done / Not yet
   | 'settled';          // closed — renders nowhere active
 
 export type WorkMachineState = {
@@ -43,6 +46,8 @@ export type WorkMachineState = {
    *  moot (the draft itself · the item's own inbound · outlived the verdict). Served so the room
    *  hides the same turns the header ignored — header and room speak ONE claim. */
   mootAskKeys?: string[];
+  /** W11.2 — on `looks_done`: the evidence line (who · what · when), lib/evidence/looks-done.ts. */
+  looksDoneLine?: string;
 };
 
 // ── THE MOOT ASK BY CODE (stabilization W3.5 (d); lib/room/ask-mootness is the ONE predicate) ──
@@ -84,8 +89,43 @@ export const STATE_WORDS: Record<WorkLifecycle, string | null> = {
   awaiting_approval: 'ready to send',
   committed: 'sent — awaiting them',
   parked: 'set aside',
+  // W11.2 (owner, Sep 23 — "work is probably done" is identified BY THE PLATFORM): the user's side
+  // (the user · a teammate · the working circle) did a deed on the work's own conversation and the
+  // judge did not close on it. The row offers Done (the normal, undoable resolution) / Not yet (a
+  // sticky refusal for that evidence); attention ranks it below real work.
+  looks_done: LOOKS_DONE_WORD_LITERAL,
   settled: null,
 };
+
+/** The looks-done word, named (lib/home/attention.ts ranks by it; the row's two buttons key on it).
+ *  Its one home is client-safe (lib/evidence/looks-done-word.ts) so the Home row can read it too. */
+export const LOOKS_DONE_WORD = STATE_WORDS.looks_done as string;
+
+// ─── THE WORD THAT OUTRANKS A RECEIPT (stabilization W11.1 · ONE COHERENT ITEM, owner walk Sep 23) ──
+// The Home row said "ready to send · overdue" while the room header said "NEEDS ONE THING FROM YOU"
+// for the SAME item. Both read the machine (the deck via `workStatesFor`, the room via `workStateOf`,
+// one `deriveState`) and both got `awaiting_input` — but the deck's printers put the RECEIPT (a
+// staged draft exists → "ready to send") ABOVE the machine's word. The ladder's own law — THE OPEN
+// ASK OUTRANKS A STAGED SEND — was undone at the last inch, by the printer. So the rule is declared
+// HERE, beside the words: when the machine says the work is BLOCKED ON THE USER, that word is the
+// row's word; a receipt may only speak when the machine is not waiting on them. Every printer (the
+// room header, lib/home/attention.ts whyNowOf, lib/home/calm.ts toWhisper) reads the same states.
+export const BLOCKED_ON_USER_STATES: ReadonlySet<WorkLifecycle> = new Set<WorkLifecycle>(['awaiting_input', 'awaiting_decision']);
+
+/** The served words of the blocked-on-user states — what a CLIENT-SAFE printer compares against
+ *  (lib/home/calm.ts cannot import this module at runtime; it spells the same two words, gated). */
+export const BLOCKED_ON_USER_WORDS: ReadonlySet<string> = new Set(
+  [...BLOCKED_ON_USER_STATES].map((s) => STATE_WORDS[s]).filter((w): w is string => !!w),
+);
+
+/** THE ROW'S ONE WORD — pure: the machine's blocked-on-user word outranks a receipt; otherwise the
+ *  receipt (the prepared thing IS the state); otherwise the machine's word. */
+export function rowWordOf(receipt: string | null | undefined, stateWord: string | null | undefined): string | null {
+  const w = String(stateWord ?? '').trim();
+  if (w && BLOCKED_ON_USER_WORDS.has(w)) return w;
+  const r = String(receipt ?? '').trim();
+  return r || w || null;
+}
 
 // ─── THE SEAT WORD (Q4 · THE SEAT CONTRACT, docs/attention-plan.md PART III — Sep 18) ──────────
 // A NEW WORD IS A SPEC CHANGE, so it is declared here, beside the lifecycle words, and nowhere
@@ -121,6 +161,8 @@ export type DeriveInputs = {
   liveAsk: boolean;
   /** A send-shaped artifact's sent stamp landed (inbox source_data stamps). */
   sentStamp: boolean;
+  /** W11.2 — a live (un-refused) looks-done record stands on the item (lib/evidence/looks-done.ts). */
+  looksDone?: boolean;
 };
 
 /** THE ONE LADDER — pure, both readers call it. Every clause carries its found-live rationale. */
@@ -128,6 +170,10 @@ export function deriveState(input: DeriveInputs): WorkMachineState {
   const none: WorkMachineState = { state: 'settled', verdictWork: null, primary: 'none' };
   if (!input.open) return none;
   const v = input.verdict;
+  // W11.2 LOOKS DONE outranks the ladder: the evidence says the work may already be finished, so
+  // asking, preparing or offering a Send would be work on a debt that may not exist. A judged-none
+  // item is settled whatever the record says.
+  if (input.looksDone && v?.work !== 'none') return { state: 'looks_done', verdictWork: v?.work ?? null, primary: 'none' };
   if (!v?.work) return { state: 'unjudged', verdictWork: null, primary: 'none' };
   if (v.work === 'none') return v.revisit?.after && v.revisit.after > new Date().toISOString().slice(0, 10)
     ? { state: 'parked', verdictWork: 'none', primary: 'none' }
@@ -228,10 +274,14 @@ export async function workStateOf(
     // verdict is actionable, exactly as before; the unheld path keeps its original sequencing.
     const asksRead = () => client.from('room_turns').select('dedupe_key, component, archived_at')
       .eq('user_id', userId).like('dedupe_key', `%${item.id}%`).limit(6);
-    const [{ data: j }, earlyAsks] = await Promise.all([
+    const [{ data: j }, earlyAsks, ld] = await Promise.all([
       readPlan(client, userId, 'judgment', `${item.kind}:${item.id}`).then((data) => ({ data })),
       held ? asksRead() : Promise.resolve(null),
+      readPlan(client, userId, 'looks_done', `${item.kind}:${item.id}`), // W11.2
     ]);
+    const { looksDoneLive, looksDoneLine } = await import('@/lib/evidence/looks-done');
+    const ldRec = (ld?.tasks ?? null) as import('@/lib/evidence/looks-done').LooksDoneRecord | null;
+    const looksDone = looksDoneLive(ldRec);
     const verdict = ((j?.tasks ?? null) as { verdict?: Verdict } | null)?.verdict ?? null;
 
     // ── Prepared truth via THE ONE READER (never a parallel derivation). W2.1: the reader also
@@ -256,7 +306,8 @@ export async function workStateOf(
     }
 
     return {
-      ...deriveState({ open, verdict, judgedAt: (j?.updated_at as string) ?? null, prepared, liveAsk, sentStamp }),
+      ...deriveState({ open, verdict, judgedAt: (j?.updated_at as string) ?? null, prepared, liveAsk, sentStamp, looksDone }),
+      ...(looksDone && ldRec?.evidence ? { looksDoneLine: looksDoneLine(ldRec.evidence) } : {}),
       ...(mootAskKeys.length ? { mootAskKeys } : {}),
     };
   } catch { return none; }
@@ -281,7 +332,7 @@ export async function workStatesFor(
     const keyOf = (i: { kind: string; id: string }) => `${i.kind}:${i.id}`;
     const inboxNeedingRows = items.filter((i) => i.kind === 'inbox' && !i.row).map((i) => i.id);
     const commitNeedingRows = items.filter((i) => i.kind === 'commitment' && !i.row).map((i) => i.id);
-    const [jRes, inboxRes, commitRes, askRes] = await Promise.all([
+    const [jRes, inboxRes, commitRes, askRes, ldRows] = await Promise.all([
       readPlans(client, userId, 'judgment', { keys: items.map(keyOf) }).then(asRawResult),
       inboxNeedingRows.length
         ? client.from('inbox_items').select('id, status, source_data, last_activity_at, source').eq('user_id', userId).in('id', inboxNeedingRows)
@@ -289,9 +340,17 @@ export async function workStatesFor(
       commitNeedingRows.length
         ? client.from('commitments').select('id, status, description').eq('user_id', userId).in('id', commitNeedingRows)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
-      client.from('room_turns').select('dedupe_key, component, archived_at')
-        .eq('user_id', userId).filter('component->>key', 'eq', 'input_checklist').is('archived_at', null).limit(200),
+      // NO SILENT CAPS (W11.1): this read was `.limit(200)`, unordered — past 200 live checklists an
+      // item's ask could fall outside the slice, and the deck read "ready to send" where the room
+      // (its own per-item read) said "needs one thing from you". Paged whole, ordered.
+      fetchAllRows<AskRow>((from, to) => client.from('room_turns').select('dedupe_key, component, archived_at')
+        .eq('user_id', userId).filter('component->>key', 'eq', 'input_checklist').is('archived_at', null)
+        .order('id', { ascending: true }).range(from, to) as unknown as PromiseLike<{ data: AskRow[] | null; error: unknown }>)
+        .then((data) => ({ data })),
+      readPlans(client, userId, 'looks_done', { keys: items.map(keyOf) }), // W11.2
     ]);
+    const { looksDoneLive, looksDoneLine } = await import('@/lib/evidence/looks-done');
+    const looksDoneByKey = new Map(ldRows.map((r) => [r.key, r.tasks as unknown as import('@/lib/evidence/looks-done').LooksDoneRecord]));
     const judgments = new Map<string, { verdict: Verdict; at: string | null; firstAt: string | null }>();
     for (const j of (jRes.data ?? []) as Array<{ entity_id: string; tasks: unknown; updated_at: string; created_at: string }>) {
       judgments.set(j.entity_id, { verdict: ((j.tasks ?? null) as { verdict?: Verdict } | null)?.verdict ?? null, at: j.updated_at ?? null, firstAt: j.created_at ?? null });
@@ -335,7 +394,9 @@ export async function workStatesFor(
         ...deriveState({
           open, verdict: j?.verdict ?? null, judgedAt: j?.at ?? null,
           prepared: st?.all ?? [], liveAsk: asks.live, sentStamp: st?.sentStamp ?? false,
+          looksDone: looksDoneLive(looksDoneByKey.get(key)),
         }),
+        ...(looksDoneLive(looksDoneByKey.get(key)) && looksDoneByKey.get(key)?.evidence ? { looksDoneLine: looksDoneLine(looksDoneByKey.get(key)!.evidence) } : {}),
         ...(asks.mootKeys.length ? { mootAskKeys: asks.mootKeys } : {}),
         judgedFirstAt: j?.firstAt ?? null,
       });

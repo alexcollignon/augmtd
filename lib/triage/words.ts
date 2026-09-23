@@ -13,7 +13,9 @@
 // invents its own "today" is how a deck built at 23:58 offers "tomorrow" for yesterday.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import { clipForPrompt } from '@/lib/utils/clip-for-prompt';
+// W11.3 · THE MARKER NEVER RENDERS: a card's tail is a DISPLAY clip (boundary + "…"), never the
+// prompt-side EXCERPT_MARK — the card's open verb is the door to the whole message.
+import { clipForDisplay } from '@/lib/utils/clip-for-prompt';
 import { topMessageOf } from '@/lib/inbox/top-message';
 // THE ONE ENTITY DECODER (W5b) — a snippet-fed tail must never show `&#39;` as text.
 import { decodeEntities } from '@/lib/core/text';
@@ -123,7 +125,7 @@ export function threadTail(messages: ThreadDoorMessage[] | null | undefined): Tr
       // DECODED BEFORE THE QUOTE STRIP (W5b): an escaped `&gt;` quote line is still a quote line, and
       // a snippet fallback arrives HTML-escaped from the provider.
       const raw = (typeof m.body === 'string' && m.body.trim()) ? topMessageOf(decodeEntities(m.body)) : decodeEntities(m.snippet ?? '');
-      const body = clipForPrompt(String(raw ?? '').replace(/\n{3,}/g, '\n\n').trim(), TRIAGE_MESSAGE_CHARS);
+      const body = clipForDisplay(String(raw ?? '').replace(/\n{3,}/g, '\n\n').trim(), TRIAGE_MESSAGE_CHARS);
       return {
         id: String(m.id ?? `m${i}`),
         author: m.isFromUser ? 'You' : (decodeEntities(m.fromName?.trim() || m.from?.trim() || '') || 'Them'),

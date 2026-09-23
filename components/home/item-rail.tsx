@@ -32,7 +32,7 @@ import { moveTargetId, mergedArtifactKey, stageOfArtifactKey } from '@/lib/room/
 import DecisionCard, { type DecisionSpec, type DecisionOutcome } from '@/components/home/decision-card';
 // THE ONE OBJECT CARD's host mount — the room shows WHAT IT IS TALKING ABOUT (THE OPENING
 // CONTRACT, clause 1): one read of the thread door, one kit card, one viewer, every seat.
-import { SourceObjectMount, MeetingSourceMount, type MeetingSourceFacts } from '@/components/room/source-object';
+import { SourceObjectMount, MeetingSourceMount, EmailSourceMount, type MeetingSourceFacts, type EmailSourceFacts } from '@/components/room/source-object';
 import { panelPlan } from '@/lib/room/render-plan';
 import { offerLineFor } from '@/lib/room/cta-law';
 import { roomKeyForDoor, targetOwnedByDoor, cardMayBindTarget, objectIdForDoor, idsNamedByCard, type Door } from '@/lib/room/door';
@@ -377,7 +377,7 @@ function Chip({ icon, label, onClick }: { icon?: React.ReactNode; label: string;
   );
 }
 
-export function ItemRail({ kind, id, view, pending = false, onDraft, decision, artifacts, onOpenHref, onStage, onHistory, sourceItemId, sourceMeeting, onOpenThread }: {
+export function ItemRail({ kind, id, view, pending = false, onDraft, decision, artifacts, onOpenHref, onStage, onHistory, sourceItemId, sourceMeeting, sourceEmail, onOpenThread }: {
   kind: RailKind; id: string; view: RailView;
   /** THE STRUCTURAL FRAME (UX arc): true while the view is still loading — the rail mounts its
    *  shell (header, turns, composer) immediately and shows a quiet shimmer instead of anchor
@@ -436,6 +436,11 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   /** W7.3 · A MEETING-BORN COMMITMENT'S SOURCE: the meeting itself, served by the door. It takes the
    *  object card's ONE seat when the door has no mail object — the promise shows where it was made. */
   sourceMeeting?: MeetingSourceFacts | null;
+  /** W11.1 · AN EMAIL-BORN COMMITMENT'S SOURCE IS ITS OWN MESSAGE (`commitments.source_id`, served
+   *  by lib/commitments/source.ts emailSourceOf) — never the thread's newest tail. On a commitment
+   *  door the thread object card never mounts; this card takes the seat, and its one door opens the
+   *  thread ("Later in this conversation →"). Absent while loading → nothing (the in-flight rule). */
+  sourceEmail?: EmailSourceFacts | null;
   /** W8.4 · ONE CARD, ONE DOOR — the object card's "Thread →" opens the thread WHERE THE HOST READS
    *  IT: the deep-dive raises its ONE drawer on the thread section (the same door the reply card's
    *  "Thread →" uses). Absent (the project room) → the room's own in-room focus (onOpenHref), never a
@@ -1342,7 +1347,15 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   const objectAlreadyMounted = !!objectItemId
     && mountedCards.some((a) => !!a.showsSource
       && ((a.anchorKey ?? '').includes(objectItemId) || a.key.includes(objectItemId)));
-  const objectCard = objectItemId && !objectAlreadyMounted ? (
+  // W11.1 · A COMMITMENT'S OBJECT IS ITS OWN SOURCE MESSAGE: the thread's object card (whose door
+  // serves the NEWEST tail) never stands for a commitment — the message the promise came from does.
+  const commitmentDoor = kind === 'commitment';
+  const objectCard = (commitmentDoor && sourceEmail) ? (
+    <EmailSourceMount source={sourceEmail}
+      // The one door: the host's drawer (the deep-dive's Source section, which carries the rest of
+      // the conversation) — else the thread's own item. No door, no label (no lying doors).
+      onOpen={onOpenThread ? () => onOpenThread(objectItemId ?? '') : objectItemId ? () => go(`/item/${objectItemId}`) : undefined} />
+  ) : (objectItemId && !objectAlreadyMounted && !commitmentDoor) ? (
     <SourceObjectMount itemId={objectItemId}
       // W8.4 · ONE CARD, ONE DOOR: the host's drawer (the deep-dive) — else the room's own focus.
       onOpenThread={() => (onOpenThread ? onOpenThread(objectItemId) : go(`/item/${objectItemId}`))} />

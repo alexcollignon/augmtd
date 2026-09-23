@@ -71,3 +71,5 @@ export { SYNTH_BRIEF_VERSION } from '@/lib/home/synthesize-brief';
 export { BUNDLE_NAMES_VERSION } from '@/lib/home/name-bundles';
 /** The conversation delta (W8.2) — its prompt + validation floors; stamped on every settle's activity row. */
 export { CONVERSATION_DELTA_VERSION } from '@/lib/work/conversation-delta';
+/** The working circle's inference rule (W11.2) — the version slot of the `working_circle` cache (a bump re-infers). */
+export { CIRCLE_VERSION } from '@/lib/evidence/circle';

@@ -17,6 +17,7 @@ import { SkillsLibraryView } from '@/components/workers/skills-library-view';
 import { TabBar } from '@/components/ui';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { ROLE_AVATARS } from '@/lib/workers/roles';
+import WorkingCircle from '@/components/settings/working-circle';
 
 type Worker = { id: string; name: string; description: string | null; worker_role: string | null };
 const LS_KEY = 'aug-team-roster-v1';
@@ -91,6 +92,10 @@ export default function TeamSection() {
         )}
         {(workers ?? []).map((w) => <WorkerRow key={w.id} w={w} />)}
       </div>
+
+      {/* W11.2 THE WORKING CIRCLE — the people whose deeds count as your team's (members, the
+          collaborators you confirmed, and co-senders inferred from your own mail). */}
+      <WorkingCircle />
 
       {/* THE SKILLS LIBRARY — team-level "how to" instructions, assigned per coworker. The same
           library component the workers page hosted; one system of record. */}

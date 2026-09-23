@@ -92,6 +92,33 @@ export function MeetingSourceMount({ meeting, onOpen }: { meeting: MeetingSource
   return <ThreadCardView card={meetingSourceCard(meeting, onOpen)} />;
 }
 
+// ── A COMMITMENT'S SOURCE IS ITS OWN MESSAGE (stabilization W11.1 · ONE OBJECT, ONE DOOR) ─────────
+// Found live (owner walk, Sep 23): an email-born commitment's card showed the thread's LATEST message
+// (weeks after the promise) — SourceObjectMount reads the thread door, whose tail is the newest. The
+// commitment's object is the ONE message it was extracted from (`commitments.source_id`, read by
+// lib/commitments/source.ts emailSourceOf and served on the commitment's payload); the rest of the
+// conversation is one click away — "Later in this conversation →" opens the thread drawer.
+/** The served shape (lib/commitments/source.ts `EmailSource`) — the payload is the contract. */
+export type EmailSourceFacts = { id: string; threadId: string | null; subject: string | null; from: string | null; receivedAt: string | null; excerpt: string | null };
+
+/** The door label — one wording, so the gate asserts the mapping and not a scattered literal. */
+export const LATER_IN_CONVERSATION_LABEL = 'Later in this conversation →';
+
+/** The pure producer: served facts → the kit's `source` card (the message's own words). */
+export function emailSourceCard(m: EmailSourceFacts, onOpen?: () => void): ThreadCard {
+  return {
+    kind: 'source', id: `source-email-${m.id}`, source: 'email',
+    who: m.from, when: whenLabel(m.receivedAt),
+    ...(m.subject ? { title: m.subject } : {}),
+    ...(m.excerpt ? { excerpt: m.excerpt } : {}),
+    ...(onOpen ? { onOpen, openLabel: LATER_IN_CONVERSATION_LABEL } : {}),
+  };
+}
+
+export function EmailSourceMount({ source, onOpen }: { source: EmailSourceFacts; onOpen?: () => void }) {
+  return <ThreadCardView card={emailSourceCard(source, onOpen)} />;
+}
+
 export function SourceObjectMount({ itemId, onOpenThread, openLabel }: {
   /** The inbox item whose thread IS the object under the ask. */
   itemId: string;

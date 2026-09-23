@@ -84,6 +84,33 @@ const LABEL_WORD: Record<RuleLabel, string> = {
   needs_reply: 'Needs reply', to_do: 'To do', waiting_on: 'Waiting on', meeting: 'Meeting',
   fyi: 'FYI', notifications: 'Notifications', marketing: 'Marketing', done: 'Done',
 };
+// ── W11.3 · RULES SORT MAIL IN AUGMTD (WHAT THE SCREEN SAYS IS TRUE — owner walk Sep 23) ────────
+// After W10 a rule's `set_type` is an IN-APP SORT: it decides which lane the mail lands in inside
+// AUGMTD (lib/inbox/rules/types.ts LABEL_TO_TYPE). It writes a mailbox label ONLY when the account
+// chose the mirror (augmtdLabelsOn) AND the posture is one the mirror still writes (Needs reply ·
+// To do · Waiting on · Done). Meeting / Notifications / Marketing / FYI are no mailbox labels at all
+// any more — in-app they are awareness mail of a given kind. The built-in rows used to read "Label
+// mail … as Notifications" to an account with labels OFF: three lies in one line. So the sentence
+// speaks SORTING, and names the mailbox only when the mailbox is actually touched.
+/** How a sentence names the in-app sort a set_type performs. */
+export const SORT_PHRASE: Record<RuleLabel, string> = {
+  needs_reply: 'Needs reply', to_do: 'To do', waiting_on: 'Waiting on', done: 'Done',
+  fyi: 'for your awareness',
+  notifications: 'a notification (for your awareness)',
+  meeting: 'a calendar update (for your awareness)',
+  marketing: 'marketing (for your awareness)',
+};
+/** How a receipt names the same sort ("N messages sorted as …"). */
+const SORT_COUNT_WORD: Record<RuleLabel, string> = {
+  needs_reply: 'Needs reply', to_do: 'To do', waiting_on: 'Waiting on', done: 'Done',
+  fyi: 'for your awareness', notifications: 'notifications', meeting: 'calendar updates', marketing: 'marketing',
+};
+/** The postures the mailbox mirror still writes (mirrors lib/inbox/rules/write-back.ts
+ *  AUGMTD_LIVE_POSTURE_LABELS — smoke-screen-truth asserts the two never drift). */
+export const MIRRORED_POSTURES: readonly RuleLabel[] = ['needs_reply', 'to_do', 'waiting_on', 'done'];
+/** Render context: whether the account chose the mailbox mirror (email_settings.auto_label). */
+export type RenderOpts = { mirrorOn?: boolean };
+
 const KIND_WORD: Record<string, string> = {
   receipt: 'a receipt', newsletter: 'a newsletter', notification: 'a notification', calendar: 'a calendar update',
   cold_outreach: 'cold outreach', customer: 'customer mail', team: 'team mail', personal: 'personal mail',
@@ -136,19 +163,31 @@ function conditionPhrase(conditions: Condition[], mode: MatchMode): string {
   const conj = mode === 'any' ? 'or' : 'and';
   const clauses = groups.map((g) => {
     const isLabel = g.field === 'has_label' || g.field === 'has_no_label';
+    // W11.3 · Gmail's own categories read as Gmail's words, not as raw ids ("CATEGORY_PROMOTIONS").
+    if (isLabel && g.values.every((v) => /^CATEGORY_[A-Z]+$/.test(v))) {
+      const cats = joinList(g.values.map((v) => v.slice(9).charAt(0) + v.slice(10).toLowerCase()), conj);
+      return g.field === 'has_label' ? `that Gmail files under ${cats}` : `that Gmail does not file under ${cats}`;
+    }
     return FIELD_PHRASE[g.field](joinList(g.values.map((v) => (isLabel ? v : quote(v))), conj));
   });
   return joinList(clauses, conj);
 }
 
 /** The verb phrases a rule's outcome actually performs — derived from the data, never a fixed subset. */
-function outcomeVerbs(outcome: RuleOutcome, subject: string): string[] {
+function outcomeVerbs(outcome: RuleOutcome, subject: string, opts: RenderOpts = {}): string[] {
   const verbs: string[] = [];
   const push = (first: string, rest: string) => verbs.push(verbs.length ? rest : first);
   const o = outcome ?? {};
-  if (o.set_type && LABEL_WORD[o.set_type]) push(`Label ${subject} as ${LABEL_WORD[o.set_type]}`, `label it ${LABEL_WORD[o.set_type]}`);
+  if (o.set_type && SORT_PHRASE[o.set_type]) {
+    push(`Treat ${subject} as ${SORT_PHRASE[o.set_type]}`, `treat it as ${SORT_PHRASE[o.set_type]}`);
+    // The mailbox is named only when it is actually touched: the mirror is ON and this posture is
+    // one the mirror writes (W11.3).
+    if (opts.mirrorOn && (MIRRORED_POSTURES as readonly string[]).includes(o.set_type)) {
+      verbs.push(`label it AUGMTD/${LABEL_WORD[o.set_type]} in my mailbox`);
+    }
+  }
   if (o.set_kind && KIND_WORD[o.set_kind]) push(`Treat ${subject} as ${KIND_WORD[o.set_kind]}`, `treat it as ${KIND_WORD[o.set_kind]}`);
-  if (o.apply_label && typeof o.apply_label === 'string') push(`File ${subject} under my label ${quote(o.apply_label)}`, `file it under ${quote(o.apply_label)}`);
+  if (o.apply_label && typeof o.apply_label === 'string') push(`File ${subject} under my mailbox label ${quote(o.apply_label)}`, `file it under my mailbox label ${quote(o.apply_label)}`);
   if (o.mark_read) push(`Mark ${subject} as read`, 'mark it read');
   if (o.trash) push(`Move ${subject} to trash`, 'move it to trash');
   else if (o.archive) push(`Archive ${subject}`, 'archive it');
@@ -165,7 +204,7 @@ function outcomeVerbs(outcome: RuleOutcome, subject: string): string[] {
  *   names the rule — never a fabricated description of what it does.
  * ZERO AI. This function must never import or construct an AI client (gate PS1 asserts it).
  */
-export function renderPostureSentence(rule: Partial<PostureRow> | null | undefined): string {
+export function renderPostureSentence(rule: Partial<PostureRow> | null | undefined, opts: RenderOpts = {}): string {
   if (!rule) return 'Apply this rule.';
   const outcome = (rule.outcome ?? {}) as PostureOutcome;
   const authored = outcome.posture?.sentence;
@@ -179,7 +218,7 @@ export function renderPostureSentence(rule: Partial<PostureRow> | null | undefin
   const subject = phrase ? `${object} ${phrase}` : object;
   const when = ai ? ` when ${lowerFirst(stripTrailingPeriod(ai))}` : '';
 
-  const verbs = outcomeVerbs((rule.outcome ?? {}) as RuleOutcome, subject);
+  const verbs = outcomeVerbs((rule.outcome ?? {}) as RuleOutcome, subject, opts);
   if (!verbs.length) {
     const named = (rule.name ?? '').trim();
     const head = named ? `Apply the ${quote(named)} rule` : 'Apply this rule';
@@ -252,7 +291,7 @@ export function validatePrimitives(raw: unknown): ValidationResult {
         : { ok: false, reason: 'I can’t flag or notify you from a rule yet — I won’t promise something I don’t do.' };
     }
     if (!(AUTHORABLE_OUTCOME_KEYS as readonly string[]).includes(key)) {
-      return { ok: false, reason: `I can’t do “${key}”. I can sort mail, treat it as a kind, file it under your own label, mark it read, archive it, or trash it.` };
+      return { ok: false, reason: `I can’t do “${key}”. I can sort mail, treat it as a kind, file it under your own mailbox label, mark it read, archive it, or trash it.` };
     }
     const v = rawOut[key];
     switch (key) {
@@ -467,7 +506,7 @@ export async function postureReceipts(
     for (const r of aiRules) {
       const label = (r.outcome as RuleOutcome | null)?.set_type;
       if (!label) {
-        out.set(r.id, { ruleId: r.id, form: 'no_effect', count: 0, sharedWith: 0, scanned: 0, line: 'No label to count — this posture records nothing yet.' });
+        out.set(r.id, { ruleId: r.id, form: 'no_effect', count: 0, sharedWith: 0, scanned: 0, line: 'This rule sorts nothing, so there is nothing to count yet.' });
         continue;
       }
       const { count } = await client.from('inbox_items')
@@ -475,12 +514,14 @@ export async function postureReceipts(
         .eq('user_id', userId).eq('rule_type', label).gte('created_at', since);
       const n = count ?? 0;
       const sharedWith = Math.max(0, (liveByLabel.get(label) ?? 1) - 1);
-      const word = LABEL_WORD[label as RuleLabel] ?? label;
+      // W11.3 · THE COUNT SAYS WHAT IT MEASURES: `inbox_items.rule_type` is the IN-APP sort, not a
+      // mailbox label — the line says "sorted as … in AUGMTD", never "carry the … label".
+      const word = SORT_COUNT_WORD[label as RuleLabel] ?? label;
       out.set(r.id, {
         ruleId: r.id, form: 'label_count', count: n, sharedWith, scanned: 0,
         line: sharedWith > 0
-          ? `${plural(n, 'message carries', 'messages carry')} the ${word} label in the last ${RECEIPT_WINDOW_DAYS} days — shared with ${plural(sharedWith, 'other posture', 'other postures')}, so this isn’t all its own doing.`
-          : `${plural(n, 'message carries', 'messages carry')} the ${word} label in the last ${RECEIPT_WINDOW_DAYS} days.`,
+          ? `${plural(n, 'message', 'messages')} sorted as ${word} in AUGMTD in the last ${RECEIPT_WINDOW_DAYS} days — shared with ${plural(sharedWith, 'other rule', 'other rules')}, so not all of it is this rule’s doing.`
+          : `${plural(n, 'message', 'messages')} sorted as ${word} in AUGMTD in the last ${RECEIPT_WINDOW_DAYS} days.`,
       });
     }
   }
@@ -495,11 +536,11 @@ export async function postureReceipts(
 
 // ── 5 · CRUD — thin over the SAME store the rules routes write ───────────────────────────────────
 
-export function toPosture(row: PostureRow): Posture {
+export function toPosture(row: PostureRow, opts: RenderOpts = {}): Posture {
   const outcome = (row.outcome ?? {}) as PostureOutcome;
   return {
     id: row.id,
-    sentence: renderPostureSentence(row),
+    sentence: renderPostureSentence(row, opts),
     verbatim: !!(outcome.posture?.sentence && outcome.posture.sentence.trim()),
     builtin: row.source === 'default' || row.source === 'workspace',
     enabled: !!row.enabled,
@@ -519,7 +560,7 @@ export async function listPostures(client: DBClient, userId: string, connectionI
   let q = client.from('inbox_rules').select('*').eq('user_id', userId);
   if (connectionId) q = q.eq('connection_id', connectionId);
   const { data } = await q.order('priority', { ascending: true });
-  return ((data ?? []) as PostureRow[]).map(toPosture);
+  return ((data ?? []) as PostureRow[]).map((r) => toPosture(r));
 }
 
 export type CreatePostureResult = { ok: true; posture: Posture; understood: string } | { ok: false; reason: string };

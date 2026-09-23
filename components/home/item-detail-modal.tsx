@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { ItemDetail, type ItemKind } from './item-detail';
+import { takeFramePainted } from './item-open-frame';
 
 // ── The item-detail rendered as a DEEP DIVE IN the Home — NOT a centered popup. Mounted by the
 // intercepting route (@modal/(.)item/[id]) on soft-navigation from the Home. It covers the Home's
@@ -23,7 +24,9 @@ export function ItemDetailModal({ id }: { id: string }) {
   const kind = (params.get('kind') as ItemKind | null) ?? 'email';
 
   // Mount → animate in. `closing` triggers the exit animation before we actually pop the route.
-  const [entered, setEntered] = useState(false);
+  // W11.4: the route's loading frame already slid in — the room lands as a FILL of that frame
+  // (already entered), never a second entrance from transparent (components/home/item-open-frame).
+  const [entered, setEntered] = useState(() => takeFramePainted());
   const [closing, setClosing] = useState(false);
 
   useEffect(() => {

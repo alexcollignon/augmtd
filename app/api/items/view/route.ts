@@ -68,22 +68,91 @@ export async function GET(request: NextRequest) {
     // ── WAVE 1 — every read that keys on (user, kind, id) alone, in ONE flight. THE ONE READER's
     // whole STATE is held (not just `.all`), so the machine below re-reads nothing (W3.7: the
     // second full preparedState this door used to pay on its critical path is gone).
-    const [planRes, prepState, linkRes, anyVerdict, itemRowRes] = await Promise.all([
-      supabase.from('item_plans').select('tasks, updated_at').eq('user_id', user.id).eq('kind', kind).eq('entity_id', id).maybeSingle(),
-      linkKind === 'meeting'
-        ? Promise.resolve(null as PreparedState | null)
-        : preparedState(supabase, user.id, { kind: linkKind, id }).catch(() => null),
-      supabase.from('entity_links').select('entity_id').eq('user_id', user.id).eq('item_kind', linkKind).eq('item_id', id).not('entity_id', 'is', null).maybeSingle(),
-      // ANY membership verdict (incl. a remembered refusal) — decides whether to recognize-on-open below.
-      supabase.from('entity_links').select('item_id').eq('user_id', user.id).eq('item_kind', linkKind).eq('item_id', id).maybeSingle(),
-      // The open item itself — the ANCHOR the rail leads with (P5b: the rail narrates THIS item first).
-      // `status` rides (ANCHOR_ROW_SELECT) so the machine reader takes this row instead of re-reading it.
-      linkKind === 'inbox_item'
-        ? supabase.from('inbox_items').select(ANCHOR_ROW_SELECT.inbox_item).eq('id', id).eq('user_id', user.id).maybeSingle()
-        : linkKind === 'commitment'
-          ? supabase.from('commitments').select(ANCHOR_ROW_SELECT.commitment).eq('id', id).eq('user_id', user.id).maybeSingle()
-          : supabase.from('meeting_transcripts').select(ANCHOR_ROW_SELECT.meeting).eq('id', id).eq('user_id', user.id).maybeSingle(),
-    ]);
+    // W11.4 THE ITEM OPENS NOW — NO WAVE BARRIER: each read is STARTED here and each wave-2 read
+    // below chains on ITS OWN input the moment that input lands (the source object on the row, the
+    // rail on the link, the machine on row + prepared), instead of every wave-2 read waiting for the
+    // slowest wave-1 read (bench-item-open: preparedState alone ran 0.4–1.0s while the row it gates
+    // nothing on landed in ~0.1s). The critical path is the longest CHAIN, never the sum of maxima.
+    // Each builder is turned into ONE promise here (a PostgREST builder re-executes on every `then`).
+    const planP = Promise.resolve(supabase.from('item_plans').select('tasks, updated_at').eq('user_id', user.id).eq('kind', kind).eq('entity_id', id).maybeSingle());
+    const prepP: Promise<PreparedState | null> = linkKind === 'meeting'
+      ? Promise.resolve(null as PreparedState | null)
+      : preparedState(supabase, user.id, { kind: linkKind, id }).catch(() => null);
+    const linkP = Promise.resolve(supabase.from('entity_links').select('entity_id').eq('user_id', user.id).eq('item_kind', linkKind).eq('item_id', id).not('entity_id', 'is', null).maybeSingle());
+    // ANY membership verdict (incl. a remembered refusal) — decides whether to recognize-on-open below.
+    const anyVerdictP = Promise.resolve(supabase.from('entity_links').select('item_id').eq('user_id', user.id).eq('item_kind', linkKind).eq('item_id', id).maybeSingle());
+    // The open item itself — the ANCHOR the rail leads with (P5b: the rail narrates THIS item first).
+    // `status` rides (ANCHOR_ROW_SELECT) so the machine reader takes this row instead of re-reading it.
+    const itemRowP = Promise.resolve(linkKind === 'inbox_item'
+      ? supabase.from('inbox_items').select(ANCHOR_ROW_SELECT.inbox_item).eq('id', id).eq('user_id', user.id).maybeSingle()
+      : linkKind === 'commitment'
+        ? supabase.from('commitments').select(ANCHOR_ROW_SELECT.commitment).eq('id', id).eq('user_id', user.id).maybeSingle()
+        : supabase.from('meeting_transcripts').select(ANCHOR_ROW_SELECT.meeting).eq('id', id).eq('user_id', user.id).maybeSingle());
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const foldedRowP: Promise<any> = itemRowP.then((res) => foldAnchorRow(linkKind, res.data ?? null));
+    // THE BRIEF'S LAST-GOOD keys on the loose room alone, so it is STARTED beside wave 1 (W11.4).
+    const looseKey = looseRoomKeyOf(linkKind, id);
+    const { readRoomResponse, ensureLooseRoomBrief, joinCompose } = await import('@/lib/room/brief');
+    const lastGoodP = readRoomResponse(supabase, user.id, looseKey, { allowStaleVersion: true }).catch(() => null);
+
+    // ── WAVE 2, CHAINED — THE RAIL + THE MACHINE + THE DOOR'S OWN OBJECT, each started on its OWN
+    // input (W11.4), awaited together below beside the brief's last-good read.
+    // THE RAIL (P1.5b) — the deal's judged state + everything else living on this entity, via
+    // THE ONE room-view builder (P7c-c2: shared with GET /api/entities/[id]/room — the deep-dive and
+    // the project room can never drift). Zero AI here; its routing chip is cache-or-defer (no AI and
+    // no extra round trip on the read path — suggestWorkerForMove deferOnMiss, in its own wave).
+    const roomP = linkP.then(async (linkRes) => {
+      const { buildRoomView, emptySiblings } = await import('@/lib/entities/room-view');
+      return linkRes.data?.entity_id
+        ? buildRoomView(supabase, user.id, linkRes.data.entity_id as string, id)
+        : { entity: null, siblings: emptySiblings() };
+    });
+    // THE MACHINE'S ONE WORD (experience-spec, Part "THE MACHINE"): the lifecycle this item stands in,
+    // derived from the same truth the door renders (judgment · prepared · live asks). Meetings have no
+    // work state; a failed derivation simply ships nothing — the header renders as before.
+    // THE MOOT ASK BY CODE (W3.5 (d)): the asks the machine ignored are served so the room hides
+    // the same turns — header and room speak ONE claim.
+    const machineP = (linkKind === 'inbox_item' || linkKind === 'commitment')
+      ? Promise.all([foldedRowP, prepP]).then(async ([itemRow, prepState]) => {
+          try {
+            const { workStateOf, STATE_WORDS } = await import('@/lib/work/machine');
+            // HELD: the row and THE ONE READER's state from wave 1 — the machine re-reads neither.
+            const st = await workStateOf(supabase, user.id, { kind: linkKind === 'inbox_item' ? 'inbox' : 'commitment', id }, { row: itemRow, prepared: prepState });
+            // W11.1 · LOOKS DONE: the evidence line rides the word (who · what · when — its one home is
+            // lib/evidence/looks-done.ts; the room renders it, never composes it).
+            return { state: st.state, word: STATE_WORDS[st.state], moot: st.mootAskKeys ?? [], line: st.looksDoneLine ?? null };
+          } catch { return null; /* non-fatal — the word is an enhancement */ }
+        })
+      : Promise.resolve(null);
+    // THE DOOR'S OWN OBJECT (ONE OBJECT, ONE DOOR — lib/room/door.ts objectIdForDoor): a
+    // commitment's source object is the inbox item of the email it was born from — the exact
+    // email item when one exists, else the newest item on that email's own thread. Never a
+    // move target. A meeting-born commitment has no mail object (W7.4 hands the meeting source
+    // to the same mount; this door only ever CHOOSES the id). Zero AI; one small read.
+    // W7.3: `source_id` is the EMAILS row id — THE ONE READ (lib/commitments/source.ts) maps it.
+    const sourceItemIdP = foldedRowP.then(async (itemRow): Promise<string | null> => {
+      if (linkKind !== 'commitment' || !itemRow) return null;
+      if (String(itemRow.source ?? '') !== 'email') return null;
+      const { inboxItemForEmail } = await import('@/lib/commitments/source');
+      return inboxItemForEmail(supabase, user.id, {
+        emailId: itemRow.source_id ? String(itemRow.source_id) : null,
+        threadId: itemRow.thread_id ? String(itemRow.thread_id) : null,
+      });
+    });
+    // W7.3 · A MEETING-BORN COMMITMENT'S SOURCE IS ITS MEETING — served as the source object (title,
+    // date, attendees minus the user, the summary's clipped first words, the meeting page's address).
+    const sourceMeetingP = foldedRowP.then(async (itemRow) => {
+      if (linkKind !== 'commitment' || !itemRow || String(itemRow.source ?? '') !== 'meeting' || !itemRow.source_id) return null;
+      const [{ meetingSourceOf }, { loadUserForms, isUserForm }] = await Promise.all([
+        import('@/lib/commitments/source'), import('@/lib/prepare/addressee'),
+      ]);
+      const forms = await loadUserForms(supabase, user.id);
+      return meetingSourceOf(supabase, user.id, String(itemRow.source_id), (who) => isUserForm(who, forms));
+    });
+    // Awaited below; marked handled here so an early exit (a throw in wave 1) never leaves one unhandled.
+    for (const p of [roomP, machineP, sourceItemIdP, sourceMeetingP]) void p.catch(() => {});
+
+    const [planRes, prepState, linkRes, anyVerdict, itemRowRes] = await Promise.all([planP, prepP, linkP, anyVerdictP, itemRowP]);
     const preparedArts = prepState?.all ?? [];
     mark('wave1');
 
@@ -92,7 +161,7 @@ export async function GET(request: NextRequest) {
     // per part; never invented. ONE derivation (lib/room/item-anchor) shared with THE WARM — the
     // loose brief's sig rides it, so a warm that derived it differently would warm nothing.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const itemRow = foldAnchorRow(linkKind, itemRowRes.data ?? null) as any;
+    const itemRow = (await foldedRowP) as any;
     const anchor = anchorOf(linkKind, itemRow, preparedArts);
     const itemActivityAt: string | null = activityAtOf(linkKind, itemRow);
 
@@ -107,9 +176,7 @@ export async function GET(request: NextRequest) {
     // ONE OBJECT, ONE DOOR (W7.2): ALWAYS the item's own `<kind>:<id>` room, linked or not. The
     // linked branch ("linked → the ENTITY room's brief") is dead: it served an untracked machine
     // container's agenda under this item's title the moment recognition-on-open wrote a link.
-    const looseKey = looseRoomKeyOf(linkKind, id);
-    const { readRoomResponse, ensureLooseRoomBrief, joinCompose } = await import('@/lib/room/brief');
-    const lastGoodP = readRoomResponse(supabase, user.id, looseKey, { allowStaleVersion: true }).catch(() => null);
+    // (W11.4: `looseKey` + the last-good read were STARTED beside wave 1 — they key on the room alone.)
     // A HOVER WARM IS ZERO-AI (W8.4 — lib/room/open-kicks.ts): `?warm=1` is the deck's hover/intent
     // prefetch, a pure read. Only a REAL open schedules the AI-bearing background work (the compose,
     // recognize-on-open, the re-prepare trip); an open that joins a warm in flight kicks the same
@@ -158,61 +225,12 @@ export async function GET(request: NextRequest) {
       INVITE_PHRASE.test(`${t.text || ''} ${t.detail || ''}`) && !isSendBlocked(tasks, t));
     const inviteTaskId = inviteStep?.id ?? null;
 
-    // ── WAVE 2 — THE RAIL + THE MACHINE, beside the brief (W3.7: these ran one after the other and
-    // both after wave 1 — now they share one flight with the compose already running above).
-    // THE RAIL (P1.5b) — the deal's judged state + everything else living on this entity, via
-    // THE ONE room-view builder (P7c-c2: shared with GET /api/entities/[id]/room — the deep-dive and
-    // the project room can never drift). Zero AI here; its routing chip is cache-or-defer (no AI
-    // and no extra round trip on the read path — suggestWorkerForMove deferOnMiss, in its own wave).
-    // THE MACHINE'S ONE WORD (experience-spec, Part "THE MACHINE"): the lifecycle this item stands in,
-    // derived from the same truth the door renders (judgment · prepared · live asks). Meetings have no
-    // work state; a failed derivation simply ships nothing — the header renders as before.
-    // THE MOOT ASK BY CODE (W3.5 (d)): the asks the machine ignored are served so the room hides
-    // the same turns — header and room speak ONE claim.
-    const { buildRoomView, emptySiblings } = await import('@/lib/entities/room-view');
-    const [room, machine, sourceItemId, sourceMeeting] = await Promise.all([
-      linkRes.data?.entity_id
-        ? buildRoomView(supabase, user.id, linkRes.data.entity_id as string, id)
-        : Promise.resolve({ entity: null, siblings: emptySiblings() }),
-      (linkKind === 'inbox_item' || linkKind === 'commitment')
-        ? (async () => {
-            try {
-              const { workStateOf, STATE_WORDS } = await import('@/lib/work/machine');
-              // HELD: the row and THE ONE READER's state from wave 1 — the machine re-reads neither.
-              const st = await workStateOf(supabase, user.id, { kind: linkKind === 'inbox_item' ? 'inbox' : 'commitment', id },
-                { row: itemRow, prepared: prepState });
-              return { state: st.state, word: STATE_WORDS[st.state], moot: st.mootAskKeys ?? [] };
-            } catch { return null; /* non-fatal — the word is an enhancement */ }
-          })()
-        : Promise.resolve(null),
-      // THE DOOR'S OWN OBJECT (ONE OBJECT, ONE DOOR — lib/room/door.ts objectIdForDoor): a
-      // commitment's source object is the inbox item of the email it was born from — the exact
-      // email item when one exists, else the newest item on that email's own thread. Never a
-      // move target. A meeting-born commitment has no mail object (W7.4 hands the meeting source
-      // to the same mount; this door only ever CHOOSES the id). Zero AI; one small read.
-      // W7.3: `source_id` is the EMAILS row id — THE ONE READ (lib/commitments/source.ts) maps it.
-      (async (): Promise<string | null> => {
-        if (linkKind !== 'commitment' || !itemRow) return null;
-        if (String(itemRow.source ?? '') !== 'email') return null;
-        const { inboxItemForEmail } = await import('@/lib/commitments/source');
-        return inboxItemForEmail(supabase, user.id, {
-          emailId: itemRow.source_id ? String(itemRow.source_id) : null,
-          threadId: itemRow.thread_id ? String(itemRow.thread_id) : null,
-        });
-      })(),
-      // W7.3 · A MEETING-BORN COMMITMENT'S SOURCE IS ITS MEETING — served as the source object (title,
-      // date, attendees minus the user, the summary's clipped first words, the meeting page's address).
-      (async () => {
-        if (linkKind !== 'commitment' || !itemRow || String(itemRow.source ?? '') !== 'meeting' || !itemRow.source_id) return null;
-        const [{ meetingSourceOf }, { loadUserForms, isUserForm }] = await Promise.all([
-          import('@/lib/commitments/source'), import('@/lib/prepare/addressee'),
-        ]);
-        const forms = await loadUserForms(supabase, user.id);
-        return meetingSourceOf(supabase, user.id, String(itemRow.source_id), (who) => isUserForm(who, forms));
-      })(),
-    ]);
+    // ── WAVE 2 — THE RAIL + THE MACHINE + THE DOOR'S OWN OBJECT (each STARTED above on its own
+    // input — W11.4), in ONE flight, awaited here beside the brief's last-good read.
+    const [room, machine, sourceItemId, sourceMeeting] = await Promise.all([roomP, machineP, sourceItemIdP, sourceMeetingP]);
     mark('wave2');
-    const machineState: { state: string; word: string | null } | null = machine ? { state: machine.state, word: machine.word } : null;
+    const machineState: { state: string; word: string | null; line?: string | null } | null = machine
+      ? { state: machine.state, word: machine.word, ...(machine.line ? { line: machine.line } : {}) } : null;
     const mootAskKeys: string[] = machine?.moot ?? [];
     // ── THE BRIEF, AS THE FIRST PAINT CARRIES IT: last-good (one select, read beside wave 1/2).
     const r = await lastGoodP;
@@ -297,3 +315,4 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
+
