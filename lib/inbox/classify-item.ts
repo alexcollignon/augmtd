@@ -4,7 +4,7 @@
 // with something you owe.
 
 import { isNeedsReply, isCcOnlyBystander, type SignalItem } from './needs-reply';
-import { isNoMoveNotice, rawMailKindOf } from './notice-demotion';
+import { isNoMoveNotice, rawMailKindOf, listMailOf } from './notice-demotion';
 import { isCampaignEcho } from './campaign-echo';
 import { getUnderstanding } from './item-understanding';
 import { DEFAULT_RULES } from './rules/defaults';
@@ -58,6 +58,7 @@ function noMoveConfirmed(item: Item): boolean {
       workState: item.work_state ?? null,
       // THE ECHO FLOOR rides the ONE no-move law (LAW 5) — derivation here, law there.
       campaignEcho: isCampaignEcho(item),
+      listMail: listMailOf(sd),
     });
   } catch { return true; } // law unavailable → keep the conservative demotion
 }

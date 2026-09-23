@@ -24,7 +24,7 @@ import { ItemDetail, type ReportedDecision } from '@/components/home/item-detail
 import { RoomShell } from '@/components/room/room-shell';
 import { FiledIcon } from '@/components/room/filed-icon';
 import { pushDealTurn } from '@/components/home/item-rail';
-import { railCoversItem, moveTargetId, mountsEmailCard, boardRowItemId } from '@/lib/room/presentation';
+import { railCoversItem, moveTargetId, mountsEmailCard, boardRowItemId, prepAnchorKey } from '@/lib/room/presentation';
 import { EmailCard } from '@/components/home/email-card';
 import { AddItemPicker } from '@/components/entities/add-item-picker';
 import GanttChart from '@/components/entities/gantt-chart';
@@ -783,7 +783,24 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
     const mayPaintDetail = mayReplaceInPlace('open', !!cached);
     const mayPaintRail = mayReplaceInPlace('open', !!cachedRail);
     fetch(`/api/entities/${entityId}/detail`).then((r) => r.json()).then((data) => { if (alive && data.entity) { saveLS(roomDetailKey(entityId), data); if (mayPaintDetail) setD(data); } }).catch(() => {});
-    fetch(`/api/entities/${entityId}/room`).then((r) => r.json()).then((data) => { if (alive && data.entity) { saveLS(roomRailKey(entityId), data); if (mayPaintRail) setRail(data); } }).catch(() => {});
+    fetch(`/api/entities/${entityId}/room`).then((r) => r.json()).then((data) => {
+      if (!alive || !data.entity) return;
+      saveLS(roomRailKey(entityId), data);
+      if (mayPaintRail) setRail(data);
+      // THE LATE BRIEF IS AN APPEND (W3.5 (a); registry precedence #1): the server's compose outran
+      // its paint budget — ONE re-check, and the arrival lands as `lateBrief` (a message appended
+      // beneath the painted opening), never a swap.
+      if (data.briefPending && !data.entity.brief) {
+        setTimeout(() => {
+          fetch(`/api/entities/${entityId}/room`).then((r) => r.json()).then((d2) => {
+            if (!alive || !d2.entity) return;
+            saveLS(roomRailKey(entityId), d2);
+            const text = d2.entity.brief as string | null;
+            if (text) setRail((prev) => (prev ? { ...prev, lateBrief: { text, at: d2.entity.briefAt ?? null } } : prev));
+          }).catch(() => {});
+        }, 7000);
+      }
+    }).catch(() => {});
     return () => { alive = false; };
   }, [entityId]);
 
@@ -1170,9 +1187,10 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
                   <EmailCard item={{ id: boardRowItemId(r) }} onOpenThread={() => openHref(r.href, false)} />
                 ),
               } : {}),
-              // RAW, like every other door: the anchor key must equal the dedupe key the prepare
-              // pass wrote on its narration turn (`prep:<rawItemId>`) or the card never seats at
-              // its own moment in the story — it just appends at the end, silently.
+              // THE WRITER'S SHAPE (W2.1): the anchor key must equal the dedupe key the prepare
+              // pass wrote on its narration turn — `prep:<spineId>` (`prep:inbox:<id>` /
+              // `prep:commit:<id>`) — or the card never seats at its own moment in the story; it
+              // just appends at the end, silently. `prepAnchorKey` is the ONE reader-side producer.
               key: `prep-${boardRowItemId(r)}`,
               // THE EXCERPT-HONESTY LAW REACHES THE CARD LABEL (owner walk, Sep 7): a hard
               // slice(44) cut "…Thursday 11h with A and B" down to "…with A" — a card
@@ -1181,7 +1199,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
               label: `${r.prepared === 'draft' ? 'Draft ready' : 'Prepared'} — "${clipLabel(r.title, 52)}"`,
               by: r.prepared && r.prepared !== 'draft' ? r.prepared : null,
               onOpen: () => openHref(r.href, false),
-              anchorKey: `prep:${boardRowItemId(r)}`,
+              anchorKey: prepAnchorKey(r.id.startsWith('commit:') ? 'commitment' : 'inbox', boardRowItemId(r)),
             }));
           })()}
           // THE ONE-NAVIGATION LAW (Aug 4): a rail link inside the room opens IN the room — the

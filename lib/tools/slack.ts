@@ -1,13 +1,14 @@
 // ─── Slack tools ──────────────────────────────────────────────────────────────
 // Company-scoped, ONE SLACK APP PER COWORKER (distinct bot identities → separate
 // DM threads, real @mentions). A worker's role maps to its own Nango provider key
-// (slack-clara / slack-sofia / …); each posts/DMs as itself (no persona override).
+// (slack-clara / slack-luca / slack-max); each posts/DMs as itself (no persona override).
 // The bot must be invited to a channel to post/read it.
 
 import { nangoProxy } from '@/lib/integrations/nango';
 import { resolveConnection, isToolEnabledForAgent, getAgentToolConfig } from '@/lib/integrations/connection';
 import { slackKeyForRole } from '@/lib/integrations/registry';
 import { ROLE_LABELS } from '@/lib/workers/roles';
+import { isDmTarget, normalizeChannel, isChannelId } from '@/lib/tools/slack-target';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Admin = any;
@@ -27,18 +28,8 @@ async function slackConn(admin: Admin, userId: string, agentId?: string): Promis
   return conn ? { connectionId: conn.connectionId, providerKey } : null;
 }
 
-// "DM the user" sentinels — a channel value the worker/UI uses to mean a direct message.
-const DM_SENTINELS = new Set(['@me', 'dm', 'dm:me', 'me', '__dm__']);
-export function isDmTarget(ch: string): boolean { return DM_SENTINELS.has(ch.trim().toLowerCase()); }
-
-// Accept a pasted Slack channel URL (e.g. .../archives/C0123ABCD or
-// .../client/T.../C0123ABCD) and reduce it to the channel ID, so users can point at a
-// private channel by copying its link. Non-URL values (#name, @me, raw ID) pass through.
-export function normalizeChannel(ch: string): string {
-  const v = ch.trim();
-  const m = v.match(/\/(?:archives|client\/[A-Z0-9]+)\/([A-Z0-9]+)/i);
-  return m ? m[1] : v;
-}
+// The pure target helpers live in ONE leaf module (the confirm card reads them too).
+export { isDmTarget, normalizeChannel };
 
 // Resolve the user's Slack DM channel id (email → slack user → open DM) for a given
 // coworker app. null if not resolvable.
@@ -167,7 +158,7 @@ export const slackListMembersDefinition = {
 
 export const slackPostMessageDefinition = {
   name: 'slack_post_message',
-  description: "Post a message to a Slack channel as yourself (your own Slack app). The app must already be in the channel. Use slack_list_channels to resolve a channel id from a name, or \"@me\" to DM the user. You can @-mention people and reply in threads.",
+  description: "PREPARE a Slack post for the user to confirm — it is PREPARED as a confirm card showing the channel and the exact text, and nothing reaches Slack until the user clicks Apply (it then posts as your own Slack app). Never say it was posted or sent. The app must already be in the channel. Use slack_list_channels to resolve a channel id from a name, or \"@me\" to DM the user. You can @-mention people and reply in threads.",
   input_schema: {
     type: 'object',
     properties: {
@@ -284,6 +275,57 @@ async function attributionLabel(admin: Admin, userId: string, agentId?: string):
   if (first && role) return `${first}'s ${role}`;
   if (first) return `for ${first}`;
   return role;
+}
+
+// ─── THE CONFIRM CARD'S PREFLIGHT (stabilization W0.3c — HUMAN IN THE LOOP, posts included) ─────
+// slack_post_message is CLASS A (lib/work/confirm-policy.ts): a chat lane PREPARES the post and the
+// user's click on /api/changes/[id]/apply runs executeSlackPostMessage below with the STORED args.
+// This preflight runs at PREPARE time, with NO Slack write: it resolves the worker's default channel
+// and normalizes a pasted link NOW, so the card shows exactly the target Apply will post to, and it
+// refuses what could never post (tool off, app not connected, nothing to say) instead of parking a
+// card whose Apply is a guaranteed failure. Both runtimes (native worker chat + the AgentOS box)
+// call THIS function — one preflight, never two.
+export async function prepareSlackPostArgs(
+  config: Record<string, unknown>,
+  userId: string,
+  agentId: string | undefined,
+  admin: Admin,
+): Promise<{ ok: true; args: { channel: string; text: string; thread_ts?: string } } | { ok: false; result: string }> {
+  if (!(await isToolEnabledForAgent(admin, agentId, 'slack'))) return { ok: false, result: DISABLED };
+  const text = String(config.text ?? '').trim();
+  let channel = String(config.channel ?? '').trim();
+  if (!channel) {
+    const cfg = await getAgentToolConfig(admin, agentId, 'slack');
+    channel = String(cfg.default_channel ?? '').trim();
+  }
+  channel = normalizeChannel(channel);
+  if (!channel || !text) return { ok: false, result: 'Provide both a channel and message text.' };
+  const conn = await slackConn(admin, userId, agentId);
+  if (!conn) return { ok: false, result: NOT_CONNECTED };
+  const threadTs = typeof config.thread_ts === 'string' && config.thread_ts.trim() ? config.thread_ts.trim() : undefined;
+  return { ok: true, args: { channel, text, ...(threadTs ? { thread_ts: threadTs } : {}) } };
+}
+
+/** The card's channel NAME ("#general") for a stored target — a READ (conversations.info) when the
+ *  target is a raw id, the given name otherwise; null for a DM or when Slack will not say. Never
+ *  throws: a missing name leaves the id on the card, it never blocks it. */
+export async function slackChannelDisplayName(
+  admin: Admin, userId: string, agentId: string | undefined, channel: string,
+): Promise<string | null> {
+  const c = channel.trim();
+  if (!c || isDmTarget(c)) return null;
+  if (!isChannelId(c)) return c.startsWith('#') ? c : `#${c}`;
+  try {
+    const conn = await slackConn(admin, userId, agentId);
+    if (!conn) return null;
+    const res = await nangoProxy({
+      method: 'GET', endpoint: '/conversations.info',
+      providerConfigKey: conn.providerKey, connectionId: conn.connectionId, params: { channel: c },
+    });
+    const body = res.body as { ok?: boolean; channel?: { name?: string; is_private?: boolean } } | null;
+    const name = body?.ok ? body.channel?.name : null;
+    return name ? `#${name}` : null;
+  } catch { return null; }
 }
 
 export async function executeSlackPostMessage(

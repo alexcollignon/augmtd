@@ -10,22 +10,30 @@
 // the full picture stays the chief's/deck's job (the grounding boundary law).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
+import { sigOf } from '@/lib/core/sig';
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
 
 const CACHE_KIND = 'day_state';
 const TTL_MS = 10 * 60_000;
+/** THE BLOCK'S OWN SHAPE (W2.5 — every cache carries a version): bump when the block's wording or
+ *  derivation changes, so a DM never serves the old shape for the rest of its TTL. */
+export const DAY_STATE_VERSION = 1;
 
 export async function getSharedDayState(client: DBClient, userId: string): Promise<string | null> {
   try {
+    // W2.5 DEPENDENCY-KEYED: the block's version AND its day are deps — a block cached at 23:58
+    // must never speak "today" after midnight (TIME TRUTH), and a shape change never waits out the TTL.
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const sig = sigOf({ version: DAY_STATE_VERSION, deps: { day: todayStr } });
     // Cache first — one row read; a DM message must never pay the spine walk twice in 10 min.
     const { data: cached } = await client.from('item_plans').select('tasks, updated_at')
       .eq('user_id', userId).eq('kind', CACHE_KIND).eq('entity_id', 'global').maybeSingle();
-    if (cached?.tasks?.block && cached.updated_at && Date.now() - new Date(cached.updated_at).getTime() < TTL_MS) {
+    if (cached?.tasks?.block && cached.tasks.sig === sig && cached.updated_at && Date.now() - new Date(cached.updated_at).getTime() < TTL_MS) {
       return cached.tasks.block as string;
     }
 
-    const todayStr = new Date().toISOString().slice(0, 10);
     const { buildWorkItems } = await import('@/lib/work-items/model');
     const items = (await buildWorkItems(client, userId, { todayStr, skipReconcile: true }))
       .filter((i: { state: string }) => i.state === 'todo' || i.state === 'waiting' || i.state === 'in_progress');
@@ -47,7 +55,7 @@ export async function getSharedDayState(client: DBClient, userId: string): Promi
 
     await client.from('item_plans').upsert({
       user_id: userId, kind: CACHE_KIND, entity_id: 'global',
-      tasks: { block }, updated_at: new Date().toISOString(),
+      tasks: { block, sig }, updated_at: new Date().toISOString(),
     }, { onConflict: 'user_id,kind,entity_id' });
     return block;
   } catch { return null; } // grounding is an enhancement — a DM never fails on it

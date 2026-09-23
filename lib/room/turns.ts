@@ -11,6 +11,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
 
 export type RoomTurnAuthor = { kind: 'coworker'; id?: string; name: string; role?: string | null };
 
@@ -261,14 +262,17 @@ export async function restoreRoomSession(
 
 export type RoomSession = { at: string; count: number; firstText: string };
 
-/** The room's archived SESSIONS (History ⌄), newest first — turns sharing an archived_at batch. */
+/** The room's archived SESSIONS (History ⌄), newest first — turns sharing an archived_at batch.
+ *  NO SILENT CAPS (invariant 10): a long-lived room's full archived history is a full listing —
+ *  an unpaged `.limit(1000)` would silently drop older sessions from the History picker (and
+ *  under-count a session's turns) once a room passed 1000 archived turns. Paged via
+ *  `fetchAllRows`, keeping the room's existing stable `created_at` order. */
 export async function listRoomSessions(client: SupabaseClient, userId: string, roomKey: string): Promise<RoomSession[]> {
   try {
-    const { data, error } = await client.from('room_turns')
-      .select('archived_at, text, created_at')
-      .eq('user_id', userId).eq('room_key', roomKey).not('archived_at', 'is', null)
-      .order('created_at', { ascending: true }).limit(1000);
-    if (error || !data) return [];
+    const data = await fetchAllRows<{ archived_at: string; text: string; created_at: string }>((from, to) =>
+      client.from('room_turns').select('archived_at, text, created_at')
+        .eq('user_id', userId).eq('room_key', roomKey).not('archived_at', 'is', null)
+        .order('created_at', { ascending: true }).range(from, to));
     const by = new Map<string, { count: number; firstText: string }>();
     for (const r of data as Array<{ archived_at: string; text: string }>) {
       const k = r.archived_at;

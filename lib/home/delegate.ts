@@ -5,7 +5,8 @@ import { getAIClient } from '@/lib/ai/factory';
 import type { AgentStep, StepOutput } from '@/lib/workflows/types';
 import type { ItemPlanKind, ItemPlanTask } from './item-plan';
 import { TYPED_OUTPUT_RULE } from '@/lib/workflows/typed-output';
-import { EXCERPT_RULE, clipLabel } from '@/lib/utils/clip-for-prompt';
+import { EXCERPT_RULE, clipForPrompt, clipLabel } from '@/lib/utils/clip-for-prompt';
+import { clipWithRule } from '@/lib/utils/pack-context';
 import { readPool, writeDeliverable, renderPoolForContext, type Deliverable } from './deliverable-pool';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -205,7 +206,7 @@ export async function runDelegation(args: {
       const currentText = await extractTextFromAttachment(args.revise.bytes, mime as Parameters<typeof extractTextFromAttachment>[1], `current.${args.revise.ext}`);
       if (currentText) {
         prompt += `\n\nTHE CURRENT DOCUMENT (you are REVISING "${args.revise.title}" — produce the FULL revised ` +
-          `text: apply the requested changes and keep everything else exactly):\n${currentText.slice(0, 12000)}`;
+          `text: apply the requested changes and keep everything else exactly):\n${clipWithRule(currentText, 12000)}`;
       }
     } catch { /* the compile job still holds the real bytes */ }
   }
@@ -394,7 +395,7 @@ export async function runDelegation(args: {
         // REVISION-IN-PLACE (DH7): the revised deliverable keeps its artifact id — the card
         // the user already has UPDATES; a second card never appears.
         const artifactId = args.revise?.artifactId ?? randomUUID();
-        const title = (args.revise?.title || (typeof m.content === 'object' && m.content && 'title' in m.content ? String(m.content.title) : '') || itemLabel).slice(0, 120) || 'Delegated work';
+        const title = clipLabel(args.revise?.title || (typeof m.content === 'object' && m.content && 'title' in m.content ? String(m.content.title) : '') || itemLabel, 120) || 'Delegated work';
         const path = `${userId}/${artifactThread}/${artifactId}.${m.ext}`;
         // cacheControl 0: a REVISION overwrites the same path — the default 1h CDN cache would
         // serve the pre-revision file to the very click that asked for the change.
@@ -433,14 +434,16 @@ export async function runDelegation(args: {
   // here. Dedup on `task_id` (a re-run REPLACES). Non-fatal: a pool-write failure never loses the run.
   let deliverable: Deliverable | undefined;
   if (poolScope && deliverableOk) {
-    const gist = output.replace(/\s+/g, ' ').slice(0, 140);
+    const gist = clipLabel(output, 140);
     deliverable = await writeDeliverable(supabase, userId, {
       kind: poolScope.kind,
       entityId: poolScope.entityId,
       taskId: poolScope.taskId ?? null,
       type: 'text',
-      title: itemLabel.slice(0, 100),
-      content: output.slice(0, 8000),
+      title: clipLabel(itemLabel, 100),
+      // THE CONTEXT BUDGET (W2.7): the pool copy is read into OTHER coworkers' prompts — a cut
+      // declares itself (the full text lives in the thread), never a silent 8k head-slice.
+      content: clipForPrompt(output, 8000),
       gist,
       metadata: { source: 'delegation', agentId: worker.id, agentName: worker.name, ...(args.preparedFrom ? { prepared_from: args.preparedFrom } : {}), ...(args.provenance ? { provenance: args.provenance } : {}) },
     }) ?? undefined;

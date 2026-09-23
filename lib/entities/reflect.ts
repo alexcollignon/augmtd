@@ -25,7 +25,7 @@ type Ent = { id: string; name: string; summary: string | null; aliases: string[]
 // Bump when the pair-judgment EVIDENCE or prompt changes — versioned into pairSig so an evidence
 // upgrade re-judges previously-'separate' pairs (a prompt-driven cache must invalidate on the prompt
 // itself, not only on the data — the alignment-cache lesson).
-const REFLECT_PROMPT_VERSION = 6;
+export const REFLECT_PROMPT_VERSION = 6;
 
 // A CHANNEL-shaped name ("X x Y", "1:1", "<person> — <topic>") is the anti-pattern the recognition
 // judge avoids — but an early entity can still carry one. On a merge, the DEAL-shaped name must win

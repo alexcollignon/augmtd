@@ -250,7 +250,7 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
       setDraft(j.workflow as Draft);
       setPresenterId((prev) => prev ?? data?.workers?.[0]?.id ?? null);
     } catch {
-      // Found live (Rene, Aug 10): a timed-out draft threw on the JSON parse and the spinner
+      // Found live (a pilot user, Aug 10): a timed-out draft threw on the JSON parse and the spinner
       // reset with NO message — "Draft it does nothing". Failure always speaks.
       toast.error('Drafting took too long — try again, or simplify the description.');
     } finally { setDrafting(false); }

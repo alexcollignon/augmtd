@@ -1,5 +1,6 @@
 /**
- * Transcription Pipeline — shared by in-person recording and online bot paths.
+ * Transcription Pipeline — the in-person recording path's Vercel-side fallback (used when
+ * MEETING_BOT_SERVICE_URL is unset; normally the Hetzner transcription worker does this).
  *
  * Downloads audio from Supabase Storage → Whisper → storeTranscriptAndGenerateWork.
  */
@@ -52,7 +53,6 @@ export async function processAudioFile(params: ProcessAudioFileParams): Promise<
     await storeTranscriptAndGenerateWork(
       userId,
       calendarEventId,
-      null, // no bot ID for direct recordings
       title,
       startTime,
       endTime,

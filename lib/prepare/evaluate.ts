@@ -14,6 +14,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { getPersonEntities, resolveIdentity } from '@/lib/entities/people';
+import { claimsUndoneWork, completionObjection } from '@/lib/prepare/truth';
 
 export type EvalVerdict = {
   verdict: 'pass' | 'revise' | 'flag' | 'needs_input';
@@ -71,12 +72,25 @@ export async function evaluateDeliverable(admin: SupabaseClient, userId: string,
    *  finished (finish_reason 'stop') — when it says so, the truncation HEURISTIC below is off,
    *  because a heuristic may never overrule a fact. Absent/undefined → no receipt, floor applies. */
   sourceComplete?: boolean;
+  /** THE COMPLETION FLOOR's facts (W5a) — code's, never the model's. `obligationOpen`: the user
+   *  still owes what these words are about; `staged`: a real attachment/deliverable rides with
+   *  them. Absent → the floor is off (a heuristic never speaks without its facts). */
+  obligationOpen?: boolean;
+  staged?: boolean;
 }): Promise<EvalVerdict> {
   try {
     // Structural, before the review; the caller's capped revision regenerates it complete (or it
     // surfaces honestly flagged).
     if (args.sourceComplete !== true && looksMechanicallyTruncated(args.content)) {
       return { verdict: 'revise', objection: 'The deliverable appears CUT OFF mid-sentence at the end — regenerate it complete; never hand over a truncated document.' };
+    }
+    // ── THE COMPLETION FLOOR (W5a — the fabricated-deed class, found live: "I've finished the
+    // redistribution… everything is balanced now" on an open obligation nothing had touched). A
+    // message about an OPEN obligation with nothing staged may not announce a deed. Deterministic,
+    // narrow vocabulary (lib/prepare/truth), fail-safe: it speaks only with its facts in hand. ──
+    if (args.kind !== 'deliverable' && args.obligationOpen === true) {
+      const claim = claimsUndoneWork(args.content, { obligationOpen: true, staged: args.staged === true });
+      if (claim) return { verdict: 'revise', objection: completionObjection(claim) };
     }
     // ── STRUCTURAL floor: an artifact addressed to the USER THEMSELF is wrong at birth (the
     // self-nudge class) — no AI needed, the registry answers. T3 adds the twin: an AUTOMATED /

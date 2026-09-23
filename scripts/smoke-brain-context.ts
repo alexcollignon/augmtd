@@ -1,6 +1,8 @@
 // READ-ONLY cross-user smoke for Step 2 — proves the drafter now receives grounded RELATIONSHIP & DEAL
 // context. For recent inbox items, run the SAME renderBrainContext the drafter calls (sender + the item's
-// initiative) and report how many produce a non-empty block, plus samples to eyeball. No writes, no AI.
+// ENTITY LINK) and report how many produce a non-empty block, plus samples to eyeball. No writes, no AI.
+// ⟲ RE-POINTED (W2.2): the wider work resolves through `entity_links` (item id), never the
+// classifier's `understanding.initiative` label.
 import { config } from 'dotenv'; config({ path: '.env.local' });
 import { createClient } from '@supabase/supabase-js';
 import { renderBrainContext } from '../lib/context/brain-context';
@@ -14,18 +16,17 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPAB
   let shown = 0;
 
   for (const uid of userIds) {
-    const { data: items } = await sb.from('inbox_items').select('source_data').eq('user_id', uid).eq('source', 'email').order('created_at', { ascending: false }).limit(60);
+    const { data: items } = await sb.from('inbox_items').select('id, source_data').eq('user_id', uid).eq('source', 'email').order('created_at', { ascending: false }).limit(60);
     let withBlock = 0;
     for (const it of (items ?? []) as any[]) {
       totItems++;
       const sd = it.source_data ?? {};
       const from = sd.from_address || sd.from || '';
-      const initiative = sd.understanding?.initiative ?? null;
       if (!from) continue;
-      const block = await renderBrainContext(sb, uid, { personEmail: from, personName: sd.from_name || null, initiative });
+      const block = await renderBrainContext(sb, uid, { personEmail: from, personName: sd.from_name || null, item: { kind: 'inbox_item', id: String(it.id) } });
       if (!block) continue;
       withBlock++; totWithBlock++;
-      const hasInit = block.includes('[THE INITIATIVE');
+      const hasInit = block.includes('[THE WIDER WORK');
       if (hasInit) totBoth++; else totPersonOnly++;
       if (shown < 6) {
         shown++;

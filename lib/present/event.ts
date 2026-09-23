@@ -57,6 +57,10 @@ export type EventSpec = {
   verbs: EventVerb[];
   /** The sanitized selection, when the turn proposed one. */
   proposal?: EventProposal | null;
+  /** THE NOTE IS DELIVERED OR NOT OFFERED (W0.4): the verbs whose one-line note this event's
+   *  provider actually carries to the other side (`noteVerbsFor`). The card offers a note ONLY on
+   *  these; a verb absent here gets no note field, never a box that goes nowhere. */
+  noteVerbs?: EventVerb[];
 };
 
 /** What the model (or a fast-path parser) may propose: ONE armed verb + its arguments. */
@@ -120,4 +124,42 @@ export function isEventSpec(v: unknown): v is EventSpec {
   return !!s && typeof s.id === 'string' && typeof s.title === 'string'
     && typeof s.startISO === 'string' && typeof s.endISO === 'string'
     && !!s.facts && Array.isArray(s.verbs) && s.verbs.every((x) => (EVENT_VERBS as readonly string[]).includes(x));
+}
+
+/**
+ * THE NOTE IS DELIVERED OR NOT OFFERED (W0.4 — EXACTLY-ONCE DEEDS). Where each provider carries a
+ * one-line note to the other side:
+ *   · Graph (outlook) — `comment` on accept / tentativelyAccept / decline, and on the organizer's
+ *     `cancel` action.
+ *   · Google (gmail)  — the self-attendee `comment` on an RSVP; `events.delete` carries NO message,
+ *     so a Google cancel offers no note at all.
+ * Only decline and cancel have ever offered one on the card; this narrows that set per provider and
+ * the deed door drops a note the provider would not deliver. Pure.
+ */
+export function noteVerbsFor(provider: string | null | undefined): EventVerb[] {
+  if (provider === 'outlook') return ['decline', 'cancel'];
+  if (provider === 'gmail') return ['decline'];
+  return [];
+}
+
+/**
+ * THE DEED IDENTITY (W0.4 — a correction is a new deed, never a swallowed duplicate). The commit
+ * door's key for a calendar verb carries the event's CURRENT state alongside the verb and its
+ * arguments: the user's current response for an RSVP, the current window for a move or a cancel.
+ * So Accept → Decline → Accept is three deeds (each answers a different state), while a double-click
+ * on the same state is ONE. Pure — the door hashes it.
+ */
+export function eventDeedIdentity(
+  eventId: string,
+  proposal: Pick<EventProposal, 'verb' | 'newStartISO' | 'newEndISO' | 'note'>,
+  current: { myResponse: EventResponse | null; startISO: string; endISO: string },
+): string {
+  const rsvp = proposal.verb === 'accept' || proposal.verb === 'tentative' || proposal.verb === 'decline';
+  const state = rsvp
+    ? `r=${current.myResponse ?? 'none'}`
+    : `w=${current.startISO}|${current.endISO}`;
+  return JSON.stringify({
+    id: eventId, verb: proposal.verb, state,
+    s: proposal.newStartISO ?? '', e: proposal.newEndISO ?? '', n: proposal.note ?? '',
+  });
 }

@@ -5,6 +5,7 @@ import { XMarkIcon, PaperAirplaneIcon, PaperClipIcon, ChevronDownIcon } from '@h
 import { toast } from 'sonner';
 import KbFilePicker from './kb-file-picker';
 import FormatToolbar from './format-toolbar';
+import { sanitizeDraftHtml, sanitizeSignatureHtml } from '@/lib/utils/sanitize-html';
 import AttendeeInput, { AttendeeChip } from '@/components/meetings/attendee-input';
 import { createClient } from '@/lib/supabase/client';
 
@@ -143,7 +144,8 @@ export default function ComposePanel({ draft, onChange, onDiscard, onSent, conne
     if (showSignature && signatureHtml) {
       const sigDiv = document.createElement('div');
       sigDiv.setAttribute('data-sig', '1');
-      sigDiv.innerHTML = `<br>-- <br>${signatureHtml}`;
+      // RENDER SAFETY (Sep 22): the user's own signature — the signature profile (their https logo stays).
+      sigDiv.innerHTML = `<br>-- <br>${sanitizeSignatureHtml(signatureHtml)}`;
       el.appendChild(sigDiv);
     }
 
@@ -161,7 +163,8 @@ export default function ComposePanel({ draft, onChange, onDiscard, onSent, conne
 
     // Keep existing sig block if present
     const existingSig = el.querySelector('[data-sig="1"]')?.outerHTML ?? '';
-    el.innerHTML = draft.body;
+    // RENDER SAFETY (Sep 22): an externally-set body is model-authored — sanitized before it mounts.
+    el.innerHTML = sanitizeDraftHtml(draft.body);
 
     // Re-append sig if it was there and not already included in new body
     if (existingSig && !el.querySelector('[data-sig="1"]')) {

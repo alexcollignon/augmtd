@@ -4,6 +4,10 @@ import { noteItemAction } from '@/lib/entities/on-action';
 import { createClient } from '@/lib/supabase/server';
 import { logActivity } from '@/lib/activity/log';
 
+// W0.5 TIME BUDGET: after() calls noteItemAction / r.runTails (AI-bearing entity re-synthesis) —
+// the platform default kills it mid-work (CLAUDE.md maxDuration lesson).
+export const maxDuration = 300;
+
 // POST /api/restore — undo a reversible action by flipping its entity's status back so the item
 // reappears on the Home. The single restore path used by BOTH the transient Home "Undo" toast and
 // the Activity-log Undo affordance. RLS-safe (cookie client). Non-fatal: a failed restore returns a

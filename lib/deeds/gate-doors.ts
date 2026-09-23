@@ -84,8 +84,10 @@ export async function resumeRun(
       });
     } catch { /* the decision is what matters — the note is a courtesy */ }
   }
+  // A SUPPLY IS NEVER A REJECTION (W0.4): material rides with approve:true whatever the caller
+  // spelled — the door reads the payload too, so the two can never disagree into a rejected run.
   return post(door, {
-    approve: opts.approve,
+    approve: opts.input ? true : opts.approve,
     ...(opts.input ? { input: opts.input } : {}),
   });
 }

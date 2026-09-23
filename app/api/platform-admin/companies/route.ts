@@ -49,7 +49,6 @@ export async function GET() {
     ...c,
     features: normalizeFeatures(c.features),
     member_count: countMap[c.id] ?? 0,
-    meeting_assistant: c.settings?.meeting_assistant ?? true,
   }));
 
   return NextResponse.json({ companies: result });

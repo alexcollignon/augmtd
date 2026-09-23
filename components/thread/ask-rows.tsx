@@ -116,11 +116,14 @@ function Row({ label, doors }: { label: string; doors?: AskRowDoors | null }) {
               disabled={busy}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
+                // IME SAFETY: an Enter confirming a composition is not a send.
+                if (e.nativeEvent.isComposing) return;
                 // Enter sends; Shift+Enter is a second line (an address has two); Escape is out.
                 if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void submit(); }
                 else if (e.key === 'Escape') { e.preventDefault(); setTyping(false); setDraft(''); }
               }}
               placeholder={`Type ${inSentence(spoken(label))} — Enter to send`}
+              aria-label={`Type ${inSentence(spoken(label))}`}
               className="aug-focus w-full resize-none rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[13px] leading-[1.5] text-neutral-800 placeholder:text-neutral-400 focus:border-indigo-300 disabled:opacity-60"
             />
             <span className="mt-1 flex items-center gap-3">

@@ -13,6 +13,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getInitiativeCandidates } from '@/lib/inbox/initiative-candidates';
 import { sameAttendee } from '@/lib/projects/identity';
+// ONE OPEN-STATUS CONSTANT (W2.2) — never a local list.
+import { OPEN_COMMITMENT_STATUSES } from '@/lib/core/statuses';
 
 const emailOf = (s?: string | null): string | null =>
   String(s || '').toLowerCase().match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || null;
@@ -58,7 +60,7 @@ async function fetchContextCorpus(supabase: SupabaseClient, userId: string, scop
     scopeEmails.length
       ? supabase.from('relationship_graph').select('contact_email, contact_name, interaction_frequency').eq('user_id', userId).in('contact_email', scopeEmails)
       : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
-    supabase.from('commitments').select('id, description, counterparty, direction, due_date, initiative').eq('user_id', userId).in('status', ['open', 'pending']).limit(400),
+    supabase.from('commitments').select('id, description, counterparty, direction, due_date, initiative').eq('user_id', userId).in('status', [...OPEN_COMMITMENT_STATUSES]).limit(400),
     supabase.from('meeting_transcripts').select('id, title, start_time, attendees, initiative').eq('user_id', userId).lte('start_time', nowISO).order('start_time', { ascending: false }).limit(150),
     supabase.from('calendar_events').select('id, title, start_time, attendees').eq('user_id', userId).eq('status', 'confirmed').gte('start_time', nowISO).order('start_time', { ascending: true }).limit(150),
     supabase.from('inbox_items').select('id, work_title, source_data, created_at').eq('user_id', userId).order('created_at', { ascending: false }).limit(250),

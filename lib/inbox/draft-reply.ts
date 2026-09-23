@@ -2,6 +2,7 @@
 // (/api/inbox/[id]/draft) and the auto-draft sweep (/api/cron/draft-sweep). Returns the reply body.
 
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { COMPLETION_HONESTY_RULE } from '@/lib/prepare/truth';
 import { buildVoiceBlock, buildMeetingFollowupContext } from '@/lib/context/voice-context';
 import { renderBrainContext } from '@/lib/context/brain-context';
 import { detectLanguage } from '@/lib/inbox/detect-language';
@@ -92,7 +93,9 @@ ${clipForPrompt(body, 1200)}
     buildMeetingFollowupContext(userId, from, client).catch(() => ''),
     // Step 2: read the durable Person + Initiative brains — the draft reasons WITH the relationship (who
     // they are, who owes whom, how they write) + where the deal stands. Additive, non-fatal, no AI.
-    renderBrainContext(client, userId, { personEmail: from, personName: fromName, initiative: understanding?.initiative ?? null }).catch(() => ''),
+    // THE WIDER WORK rides the item's ENTITY LINK (resolved via the thread — W2.2), never the
+    // classifier's `understanding.initiative` label.
+    renderBrainContext(client, userId, { personEmail: from, personName: fromName, threadId: String(sourceData.thread_id || '') || null }).catch(() => ''),
     // O3a: drafting is the ASSISTANT coworker's craft — her assigned skills shape every draft, which is
     // what makes the "{assistant} drafted this" attribution causal, not cosmetic.
     buildAssistantSkillsBlock(client, userId),
@@ -170,6 +173,9 @@ ${clipForPrompt(body, 1200)}
       // together like "Name CompanyRole" is a formatting artifact, not the user's style) — always
       // format the sign-off block on separate lines (name / role or company / phone / links).
       `Format the signature block on separate lines; never reproduce run-together artifacts from the examples. ` +
+      // THE COMPLETION RULE (W5a): the reply may claim only deeds the facts above (staged
+      // attachments, the artifact truth) support.
+      `${COMPLETION_HONESTY_RULE} ` +
       `Return ONLY the reply body — no subject line, no preamble, no ` +
       `surrounding quotes. Keep it appropriately concise and ready to send.\n\n` +
       `--- EMAIL TO REPLY TO ---\n` +
@@ -228,7 +234,9 @@ export async function generateNudgeDraft(
         ? `You are ${userName}. Write a brief, friendly message from ${userName} to ${who} about something ` +
           `${userName} OWES THEM: "${opts.description}". ${userName} is the one on the hook here — write it as ` +
           `an update/hand-over from ${userName}, never as a chase and never as a request for something from ` +
-          `${who}. Keep it warm and short. Address ${who} and sign as ${userName} — NEVER sign as the recipient. `
+          `${who}. Keep it warm and short. Address ${who} and sign as ${userName} — NEVER sign as the recipient. ` +
+          // THE COMPLETION RULE (W5a): an update about an open obligation speaks status, never a deed.
+          `${COMPLETION_HONESTY_RULE} `
         : `You are ${userName}. Write a brief, friendly NUDGE from ${userName} to ${who}, following up on ` +
           `something ${userName} is waiting on them for: "${opts.description}".${aged} Keep it warm, low-pressure, ` +
           `and short — a gentle check-in, not a demand. Address ${who} and sign as ${userName} — NEVER sign as ` +

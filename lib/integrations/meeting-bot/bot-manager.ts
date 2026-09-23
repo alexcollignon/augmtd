@@ -1,7 +1,10 @@
 /**
- * Meeting Bot Manager
+ * Meeting transcript store + insight generation (the IN-PERSON recording pipeline).
  *
- * Handles bot creation for calendar events and transcript storage.
+ * The auto-join meeting bot (Playwright/PulseAudio on Hetzner) and its bot-creation helpers were
+ * REMOVED Sep 23 (owner: "we're only using the in-person recording action"). The file keeps its
+ * historical path; what lives here is the transcript → insights → work-items half every recording
+ * rides (transcription worker → /api/meetings/recording/[id]/generate-insights).
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
@@ -9,9 +12,40 @@ import { randomUUID } from 'crypto';
 import { getAIClient } from '@/lib/ai/factory';
 import { logAIUsage } from '@/lib/ai/log-usage';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
-import { getOAuth2Client } from '@/lib/google/oauth';
 import { indexArtifact } from '@/lib/knowledge/indexer';
 import { resolveDeixisInDescriptions } from '@/lib/inbox/deixis';
+import { userTimezone, localNow } from '@/lib/utils/user-time';
+import { anchorDueDate } from '@/lib/commitments/extraction-truth';
+
+// ── THE CLOCK REACHES THE MEETING LANE (W3.4 · invariant 14 TIME TRUTH — executeAIStep's idiom) ──
+// Meeting extraction ran dateless: a spoken "the 27th of August" landed as 2024, on the inbox_item
+// AND the commitment mirror. Both prompts now carry a CODE-COMPUTED today in the user's zone + the
+// meeting's OWN date with the resolve-forward / never-modernize rule, and code re-anchors whatever
+// year the model still writes into the past (`anchorDueDate`) before either mirror is written.
+async function meetingClockBlock(supabase: SupabaseClient, userId: string, meetingDate?: string | null): Promise<string> {
+  const tz = await userTimezone(supabase, userId).catch(() => 'UTC');
+  const today = localNow(tz);
+  const when = meetingDate && !Number.isNaN(Date.parse(meetingDate)) ? new Date(meetingDate) : new Date();
+  let mdPretty = localNow(tz, when).dateStr;
+  try { mdPretty = new Intl.DateTimeFormat('en-US', { timeZone: today.tz, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }).format(when); } catch { /* ISO stands */ }
+  return `TODAY is ${today.pretty} (${today.tz}). THIS MEETING TOOK PLACE ON ${mdPretty}. ` +
+    `Every date spoken or written in it resolves FORWARD from the meeting's own date: a date with no year ` +
+    `takes the meeting's year (the NEXT year only when that date is long past); relative words ("Thursday", ` +
+    `"next week", "end of the month") resolve forward from the meeting date. NEVER write an earlier year, ` +
+    `never shift a date or year to fit the present, never invent one — a date you cannot resolve is null.`;
+}
+
+/** The code half of the clock: every model-written date re-anchored forward from the meeting. */
+function anchorInsightDates(insights: MeetingInsights, meetingDate?: string | null): MeetingInsights {
+  return {
+    ...insights,
+    actionItems: (insights.actionItems ?? []).map((a) => {
+      const due = anchorDueDate(a.dueDate, meetingDate ?? null);
+      return { ...a, dueDate: due ?? undefined };
+    }),
+    decisions: (insights.decisions ?? []).map((d) => (d.date ? { ...d, date: anchorDueDate(d.date, meetingDate ?? null) ?? undefined } : d)),
+  };
+}
 
 // ── THE SERVED-WORDS LAW (proactive-reach LAW 3) — the meeting half of the `work_title` seam ─────
 // A meeting action item becomes an inbox_item whose `work_title` IS the spoken action, and speech is
@@ -76,131 +110,13 @@ function isGenericTitle(title: string): boolean {
 }
 
 /**
- * Create bots for calendar events with Google Meet links.
- * Uses self-hosted bot service (MEETING_BOT_SERVICE_URL).
- * Called after calendar sync completes.
- */
-export async function createBotsForCalendarEvents(
-  userId: string,
-  supabase: SupabaseClient
-): Promise<{ created: number; errors: string[] }> {
-  if (!process.env.MEETING_BOT_SERVICE_URL) {
-    return { created: 0, errors: [] };
-  }
-
-  // Bots are only created when the user explicitly clicks "Send assistant" in the UI.
-  // This function only handles orphan recovery — re-queuing bots that were explicitly
-  // scheduled but whose Hetzner job was lost (e.g. container restart).
-
-  // Fetch profile for bot name display
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('full_name')
-    .eq('id', userId)
-    .single();
-
-  const firstName = profile?.full_name?.split(' ')[0] ?? 'Your';
-  const botName = `${firstName}'s Assistant`;
-
-  // Get a fresh Google OAuth access token for the user (used to authenticate the bot browser session)
-  let googleAccessToken: string | undefined;
-  try {
-    const { data: conn } = await supabase
-      .from('connections')
-      .select('metadata')
-      .eq('user_id', userId)
-      .eq('provider', 'gmail')
-      .eq('status', 'active')
-      .single();
-    if (conn?.metadata?.tokens) {
-      const tokens = JSON.parse(Buffer.from(conn.metadata.tokens, 'base64').toString());
-      const oauth2 = getOAuth2Client();
-      oauth2.setCredentials(tokens);
-      const { credentials } = await oauth2.refreshAccessToken();
-      googleAccessToken = credentials.access_token ?? undefined;
-    }
-  } catch (err) {
-    console.warn('[MeetingBot] Could not get Google access token — bot will join as guest:', err);
-  }
-
-  const now = new Date();
-  const twoWeeksFromNow = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
-  let created = 0;
-  const errors: string[] = [];
-
-  // --- Orphan recovery: re-queue bots whose Hetzner job was lost (e.g. after container restart) ---
-  const { data: scheduledEvents } = await supabase
-    .from('calendar_events')
-    .select('id, title, meeting_link, start_time, attendee_bot_id')
-    .eq('user_id', userId)
-    .gte('start_time', now.toISOString())
-    .lte('start_time', twoWeeksFromNow.toISOString())
-    .eq('attendee_bot_state', 'scheduled')
-    .not('attendee_bot_id', 'is', null)
-    .not('meeting_link', 'is', null)
-    .order('start_time', { ascending: true })
-    .limit(50);
-
-  if (scheduledEvents && scheduledEvents.length > 0) {
-    console.log(`[MeetingBot] Checking ${scheduledEvents.length} scheduled bot(s) for orphans (user: ${userId})`);
-
-    const { checkMeetingBotExists } = await import('@/lib/integrations/meeting-bot/client');
-
-    for (const event of scheduledEvents) {
-      try {
-        if (!event.meeting_link?.includes('meet.google.com')) continue;
-
-        const isAlive = await checkMeetingBotExists(event.attendee_bot_id);
-        if (isAlive) {
-          console.log(`[MeetingBot] Bot ${event.attendee_bot_id} is alive for: ${event.title} — skipping`);
-          continue;
-        }
-
-        console.log(`[MeetingBot] Orphaned bot ${event.attendee_bot_id} for: ${event.title} — re-queuing`);
-
-        const meetingStart = new Date(event.start_time);
-        const minJoinTime = new Date(now.getTime() + 2 * 60 * 1000);
-        const joinAt = meetingStart > minJoinTime ? meetingStart : minJoinTime;
-
-        const { createMeetingBot: createBot } = await import('@/lib/integrations/meeting-bot/client');
-        const result = await createBot(event.meeting_link, joinAt, event.id, userId, botName, googleAccessToken);
-
-        const { error } = await supabase
-          .from('calendar_events')
-          .update({
-            attendee_bot_id: result.botId,
-            attendee_bot_state: 'scheduled',
-            attendee_bot_created_at: new Date().toISOString(),
-          })
-          .eq('id', event.id);
-
-        if (error) {
-          errors.push(`Failed to save re-queued bot for event ${event.id}: ${error.message}`);
-        } else {
-          created++;
-          console.log(`[MeetingBot] Re-queued bot ${result.botId} for: ${event.title} (joins at ${joinAt.toISOString()})`);
-        }
-      } catch (error: any) {
-        console.error(`[MeetingBot] Error checking/re-queuing orphan for event ${event.id}:`, error);
-        errors.push(`Orphan check for ${event.title}: ${error.message}`);
-      }
-    }
-  }
-  // --- End orphan recovery ---
-
-  return { created, errors };
-}
-
-/**
  * Store transcript and generate work items.
- * Accepts pre-normalized segments ({ speaker, text, timestamp }) from the Whisper pipeline
- * or raw Attendee.dev segments ({ speaker_name, transcription.transcript, timestamp_ms }).
+ * Accepts pre-normalized segments ({ speaker, text, timestamp }) from the Whisper pipeline.
  * Exported for use by the transcription pipeline.
  */
 export async function storeTranscriptAndGenerateWork(
   userId: string,
   calendarEventId: string | null,
-  botId: string | null,
   title: string,
   startTime: string,
   endTime: string,
@@ -215,13 +131,13 @@ export async function storeTranscriptAndGenerateWork(
   const rawSegments = Array.isArray(transcript) ? transcript : [];
 
   const transcriptText = rawSegments
-    .map((s: any) => `[${s.speaker_name || s.speaker || 'Unknown'}]: ${s.transcription?.transcript || s.text || ''}`)
+    .map((s: any) => `[${s.speaker || 'Unknown'}]: ${s.text || ''}`)
     .join('\n');
 
   const normalizedSegments = rawSegments.map((s: any) => ({
-    speaker: s.speaker || s.speaker_name || 'Unknown',
-    text: s.text || s.transcription?.transcript || '',
-    timestamp: s.timestamp ?? Math.floor((s.timestamp_ms || 0) / 1000),
+    speaker: s.speaker || 'Unknown',
+    text: s.text || '',
+    timestamp: s.timestamp ?? 0,
   }));
 
   let transcriptRecord: any;
@@ -229,7 +145,6 @@ export async function storeTranscriptAndGenerateWork(
     const { data, error: updateError } = await supabase
       .from('meeting_transcripts')
       .update({
-        attendee_bot_id: botId,
         bot_state: 'ended',
         // Don't overwrite duration_minutes here — the transcription worker already wrote
         // the correct value from the actual audio length. Recalculating from start/end
@@ -253,9 +168,8 @@ export async function storeTranscriptAndGenerateWork(
         user_id: userId,
         meeting_id: calendarEventId ?? randomUUID(),
         calendar_event_id: calendarEventId,
-        attendee_bot_id: botId,
         bot_state: 'ended',
-        source: options?.source ?? 'bot',
+        source: options?.source ?? 'recording',
         recording_storage_path: options?.recordingStoragePath ?? null,
         title,
         start_time: startTime,
@@ -277,7 +191,7 @@ export async function storeTranscriptAndGenerateWork(
 
   console.log(`[MeetingBot] Stored transcript ${transcriptRecord.id}`);
 
-  // Collect live notes — from options (in-person) or calendar_events.metadata (bot)
+  // Collect live notes — from options, else calendar_events.metadata (notes taken on a scheduled meeting)
   let liveNotes = options?.liveNotes || '';
   if (!liveNotes && calendarEventId) {
     try {
@@ -292,7 +206,7 @@ export async function storeTranscriptAndGenerateWork(
     } catch {}
   }
 
-  const insights = await extractMeetingInsights(userId, title, normalizedSegments, supabase, liveNotes || undefined);
+  const insights = await extractMeetingInsights(userId, title, normalizedSegments, supabase, liveNotes || undefined, startTime);
   const keyTopics = extractKeyTopics(normalizedSegments);
 
   let workItemsCreated = 0;
@@ -317,7 +231,7 @@ export async function storeTranscriptAndGenerateWork(
       .insert({
         user_id: userId,
         source: 'meeting',
-        source_id: botId,
+        source_id: null,
         source_meeting_transcript_id: transcriptRecord.id,
         work_state: 'action_required',
         work_title: item.action,
@@ -373,7 +287,7 @@ export async function storeTranscriptAndGenerateWork(
     await writeMeetingCommitments(
       userId,
       insights.actionItems ?? [],
-      { transcriptId: transcriptRecord.id, attendees: participants, userName: prof?.full_name ?? null },
+      { transcriptId: transcriptRecord.id, attendees: participants, userName: prof?.full_name ?? null, meetingDate: startTime },
       supabase,
     );
   } catch (e) {
@@ -423,6 +337,14 @@ export async function storeTranscriptAndGenerateWork(
     const { shadowRecognizeMeeting } = await import('@/lib/entities/hooks');
     await shadowRecognizeMeeting(supabase, userId, transcriptRecord.id);
   } catch { /* non-fatal */ }
+
+  // EVIDENCE SETTLES (W3.1, invariant 7): a meeting HELD with a counterparty is a deed — it can
+  // settle "meet them" / "set up a call" standing open on the deck. The reverse nominator matches
+  // by attendee address (the transcript's own, else its calendar event's) and hands the open work
+  // to the reasoned judge. Fire-and-forget, bounded, never blocks the meeting pipeline.
+  void import('@/lib/work/evidence-settle')
+    .then(({ settleForEvent }) => settleForEvent(supabase, userId, { type: 'transcript', id: String(transcriptRecord.id) }))
+    .catch(() => {});
 
   // Fire-and-forget: index transcript text into KB so it's searchable in Drive
   if (transcriptText.trim()) {
@@ -517,7 +439,7 @@ export async function reprocessTranscripts(
       const segments = transcript.transcript_segments || [];
       if (segments.length === 0) continue;
 
-      const actionItemsRaw = await extractActionItemsWithAI(userId, transcript.title, segments, supabase);
+      const actionItemsRaw = await extractActionItemsWithAI(userId, transcript.title, segments, supabase, transcript.start_time ?? null);
       // THE SERVED-WORDS LAW — same ONE resolver, anchored to this transcript's own start time.
       const actionItems = await resolveActionItemDeixis(supabase, userId, actionItemsRaw, transcript.start_time ?? null);
       const keyTopics = extractKeyTopics(segments);
@@ -530,7 +452,7 @@ export async function reprocessTranscripts(
           .insert({
             user_id: userId,
             source: 'meeting',
-            source_id: transcript.attendee_bot_id,
+            source_id: null,
             source_meeting_transcript_id: transcript.id,
             work_state: 'action_required',
             work_title: item.action,
@@ -597,11 +519,14 @@ export async function extractMeetingInsights(
   segments: any[],
   supabase: SupabaseClient,
   liveNotes?: string,
+  /** The meeting's OWN date (start time) — the clock's anchor. Absent → today. */
+  meetingDate?: string | null,
 ): Promise<MeetingInsights> {
   try {
     const { client: openai, model: defaultModel, endpoint, tier } = await getAIClient(userId, 'generation', supabase);
 
     const userContext = await buildUserContextBlock(userId, supabase);
+    const clock = await meetingClockBlock(supabase, userId, meetingDate);
 
     const transcriptText = segments
       .map((s, i) => `[${i}] [${s.speaker}]: ${s.text}`)
@@ -620,6 +545,7 @@ export async function extractMeetingInsights(
     const prompt = `${userContext ? userContext + '\n\n' : ''}You are producing clean meeting notes in the style of a smart colleague's bullet-point notebook.
 
 Meeting: "${meetingTitle}"
+${clock}
 ${notesBlock ? '\n' + notesBlock + '\n' : ''}
 ${isTextNote ? 'These are written notes (no audio transcript).' : 'Transcript (each line prefixed with segment index [N]):'}
 ${transcriptText}
@@ -706,7 +632,7 @@ Rules for other fields:
     const parsed = JSON.parse(stripped.slice(jsonStart, jsonEnd + 1)) as MeetingInsights;
 
     console.log(`[MeetingBot] Extracted insights: ${parsed.decisions?.length ?? 0} decisions, ${parsed.actionItems?.length ?? 0} actions, ${parsed.risks?.length ?? 0} risks, ${parsed.keyMoments?.length ?? 0} key moments`);
-    return {
+    return anchorInsightDates({
       document: parsed.document ?? '',
       decisions: parsed.decisions ?? [],
       actionItems: parsed.actionItems ?? [],
@@ -714,10 +640,10 @@ Rules for other fields:
       keyMoments: parsed.keyMoments ?? [],
       suggested_next_step: parsed.suggested_next_step ?? null,
       generatedTitle: parsed.generatedTitle ?? null,
-    };
+    }, meetingDate);
   } catch (error) {
     console.error('[MeetingBot] Error extracting meeting insights:', error);
-    const actionItems = await extractActionItemsWithAI(userId, meetingTitle, segments, supabase);
+    const actionItems = await extractActionItemsWithAI(userId, meetingTitle, segments, supabase, meetingDate);
     return { document: '', decisions: [], actionItems, risks: [], keyMoments: [], suggested_next_step: null };
   }
 }
@@ -736,7 +662,7 @@ export async function reEnhanceTranscript(
   let transcript: any = null;
   const { data: byEvent } = await supabase
     .from('meeting_transcripts')
-    .select('id, title, transcript_segments, notes_structured, calendar_event_id')
+    .select('id, title, transcript_segments, notes_structured, calendar_event_id, start_time')
     .eq('calendar_event_id', eventOrTranscriptId)
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
@@ -747,7 +673,7 @@ export async function reEnhanceTranscript(
   if (!transcript) {
     const { data: byId } = await supabase
       .from('meeting_transcripts')
-      .select('id, title, transcript_segments, notes_structured, calendar_event_id')
+      .select('id, title, transcript_segments, notes_structured, calendar_event_id, start_time')
       .eq('id', eventOrTranscriptId)
       .eq('user_id', userId)
       .maybeSingle();
@@ -770,7 +696,7 @@ export async function reEnhanceTranscript(
   }
 
   const combinedNotes = [liveNotes, templateHint].filter(Boolean).join('\n');
-  const insights = await extractMeetingInsights(userId, transcript.title, segments, supabase, combinedNotes || undefined);
+  const insights = await extractMeetingInsights(userId, transcript.title, segments, supabase, combinedNotes || undefined, transcript.start_time ?? null);
 
   // Update transcript
   const update: Record<string, any> = {
@@ -801,10 +727,12 @@ async function extractActionItemsWithAI(
   userId: string,
   meetingTitle: string,
   segments: any[],
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  meetingDate?: string | null,
 ): Promise<ExtractedActionItem[]> {
   try {
     const { client: openai, model: defaultModel, endpoint, tier } = await getAIClient(userId, 'summarization', supabase);
+    const clock = await meetingClockBlock(supabase, userId, meetingDate);
 
     const { data: profiles } = await supabase
       .from('profiles')
@@ -839,6 +767,7 @@ async function extractActionItemsWithAI(
     }
 
     const prompt = `${contextPrompt}Meeting: "${meetingTitle}"
+${clock}
 
 Transcript:
 ${transcriptText}
@@ -853,7 +782,7 @@ obligation is not a new item. Be selective: prefer fewer, real commitments (typi
     "assignee": "Name or null if unclear",
     "priority": 75,
     "context": "Brief explanation of why this matters",
-    "dueDate": "YYYY-MM-DD or null",
+    "dueDate": "YYYY-MM-DD ONLY if a deadline was explicitly stated (resolved forward from the meeting date), else null",
     "category": "todo"
   }
 ]
@@ -878,7 +807,9 @@ Category: "todo" | "waiting_for" | "project". Maximum 10 items. Return ONLY the 
     const response = completion.choices[0]?.message?.content?.trim();
     if (!response) return [];
 
-    const actionItems = JSON.parse(response) as ExtractedActionItem[];
+    // THE CLOCK's code half — the model's year never outranks the meeting's own date.
+    const actionItems = (JSON.parse(response) as ExtractedActionItem[])
+      .map((a) => ({ ...a, dueDate: anchorDueDate(a.dueDate, meetingDate ?? null) ?? undefined }));
     console.log(`[MeetingBot] Extracted ${actionItems.length} action items`);
     return actionItems;
   } catch (error) {

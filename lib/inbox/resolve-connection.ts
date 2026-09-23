@@ -11,6 +11,8 @@
 // NEVER throws. Any missing field just degrades to the next step; step 3 always returns *a* provider
 // match (never `.single()`-errors on multiples), logging a warning when it can't disambiguate.
 
+import { firstEmailTrimmed } from '@/lib/core/email';
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
 
@@ -32,11 +34,10 @@ function connectionAddress(conn: ConnectionRow): string | null {
 }
 
 // Extract a bare email address from either a plain address or a "Name <email>" string, lowercased.
-const EMAIL_RE = /[^\s<>"]+@[^\s<>"]+\.[^\s<>"]+/;
 function toBareEmail(v: unknown): string | null {
   if (typeof v !== 'string') return null;
-  const m = v.match(EMAIL_RE);
-  return m ? m[0].replace(/[.,;:!?)\]]+$/, '').toLowerCase() : null; // B5: trailing-punctuation trim
+  const hit = firstEmailTrimmed(v); // B5: trailing-punctuation trim
+  return hit ? hit.toLowerCase() : null;
 }
 
 /**

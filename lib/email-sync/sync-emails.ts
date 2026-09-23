@@ -1141,6 +1141,18 @@ export async function syncEmailsForConnection(
             }).catch(() => {});
           }
 
+          // EVIDENCE SETTLES (W3.1, invariant 7): a message the user SENT is a deed on ANY thread —
+          // the reverse nominator finds the open work owed to its recipients (a you_owe on another
+          // thread, a meeting commitment with the same person) and hands it to the reasoned judge.
+          // Fire-and-forget under the nominator's bound; never awaited, never blocks sync. RECENT
+          // deeds only (7d): a backfill of old sent mail is history the budgeted sweep already
+          // reads — firing a door per historical row would fan out for nothing.
+          if (storedEmail.received_at && Date.parse(storedEmail.received_at) > Date.now() - 7 * 86_400_000) {
+            void import('@/lib/work/evidence-settle')
+              .then(({ settleForEvent }) => settleForEvent(adminSupabase, connection.user_id, { type: 'email', id: storedEmail.id }))
+              .catch(() => {});
+          }
+
           console.log(`    ✓ Learning signals queued, skipping inbox item (sent email)\n`);
           continue; // Skip to next email (already stored for context)
         }

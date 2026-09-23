@@ -18,7 +18,7 @@ export async function POST(
   // Load the text note
   const { data: transcript, error: fetchError } = await supabase
     .from('meeting_transcripts')
-    .select('id, title, transcript, source, processed')
+    .select('id, title, transcript, source, processed, start_time, created_at')
     .eq('id', id)
     .eq('user_id', user.id)
     .single();
@@ -47,6 +47,7 @@ export async function POST(
     segments,
     supabase,
     undefined, // no live notes for text notes — the text IS the notes
+    transcript.start_time ?? transcript.created_at ?? null, // THE CLOCK — the note's own date
   );
 
   const GENERIC_TITLES = new Set([

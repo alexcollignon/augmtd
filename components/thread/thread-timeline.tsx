@@ -183,7 +183,13 @@ export function ThreadTimeline({ items, className }: ThreadTimelineProps) {
 
           // The muted EVENT LINE — one renderer (see `EventLine` above).
           case 'event_line':
-            return <EventLine key={item.id} text={item.text} refs={item.refs} />;
+            // A chrome line's starters (W4.1) sit beneath the SAME one muted line — never a second renderer.
+            return (
+              <div key={item.id} className="flex flex-col gap-2">
+                <EventLine text={item.text} refs={item.refs} />
+                {item.cards?.length ? <div className="px-1"><ThreadCards cards={item.cards} /></div> : null}
+              </div>
+            );
 
           // ── THE TRACE LINE — the coworker's receipt, in the event-line grammar ────────────────
           // THE WORDS ARE NOT THE HOST'S: the item carries `{tool, ok}` and `traceLine` composes

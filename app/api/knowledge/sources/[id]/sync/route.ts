@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createClient as createServerSupabase } from '@/lib/supabase/server';
 import { indexSource } from '@/lib/knowledge/indexer';
+import { matchesSecret } from '@/lib/utils/bearer-auth';
 
 export const maxDuration = 300;
 
@@ -13,7 +14,7 @@ export async function POST(
 
   // Allow both user-authenticated requests and internal async triggers
   const internalHeader = request.headers.get('x-internal-sync');
-  const isInternal = internalHeader === process.env.CRON_SECRET;
+  const isInternal = matchesSecret(internalHeader, 'CRON_SECRET');
 
   const adminClient = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

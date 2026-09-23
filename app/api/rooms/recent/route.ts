@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
     for (const i of (inbL.data ?? []) as Array<{ id: string; work_title: string | null }>) label.set(`inbox:${i.id}`, String(i.work_title ?? 'Email'));
     for (const c of (comL.data ?? []) as Array<{ id: string; description: string }>) label.set(`commitment:${c.id}`, String(c.description));
 
-    // THE HOVER EXPAND names the PROJECT an item room belongs to ("email · in EG Bank") — the
+    // THE HOVER EXPAND names the PROJECT an item room belongs to ("email · in Acme Corp") — the
     // entity link joined against TRACKED projects only (the P15 chip law: a machine-recognized
     // untracked container never wears a tag).
     const itemProject = new Map<string, string>();
@@ -199,7 +199,7 @@ export async function GET(request: NextRequest) {
     const chatLabel = new Map(chats.map((c) => [c.key, c.label]));
     type Convo = { key: string; kind: 'room' | 'chat' | 'coworker'; label: string; href: string | null; at: string | null; project?: string; sub?: string };
     // The room row's hover line — the CONCRETE kind, plus the PROJECT it belongs to when
-    // tracked ("email · in EG Bank"); an entity room's title IS the project, so just the word.
+    // tracked ("email · in Acme Corp"); an entity room's title IS the project, so just the word.
     const roomSub = (k: string) => {
       const word = !k.includes(':') ? (trackedEnt.has(k) ? 'project' : 'suggested') : k.startsWith('inbox:') ? 'email' : k.startsWith('commitment:') ? 'task' : k.startsWith('meeting:') ? 'meeting' : undefined;
       if (!word) return undefined;

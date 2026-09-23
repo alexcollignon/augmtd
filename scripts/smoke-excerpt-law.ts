@@ -89,6 +89,10 @@ const CLIP_WITHOUT_RULE: Record<string, string> = {
     'NO PROMPT IS ASSEMBLED HERE: `threadTail` builds the card\'s own message tail, rendered to a '
     + 'person in the triage deck. smoke-quality gates the marker on each tail body — the card must '
     + 'not lie about its own length any more than a prompt may.',
+  'lib/triage/deck-context.ts':
+    'NO PROMPT IS ASSEMBLED HERE: `shapeDeckContext` clips a handed commitment\'s founding message '
+    + '(its thread\'s newest message, topMessageOf) into DeckContext.founding.line, rendered to a '
+    + 'person on the triage card (W3.6). smoke-deck-context gates the marker on the clip.',
   'app/api/commitments/[id]/route.ts':
     'NO PROMPT IS ASSEMBLED HERE: `arrivedText` clips already-arrived step outputs into the INPUT '
     + 'STATION card\'s served context, which a person reads and scrolls (components/home/item-detail'
@@ -259,6 +263,129 @@ console.log('\nTHE HAND-BACK LAW (our own repair is never a chore for the princi
     rb.includes('NEVER ask them to regenerate'), '');
   ok('the report FACTS clip the gist honestly and declare the cut',
     rb.includes('clipForPrompt(f.deliverableGist, 500)') && rb.includes('EXCERPT_RULE'), '');
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE CONTEXT BUDGET (W2.7 — invariant 13 BY STRUCTURE). The sweeps above prove every file that
+// CLIPS also DECLARES; they could never see a file that never clipped at all — a raw
+// `.slice(0, N)` on prompt-bound text is invisible to a clipper-census. So the named PROMPT
+// ASSEMBLERS carry a floor of their own: no raw head-slice of N ≥ 100 survives in them, except
+// on an allowlist line WITH ITS REASON (text that never reaches a prompt). A new assembler
+// joins this list the day it is built; a raw slice inside one fails the board.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+const ASSEMBLERS = [
+  'lib/converse/index.ts',
+  'lib/converse/read-budget.ts',
+  'lib/room/grounding.ts',
+  'lib/room/user-grounding.ts',
+  'lib/work/judge.ts',
+  'lib/home/ask.ts',
+  'lib/work/agentos-bridge.ts',
+  'lib/home/delegate.ts',
+  'lib/knowledge/build-kb-context.ts',
+];
+/** file → the exact source fragment of a raw slice that is NOT prompt-bound, and why. */
+const RAW_SLICE_OK: Array<{ file: string; fragment: string; reason: string }> = [
+  { file: 'lib/converse/index.ts', fragment: '`${task} ${userText.slice(0, 400)}`',
+    reason: 'resolveTemplateFile\'s INPUT is a regex test ("follow this template") and a filename-token '
+      + 'match — the string never reaches a model.' },
+];
+
+console.log('\nTHE CONTEXT BUDGET (W2.7 — no raw slice in a prompt assembler):');
+{
+  const RAW = /\.slice\(0,\s*(\d+)\)/g;
+  const offenders: string[] = [];
+  const used = new Set<number>();
+  for (const f of ASSEMBLERS) {
+    const src = readFileSync(f, 'utf8');
+    src.split('\n').forEach((line, n) => {
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;   // prose in a comment is not a cut
+      for (const m of line.matchAll(RAW)) {
+        if (Number(m[1]) < 100) continue;           // ids, dates, short row-caps — not text budgets
+        const k = RAW_SLICE_OK.findIndex((a) => a.file === f && line.includes(a.fragment));
+        if (k >= 0) { used.add(k); continue; }
+        offenders.push(`${f}:${n + 1} ${line.trim().slice(0, 110)}`);
+      }
+    });
+  }
+  ok('NO RAW .slice(0, N≥100) in a named prompt assembler (packContext / clipForPrompt / clipLabel only)',
+    offenders.length === 0, `\n      ${offenders.join('\n      ')}`);
+  const ghosts = RAW_SLICE_OK.filter((_, k) => !used.has(k));
+  ok('…and the raw-slice allowlist carries no ghosts', ghosts.length === 0, ghosts.map((g) => `${g.file}: ${g.fragment}`).join(', '));
+  ok('every exemption states a reason', RAW_SLICE_OK.every((a) => a.reason.length > 40), '');
+
+  const pack = readFileSync('lib/utils/pack-context.ts', 'utf8');
+  ok('the packer exists beside the clipper and cuts ONLY through it',
+    /export function packContext\(/.test(pack) && pack.includes("from '@/lib/utils/clip-for-prompt'") && !/\.slice\(0,/.test(pack.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n')), '');
+
+  // THE STRUCTURAL LIES the raw slices told, each gated at its seam.
+  ok('check_calendar: the model text is PACKED (slots first), the card renders the days the model saw',
+    conv.includes('packCalendarRead(read)') && conv.includes('read.win.days.filter((d) => packed.seenDays.has(d.dayStr))'), '');
+  ok('search_knowledge_base: the card shows ONLY the files that reached the model',
+    conv.includes('kb.packedFileIds') && conv.includes('.filter((g) => seen.has(g.fileId))')
+    && readFileSync('lib/knowledge/build-kb-context.ts', 'utf8').includes('packedFileIds'), '');
+  ok('get_meeting_context: packed BY MEETING, the card filtered to what was seen',
+    conv.includes('packMeetingRead(read.blocks)') && conv.includes('read.meetings.filter((m) => packed!.seen.has(m.id))'), '');
+  ok('get_emails: packed by email', conv.includes('packEmailsRead(text)'), '');
+  ok('the open loop PACKS its page (the preamble can no longer tail-chop the grounding away)',
+    conv.includes('const packedContext = packContext([') && !conv.includes('preamble ? `${preamble}\\n\\n${grounding}` : grounding'), '');
+}
+
+console.log('\nTHE CONTEXT BUDGET — LIVE (the production packers, zero AI):');
+{
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const { packCalendarRead } = require('../lib/converse/read-budget') as typeof import('../lib/converse/read-budget');
+  const { EXCERPT_MARK, EXCERPT_RULE } = require('../lib/utils/clip-for-prompt') as { EXCERPT_MARK: string; EXCERPT_RULE: string };
+  const days = Array.from({ length: 21 }, (_, i) => ({ dayStr: `2026-10-${String(i + 1).padStart(2, '0')}`, weekday: 'Monday', busy: [] }));
+  const window = ['THE CALENDAR — reach header.', ...days.map((d) => `Mon ${d.dayStr} — busy ${'10:00–11:00 (a long steering workshop with the whole programme board) · '.repeat(4)}`)].join('\n');
+  const slots = 'FREE SLOTS (30 min each):\n- Tuesday 6 Oct, 16:00–16:30';
+  const raw = `${window}\n\nLAST READ: 1 min ago.\n\n${slots}`;
+  const { text, seenDays } = packCalendarRead({ blocks: { window, freshness: 'LAST READ: 1 min ago.', clamp: null, slots }, win: { days, hasCalendar: true } as never });
+  ok('THE INCIDENT, GATED — a busy window\'s raw 3000-char slice lost the FREE SLOTS; the pack keeps them whole',
+    !raw.slice(0, 3000).includes('FREE SLOTS') && text.includes(slots) && text.length <= 3000, `${text.length} chars`);
+  ok('…the cut declares itself and the rule rides inside the budget',
+    text.includes(EXCERPT_MARK) || /omitted for length by this system/.test(text), '');
+  ok('…a mark never stands without the rule', !text.includes(EXCERPT_MARK) || text.includes(EXCERPT_RULE), '');
+  ok('…and the card is told exactly which days were seen (earliest kept)',
+    seenDays.has('2026-10-01') && !seenDays.has('2026-10-21'), `${seenDays.size} days`);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// W1.6b — TOOL-EXECUTOR CLIPS. These tool results ride straight back to the model as a standalone
+// message (not through an assembler that appends a rule downstream), so each one must carry its
+// own rule where it clips — the same reasoning as the reactions.ts fire-context seam above.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+console.log('\nTHE TOOL-EXECUTOR SEAMS (W1.6b — a tool result stands alone, so it carries its own rule):');
+{
+  const meetingCtx = readFileSync('lib/tools/get-meeting-context.ts', 'utf8');
+  ok('get_meeting_context: no raw .slice on the summary/notes lines (clipWithRule instead)',
+    !meetingCtx.includes('m.summary.trim().slice(0, 500)') && !meetingCtx.includes('ns.live_notes.trim().slice(0, 300)')
+    && meetingCtx.includes("from '@/lib/utils/pack-context'") && (meetingCtx.match(/clipWithRule\(/g) ?? []).length >= 2, '');
+
+  const getEmails = readFileSync('lib/tools/get-emails.ts', 'utf8');
+  ok('get_emails: the snippet is clipped with a declared rule, not a raw .slice',
+    !getEmails.includes(".slice(0, 300)") && getEmails.includes('clipWithRule('), '');
+
+  const ask = readFileSync('lib/home/ask.ts', 'utf8');
+  ok('home/ask file-candidate line: a LABEL uses clipLabel (word boundary, no marker), not a raw .slice',
+    !ask.includes('c.snippet.slice(0, 90)') && ask.includes('clipLabel(c.snippet, 90)'), '');
+
+  const webSearch = readFileSync('lib/tools/web-search.ts', 'utf8');
+  ok('web_search: result content is clipForPrompt + a once-at-the-end EXCERPT_RULE, not a raw .slice',
+    !webSearch.includes('r.content?.slice(0, 400)') && webSearch.includes('clipForPrompt(r.content, 400)') && webSearch.includes('EXCERPT_RULE'), '');
+
+  const deepResearch = readFileSync('lib/tools/deep-research.ts', 'utf8');
+  ok('deep_research (tavilySearch): result content is clipForPrompt + a once-at-the-end EXCERPT_RULE',
+    !deepResearch.includes('r.content?.slice(0, 500)') && deepResearch.includes('clipForPrompt(r.content, 500)') && deepResearch.includes('EXCERPT_RULE'), '');
+
+  const teamWork = readFileSync('lib/tools/team-work.ts', 'utf8');
+  ok('find_team_work/read_team_work: both text bodies use clipWithRule, not a raw .slice',
+    !teamWork.includes('.slice(0, 4000)') && !teamWork.includes('.slice(0, 9000)')
+    && (teamWork.match(/clipWithRule\(/g) ?? []).length >= 2, '');
+
+  const linkedin = readFileSync('lib/tools/linkedin-post.ts', 'utf8');
+  ok('linkedin_post voice exemplars: clipWithRule, not a raw .slice(0, 6000)',
+    !linkedin.includes('.join(\'\\n\\n\')\n    .slice(0, 6000)') && linkedin.includes('clipWithRule(') , '');
 }
 
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed`);

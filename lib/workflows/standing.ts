@@ -25,6 +25,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { normalizeOutput } from './types';
 import { clip } from '@/lib/room/turns';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
 
 export type WfRow = {
   id: string; user_id: string; name: string; status: string;
@@ -517,10 +518,13 @@ export async function executeSteerStandingTask(
       .eq('id', c.source_id).eq('user_id', userId).maybeSingle();
     if (!wf) return { ok: false, error: 'the standing task no longer exists' };
     const day = new Date().toISOString().slice(0, 10);
-    const appended = `${String(wf.worker_instructions ?? '').trim()}\n\nSTANDING FEEDBACK (${day}): ${instruction.slice(0, 400)}`.trim();
-    // Cap: keep the NEWEST feedback (tail) — the oldest lines age out first.
-    const capped = appended.length > 4000 ? appended.slice(appended.length - 4000) : appended;
-    await admin.from('workflows').update({ worker_instructions: capped }).eq('id', wf.id);
+    // W2.4 THE MEMORY LADDER — method + feedback[] (lib/workflows/worker-instructions.ts): the
+    // dated STANDING FEEDBACK (day) entry is appended and the OLDEST feedback folds into one
+    // summary line by count/age; the authored METHOD is never truncated. (The old tail cap
+    // `slice(-4000)` cut the method off once feedback accumulated.)
+    const { addStandingFeedback } = await import('@/lib/workflows/worker-instructions');
+    const { rendered } = addStandingFeedback(wf.worker_instructions as string | null, instruction, day);
+    await admin.from('workflows').update({ worker_instructions: rendered }).eq('id', wf.id);
     return { ok: true, taskName: String(wf.name) };
   } catch { return { ok: false, error: 'the feedback could not be saved' }; }
 }
@@ -530,28 +534,33 @@ export async function executeSteerStandingTask(
  *  the hour, and a workflow deleted out-of-band closes its debt. */
 export async function syncAllStandingCommitments(admin: SupabaseClient): Promise<void> {
   try {
-    const { data: wfs } = await admin.from('workflows')
-      .select('id, user_id, name, status, trigger, next_run_at, agent_id').limit(500);
-    if (!wfs?.length) return;
+    // NO SILENT CAPS (W2.6): the full listing is PAGED. The old 500-row cap here was worse than a missed
+    // sync — the orphan sweep below builds its ALIVE set from this read, so a workflow past the cap
+    // would read as deleted and its standing commitment would be dismissed out from under it.
+    const wfs = await fetchAllRows<WfRow>((from, to) => admin.from('workflows')
+      .select('id, user_id, name, status, trigger, next_run_at, agent_id')
+      .order('id', { ascending: true }).range(from, to));
+    if (!wfs.length) return;
     const agentIds = [...new Set(wfs.map((w) => w.agent_id).filter(Boolean))] as string[];
     const names = new Map<string, string>();
-    if (agentIds.length) {
-      const { data: ags } = await admin.from('custom_agents').select('id, name').in('id', agentIds);
+    for (let i = 0; i < agentIds.length; i += 200) {
+      const { data: ags } = await admin.from('custom_agents').select('id, name').in('id', agentIds.slice(i, i + 200));
       for (const a of ags ?? []) names.set(String(a.id), String(a.name));
     }
     // One owner read for the whole set (B2) — the debt belongs to the accountability owner.
     const { ownersFor } = await import('./owner');
-    const owners = await ownersFor(admin, (wfs as WfRow[]).map((w) => ({ id: w.id, user_id: w.user_id })));
-    for (const wf of wfs as WfRow[]) {
+    const owners = await ownersFor(admin, wfs.map((w) => ({ id: w.id, user_id: w.user_id })));
+    for (const wf of wfs) {
       await syncStandingCommitment(admin, wf, wf.agent_id ? names.get(wf.agent_id) ?? null : null, {
         owner: owners.get(wf.id),
       });
     }
     // Workflows DELETED out-of-band: close orphaned standing rows whose workflow no longer exists.
     const alive = new Set(wfs.map((w) => String(w.id)));
-    const { data: openStanding } = await admin.from('commitments')
-      .select('id, source_id').eq('source', 'workflow').eq('status', 'open').limit(500);
-    for (const c of (openStanding ?? []) as Array<{ id: string; source_id: string | null }>) {
+    const openStanding = await fetchAllRows<{ id: string; source_id: string | null }>((from, to) => admin.from('commitments')
+      .select('id, source_id').eq('source', 'workflow').eq('status', 'open')
+      .order('id', { ascending: true }).range(from, to));
+    for (const c of openStanding) {
       if (c.source_id && !alive.has(c.source_id)) {
         await admin.from('commitments').update({
           status: 'dismissed', resolved_reason: 'standing task removed', resolved_at: new Date().toISOString(),

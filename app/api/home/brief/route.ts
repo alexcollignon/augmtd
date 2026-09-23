@@ -4,10 +4,12 @@ import { getAIClient } from '@/lib/ai/factory';
 import { buildAnsweredSet } from '@/lib/inbox/needs-reply';
 import { computeThreadReplyState } from '@/lib/inbox/thread-resolution';
 import { classifyItem } from '@/lib/inbox/classify-item';
+import { withoutMirrors, isCommitmentMirror } from '@/lib/inbox/commitment-mirrors';
 import { getUnderstanding, coerceUnderstanding } from '@/lib/inbox/item-understanding';
 import { lastMeetingRecall } from '@/lib/context/voice-context';
 import { buildBriefContext, type EmailSeed } from '@/lib/home/brief-context';
-import { synthesizeBrief, type MustRespondCandidate } from '@/lib/home/synthesize-brief';
+import { synthesizeBrief, SYNTH_BRIEF_VERSION, type MustRespondCandidate } from '@/lib/home/synthesize-brief';
+import { sigOf } from '@/lib/core/sig';
 import { loadUserRules } from '@/lib/inbox/rules/load';
 import { buildInitiativeClusters, type ClusterMap } from '@/lib/projects/initiative-clusters';
 import { normalizeInitiative } from '@/lib/inbox/item-understanding';
@@ -17,11 +19,16 @@ import { foldDuplicateCommitments, visibleObligationsFromItems } from '@/lib/hom
 import { isCalendarSystemSubject } from '@/lib/inbox/automated';
 import { computeBundles } from '@/lib/home/bundle-brief';
 import { clipAnchorTitle, writeDayAnchors } from '@/lib/home/day-anchors';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
 import { TODAY_ZONE_FEATURE } from '@/lib/home/day';
 import { CATCH_UP_THRESHOLD } from '@/lib/work/catch-up';
-import { nameBundles, type BundleName, type BundleNameInput } from '@/lib/home/name-bundles';
+import { nameBundles, BUNDLE_NAMES_VERSION, type BundleName, type BundleNameInput } from '@/lib/home/name-bundles';
+import { mergeHomeBrief } from '@/lib/home/brief-store';
 
-export const maxDuration = 30;
+// W0.5 TIME BUDGET: ~10 after() callbacks fire here (synthesizeBrief, bootstrapMemory, nameBundles,
+// composeBriefing, cluster naming, anticipation…), several AI-bearing — 30s killed them mid-work
+// (CLAUDE.md maxDuration lesson). The response itself stays fast; after() runs post-response.
+export const maxDuration = 300;
 
 // GET /api/home/brief — the day brief, LAYERED by topic (not a flat task list).
 // A meeting with N action items is ONE card (items nested); commitments group under their
@@ -92,7 +99,7 @@ import { isAutomatedSenderStrong as isAutomatedSender, isActionWorthyAutomated }
 // THE DECK FLOORS + THE SERVE-LABEL CHOKE — the two structures that replaced two site lists
 // (proactive-reach LAWS 3 · 5 · 6). The route composes lanes through the floors and serves through
 // the choke; `scripts/smoke-deck-truth.ts` asserts the world against the very same modules.
-import { rePromotesToDeck, noticeIsDemoted, readJudgedNone, DECK_POOL_LIMIT, ACTION_NOTICE_LIMIT, type DeckFloors } from '@/lib/home/deck-floors';
+import { rePromotesToDeck, noticeIsDemoted, readJudgedNone, DECK_POOL_LIMIT, ACTION_NOTICE_LIMIT, TRACKED_PROJECTS_LIMIT, FYI_POOL_LIMIT, BUNDLE_ENTITIES_LIMIT, BUNDLE_LINK_ATOMS_LIMIT, type DeckFloors } from '@/lib/home/deck-floors';
 import { guardDeckLabels } from '@/lib/home/serve-labels';
 import { getCampaignSignature, isCampaignEcho } from '@/lib/inbox/campaign-echo';
 // ── THE SERVED-WORDS LAW's serve guard (proactive-reach LAW 3, docs/proactive-reach-plan.md) ─────
@@ -157,13 +164,16 @@ export async function GET() {
     clusters?: Array<[string, { key: string; label: string; total: number }]>;
   };
   const aux: BriefAux = ((profileRow?.home_brief as { aux?: BriefAux } | null | undefined)?.aux) ?? {};
-  // Read-merge-write a patch into home_brief.aux (never clobbers the brief or sibling aux keys).
+  // Merge a patch into home_brief.aux via THE ONE MERGE (brief-store.ts) — the top-level `aux` write
+  // is now atomic against every OTHER top-level home_brief key (tldr/mustRespond/bundleNames/briefing/
+  // sig), closing the lost-update race those writers used to share. `aux`'s own nested fields are
+  // still read-then-merged here (unchanged from before — aux patches aren't fired concurrently with
+  // each other within one request).
   const mergeAux = async (patch: Partial<BriefAux>) => {
     try {
       const { data } = await supabase.from('profiles').select('home_brief').eq('id', user.id).single();
-      const hb = ((data?.home_brief as Record<string, unknown>) ?? {});
-      const curAux = ((hb.aux as BriefAux) ?? {});
-      await supabase.from('profiles').update({ home_brief: { ...hb, aux: { ...curAux, ...patch } } }).eq('id', user.id).then(() => {}, () => {});
+      const curAux = (((data?.home_brief as { aux?: BriefAux } | null)?.aux) ?? {});
+      await mergeHomeBrief(supabase, user.id, { aux: { ...curAux, ...patch } });
     } catch { /* non-fatal */ }
   };
 
@@ -228,7 +238,9 @@ export async function GET() {
   const trackedNameById = new Map<string, string>();
   try {
     const { data: tps } = await supabase.from('work_entities').select('id, name, aliases')
-      .eq('user_id', user.id).eq('kind', 'initiative').eq('tracked', true).eq('status', 'active').limit(100);
+      .eq('user_id', user.id).eq('kind', 'initiative').eq('tracked', true).eq('status', 'active')
+      .order('id', { ascending: true }).limit(TRACKED_PROJECTS_LIMIT);
+    if ((tps ?? []).length >= TRACKED_PROJECTS_LIMIT) console.warn(`[home/brief] tracked-projects pool SATURATED at ${TRACKED_PROJECTS_LIMIT} — some tracked projects may not tag their rows; raise the bound`);
     trackedProjects = ((tps ?? []) as Array<{ id: string; name: string; aliases: unknown }>).map((t) => {
       trackedNameById.set(String(t.id), String(t.name));
       return { name: String(t.name), aliases: Array.isArray(t.aliases) ? (t.aliases as string[]) : [] };
@@ -285,8 +297,10 @@ export async function GET() {
 
   const since24 = new Date(now.getTime() - DAY).toISOString();
   const [itemsRes, commitsRes, meetingsRes, handledRes, triagedRes, summarisedRes, trackedRes, filteredRes, fyiRes] = await Promise.all([
-    supabase.from('inbox_items')
-      .select('id, work_title, work_state, rule_type, type_override, source, source_id, source_meeting_transcript_id, source_data, created_at, last_activity_at')
+    // THE MIRROR FLOOR (W2.3): a historical `source='commitment'` row never enters the actionable pool —
+    // the commitment lane (commitsRes) IS that fact's one home. One predicate, every listing read.
+    withoutMirrors(supabase.from('inbox_items')
+      .select('id, work_title, work_state, rule_type, type_override, source, source_id, source_meeting_transcript_id, source_data, created_at, last_activity_at'))
       .eq('user_id', user.id).eq('status', 'pending')
       // Action work_states (reply-via-email + external tasks + meeting action items) OR a rule that
       // classified it actionable (rule_type) — so a needs_reply the RULES found on a 'noted' email
@@ -303,7 +317,12 @@ export async function GET() {
     // NO SILENT CAPS, here too (perf walk, Sep 8): this read had no bound at all, so PostgREST's
     // invisible 1000-row ceiling was the cap — the repo's oldest lesson. An explicit bound + the
     // saturation log below makes the ceiling a fact we can see.
-    supabase.from('commitments').select('*').eq('user_id', user.id).eq('status', 'open').limit(500),
+    // W0.5: ORDERED — an unordered .limit(500) hands back an ARBITRARY 500 of N once a user clears
+    // it (one real account sits at 469, close enough that the cap is live, not theoretical); the
+    // 500-cap saturation warning below is worthless without a stable, meaningful eviction order.
+    // Soonest-due-first (nulls last) means a saturating pool drops the LEAST time-critical rows first.
+    supabase.from('commitments').select('*').eq('user_id', user.id).eq('status', 'open')
+      .order('due_date', { ascending: true, nullsFirst: false }).limit(500),
     supabase.from('calendar_events')
       .select('id, title, start_time, attendees, timezone, is_all_day')
       .eq('user_id', user.id).eq('status', 'confirmed')
@@ -313,7 +332,7 @@ export async function GET() {
       .eq('user_id', user.id).eq('status', 'done').gte('updated_at', new Date(now.getTime() - DAY).toISOString()),
     // (profiles row is fetched FIRST, before this batch — it carries the aux side-cache)
     // ── Heartbeat (Slice D): what the system handled autonomously in the last 24h ──
-    supabase.from('inbox_items').select('id', { count: 'exact', head: true })
+    withoutMirrors(supabase.from('inbox_items').select('id', { count: 'exact', head: true }))
       .eq('user_id', user.id).gte('created_at', since24),                                  // triaged
     supabase.from('meeting_transcripts').select('id', { count: 'exact', head: true })
       .eq('user_id', user.id).gte('created_at', since24),                                  // summarised
@@ -325,11 +344,12 @@ export async function GET() {
     // FYI tier (for the FYI-by-topic brief): awareness emails, grouped by sender downstream. Wide
     // window so high-volume people (not just recent newsletters) surface in the people section.
     // (id/created_at carried so a PERSON-kind awareness email can be promoted to "keep an eye on".)
-    supabase.from('inbox_items').select('id, work_title, source_data, rule_type, created_at, last_activity_at')
+    withoutMirrors(supabase.from('inbox_items').select('id, work_title, source_data, rule_type, created_at, last_activity_at'))
       .eq('user_id', user.id).eq('status', 'pending').eq('work_state', 'noted')
-      .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(200),
+      .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(FYI_POOL_LIMIT),
   ]);
   mark('queries');
+  if ((fyiRes.data ?? []).length >= FYI_POOL_LIMIT) console.warn(`[home/brief] FYI pool SATURATED at ${FYI_POOL_LIMIT} — the oldest awareness mail is being evicted by recency; raise the bound`);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const items = (itemsRes.data ?? []) as any[];
@@ -394,7 +414,7 @@ export async function GET() {
   let campaignSig: import('@/lib/inbox/campaign-echo').CampaignSignature | null = null;
   try { campaignSig = await getCampaignSignature(supabase, user.id); } catch { /* the floor goes inert, never fabricates */ }
   const classifiedEmails = items
-    .filter((it) => it.source !== 'meeting' && it.source !== 'commitment')
+    .filter((it) => it.source !== 'meeting' && !isCommitmentMirror(it))
     .map((it) => ({ it, posture: classifyItem(it as never, userRules) }));
   // THE DECK FLOORS (lib/home/deck-floors.ts) — the lane-entry law lives in ONE module the standing
   // gate asserts the world against; the route no longer derives its own. `judgedNone` is filled
@@ -706,18 +726,17 @@ export async function GET() {
     }));
   // PREPARED tokens for commitment rows (5B.3 — one cheap pool query, facts only): a commitment with
   // a prepared draft/deliverable shows "drafted" / the preparer's name on the deck like inbox rows do.
-  const commitPrepared = new Map<string, string>();
+  // ONE READER PER OBJECT (W2.1): the token comes from THE ONE READER — a chip claims only what a
+  // room renders (live: unsent, not superseded, not past its time) and carries WHAT is prepared so
+  // the receipt can word itself (an invite says "invite prepared", never "ready to send").
+  const commitPrepared = new Map<string, { by: string; kind: string | null }>();
   try {
     const openCommitIds = commitmentCands.map((c) => c.id);
     if (openCommitIds.length) {
-      const { data: dl } = await supabase.from('item_deliverables').select('entity_id, type, metadata')
-        .eq('user_id', user.id).eq('kind', 'commitment').in('entity_id', openCommitIds.slice(0, 200))
-        .in('type', ['draft', 'document']).order('created_at', { ascending: false }).limit(100);
-      for (const d of (dl ?? []) as Array<Record<string, unknown>>) {
-        const id = d.entity_id as string;
-        if (commitPrepared.has(id)) continue;
-        const meta = (d.metadata ?? {}) as { agentName?: string; worker?: string };
-        commitPrepared.set(id, (meta.agentName ?? meta.worker ?? 'draft') as string);
+      const { preparedStatesFor } = await import('@/lib/prepare/read');
+      const states = await preparedStatesFor(supabase, user.id, openCommitIds.map((id) => ({ kind: 'commitment' as const, id })));
+      for (const [key, st] of states) {
+        if (st.badge) commitPrepared.set(key.replace(/^commitment:/, ''), { by: st.badge, kind: st.leadKind });
       }
     }
   } catch { /* non-fatal — tokens are an enhancement */ }
@@ -866,6 +885,9 @@ export async function GET() {
   // The USER's home timezone — a meeting must show in the user's local clock, NOT the organiser's zone (a
   // Dubai-created event would otherwise read +4h). No stored preference, so derive it agnostically: the most
   // common timezone across the user's own calendar events (their home zone), fallback UTC.
+  // BOUNDED-EXPLICIT (invariant 10): a frequency SAMPLE, not a full listing — 300 recent calendar
+  // rows are plenty to find the user's dominant (home) timezone; a truncation here just means a
+  // slightly staler sample, never a wrong-by-construction answer once the user has any history.
   const { data: tzRows } = await supabase.from('calendar_events').select('timezone').eq('user_id', user.id).not('timezone', 'is', null).limit(300);
   const tzFreq = new Map<string, number>();
   for (const r of (tzRows ?? []) as Array<{ timezone: string | null }>) { const t = r.timezone; if (t) tzFreq.set(t, (tzFreq.get(t) ?? 0) + 1); }
@@ -921,7 +943,12 @@ export async function GET() {
   // Awareness signature: count + freshest awareness item, so promoting/refreshing "keep an eye on"
   // regenerates the brief when the awareness pool shifts (not just on the 3h TTL).
   const eyeFresh = keepAnEyeOnRaw.reduce((mx, k) => (k.receivedAt > mx ? k.receivedAt : mx), '');
-  const sig = `${todayStr}|${emailP}|${meetingP}|${commitP}|${overdueP}|${overdueC}|${status.waitingOn}|${schedule.length}|${fyiSig}|${freshest}|${commitFresh}|${keepAnEyeOnRaw.length}|${eyeFresh}`;
+  // THE ONE SIG (W2.6): the synthesis prompt's VERSION rides the key beside every input — a prompt
+  // edit re-synthesizes every cached brief (the sig used to carry no version at all).
+  const sig = sigOf({ version: SYNTH_BRIEF_VERSION, deps: {
+    day: todayStr, emailP, meetingP, commitP, overdueP, overdueC, waitingOn: status.waitingOn,
+    schedule: schedule.length, fyiSig, freshest, commitFresh, eye: keepAnEyeOnRaw.length, eyeFresh,
+  } });
 
   const fullName = (profileRes.data as { full_name?: string } | null)?.full_name ?? null;
   const firstName = fullName?.split(' ')[0] ?? null;
@@ -994,10 +1021,11 @@ export async function GET() {
     // 3. Persist the basic brief IMMEDIATELY with the NEW sig. This is the anti-regen-storm guard:
     //    the very next request (poll / realtime refetch) is a cache-HIT on this basic brief and does
     //    NOT trigger a second synthesis while the background one is still running.
-    //    SPREAD the cached blob first (P0): the persist must PRESERVE the sibling caches that live in
-    //    home_brief (aux / bundleNames / briefing) — writing a fresh object silently wiped them, which
-    //    re-fired the bundle-naming + briefing AI passes on every sig change.
-    await supabase.from('profiles').update({ home_brief: { ...((profileRes.data?.home_brief as Record<string, unknown>) ?? {}), text: briefLine, tldr, followups, fyiDigest, mustRespond, keepAnEyeOn, droppedItemIds, commitmentPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+    //    THE ONE MERGE (brief-store.ts, W0.5): the persist must PRESERVE the sibling caches that live
+    //    in home_brief (aux / bundleNames / briefing) — a whole-blob spread of the REQUEST-START
+    //    snapshot silently wiped whatever another concurrent after() had ALREADY written to a sibling
+    //    key since this request began; the atomic jsonb merge touches only the keys named here.
+    await mergeHomeBrief(supabase, user.id, { text: briefLine, tldr, followups, fyiDigest, mustRespond, keepAnEyeOn, droppedItemIds, commitmentPlacements, generated_at: now.toISOString(), sig });
 
     // 4. Enrich in the BACKGROUND — same inputs as before — and persist the ENRICHED brief with the
     //    SAME sig (upgrades the cache in place: real ask/angle, ordering, supersession drops,
@@ -1083,12 +1111,10 @@ export async function GET() {
         enrDropped = synth.droppedItemIds.filter((id) => !protectedItemIds.has(id));
         if (Object.keys(synth.commitmentPlacements).length) enrPlacements = synth.commitmentPlacements;
         // Persist the enriched brief under the SAME sig — upgrades the cache in place so the next
-        // refetch is a cache-hit on the fully-synthesized version. READ-MERGE-WRITE (P0): preserve the
-        // sibling caches (aux / bundleNames / briefing) that other after() callbacks may have written
-        // while the synthesis ran.
-        const { data: curRow } = await supabase.from('profiles').select('home_brief').eq('id', user.id).single();
-        const curHb = ((curRow?.home_brief as Record<string, unknown>) ?? {});
-        await supabase.from('profiles').update({ home_brief: { ...curHb, text: enrBriefLine, tldr: enrTldr, followups: enrFollowups, fyiDigest: enrFyiDigest, mustRespond: enrMustRespond, keepAnEyeOn: enrKeepAnEyeOn, droppedItemIds: enrDropped, commitmentPlacements: enrPlacements, generated_at: now.toISOString(), sig } }).eq('id', user.id).then(() => {}, () => {});
+        // refetch is a cache-hit on the fully-synthesized version. THE ONE MERGE (brief-store.ts,
+        // W0.5): atomic against sibling caches (aux / bundleNames / briefing) that other after()
+        // callbacks may write concurrently — no read-then-write window to lose their patch in.
+        await mergeHomeBrief(supabase, user.id, { text: enrBriefLine, tldr: enrTldr, followups: enrFollowups, fyiDigest: enrFyiDigest, mustRespond: enrMustRespond, keepAnEyeOn: enrKeepAnEyeOn, droppedItemIds: enrDropped, commitmentPlacements: enrPlacements, generated_at: now.toISOString(), sig });
       } catch { /* non-fatal — basic brief stays cached */ }
     });
   }
@@ -1109,7 +1135,7 @@ export async function GET() {
     commitmentCands
       .filter((c) => placementOf(c) === 'on_your_plate')
       // THE SERVE GUARD on the commitment's served description (legacy rows heal as they serve).
-      .map((c) => ({ id: c.id, description: stripDeixis(c.description), counterparty: c.counterparty || c.sourceLabel, dueDate: c.dueDate, overdue: c.overdue, dueToday: c.dueToday, prepared: commitPrepared.get(c.id) ?? null, initiative: clusterTag(c.initiative)?.initiative ?? null, initiativeTotal: clusterTag(c.initiative)?.initiativeTotal ?? null })),
+      .map((c) => ({ id: c.id, description: stripDeixis(c.description), counterparty: c.counterparty || c.sourceLabel, dueDate: c.dueDate, overdue: c.overdue, dueToday: c.dueToday, prepared: commitPrepared.get(c.id)?.by ?? null, preparedKind: commitPrepared.get(c.id)?.kind ?? null, initiative: clusterTag(c.initiative)?.initiative ?? null, initiativeTotal: clusterTag(c.initiative)?.initiativeTotal ?? null })),
   )
     .sort((a, b) => {
       const rk = (x: typeof a) => (x.overdue ? 0 : x.dueToday ? 1 : x.dueDate ? 2 : 3);
@@ -1176,18 +1202,27 @@ export async function GET() {
   const pendingItemIds = new Set(items.map((it) => it.id));
   // C3 SURFACING — who/what prepared each item ("✦ drafted" / "✦ prepared by <coworker>") rides the
   // payload so the deck announces arrival + attribution (the jaws-drop is seeing it before you ask).
-  const { preparedBadge } = await import('@/lib/prepare/read');
+  // W2.1: the inbox tokens ride THE ONE READER too (rows in hand — source_data AND the pool, one
+  // batched read), so a coworker's pooled deliverable on an inbox item earns its chip and an
+  // expired invite alone earns none.
+  const { preparedStatesFor: preparedStatesForInbox } = await import('@/lib/prepare/read');
   const preparedByItem = new Map<string, string>();
-  for (const it of items) {
-    const badge = preparedBadge(it.source_data as never);
-    if (badge) preparedByItem.set(String(it.id), badge);
-  }
+  const preparedKindByItem = new Map<string, string | null>();
+  try {
+    const inboxStates = await preparedStatesForInbox(supabase, user.id, items.map((it) => ({
+      kind: 'inbox' as const, id: String(it.id),
+      row: { source_data: it.source_data, last_activity_at: ((it as { last_activity_at?: string | null }).last_activity_at ?? null) },
+    })));
+    for (const [key, st] of inboxStates) {
+      if (st.badge) { preparedByItem.set(key.replace(/^inbox:/, ''), st.badge); preparedKindByItem.set(key.replace(/^inbox:/, ''), st.leadKind); }
+    }
+  } catch { /* tokens are an enhancement */ }
   const mustRespondOut = mustRespond
     ? { ...mustRespond, items: mustRespond.items
         .filter((r) => !r.itemId || pendingItemIds.has(r.itemId))
         // THE SERVE GUARD on the reply lane's whisper label AND the subject it falls back to — both
         // reach the deck verbatim, and a cached tier can carry an ask composed days ago.
-        .map((r) => ({ ...r, ask: stripDeixis(r.ask), subject: r.subject ? stripDeixis(r.subject) : r.subject, draft: draftByItem.get(r.itemId) ?? null, preparedBy: preparedByItem.get(r.itemId) ?? null })) }
+        .map((r) => ({ ...r, ask: stripDeixis(r.ask), subject: r.subject ? stripDeixis(r.subject) : r.subject, draft: draftByItem.get(r.itemId) ?? null, preparedBy: preparedByItem.get(r.itemId) ?? null, preparedKind: preparedKindByItem.get(r.itemId) ?? null })) }
     : mustRespond;
   // "Keep an eye on" is awareness — no action buttons — but still drop items that are no longer
   // pending (dismissed elsewhere) so a stale cached tier can't show a gone item. Also enforce the
@@ -1233,7 +1268,7 @@ export async function GET() {
   const USER_ACTIONABLE = new Set(['needs_reply', 'to_do', 'waiting_on']);
   type FyaCand = { id: string; source_data: Record<string, unknown>; work_title: string | null };
   const fyaFromItems: FyaCand[] = items
-    .filter((it) => it.source !== 'meeting' && it.source !== 'commitment')
+    .filter((it) => it.source !== 'meeting' && !isCommitmentMirror(it))
     .filter((it) => !USER_ACTIONABLE.has(String(it.type_override || ''))) // user's explicit type wins
     .filter((it) => { const u = getUnderstanding(it); return !!u && u.relevance === 'awareness'; })
     .filter((it) => !isBulk((it.source_data ?? {}) as Record<string, unknown>)) // real correspondence only
@@ -1298,7 +1333,9 @@ export async function GET() {
   // replies to threads that were never an inbox item. The ring must reflect ITEMS the user resolved here,
   // which the Activity log mirrors — not the mailbox's raw outbound volume.
   const [inboxClearedRes, commitClearedRes] = await Promise.all([
-    supabase.from('inbox_items').select('id', { count: 'exact', head: true })
+    // Mirrors excluded (W2.3): the repair sweep archives ~900 historical rows in one pass — a machine
+    // retirement must never read as the user's own cleared-today deeds.
+    withoutMirrors(supabase.from('inbox_items').select('id', { count: 'exact', head: true }))
       .eq('user_id', user.id).in('status', ['completed', 'dismissed']).gte('source_data->>resolved_at', startOfDay),
     // Count only USER-driven resolutions — exclude auto-fulfillment (`resolved_reason='fulfilled'`, the
     // commitments-sweep detecting a commitment was met, often a phantom created + closed the same minute).
@@ -1355,15 +1392,25 @@ export async function GET() {
   let wentsRows: Array<Record<string, unknown>> = [];
   let alinksRows: Array<{ item_id: string; entity_id: string }> = [];
   try {
-    const { data: wents } = await supabase.from('work_entities')
-      .select('id, name, status, state, next_move, priority, last_event_at, tracked')
-      .eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null).limit(400);
-    wentsRows = (wents ?? []) as Array<Record<string, unknown>>;
+    // NO SILENT CAPS: an unpaged `.limit(400)` silently dropped active entities from the bundle
+    // grouping past 400 (their atoms would bundle by meeting/thread only, losing the project
+    // grouping) — paged, stable order. The `atomIds.slice(0, 400)` below was worse: it dropped
+    // ENTITY RESOLUTION for any atom past the 400th outright — chunked `.in()` batches now cover
+    // every deck atom.
+    wentsRows = await fetchAllRows<Record<string, unknown>>((from, to) =>
+      supabase.from('work_entities')
+        .select('id, name, status, state, next_move, priority, last_event_at, tracked')
+        .eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null)
+        .order('id', { ascending: true }).range(from, to));
+    if (wentsRows.length >= BUNDLE_ENTITIES_LIMIT) console.warn(`[home/brief] bundle-entities read reached ${wentsRows.length} rows (named floor ${BUNDLE_ENTITIES_LIMIT}) — now fully paged, but a growing count is worth watching`);
     const atomIds = bundleAtoms.map((a) => a.id);
-    if (atomIds.length) {
-      const { data: alinks } = await supabase.from('entity_links').select('item_id, entity_id').eq('user_id', user.id)
-        .in('item_kind', ['inbox_item', 'commitment']).in('item_id', atomIds.slice(0, 400)).not('entity_id', 'is', null);
-      alinksRows = (alinks ?? []) as Array<{ item_id: string; entity_id: string }>;
+    if (atomIds.length >= BUNDLE_LINK_ATOMS_LIMIT) console.warn(`[home/brief] bundle atom set is ${atomIds.length} rows (named floor ${BUNDLE_LINK_ATOMS_LIMIT}) — entity-link resolution is now chunked, not truncated`);
+    for (let k = 0; k < atomIds.length; k += 300) {
+      const batch = await fetchAllRows<{ item_id: string; entity_id: string }>((from, to) =>
+        supabase.from('entity_links').select('item_id, entity_id').eq('user_id', user.id)
+          .in('item_kind', ['inbox_item', 'commitment']).in('item_id', atomIds.slice(k, k + 300)).not('entity_id', 'is', null)
+          .order('item_id', { ascending: true }).range(from, to));
+      alinksRows.push(...batch);
     }
     const nameById = new Map(wentsRows.map((e) => [e.id as string, e.name as string]));
     const linkByAtom = new Map(alinksRows.map((l) => [l.item_id, l.entity_id]));
@@ -1438,7 +1485,7 @@ export async function GET() {
   // upgrades it. On a signature MISS we serve the fallback now and refresh the cache in the background, so
   // the response never waits on the AI. Names/whys ride back as `bundleNames` (key → {name, why?}).
   const bundleKeys = [...new Set(Object.values(bundles).map((b) => b.key))].sort();
-  const bundleSig = bundleKeys.join('|');
+  const bundleSig = sigOf({ version: BUNDLE_NAMES_VERSION, deps: { keys: bundleKeys } });
   const cachedBundleNames = cached?.bundleNames?.sig === bundleSig ? (cached.bundleNames.names ?? {}) : {};
   const bundleNames: Record<string, BundleName> = {};
   for (const key of bundleKeys) {
@@ -1467,10 +1514,9 @@ export async function GET() {
       try {
         const names = await nameBundles(user.id, supabase, nameInputs);
         if (!Object.keys(names).length) return;
-        // Read-merge-write so we upgrade only `bundleNames` and preserve the rest of home_brief.
-        const { data } = await supabase.from('profiles').select('home_brief').eq('id', user.id).single();
-        const hb = ((data?.home_brief as Record<string, unknown>) ?? {});
-        await supabase.from('profiles').update({ home_brief: { ...hb, bundleNames: { sig: bundleSig, names } } }).eq('id', user.id).then(() => {}, () => {});
+        // THE ONE MERGE (brief-store.ts, W0.5): upgrade only `bundleNames`, atomic against every
+        // sibling key another concurrent after() may be writing.
+        await mergeHomeBrief(supabase, user.id, { bundleNames: { sig: bundleSig, names } });
       } catch { /* non-fatal — deterministic labels stay */ }
     });
   }
@@ -1479,8 +1525,8 @@ export async function GET() {
   // from mustRespondRaw (fresh every load, like the other facts), so no cache plumbing. One cheap query on the
   // must-respond senders. The card renders a muted tag; a miss = no cue (only meaningful stakes show). ──
   // itemWeights (itemId → 0–100) come from the SHARED verdict (lib/brains/verdict.ts personVerdict) — the
-  // ONE judgment authority. The deck's "Important" lens READS this; it does not re-derive priority. Same
-  // person_state row also yields the cue. (Timeline/Projects will call the same verdict functions.)
+  // ONE judgment authority. The deck's "Important" lens READS this; it does not re-derive priority. The
+  // same person ENTITY also yields the cue. (Timeline/Projects will call the same verdict functions.)
   const personCues: Record<string, { label: string; tone: 'neutral' | 'amber' }> = {};
   const itemWeights: Record<string, number> = {};
   try {
@@ -1489,31 +1535,23 @@ export async function GET() {
     for (const m of mustRespondRaw) { const k = (m.fromEmail || '').toLowerCase(); if (!k) continue; const a = keyToItems.get(k) ?? []; a.push(m.itemId); keyToItems.set(k, a); }
     const keys = [...keyToItems.keys()];
     if (keys.length) {
-      // ENTITY-FIRST (One Brain cutover #4): resolve each sender to the ONE human in the person registry
-      // (alias-matched — a person's several addresses land on one entity, killing duplicate cues/weights).
-      // person_state remains only for senders the registry doesn't know.
-      const unresolved = new Set(keys);
+      // THE PERSON REGISTRY IS THE ONLY SOURCE (One Brain cutover #4; W2.6 demolition): resolve each
+      // sender to the ONE human in the registry (alias-matched — a person's several addresses land on
+      // one entity, killing duplicate cues/weights). The label-era `person_state` fallback is GONE: that
+      // table has had no writer since July (the live refresh writes person ENTITIES), so for a sender
+      // the registry doesn't know it could only serve a months-old frozen relationship as current.
+      // A sender without an entity simply carries no cue and the default weight — the honest absence.
       try {
         const { getPersonEntities, findPersonEntity } = await import('@/lib/entities/people');
         const registry = await getPersonEntities(supabase, user.id);
         for (const k of keys) {
           const pe = findPersonEntity(registry, k, null);
           if (!pe?.state?.summary) continue;
-          unresolved.delete(k);
           const cue = relationshipCue(pe.state.relationship, pe.state.momentum, pe.quietDays);
           const v = personVerdict({ state: pe.state, next_touch: pe.nextTouch, quiet_days: pe.quietDays } as never);
           for (const id of (keyToItems.get(k) ?? [])) { if (cue) personCues[id] = cue; itemWeights[id] = v.weight; }
         }
-      } catch { /* fall through to person_state for all keys */ }
-      if (unresolved.size) {
-        const { data: ps } = await supabase.from('person_state').select('person_key, state, next_touch, quiet_days').eq('user_id', user.id).in('person_key', [...unresolved]);
-        for (const r of (ps ?? []) as Array<{ person_key: string; state: { relationship?: string; momentum?: string; summary?: string; whoOwes?: { you: string[]; them: string[] } } | null; next_touch: { title?: string; reason?: string; entityRef?: string | null } | null; quiet_days: number | null }>) {
-          const ids = keyToItems.get(r.person_key.toLowerCase()) ?? [];
-          const cue = relationshipCue(r.state?.relationship, r.state?.momentum, r.quiet_days);
-          const v = personVerdict(r);
-          for (const id of ids) { if (cue) personCues[id] = cue; itemWeights[id] = v.weight; }
-        }
-      }
+      } catch { /* the registry is unreadable — no cues this load, default weights */ }
     }
   } catch { /* non-fatal — cards just render without a cue / default weight */ }
 
@@ -1631,9 +1669,8 @@ export async function GET() {
         try {
           const briefing = await composeBriefing(supabase, user.id, inputs);
           if (!briefing) return;
-          const { data } = await supabase.from('profiles').select('home_brief').eq('id', user.id).single();
-          const hb = ((data?.home_brief as Record<string, unknown>) ?? {});
-          await supabase.from('profiles').update({ home_brief: { ...hb, briefing } }).eq('id', user.id).then(() => {}, () => {});
+          // THE ONE MERGE (brief-store.ts, W0.5) — atomic against every sibling key.
+          await mergeHomeBrief(supabase, user.id, { briefing });
         } catch { /* non-fatal — last-good briefing stays */ }
       });
     }
@@ -1840,7 +1877,7 @@ export async function GET() {
     const leadWordByAtom = new Map<string, string>();
     const push = (
       entityId: string, key: string, source: 'reply' | 'notice' | 'commitment',
-      f: { who?: string | null; dueDate?: string | null; overdue?: boolean; dueToday?: boolean; prepared?: string | null },
+      f: { who?: string | null; dueDate?: string | null; overdue?: boolean; dueToday?: boolean; prepared?: string | null; preparedKind?: string | null },
       adj: { localTime: string | null; title: string | null; eventId?: string; today?: boolean } | null,
     ) => {
       // ── Q4 · THE SEAT CONTRACT's three facts, gathered HERE (the one choke) and handed to the
@@ -1852,7 +1889,7 @@ export async function GET() {
       const sd = (raw?.source_data ?? null) as Record<string, unknown> | null;
       leadWordByAtom.set(entityId, String(f.who || raw?.work_title || 'This'));
       const draft: Row = {
-        key, entityId, source, whyNow: '', calendarAdjacent: !!adj, prepared: f.prepared ?? null,
+        key, entityId, source, whyNow: '', calendarAdjacent: !!adj, prepared: f.prepared ?? null, preparedKind: f.preparedKind ?? null,
         overdue: !!f.overdue, dueToday: !!f.dueToday, dueDate: f.dueDate ?? null,
         selfAuthored: source === 'commitment' ? false : (raw ? itemIsSelfEcho(raw) : false),
         provedAlive: provedAliveOf(sd),
@@ -1869,24 +1906,24 @@ export async function GET() {
       const seat = seatVerdict(draft);
       draft.whyNow = whyNowOf({
         source, who: f.who ?? null, dueDate: f.dueDate ?? null, overdue: !!f.overdue,
-        dueToday: !!f.dueToday, prepared: f.prepared ?? null, needsShaping: seat.needsShaping,
+        dueToday: !!f.dueToday, prepared: f.prepared ?? null, preparedKind: f.preparedKind ?? null, needsShaping: seat.needsShaping,
         stateWord: machineOf(entityId)?.word ?? null, meeting: adj,
       }, now);
       rows.push(draft);
     };
-    for (const m of ((mustRespondOut?.items ?? []) as unknown as Array<{ itemId: string; who: string; dueDate?: string | null; preparedBy?: string | null }>)) {
+    for (const m of ((mustRespondOut?.items ?? []) as unknown as Array<{ itemId: string; who: string; dueDate?: string | null; preparedBy?: string | null; preparedKind?: string | null }>)) {
       push(m.itemId, `r-${m.itemId}`, 'reply',
-        { who: m.who, dueDate: m.dueDate ?? null, overdue: !!m.dueDate && m.dueDate < todayStr, dueToday: m.dueDate === todayStr, prepared: m.preparedBy ?? null },
+        { who: m.who, dueDate: m.dueDate ?? null, overdue: !!m.dueDate && m.dueDate < todayStr, dueToday: m.dueDate === todayStr, prepared: m.preparedBy ?? null, preparedKind: m.preparedKind ?? null },
         adjacencyFor(emailOfItem(m.itemId)));
     }
     for (const n of actionNotices) {
       push(n.itemId, `n-${n.itemId}`, 'notice',
-        { who: n.who, dueDate: n.dueDate ?? null, overdue: !!n.dueDate && n.dueDate < todayStr, dueToday: n.dueDate === todayStr, prepared: preparedByItem.get(n.itemId) ?? null },
+        { who: n.who, dueDate: n.dueDate ?? null, overdue: !!n.dueDate && n.dueDate < todayStr, dueToday: n.dueDate === todayStr, prepared: preparedByItem.get(n.itemId) ?? null, preparedKind: preparedKindByItem.get(n.itemId) ?? null },
         adjacencyFor(emailOfItem(n.itemId)));
     }
     for (const c of commitments) {
       push(c.id, `c-${c.id}`, 'commitment',
-        { who: c.counterparty, dueDate: c.dueDate ?? null, overdue: !!c.overdue, dueToday: !!c.dueToday, prepared: c.prepared ?? null },
+        { who: c.counterparty, dueDate: c.dueDate ?? null, overdue: !!c.overdue, dueToday: !!c.dueToday, prepared: c.prepared ?? null, preparedKind: (c as { preparedKind?: string | null }).preparedKind ?? null },
         adjacencyFor(commitCounterpartyEmail.get(c.id)));
     }
     // THE ORDER THE BUDGET CUTS is the deck's own judged order (the agenda's law: the REASONED
@@ -2012,5 +2049,5 @@ export async function GET() {
   // upstream `stripDeixis` seams stay where they are (they feed the SERVER-side agenda and the
   // briefing composer's inputs, which never pass through here); this is the guarantee that no lane
   // — present or future — can serve a word that has stopped being true.
-  return NextResponse.json(guardDeckLabels({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => withAttention({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null, machine: machineOf(n.itemId) }, n.itemId)), mustRespond: attentionMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities.map((p) => ({ ...p, machine: p.itemId ? machineOf(p.itemId) : null })), commitments: commitments.map((c) => withAttention({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null, machine: machineOf(c.id) }, c.id)), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, projectByAtom, briefing: cachedBriefing, trackedProjects, mail, today: todayStr, attention: { budget: attention.budget, served: attention.served, heldBack: attention.heldBack, heldTotal: attention.heldTotal, heldWaiting: attention.heldWaiting, heldHandled: attention.heldHandled, fresh: attention.fresh, catchUp: attention.catchUp } }));
+  return NextResponse.json(guardDeckLabels({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => withAttention({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, preparedKind: preparedKindByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null, machine: machineOf(n.itemId) }, n.itemId)), mustRespond: attentionMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities.map((p) => ({ ...p, machine: p.itemId ? machineOf(p.itemId) : null })), commitments: commitments.map((c) => withAttention({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null, machine: machineOf(c.id) }, c.id)), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, projectByAtom, briefing: cachedBriefing, trackedProjects, mail, today: todayStr, attention: { budget: attention.budget, served: attention.served, heldBack: attention.heldBack, heldTotal: attention.heldTotal, heldWaiting: attention.heldWaiting, heldHandled: attention.heldHandled, fresh: attention.fresh, catchUp: attention.catchUp } }));
 }

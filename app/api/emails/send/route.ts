@@ -10,6 +10,7 @@ import { emailBodyHTML, emailBodyText, type StandaloneEmailDraft } from '@/lib/p
 import { logActivity } from '@/lib/activity/log';
 import { checkRateLimit } from '@/lib/utils/rate-limit';
 import { sanitizeHeaderValue } from '@/lib/utils/email-headers';
+import { isEmailStrict } from '@/lib/core/email';
 
 export const maxDuration = 60;
 
@@ -32,10 +33,9 @@ export const maxDuration = 60;
 // /api/compose/send has always had) — stated on the card, never silently substituted.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-const EMAIL_RE = /^[^\s<>",;:]+@[^\s<>",;:]+\.[a-z]{2,}$/i;
 const cleanList = (v: unknown, keep: string[]): string[] =>
   Array.isArray(v)
-    ? [...new Set(v.map((s) => String(s ?? '').trim()).filter((a) => EMAIL_RE.test(a)))].slice(0, 20)
+    ? [...new Set(v.map((s) => String(s ?? '').trim()).filter((a) => isEmailStrict(a)))].slice(0, 20)
     : keep;
 
 export async function POST(request: NextRequest) {

@@ -45,9 +45,11 @@
 // Reactivation never travels this road: settlement spreads, reactivation stays per-thread.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { readPlan, upsertPlan } from '@/lib/store/item-plans';
 import { sameAttendee } from '@/lib/projects/identity';
 import { namesOverlap } from '@/lib/entities/recognize';
 import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
 
 // THE VERSION'S SCOPE, stated so it is not over- or under-read: this number gates the DISPOSAL
 // contract — the reasoned prompt, the verifier, and the cascade/nominate asymmetry. A cached verdict
@@ -261,8 +263,7 @@ export async function judgeSameConversation(
 ): Promise<{ same: boolean; evidence: string; reason: string; cached: boolean }> {
   const key = pairKey(a.threadId, b.threadId);
   try {
-    const { data } = await client.from('item_plans').select('tasks')
-      .eq('user_id', userId).eq('kind', 'conversation_pair').eq('entity_id', key).maybeSingle();
+    const data = await readPlan(client, userId, 'conversation_pair', key);
     const t = (data?.tasks ?? null) as { v?: number; same?: boolean; evidence?: string; reason?: string } | null;
     if (t && t.v === CONVERSATION_IDENTITY_VERSION && typeof t.same === 'boolean') {
       // THE CACHE PREVENTS RE-JUDGING — and costs the scan's AI budget nothing, which is what makes
@@ -317,10 +318,7 @@ export async function judgeSameConversation(
     return { same: false, evidence: '', reason: 'same-conversation judge unavailable', cached: false };
   }
   try {
-    await client.from('item_plans').upsert({
-      user_id: userId, kind: 'conversation_pair', entity_id: key,
-      tasks: { v: CONVERSATION_IDENTITY_VERSION, ...out }, updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id,kind,entity_id' }).then(() => {}, () => {});
+    await upsertPlan(client, userId, 'conversation_pair', key, { v: CONVERSATION_IDENTITY_VERSION, ...out });
   } catch { /* non-fatal */ }
   return { ...out, cached: false };
 }
@@ -479,14 +477,20 @@ export async function readSiblingNomination(client: DBClient, userId: string, ke
   } catch { return null; }
 }
 
-/** Every standing nomination for a user — LAW 1's sweep reads this to rank its queue. */
+/** Every standing nomination for a user — LAW 1's sweep reads this to rank its queue.
+ *  NO SILENT CAPS (invariant 10): this was an unordered `.limit(1000)` — exactly Supabase's own
+ *  page ceiling, so a user past 1000 standing nominations silently lost the sweep's ranking signal
+ *  for the overflow (they'd still get judged, just without the "a sibling already settled this"
+ *  fast-path). Paged via `fetchAllRows` with a stable `entity_id` order. */
 export async function readSiblingNominations(client: DBClient, userId: string): Promise<Map<string, SiblingNomination>> {
   const out = new Map<string, SiblingNomination>();
   try {
-    const { data } = await client.from('item_plans').select('entity_id, tasks')
-      .eq('user_id', userId).eq('kind', 'judgment_nomination').limit(1000);
-    for (const r of (data ?? []) as any[]) {
-      const t = r.tasks as SiblingNomination | null;
+    const rows = await fetchAllRows<{ entity_id: string; tasks: SiblingNomination | null }>((from, to) =>
+      client.from('item_plans').select('entity_id, tasks')
+        .eq('user_id', userId).eq('kind', 'judgment_nomination')
+        .order('entity_id', { ascending: true }).range(from, to));
+    for (const r of rows) {
+      const t = r.tasks;
       if (t && t.v === CONVERSATION_IDENTITY_VERSION && t.settledAt) out.set(String(r.entity_id), t);
     }
   } catch { /* best-effort */ }
@@ -547,6 +551,10 @@ export async function cascadeConversationSettlement(
         .eq('source_data->>thread_id', sib.threadId).limit(20);
       for (const it of (items ?? []) as any[]) {
         if (mayCascade) {
+          // THE OUTCOME LEDGER (W3.2): this copy's pending preparations, captured BEFORE the strip —
+          // the conversation was settled elsewhere, so they end done_elsewhere (the work was real).
+          const { capturePending, logPendingOutcomes } = await import('@/lib/prepare/outcome');
+          const pendingPrep = await capturePending(client, userId, { kind: 'inbox', id: String(it.id) });
           const now = new Date().toISOString();
           const sd = { ...((it.source_data ?? {}) as Record<string, unknown>) };
           delete sd.draft; delete sd.nudge_draft; delete sd.prepared_by;
@@ -556,6 +564,10 @@ export async function cascadeConversationSettlement(
             updated_at: now,
           }).eq('id', it.id).eq('user_id', userId).eq('status', 'pending');
           if (error) continue;
+          await logPendingOutcomes(client, userId, pendingPrep, {
+            base: 'done_elsewhere', itemKind: 'inbox', itemId: String(it.id), door: 'conversation_cascade',
+            source: (it.source_data ?? null) as Record<string, unknown> | null,
+          }).catch(() => 0);
           out.cascaded.push(String(it.id));
           import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'inbox_item', String(it.id))).catch(() => {});
           try {

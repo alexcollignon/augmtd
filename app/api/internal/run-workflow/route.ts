@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { runWorkflow } from '@/lib/workflows/run-workflow';
+import { hasBearer } from '@/lib/utils/bearer-auth';
 
 // Internal run dispatcher for chat-triggered runs (run_task). The chat / AgentOS routes
 // are maxDuration=60, far too short for a real run (~175s), and a bare fire-and-forget
@@ -8,8 +9,7 @@ import { runWorkflow } from '@/lib/workflows/run-workflow';
 export const maxDuration = 800;
 
 export async function POST(req: NextRequest) {
-  const secret = process.env.AGENTOS_SECRET;
-  if (!secret || (req.headers.get('authorization') ?? '') !== `Bearer ${secret}`) {
+  if (!hasBearer(req, 'AGENTOS_SECRET')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

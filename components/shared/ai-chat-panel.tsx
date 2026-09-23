@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useEffect, useRef, useState, RefObject, useCallback } from 'react';
+import { ThreadTimeline, ThreadComposer, type ThreadItem } from '@/components/thread';
+import { useCosSeat } from '@/hooks/use-cos-seat';
 import type { InboxItem } from '@/lib/types/inbox';
 import EmailListCard from '@/components/inbox/email-list-card';
 import MeetingProposalCard from '@/components/inbox/meeting-proposal-card';
@@ -12,7 +14,6 @@ import {
   CalendarDaysIcon,
   ChevronRightIcon,
   EnvelopeIcon,
-  SparklesIcon,
   ChatBubbleLeftIcon,
   ArrowTopRightOnSquareIcon,
   ChevronDownIcon,
@@ -330,7 +331,8 @@ function ActionChip({ action, onAction }: {
     <div className={`inline-flex items-center gap-2 mt-2 px-3 py-1.5 border rounded-lg text-[12px] ${styles.border}`}>
       <span className="text-neutral-600">{action.label}</span>
       {state === 'loading' ? (
-        <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin flex-shrink-0 opacity-50" />
+        // THE AVATAR STATUS GRAMMAR (W4.1): no spinner — a quiet word while the deed runs.
+        <span className="text-[11px] text-neutral-400">Doing it…</span>
       ) : state === 'confirming' ? (
         <>
           <button onClick={handleConfirm} className={`font-semibold transition-colors ${styles.confirmBtn}`}>Confirm</button>
@@ -360,7 +362,6 @@ function WorkflowActionChip({ workflow, onOpenWorkflow }: {
       disabled={clicked}
       className="inline-flex items-center gap-1.5 mt-2 px-3 py-1.5 bg-indigo-50 border border-indigo-200 rounded-lg text-[12px] text-indigo-700 hover:bg-indigo-100 transition-colors disabled:opacity-50"
     >
-      <SparklesIcon className="w-3 h-3 flex-shrink-0" />
       {label}
     </button>
   );
@@ -550,6 +551,7 @@ export default function AiChatPanel({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sourceDropdownRef = useRef<HTMLDivElement>(null);
   const [sourceDropdownOpen, setSourceDropdownOpen] = useState(false);
+  const seat = useCosSeat();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -573,8 +575,8 @@ export default function AiChatPanel({
 
   const isEmpty = history.length === 0 && !isStreaming;
 
-  const handleSubmit = () => {
-    if (chatInput.trim() && !isStreaming) onSendMessage(chatInput);
+  const handleSubmit = (text: string) => {
+    if (text.trim() && !isStreaming) onSendMessage(text);
   };
 
   const isChatOnly = chatSources.length === 1 && chatSources[0] === 'chat';
@@ -629,6 +631,49 @@ export default function AiChatPanel({
             ? 'Ask about this email...'
             : 'Ask about your inbox...';
 
+  // ── ONE THREAD COMPONENT (W4.1b) ─────────────────────────────────────────────────────────────
+  // The panel's history MAPS onto the kit's ThreadItem grammar (user bubble · the seat's actor
+  // bubble); each assistant turn's MessageContent — markdown, inline email cards, the action /
+  // compose / reply / workflow / process buttons, KB refs — mounts UNCHANGED as a `custom` card.
+  // Ids are positional and the live answer keeps its own id, so each MessageContent mounts exactly
+  // when it did before (its mount-once UPDATE_DRAFT / OPEN_COMPOSE effect depends on that).
+  const actorId = seat?.agentId ?? 'cos';
+  const actorName = seat?.name ?? 'Your assistant';
+  const actorRoleLabel = seat ? seat.seatLabel : undefined;
+  const contentCard = (content: string) => ({
+    kind: 'custom' as const, id: 'content',
+    node: (
+      <div className="text-[13px] leading-[1.55] text-neutral-800">
+        <MessageContent
+          content={content}
+          context={context}
+          inboxItems={inboxItems}
+          onSelectItem={onSelectItem}
+          onAction={onAction}
+          onUpdateComposeDraft={onUpdateComposeDraft}
+          onOpenCompose={onOpenCompose}
+          onUseAsReply={onUseAsReply}
+          mode={mode}
+          onUpdateReplyDraft={onUpdateReplyDraft}
+          connectionId={emailChipData?.connectionId}
+          onOpenWorkflow={onOpenWorkflow}
+          onOpenProcess={onOpenProcess}
+        />
+      </div>
+    ),
+  });
+  const items: ThreadItem[] = history.map((msg, i): ThreadItem => msg.role === 'user'
+    ? { type: 'user_bubble', id: `h:${i}`, text: msg.content }
+    : { type: 'actor_bubble', id: `h:${i}`, actorId, actorName, actorRoleLabel, cards: [contentCard(msg.content)] });
+  if (isStreaming) {
+    items.push({
+      type: 'actor_bubble', id: 'live', actorId, actorName, actorRoleLabel,
+      // THE AVATAR STATUS GRAMMAR: the face carries the wait — no dots, no spinner.
+      status: streamingContent ? 'idle' : 'working',
+      cards: streamingContent ? [contentCard(streamingContent)] : undefined,
+    });
+  }
+
   return (
     <div className="flex-1 min-h-0 flex flex-col">
 
@@ -667,221 +712,113 @@ export default function AiChatPanel({
       )}
 
       {/* ── Zone 2: Messages ── */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-5">
+      <div className="flex-1 overflow-y-auto px-3 py-3">
         {isEmpty ? (
-          <div className="flex flex-col items-center justify-center h-full py-12 gap-3 text-center">
-            <p className="text-[12px] text-neutral-400">Try asking...</p>
-            <div className="flex flex-col gap-2 w-full">
-              {quickPrompts.map(prompt => (
-                <button
-                  key={prompt}
-                  onClick={() => onSendMessage(prompt)}
-                  className="text-left px-3.5 py-2.5 text-[12px] text-neutral-600 bg-neutral-50 rounded-xl border border-neutral-200 hover:border-indigo-200 hover:text-indigo-700 hover:bg-indigo-50/50 transition-colors shadow-sm"
-                >
-                  {prompt}
-                </button>
-              ))}
-            </div>
-          </div>
+          <p className="px-1 text-[12px] text-neutral-400">Try asking...</p>
         ) : (
-          <>
-            {history.map((msg, i) => (
-              <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                {msg.role === 'user' ? (
-                  <div className="max-w-[82%] px-3.5 py-2 bg-neutral-100 text-neutral-800 text-[13px] leading-relaxed rounded-2xl rounded-br-sm">
-                    {msg.content}
-                  </div>
-                ) : (
-                  <div className="flex items-start gap-2.5 max-w-[92%]">
-                    <div className="flex-shrink-0 w-5 h-5 rounded-full bg-indigo-50 flex items-center justify-center mt-0.5">
-                      <SparklesIcon className="w-3 h-3 text-indigo-500" />
-                    </div>
-                    <div className="text-[13px] text-neutral-800 leading-relaxed min-w-0">
-                      <MessageContent
-                        content={msg.content}
-                        context={context}
-                        inboxItems={inboxItems}
-                        onSelectItem={onSelectItem}
-                        onAction={onAction}
-                        onUpdateComposeDraft={onUpdateComposeDraft}
-                        onOpenCompose={onOpenCompose}
-                        onUseAsReply={onUseAsReply}
-                        mode={mode}
-                        onUpdateReplyDraft={onUpdateReplyDraft}
-                        connectionId={emailChipData?.connectionId}
-                        onOpenWorkflow={onOpenWorkflow}
-                        onOpenProcess={onOpenProcess}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {isStreaming && (
-              <div className="flex justify-start">
-                <div className="flex items-start gap-2.5 max-w-[92%]">
-                  <div className="flex-shrink-0 w-5 h-5 rounded-full bg-indigo-50 flex items-center justify-center mt-0.5">
-                    <SparklesIcon className="w-3 h-3 text-indigo-500" />
-                  </div>
-                  <div className="text-[13px] text-neutral-800 leading-relaxed min-w-0">
-                    {streamingContent ? (
-                      <MessageContent
-                        content={streamingContent}
-                        context={context}
-                        inboxItems={inboxItems}
-                        onSelectItem={onSelectItem}
-                        onAction={onAction}
-                        onUpdateComposeDraft={onUpdateComposeDraft}
-                        onOpenCompose={onOpenCompose}
-                        onUseAsReply={onUseAsReply}
-                        mode={mode}
-                        onUpdateReplyDraft={onUpdateReplyDraft}
-                        connectionId={emailChipData?.connectionId}
-                        onOpenWorkflow={onOpenWorkflow}
-                        onOpenProcess={onOpenProcess}
-                      />
-                    ) : (
-                      <span className="flex items-center gap-1 pt-1">
-                        <span className="inline-block w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                        <span className="inline-block w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                        <span className="inline-block w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </>
+          <ThreadTimeline items={items} />
         )}
         <div ref={bottomRef} />
       </div>
 
-      {/* ── Zone 3: Input area ── */}
-      <div className="flex-shrink-0 border-t border-neutral-200">
-
-        {/* File chips */}
-        {context === 'inbox' && showFileChips && (
-          <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">
-            {attachedFiles.map(f => (
-              <span key={f.filename} className="inline-flex items-center gap-1 px-2 py-1 bg-indigo-50 border border-indigo-200 rounded-lg text-[11px] text-indigo-700 max-w-[160px]">
-                <DocumentTextIcon className="w-3 h-3 flex-shrink-0" />
-                <span className="truncate">{f.filename}</span>
-                <button onClick={() => onRemoveFile?.(f.filename)} className="flex-shrink-0 ml-0.5 text-indigo-400 hover:text-indigo-700 transition-colors">
-                  <XMarkIcon className="w-3 h-3" />
-                </button>
-              </span>
-            ))}
-            {isAttaching && (
-              <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-neutral-50 border border-neutral-200 rounded-lg text-[11px] text-neutral-500">
-                <div className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                Extracting...
-              </span>
+      {/* ── Zone 3: Input — the kit's composer, the panel's own handlers in its slots ── */}
+      <div className="flex-shrink-0 px-3 pb-3 pt-2">
+        <ThreadComposer
+          inputRef={chatInputRef}
+          value={chatInput}
+          onChange={onChatInputChange}
+          onSend={handleSubmit}
+          disabled={isStreaming}
+          placeholder={placeholder}
+          chips={isEmpty ? quickPrompts.map((prompt) => ({ label: prompt, onClick: () => onSendMessage(prompt) })) : undefined}
+          attachmentsSlot={<>
+            {/* File chips */}
+            {context === 'inbox' && showFileChips && (
+              <div className="flex flex-wrap gap-1.5">
+                {attachedFiles.map(f => (
+                  <span key={f.filename} className="inline-flex items-center gap-1 px-2 py-1 bg-indigo-50 border border-indigo-200 rounded-lg text-[11px] text-indigo-700 max-w-[160px]">
+                    <DocumentTextIcon className="w-3 h-3 flex-shrink-0" />
+                    <span className="truncate">{f.filename}</span>
+                    <button onClick={() => onRemoveFile?.(f.filename)} className="flex-shrink-0 ml-0.5 text-indigo-400 hover:text-indigo-700 transition-colors">
+                      <XMarkIcon className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+                {isAttaching && (
+                  <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-neutral-50 border border-neutral-200 rounded-lg text-[11px] text-neutral-500">
+                    {/* No spinner (W4.1 — the avatar status grammar): the quiet word is the state. */}
+                    Extracting…
+                  </span>
+                )}
+              </div>
             )}
-          </div>
-        )}
-
-        {/* Textarea */}
-        <div className="px-3 pt-2.5 pb-1">
-          <textarea
-            ref={chatInputRef}
-            value={chatInput}
-            onChange={e => {
-              onChatInputChange(e.target.value);
-              e.target.style.height = 'auto';
-              e.target.style.height = `${e.target.scrollHeight}px`;
-            }}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleSubmit();
-                (e.target as HTMLTextAreaElement).style.height = 'auto';
-              }
-            }}
-            placeholder={placeholder}
-            disabled={isStreaming}
-            rows={1}
-            className="w-full text-[13px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none disabled:opacity-50 resize-none overflow-hidden leading-relaxed"
-            style={{ maxHeight: '160px', overflowY: 'auto' }}
-          />
-        </div>
-
-        {/* Controls row */}
-        <div className="flex items-center gap-1 px-2 pb-2.5">
-          {/* File attach (inbox only) */}
-          {context === 'inbox' && (
-            <>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isStreaming || isAttaching}
-                title="Attach file"
-                className="p-1.5 text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 rounded-lg disabled:opacity-30 transition-colors"
-              >
-                <PaperClipIcon className="w-3.5 h-3.5" />
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf,.docx,.txt,.csv,.xlsx,.pptx"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) onFileAttach?.(file);
-                  e.target.value = '';
-                }}
-              />
-            </>
-          )}
-
-          {/* Source dropdown (inbox only) */}
-          {context === 'inbox' && (
-            <div ref={sourceDropdownRef} className="relative">
-              <button
-                onClick={() => setSourceDropdownOpen(v => !v)}
-                className="flex items-center gap-1 px-2 py-1.5 text-[11px] text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 rounded-lg transition-colors"
-              >
-                <span>{sourceLabel}</span>
-                <ChevronDownIcon className="w-3 h-3 flex-shrink-0" />
-              </button>
-              {sourceDropdownOpen && (
-                <div className="absolute bottom-full left-0 mb-1 w-44 bg-white border border-neutral-200 shadow-lg rounded-xl z-20 py-1.5 overflow-hidden">
-                  <button
-                    onClick={() => { onSourcesChange?.(CONTEXT_SOURCE_IDS); setSourceDropdownOpen(false); }}
-                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-neutral-50 transition-colors ${allActive ? 'text-indigo-700 font-semibold' : 'text-neutral-700'}`}
-                  >
-                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${allActive ? 'bg-indigo-500' : 'bg-transparent'}`} />
-                    All sources
-                  </button>
-                  <div className="border-t border-neutral-100 my-1" />
-                  {SOURCE_OPTIONS.map(opt => {
-                    const active = !allActive && activeContextSources.includes(opt.id);
-                    return (
-                      <button
-                        key={opt.id}
-                        onClick={() => toggleSource(opt.id)}
-                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-neutral-50 transition-colors ${active ? 'text-indigo-700 font-semibold' : 'text-neutral-700'}`}
-                      >
-                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${active ? 'bg-indigo-500' : 'bg-transparent'}`} />
-                        {opt.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="flex-1" />
-
-          {/* Send button */}
-          <button
-            onClick={handleSubmit}
-            disabled={!chatInput.trim() || isStreaming}
-            className="w-7 h-7 bg-indigo-600 hover:bg-indigo-700 disabled:bg-neutral-200 rounded-full flex items-center justify-center transition-colors flex-shrink-0"
-          >
-            <PaperAirplaneIcon className="w-3.5 h-3.5 text-white" />
-          </button>
-        </div>
+          </>}
+          attachSlot={<>
+            {/* File attach (inbox only) */}
+            {context === 'inbox' && (
+              <>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isStreaming || isAttaching}
+                  title="Attach file"
+                  className="p-1.5 text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 rounded-lg disabled:opacity-30 transition-colors"
+                >
+                  <PaperClipIcon className="w-3.5 h-3.5" />
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.docx,.txt,.csv,.xlsx,.pptx"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) onFileAttach?.(file);
+                    e.target.value = '';
+                  }}
+                />
+              </>
+            )}
+          </>}
+          trailingSlot={<>
+            {/* Source dropdown (inbox only) */}
+            {context === 'inbox' && (
+              <div ref={sourceDropdownRef} className="relative">
+                <button
+                  onClick={() => setSourceDropdownOpen(v => !v)}
+                  className="flex items-center gap-1 px-2 py-1.5 text-[11px] text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 rounded-lg transition-colors"
+                >
+                  <span>{sourceLabel}</span>
+                  <ChevronDownIcon className="w-3 h-3 flex-shrink-0" />
+                </button>
+                {sourceDropdownOpen && (
+                  <div className="absolute bottom-full left-0 mb-1 w-44 bg-white border border-neutral-200 shadow-lg rounded-xl z-20 py-1.5 overflow-hidden">
+                    <button
+                      onClick={() => { onSourcesChange?.(CONTEXT_SOURCE_IDS); setSourceDropdownOpen(false); }}
+                      className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-neutral-50 transition-colors ${allActive ? 'text-indigo-700 font-semibold' : 'text-neutral-700'}`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${allActive ? 'bg-indigo-500' : 'bg-transparent'}`} />
+                      All sources
+                    </button>
+                    <div className="border-t border-neutral-100 my-1" />
+                    {SOURCE_OPTIONS.map(opt => {
+                      const active = !allActive && activeContextSources.includes(opt.id);
+                      return (
+                        <button
+                          key={opt.id}
+                          onClick={() => toggleSource(opt.id)}
+                          className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-neutral-50 transition-colors ${active ? 'text-indigo-700 font-semibold' : 'text-neutral-700'}`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${active ? 'bg-indigo-500' : 'bg-transparent'}`} />
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </>}
+        />
       </div>
     </div>
   );

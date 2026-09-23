@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { PaperAirplaneIcon, SparklesIcon, ChatBubbleLeftRightIcon, ChevronRightIcon, CalendarIcon } from '@heroicons/react/24/outline';
+import { ThreadTimeline, ThreadComposer, type ThreadItem } from '@/components/thread';
+import { useCosSeat } from '@/hooks/use-cos-seat';
+import { ChatBubbleLeftRightIcon, ChevronRightIcon, CalendarIcon } from '@heroicons/react/24/outline';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -22,6 +24,7 @@ export default function ChatSidebar({ isOpen, onClose, context, inline = false, 
   const [inputValue, setInputValue] = useState('');
   const [streaming, setStreaming] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const seat = useCosSeat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -95,79 +98,49 @@ export default function ChatSidebar({ isOpen, onClose, context, inline = false, 
     }
   }, [messages, streaming, context]);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage(inputValue);
-    }
-  };
-
   if (!isOpen) return null;
 
   const isEmpty = messages.length === 0;
 
+  // ── ONE THREAD COMPONENT (W4.1b) ─────────────────────────────────────────────────────────────
+  // The panel's own bubbles/textarea are gone: its messages MAP onto the kit's ThreadItem grammar
+  // (user bubble · the seat's actor bubble) and its box is the kit's composer. The data flow above
+  // (the /api/assistant/chat stream, the state) is untouched — only the render layer moved.
+  const actorId = seat?.agentId ?? 'cos';
+  const actorName = seat?.name ?? 'Your assistant';
+  const items: ThreadItem[] = messages.map((msg, i): ThreadItem => {
+    if (msg.role === 'user') return { type: 'user_bubble', id: `m:${i}`, text: msg.content };
+    const live = streaming && i === messages.length - 1;
+    return {
+      type: 'actor_bubble', id: `m:${i}`, actorId, actorName,
+      actorRoleLabel: seat ? seat.seatLabel : undefined,
+      text: msg.content || undefined,
+      // THE AVATAR STATUS GRAMMAR: the face carries the wait — no dots, no spinner.
+      status: live && !msg.content ? 'working' : 'idle',
+    };
+  });
+
   const inner = (
     <>
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4 min-h-0">
+      <div className="flex-1 overflow-y-auto px-3 py-3 min-h-0">
         {isEmpty ? (
           <p className="text-[11px] text-neutral-400 px-1">Ask anything…</p>
         ) : (
-          messages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start gap-2'}`}>
-              {msg.role === 'user' ? (
-                <div className="max-w-[80%] px-3 py-2 bg-neutral-100 rounded-2xl rounded-br-sm text-[13px] text-neutral-800 leading-relaxed">
-                  {msg.content}
-                </div>
-              ) : (
-                <>
-                  <div className="w-5 h-5 rounded-full bg-indigo-50 flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <SparklesIcon className="w-3 h-3 text-indigo-500" />
-                  </div>
-                  <div className="flex-1 min-w-0 text-[13px] text-neutral-800 leading-relaxed whitespace-pre-wrap">
-                    {msg.content ? msg.content : (
-                      streaming && i === messages.length - 1 ? (
-                        <span className="flex items-center gap-1 mt-1">
-                          <span className="inline-block w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                          <span className="inline-block w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                          <span className="inline-block w-1.5 h-1.5 bg-neutral-300 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                        </span>
-                      ) : null
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          ))
+          <ThreadTimeline items={items} />
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
+      {/* Input — the kit's composer, the panel's own handler */}
       <div className="flex-shrink-0 px-3 pb-3 pt-2">
-        <div className="flex items-end gap-2 rounded-2xl border border-neutral-200 bg-white shadow-sm px-3 py-2">
-          <textarea
-            ref={inputRef}
-            value={inputValue}
-            onChange={(e) => {
-              setInputValue(e.target.value);
-              e.target.style.height = 'auto';
-              e.target.style.height = `${e.target.scrollHeight}px`;
-            }}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask anything…"
-            rows={1}
-            className="flex-1 text-[12px] text-neutral-700 placeholder-neutral-400 bg-transparent outline-none min-w-0 disabled:opacity-50 resize-none overflow-hidden leading-relaxed"
-            style={{ maxHeight: '120px', overflowY: 'auto' }}
-          />
-          <button
-            onClick={() => sendMessage(inputValue)}
-            disabled={!inputValue.trim() || streaming}
-            className="flex-shrink-0 w-7 h-7 bg-indigo-600 rounded-full flex items-center justify-center disabled:opacity-40 transition-opacity mb-px"
-          >
-            <PaperAirplaneIcon className="w-3.5 h-3.5 text-white" />
-          </button>
-        </div>
+        <ThreadComposer
+          inputRef={inputRef}
+          value={inputValue}
+          onChange={setInputValue}
+          onSend={(t) => sendMessage(t)}
+          placeholder="Ask anything…"
+        />
       </div>
     </>
   );

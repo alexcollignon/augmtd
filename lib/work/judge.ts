@@ -11,26 +11,76 @@
 // Doctrine: structural floors BEFORE AI (an answered thread, an automated sender, the ownership-
 // keyed notice law — imported, never re-implemented); `none` is always legal; conservative
 // (a wrong mount costs trust, message_only costs nothing); one reasoned call, schema-validated;
-// cached on the item (sig = activity + pool + JUDGE_VERSION).
+// cached on the item (sig = sigOf(JUDGE_VERSION, day, activity, pool, evidence, entity sig, …)).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { coerceUnderstanding, type ItemUnderstanding } from '@/lib/inbox/item-understanding';
 import { isBystanderSeat } from '@/lib/inbox/recipient-role';
-import { isNoMoveNotice, isAutomatedSenderStrong, rawMailKindOf } from '@/lib/inbox/notice-demotion';
+import { isNoMoveNotice, isAutomatedSenderStrong, rawMailKindOf, listMailOf } from '@/lib/inbox/notice-demotion';
 import { isOwnCoworkerSender, ownCoworkerLocals, SELF_ECHO_REASON } from '@/lib/inbox/self-echo';
 import { computeThreadReplyState, type ThreadMessage } from '@/lib/inbox/thread-resolution';
-import { getPrepared, type PreparedArtifact } from '@/lib/prepare/read';
+import { preparedState, isLiveArtifact, withdrawnReasonOf, type PreparedArtifact } from '@/lib/prepare/read';
 import { loadRoster, type RosterEntry } from '@/lib/prepare/route-suggestion';
 import { userTimezone, localNow, timesInText, dateStatedInText, dateStatedInTextVerified } from '@/lib/utils/user-time';
-import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { clipForPrompt, clipLabel, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 import { anchorPassedFact } from '@/lib/work/judgment-nominator';
 import { readOutcomeFacts, outcomeHistoryFact, outcomeSigPart, type CounterpartyClass } from '@/lib/prepare/outcome-facts';
 import { readSiblingNomination, siblingSettledFact } from '@/lib/inbox/conversation-identity';
 import { readProofOfLifeAsk, proofOfLifeFact, proofOfLifeSigPart } from '@/lib/work/proof-of-life';
+import { sigOf } from '@/lib/core/sig';
+import { readPlan, upsertPlan } from '@/lib/store/item-plans';
+import { normalizeEmail } from '@/lib/core/email';
+import { loadEvidencePool, matchEvidence, evidenceSig, resolveCommitmentAddress, type Evidence, type EvidencePool } from '@/lib/work/evidence-nominator';
 
-// Word-boundary label clip (UI text, no excerpt marker — labels aren't prompts).
-function clipLabel(text: string, max: number): string {
+// ── LATER EVIDENCE (W3.1 EVIDENCE SETTLES, judge half · invariant 7) ─────────────────────────────
+// The judge reads what the user's own record shows AFTER the item — sent mail to the counterparty on
+// ANY thread, held/booked meetings, recorded transcripts — as dated FACTS. It never disposes from
+// them on its own (precedence #11: evidence NOMINATES, the fulfillment judge DECIDES); the one rule
+// that reads them is the long-standing ALREADY BOOKED rule (the scheduling half only).
+//
+// ONE POOL PER USER PER BATCH: judgeWork runs in loops (the prep pass, the judgment sweep, proof-of-
+// life, the commitments sweep) — the pool (≤3 bounded reads) is memoized per user for a short window
+// so a batch pays it once, never per item. Single-flight: concurrent judgments share the promise.
+const EVIDENCE_LOOKBACK_DAYS = 60;          // an item older than this sees evidence from the window only
+const EVIDENCE_POOL_TTL_MS = 90_000;        // a batch's lifetime; a newer deed re-keys the next pass
+const EVIDENCE_CAL_HORIZON_DAYS = 21;       // the booked-calendar fact's forward reach (the v16 window)
+const _evidencePools = new Map<string, { at: number; p: Promise<EvidencePool> }>();
+function judgeEvidencePool(client: SupabaseClient, userId: string): Promise<EvidencePool> {
+  const now = Date.now();
+  const hit = _evidencePools.get(userId);
+  if (hit && now - hit.at < EVIDENCE_POOL_TTL_MS) return hit.p;
+  if (_evidencePools.size > 200) for (const [k, v] of _evidencePools) if (now - v.at >= EVIDENCE_POOL_TTL_MS) _evidencePools.delete(k);
+  const p = loadEvidencePool(client, userId, new Date(now - EVIDENCE_LOOKBACK_DAYS * 86_400_000).toISOString())
+    .catch(() => ({ emails: [], events: [], transcripts: [] } as EvidencePool));
+  _evidencePools.set(userId, { at: now, p });
+  return p;
+}
+
+/** An evidence moment in the USER'S zone (TIME TRUTH — the prompt says times are in this zone). */
+function atLocal(iso: string, tz: string): string {
+  try { return new Date(iso).toLocaleString('sv-SE', { timeZone: tz }).slice(0, 16); } catch { return iso.slice(0, 16).replace('T', ' '); }
+}
+
+/** The LATER EVIDENCE facts block — dated, short, one line per piece. '' when nothing was found.
+ *  The calendar lines keep the ALREADY ON THE USER'S CALENDAR header the ALREADY BOOKED rule reads. */
+export function laterEvidenceBlock(ev: Evidence[], tz: string): string {
+  if (!ev.length) return '';
+  const q = (t: string) => `"${clipLabel(String(t || 'untitled'), 70)}"`;
+  const cal = ev.filter((e) => e.type === 'calendar');
+  const sent = ev.filter((e) => e.type === 'email' && e.by === 'user');
+  const recv = ev.filter((e) => e.type === 'email' && e.by === 'counterparty');
+  const tr = ev.filter((e) => e.type === 'transcript');
+  return `LATER EVIDENCE — the user's own record AFTER this item, with this counterparty (dated facts, not a verdict):\n` +
+    (cal.length ? `ALREADY ON THE USER'S CALENDAR with this counterparty:\n${cal.map((e) => `- ${q(e.title)} at ${atLocal(e.at, tz)} (${e.status === 'held' ? 'held' : 'booked, upcoming'})`).join('\n')}\n` : '') +
+    (sent.length ? `SENT BY THE USER to this counterparty since (any thread):\n${sent.map((e) => `- ${q(e.title)} on ${atLocal(e.at, tz)}`).join('\n')}\n` : '') +
+    (recv.length ? `RECEIVED FROM THIS COUNTERPARTY since (any thread):\n${recv.map((e) => `- ${q(e.title)} on ${atLocal(e.at, tz)}`).join('\n')}\n` : '') +
+    (tr.length ? `MEETINGS RECORDED with this counterparty since:\n${tr.map((e) => `- ${q(e.title)} on ${atLocal(e.at, tz)}`).join('\n')}\n` : '');
+}
+
+// Word-boundary clip with NO ellipsis — for a `requires` label, which is an IDENTITY (it keys the
+// staged `require:<label>` rows), so it must not grow a display glyph. Titles use clipLabel.
+function clipWords(text: string, max: number): string {
   if (text.length <= max) return text;
   const cut = text.slice(0, max);
   const w = cut.lastIndexOf(' ');
@@ -121,7 +171,7 @@ async function coerceVerdict(raw: unknown, roster: RosterEntry[], ctx: TimeCtx, 
     executor, gate: gateOf(component as WorkComponentKey),
     // Word-boundary clip — a raw slice served "…whether the proposal meets expect" to the
     // decision card (found on the served room, Aug 12). The clip is honest: cut at a space.
-    reason: (() => { const t = String(r.reason || ''); if (t.length <= 240) return t; const c = t.slice(0, 240); return `${c.slice(0, Math.max(120, c.lastIndexOf(' ')))}…`; })(),
+    reason: clipLabel(String(r.reason || ''), 240),
   };
   // The disposition is only meaningful on a none verdict (a live work item can't be moot).
   // STRUCTURAL COHERENCE on "expired" (the hallucinated-expiry class): the model must SHOW the
@@ -163,19 +213,19 @@ async function coerceVerdict(raw: unknown, roster: RosterEntry[], ctx: TimeCtx, 
     const rv = r.revisit as Record<string, unknown>;
     const after = String(rv.after ?? '').slice(0, 10);
     if (/^\d{4}-\d{2}-\d{2}$/.test(after) && after > ctx.todayStr) {
-      out.revisit = { after, ...(rv.reason ? { reason: String(rv.reason).slice(0, 140) } : {}) };
+      out.revisit = { after, ...(rv.reason ? { reason: clipLabel(String(rv.reason), 140) } : {}) };
     }
   }
   if (work === 'decide' && Array.isArray(r.options)) {
     out.options = (r.options as unknown[]).slice(0, 4)
-      .map((o) => ({ label: String((o as Record<string, unknown>)?.label ?? o ?? '').slice(0, 80) }))
+      .map((o) => ({ label: clipLabel(String((o as Record<string, unknown>)?.label ?? o ?? ''), 80) }))
       .filter((o) => o.label);
   }
   // The deliverable inventory is only meaningful on outbound work (a none/chase carries nothing).
   if ((work === 'reply' || work === 'send_file' || work === 'produce') && Array.isArray(r.requires)) {
     const reqs = (r.requires as unknown[]).slice(0, 5)
       // Word-boundary clip — a mid-word label ("…timezone offset an") read as broken UI (Aug 4).
-      .map((o) => ({ label: clipLabel(String((o as Record<string, unknown>)?.label ?? o ?? '').trim(), 90) }))
+      .map((o) => ({ label: clipWords(String((o as Record<string, unknown>)?.label ?? o ?? '').trim(), 90) }))
       .filter((o) => o.label);
     if (reqs.length) out.requires = reqs;
   }
@@ -187,8 +237,7 @@ async function coerceVerdict(raw: unknown, roster: RosterEntry[], ctx: TimeCtx, 
 async function readCache(
   client: SupabaseClient, userId: string, input: JudgeInput, sig: string,
 ): Promise<{ hit: WorkVerdict | null; prior: WorkVerdict | null; priorSig: string | null }> {
-  const { data } = await client.from('item_plans').select('tasks')
-    .eq('user_id', userId).eq('kind', 'judgment').eq('entity_id', `${input.kind}:${input.id}`).maybeSingle();
+  const data = await readPlan(client, userId, 'judgment', `${input.kind}:${input.id}`);
   const t = (data?.tasks ?? null) as { verdict?: unknown; sig?: string } | null;
   const v = (t?.verdict ?? null) as WorkVerdict | null;
   const valid = !!v && WORKS.has(v.work) && COMPONENT_KEYS.has(v.component);
@@ -208,10 +257,7 @@ async function readCache(
 const nonDaySig = (s: string): string => { const p = s.split(':'); return [p[0], ...p.slice(2)].join(':'); };
 
 async function writeCache(client: SupabaseClient, userId: string, input: JudgeInput, sig: string, verdict: WorkVerdict): Promise<void> {
-  await client.from('item_plans').upsert({
-    user_id: userId, kind: 'judgment', entity_id: `${input.kind}:${input.id}`,
-    tasks: { verdict, sig }, updated_at: new Date().toISOString(),
-  }, { onConflict: 'user_id,kind,entity_id' }).then(() => {}, () => {});
+  await upsertPlan(client, userId, 'judgment', `${input.kind}:${input.id}`, { verdict, sig });
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -260,8 +306,7 @@ export async function parkItem(
   horizon.setUTCFullYear(horizon.getUTCFullYear() + 1);
   if (after > horizon.toISOString().slice(0, 10)) return { ok: false, reason: 'that is further out than I can honestly hold it' };
 
-  const { data } = await client.from('item_plans').select('tasks')
-    .eq('user_id', userId).eq('kind', 'judgment').eq('entity_id', `${input.kind}:${input.id}`).maybeSingle();
+  const data = await readPlan(client, userId, 'judgment', `${input.kind}:${input.id}`);
   const priorSig = String(((data?.tasks ?? null) as { sig?: string } | null)?.sig ?? '');
   const sig = priorSig.split(':')[0] === String(JUDGE_VERSION) ? priorSig : `${JUDGE_VERSION}:${todayStr}:user-park`;
 
@@ -277,7 +322,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
   try {
     // ── Load the item + its brain neighborhood. ──
     let title = '', body = '', who: string | null = null, whoEmail: string | null = null, threadNow = '';
-    let u: ItemUnderstanding | null = null, activityAt = '', workState: string | null = null, rawKind: string | null = null;
+    let u: ItemUnderstanding | null = null, activityAt = '', workState: string | null = null, rawKind: string | null = null, listMail = false;
     let dueDate: string | null = null; // the item's own stated date (commitment due / extracted deadline) — the event-boundary anchor
     let threadMsgs: ThreadMessage[] = [];
     // AN ITEM'S OWN DOCUMENT IS THE ITEM'S OWN CONTEXT (owner walk, Sep 10): the files that arrived
@@ -290,6 +335,9 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     // seat (stamped at sync since July 8); the judge applies the rule with the body in view — the
     // naming exception is a reading of the text, not an arithmetic.
     let seatBlock = '';
+    // THE EVIDENCE MATCH'S INPUTS (W3.1): the moment evidence must postdate, the thread it may share,
+    // and who must act — set per kind below; the counterparty ADDRESS is `whoEmail` for both kinds.
+    let evAfterISO = '', evThreadId: string | null = null, evFulfiller: 'user' | 'counterparty' = 'user';
     if (input.kind === 'inbox') {
       const { data: it } = await client.from('inbox_items')
         .select('id, work_title, work_state, status, last_activity_at, created_at, source_data')
@@ -306,6 +354,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       u = coerceUnderstanding(sd.understanding);
       dueDate = u?.deadline ?? null;
       rawKind = rawMailKindOf(sd);
+      listMail = listMailOf(sd);
       workState = (it.work_state as string) || null;
       try {
         const { readItemAttachments, attachmentFactBlock } = await import('@/lib/inbox/attachment-context');
@@ -317,6 +366,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       }
       activityAt = String(it.last_activity_at || it.created_at || '');
       const tid = (sd.thread_id as string) || null;
+      evAfterISO = activityAt; evThreadId = tid;
       if (tid) {
         const { data: msgs } = await client.from('emails').select('is_from_user, received_at, from_address, from_name, to_addresses, cc_addresses, body')
           .eq('user_id', userId).eq('thread_id', tid);
@@ -343,7 +393,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       }
     } else {
       const { data: c } = await client.from('commitments')
-        .select('id, description, counterparty, direction, status, due_date, updated_at, created_at, source')
+        .select('id, description, counterparty, direction, status, due_date, updated_at, created_at, source, source_id, thread_id')
         .eq('id', input.id).eq('user_id', userId).maybeSingle();
       if (!c || !['open', 'pending', 'in_progress'].includes(String(c.status))) return fallbackVerdict('no longer open');
       // THE STANDING FLOOR (Arc 2 binding): a source='workflow' commitment is the team's standing
@@ -368,13 +418,30 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       }
       title = String(c.description || '');
       who = (c.counterparty as string) || null;
+      // THE COMMITMENT'S ADDRESS (W3.1): the counterparty resolves to an email through facts the house
+      // holds ("Name <email>" → the person registry → the thread's inbound sender → the meeting's
+      // attendees) — the nominator's ONE resolver. Before, `whoEmail` was never set on this branch:
+      // the booked-calendar fact and the person lookup were structurally blind for every commitment.
+      try {
+        const { getPersonEntities } = await import('@/lib/entities/people');
+        whoEmail = await resolveCommitmentAddress(client, userId, c as { id: string; counterparty?: string | null; thread_id?: string | null; source?: string | null; source_id?: string | null }, await getPersonEntities(client, userId));
+      } catch { whoEmail = null; }
+      evAfterISO = String(c.created_at || ''); evThreadId = (c.thread_id as string) || null;
+      evFulfiller = String(c.direction) === 'awaiting' ? 'counterparty' : 'user';
       activityAt = String(c.updated_at || c.created_at || '');
       dueDate = (c.due_date as string) || null;
       body = `direction: ${c.direction}${c.due_date ? ` · due ${c.due_date}` : ''}`;
     }
 
     // ── The pool (the judge must KNOW prepared work exists) + the sig. ──
-    const pool: PreparedArtifact[] = await getPrepared(client, userId, { kind: input.kind === 'inbox' ? 'inbox_item' : 'commitment', id: input.id });
+    // W5c · THE JUDGE READS LIVE: an artifact THE ONE READER hides (a false completion claim, an
+    // invite outside the stated window, a passed time, a superseded ground) is NOT prepared work —
+    // found live (Sep 23): the judge read a hidden paste pack as "already prepared", verdicted
+    // send_file and REQUIRED the pack from the user as an input. Hidden ones are stated WITHDRAWN,
+    // so the verdict knows the team re-prepares them (never an ask to the user).
+    const prepSt = await preparedState(client, userId, { kind: input.kind === 'inbox' ? 'inbox_item' : 'commitment', id: input.id });
+    const pool: PreparedArtifact[] = prepSt.live;
+    const withdrawn = prepSt.all.filter((a) => !isLiveArtifact(a));
     // THE USER'S CLOCK (T-class): the day boundary, "now", and every time law run in the USER'S
     // timezone (derived from their own calendar), never the server's. The day rides the sig: with
     // time-awareness a verdict is a function of TODAY — at most one re-judgment per item per day,
@@ -405,7 +472,39 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     const outcomeFacts = await readOutcomeFacts(client, userId, todayStr).catch(() => null);
     const outcomeKlass: CounterpartyClass = input.kind !== 'inbox' ? 'unknown'
       : (isAutomatedSenderStrong(whoEmail, who, title) ? 'automated' : 'human');
-    const sig = `${JUDGE_VERSION}:${todayStr}:${activityAt}:${pool.length}:${pool[0]?.at ?? ''}${eventPassed ? ':past' : ''}${siblingNom ? `:sib${siblingNom.at}` : ''}${proofOfLifeSigPart(proofAsk)}${outcomeSigPart(outcomeFacts)}`;
+    // THE ENTITY THE JUDGE READS rides the sig (W2.5, R4: "judge sig omits entity.sig") — the deal's
+    // state/next-move below is part of the verdict's input, so a re-synthesized state re-judges today
+    // instead of serving a verdict made against the old one until the day rolls.
+    const { data: link } = await client.from('entity_links').select('entity_id')
+      .eq('user_id', userId).eq('item_kind', input.kind === 'inbox' ? 'inbox_item' : 'commitment')
+      .eq('item_id', input.id).not('entity_id', 'is', null).maybeSingle();
+    const ent = link?.entity_id
+      ? (await client.from('work_entities').select('name, state, next_move, goals, rules, sig')
+        .eq('id', link.entity_id).eq('user_id', userId).maybeSingle()).data
+      : null;
+    // LATER EVIDENCE (W3.1) — matched from the per-user batch pool; its identity rides the sig so a
+    // NEW deed re-judges, the same set never re-spends.
+    let evidence: Evidence[] = [];
+    if (evAfterISO) {
+      try {
+        const full = await judgeEvidencePool(client, userId);
+        const horizon = new Date(Date.now() + EVIDENCE_CAL_HORIZON_DAYS * 86_400_000).toISOString();
+        evidence = matchEvidence({ ...full, events: full.events.filter((e) => e.at <= horizon) }, {
+          kind: input.kind, id: input.id, afterISO: evAfterISO,
+          counterpartyEmail: whoEmail ? normalizeEmail(whoEmail) : null, threadId: evThreadId,
+          fulfiller: evFulfiller, description: title,
+        }, new Date().toISOString());
+      } catch { evidence = []; } // the evidence fact is an enhancement
+    }
+    // THE ONE SIG HELPER (W2.5): `<JUDGE_VERSION>:<day>:<deps>` — the version and day slots stay
+    // positional (readCache's same-version prior, the parked serve's nonDaySig, parkItem), every
+    // other input the verdict reads is a named dep.
+    const sig = `${JUDGE_VERSION}:${todayStr}:${sigOf({ version: JUDGE_VERSION, deps: {
+      activityAt, poolN: pool.length, poolAt: pool[0]?.at ?? '', past: eventPassed,
+      sib: siblingNom ? `:sib${siblingNom.at}` : '', proof: proofOfLifeSigPart(proofAsk),
+      outcome: outcomeSigPart(outcomeFacts), evidence: evidenceSig(evidence),
+      entity: ent ? String((ent as { sig?: string | null }).sig ?? '') : null,
+    } })}`;
     const { hit: cached, prior, priorSig } = await readCache(client, userId, input, sig);
     if (cached) return cached;
     // W4 PARKED SERVE — a revisit verdict holds WITHOUT AI until its date: same item facts (only
@@ -448,28 +547,22 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       await writeCache(client, userId, input, sig, v);
       return v;
     }
-    if (input.kind === 'inbox' && isNoMoveNotice({ u, rawKind, fromEmail: whoEmail, fromName: who, subject: title, workState })) {
+    if (input.kind === 'inbox' && isNoMoveNotice({ u, rawKind, fromEmail: whoEmail, fromName: who, subject: title, workState, listMail })) {
       const v = fallbackVerdict('an automated notice nobody owes a move on');
       await writeCache(client, userId, input, sig, v);
       return v;
     }
 
     // ── The brain neighborhood: entity + person (assembled, not re-derived). ──
+    // (the entity row was read above, before the sig — it rides it.)
     let dealBlock = '';
-    const { data: link } = await client.from('entity_links').select('entity_id')
-      .eq('user_id', userId).eq('item_kind', input.kind === 'inbox' ? 'inbox_item' : 'commitment')
-      .eq('item_id', input.id).not('entity_id', 'is', null).maybeSingle();
-    if (link?.entity_id) {
-      const { data: ent } = await client.from('work_entities').select('name, state, next_move, goals, rules')
-        .eq('id', link.entity_id).eq('user_id', userId).maybeSingle();
-      if (ent) {
-        const st = (ent.state ?? {}) as { summary?: string };
-        const nm = (ent.next_move ?? null) as { title?: string } | null;
-        const goals = Array.isArray(ent.goals) ? (ent.goals as string[]).filter(Boolean) : [];
-        const rules = Array.isArray(ent.rules) ? (ent.rules as string[]).filter(Boolean) : [];
-        dealBlock = `THE DEAL (${ent.name}): ${st.summary ?? ''}${nm?.title ? ` · next move: ${nm.title}` : ''}` +
-          `${goals.length ? ` · goals: ${goals.join('; ')}` : ''}${rules.length ? ` · rules: ${rules.join('; ')}` : ''}\n`;
-      }
+    if (ent) {
+      const st = (ent.state ?? {}) as { summary?: string };
+      const nm = (ent.next_move ?? null) as { title?: string } | null;
+      const goals = Array.isArray(ent.goals) ? (ent.goals as string[]).filter(Boolean) : [];
+      const rules = Array.isArray(ent.rules) ? (ent.rules as string[]).filter(Boolean) : [];
+      dealBlock = `THE DEAL (${ent.name}): ${st.summary ?? ''}${nm?.title ? ` · next move: ${nm.title}` : ''}` +
+        `${goals.length ? ` · goals: ${goals.join('; ')}` : ''}${rules.length ? ` · rules: ${rules.join('; ')}` : ''}\n`;
     }
     let personBlock = '';
     if (who) {
@@ -497,27 +590,17 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       }
     } catch { /* the ask fact is an enhancement */ }
     // ── THE BOOKED-CALENDAR FACT (JUDGE v16, found live: a `schedule` verdict stood on a meeting
-    // the counterparty had ALREADY ACCEPTED on the real calendar — the lane floor caught the
-    // duplicate invite, but the verdict persisted and burned an extraction every pass visit).
-    // The judge sees the user's actual bookings with THIS counterparty as facts. ──
-    let calBlock = '';
-    if (whoEmail) {
-      try {
-        const { data: evs } = await client.from('calendar_events').select('title, start_time')
-          .eq('user_id', userId)
-          .filter('attendees', 'cs', JSON.stringify([{ email: whoEmail.toLowerCase() }]))
-          .gte('start_time', new Date(Date.now() - 24 * 3_600_000).toISOString())
-          .lte('start_time', new Date(Date.now() + 21 * 86_400_000).toISOString())
-          .order('start_time', { ascending: true }).limit(3);
-        if (evs?.length) {
-          calBlock = `ALREADY ON THE USER'S CALENDAR with this sender:\n` +
-            evs.map((e) => `- "${String(e.title ?? 'meeting').slice(0, 70)}" at ${String(e.start_time).slice(0, 16).replace('T', ' ')}`).join('\n') + '\n';
-        }
-      } catch { /* the calendar fact is an enhancement */ }
-    }
+    // the counterparty had ALREADY ACCEPTED on the real calendar) — now one section of LATER EVIDENCE
+    // (W3.1): the calendar lines keep their header and the ALREADY BOOKED rule's meaning (bookings
+    // with THIS counterparty, forward reach 21 days), for BOTH kinds, beside the user's sent mail on
+    // other threads and the recorded meetings. Facts only — the fulfillment judge settles. ──
+    const evidenceBlock = laterEvidenceBlock(evidence, tzName);
     const roster = await loadRoster(client, userId);
     const poolBlock = pool.length
       ? `ALREADY PREPARED (prefill, don't redo): ${pool.slice(0, 3).map((d) => `${d.kind}${d.by ? ` by ${d.by}` : ''}${d.attachment ? ` (+${d.attachment.filename})` : ''}`).join(' · ')}\n`
+      : '';
+    const withdrawnBlock = withdrawn.length
+      ? `WITHDRAWN — NOT PREPARED (failed a truth check; the team re-prepares these itself — never treat them as existing, never list them in "requires", never ask the user to supply them): ${withdrawn.slice(0, 3).map((d) => `${d.kind} (${withdrawnReasonOf(d) ?? 'not ready'})`).join(' · ')}\n`
       : '';
 
     // ── THE ONE REASONED CALL. ──
@@ -534,6 +617,9 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         // invoice is still owed). Rides the day-keyed sig, so no JUDGE_VERSION bump is needed.
         anchorPassedFact(dueDate, todayStr) +
         siblingSettledFact(siblingNom) +
+        // W3.1 — LATER EVIDENCE sits beside the other settlement fact: what the user's record shows
+        // AFTER the item. Facts; the judge decides (and only the ALREADY BOOKED rule reads them).
+        evidenceBlock +
         // Q7 — the silence, stated in code. Empty string when the lane has not asked.
         proofOfLifeFact(proofAsk) +
         // LAW 7 — the user's own verdicts on our preparations. A fact; the judge decides.
@@ -541,15 +627,15 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         // THE SEAT LAW — stated before the deal/person colour, because it decides whether any of
         // this is the user's work at all.
         seatBlock +
-        dealBlock + personBlock + poolBlock + calBlock + attachFacts +
+        dealBlock + personBlock + poolBlock + withdrawnBlock + attachFacts +
         (u ? `UNDERSTANDING: relevance=${u.relevance} ownership=${u.ownership ?? '?'} kind=${u.mailKind ?? '?'}${u.ask ? ` ask="${u.ask}"` : ''}${u.deadline ? ` deadline=${u.deadline}` : ''}\n` : '') +
-        `THE ITEM${who ? ` (from ${who})` : ''}: ${title.slice(0, 140)}\n${body ? `${body}\n` : ''}` +
+        `THE ITEM${who ? ` (from ${who})` : ''}: ${clipLabel(title, 140)}\n${body ? `${body}\n` : ''}` +
         `${threadNow ? `\nWHERE THE THREAD STANDS NOW (newest last — judge THIS position, not the founding ask): \n${threadNow}\n` : ''}` +
         // EXCERPT-HONESTY (Aug 4): our own length-clips must never read as source truncation.
         `${EXCERPT_RULE}\n\n` +
         `THE TEAM (for executor "coworker"):\n${roster.map((w) => `- ${w.name} — ${w.role.replace(/_/g, ' ')}: ${w.description}`).join('\n') || '(none)'}\n\n` +
         `COMPONENTS (pick exactly one — what the work surface should mount):\n${renderComponentOptions()}\n\n` +
-        (prior ? `YOUR PRIOR JUDGMENT on this item: work=${prior.work}${prior.resolution ? ` resolution=${prior.resolution}` : ''}${prior.revisit ? ` revisit=${prior.revisit.after}` : ''} — "${prior.reason.slice(0, 120)}". BE CONSISTENT with it unless something in the item MATERIALLY changed since; do not flip an ambiguous call on a re-read.${prior.revisit && prior.revisit.after <= todayStr ? ' YOU SET THIS ASIDE until that date and THE DATE HAS ARRIVED — judge it fresh NOW as live work (the wait is over; do not re-park it without a NEW stated basis).' : ''}\n\n` : '') +
+        (prior ? `YOUR PRIOR JUDGMENT on this item: work=${prior.work}${prior.resolution ? ` resolution=${prior.resolution}` : ''}${prior.revisit ? ` revisit=${prior.revisit.after}` : ''} — "${clipForPrompt(prior.reason, 120)}". BE CONSISTENT with it unless something in the item MATERIALLY changed since; do not flip an ambiguous call on a re-read.${prior.revisit && prior.revisit.after <= todayStr ? ' YOU SET THIS ASIDE until that date and THE DATE HAS ARRIVED — judge it fresh NOW as live work (the wait is over; do not re-park it without a NEW stated basis).' : ''}\n\n` : '') +
         `Rules:\n` +
         `- work: reply|decide|produce|send_file|schedule|forward|chase|none. CONSERVATIVE: unsure → "none"/"message_only" — a wrong mount costs trust, none costs nothing.\n` +
         `- "forward" ONLY when the item explicitly asks the user to PASS this thread/document on to a NAMED third party ("please forward this to…", "can you share this with finance/legal/<person>") — the passing-on IS the work. A reply that merely mentions someone else is still "reply".\n` +
@@ -585,7 +671,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         && isAutomatedSenderStrong(whoEmail, who, title)) {
         v.work = 'none'; v.component = 'message_only'; v.gate = null;
         delete v.requires; delete v.options;
-        v.reason = `automated sender — a reply reaches no one; the action happens outside the mailbox. (${v.reason.slice(0, 110)})`;
+        v.reason = `automated sender — a reply reaches no one; the action happens outside the mailbox. (${clipLabel(v.reason, 110)})`;
       }
       return v;
     };

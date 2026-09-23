@@ -20,24 +20,9 @@ import { logAIUsage } from '@/lib/ai/log-usage';
 const MIN_TEXT_CHARS = 40;
 const MAX_TEXT_CHARS = 6000;
 
-type IdentityData = {
-  fullName?: string; role?: string; email?: string; department?: string;
-  authority?: string; responsibilities?: string[];
-  /** Free-form durable context lines ("markets Egyptian credit data", "reports to the CRO"). */
-  notes?: string[];
-};
-
-function uniqCap(existing: string[], incoming: string[], cap: number, maxLen: number): string[] {
-  const seen = new Set(existing.map((s) => s.trim().toLowerCase()));
-  const out = [...existing];
-  for (const raw of incoming) {
-    const s = String(raw ?? '').trim().slice(0, maxLen);
-    if (!s || seen.has(s.toLowerCase())) continue;
-    seen.add(s.toLowerCase());
-    out.push(s);
-  }
-  return out.slice(-cap); // keep the newest when over cap — recent context wins
-}
+// THE ONE IDENTITY-NOTES WRITER lives in the memory ladder (W2.4): this lane is the INTERVIEW
+// (the AI pass), and it files what it learns through the same merge every other rung uses.
+import { mergeUserIdentity, type IdentityData } from '@/lib/memory/file-fact';
 
 /** True when this account has nothing ambient to learn from (the gate). */
 async function contextPoor(admin: SupabaseClient, userId: string): Promise<boolean> {
@@ -99,19 +84,11 @@ If nothing new and durable was stated, respond with exactly: NOTHING`;
     if (start < 0 || end <= start) return;
     const parsed = JSON.parse(jsonStr.slice(start, end + 1)) as { role?: string | null; responsibilities?: string[]; notes?: string[] };
 
-    const merged: IdentityData = {
-      ...cur,
-      // Fill-if-empty: an explicit intro-step/signup role outranks a chat-mention rewrite.
-      ...(parsed.role && !cur.role ? { role: String(parsed.role).slice(0, 120) } : {}),
-      responsibilities: uniqCap(cur.responsibilities ?? [], parsed.responsibilities ?? [], 8, 100),
-      notes: uniqCap(cur.notes ?? [], parsed.notes ?? [], 12, 140),
-    };
-    const changed = JSON.stringify(merged) !== JSON.stringify({ ...cur, responsibilities: cur.responsibilities ?? [], notes: cur.notes ?? [] });
-    if (!changed) return;
-
-    await admin.from('context_profiles').upsert({
-      user_id: userId, profile_type: 'identity', profile_data: merged,
-    }, { onConflict: 'user_id,profile_type' });
+    // Fill-if-empty role, deduped + capped responsibilities/notes — the merge semantics are the
+    // writer's (one implementation for every user-scope fact; W2.4).
+    await mergeUserIdentity(admin, userId, {
+      role: parsed.role ?? null, responsibilities: parsed.responsibilities ?? [], notes: parsed.notes ?? [],
+    }, { source: 'intake' });
   } catch { /* the lane never breaks a conversation */ }
 }
 

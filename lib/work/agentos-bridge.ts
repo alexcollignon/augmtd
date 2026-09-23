@@ -36,6 +36,8 @@ import { stripChatMarkers, splitStreamableText } from '@/lib/work/chat-markers'
 // pointers. The model's side of the wire is untouched.
 import { clearDmPresents, drainDmPresents, PRESENTING_TOOLS } from '@/lib/present/dm-channel'
 import { collectionPointer, eventPointer, type CollectionTurnPointer, type EventTurnPointer } from '@/lib/present/pointer'
+import { changePointer, type ChangeTurnPointer } from '@/lib/present/change'
+import { packContext } from '@/lib/utils/pack-context'
 
 // AgentOS is hardcoded to mirror the bedrock_optimised tier (infra/agentos/models.py) — every
 // AgentOS-routed call by construction uses that tier's models, so cost logging can log
@@ -108,6 +110,37 @@ function parseCardMarkers(result: unknown): Record<string, unknown>[] {
   return out
 }
 
+// ─── THE MARKER ALLOWLIST (W0.3 — UNTRUSTED INPUT IS DATA) ───────────────────────────────────
+// A marker becomes a card ONLY when it arrives in the result of the ONE tool that legitimately
+// produces its family. Every other result — get_emails, fetch_url, web_search, slack_read_messages,
+// search_knowledge_base, rss… — carries third-party text, and a crafted `[[email_draft:<b64>]]`
+// inside an inbound mail used to render a real "Clara drafted this" card. One table, one place:
+// adding a producing tool = one row here (the emitters live in app/api/internal/agentos/*).
+const MARKER_PRODUCERS: Record<'artifact' | 'email_draft' | 'workflow_draft' | 'card', readonly string[]> = {
+  artifact: ['generate_document'],          // tools/route.ts — [[artifact:id|type|title]]
+  email_draft: ['compose_email'],           // tools/route.ts — [[email_draft:<b64>]]
+  workflow_draft: ['create_task'],          // lib/tools/worker-tasks.ts executeCreateTask via tasks/route.ts
+  card: ['present_linkedin_post'],          // tools/route.ts — [[card:<b64>]]
+}
+
+export interface ToolMarkers {
+  artifact: { id: string; type: string; title: string } | null
+  emailDraft: Record<string, unknown> | null
+  workflowDraft: Record<string, unknown> | null
+  cards: Record<string, unknown>[]
+}
+
+/** Parse only the marker families `toolName` is allowed to produce. Pure — the forged-card gate. */
+export function markersFor(toolName: string, result: unknown): ToolMarkers {
+  const may = (family: keyof typeof MARKER_PRODUCERS) => MARKER_PRODUCERS[family].includes(toolName)
+  return {
+    artifact: may('artifact') ? parseArtifactMarker(result) : null,
+    emailDraft: may('email_draft') ? parseEmailDraftMarker(result) : null,
+    workflowDraft: may('workflow_draft') ? parseWorkflowDraftMarkerB(result) : null,
+    cards: may('card') ? parseCardMarkers(result) : [],
+  }
+}
+
 // ─── Per-user run context (Phase 3.5) ─────────────────────────────────────────
 // The static role prompts live in AgentOS; the genuinely per-user, per-run data
 // is built here — reusing the native builders — and injected into the model via
@@ -140,9 +173,9 @@ async function buildWorkerRunContext(
       .limit(10),
     buildSkillsBlock(adminClient, agentId),
     buildConnectedIntegrationsBlock(adminClient, userId, agentId),
-    // Step 2: the user's WORLD (live initiatives + relationships needing attention) — so the coworker
-    // reasons WITH the deals/people, not a cold prompt. Read-only, non-fatal.
-    import('@/lib/context/brain-context').then((m) => m.renderWorldContext(adminClient, userId)).catch(() => ''),
+    // ONE USER GROUNDING (W2.2): the user's world is the SAME judged page the Home chat and the
+    // native loop read (lib/room/user-grounding.ts) — parity across runtimes, no private world.
+    import('@/lib/room/user-grounding').then((m) => m.assembleUserGrounding(adminClient, userId)).then((g) => g.text).catch(() => ''),
   ])
 
   const agent = agentRes?.data as { memory_text: string | null; user_preferences: string | null; name?: string | null } | null
@@ -176,7 +209,7 @@ async function buildWorkerRunContext(
     parts.push(identityBlock)
   }
   if (worldBlock) {
-    parts.push(worldBlock)
+    parts.push(`[THE USER'S WORLD — judged truth shared with the Home; reason WITH it, never restate it wholesale]\n${worldBlock}`)
   }
   // THE WORKERS READ THE ONE GROUNDING: a message naming a registered project pulls that
   // project's FULL room page — the worker and the room read the same truth (never contradict).
@@ -333,7 +366,15 @@ export async function streamWorkerViaAgentOS({
     const { data: t } = await adminClient.from('work_threads').select('artifacts').eq('id', threadId).maybeSingle()
     const artifacts = (t?.artifacts ?? []) as Array<{ title?: string; content?: unknown }>
     if (artifacts.length) {
-      const blocks = artifacts.slice(-3).map(a => `### ${a.title ?? 'Document'}\n${serializeArtifactContent(a.content).slice(0, 6000)}`).join('\n\n')
+      // THE CONTEXT BUDGET (W2.7): the three newest documents share one budget, the NEWEST (the
+      // one a "revise it" means) survives longest, and any cut declares itself + carries the rule
+      // — a raw 6k head-slice let the worker "revise" a document it could only half see.
+      const recent = artifacts.slice(-3)
+      const blocks = packContext(recent.map((a, i) => ({
+        id: `doc:${i}`, label: `the document "${a.title ?? 'Document'}"`,
+        text: `### ${a.title ?? 'Document'}\n${serializeArtifactContent(a.content)}`,
+        priority: i, minChars: 1500,
+      })), 18000).text
       docContext = `\n\n[DOCUMENTS ALREADY CREATED IN THIS CONVERSATION — you produced these; reference, summarise, or revise them when asked]\n${blocks}`
     }
   } catch { /* best-effort */ }
@@ -396,6 +437,9 @@ export async function streamWorkerViaAgentOS({
   // stored row set — or a stored verb ladder — is exactly what a reload would lie about.
   const allCollections: CollectionTurnPointer[] = []
   const allEventCards: EventTurnPointer[] = []
+  // THE CONFIRM CARD (stabilization W0.3b) — a POINTER too: `{changeId}`, re-read through
+  // `GET /api/changes/[id]` so a reloaded card never offers Apply on a change already applied.
+  const allChanges: ChangeTurnPointer[] = []
   let runMetrics: AgnoMetrics | null = null
   let runModel: string | undefined
 
@@ -423,6 +467,10 @@ export async function streamWorkerViaAgentOS({
           } else if (e.event) {
             allEventCards.push(eventPointer(e.event))
             send({ type: 'event', event: { id: crypto.randomUUID(), spec: e.event } })
+          } else if (e.change) {
+            // A PREPARED CHANGE arrives as its card; nothing has applied (the click is the deed).
+            allChanges.push(changePointer(e.change))
+            send({ type: 'change', change: { id: e.change.id, spec: e.change } })
           }
         }
       }
@@ -488,19 +536,22 @@ export async function streamWorkerViaAgentOS({
               // and yields nothing for anything else.
               const deed = deedFromToolResult(name, tool.result)
               if (deed) deeds.push(deed)
-              // Document generation surfaces an artifact (Op-B). The tool result
-              // carries a [[artifact:id|type|title]] marker — emit + accumulate.
-              const art = parseArtifactMarker(tool.result)
+              // THE MARKER ALLOWLIST (W0.3): each family is parsed ONLY from its producing tool's
+              // result — a marker inside an untrusted tool's result (an inbound mail, a fetched
+              // page) is data and renders nothing.
+              const markers = markersFor(name, tool.result)
+              // Document generation surfaces an artifact (Op-B) — emit + accumulate.
+              const art = markers.artifact
               if (art) {
                 artifactMeta[art.id] = { title: art.title, type: art.type }
                 send({ type: 'artifact_ready', artifact: art })
               }
-              const draft = parseEmailDraftMarker(tool.result)
+              const draft = markers.emailDraft
               if (draft) { emailDrafts.push(draft); send({ type: 'email_draft', draft }) }
-              const wfDraft = parseWorkflowDraftMarkerB(tool.result)
+              const wfDraft = markers.workflowDraft
               if (wfDraft) { workflowDrafts.push(wfDraft); send({ type: 'workflow_draft', draft: wfDraft }) }
               // Rich render-registry cards (e.g. linkedin_post) — display-only artifacts.
-              for (const card of parseCardMarkers(tool.result)) {
+              for (const card of markers.cards) {
                 cardArtifacts.push(card)
                 send({ type: 'artifact', artifact: card })
               }
@@ -586,6 +637,8 @@ export async function streamWorkerViaAgentOS({
               // A POINTER, NEVER THE SPEC: `GET /api/events/[id]/card` re-derives the verbs, so a
               // reloaded card can never offer one the event's live state has stopped allowing.
               ...(allEventCards.length > 0 ? { events: allEventCards } : {}),
+              // A POINTER, NEVER THE ARGUMENTS: `GET /api/changes/[id]` re-derives the status.
+              ...(allChanges.length > 0 ? { changes: allChanges } : {}),
             },
           })
           await adminClient

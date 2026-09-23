@@ -47,13 +47,18 @@ const CONSEQUENCE: Partial<Record<EventVerb, string>> = {
   cancel: 'Everyone invited gets the cancellation.',
 };
 
-/** The verbs that carry an editable one-line note to the other side. */
-const NOTABLE: readonly EventVerb[] = ['decline', 'cancel'];
+/** THE NOTE IS DELIVERED OR NOT OFFERED (W0.4): the verbs that carry an editable one-line note are
+ *  the SERVED `spec.noteVerbs` — the ones this event's provider actually delivers a note on. A card
+ *  never offers a box whose words would go nowhere (a Google cancel has no message channel). */
+const NO_NOTE: readonly EventVerb[] = [];
+
+/** THE RE-READ IS BOUNDED (W0.4): at most this many attempts per event id per mount. */
+const REREAD_MAX_ATTEMPTS = 2;
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
 /** The picker's starting values — THE EVENT'S OWN window, never today and never a guess. */
-function pickerDefaultsOf(spec: EventSpec): { date: string; time: string; durationMin: number } {
+function pickerDefaultsOf(spec: Pick<EventSpec, 'startISO' | 'endISO'>): { date: string; time: string; durationMin: number } {
   const s = new Date(spec.startISO);
   const e = new Date(spec.endISO);
   const mins = Number.isFinite(e.getTime()) && Number.isFinite(s.getTime())
@@ -92,6 +97,11 @@ export default function EventCard({ spec: seed, pointer }: {
   const [error, setError] = React.useState<string | null>(null);
 
   const eventId = spec?.id ?? pointer?.eventId ?? null;
+  // THE POINTER'S IDENTITY IS ITS ID (W0.4): hosts rebuild the pointer object on every parent
+  // render (a streaming turn re-renders many times a second) — keying the re-read on the object
+  // re-fetched per render. The primitive is the only identity that means "a different event".
+  const pointerEventId = pointer?.eventId ?? null;
+  const attempts = React.useRef<{ id: string | null; n: number }>({ id: null, n: 0 });
 
   /** THE RE-READ — the one door, used on mount and again whenever the event outran the card. */
   const reread = React.useCallback(async (id: string): Promise<EventSpec | null> => {
@@ -105,15 +115,29 @@ export default function EventCard({ spec: seed, pointer }: {
   }, []);
 
   React.useEffect(() => {
-    if (spec || !pointer?.eventId) return;
+    if (spec || failed || !pointerEventId) return;
+    if (attempts.current.id !== pointerEventId) attempts.current = { id: pointerEventId, n: 0 };
+    if (attempts.current.n >= REREAD_MAX_ATTEMPTS) { setFailed(true); return; }
+    attempts.current.n += 1;
     let live = true;
     (async () => {
-      const next = await reread(pointer.eventId);
+      const next = await reread(pointerEventId);
       if (!live) return;
       if (next) setSpec(next); else setFailed(true);
     })();
     return () => { live = false; };
-  }, [pointer, reread, spec]);
+  }, [pointerEventId, reread, spec, failed]);
+
+  // THE PICKER'S SEED IS STABLE (W0.4): the kit resets its picker whenever `pickerDefaults` changes
+  // IDENTITY, so a fresh object per render wiped the user's half-typed time mid-stream. The seed is
+  // rebuilt only when the event itself (id · start · end) changes.
+  const specId = spec?.id ?? null;
+  const specStart = spec?.startISO ?? '';
+  const specEnd = spec?.endISO ?? '';
+  const pickerDefaults = React.useMemo(
+    () => (specId ? pickerDefaultsOf({ startISO: specStart, endISO: specEnd }) : null),
+    [specId, specStart, specEnd],
+  );
 
   // ── THE DEED — the ONE door, and only ever from the user's own confirming click ───────────────
   const commit = React.useCallback(async (verb: EventVerb, args: EventVerbArgs) => {
@@ -137,9 +161,12 @@ export default function EventCard({ spec: seed, pointer }: {
       if (res.status === 409) {
         // THE VERB VANISHED HONESTLY — the event moved (answered elsewhere, cancelled, passed).
         // The card corrects itself from the truth rather than retrying a deed it may not do.
+        // The SERVER'S OWN SENTENCE wins where it has one (in flight · a recurring series).
         const fresh = await reread(spec.id);
         setBusyVerb(null);
         if (fresh) setSpec(fresh);
+        const said = typeof json?.reason === 'string' ? json.reason.trim() : '';
+        if (said) { setError(said); return; }
         setError('That’s no longer possible — this event has changed since the card was drawn.');
         return;
       }
@@ -165,12 +192,13 @@ export default function EventCard({ spec: seed, pointer }: {
 
   // THE PERMITTED SET, AS SERVED — `spec.verbs` in the ladder's order, worded by the contract.
   // Nothing here filters, reorders or invents; a verb missing from the set has no button.
+  const notable = spec.noteVerbs ?? NO_NOTE;
   const verbs: EventCardVerb[] = spec.verbs.map((v) => ({
     id: v,
     label: EVENT_VERB_WORDS[v].label,
     armedLabel: EVENT_VERB_WORDS[v].armed,
     ...(IRREVERSIBLE_VERBS.includes(v) && CONSEQUENCE[v] ? { consequence: CONSEQUENCE[v]! } : {}),
-    ...(NOTABLE.includes(v) ? { notable: true } : {}),
+    ...(notable.includes(v) ? { notable: true } : {}),
     ...(v === 'reschedule' ? { needsWindow: true } : {}),
     ...(busyVerb === v ? { busy: true } : {}),
     onConfirm: (args: EventVerbArgs) => void commit(v, args),
@@ -179,8 +207,13 @@ export default function EventCard({ spec: seed, pointer }: {
   // THE PROPOSAL ARMS ONE VERB, and only one the facts still permit. A served spec carries its
   // own; a rehydrated turn's pointer carries the one its turn proposed — honored only while it is
   // still in the served set (the card never resurrects a verb the ladder has since withdrawn).
-  const proposal = spec.proposal
+  const selected = spec.proposal
     ?? (pointer?.proposal && spec.verbs.includes(pointer.proposal.verb) ? pointer.proposal : null);
+  // THE NOTE IS DELIVERED OR NOT OFFERED (W0.4): a proposal's note survives only on a verb whose
+  // provider carries it — otherwise the card would prefill words that go nowhere.
+  const proposal = selected && selected.note && !notable.includes(selected.verb)
+    ? { ...selected, note: undefined }
+    : selected;
 
   const others = spec.attendees ?? [];
   const attendeesLine = others.length
@@ -211,7 +244,7 @@ export default function EventCard({ spec: seed, pointer }: {
     ...(proposal && !done ? { armedVerbId: proposal.verb } : {}),
     ...(proposal?.newLabel ? { proposedLabel: proposal.newLabel } : {}),
     ...(proposal?.note ? { note: proposal.note } : {}),
-    pickerDefaults: pickerDefaultsOf(spec),
+    ...(pickerDefaults ? { pickerDefaults } : {}),
     ...(done ? { done } : {}),
     ...(quietLine ? { quietLine } : {}),
     ...(error ? { error } : {}),

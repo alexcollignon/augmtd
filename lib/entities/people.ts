@@ -4,6 +4,7 @@
 // remains the fallback until demolition. Per-process cached (small per-user set, 60s TTL).
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
 
 export type PersonEntity = {
   id: string;
@@ -26,9 +27,13 @@ export async function getPersonEntities(supabase: SupabaseClient, userId: string
   if (c && Date.now() - c.at < TTL) return c.list;
   let list: PersonEntity[] = [];
   try {
-    const { data } = await supabase.from('work_entities')
-      .select('id, name, aliases, state, next_move, last_event_at')
-      .eq('user_id', userId).eq('kind', 'person').eq('status', 'active').limit(500);
+    // NO SILENT CAPS (W1.6): `.limit(500)` on an UNORDERED query returned an arbitrary slice — a
+    // user with 875 persons lost ~375 of them silently. Paged + ordered via fetchAllRows instead.
+    const data = await fetchAllRows<Record<string, unknown>>((from, to) =>
+      supabase.from('work_entities')
+        .select('id, name, aliases, state, next_move, last_event_at')
+        .eq('user_id', userId).eq('kind', 'person').eq('status', 'active')
+        .order('id', { ascending: true }).range(from, to), { maxRows: 5000 });
     const now = Date.now();
     list = ((data ?? []) as Array<Record<string, unknown>>).map((r) => {
       const lastEventAt = (r.last_event_at as string) ?? null;

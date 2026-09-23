@@ -97,10 +97,13 @@ export function isBystanderSeat(seat?: SeatFacts | null): boolean {
   return computeRecipientRole(seat.to, seat.cc, mine).is_cc_only;
 }
 
+/** Accent-folded lowercase — "Zoë" and "Zoe" are one token (a naive split read "zo"). */
+const foldName = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
 /** The distinctive tokens that denote this user — display-name words + email local-part words. */
 function userTokens(seat?: SeatFacts | null): string[] {
   const out = new Set<string>();
-  const add = (s: string) => { for (const t of s.toLowerCase().split(/[^a-z0-9]+/)) if (t.length >= 3) out.add(t); };
+  const add = (s: string) => { for (const t of foldName(s).split(/[^a-z0-9]+/)) if (t.length >= 3) out.add(t); };
   if (seat?.userName) add(seat.userName);
   for (const a of seat?.userAddresses ?? []) {
     const local = String(a ?? '').split('@')[0];
@@ -109,21 +112,45 @@ function userTokens(seat?: SeatFacts | null): string[] {
   return [...out];
 }
 
+// THE QUOTED-HEADER CUT (W3.4, found by the census: 73 of 73 CC-seat debts were "rescued" by the
+// naming exception). topMessageOf misses inline forwarded headers ("From: X < > · Cc: <the user>")
+// that sit under a signature, so the user's own name in a quoted Cc line read as a naming. The
+// message's own words end at the first quoted-header line, in any corpus language.
+const QUOTED_HEADER_RE = /^\s*(?:from|de|von|envoy[eé] par|enviado|sent|gesendet)\s*:|^\s*on .{4,200}wrote:\s*$|^\s*-{2,}\s*(?:original|mensagem|urspr|message d)/im;
+// A greeting line — the addressee list of the message.
+const GREETING_RE = /^\s*(?:hi|hello|hey|dear|good (?:morning|afternoon|evening)|ol[aá]|oi|caro|cara|prezad[oa]s?|bom dia|boa tarde|boa noite|hallo|liebe[rs]?|sehr geehrte[rs]?|guten (?:morgen|tag)|bonjour|bonsoir|cher|ch[eè]re|salut)\b/i;
+// A direct ask after the vocative: "Sam, could you…" / "Sam: please…".
+const REQUEST_AFTER = '\\s*[,:–-]?\\s*(?:can|could|would|will you|please|pls|kindly|pode[ms]?|poderia[ms]?|podia[ms]?|kannst|k[oö]nntest|k[oö]nnten|pourrais|pourriez|peux|pouvez)\\b';
+
 /**
- * Does this text name the user directly? The seat law's ONE exception — a CC'd person who is
- * addressed by name in the body genuinely does owe the thing. Word-boundary match on distinctive
- * tokens; no tokens (no name, no addresses) → false (we cannot claim they were named).
+ * Does this text ADDRESS the user as the doer? The seat law's ONE exception — a CC'd person who is
+ * directly asked genuinely does owe the thing. THE ADDRESSED READING (W3.4 — was "the name appears
+ * anywhere in the top message", which a signature, a third-person mention or a quoted Cc line
+ * satisfied): the user's name is in the GREETING line ("Dear Sam and Jordan,"), or is the vocative
+ * of a direct request ("Jordan, could you…"), or is @-mentioned, or is assigned ("Jordan to send…").
+ * Accent-folded, word-bounded, distinctive tokens only; no tokens → false. Unclear → not addressed,
+ * and an unaddressed bystander is never handed a debt.
  */
 export function textNamesUser(text: string, seat?: SeatFacts | null): boolean {
   // THE MESSAGE'S OWN WORDS, and only those: the quoted reply-chain carries the thread's To/CC
   // header lines, so the user's own CC'd address reads as a "naming" and the exception swallows the
-  // law (found on the live CV row — the seat stripped nothing because the quoted header said
-  // "alex@…"). Addresses are the SEAT, never a naming, so they come out of the haystack too.
-  const hay = topMessageOf(String(text ?? ''))
-    .replace(/[^\s<>"]+@[^\s<>"]+/g, ' ')
-    .toLowerCase();
+  // law (found on the live CV row). Addresses are the SEAT, never a naming, so they come out too.
+  let own = topMessageOf(String(text ?? ''));
+  const cut = QUOTED_HEADER_RE.exec(own);
+  if (cut && cut.index > 0) own = own.slice(0, cut.index);
+  const hay = foldName(own.replace(/[^\s<>"]+@[^\s<>"]+/g, ' '));
   if (!hay.trim()) return false;
-  return userTokens(seat).some((t) => new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(hay));
+  const toks = userTokens(seat).map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (!toks.length) return false;
+  const T = `(?:${toks.join('|')})`;
+  const lines = hay.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  // The subject line rides first in the extractor's haystack — the greeting is the first BODY line
+  // that reads like one (or a bare short vocative line: "Sam, Jordan,").
+  const greeting = lines.find((l) => GREETING_RE.test(l) || /^[\p{L} ,&'-]{2,60},$/u.test(l));
+  if (greeting && new RegExp(`\\b${T}\\b`).test(greeting)) return true;
+  if (new RegExp(`\\b${T}\\b${REQUEST_AFTER}`).test(hay)) return true;
+  if (new RegExp(`@${T}\\b`).test(hay)) return true;
+  return new RegExp(`\\b${T}\\s+(?:to|will|should|needs? to|must)\\s+[a-z]`).test(hay);
 }
 
 /**

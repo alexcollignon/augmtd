@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { generateNudgeDraft } from '@/lib/inbox/draft-reply';
+import { createHash } from 'crypto';
 import { logActivity } from '@/lib/activity/log';
+import { claimCommit, recordCommitResult, releaseCommitClaim } from '@/lib/work/commit-door';
+
+/** THE LIVE STATES a nudge may answer (W0.4): an open debt, or a surfaced-but-unconfirmed one.
+ *  A done or dismissed commitment has nothing left to chase — a nudge there is a stray email. */
+const NUDGEABLE = ['open', 'suggested'];
 
 export const maxDuration = 30;
 
@@ -18,7 +24,7 @@ export const maxDuration = 30;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function loadCommitment(supabase: any, userId: string, id: string) {
   const { data } = await supabase.from('commitments')
-    .select('id, description, counterparty, direction, source, source_id, thread_id, created_at')
+    .select('id, description, counterparty, direction, source, source_id, thread_id, created_at, status')
     .eq('id', id).eq('user_id', userId).maybeSingle();
   return data;
 }
@@ -68,7 +74,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const { data: { user }, error } = await supabase.auth.getUser();
   if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { body, attachments: rawAttachments } = await request.json();
+  const { body, attachments: rawAttachments, aiDraft } = await request.json();
   if (!body || typeof body !== 'string') return NextResponse.json({ error: 'Missing body' }, { status: 400 });
 
   // Same base64 attach shape the inbox reply uses ({filename, content(base64), mimeType}) →
@@ -81,6 +87,25 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   const commitment = await loadCommitment(supabase, user.id, id);
   if (!commitment) return NextResponse.json({ error: 'not found' }, { status: 404 });
+  // A CLOSED DEBT IS NOT CHASED (W0.4): the old door re-sent on a done commitment.
+  if (!NUDGEABLE.includes(String(commitment.status ?? 'open'))) {
+    return NextResponse.json({ error: 'This one is already closed — there is nothing left to nudge.' }, { status: 409 });
+  }
+
+  // ── THE COMMIT DOOR (W0.4 — EXACTLY-ONCE DEEDS): one claim per commitment + message. A
+  // double-click loses the claim and never mails twice; a failed or unsendable nudge releases it.
+  const idemKey = `nudge:${id}:${createHash('sha256').update(body).digest('hex').slice(0, 24)}`;
+  const claim = await claimCommit(supabase, user.id, {
+    idempotencyKey: idemKey, actionType: 'nudge',
+    payload: { commitmentId: id, counterparty: commitment.counterparty ?? null },
+  });
+  if (claim.status === 'duplicate') {
+    if (claim.priorResult == null) {
+      return NextResponse.json({ error: 'That nudge is already on its way.' }, { status: 409 });
+    }
+    return NextResponse.json({ success: true, sent: true, alreadySent: true });
+  }
+  const release = async () => { if (claim.status === 'claimed') await releaseCommitClaim(supabase, user.id, idemKey); };
 
   // Resolve the source email (for thread-reply mechanics) when this commitment came from email.
   let sent = false;
@@ -132,18 +157,53 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
   } catch (e) {
     console.error('[nudge] send failed', e);
+    await release();
     return NextResponse.json({ error: 'Could not send the nudge.' }, { status: 500 });
   }
 
   if (!sent) {
+    await release();
     // No connected-mailbox thread to reply on (e.g. no OAuth). We don't silently drop it — tell the
     // client so it can keep the draft open for the user to copy/send manually.
     return NextResponse.json({ error: 'No connected mailbox to send this nudge — copy it and send from your email.', sent: false }, { status: 409 });
   }
 
-  // Sent → the ball moved; close the commitment so it leaves "Ball in your court".
-  await supabase.from('commitments').update({ status: 'done', last_nudged_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    .eq('id', id).eq('user_id', user.id).then(() => {}, () => {});
+  if (claim.status === 'claimed') await recordCommitResult(supabase, user.id, idemKey, `Nudge sent (${String(commitment.counterparty ?? 'contact')})`);
+
+  // THE OUTCOME LOG (W3.2 — THE TWO-WAY LEDGER): the nudge's fate. The prepared text is the pass's
+  // POOLED chase draft (through THE ONE READER) — else the on-demand draft the composer was seeded
+  // with (`aiDraft`; the POST never stores it). The pooled row is stamped SPENT so the reader stops
+  // offering a chase that already went. Non-fatal: a sent nudge is never lost to bookkeeping.
+  try {
+    const { getPrepared } = await import('@/lib/prepare/read');
+    const pooled = (await getPrepared(supabase, user.id, { kind: 'commitment', id }))
+      .find((a) => a.kind === 'nudge_draft' || a.kind === 'reply_draft');
+    const prepared = typeof aiDraft === 'string' && aiDraft.trim() ? aiDraft : (pooled?.content ?? '');
+    if (pooled?.payload && 'rowId' in pooled.payload && pooled.payload.rowId) {
+      const { data: prow } = await supabase.from('item_deliverables').select('metadata')
+        .eq('id', pooled.payload.rowId).eq('user_id', user.id).maybeSingle();
+      await supabase.from('item_deliverables')
+        .update({ metadata: { ...((prow?.metadata ?? {}) as Record<string, unknown>), sent_at: new Date().toISOString() } })
+        .eq('id', pooled.payload.rowId).eq('user_id', user.id);
+    }
+    if (prepared.trim()) {
+      const { logPreparedOutcome, sendVerdict } = await import('@/lib/prepare/outcome');
+      const v = sendVerdict(prepared, body);
+      await logPreparedOutcome(supabase, user.id, {
+        outcome: v.outcome, artifact: 'nudge_draft', itemKind: 'commitment', itemId: id,
+        ...(v.editShare !== undefined ? { editShare: v.editShare } : {}),
+        door: 'nudge_send', senderClass: 'unknown', preparedAt: pooled?.at ?? null,
+      });
+    }
+  } catch { /* the outcome log never breaks the send it observes */ }
+
+  // Sent → the ball moved; close the commitment so it leaves "Ball in your court". A CONDITIONAL
+  // flip (only a still-live row) — and its failure is SAID, never swallowed: the send landed, so the
+  // answer stays a success, but the client learns the row did not close.
+  const { error: flipErr } = await supabase.from('commitments')
+    .update({ status: 'done', last_nudged_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq('id', id).eq('user_id', user.id).in('status', NUDGEABLE);
+  if (flipErr) console.error('[nudge] sent, but the commitment did not close:', flipErr.message);
 
   // Activity timeline (non-fatal).
   const who = (commitment.counterparty && String(commitment.counterparty).trim()) || 'a contact';
@@ -155,5 +215,5 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     metadata: { direction: commitment.direction, source: commitment.source },
   });
 
-  return NextResponse.json({ success: true, sent: true });
+  return NextResponse.json({ success: true, sent: true, ...(flipErr ? { closed: false, warning: 'Sent — but it is still showing as open; mark it done.' } : {}) });
 }

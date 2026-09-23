@@ -23,6 +23,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { settleMirrorRows } from '@/lib/inbox/commitment-mirrors';
 
 // Bump on ANY change to the judging prompt/facts/scoping — a cached verdict from an older law must
 // never satisfy the current one (the prompt-version-in-cache-sig law, learned three times now).
@@ -155,6 +156,9 @@ export async function applyExpiryVerdict(
   verdict: ExpiryVerdict,
 ): Promise<boolean> {
   if (verdict.verdict !== 'expired') return false;
+  // THE OUTCOME LEDGER (W3.2): a preparation still pending when the obligation lapsed EXPIRED.
+  const { capturePending, logPendingOutcomes } = await import('@/lib/prepare/outcome');
+  const pendingPrep = await capturePending(client, userId, { kind: 'commitment', id: commitment.id });
   const nowIso = new Date().toISOString();
   // Column-aware update (resolved_at/resolved_reason from 20260705d); retry status-only on older schemas.
   let err;
@@ -167,10 +171,12 @@ export async function applyExpiryVerdict(
       .eq('id', commitment.id).eq('user_id', userId).eq('status', 'open'));
     if (err) return false;
   }
-  // The row it surfaced on the deck dies with it (the same hand the fulfilled branch uses), and the
-  // room's asks settle — an obligation's ask must never outlive the obligation.
-  await client.from('inbox_items').delete()
-    .eq('user_id', userId).eq('source', 'commitment').eq('source_id', commitment.id);
+  await logPendingOutcomes(client, userId, pendingPrep, {
+    base: 'expired', itemKind: 'commitment', itemId: commitment.id, door: 'expiry',
+  }).catch(() => 0);
+  // A historical mirror row (W2.3: no longer written) archives with it — never a hard delete — and
+  // the room's asks settle: an obligation's ask must never outlive the obligation.
+  await settleMirrorRows(client, userId, commitment.id, { reason: 'expired', stampAt: nowIso });
   import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'commitment', commitment.id)).catch(() => {});
   try {
     const { logActivity } = await import('@/lib/activity/log');

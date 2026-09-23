@@ -3,7 +3,7 @@
 // ── The SINGLE source of truth for rendering an email thread as the inbox shows it — sender
 // AVATARS (deterministic initial chips), sender name, To/CC recipients, date, per-message collapse
 // (latest always expanded, older collapsed, "Show earlier" fold), and the email body (HTML via a
-// sandboxed shadow-DOM host, plain-text fallback). Extracted VERBATIM from work-detail-inline.tsx's
+// sandboxed srcdoc iframe — scripts never run, plain-text fallback). Extracted VERBATIM from work-detail-inline.tsx's
 // inline thread block so the inbox and the Home item-detail render pixel-identically and can never
 // drift. Both surfaces import <ThreadMessages/>.
 //
@@ -45,31 +45,70 @@ interface ThreadFallback {
   cc_addresses?: string[] | null;
 }
 
-// Sandboxed email body — HTML renders in a shadow root (styles can't leak in/out, images clamped,
-// tracking pixels hidden, links open in a new tab); plain text renders in a scroll box.
+// RENDER SAFETY (Sep 22 — stabilization W0.1, invariant 3): inbound HTML renders in a SANDBOXED
+// <iframe srcDoc>. The sandbox NEVER carries allow-scripts — no <script>, no inline handler, no
+// javascript: link can run (a shadow root isolated styles but EXECUTED inline handlers: stored XSS
+// from any inbound mail). allow-same-origin is safe ONLY because scripts are off (the standard mail-
+// client pattern) and exists so the parent can measure the document for auto-height. The srcdoc head
+// adds a CSP meta (belt and braces) + <base target="_blank"> so links leave in a new tab. Remote
+// images LOAD (owner call, Sep 22); tracking pixels + cid: refs stay hidden. Plain text renders in a
+// scroll box. External API unchanged — every call site keeps working.
+export const EMAIL_FRAME_CSP = "script-src 'none'; object-src 'none'; form-action 'none'; frame-src 'none'";
+export const EMAIL_FRAME_SANDBOX = 'allow-same-origin allow-popups allow-popups-to-escape-sandbox';
+
+export function emailSrcDoc(html: string): string {
+  return `<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${EMAIL_FRAME_CSP}">
+<base target="_blank">
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body { overflow-x: auto; overflow-y: hidden; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 13px; line-height: 1.55; color: #404040; word-wrap: break-word; }
+  * { box-sizing: border-box; }
+  img { max-width: 100% !important; height: auto; }
+  img[width="1"], img[height="1"], img[src^="cid:"] { display: none !important; }
+  a { color: inherit; }
+</style></head><body>${html}</body></html>`;
+}
+
 export function IframeEmailBody({ html, plain }: { html: string | null; plain: string | null }) {
-  const hostRef = useRef<HTMLDivElement>(null);
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(0);
+  const srcDoc = useMemo(() => (html ? emailSrcDoc(html) : ''), [html]);
 
   useEffect(() => {
-    const host = hostRef.current;
-    if (!host || !html) return;
-
-    const shadow = host.shadowRoot ?? host.attachShadow({ mode: 'open' });
-    shadow.innerHTML = `<style>
-      :host { display: block; overflow-x: auto; }
-      * { box-sizing: border-box; }
-      body { margin: 0; padding: 0; }
-      img { max-width: 100% !important; height: auto; }
-      img[width="1"], img[height="1"], img[src^="cid:"] { display: none !important; }
-      a { color: inherit; }
-    </style>${html}`;
-
-    // Open all links in a new tab (shadow DOM ignores <base target="_blank">)
-    shadow.querySelectorAll('a[href]').forEach(a => {
-      a.setAttribute('target', '_blank');
-      a.setAttribute('rel', 'noopener noreferrer');
-    });
-  }, [html]);
+    const frame = frameRef.current;
+    if (!frame || !html) return;
+    let ro: ResizeObserver | null = null;
+    const imgCleanups: Array<() => void> = [];
+    const measure = () => {
+      const doc = frame.contentDocument;
+      if (!doc?.body) return;
+      const h = Math.max(doc.body.scrollHeight, doc.documentElement?.scrollHeight ?? 0);
+      setHeight(prev => (Math.abs(prev - h) > 1 ? h : prev));
+    };
+    const attach = () => {
+      ro?.disconnect();
+      imgCleanups.splice(0).forEach(fn => fn());
+      const doc = frame.contentDocument;
+      if (!doc?.body) return;
+      measure();
+      ro = new ResizeObserver(measure);
+      ro.observe(doc.body);
+      // Late-landing images grow the body; ResizeObserver catches most, load events the rest.
+      doc.querySelectorAll('img').forEach(img => {
+        img.addEventListener('load', measure);
+        imgCleanups.push(() => img.removeEventListener('load', measure));
+      });
+    };
+    frame.addEventListener('load', attach);
+    // srcDoc may already be parsed by the time the effect runs.
+    if (frame.contentDocument?.readyState === 'complete') attach();
+    return () => {
+      frame.removeEventListener('load', attach);
+      ro?.disconnect();
+      imgCleanups.forEach(fn => fn());
+    };
+  }, [html, srcDoc]);
 
   if (!html) {
     return (
@@ -79,12 +118,24 @@ export function IframeEmailBody({ html, plain }: { html: string | null; plain: s
     );
   }
 
-  return <div ref={hostRef} className="w-full px-4 py-2" />;
+  return (
+    <div className="w-full px-4 py-2">
+      <iframe
+        ref={frameRef}
+        title="Email message"
+        srcDoc={srcDoc}
+        sandbox={EMAIL_FRAME_SANDBOX}
+        referrerPolicy="no-referrer"
+        className="block w-full border-0"
+        style={{ height: height || 40 }}
+      />
+    </div>
+  );
 }
 
 // Compact mode's height-capped latest body (judged room): renders the message clamped, and only
 // when the content ACTUALLY overflows the cap does the fade + "Show full message" appear — a short
-// note never grows a pointless unfold control. Measured post-render (shadow-DOM images may land
+// note never grows a pointless unfold control. Measured post-render (iframe images may land
 // late, so re-check on resize).
 function CappedBody({ html, plain, onExpand }: { html: string | null; plain: string | null; onExpand: () => void }) {
   const boxRef = useRef<HTMLDivElement>(null);
@@ -96,6 +147,9 @@ function CappedBody({ html, plain, onExpand }: { html: string | null; plain: str
     check();
     const ro = new ResizeObserver(check);
     ro.observe(el);
+    // The frame keeps growing past the cap (late images) while the capped box stays put — watch the
+    // content too, or a long mail loses its "Show full message".
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
     return () => ro.disconnect();
   }, [html, plain]);
   return (

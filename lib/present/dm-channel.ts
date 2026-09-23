@@ -30,6 +30,7 @@
 
 import type { CollectionSpec } from '@/lib/present/collection';
 import type { EventSpec } from '@/lib/present/event';
+import type { ChangeSpec } from '@/lib/present/change';
 
 /** The `item_plans.kind` this channel owns. */
 export const DM_PRESENT_KIND = 'dm_present';
@@ -38,6 +39,11 @@ export const DM_PRESENT_KIND = 'dm_present';
  *  ordinary tool call costs no read. Keep in step with the internal routes' present lanes. */
 export const PRESENTING_TOOLS: readonly string[] = [
   'list_tasks', 'search_knowledge_base', 'get_meeting_context', 'check_calendar', 'prepare_event_action',
+  // THE CONFIRM CARD (stabilization W0.3b): a class-A change PREPARES on the box lane too, and its
+  // card rides this same channel — these are lib/work/confirm-policy.ts' CONFIRM_TOOLS.
+  'update_task', 'delete_task', 'share_task', 'run_task',
+  // W0.3c — a Slack post is class A too; its card rides the tools route's side-channel.
+  'slack_post_message',
 ];
 
 /** At most this many cards may ride one turn — a runaway loop never becomes a wall of cards. */
@@ -48,6 +54,8 @@ export type DmPresentEntry = {
   turn: string | null;
   collection?: CollectionSpec;
   event?: EventSpec;
+  /** A PREPARED CHANGE awaiting the click (stabilization W0.3b) — the card, never the arguments. */
+  change?: ChangeSpec;
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -55,7 +63,7 @@ type Admin = any;
 
 const isEntry = (v: unknown): v is DmPresentEntry => {
   const e = v as DmPresentEntry | null;
-  return !!e && typeof e === 'object' && (!!e.collection || !!e.event);
+  return !!e && typeof e === 'object' && (!!e.collection || !!e.event || !!e.change);
 };
 
 /** Read the channel's current entries. Never throws — a card is an ENHANCEMENT; the answer stands. */
@@ -83,9 +91,9 @@ export async function clearDmPresents(admin: Admin, userId: string, threadId: st
 /** The internal route's write: append one present for this thread. Best-effort by construction. */
 export async function pushDmPresent(
   admin: Admin, userId: string, threadId: string,
-  entry: { turn?: string | null; collection?: CollectionSpec; event?: EventSpec },
+  entry: { turn?: string | null; collection?: CollectionSpec; event?: EventSpec; change?: ChangeSpec },
 ): Promise<void> {
-  if (!userId || !threadId || (!entry.collection && !entry.event)) return;
+  if (!userId || !threadId || (!entry.collection && !entry.event && !entry.change)) return;
   try {
     const existing = await readEntries(admin, userId, threadId);
     if (existing.length >= DM_PRESENT_MAX) return;
@@ -93,6 +101,7 @@ export async function pushDmPresent(
       turn: entry.turn ?? null,
       ...(entry.collection ? { collection: entry.collection } : {}),
       ...(entry.event ? { event: entry.event } : {}),
+      ...(entry.change ? { change: entry.change } : {}),
     }];
     await admin.from('item_plans')
       .upsert({ user_id: userId, kind: DM_PRESENT_KIND, entity_id: threadId, tasks: next,

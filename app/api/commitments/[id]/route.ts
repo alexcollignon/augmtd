@@ -3,8 +3,13 @@ import { createClient } from '@/lib/supabase/server';
 import { logActivity } from '@/lib/activity/log';
 import { after } from 'next/server';
 import { noteItemAction } from '@/lib/entities/on-action';
+import { settleMirrorRows } from '@/lib/inbox/commitment-mirrors';
 import { clipForPrompt } from '@/lib/utils/clip-for-prompt';
 import type { SupabaseClient } from '@supabase/supabase-js';
+
+// W0.5 TIME BUDGET: PATCH's after() calls noteItemAction, which re-synthesizes the linked entity's
+// state (AI-bearing) — the platform default kills it mid-work (CLAUDE.md maxDuration lesson).
+export const maxDuration = 300;
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE ASK CARRIES ITS CONTEXT (relay canvas, THE WAVE — owner walk, Aug 25).
@@ -304,6 +309,10 @@ export async function PATCH(
     // D2 (work-surface): an optional user NOTE ("we'll discuss it on Thursday's call") becomes the
     // resolved_reason — a ledger fact the entity's next state synthesis reasons WITH.
     const userNote = typeof body.note === 'string' && body.note.trim() ? body.note.trim().slice(0, 200) : null;
+    // THE OUTCOME LEDGER (W3.2): what was prepared-and-unsent, captured through THE ONE READER
+    // before the flip; its fate is stamped once the close lands.
+    const { capturePending, logPendingOutcomes } = await import('@/lib/prepare/outcome');
+    const pending = await capturePending(supabase, user.id, { kind: 'commitment', id });
     let error;
     ({ error } = await supabase
       .from('commitments')
@@ -318,10 +327,15 @@ export async function PATCH(
         .eq('user_id', user.id));
     }
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    // DONE = the user did it outside our door (done_elsewhere — the work was real); DISMISS = their no.
+    await logPendingOutcomes(supabase, user.id, pending, {
+      base: status === 'done' ? 'done_elsewhere' : 'discarded',
+      itemKind: 'commitment', itemId: id, door: 'resolve_commitment',
+    }).catch(() => 0);
 
-    // Clean up any inbox item the aging sweep surfaced for this commitment — it's handled now.
-    await supabase.from('inbox_items').delete()
-      .eq('user_id', user.id).eq('source', 'commitment').eq('source_id', id);
+    // A historical mirror the aging sweep once surfaced (W2.3: no longer written) archives with it —
+    // never a hard delete; a no-op once the repair sweep has run.
+    await settleMirrorRows(supabase, user.id, id, { reason: status === 'done' ? 'user_marked' : 'user_dismissed', stampAt: nowIso });
 
     // Activity timeline (non-fatal).
     const desc = (commitment?.description && String(commitment.description).trim()) || 'a commitment';

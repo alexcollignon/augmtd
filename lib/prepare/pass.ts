@@ -20,6 +20,7 @@ import { partitionDailyReport } from '@/lib/work-items/report';
 import { generateReplyDraft, generateNudgeDraft, getDraftingAssistant } from '@/lib/inbox/draft-reply';
 import { DRAFT_LAW_VERSION as DRAFT_LAW_VERSION_C } from '@/lib/inbox/attachment-context';
 import type { TaskRoute } from '@/lib/prepare/route-suggestion';
+import type { PreparedKind } from '@/lib/prepare/read';
 import { evaluateDeliverable, type EvalVerdict } from '@/lib/prepare/evaluate';
 import { aiCall } from '@/lib/ai/call';
 
@@ -46,7 +47,7 @@ async function reviewAndRevise(
 import { resolveFileUniversal } from '@/lib/knowledge/resolve';
 import { logActivity } from '@/lib/activity/log';
 import { orderForPreparation, type NominatorItem, type JudgmentAge } from '@/lib/work/judgment-nominator';
-import { fetchAllRows } from '@/lib/utils/fetch-all';
+import { readPlans, upsertPlan } from '@/lib/store/item-plans';
 
 const FRESH_HOURS = 24;   // a draft older than this (or older than new thread activity) re-prepares
 
@@ -124,6 +125,15 @@ export async function prepareOneItem(
     const { applyVerdictConsequences } = await import('@/lib/work/apply-verdict');
     const cons = await applyVerdictConsequences(admin, userId, { kind: w.id.startsWith('commit:') ? 'commitment' : 'inbox', id: w.entityId }, verdict);
     if (cons.resolved) return { did: 'none', reason: `resolved by the verdict (${verdict.resolution}): ${verdict.reason}` };
+    // ── W5c · A HIDDEN ARTIFACT IS NEVER FRESH: THE ONE READER's non-live kinds (outside the stated
+    // window · a false completion claim · a passed time · superseded) are handed to every lane below,
+    // whose freshness guard would otherwise read a young-but-untrue row as "already on it" — the
+    // on-open trip fired, the lane no-op'd, and the room stood with nothing true to show (Sep 23). ──
+    let nonLive: Set<PreparedKind> = new Set();
+    try {
+      const { preparedState, nonLiveKindsOf } = await import('@/lib/prepare/read');
+      nonLive = nonLiveKindsOf(await preparedState(admin, userId, { kind: w.id.startsWith('commit:') ? 'commitment' : 'inbox_item', id: w.entityId }));
+    } catch { /* the lanes' own guards stand */ }
     // ── Q8b · THE PASTE PACK (attention-plan PART III): BEFORE the commit-door lanes, ask whether
     // this account/item HAS the door they end at. When it does not — an email-off workspace, or a
     // `reply` verdict on a commitment (the reply lane is mail-only by construction and its first
@@ -152,6 +162,7 @@ export async function prepareOneItem(
           // A chase is the only one of these verbs where the OTHER side owes; everything else is
           // the user's own obligation, and the drafter is told which.
           userOwes: verdict.work !== 'chase',
+          supersede: nonLive.has('paste_pack'),
         });
         if (pack.status === 'written') return await done({ did: 'paste_pack', worker: pack.by ?? undefined, why: elig.why });
         return { did: 'none', reason: pack.status === 'fresh'
@@ -160,11 +171,11 @@ export async function prepareOneItem(
       }
     }
     if (verdict.work === 'send_file') return await done(await prepareDocSend(admin, userId, w, verdict));
-    if (verdict.work === 'chase' && (w.who || w.blockedOn)) return await done(await prepareNudge(admin, userId, { ...w, blockedOn: w.blockedOn ?? w.who ?? null }));
+    if (verdict.work === 'chase' && (w.who || w.blockedOn)) return await done(await prepareNudge(admin, userId, { ...w, blockedOn: w.blockedOn ?? w.who ?? null }, nonLive));
     // ── W1: THE JUDGE'S NEW HANDS — schedule and forward were judged-but-never-prepared (the
     // registry mapped them, the pass fell through to none). Both prepare an EDITABLE artifact and
     // stop at the commit line: the invite books nothing, the forward sends nothing.
-    if (verdict.work === 'schedule') return await done(await prepareInviteDraft(admin, userId, w));
+    if (verdict.work === 'schedule') return await done(await prepareInviteDraft(admin, userId, w, nonLive));
     if (verdict.work === 'forward') return await done(await prepareForwardDraft(admin, userId, w, verdict));
     // ── THE DECISION BRIEF (trichotomy T2 — the judge's last silent verb): a `decide` verdict
     // used to fall to the generic none — "you must choose" judged, nothing prepared, nothing
@@ -183,7 +194,7 @@ export async function prepareOneItem(
         target = String(((chIt?.source_data ?? {}) as { from?: string }).from ?? '').trim() || null;
       }
       target ??= /^waiting (?:on|for)\s+([^:]{2,40}):/i.exec(w.title)?.[1]?.trim() ?? null;
-      return await done(await prepareNudge(admin, userId, { ...w, blockedOn: target ?? w.title.slice(0, 60) }));
+      return await done(await prepareNudge(admin, userId, { ...w, blockedOn: target ?? w.title.slice(0, 60) }, nonLive));
     }
     if (verdict.work === 'produce') {
       // THE DELIVERABLE RESOLUTION on PRODUCED work — the class where "what does it take / what do
@@ -226,7 +237,7 @@ export async function prepareOneItem(
         if (cf) { artifactTruth = [artifactTruth, cf.facts].filter(Boolean).join('\n\n'); computedStamp = cf.stamp; }
       }
       if (verdict.executor.kind === 'coworker' && verdict.executor.id) {
-        const dr = await delegatePrepare(admin, userId, w, { id: verdict.executor.id, name: verdict.executor.name ?? 'Coworker', worker_role: null, is_worker: true }, artifactTruth || undefined, computedStamp);
+        const dr = await delegatePrepare(admin, userId, w, { id: verdict.executor.id, name: verdict.executor.name ?? 'Coworker', worker_role: null, is_worker: true }, artifactTruth || undefined, computedStamp, nonLive.has('deliverable'));
         return await done({ ...dr, why: verdict.reason });
       }
       // W1: a produce verdict WITHOUT a named coworker is no longer a silent none — the drafting
@@ -235,12 +246,12 @@ export async function prepareOneItem(
       // for above; with everything in hand the assistant builds from what's staged.
       const paProduce = await getDraftingAssistant(admin, userId);
       if (paProduce) {
-        const dr = await delegatePrepare(admin, userId, w, { id: paProduce.id, name: paProduce.name, worker_role: 'personal_assistant', is_worker: true }, artifactTruth || undefined, computedStamp);
+        const dr = await delegatePrepare(admin, userId, w, { id: paProduce.id, name: paProduce.name, worker_role: 'personal_assistant', is_worker: true }, artifactTruth || undefined, computedStamp, nonLive.has('deliverable'));
         return await done({ ...dr, why: verdict.reason });
       }
       return { did: 'none', reason: 'produced work needs a coworker and none is set up yet' };
     }
-    if (verdict.work === 'reply') return await done(await prepareReplyDraft(admin, userId, w, verdict));
+    if (verdict.work === 'reply') return await done(await prepareReplyDraft(admin, userId, w, verdict, nonLive));
     return { did: 'none', reason: verdict.reason || 'this one needs you — no preparation applies' };
   } catch (e) { console.error('[prepareOneItem]', e); return { did: 'none', reason: 'preparation failed — try again' }; }
 }
@@ -334,7 +345,7 @@ async function prepareDecisionBrief(
     metadata: { decisionBrief: true, options: options.map((o) => ({ label: o.label, tradeoff: o.tradeoff ?? null })), recommendation: d.recommendation ?? null, why: d.why ?? null, prepared_from: currentGround, ...(pa ? { agentName: pa.name } : {}) },
   });
   if (error) return { did: 'none', reason: 'could not store the decision brief — it will retry' };
-  if (movedPast) await narrateGroundMove(admin, userId, w, currentGround);
+  if (movedPast) await narrateGroundMove(admin, userId, w, currentGround, 'deliverable', (prior?.created_at as string | undefined) ?? null);
   // The deck's ✦ badge reads source_data (the C3 surfacing seam) — a pool-only preparation is
   // invisible on the row without this stamp (the same one delegatePrepare writes).
   if (w.id.startsWith('inbox:') && pa) {
@@ -387,7 +398,7 @@ async function narratePrepare(
 }
 
 // ── The reply-draft branch (slice 1). ──
-async function prepareReplyDraft(admin: SupabaseClient, userId: string, w: WorkItem, verdict?: import('@/lib/work/judge').WorkVerdict): Promise<PrepareOneResult> {
+async function prepareReplyDraft(admin: SupabaseClient, userId: string, w: WorkItem, verdict?: import('@/lib/work/judge').WorkVerdict, nonLive?: Set<PreparedKind>): Promise<PrepareOneResult> {
   const { data: it } = await admin.from('inbox_items').select('id, source_data, last_activity_at, status, rule_type')
     .eq('id', w.entityId).eq('user_id', userId).maybeSingle();
   if (!it || it.status !== 'pending') return { did: 'none', reason: 'no longer open' };
@@ -422,6 +433,7 @@ async function prepareReplyDraft(admin: SupabaseClient, userId: string, w: WorkI
   const { draftLawStale, DRAFT_LAW_VERSION } = await import('@/lib/inbox/attachment-context');
   const stale = !existing?.body
     || movedPast
+    || !!nonLive?.has('reply_draft')   // W5c: a hidden (untrue) draft is never fresh
     || draftLawStale(existing)
     || (Date.now() - Date.parse(existing.generated_at || '0')) > FRESH_HOURS * 3_600_000
     || (!!it.last_activity_at && Date.parse(it.last_activity_at as string) > Date.parse(existing.generated_at || '0'));
@@ -457,12 +469,14 @@ async function prepareReplyDraft(admin: SupabaseClient, userId: string, w: WorkI
   await admin.from('inbox_items')
     .update({ source_data: { ...sd, draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', prepared_from: currentGround, law_version: DRAFT_LAW_VERSION, ...(stagedAttachment ? { attachment: stagedAttachment } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) } })
     .eq('id', it.id);
-  if (movedPast) await narrateGroundMove(admin, userId, w, currentGround);
+  if (movedPast) await narrateGroundMove(admin, userId, w, currentGround, 'reply_draft', existing?.generated_at ?? null);
   return { did: 'draft', worker: pa?.name };
 }
 
 // ── The nudge branch (slice 1) — inbox waits land on source_data, commitment waits in the pool. ──
-async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem): Promise<PrepareOneResult> {
+async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem, nonLive?: Set<PreparedKind>): Promise<PrepareOneResult> {
+  // W5c: an untrue nudge/draft (a false completion claim, a superseded ground) is never "fresh".
+  const untrueNudge = !!nonLive && (nonLive.has('nudge_draft') || nonLive.has('reply_draft'));
   const ageDays = Math.max(0, Math.round((Date.now() - Date.parse(w.startAt)) / 86_400_000));
   if (w.id.startsWith('inbox:')) {
     const { data: it } = await admin.from('inbox_items').select('id, source_data, status').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
@@ -475,7 +489,7 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem):
     const { groundOf, groundMoved } = await import('@/lib/prepare/ground');
     const currentGround = await groundOf(admin, userId, { kind: 'inbox', id: String(it.id) });
     const movedPast = !!existing?.body && groundMoved(existing.prepared_from ?? null, currentGround);
-    if (existing && !movedPast && (Date.now() - Date.parse(existing.generated_at || '0')) < FRESH_HOURS * 3_600_000) return { did: 'none', reason: 'a fresh nudge is already on it' };
+    if (existing && !movedPast && !untrueNudge && (Date.now() - Date.parse(existing.generated_at || '0')) < FRESH_HOURS * 3_600_000) return { did: 'none', reason: 'a fresh nudge is already on it' };
     // THE LANGUAGE MIRROR: the counterparty's own words are the concrete signal.
     const mirrorText = String(sd.body || '').slice(0, 1200) || null;
     const raw = await generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays, mirrorText }, admin);
@@ -487,7 +501,7 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem):
     await admin.from('inbox_items')
       .update({ source_data: { ...sd, nudge_draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', prepared_from: currentGround, ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) } })
       .eq('id', it.id);
-    if (movedPast) await narrateGroundMove(admin, userId, w, currentGround);
+    if (movedPast) await narrateGroundMove(admin, userId, w, currentGround, 'nudge_draft', existing?.generated_at ?? null);
     return { did: 'nudge', worker: pa?.name };
   }
   if (w.id.startsWith('commit:')) {
@@ -502,7 +516,7 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem):
     const currentGround = await groundOf(admin, userId, { kind: 'commitment', id: w.entityId });
     const priorMeta = (existing?.metadata ?? {}) as { prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null };
     const movedPast = !!existing && groundMoved(priorMeta.prepared_from ?? null, currentGround);
-    if (existing && !movedPast && (Date.now() - Date.parse(existing.created_at as string)) < FRESH_HOURS * 3_600_000) return { did: 'none', reason: 'a fresh nudge is already on it' };
+    if (existing && !movedPast && !untrueNudge && (Date.now() - Date.parse(existing.created_at as string)) < FRESH_HOURS * 3_600_000) return { did: 'none', reason: 'a fresh nudge is already on it' };
     // THE LANGUAGE MIRROR: the counterparty's last inbound message on the commitment's thread.
     let mirrorText: string | null = null;
     try {
@@ -532,7 +546,7 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem):
       title: `Nudge — ${(w.blockedOn || '').split('<')[0].trim()}`.slice(0, 100), content: body, ref: null,
       metadata: { ...(pa ? { agentName: pa.name } : {}), prepared_from: currentGround, ...(review.verdict !== 'pass' ? { review } : {}) },
     }).then(() => {}, () => {});
-    if (movedPast) await narrateGroundMove(admin, userId, w, currentGround);
+    if (movedPast) await narrateGroundMove(admin, userId, w, currentGround, 'nudge_draft', (existing?.created_at as string | undefined) ?? null);
     return { did: 'nudge', worker: pa?.name };
   }
   return { did: 'none', reason: 'not a preparable item' };
@@ -543,8 +557,11 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem):
 // extractor the deep-dive's on-demand card uses). Stored as the item's prepared artifact; the card
 // serves it instantly and the ONLY commit is the user's approve → /api/items/execute (gate `book`).
 // Idempotent: a fresh prepared invite (newer than thread activity) is never regenerated. ──
-async function prepareInviteDraft(admin: SupabaseClient, userId: string, w: WorkItem): Promise<PrepareOneResult> {
+async function prepareInviteDraft(admin: SupabaseClient, userId: string, w: WorkItem, nonLive?: Set<PreparedKind>): Promise<PrepareOneResult> {
   const isCommit = w.id.startsWith('commit:');
+  // W5c: an invite THE ONE READER hides (outside the stated window · its time passed · superseded)
+  // is never "a fresh prepared invite already on it" — the clock is not the truth.
+  const untrueInvite = !!nonLive?.has('invite');
   // THE GROUND LAW: the invite is the lane the law was found on — a counterparty who moves the day
   // supersedes the prepared time, and the clock says nothing about that.
   const { groundOf, groundMoved } = await import('@/lib/prepare/ground');
@@ -557,7 +574,7 @@ async function prepareInviteDraft(admin: SupabaseClient, userId: string, w: Work
       .limit(1).maybeSingle();
     const priorMeta = (prior?.metadata ?? {}) as { prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null };
     movedPast = !!prior && groundMoved(priorMeta.prepared_from ?? null, currentGround);
-    if (prior && !movedPast && (Date.now() - Date.parse(prior.created_at as string)) < FRESH_HOURS * 3_600_000) {
+    if (prior && !movedPast && !untrueInvite && (Date.now() - Date.parse(prior.created_at as string)) < FRESH_HOURS * 3_600_000) {
       return { did: 'none', reason: 'a fresh prepared invite is already on it' };
     }
   }
@@ -567,26 +584,43 @@ async function prepareInviteDraft(admin: SupabaseClient, userId: string, w: Work
   const ctx = await buildItemContext(admin, userId, planKind, w.entityId);
   if (!ctx) return { did: 'none', reason: 'could not ground the invite in the item' };
   const invite = await prepareCalendarInvite(admin, userId, planKind, ctx, w.title);
+  // ── TIME TRUTH (W5a, owner walk Sep 23): THE STATED WINDOW IS A FACT ABOUT THE THREAD. The item's
+  // own words ("September 30 or October 1") are parsed by the ONE window parser (code-verified, never
+  // guessed); a proposal — the model's or the calendar's — that lands outside it is not "inside what
+  // they stated", and a slot behind the clock is not a proposal at all. Both are dropped BEFORE the
+  // card can ever render them. The item's own title/description is read first (narrow); the wider
+  // grounding text only when the title states nothing. ──
+  // W5c: ONE implementation (lib/prepare/truth confineInviteToStatedWindow) — the card's on-demand
+  // build runs the very same confinement, so the two builders can never disagree about the window.
+  const { confineInviteToStatedWindow } = await import('@/lib/prepare/truth');
+  const windowAnchor = w.startAt || null;
+  const statedWin = confineInviteToStatedWindow(invite, { narrow: w.title, wide: ctx.text }, windowAnchor);
   // ── Q8c · THE PROPOSE TIER'S LAST MILE (attention-plan PART III; measured: 11 standing schedule
   // verdicts, 9 with no invite at all and 2 with no time — the scheduling asks sat CTA-only). The
   // grounding pass may only propose INSIDE a day or window the item itself states, which is right:
   // a time nobody mentioned is not a fact about the thread. So when the thread states no day, the
   // proposal comes from the OTHER authority — the user's own calendar, in code, zero AI. The card
-  // already says `proposed`, and approve-before-commit is untouched: nothing books. ──
+  // already says `proposed`, and approve-before-commit is untouched: nothing books.
+  // W5a: when the item DOES state a window, the calendar search is CONFINED to it (fromDayStr /
+  // toDayStr — the picker already honored them for chat; this caller ignored them), and the slot's
+  // provenance is stamped so the card's label can only claim what code verified. ──
   if (!invite.startISO) {
     try {
       const { userTimezone, localNow } = await import('@/lib/utils/user-time');
       const { proposeFreeSlots } = await import('@/lib/prepare/free-slots');
       const tz = invite.timezone && invite.timezone !== 'UTC' ? invite.timezone : await userTimezone(admin, userId);
-      const slots = await proposeFreeSlots(admin, userId, { tz, todayStr: localNow(tz).dateStr, count: 3 });
+      const slots = await proposeFreeSlots(admin, userId, {
+        tz, todayStr: localNow(tz).dateStr, count: 3,
+        ...(statedWin ? { fromDayStr: statedWin.start, toDayStr: statedWin.end } : {}),
+      });
       if (slots.length) {
         invite.startISO = slots[0].startISO;
         invite.endISO = slots[0].endISO;
         invite.proposed = true;      // OURS, not theirs — the card says so in the user's own words
+        invite.proposedFrom = statedWin ? 'stated_window' : 'calendar';
         invite.timezone = tz;
         // The other two ride as the card's alternatives. Their note states their ONLY evidence:
-        // the user's calendar is free then. (The item's own stated slots, when it has any, were
-        // already code-verified upstream — this branch only runs when it stated none.)
+        // the user's calendar is free then (inside the stated window when there is one).
         invite.alternatives = slots.slice(1, 3).map((s) => ({ ...s, note: 'free on your calendar' }));
       }
     } catch { /* a calendar we cannot read proposes nothing — the card still asks for a time */ }
@@ -619,6 +653,14 @@ async function prepareInviteDraft(admin: SupabaseClient, userId: string, w: Work
               if (itStrip && pi && !pi.sent_at) {
                 const { prepared_invite: _drop, ...rest } = sdStrip;
                 await admin.from('inbox_items').update({ source_data: rest }).eq('id', itStrip.id);
+                // THE OUTCOME LEDGER (W3.2): the meeting is already on the calendar — the user booked
+                // it outside our door while our invite waited. done_elsewhere: the work was real.
+                const { logPreparedOutcome } = await import('@/lib/prepare/outcome');
+                await logPreparedOutcome(admin, userId, {
+                  outcome: 'done_elsewhere', artifact: 'invite', itemKind: 'inbox', itemId: String(itStrip.id),
+                  door: 'booked_floor', source: sdStrip,
+                  preparedAt: typeof (pi as { generated_at?: unknown }).generated_at === 'string' ? (pi as { generated_at: string }).generated_at : null,
+                });
               }
             } catch { /* the stale artifact ages out via the ground check regardless */ }
           }
@@ -636,7 +678,7 @@ async function prepareInviteDraft(admin: SupabaseClient, userId: string, w: Work
       gist: 'prepared calendar invite (approve to send)',
       metadata: { invite, ...(pa ? { agentName: pa.name } : {}), prepared_from: currentGround, provenance: { item: w.title.slice(0, 100) } },
     }).catch(() => {});
-    if (movedPast) await narrateGroundMove(admin, userId, w, currentGround);
+    if (movedPast) await narrateGroundMove(admin, userId, w, currentGround, 'invite', null);
     return { did: 'invite', worker: pa?.name };
   }
   const { data: it } = await admin.from('inbox_items').select('id, source_data, status, last_activity_at').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
@@ -646,6 +688,7 @@ async function prepareInviteDraft(admin: SupabaseClient, userId: string, w: Work
   movedPast = !!existing && !existing.sent_at && groundMoved(existing.prepared_from ?? null, currentGround);
   const stale = !existing
     || movedPast
+    || untrueInvite
     || (Date.now() - Date.parse(existing.generated_at || '0')) > FRESH_HOURS * 3_600_000
     || (!!it.last_activity_at && Date.parse(it.last_activity_at as string) > Date.parse(existing.generated_at || '0'));
   if (existing?.sent_at) return { did: 'none', reason: 'the invite already went out' };
@@ -653,7 +696,7 @@ async function prepareInviteDraft(admin: SupabaseClient, userId: string, w: Work
   await admin.from('inbox_items').update({
     source_data: { ...sd, prepared_invite: { ...invite, generated_at: new Date().toISOString(), prepared: 'pass', prepared_from: currentGround }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) },
   }).eq('id', it.id);
-  if (movedPast) await narrateGroundMove(admin, userId, w, currentGround);
+  if (movedPast) await narrateGroundMove(admin, userId, w, currentGround, 'invite', existing?.generated_at ?? null);
   return { did: 'invite', worker: pa?.name };
 }
 
@@ -692,14 +735,14 @@ async function prepareForwardDraft(
   await admin.from('inbox_items').update({
     source_data: { ...sd, prepared_forward: { ...fwdSlim, generated_at: new Date().toISOString(), prepared: 'pass', prepared_from: currentGround }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) },
   }).eq('id', it.id);
-  if (movedPast) await narrateGroundMove(admin, userId, w, currentGround);
+  if (movedPast) await narrateGroundMove(admin, userId, w, currentGround, 'forward', existing?.generated_at ?? null);
   return { did: 'forward', worker: pa?.name };
 }
 
 // ── C2 · the COWORKER branch — judgment shapes are prepared by the right coworker, with the item's
 // grounding + the deliverable pool (runDelegation reads+writes it). Idempotent per item. Nothing
 // sends — prompt-level prepare-and-hand-back guardrail lives in buildDelegationPrompt. ──
-async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkItem, worker: WorkerRow, artifactTruth?: string, computedStamp?: string): Promise<PrepareOneResult> {
+async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkItem, worker: WorkerRow, artifactTruth?: string, computedStamp?: string, untrueDeliverable?: boolean): Promise<PrepareOneResult> {
   const poolKind = w.id.startsWith('commit:') ? 'commitment' : 'email';
   const { data: prior } = await admin.from('item_deliverables').select('id, created_at, metadata')
     .eq('user_id', userId).eq('kind', poolKind).eq('entity_id', w.entityId).eq('task_id', 'prepare-pass')
@@ -721,9 +764,9 @@ async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkIte
     const { data: fresherSupply } = await admin.from('item_deliverables').select('id, created_at')
       .eq('user_id', userId).eq('kind', poolKind).eq('entity_id', w.entityId).like('task_id', 'require:%')
       .gt('created_at', prior.created_at as string).limit(1).maybeSingle();
-    if (!fresherSupply && !movedPast) return { did: 'none', reason: `${worker.name.split(' ')[0]} already prepared this`, worker: worker.name };
+    if (!fresherSupply && !movedPast && !untrueDeliverable) return { did: 'none', reason: `${worker.name.split(' ')[0]} already prepared this`, worker: worker.name };
     await admin.from('item_deliverables')
-      .update({ metadata: { ...((prior.metadata ?? {}) as Record<string, unknown>), version_of: movedPast && !fresherSupply ? 'superseded:ground-move' : 'superseded:require-supply' } })
+      .update({ metadata: { ...((prior.metadata ?? {}) as Record<string, unknown>), version_of: fresherSupply ? 'superseded:require-supply' : movedPast ? 'superseded:ground-move' : 'superseded:truth' } })
       .eq('id', prior.id).then(() => {}, () => {});
   }
   // FIX 3 — an OUTSTANDING ask blocks re-delegation: while the coworker's input checklist sits
@@ -843,7 +886,7 @@ async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkIte
     entityType: w.id.startsWith('commit:') ? 'commitment' : 'inbox_item', entityId: w.entityId,
     metadata: { via: 'preparation_pass', worker: worker.name, role: worker.worker_role },
   }).catch(() => {});
-  if (movedPast) await narrateGroundMove(admin, userId, w, currentGround);
+  if (movedPast) await narrateGroundMove(admin, userId, w, currentGround, 'deliverable', (prior?.created_at as string | undefined) ?? null);
   return { did: 'delegated', worker: worker.name };
 }
 
@@ -860,7 +903,19 @@ async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkIte
 // (item, inbound) so a multi-lane re-prep or a re-run can never spam; lane-agnostic text so the
 // keyed dedupe-update never drops a lane's mention. The brief (recomposed on the same ground
 // move) speaks the specifics; this line is the record's one timestamped delta. ──
-async function narrateGroundMove(admin: SupabaseClient, userId: string, w: WorkItem, current: { emailId: string | null; receivedAt: string | null }): Promise<void> {
+async function narrateGroundMove(
+  admin: SupabaseClient, userId: string, w: WorkItem, current: { emailId: string | null; receivedAt: string | null },
+  artifact: import('@/lib/prepare/outcome').PreparedArtifactKind, preparedAt: string | null,
+): Promise<void> {
+  // THE OUTCOME LEDGER (W3.2): the artifact the ground move overtook was SUPERSEDED — a timing fact,
+  // never a user verdict (the facts report it and never count it). One row per re-prepared lane.
+  try {
+    const { logPreparedOutcome } = await import('@/lib/prepare/outcome');
+    await logPreparedOutcome(admin, userId, {
+      outcome: 'superseded', artifact, itemKind: w.id.startsWith('commit:') ? 'commitment' : 'inbox',
+      itemId: w.entityId, door: 'ground_move', senderClass: 'unknown', preparedAt,
+    });
+  } catch { /* the ledger never blocks the re-preparation */ }
   if (!current.emailId) return;
   try {
     const { data: em } = await admin.from('emails').select('from_name, from_address').eq('id', current.emailId).eq('user_id', userId).maybeSingle();
@@ -1020,11 +1075,8 @@ export function judgmentKeyOf(w: WorkItem): string {
  *  truncated read would make judged items look never-judged and re-burn the backlog every sweep). */
 export async function readJudgmentAges(admin: SupabaseClient, userId: string): Promise<JudgmentAge[]> {
   try {
-    const rows = await fetchAllRows<{ entity_id: string; updated_at: string | null }>((from, to) =>
-      admin.from('item_plans').select('entity_id, updated_at')
-        .eq('user_id', userId).eq('kind', 'judgment')
-        .order('entity_id', { ascending: true }).range(from, to));
-    return rows.map((r) => ({ key: String(r.entity_id), judgedAt: r.updated_at ?? null }));
+    const rows = await readPlans(admin, userId, 'judgment', { withTasks: false });
+    return rows.map((r) => ({ key: r.key, judgedAt: r.updated_at ?? null }));
   } catch { return []; }
 }
 
@@ -1037,6 +1089,71 @@ export function toNominatorItem(w: WorkItem, meetingPassedAt?: string | null): N
     meetingPassedAt: meetingPassedAt ?? null,
     title: w.title,
   };
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// W3.3 REACH — THE PREPARATION LEDGER'S ONE WRITER + THE COMMITMENT LANE.
+//
+// Measured (Sep 22): 45 of 915 open commitments had EVER received a prep_outcome — the pass barely
+// reached them. Commitments competed inside lanes 2-4 with the whole inbox under one shared clock, and
+// the `attempted` read that ranks never-prepared work first was an UNPAGED `.limit(1000)` (invariant
+// 10: past 1000 outcomes, prepared items silently read as never-attempted and re-burned the budget).
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** The verdict verbs the pass can prepare FOR — every WORK_VERBS verb (lib/work/surface-registry)
+ *  except `none`. The commitment lane's membership test. */
+export const isPreparableVerdict = (work: string | null | undefined): boolean => !!work && work !== 'none';
+
+/** Which lane reached an item — carried on its prep_outcome row so the ledger says WHO prepared it. */
+export type PrepLane = 'reply' | 'open_question' | 'needs_you' | 'triage' | 'commitment' | 'proof_of_life' | 'anticipation';
+
+/** THE PREP OUTCOME LEDGER — every attempt's did/reason, paged (NO SILENT CAPS): key → last `at`. */
+export async function readPrepOutcomes(admin: SupabaseClient, userId: string): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  try {
+    const rows = await readPlans(admin, userId, 'prep_outcome');
+    for (const r of rows) out.set(r.key, String(r.tasks?.at ?? r.updated_at ?? ''));
+  } catch { /* an unordered walk is still a walk */ }
+  return out;
+}
+
+/** An attempt that failed HONESTLY and says so ("… it will retry") — a caller keeping an
+ *  exactly-once fire record must leave the moment open for it (anticipation's retry). */
+export const isRetryableOutcome = (r: PrepareOneResult): boolean => r.did === 'none' && /will retry/i.test(r.reason ?? '');
+
+/** THE ONE WRITER of a prep_outcome row (the trichotomy ledger) — the pass, anticipation and the
+ *  re-queue lane all record through here, so "did anything prepare this?" has one answer. */
+export async function recordPrepOutcome(
+  admin: SupabaseClient, userId: string, key: string, r: PrepareOneResult, lane: PrepLane,
+): Promise<void> {
+  try {
+    await upsertPlan(admin, userId, 'prep_outcome', key,
+      { did: r.did, reason: r.reason ?? null, worker: r.worker ?? null, lane, at: new Date().toISOString() });
+  } catch { /* observability is an enhancement */ }
+}
+
+/**
+ * THE COMMITMENT LANE (pure, zero-AI, total and stable): open, non-stale commitments whose STANDING
+ * verdict is actionable, ordered ENTITY PRIORITY first (a hot deal's debt outranks a loose one), then
+ * LEAST-RECENTLY-PREPARED (never-prepared first, then the oldest attempt), then key. This is the
+ * lane's internal reach order only — what its floor cannot reach falls to the pass's overflow, which
+ * walks the ONE nominated order like every other deferred item.
+ */
+export function commitmentLane(
+  candidates: WorkItem[],
+  facts: { verdictOf: (key: string) => string | null | undefined; lastPreparedAt: (key: string) => string | null | undefined; weightOf: (w: WorkItem) => number; excluded?: (key: string) => boolean },
+): WorkItem[] {
+  const lane = candidates.filter((w) => w.id.startsWith('commit:') && isPreparableCandidate(w)
+    && !(facts.excluded?.(judgmentKeyOf(w)))
+    && isPreparableVerdict(facts.verdictOf(judgmentKeyOf(w))));
+  return lane.sort((a, b) => {
+    const dw = facts.weightOf(b) - facts.weightOf(a);
+    if (dw) return dw;
+    const pa = facts.lastPreparedAt(judgmentKeyOf(a)) || '';
+    const pb = facts.lastPreparedAt(judgmentKeyOf(b)) || '';
+    if (pa !== pb) return pa.localeCompare(pb); // '' (never prepared) sorts first
+    return judgmentKeyOf(a).localeCompare(judgmentKeyOf(b));
+  });
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1090,12 +1207,9 @@ export async function runPreparationPass(
   // reached outranks one it already worked (fresh-work guards make re-visits cheap but they
   // still eat budget; the T1 trace found items silent purely because the walk never got there).
   // Within each tier, the entity-priority order stands.
-  const attempted = new Set<string>();
-  try {
-    const { data: outs } = await admin.from('item_plans').select('entity_id')
-      .eq('user_id', userId).eq('kind', 'prep_outcome').limit(1000);
-    for (const o of outs ?? []) attempted.add(String(o.entity_id));
-  } catch { /* unordered walk */ }
+  // W3.3 · PAGED (invariant 10): the old `.limit(1000)` read silently stopped at 1000 outcomes.
+  const lastPrepared = await readPrepOutcomes(admin, userId);
+  const attempted = new Set<string>(lastPrepared.keys());
   const keyOf = judgmentKeyOf;
 
   // ── THE CANDIDATE LANES, each walked in ONE nominated order under ONE shared budget. Lane 3 is
@@ -1113,12 +1227,38 @@ export async function runPreparationPass(
   // TAIL, and Q7's proof-of-life lane — not a drafting budget — is what decides whether it is still
   // live. Preparing 74 items nothing has moved in two months would spend the desk's budget on the
   // ledger's population. (Measured: 74 stale candidates on the reference account.)
+  //
+  // W3.3 REACH adds two lanes, each with its own floor under THE SHARE below:
+  //   · PROOF-OF-LIFE RE-QUEUE (first): items Q7 just re-affirmed as still owed. They usually sit in
+  //     the quiet tail this pass excludes, so without the marker a proven-live item was never
+  //     prepared. Read from the queue (lib/prepare/requeue), never from the stale lane itself.
+  //   · THE COMMITMENT LANE (last): open, non-stale commitments whose standing verdict is actionable,
+  //     in entity-priority → least-recently-prepared order (commitmentLane). Measured: 5% of open
+  //     commitments had ever been reached; they competed with the whole inbox inside lanes 2-4.
+  const { readStandingVerdicts } = await import('@/lib/work/proof-of-life');
+  const { readPrepRequeue, clearPrepRequeue } = await import('@/lib/prepare/requeue');
+  const [standing, requeue] = await Promise.all([readStandingVerdicts(admin, userId), readPrepRequeue(admin, userId)]);
+  const staleKeys = new Set(rep.stale.map(keyOf));
+  const requeueLane = items.filter((w) => requeue.has(keyOf(w)) && isPreparableCandidate(w));
+  const commitLane = commitmentLane(items, {
+    verdictOf: (k) => standing.get(k),
+    lastPreparedAt: (k) => lastPrepared.get(k),
+    weightOf,
+    excluded: (k) => staleKeys.has(k),
+  });
   const lanes: WorkItem[][] = [
+    requeueLane,
     autoDraft ? rep.needsYou.filter((x) => x.kind === 'reply' && x.id.startsWith('inbox:')) : [],
     rep.openQuestions.filter((x) => x.blockedOn),
     rep.needsYou.filter((w) => !w.automated && w.kind !== 'reply' && (w.id.startsWith('inbox:') || w.id.startsWith('commit:'))),
     rep.triage.filter((w) => !w.automated && (w.id.startsWith('inbox:') || w.id.startsWith('commit:'))),
+    commitLane, // keeps its OWN order (the nominated sort below skips it); its overflow walks the nominated one
   ];
+  const laneNames: PrepLane[] = ['proof_of_life', 'reply', 'open_question', 'needs_you', 'triage', 'commitment'];
+  // A queued key whose item is no longer open (settled, dismissed) is served by being gone.
+  for (const k of requeue.keys()) {
+    if (!requeueLane.some((w) => keyOf(w) === k)) await clearPrepRequeue(admin, userId, k);
+  }
   // THE ONE ORDERING (proactive-reach LAW 1): computed once over the union of the lanes and applied
   // to each — the judgment ages come from the same cache the judge writes, so "least recently
   // judged" is a fact, never an estimate.
@@ -1135,26 +1275,24 @@ export async function runPreparationPass(
   );
   const rankOf = new Map(nominated.map((n) => [n.item.key, n.rank]));
   for (const lane of lanes) {
+    if (lane === commitLane) continue;
     lane.sort((a, b) => (rankOf.get(keyOf(a)) ?? Number.MAX_SAFE_INTEGER) - (rankOf.get(keyOf(b)) ?? Number.MAX_SAFE_INTEGER));
   }
   // ── THE TRICHOTOMY LAW (plan AH): every candidate's outcome is RECORDED — `prep_outcome`
   // rows (item_plans, zero-migration) are the pass's observable ledger: what was prepared,
   // what was asked, what was skipped and WHY. Silence stops being unmeasurable. ──
-  const recordOutcome = async (w: WorkItem, r: PrepareOneResult) => {
-    try {
-      const key = w.id.startsWith('commit:') ? `commitment:${w.entityId}` : `inbox:${w.entityId}`;
-      await admin.from('item_plans').upsert({
-        user_id: userId, kind: 'prep_outcome', entity_id: key,
-        tasks: { did: r.did, reason: r.reason ?? null, worker: r.worker ?? null, at: new Date().toISOString() },
-      }, { onConflict: 'user_id,kind,entity_id' });
-    } catch { /* observability is an enhancement */ }
-  };
+  const recordOutcome = (w: WorkItem, r: PrepareOneResult, lane: PrepLane) => recordPrepOutcome(admin, userId, keyOf(w), r, lane);
+  const laneOf = new Map<string, PrepLane>();
+  lanes.forEach((lane, i) => { for (const w of lane) if (!laneOf.has(w.id)) laneOf.set(w.id, laneNames[i]); });
   const seen = new Set<string>();
-  const work = async (w: WorkItem) => {
+  // The ledger names the lane that ACTUALLY reached the item (the overflow keeps the item's first lane).
+  const work = async (w: WorkItem, lane: PrepLane) => {
     seen.add(w.id);
     const r = await prepareOneItem(admin, userId, w);
     tally(r);
-    await recordOutcome(w, r);
+    await recordOutcome(w, r, lane);
+    // A re-queued item is SERVED once the pass reached it (its outcome is now on the ledger).
+    if (requeue.has(keyOf(w))) await clearPrepRequeue(admin, userId, keyOf(w));
   };
 
   // ── Q8a · THE LANE FLOORS (attention-plan PART III — the STARVATION class, measured). ──────────
@@ -1171,13 +1309,14 @@ export async function runPreparationPass(
   // budget is left is spent on everything deferred, in the ONE nominated order, so a genuinely quiet
   // day still drains the backlog exactly as it did before.
   const deferred: WorkItem[] = [];
+  const deferredIds = new Set<string>(); // lanes overlap — an item deferred twice is ONE item left behind
   for (let i = 0; i < lanes.length; i++) {
     const lanesLeft = lanes.length - i;
     const laneDeadline = Math.min(deadline, Date.now() + Math.max(0, deadline - Date.now()) / lanesLeft);
     for (const w of lanes[i]) {
       if (seen.has(w.id)) continue;       // one attempt per item per pass (lanes can overlap)
-      if (Date.now() > laneDeadline) { deferred.push(w); continue; }
-      await work(w);
+      if (Date.now() > laneDeadline) { if (!deferredIds.has(w.id)) { deferredIds.add(w.id); deferred.push(w); } continue; }
+      await work(w, laneNames[i]);
     }
   }
   // THE OVERFLOW — the deferred items in the one nominated order (never lane order: a lane's floor
@@ -1186,7 +1325,7 @@ export async function runPreparationPass(
   for (const w of deferred) {
     if (seen.has(w.id)) continue;
     if (Date.now() > deadline) { leftBehind++; continue; }
-    await work(w);
+    await work(w, laneOf.get(w.id) ?? 'needs_you');
   }
   if (leftBehind > 0) {
     console.log(`[prepare-pass] budget spent for user ${userId}: ${leftBehind} candidate(s) left for the next sweep`);

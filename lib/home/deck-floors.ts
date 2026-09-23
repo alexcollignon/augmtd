@@ -16,7 +16,8 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import { getUnderstanding } from '@/lib/inbox/item-understanding';
-import { isNoMoveNotice, rawMailKindOf, isAutomatedSenderStrong } from '@/lib/inbox/notice-demotion';
+import { readPlans, asRawResult } from '@/lib/store/item-plans';
+import { isNoMoveNotice, rawMailKindOf, isAutomatedSenderStrong, listMailOf } from '@/lib/inbox/notice-demotion';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export type DeckItem = {
@@ -48,6 +49,14 @@ export type DeckFloors = {
 export const DECK_POOL_LIMIT = 800;
 export const ACTION_NOTICE_LIMIT = 200;
 export const REPLY_LIMIT = 100;
+// W1.6b — the remaining named bounds in the brief route, made explicit with the same discipline
+// (a named constant + a stable eviction order + a loud warn when the bound actually binds). These
+// are all WORKING-SET reads for one ambient page load, not full-listing correctness — but a bound
+// that saturates is still a gate, so it still needs a name and a voice.
+export const TRACKED_PROJECTS_LIMIT = 100;   // a user's own tracked-project row tags (row-tag law)
+export const FYI_POOL_LIMIT = 200;           // the awareness/noted pool feeding the FYI-by-topic brief
+export const BUNDLE_ENTITIES_LIMIT = 400;    // active initiatives read for ONE-BRAIN bundle grouping
+export const BUNDLE_LINK_ATOMS_LIMIT = 400;  // atom ids resolved to their entity for bundling
 
 /** The sender address off a stored item — ONE reader (the route's old private copy is gone). */
 export function fromEmailOf(sd: Record<string, unknown> | null | undefined): string | null {
@@ -124,6 +133,7 @@ export function noticeIsDemoted(it: DeckItem, floors: DeckFloors): boolean {
     workState: (it.work_state as string) || null,
     // THE ECHO FLOOR reaches the notice law too — one law, one shape, wherever it is asked.
     campaignEcho: floors.isEcho(it),
+    listMail: listMailOf(sd),
   }) || (floors.judgedNone.has(it.id) && !sheltered);
 }
 
@@ -154,8 +164,7 @@ export async function readJudgedNone(client: any, userId: string, itemIds: strin
     const slice = itemIds.slice(i, i + CHUNK).map((id) => `inbox:${id}`);
     if (!slice.length) continue;
     try {
-      const { data } = await client.from('item_plans').select('entity_id, tasks')
-        .eq('user_id', userId).eq('kind', 'judgment').in('entity_id', slice);
+      const { data } = asRawResult(await readPlans(client, userId, 'judgment', { keys: slice }));
       for (const j of (data ?? []) as Array<{ entity_id: string; tasks: { verdict?: { work?: string; resolution?: string } } }>) {
         if (verdictDemotes(j.tasks?.verdict)) out.add(String(j.entity_id).replace(/^inbox:/, ''));
       }

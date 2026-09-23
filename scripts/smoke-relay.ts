@@ -1513,8 +1513,11 @@ async function main() {
       // RE-POINTED (the stations-ask-by-name wave, Aug 25): the served inputs object grew a
       // `stations` count (the sheet-vs-stations predicate's input) and went multi-line. The LAW is
       // unchanged: acceptMaterial per row, read from the ONE store.
+      // ⟲ RE-POINTED (stabilization W2.6 TYPED STORES, Sep 23): the raw `.eq('kind', 'workflow_inputs')`
+      // read became the ONE item_plans door (readPlans, paged). Same store, same per-row flag.
       ok('THE LEDGER SERVES inputs.acceptMaterial per row, read from the ONE store',
-        /\.eq\('kind', 'workflow_inputs'\)/.test(ledgerRouteCode)
+        /readPlans\(supabase, user\.id, 'workflow_inputs'\)/.test(ledgerRouteCode)
+        && /r\.tasks\?\.acceptMaterial === true/.test(ledgerRouteCode)
         && /acceptMaterial: materialWfIds\.has\(w\.id\),/.test(ledgerRouteCode));
       // RE-POINTED (latency wave, Aug 25): the GET's two store reads share one input (`data.user_id`)
       // and now fly in ONE Promise.all instead of two sequential awaits, so the anchor no longer
@@ -5332,11 +5335,12 @@ async function main() {
       const resumeSrc = stripComments(readFileSync('app/api/workflows/runs/[id]/resume/route.ts', 'utf8'));
       ok('the door accepts the supply payload alongside the existing approve/reject shapes',
         /input\?: \{ text\?: string; kbFileId\?: string; pin\?: boolean \}/.test(resumeSrc)
-        && /gate\.kind === 'input' && approve !== false/.test(resumeSrc));
+        // ⟲ RE-POINTED (Sep 22 — W0.4 THE SUPPLY IS NEVER A REJECTION): the payload decides, never the bit.
+        && /const suppliesMaterial = gate\.kind === 'input' && \(Boolean\(body\.input\) \|\| approve\);/.test(resumeSrc));
       ok('NO LYING DOOR — a bare approve at an input gate is REFUSED, and says what it wants instead',
         /waiting for something from you, not a yes or no/.test(resumeSrc));
       ok('…while a REJECT still falls through to the ordinary hold-back (declining is a real answer)',
-        resumeSrc.indexOf("gate.kind === 'input' && approve !== false") < resumeSrc.indexOf('if (!approve) {'));
+        resumeSrc.indexOf('const suppliesMaterial') < resumeSrc.indexOf('if (!approve) {'));
       // ⟲ RE-POINTED (THE WAVE part 2, THE SAYABLE SUPPLY): the four laws below used to be asserted
       // against the ROUTE's own body. A second door (the chat tool) now answers the same station, so
       // the whole core — ownership, the claim, the settle, the pin — moved into `answerInputStation`
@@ -5613,9 +5617,13 @@ async function main() {
       ok('THE KICK ROUTE uses BOTH shared functions, never its own claim',
         /const \{ claimQueuedEventRun, eventRunContext \} = await import\('@\/lib\/workflows\/reactions'\);/.test(kickSrc)
         && !/update\(\{ status: 'running' \}\)/.test(kickSrc));
+      // ⟲ RE-POINTED (stabilization W0.3 SECRETS FAIL CLOSED): the hand-rolled
+      // `!== \`Bearer ${secret}\`` compare became the house's one check, hasBearer(req, 'AGENTOS_SECRET')
+      // — constant-time and fail-closed on an unset secret. Still the SAME established env var.
       ok('…bearer-authed with the established internal secret (no new env var invented)',
-        /const secret = process\.env\.AGENTOS_SECRET;/.test(kickSrc)
-        && /!== `Bearer \$\{secret\}`/.test(kickSrc)
+        /if \(!hasBearer\(req, 'AGENTOS_SECRET'\)\)/.test(kickSrc)
+        && /import \{ hasBearer \} from '@\/lib\/utils\/bearer-auth';/.test(kickSrc)
+        && !/process\.env\.[A-Z_]*SECRET/.test(kickSrc)
         && /export const maxDuration = 300;/.test(kickSrc));
       ok('…and it refuses anything that is not a QUEUED EVENT run (a race is an outcome, not an error)',
         /run\.status !== 'queued' \|\| run\.triggered_by !== 'event'/.test(kickSrc));

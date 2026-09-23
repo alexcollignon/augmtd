@@ -36,7 +36,6 @@ interface CompanyRow {
   ai_tier: TierType | null;
   created_at: string;
   member_count: number;
-  meeting_assistant: boolean;
   settings?: { branding?: { logo_url?: string; tagline?: string } } | null;
 }
 
@@ -48,7 +47,6 @@ interface MemberRow {
   role: string;
   status: string;
   joined_at: string;
-  attendee_enabled: boolean;
 }
 
 interface PendingInviteRow {
@@ -66,7 +64,6 @@ interface UserRow {
   email: string;
   full_name: string | null;
   is_super_admin: boolean;
-  attendee_enabled: boolean;
   created_at: string;
   company_id: string | null;
   company_name: string | null;

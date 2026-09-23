@@ -5,7 +5,6 @@ import { syncEmailsForConnection, claimSync } from '@/lib/email-sync/sync-emails
 import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
 import { processMeetingsForUser } from '@/lib/calendar/meeting-processor';
 import { analyzeCalendarPatterns } from '@/lib/calendar/pattern-analyzer';
-import { createBotsForCalendarEvents } from '@/lib/integrations/meeting-bot/bot-manager';
 
 export const maxDuration = 300; // 5 minutes
 
@@ -87,12 +86,12 @@ export async function POST(request: NextRequest) {
     }
     console.log(`[Sync] Claimed ${claimedConnections.length}/${connections.length} connection(s)`);
 
-    // Process all claimed connections in parallel — within each, calendar → bots → emails order is preserved
+    // Process all claimed connections in parallel — within each, calendar → emails order is preserved
     const results = await Promise.all(claimedConnections.map(async (connection) => {
       try {
         console.log(`Syncing ${connection.provider} calendar + emails for user ${user.id}...`);
 
-        console.log(`[Sync Order] 1/3: Syncing calendar for ${connection.provider}...`);
+        console.log(`[Sync Order] 1/2: Syncing calendar for ${connection.provider}...`);
         const calendarResult = await syncCalendarForConnection(connection, adminSupabase, {
           daysAhead: 14,
           daysBehind: 7,
@@ -101,13 +100,7 @@ export async function POST(request: NextRequest) {
           console.log(`[Sync Order] ✓ Calendar synced: ${calendarResult.synced} events`);
         }
 
-        console.log(`[Sync Order] 2/3: Creating meeting bots for ${connection.provider}...`);
-        const botResult = await createBotsForCalendarEvents(user.id, adminSupabase);
-        if (botResult.created > 0) {
-          console.log(`[Sync Order] ✓ Bots created: ${botResult.created} meeting bots`);
-        }
-
-        console.log(`[Sync Order] 3/3: Syncing emails for ${connection.provider}...`);
+        console.log(`[Sync Order] 2/2: Syncing emails for ${connection.provider}...`);
         const emailResult = await syncEmailsForConnection(connection, adminSupabase, { claimed: true });
         if (emailResult.emailsFetched > 0) {
           console.log(`[Sync Order] ✓ Emails synced: ${emailResult.emailsFetched} emails`);
@@ -120,7 +113,7 @@ export async function POST(request: NextRequest) {
           console.warn(`[Sync] Marked connection ${connection.id} as needs_reconnect (invalid_grant)`);
         }
 
-        return { calendarResult, botResult, emailResult, error: null, needsReconnect };
+        return { calendarResult, emailResult, error: null, needsReconnect };
       } catch (err) {
         console.error(`Sync error for ${connection.provider}:`, err);
         const needsReconnect = String(err).includes('invalid_grant');
@@ -130,7 +123,6 @@ export async function POST(request: NextRequest) {
         }
         return {
           calendarResult: { synced: 0, errors: [String(err)] },
-          botResult: { created: 0, errors: [] },
           emailResult: { emailsFetched: 0, inboxItemsCreated: 0, errors: [] },
           error: String(err),
           needsReconnect,
@@ -143,8 +135,7 @@ export async function POST(request: NextRequest) {
     const totalEventsSynced = results.reduce((sum, r) => sum + r.calendarResult.synced, 0);
     const totalEmailsFetched = results.reduce((sum, r) => sum + r.emailResult.emailsFetched, 0);
     let totalInboxItemsCreated = results.reduce((sum, r) => sum + r.emailResult.inboxItemsCreated, 0);
-    const totalBotsCreated = results.reduce((sum, r) => sum + r.botResult.created, 0);
-    const errors = results.flatMap(r => [...r.calendarResult.errors, ...r.botResult.errors, ...r.emailResult.errors]);
+    const errors = results.flatMap(r => [...r.calendarResult.errors, ...r.emailResult.errors]);
 
     console.log(`Manual sync completed. Emails: ${totalEmailsFetched}, Calendar: ${totalEventsSynced}, Inbox items: ${totalInboxItemsCreated}`);
 
@@ -168,7 +159,6 @@ export async function POST(request: NextRequest) {
       success: true,
       emailsFetched: totalEmailsFetched,
       eventsSynced: totalEventsSynced,
-      botsCreated: totalBotsCreated,
       meetingPrepItems: meetingPrepItemsCreated,
       inboxItemsCreated: totalInboxItemsCreated,
       errors: errors.length > 0 ? errors : undefined,

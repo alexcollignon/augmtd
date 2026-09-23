@@ -15,6 +15,8 @@ import { coerceUnderstanding, normalizeInitiative } from '@/lib/inbox/item-under
 import { isAutomatedSender } from '@/lib/inbox/automated';
 import { fetchAllRows } from '@/lib/utils/fetch-all';
 import { canonicalPerson, sameAttendee } from './identity';
+// ONE OPEN-STATUS CONSTANT (W2.2) — never a local list.
+import { OPEN_COMMITMENT_STATUSES } from '@/lib/core/statuses';
 
 /** Extract a bare email from a raw "Name <e@x>" / "e@x" string, lowercased. null when none. */
 function emailOf(raw: string): string | null {
@@ -32,7 +34,7 @@ function domainOf(raw: string): string | null {
 }
 /** An INTERNAL colleague — same CORPORATE domain as the user (never a free-email provider). Such a person
  * attends nearly every meeting, so bridging a label-less event through them collapses unrelated meetings
- * into one initiative (the "47 meetings all became Talk AI Galp" bug). They must never be a bridge signal. */
+ * into one initiative (the "47 meetings all became Talk AI Acme Corp" bug). They must never be a bridge signal. */
 function isInternalPerson(raw: string, corporateDomains: Set<string>): boolean {
   if (!corporateDomains.size) return false;
   const d = domainOf(raw);
@@ -72,7 +74,7 @@ function register(map: InitiativeMap, key: string, label: string, people: string
   if (label.length > g.label.length) g.label = label; // prefer the fuller original label for display
   // These `people` are the SAME counterparty in email + name forms (an email's from + from_name, or a
   // commitment's counterparty). If ANY form is an INTERNAL-domain email, this is an internal colleague —
-  // on every meeting, so a terrible bridge (the "47 meetings all became Talk AI Galp" bug). A NAME has no
+  // on every meeting, so a terrible bridge (the "47 meetings all became Talk AI Acme Corp" bug). A NAME has no
   // domain, so we can only tell it's internal from the PAIRED email → skip ALL forms from the bridge
   // indices when the person is internal. They stay in `g.people` (display) but never bridge.
   const internal = people.some((p) => isInternalPerson(p, corporateDomains));
@@ -106,7 +108,7 @@ export async function buildInitiativeMap(supabase: SupabaseClient, userId: strin
         .eq('user_id', userId).eq('source', 'email').eq('status', 'pending')
         .order('created_at', { ascending: false }).range(from, to)),
     supabase.from('commitments').select('counterparty, initiative')
-      .eq('user_id', userId).in('status', ['open', 'pending']).not('initiative', 'is', null).limit(1000),
+      .eq('user_id', userId).in('status', [...OPEN_COMMITMENT_STATUSES]).not('initiative', 'is', null).limit(1000),
     supabase.from('profiles').select('email').eq('id', userId).maybeSingle(),
     supabase.from('connections').select('metadata, provider_account_id').eq('user_id', userId),
   ]);

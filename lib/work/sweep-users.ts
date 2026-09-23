@@ -13,33 +13,43 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { fetchAllRows } from '@/lib/utils/fetch-all';
+import { readPlansForUsers, upsertPlan } from '@/lib/store/item-plans';
+
+/** The rotation-marker kinds (lib/store/item-plans registry, role 'marker'). */
+export type SweepMarkerKind = 'judgment_sweep' | 'draft_sweep' | 'label_sweep';
 
 export async function activeUserIds(sb: SupabaseClient, opts?: { windowDays?: number }): Promise<string[]> {
   const since = new Date(Date.now() - (opts?.windowDays ?? 60) * 86_400_000).toISOString();
-  const [{ data: conns }, { data: recentItems }, { data: recentMeetings }] = await Promise.all([
-    sb.from('connections').select('user_id'),
-    sb.from('inbox_items').select('user_id').gte('created_at', since).limit(5000),
-    sb.from('meeting_transcripts').select('user_id').gte('created_at', since).limit(2000),
+  // NO SILENT CAPS (W1.6): `.limit(5000)`/`.limit(2000)` on an UNORDERED query still returns
+  // PostgREST's hard 1000-row page — a request for 5000 silently came back as an arbitrary 1000,
+  // which was quietly halving judge reach (docs/stabilization-plan.md R3/invariant 10). Paged +
+  // ordered via fetchAllRows so every active user is actually counted.
+  const [conns, recentItems, recentMeetings] = await Promise.all([
+    fetchAllRows<{ user_id: string }>((from, to) =>
+      sb.from('connections').select('user_id').order('user_id', { ascending: true }).range(from, to)),
+    fetchAllRows<{ user_id: string }>((from, to) =>
+      sb.from('inbox_items').select('user_id').gte('created_at', since)
+        .order('created_at', { ascending: false }).range(from, to), { maxRows: 5000 }),
+    fetchAllRows<{ user_id: string }>((from, to) =>
+      sb.from('meeting_transcripts').select('user_id').gte('created_at', since)
+        .order('created_at', { ascending: false }).range(from, to), { maxRows: 2000 }),
   ]);
   return [...new Set([
-    ...((conns ?? []) as Array<{ user_id: string }>).map((c) => c.user_id),
-    ...((recentItems ?? []) as Array<{ user_id: string }>).map((r) => r.user_id),
-    ...((recentMeetings ?? []) as Array<{ user_id: string }>).map((r) => r.user_id),
+    ...conns.map((c) => c.user_id),
+    ...recentItems.map((r) => r.user_id),
+    ...recentMeetings.map((r) => r.user_id),
   ])].filter(Boolean);
 }
 
 /** Order users least-recently-served first, read off a per-user marker kind in item_plans (the
  *  newest marker row per user IS their last touch). An unseen user sorts first by construction. */
 export async function orderLeastRecentlyServed(
-  sb: SupabaseClient, users: string[], markerKind: string,
+  sb: SupabaseClient, users: string[], markerKind: SweepMarkerKind,
 ): Promise<string[]> {
   if (!users.length) return users;
   const lastServed = new Map<string, string>();
   try {
-    const rows = await fetchAllRows<{ user_id: string; updated_at: string | null }>((from, to) =>
-      sb.from('item_plans').select('user_id, updated_at')
-        .eq('kind', markerKind).in('user_id', users)
-        .order('updated_at', { ascending: false }).range(from, to), { maxRows: 5000 });
+    const rows = await readPlansForUsers(sb, users, markerKind, { maxRows: 5000 });
     for (const r of rows) if (!lastServed.has(r.user_id)) lastServed.set(r.user_id, String(r.updated_at ?? ''));
   } catch { /* an unordered walk is still guarded by the route's own budget */ }
   return [...users].sort((a, b) => (lastServed.get(a) ?? '').localeCompare(lastServed.get(b) ?? ''));
@@ -47,12 +57,9 @@ export async function orderLeastRecentlyServed(
 
 /** Stamp this user's marker — the rotation's own memory (zero-migration: item_plans). */
 export async function stampServed(
-  sb: SupabaseClient, userId: string, markerKind: string, facts: Record<string, unknown>,
+  sb: SupabaseClient, userId: string, markerKind: SweepMarkerKind, facts: Record<string, unknown>,
 ): Promise<void> {
   try {
-    await sb.from('item_plans').upsert({
-      user_id: userId, kind: markerKind, entity_id: 'user',
-      tasks: { ...facts, at: new Date().toISOString() }, updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id,kind,entity_id' });
+    await upsertPlan(sb, userId, markerKind, 'user', { ...facts, at: new Date().toISOString() });
   } catch { /* the rotation degrades to unordered, never fails the sweep */ }
 }

@@ -6,6 +6,10 @@ import { sendGmailEmail, EmailAttachment } from '@/lib/google/gmail';
 import { sendOutlookEmail } from '@/lib/microsoft/outlook';
 import { noteItemAction } from '@/lib/entities/on-action';
 
+// W0.5 TIME BUDGET: after() calls noteItemAction (AI-bearing entity re-synthesis) per linked item —
+// the platform default kills it mid-work (CLAUDE.md maxDuration lesson).
+export const maxDuration = 300;
+
 function getAdminClient() {
   return createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

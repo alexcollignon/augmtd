@@ -8,13 +8,13 @@ import { createClient } from '@supabase/supabase-js';
 import { reapOrphanedRuns } from '@/lib/workflows/reap-orphans';
 import { nextRunFromTrigger } from '@/lib/workflows/schedule';
 import { runWorkflow } from '@/lib/workflows/run-workflow';
+import { hasBearer } from '@/lib/utils/bearer-auth';
 
 export const maxDuration = 800; // Vercel Pro + Fluid Compute (was 300; heavy briefing tasks ran ~150-300s, too close to the cap)
 
 export async function GET(request: NextRequest) {
   // Auth: Vercel Cron sends Bearer CRON_SECRET
-  const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!hasBearer(request, 'CRON_SECRET')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

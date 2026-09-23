@@ -8,6 +8,8 @@ interface MentionResult {
   id: string;
   label: string;
   subtitle?: string;
+  /** Coworkers only: the ROLE KEY (identity), so clients read role vocab from lib/workers/roles. */
+  role?: string | null;
 }
 
 export async function GET(request: NextRequest) {
@@ -30,7 +32,7 @@ export async function GET(request: NextRequest) {
       if (q) cq = cq.ilike('name', like);
       const { data } = await cq;
       for (const a of (data ?? []) as Array<{ id: string; name: string; worker_role: string | null }>) {
-        results.push({ type: 'coworker', id: a.id, label: a.name, subtitle: (a.worker_role ?? '').replace(/_/g, ' ') || 'coworker' });
+        results.push({ type: 'coworker', id: a.id, label: a.name, subtitle: (a.worker_role ?? '').replace(/_/g, ' ') || 'coworker', role: a.worker_role });
       }
     }
 

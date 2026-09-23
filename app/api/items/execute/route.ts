@@ -61,7 +61,26 @@ async function stampAmbientSent(
   which: 'prepared_invite' | 'prepared_forward', approved: Record<string, unknown>, compareKeys: string[],
 ): Promise<void> {
   try {
-    if (kind !== 'email' && kind !== 'awareness' && kind !== 'followup') return;
+    // W2.1 — A COMMITMENT'S POOLED INVITE IS STAMPED SPENT HERE (mirror of source_data's sent_at):
+    // THE ONE READER excludes `metadata.sent_at` rows, so the card, the chip and the machine all
+    // see the deed at once. Without this the pool row would read "invite prepared" forever.
+    if (kind === 'commitment' || kind === 'followup') {
+      if (which !== 'prepared_invite') return;
+      const { data: rows } = await supabase.from('item_deliverables').select('id, metadata, created_at')
+        .eq('user_id', userId).eq('kind', 'commitment').eq('entity_id', entityId)
+        .not('metadata->invite', 'is', null).order('created_at', { ascending: false }).limit(3);
+      const row = ((rows ?? []) as Array<{ id: string; metadata: Record<string, unknown> | null; created_at?: string | null }>).find((r) => !r.metadata?.sent_at);
+      if (!row) return;
+      const inv = (row.metadata?.invite ?? {}) as Record<string, unknown>;
+      await supabase.from('item_deliverables').update({ metadata: { ...(row.metadata ?? {}), sent_at: new Date().toISOString() } }).eq('id', row.id).eq('user_id', userId);
+      const edited = compareKeys.some((k) => JSON.stringify(inv[k] ?? '') !== JSON.stringify(approved[k] ?? ''));
+      await logPreparedOutcome(supabase, userId, {
+        outcome: edited ? 'edited' : 'accepted', artifact: 'invite', itemKind: 'commitment', itemId: entityId,
+        door: 'items_execute', senderClass: 'unknown', preparedAt: row.created_at ?? null,
+      });
+      return;
+    }
+    if (kind !== 'email' && kind !== 'awareness') return;
     const { data: it } = await supabase.from('inbox_items').select('source_data')
       .eq('id', entityId).eq('user_id', userId).maybeSingle();
     const sd = (it?.source_data ?? {}) as Record<string, unknown>;
@@ -75,6 +94,7 @@ async function stampAmbientSent(
       outcome: edited ? 'edited' : 'accepted',
       artifact: which === 'prepared_invite' ? 'invite' : 'forward',
       itemKind: 'inbox', itemId: entityId,
+      door: 'items_execute', source: sd, preparedAt: typeof art.generated_at === 'string' ? art.generated_at : null,
     });
   } catch { /* bookkeeping only */ }
 }

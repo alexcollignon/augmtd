@@ -20,6 +20,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkVerdict, JudgeInput } from './judge';
 import { clip } from '@/lib/room/turns';
+// ONE OPEN-STATUS CONSTANT (W2.2) — never a local list.
+import { isOpenCommitmentStatus } from '@/lib/core/statuses';
 
 export type VerdictConsequence = { resolved: boolean; stripped: string[] };
 
@@ -112,6 +114,10 @@ export async function applyVerdictConsequences(
         const { data: it } = await client.from('inbox_items').select('id, status, work_title, source_data')
           .eq('id', input.id).eq('user_id', userId).maybeSingle();
         if (it && it.status === 'pending') {
+          // THE OUTCOME LEDGER (W3.2): captured BEFORE the drafts strip — the judge found the work
+          // already answered (done elsewhere — it was real) or out of date (expired).
+          const { capturePending, logPendingOutcomes } = await import('@/lib/prepare/outcome');
+          const pendingPrep = await capturePending(client, userId, { kind: 'inbox', id: input.id });
           const sd = { ...((it.source_data ?? {}) as Record<string, unknown>) };
           delete sd.draft; delete sd.nudge_draft; delete sd.prepared_by; // resolved work carries no prepared drafts
           await client.from('inbox_items').update({
@@ -119,6 +125,10 @@ export async function applyVerdictConsequences(
             source_data: { ...sd, resolved_at: now, resolution_reason: expired ? 'no_longer_relevant' : 'already_handled' },
           }).eq('id', input.id).eq('user_id', userId);
           out.resolved = true;
+          await logPendingOutcomes(client, userId, pendingPrep, {
+            base: expired ? 'expired' : 'done_elsewhere', itemKind: 'inbox', itemId: input.id,
+            door: 'judge_resolution', source: (it.source_data ?? null) as Record<string, unknown> | null,
+          }).catch(() => 0);
           // Law 3 (experience spec): the resolved item's asks settle with it.
           import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'inbox_item', input.id)).catch(() => {});
           await narrateAndLog(client, userId, input, String(it.work_title ?? ''), verdict, expired);
@@ -126,12 +136,17 @@ export async function applyVerdictConsequences(
       } else {
         const { data: c } = await client.from('commitments').select('id, status, description')
           .eq('id', input.id).eq('user_id', userId).maybeSingle();
-        if (c && ['open', 'pending', 'in_progress'].includes(String(c.status))) {
+        if (c && isOpenCommitmentStatus(String(c.status))) {
+          const { capturePending, logPendingOutcomes } = await import('@/lib/prepare/outcome');
+          const pendingPrep = await capturePending(client, userId, { kind: 'commitment', id: input.id });
           await client.from('commitments').update({
             status: expired ? 'dismissed' : 'done',
             resolved_at: now, resolved_reason: expired ? 'no_longer_relevant' : 'already_handled',
           }).eq('id', input.id).eq('user_id', userId);
           out.resolved = true;
+          await logPendingOutcomes(client, userId, pendingPrep, {
+            base: expired ? 'expired' : 'done_elsewhere', itemKind: 'commitment', itemId: input.id, door: 'judge_resolution',
+          }).catch(() => 0);
           import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'commitment', input.id)).catch(() => {});
           await narrateAndLog(client, userId, input, String(c.description ?? ''), verdict, expired);
         }
@@ -261,6 +276,17 @@ async function narrateAndLog(
       metadata: { via: 'verdict', resolution: verdict.resolution, reason: clip(verdict.reason, 300) },
     });
   } catch { /* non-fatal */ }
+  await narrateResolution(client, userId, input, title, expired);
+}
+
+/**
+ * THE ONE RESOLUTION NARRATION — the drain's coalesced line + the item's own narrations archived.
+ * Exported so every machine settle (the verdict here, EVIDENCE SETTLES in lib/work/evidence-settle)
+ * speaks through the same keyed turn: one room, one day, one line — never a second narrator.
+ */
+export async function narrateResolution(
+  client: SupabaseClient, userId: string, input: JudgeInput, title: string, expired: boolean,
+): Promise<void> {
   try {
     const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
     const roomKey = await roomKeyForItem(client, userId, input.kind === 'inbox' ? 'inbox' : 'commitment', input.id);

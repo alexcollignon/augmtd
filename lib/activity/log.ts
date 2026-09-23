@@ -23,6 +23,8 @@ export type ActivityType =
   | 'initiative_tracked'
   | 'project_status'
   | 'project_ungrouped'
+  /** W2.4 THE MEMORY LADDER: a durable learned fact filed at its scope (provenance of every memory write). */
+  | 'memory_filed'
   | 'restored';
 
 export interface LogActivityInput {

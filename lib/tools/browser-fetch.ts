@@ -5,25 +5,34 @@
 //
 // Optional: set intercept_url to capture an AJAX response instead of page HTML.
 
+// THE SAFE FETCH (W0.3): the initial URL AND every request the page makes go through the same
+// scheme + IP-literal + DNS law as fetch_url/rss_feed. `--no-sandbox` below is a container
+// decision (serverless Chromium runs without a user namespace), not an egress control.
+import { checkUrl } from '@/lib/utils/safe-fetch';
+
 const MAX_CONTENT_CHARS = 6000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-const PRIVATE_HOST_RE = /^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|metadata\.google\.internal|100\.100\.100\.100|\[::1\]|::1$)/i;
+/** Non-network schemes a page may use freely; everything else must be http(s) and pass checkUrl. */
+const LOCAL_SCHEMES = new Set(['data:', 'blob:', 'about:']);
 
-function isValidBrowserUrl(raw: string): boolean {
-  try {
-    const u = new URL(raw);
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
-    if (PRIVATE_HOST_RE.test(u.hostname)) return false;
-    return true;
-  } catch {
-    return false;
-  }
+function makeHostGuard() {
+  const cache = new Map<string, Promise<boolean>>();
+  return (raw: string): Promise<boolean> => {
+    let u: URL;
+    try { u = new URL(raw); } catch { return Promise.resolve(false); }
+    if (LOCAL_SCHEMES.has(u.protocol)) return Promise.resolve(true);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return Promise.resolve(false);
+    const key = `${u.protocol}//${u.host}`;
+    let hit = cache.get(key);
+    if (!hit) { hit = checkUrl(raw).then(v => v.ok); cache.set(key, hit); }
+    return hit;
+  };
 }
 
 export async function executeBrowserFetch(config: Record<string, unknown>): Promise<string> {
   const url = typeof config.url === 'string' ? config.url.trim() : null;
-  if (!url || !isValidBrowserUrl(url)) return '[browser_fetch] Invalid or disallowed URL.';
+  if (!url || !(await checkUrl(url)).ok) return '[browser_fetch] Invalid or disallowed URL.';
 
   const waitFor      = typeof config.wait_for      === 'string' ? config.wait_for      : null;
   const extract      = typeof config.extract       === 'string' ? config.extract       : 'body';
@@ -75,6 +84,26 @@ export async function executeBrowserFetch(config: Record<string, unknown>): Prom
 
     const page = await ctx.newPage();
 
+    // THE EGRESS LAW IN THE BROWSER: every first-hop request (navigation, subresource, XHR) is
+    // resolved + checked before it leaves; a disallowed host is aborted. Playwright does NOT route
+    // redirect hops, so a redirect INTO a disallowed host is caught on the request event and the
+    // whole fetch refuses to return content (the model never reads what it answered).
+    const allowed = makeHostGuard();
+    let egressViolation: string | null = null;
+    await ctx.route('**/*', async route => {
+      const reqUrl = route.request().url();
+      if (await allowed(reqUrl)) return route.continue();
+      if (route.request().isNavigationRequest()) egressViolation = reqUrl;
+      return route.abort('blockedbyclient');
+    });
+    page.on('request', req => {
+      if (!req.redirectedFrom()) return;
+      allowed(req.url()).then(ok => { if (!ok) egressViolation = req.url(); }).catch(() => { egressViolation = req.url(); });
+    });
+    const refusal = () => egressViolation
+      ? `[browser_fetch] Refused: the page tried to reach a disallowed address (${new URL(egressViolation).host}).`
+      : null;
+
     // Intercept mode: capture matching AJAX response before page content is extracted
     if (interceptUrl) {
       // Use a promise that resolves when the target response arrives
@@ -82,6 +111,7 @@ export async function executeBrowserFetch(config: Record<string, unknown>): Prom
         new Promise<string>(resolve => {
           page.on('response', async res => {
             if (!res.url().includes(interceptUrl) || res.status() !== 200) return;
+            if (!(await allowed(res.url()))) return;
             const text = await res.text().catch(() => '');
             const trimmed = text.trim();
             if (trimmed.length > 0 && !trimmed.startsWith('<')) {
@@ -94,6 +124,7 @@ export async function executeBrowserFetch(config: Record<string, unknown>): Prom
         new Promise<null>(resolve => setTimeout(() => resolve(null), timeout)),
       ]);
 
+      if (refusal()) return refusal()!;
       if (!captured) return `[browser_fetch] Page loaded but no response matched "${interceptUrl}".`;
 
       return formatIntercepted(url, captured);
@@ -112,6 +143,7 @@ export async function executeBrowserFetch(config: Record<string, unknown>): Prom
       return (el as HTMLElement).innerText ?? el.textContent ?? '';
     }, extract);
 
+    if (refusal()) return refusal()!;
     if (!text?.trim()) return `[browser_fetch] Page loaded but no content at selector "${extract}".`;
 
     return `## ${url}\n\n${text.replace(/\s+/g, ' ').trim().slice(0, MAX_CONTENT_CHARS)}`;

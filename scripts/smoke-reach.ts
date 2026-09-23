@@ -140,7 +140,17 @@ console.log('\nR4 · the pass consumes the nominator — one ordering, not two')
   ok('the pass has NO second comparator', !/const byPriority\s*=/.test(p));
   ok('the pass exports the shared candidate derivation', /export function judgmentCandidates/.test(p));
   ok('the pass exports the judgment-age reader', /export async function readJudgmentAges/.test(p));
-  ok('the judgment ages are read PAGED (no 1000-row cap)', /fetchAllRows[\s\S]{0,400}kind', 'judgment'/.test(p));
+  // ⟲ RE-POINTED (stabilization W2.6 TYPED STORES, Sep 23): the ages read moved from a raw
+  // `fetchAllRows(… .eq('kind', 'judgment') …)` to THE ONE item_plans door. The law holds at its new
+  // home: readJudgmentAges calls readPlans for 'judgment' with NO `limit` option, and readPlans with no
+  // limit pages through fetchAllRows (asserted on the door itself, so the paging can't silently leave).
+  {
+    const store = src('lib/store/item-plans.ts');
+    const agesFn = p.slice(p.indexOf('export async function readJudgmentAges'), p.indexOf('export function toNominatorItem'));
+    ok('the judgment ages are read PAGED (no 1000-row cap)',
+      /readPlans\(admin, userId, 'judgment'/.test(agesFn) && !/limit\s*:/.test(agesFn)
+      && /if \(opts\.limit != null\)[\s\S]{0,300}return fetchAllRows<RawRow>\(\(from, to\) => build\(keys\)\.range\(from, to\)\);/.test(store));
+  }
 }
 
 // ── R5 · THE GUARANTEED BUDGET (its own cron, honest accounting) ────────────────────────────────
@@ -558,7 +568,11 @@ console.log('\nR8 · LAW 4 — one conversation, one obligation');
   ok('   …and carries the law\'s version', pairKey('a', 'b').includes(String(CONVERSATION_IDENTITY_VERSION)));
   ok('the version moved when the disposal changed', CONVERSATION_IDENTITY_VERSION >= 2);
   ok('the verdict cache is version-gated on read', /t\.v === CONVERSATION_IDENTITY_VERSION/.test(ci));
-  ok('   …and lives in the house idiom (item_plans)', /kind: 'conversation_pair'/.test(ci));
+  // ⟲ RE-POINTED (W2.6 TYPED STORES): the raw `kind: 'conversation_pair'` literal became the typed
+  // door's readPlan/upsertPlan(…, 'conversation_pair', …) — still item_plans, now registry-typed.
+  ok('   …and lives in the house idiom (item_plans)',
+    /readPlan\(client, userId, 'conversation_pair', key\)/.test(ci) && /upsertPlan\(client, userId, 'conversation_pair', key,/.test(ci)
+    && /conversation_pair:\s+spec\(/.test(src('lib/store/item-plans.ts')));
 
   // R8d — THE ASYMMETRY IN CODE: structural cascades, everything else nominates.
   ok('the ONLY direct-settle path demands a STRUCTURAL bridge fact',
@@ -611,9 +625,10 @@ console.log('\nR8 · LAW 4 — one conversation, one obligation');
     !/key: 'rfc_bridge'/.test(fs2) && /key: 'reasoned'/.test(fs2));
   // THE CACHE PREVENTS RE-JUDGMENT — and costs the budget nothing, which is what makes a widened
   // gate affordable to re-run over a whole account.
+  // ⟲ RE-POINTED (W2.6): the cache read is now the typed door's readPlan — same ordering law.
   ok('the pair cache is consulted BEFORE any spend',
-    ci.indexOf(".eq('kind', 'conversation_pair')") > 0
-    && ci.indexOf(".eq('kind', 'conversation_pair')") < ci.indexOf("const { aiCall } = await import"));
+    ci.indexOf("readPlan(client, userId, 'conversation_pair', key)") > 0
+    && ci.indexOf("readPlan(client, userId, 'conversation_pair', key)") < ci.indexOf("const { aiCall } = await import"));
   ok('   …a cache hit costs the reasoned budget nothing', /if \(!v\.cached\) spent\+\+;/.test(ci) && /cached: true/.test(ci));
   ok('   …and an exhausted budget leaves a pair UNDECIDED, never guessed',
     /if \(opts\?\.cacheOnly\) return \{ same: false[^\n]*'reasoned budget exhausted'/.test(ci)
@@ -627,7 +642,9 @@ console.log('\nR8 · LAW 4 — one conversation, one obligation');
   ok('an UNREADABLE completion is not a "no"',
     /if \(!res\.json\) return \{ same: false[^\n]*'same-conversation verdict unreadable', cached: false \};/.test(ci));
   ok('   …and, like an outage, is never cached (it returns before the upsert)',
-    ci.indexOf('verdict unreadable') > 0 && ci.indexOf('verdict unreadable') < ci.indexOf("kind: 'conversation_pair', entity_id: key"));
+    // ⟲ RE-POINTED (W2.6): the cache write is now upsertPlan(…, 'conversation_pair', …) — same ordering law.
+    ci.indexOf('verdict unreadable') > 0 && ci.indexOf("upsertPlan(client, userId, 'conversation_pair', key,") > 0
+    && ci.indexOf('verdict unreadable') < ci.indexOf("upsertPlan(client, userId, 'conversation_pair', key,"));
   ok('the budget can carry a verdict that carries a quote', /maxTokens: 700,/.test(ci));
   ok('   …and the span the model is asked for fits what the verifier will accept',
     /at most 20 words/.test(ci) && /a longer one cannot be \` \+\n\s*\`verified and will be thrown away/.test(ci));
@@ -691,7 +708,9 @@ console.log('\nR8 · LAW 4 — one conversation, one obligation');
   ok('the judge assembles the sibling fact', /siblingSettledFact\(siblingNom\)/.test(j));
   ok('   …beside the anchor fact, from the ONE module', /from '@\/lib\/inbox\/conversation-identity'/.test(j));
   ok('   …and the fact RIDES THE SIG (a settle after today\'s verdict must re-judge)',
-    /\$\{siblingNom \? `:sib\$\{siblingNom\.at\}` : ''\}/.test(j));
+    // ⟲ RE-POINTED (W2.5 DEPENDENCY-KEYED CACHES): the judge sig is built with sigOf({version, deps}) —
+    // the sibling stamp is a named dep, no longer a template-string splice.
+    /sib: siblingNom \? `:sib\$\{siblingNom\.at\}` : ''/.test(j) && /sigOf\(\{ version: JUDGE_VERSION/.test(j));
 }
 
 // ── R9 · LAW 7 — THE OUTCOME LOOP ───────────────────────────────────────────────────────────────
@@ -762,7 +781,7 @@ console.log('\nR9 · LAW 7 — the outcome loop: the user\'s own verdicts become
   ok('the judge reads the ONE aggregation module', /from '@\/lib\/prepare\/outcome-facts'/.test(j));
   ok('   …assembles the fact beside the anchor + sibling facts', /outcomeHistoryFact\(outcomeFacts, \{ klass: outcomeKlass \}\)/.test(j));
   ok('   …derives the class from the EXISTING sender predicate', /isAutomatedSenderStrong\(whoEmail, who, title\)/.test(j));
-  ok('   …and the facts RIDE THE SIG (a shifted history re-judges today)', /\$\{outcomeSigPart\(outcomeFacts\)\}/.test(j));
+  ok('   …and the facts RIDE THE SIG (a shifted history re-judges today)', /outcome: outcomeSigPart\(outcomeFacts\)/.test(j)); // ⟲ RE-POINTED (W2.5): a named sigOf dep
   ok('   …a facts addition, NOT a law change (no JUDGE_VERSION bump in this wave)',
     /Facts ride the day-keyed sig|needs no JUDGE_VERSION bump/.test(j));
   ok('   …and an unreadable ledger never breaks a judgment', /readOutcomeFacts\(client, userId, todayStr\)\.catch\(\(\) => null\)/.test(j));
@@ -825,7 +844,9 @@ console.log('\nR10 · the receipt grammar — one clock, clean silence, deltas n
   ok('the pass writes no turn on the silent path',
     !!silentBlock && /continue;/.test(silentBlock) && !/writeRoomTurn/.test(silentBlock));
   ok('   …and still records the fire (silence is not re-spent every run)',
-    /silent: true[\s\S]{0,200}?\}\,\s*\}\);/.test(a));
+    // RE-POINTED (Sep 22): the fire record became an UPSERT (W2.5 — a version-stale record is
+    // re-authored in place), so the write closes with its onConflict clause. Same law: it still stamps.
+    /silent: true[\s\S]{0,200}?\}\,\s*\}, \{ onConflict: 'user_id,kind,entity_id' \}\);/.test(a));
   // THE PROCESS PREAMBLE IS GONE — it explained the machinery, on all 30 live turns.
   const aCode = a.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*(\/\/|\*).*$/gm, '');
   ok('the fixed because-preamble is deleted (the module may discuss it; it must not SPEAK it)',

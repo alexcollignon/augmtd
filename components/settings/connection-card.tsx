@@ -6,6 +6,7 @@ import { TrashIcon } from '@heroicons/react/24/outline';
 import { createClient } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import FormatToolbar from '@/components/inbox/format-toolbar';
+import { sanitizeSignatureHtml } from '@/lib/utils/sanitize-html';
 import { Button, IconButton, Badge } from '@/components/ui';
 
 const PROVIDER_CONFIG = {
@@ -89,7 +90,8 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
     fetch(`/api/user/signature?connectionId=${connection.id}`)
       .then(r => r.json())
       .then(({ signature }) => {
-        if (editorRef.current) editorRef.current.innerHTML = signature ?? '';
+        // RENDER SAFETY (Sep 22): a stored signature (possibly pasted HTML) passes the signature profile.
+        if (editorRef.current) editorRef.current.innerHTML = sanitizeSignatureHtml(signature ?? '');
         setSigLoaded(true);
       })
       .catch(() => setSigLoaded(true));

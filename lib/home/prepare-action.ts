@@ -7,6 +7,8 @@ import { dateStatedInText, timesInText } from '@/lib/utils/user-time';
 // The slot shape lives in the CLIENT-SAFE mapper (lib/prepare/invite-card.ts) so the card and the
 // preparer cannot drift; a TYPE-only import keeps this server module out of the client graph.
 import type { InviteSlot } from '@/lib/prepare/invite-card';
+import type { ProposedFrom } from '@/lib/prepare/truth';
+import { looksLikeEmail, allEmailsLoose } from '@/lib/core/email';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // PREPARE ACTION — stage 3a of the Identified-tasks execution plan. Turn a [System] step into a
@@ -38,6 +40,10 @@ export interface PreparedCalendarInvite {
    *  grounded PROPOSAL within the stated constraints (working hours, timezones), not the item's own
    *  words. The card says so; the approve gate protects. Absent/false = the item stated the time. */
   proposed?: boolean;
+  /** TIME TRUTH (W5a): WHO vouches for the proposed slot — `stated_window` (code-verified inside the
+   *  window the item states) or `calendar` (the user's own free/busy, no window stated). The card's
+   *  annotation renders from THIS, never from `proposed` alone; absent = "our proposal", no claim. */
+  proposedFrom?: ProposedFrom;
   /** THE CARD CONTRACT's must-refuse, as OUTPUT (Sep 8): the OTHER slots the item itself stated —
    *  the in-card selector's alternatives. The model may only nominate them; every one is
    *  CODE-VERIFIED against the item's own text (`statedSlot`) before it survives, so a slot nobody
@@ -148,8 +154,6 @@ function parseObject(raw: string): Record<string, unknown> | null {
   if (start === -1 || end === -1 || end <= start) return null;
   try { return JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>; } catch { return null; }
 }
-
-const EMAIL_RE = /[^\s<>"]+@[^\s<>"]+\.[^\s<>"]+/;
 
 // Add 30 minutes to an ISO datetime (the default meeting duration when only a start is grounded).
 function plus30(iso: string): string {
@@ -273,7 +277,7 @@ export async function groundInviteFromText(
     // Attendees: intersect the model's picks with the KNOWN emails (hard guard against invention).
     const known = new Set(knownEmails.map((e) => e.toLowerCase()));
     const picked = Array.isArray(obj.attendees)
-      ? (obj.attendees as unknown[]).map((a) => String(a).trim()).filter((e) => EMAIL_RE.test(e) && known.has(e.toLowerCase()))
+      ? (obj.attendees as unknown[]).map((a) => String(a).trim()).filter((e) => looksLikeEmail(e) && known.has(e.toLowerCase()))
       : [];
     // THE NAME DOOR (the chat lane): names the pass NOMINATED are resolved by CODE against the
     // user's own people registry — ambiguity refuses (the card then asks). The model never
@@ -283,7 +287,7 @@ export async function groundInviteFromText(
       const names = Array.isArray(obj.attendee_names)
         ? (obj.attendee_names as unknown[]).map((n) => String(n).trim()).filter((n) => n && !n.includes('@')).slice(0, 5)
         : [];
-      if (names.length) resolved = (await g.resolveNames(names)).filter((e) => EMAIL_RE.test(e));
+      if (names.length) resolved = (await g.resolveNames(names)).filter((e) => looksLikeEmail(e));
     }
     // If the model returned none but we DO have known participants, seed them (the user can trim).
     const attendees = [...new Set([...(picked.length ? picked : knownEmails), ...resolved])].slice(0, 10);
@@ -341,7 +345,7 @@ export async function prepareCalendarInvite(
     sourceText: ctx.text || '',
     askText: stepText || '',
     // The real participant emails evidenced in the item — the ONLY attendees the invite may use.
-    knownEmails: ctx.participants.map((p) => (p.email || '').trim()).filter((e) => EMAIL_RE.test(e)),
+    knownEmails: ctx.participants.map((p) => (p.email || '').trim()).filter((e) => looksLikeEmail(e)),
     // Anchor for relative-time resolution: the item's own date if we have one, else today.
     anchorISO: ctx.itemDateISO && !isNaN(new Date(ctx.itemDateISO).getTime())
       ? new Date(ctx.itemDateISO).toISOString()
@@ -391,9 +395,9 @@ export async function prepareForward(
     // B5 (verb-lane sweep): the greedy tail swallowed sentence punctuation ("…to sam@acme.com."
     // yielded the address WITH the period plus its clean duplicate) — trim trailing punctuation
     // BEFORE the dedupe so both variants collapse to one valid address.
-    const to = (stepText || '').match(new RegExp(EMAIL_RE.source, 'g'))
-      ?.map((s) => s.trim().replace(/[.,;:!?)\]]+$/, ''))
-      .filter((e) => EMAIL_RE.test(e)) ?? [];
+    const to = allEmailsLoose(stepText || '')
+      .map((s) => s.trim().replace(/[.,;:!?)\]]+$/, ''))
+      .filter((e) => looksLikeEmail(e));
     return { type: 'forward', to: [...new Set(to)].slice(0, 10), subject: `Fwd: ${subject}`.trim(), forwardedBody, note: '' };
   } catch (e) {
     console.error('[prepare-action] prepareForward failed:', e);
@@ -410,20 +414,32 @@ export async function prepareForward(
 // the item (`source_data.prepared_invite` / `prepared_forward`); the card's prepare fetch serves the
 // STORED artifact first so ambient work arrives instantly instead of regenerating on open. Fresh =
 // generated within 24h and not already sent; stale/absent falls through to the live builders below.
-const AMBIENT_FRESH_MS = 24 * 3_600_000;
-
+// W2.1 ONE READER PER OBJECT: "fresh" is THE ONE READER's live predicate (unsent · not superseded
+// by a ground move · not past its own time) — the old 24h clock was a second definition of fresh.
+// Commitments are COVERED now: their pooled invite (lib/prepare/pass.ts writes it to
+// item_deliverables with `metadata.invite`) serves with its STORED proposed time instead of a
+// fresh live grounding — 3 pending commitment invites were unreachable by this door.
 async function readAmbientArtifact(
   supabase: SupabaseClient, userId: string, kind: ItemPlanKind, entityId: string,
   which: 'prepared_invite' | 'prepared_forward',
 ): Promise<Record<string, unknown> | null> {
-  if (kind !== 'email' && kind !== 'awareness' && kind !== 'followup') return null;
+  if (kind === 'meeting') return null;
   try {
+    const { preparedState } = await import('@/lib/prepare/read');
+    // `followup` is the commitment lane's chase door (its id is a commitment id — see FollowupDetail).
+    const itemKind = kind === 'commitment' || kind === 'followup' ? 'commitment' as const : 'inbox_item' as const;
+    const st = await preparedState(supabase, userId, { kind: itemKind, id: entityId });
+    const wantKind = which === 'prepared_invite' ? 'invite' : 'forward';
+    const art = st.live.find((a) => a.kind === wantKind);
+    if (!art) return null;
+    if (art.payload?.store === 'pool') return art.kind === 'invite' && art.invite ? (art.invite as Record<string, unknown>) : null;
+    // A source_data artifact: the full stored payload (to/subject/note for a forward, every invite
+    // field for an invite) lives on the row — one read, gated by the reader's liveness above.
     const { data: it } = await supabase.from('inbox_items').select('source_data')
       .eq('id', entityId).eq('user_id', userId).maybeSingle();
-    const art = ((it?.source_data ?? {}) as Record<string, unknown>)[which] as Record<string, unknown> | undefined;
-    if (!art || art.sent_at) return null;
-    if (Date.now() - Date.parse(String(art.generated_at || '0')) > AMBIENT_FRESH_MS) return null;
-    return art;
+    const stored = ((it?.source_data ?? {}) as Record<string, unknown>)[which] as Record<string, unknown> | undefined;
+    if (!stored || stored.sent_at) return null;
+    return stored;
   } catch { return null; }
 }
 
@@ -466,6 +482,7 @@ export async function prepareAction(
       description: typeof stored.description === 'string' ? stored.description : '',
       timezone: typeof stored.timezone === 'string' && stored.timezone ? stored.timezone : 'UTC',
       proposed: stored.proposed === true,
+      ...(stored.proposedFrom === 'stated_window' || stored.proposedFrom === 'calendar' ? { proposedFrom: stored.proposedFrom as ProposedFrom } : {}),
       // The pass stored its verified alternatives with the artifact — the selector survives the
       // round-trip (a stored invite that lost its options would silently become a one-slot card).
       ...(Array.isArray(stored.alternatives) && (stored.alternatives as unknown[]).length
@@ -475,5 +492,22 @@ export async function prepareAction(
   }
   const ctx = await buildItemContext(supabase, userId, input.kind, input.entityId);
   if (!ctx) return null;
-  return prepareCalendarInvite(supabase, userId, input.kind, ctx, input.task.text || '');
+  const invite = await prepareCalendarInvite(supabase, userId, input.kind, ctx, input.task.text || '');
+  // W5c · THE ON-DEMAND BUILD HONORS THE STATED WINDOW (the pass's lane runs the same function): a
+  // slot behind the clock or outside the window the item's own words state is dropped — the card
+  // then asks for a time instead of proposing a day nobody offered. The commitment's own words are
+  // the narrow text; the grounding is the wide one.
+  try {
+    const { confineInviteToStatedWindow } = await import('@/lib/prepare/truth');
+    let narrow: string | null = null;
+    let anchor: string | null = ctx.itemDateISO ?? null;
+    if (input.kind === 'commitment' || input.kind === 'followup') {
+      const { data: c } = await supabase.from('commitments').select('description, created_at')
+        .eq('id', input.entityId).eq('user_id', userId).maybeSingle();
+      narrow = (c?.description as string | undefined) ?? null;
+      anchor = (c?.created_at as string | undefined) ?? anchor;
+    }
+    confineInviteToStatedWindow(invite, { narrow, wide: ctx.text }, anchor);
+  } catch { /* the confinement is a protection; a failed read leaves the card's own checks */ }
+  return invite;
 }

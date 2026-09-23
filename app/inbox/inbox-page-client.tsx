@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { withoutMirrors, isCommitmentMirror } from '@/lib/inbox/commitment-mirrors';
 import { useSearchParams, useRouter } from 'next/navigation';
 import EmailListChronological from '@/components/inbox/email-list-chronological';
 import { type SentEmail } from '@/components/inbox/sent-email-list';
@@ -9,6 +10,7 @@ import FolderSidebar, { type ConnectionFolders, type SelectedFolder } from '@/co
 import FolderEmailList from '@/components/inbox/folder-email-list';
 import EmailSearchResults, { type EmailSearchResult } from '@/components/inbox/email-search-results';
 import WorkDetailInline from '@/components/inbox/work-detail-inline';
+import { IframeEmailBody } from '@/components/inbox/thread-messages';
 import type { FolderEmailSummary, MessageDetail } from '@/lib/google/gmail';
 import AiChatPanel from '@/components/shared/ai-chat-panel';
 import WorkflowPanel from '@/components/inbox/workflow-panel';
@@ -79,8 +81,9 @@ function SentEmailDetail({ email }: { email: SentEmail }) {
         )}
       </div>
       <div className="flex-1 overflow-y-auto px-6 py-4 text-[13px] text-neutral-800 leading-relaxed">
+        {/* RENDER SAFETY (Sep 22): inbound HTML renders only in the sandboxed email frame. */}
         {email.html_body
-          ? <div dangerouslySetInnerHTML={{ __html: email.html_body }} />
+          ? <IframeEmailBody html={email.html_body} plain={email.body ?? null} />
           : <pre className="whitespace-pre-wrap font-sans">{email.body ?? ''}</pre>
         }
       </div>
@@ -147,8 +150,9 @@ function FolderEmailDetail({ email, connectionId, folderSections, onMoved }: { e
         </div>
       </div>
       <div className="flex-1 overflow-y-auto px-6 py-4 text-[13px] text-neutral-800 leading-relaxed">
+        {/* RENDER SAFETY (Sep 22): inbound HTML renders only in the sandboxed email frame. */}
         {email.htmlBody
-          ? <div dangerouslySetInnerHTML={{ __html: email.htmlBody }} />
+          ? <IframeEmailBody html={email.htmlBody} plain={email.body ?? null} />
           : <pre className="whitespace-pre-wrap font-sans">{email.body ?? ''}</pre>
         }
       </div>
@@ -573,7 +577,7 @@ export function InboxPageClient({
         }, (payload) => {
           if (payload.eventType === 'INSERT') {
             const item = payload.new as InboxItem;
-            if (item.status === 'pending') {
+            if (item.status === 'pending' && !isCommitmentMirror(item as { source?: string | null })) {
               setInboxItems(prev => prev.some(i => i.id === item.id) ? prev : [item, ...prev]);
               setSelectedItem(prev => prev ?? item);
             }
@@ -672,9 +676,9 @@ export function InboxPageClient({
 
         // During sync: poll inbox_items every 2s as fallback for unreliable Realtime bulk delivery
         if (isCurrentlySyncing) {
-          const { data: syncItems } = await supabase
+          const { data: syncItems } = await withoutMirrors(supabase
             .from('inbox_items')
-            .select('*')
+            .select('*'))
             .eq('user_id', user.id)
             .eq('status', 'pending')
             .order('created_at', { ascending: false });
@@ -696,9 +700,9 @@ export function InboxPageClient({
 
         if (wasSyncing && !isCurrentlySyncing) {
           // Full refetch as catch-all for items that arrived before Realtime was subscribed
-          const { data: freshItems } = await supabase
+          const { data: freshItems } = await withoutMirrors(supabase
             .from('inbox_items')
-            .select('*')
+            .select('*'))
             .eq('user_id', user.id)
             .eq('status', 'pending')
             .order('created_at', { ascending: false });

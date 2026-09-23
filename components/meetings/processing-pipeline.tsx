@@ -18,7 +18,6 @@ function getActiveStep(
 
 interface ProcessingPipelineProps {
   source: 'bot' | 'recording' | 'upload' | 'text';
-  attendeeBotState?: string | null;
   botState: string | null;
   processed: boolean;
 }

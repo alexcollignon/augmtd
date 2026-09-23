@@ -21,6 +21,11 @@ import { logAIUsage } from '@/lib/ai/log-usage';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import type { BriefContext } from './brief-context';
 
+/** The Home brief synthesis's prompt/law version — the version slot of the `home_brief.sig` (built with
+ *  sigOf in app/api/home/brief/route.ts). BUMP on any change to the synthesis prompt or its output
+ *  shape so every cached brief re-synthesizes (W2.6 — the sig used to carry no version at all). */
+export const SYNTH_BRIEF_VERSION = 1;
+
 // ── The structured candidates the route feeds in (already deterministically computed) ──
 export interface MustRespondCandidate {
   itemId: string;

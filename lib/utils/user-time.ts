@@ -123,6 +123,8 @@ export function dateStatedInText(text: string, iso: string): boolean {
     `${String(mon).padStart(2, '0')}/${String(day).padStart(2, '0')}`,
     `${day}.${mon}.`, `${String(day).padStart(2, '0')}.${String(mon).padStart(2, '0')}.`, // DE: 11.09.
   ];
+  // "Sept" — the EN abbreviation mail writes that Intl's "Sep" never renders (additive, W3.4).
+  if (mon === 9) candidates.push(`sept ${day}`, `sept. ${day}`, `${day} sept`);
   for (const loc of DATE_LOCALES) {
     let monthLong: string, monthShort: string, weekday: string;
     try {

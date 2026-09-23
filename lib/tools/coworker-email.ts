@@ -8,6 +8,7 @@ import { randomUUID } from 'crypto';
 import { coworkerEmailForRole, EMAIL_LOCAL_BY_ROLE } from '@/lib/integrations/registry';
 import { isToolEnabledForAgent } from '@/lib/integrations/connection';
 import { ROLE_LABELS } from '@/lib/workers/roles';
+import { isEmail } from '@/lib/core/email';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Admin = any;
@@ -15,7 +16,6 @@ type Admin = any;
 // ONE label map (lib/workers/roles.ts) — a private copy is how a role rename half-lands.
 const DAILY_CAP = Number(process.env.COWORKER_EMAIL_DAILY_CAP || 50);
 const MAX_RECIPIENTS = 20;
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export interface CoworkerEmailInput { to: string[]; cc?: string[]; subject: string; body: string; attachments?: { filename: string; content: Buffer }[] }
 
@@ -76,7 +76,7 @@ export async function isEmailEnabledForAgent(admin: Admin, agentId: string | und
 }
 
 function clean(list: string[] | undefined): string[] {
-  return [...new Set((list ?? []).map(s => String(s).trim().toLowerCase()).filter(e => EMAIL_RE.test(e)))].slice(0, MAX_RECIPIENTS);
+  return [...new Set((list ?? []).map(s => String(s).trim().toLowerCase()).filter(e => isEmail(e)))].slice(0, MAX_RECIPIENTS);
 }
 
 function escHtml(s: string): string { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }

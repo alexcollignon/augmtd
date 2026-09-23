@@ -31,6 +31,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { HandoffStep, WorkflowStep } from './types';
 import { parkedGateOf, type RunLike } from './process-state';
+// ONE OPEN-STATUS CONSTANT (W2.2) — never a local list.
+import { isOpenCommitmentStatus } from '@/lib/core/statuses';
 
 /** How much of the gated object we serve. The surface scrolls it; beyond this it is marked
  *  truncated and cut at a whitespace boundary — never a mid-word lie. */
@@ -152,7 +154,7 @@ export async function handoffContextFor(
     const gate = run.status === 'awaiting_approval'
       ? parkedGateOf({ step_outputs: outs as RunLike['step_outputs'] }, steps)
       : null;
-    const askOpen = ['open', 'pending', 'in_progress'].includes(String(commitment.status ?? 'open'));
+    const askOpen = isOpenCommitmentStatus(String(commitment.status ?? 'open'));
     // PARKED = the run still awaits THIS ask. Every HUMAN gate counts (the wave's unbound approval
     // and the input station raise the same source='handoff' row and are equally live); a ⧉ station
     // never does — nobody holds a machine's wait.

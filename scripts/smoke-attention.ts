@@ -1037,9 +1037,10 @@ async function anchorGates() {
     ok('   …and the brief itself drains NOTHING (no lane is reachable from the request path)',
       !/runCatchUp|runGraduationLane|runJudgmentSweep/.test(brief));
     ok('the internal route reuses the kick\'s bearer idiom (no new secret, no new pattern)',
-      /const secret = process\.env\.AGENTOS_SECRET;/.test(route)
-      && /!== `Bearer \$\{secret\}`/.test(route)
-      && /const secret = process\.env\.AGENTOS_SECRET;/.test(kick));
+      // ⟲ RE-POINTED (Sep 22 — stabilization W0.3a SECRETS FAIL CLOSED): both doors now share the ONE
+      // fail-closed check (an unset secret never authenticates) — still the same secret, same idiom.
+      /hasBearer\(req, 'AGENTOS_SECRET'\)/.test(route)
+      && /hasBearer\(req, 'AGENTOS_SECRET'\)/.test(kick));
     ok('   …with the kick\'s own window', /export const maxDuration = 300;/.test(route));
     ok('the route does the work in after() and answers 202 immediately',
       /after\(async \(\) => \{[\s\S]{0,400}runCatchUp\(/.test(route)
@@ -1525,7 +1526,8 @@ function walkGates() {
     ok('   …capped: this is the opening of a stack, not a second account of one',
       /const WARM_DECK_MAX = 12;/.test(home) && /\.slice\(0, WARM_DECK_MAX\)/.test(home));
     ok('   …and the ledger EXTENDS that stack in place (append-only, nothing re-ordered)',
-      /const waitingRows = deckMode \? mergeQueue\(queueRef\.current, incomingRows\) : incomingRows;/.test(held));
+      /const waitingRows = deckMode \? mergeQueue\(queueRef\.current, incomingRows\) : listRows;/.test(held));
+    // (W5b: the LIST reads `listRows` — the ledger alone once landed; the DECK still extends its stack.)
     ok('the deck\'s day is SERVED either way — the ledger\'s, else the brief\'s',
       /const deckDay = ledger\?\.today \?\? servedDay \?\? null;/.test(held)
       && /today: todayStr/.test(brief)
@@ -1560,8 +1562,12 @@ function walkGates() {
     //  own tail where one exists — the served excerpt is the floor beneath it, never the ceiling.)
     ok('the card says WHO, what KIND, why held, and the message\'s own words',
       /\{row\.who && <span className="truncate text-\[13px\] font-medium text-neutral-800">\{row\.who\}<\/span>\}/.test(deck)
-      && /\{sourceWord && <span>\{sourceWord\}<\/span>\}/.test(deck)
-      && /\{row\.why && <p/.test(deck)
+      // ⟲ RE-POINTED (Sep 22, W3.6 · DECK CARDS WITH CONTEXT): the source line became ONE joined
+      // list (kind · project · when) so a handed commitment can name its project, and the why line
+      // gained the judge's reason (`whyLine = [row.why, ctx?.reason]`). Same facts, same order —
+      // the kind still leads, the why still speaks; one list instead of three hand-placed spans.
+      && /\[sourceWord, project, row\.dueDate \? whenWords\(row\.dueDate\) : null\]\.filter\(Boolean\)/.test(deck)
+      && /const whyLine = \[row\.why, ctx\?\.reason\]\.filter\(Boolean\)/.test(deck) && /\{whyLine && <p/.test(deck)
       && /threaded && tail && tail\.length > 0 \?/.test(deck)
       && /\) : row\.excerpt \? \(/.test(deck));
     ok('   …the kind comes from ONE table, and an unmapped source says nothing',
@@ -1578,7 +1584,9 @@ function walkGates() {
     // is unchanged and strictly better served: the Home HANDS the facts, the lens fetches nothing.
     ok('   …and the Home hands those facts over rather than the lens fetching them',
       /who\?: string \| null;/.test(held) && /preparedWord\?: string \| null;/.test(held)
-      && /who: servedWho\(it\),/.test(home)
+      // ⟲ RE-POINTED (Sep 22, W3.6): the who is read ONCE into a local (the card's title composer
+      // `cardFacts` needs it too) and that same value rides the row — one reading, literal moved.
+      && (/who: servedWho\(it\),/.test(home) || (/const who = servedWho\(it\);/.test(home) && /\n\s+who,\n/.test(home)))
       && /import \{[^}]*servedWho[^}]*\} from '@\/lib\/home\/calm';/.test(home));
     // THE CLUSTER — RE-POINTED to Q9v2 (the afternoon of the same walk), and AGAIN Sep 21 (owner:
     // "CTA buttons should be below?"). The inverted-T of four arrow key-caps INSIDE the card was

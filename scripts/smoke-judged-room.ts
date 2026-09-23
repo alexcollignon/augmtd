@@ -189,8 +189,12 @@ const src = (p: string) => readFileSync(p, 'utf8');
     !detail.includes('max-h-[45vh]'));
   check('J2v: the commitment deep-dive mounts from THE verdict (chase/reply → composer open, no button gate)',
     detail.includes('/api/items/judge?kind=commitment') && detail.includes("d.verdict.work === 'chase' || d.verdict.work === 'reply'"));
-  check('J2v: the rail skips a next-move that ECHOES the anchor ask (mechanical dedup, hand-off kept)',
-    src('components/home/item-rail.tsx').includes('echoesAnchor(ent.nextMove'));
+  // ⟲ RE-POINTED (W3.5, Sep 22 — registry precedence #1): the stored next_move no longer renders at
+  // all (the stitched fallback is dead; the composed brief reaches the first paint), so there is no
+  // echo to skip. The law — the room never says one fact twice — is held by the composed move.
+  check('J2v: the stored next_move never renders beside the anchor (the stitched fallback is dead — one fact once)',
+    !src('components/home/item-rail.tsx').includes('echoesAnchor(ent.nextMove')
+    && !src('components/home/item-rail.tsx').includes('fallbackMove'));
   check('J2v: a judged doc-send mounts PREFILLED — the resolved file auto-attaches as the standard ✕-removable chip (one-shot)',
     detail.includes('preparedAttachRef') && detail.includes("kind === 'reply_draft')?.attachment") &&
     detail.includes('atts.onKbSelect([{ id: preparedAttachment.fileId'));

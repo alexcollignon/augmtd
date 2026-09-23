@@ -437,7 +437,7 @@ export default function OneSidebar({
             </div>
             {/* THE KIND GLYPH + THE HOVER EXPAND (owner, Aug 8): a subtle icon says what each
                 conversation IS (chat · work room); hovering smoothly reveals the second line —
-                "in EG Bank" / the kind word. Plain chats stay quiet. */}
+                "in Acme Corp" / the kind word. Plain chats stay quiet. */}
             {otherRows.map((c) => {
               const Glyph = c.kind === 'chat' ? ChatBubbleLeftEllipsisIcon : FolderIcon;
               const manageable = c.kind === 'chat';

@@ -1,0 +1,13 @@
+-- THE STATUS BOARD INDEX (stabilization W4.3) — lib/platform/status.ts `usageSignals` pages
+-- ai_usage_events with `.gte('created_at', since7/since14).order('created_at', desc)` and NO
+-- user_id/agent_id filter (a platform-wide read across every workspace) — the two existing
+-- indexes (`ai_usage_events_user_created_idx`, `ai_usage_events_agent_created_idx`, both from
+-- 20260708b_ai_usage_events.sql) lead with user_id/agent_id, so this query can't use either and
+-- falls back to a sequential scan that gets slower as the table grows.
+--
+-- ⚠️ APPLY MANUALLY in the Supabase dashboard SQL editor. `CREATE INDEX CONCURRENTLY` is not
+-- allowed inside a transaction block, which is how the SQL editor runs a pasted script — use the
+-- plain (locking) form here, same as every other migration in this repo. On a small-to-medium
+-- table this is fast; on a very large one, run it directly via `psql`/the Supabase CLI with
+-- CONCURRENTLY instead of pasting it into the dashboard editor.
+CREATE INDEX IF NOT EXISTS idx_ai_usage_events_created_at ON ai_usage_events (created_at DESC);

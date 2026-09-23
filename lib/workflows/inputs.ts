@@ -27,6 +27,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { readPlan, upsertPlan, deletePlans } from '@/lib/store/item-plans';
 import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 
 export const INPUTS_KIND = 'workflow_inputs';
@@ -71,10 +72,8 @@ export async function readWorkflowInputs(
   admin: SupabaseClient, userId: string, workflowId: string,
 ): Promise<WorkflowInputs | null> {
   try {
-    const { data, error } = await admin.from('item_plans').select('tasks')
-      .eq('user_id', userId).eq('kind', INPUTS_KIND).eq('entity_id', workflowId)
-      .maybeSingle();
-    if (error || !data) return null;
+    const data = await readPlan(admin, userId, 'workflow_inputs', workflowId);
+    if (!data) return null;
     const t = (data.tasks ?? null) as { docs?: unknown; acceptMaterial?: unknown } | null;
     if (!t) return null;
     return { docs: asDocs(t.docs), acceptMaterial: t.acceptMaterial === true };
@@ -113,17 +112,13 @@ export async function writeWorkflowInputs(
 
   const nowIso = new Date().toISOString();
   if (!docs.length && !acceptMaterial) {
-    const { error } = await admin.from('item_plans').delete()
-      .eq('user_id', userId).eq('kind', INPUTS_KIND).eq('entity_id', workflowId);
+    const { error } = await deletePlans(admin, userId, 'workflow_inputs', workflowId);
     if (error) return { ok: false, error: 'the inputs could not be cleared' };
     return { ok: true, inputs: null, dropped };
   }
 
   const inputs: WorkflowInputs = { docs, acceptMaterial };
-  const { error } = await admin.from('item_plans').upsert({
-    user_id: userId, kind: INPUTS_KIND, entity_id: workflowId,
-    tasks: inputs, updated_at: nowIso,
-  }, { onConflict: 'user_id,kind,entity_id' });
+  const { error } = await upsertPlan(admin, userId, 'workflow_inputs', workflowId, inputs, { updatedAt: nowIso });
   if (error) return { ok: false, error: 'the inputs could not be saved' };
   return { ok: true, inputs, dropped };
 }

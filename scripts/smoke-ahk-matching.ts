@@ -92,9 +92,14 @@ import {
   type ProfileCandidate, type MatchReport, type MatchedItem,
 } from '../lib/matching/match-profiles';
 import {
-  renderMemberProfileDoc, memberPortalUrl, selectDepartures, profileManifestFrom, MEMBER_FOLDER_NAME,
+  renderMemberProfileDoc, memberPortalUrl, selectDepartures, profileManifestFrom,
+  DEFAULT_MEMBER_SOURCE_LABEL,
   WEBSITE_SECTION_HEADING, type PortalMember, type MemberManifest,
 } from '../lib/tenders/member-directory';
+
+// The live client's folder name — the lib module's default is generic now (THE AGNOSTIC CLAUSE,
+// stabilization plan W4.4); this probe-host gate still exercises the real client folder name.
+const MEMBER_FOLDER_NAME = 'AHK Member companies';
 import {
   enrichMember, coerceParagraph, buildEnrichmentPrompt, extractReadableText, siteUrlOf,
   websiteNoteOf, websiteNotesOf, textHashOf, NOTHING, type MemberEnrichment,
@@ -1194,7 +1199,7 @@ async function m19(): Promise<void> {
     at(WEBSITE_SECTION_HEADING) > at('## Tätigkeit') &&
     at(WEBSITE_SECTION_HEADING) > at('## Einordnung (abgeleitet)') &&
     at(WEBSITE_SECTION_HEADING) > at('## Stammdaten') &&
-    at(WEBSITE_SECTION_HEADING) > at('_Quelle: AHK-Mitgliederverzeichnis'));
+    at(WEBSITE_SECTION_HEADING) > at(`_Quelle: ${DEFAULT_MEMBER_SOURCE_LABEL}`));
   ok('it sits ABOVE Chamber notes — a human correction still outranks it by reading order',
     at(WEBSITE_SECTION_HEADING) < at('## Chamber notes'));
   ok('the section carries a source + date stamp naming the page it was read from',

@@ -230,7 +230,16 @@ export async function syncCalendarForConnection(
       // FRESHNESS IS A FACT: only a read that actually reached the provider stamps the clock, so
       // "last synced" can never be a timestamp for a sync that failed.
       if (res.pruned !== undefined) await stampCalendarSync(supabase, connection.id);
-      return res;
+      // EVIDENCE SETTLES (W3.1, invariant 7): the events this read upserted are deeds — a booked
+      // or held meeting with a counterparty can settle "set up a call with them". The reverse
+      // nominator matches by attendee address and hands the open work to the reasoned judge.
+      // Fire-and-forget, bounded (≤50 events, ≤8 judgments), never awaited on the sync path.
+      if (res.upsertedEventIds?.length) {
+        void import('@/lib/work/evidence-settle')
+          .then(({ settleForEvent }) => settleForEvent(supabase, connection.user_id, { type: 'calendar', eventIds: res.upsertedEventIds!, provider: connection.provider }))
+          .catch(() => {});
+      }
+      return { synced: res.synced, pruned: res.pruned, errors: res.errors };
     } else {
       return { synced: 0, errors: [`Unsupported provider: ${connection.provider}`] };
     }
@@ -311,7 +320,7 @@ async function syncGmailCalendar(
   supabase: SupabaseClient,
   daysAhead: number,
   daysBehind: number
-): Promise<{ synced: number; pruned?: number; errors: string[] }> {
+): Promise<{ synced: number; pruned?: number; errors: string[]; upsertedEventIds?: string[] }> {
   // Decrypt tokens (same as email sync)
   const tokens = JSON.parse(Buffer.from(connection.metadata.tokens, 'base64').toString());
 
@@ -366,6 +375,7 @@ async function syncGmailCalendar(
     let synced = 0;
     const cancelledEventIds: string[] = [];
     const seenEventIds: string[] = [];
+    const upsertedEventIds: string[] = [];
 
     for (const event of events) {
       try {
@@ -412,6 +422,7 @@ async function syncGmailCalendar(
           errors.push(`Failed to save event ${event.id}: ${error.message}`);
         } else {
           synced++;
+          upsertedEventIds.push(String(event.id)); // W3.1 — the deeds this read landed
         }
       } catch (error: any) {
         errors.push(`Error processing event ${event.id}: ${error.message}`);
@@ -422,7 +433,7 @@ async function syncGmailCalendar(
     const pruned = await applyCalendarPrune(supabase, connection, 'gmail',
       planCalendarPrune({ complete, fetchedEventIds: seenEventIds, windowStartISO: timeMin, windowEndISO: timeMax, nowISO: new Date().toISOString() }));
 
-    return { synced, pruned, errors };
+    return { synced, pruned, errors, upsertedEventIds };
   } catch (error: any) {
     console.error('[CalendarSync] Gmail API error:', error);
     return { synced: 0, errors: [error.message] };
@@ -437,7 +448,7 @@ async function syncOutlookCalendar(
   supabase: SupabaseClient,
   daysAhead: number,
   daysBehind: number
-): Promise<{ synced: number; pruned?: number; errors: string[] }> {
+): Promise<{ synced: number; pruned?: number; errors: string[]; upsertedEventIds?: string[] }> {
   // Token refresh callback - updates database when tokens are refreshed
   const onTokenRefresh = async (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }) => {
     const newEncryptedTokens = Buffer.from(JSON.stringify({
@@ -504,6 +515,7 @@ async function syncOutlookCalendar(
     let synced = 0;
     const cancelledEventIds: string[] = [];
     const seenEventIds: string[] = [];
+    const upsertedEventIds: string[] = [];
 
     for (const event of events) {
       try {
@@ -544,6 +556,7 @@ async function syncOutlookCalendar(
           errors.push(`Failed to save event ${event.id}: ${error.message}`);
         } else {
           synced++;
+          upsertedEventIds.push(String(event.id)); // W3.1 — the deeds this read landed
         }
       } catch (error: any) {
         errors.push(`Error processing event ${event.id}: ${error.message}`);
@@ -554,7 +567,7 @@ async function syncOutlookCalendar(
     const pruned = await applyCalendarPrune(supabase, connection, 'outlook',
       planCalendarPrune({ complete, fetchedEventIds: seenEventIds, windowStartISO: timeMin, windowEndISO: timeMax, nowISO: new Date().toISOString() }));
 
-    return { synced, pruned, errors };
+    return { synced, pruned, errors, upsertedEventIds };
   } catch (error: any) {
     console.error('[CalendarSync] Outlook API error:', error);
     return { synced: 0, errors: [error.message] };

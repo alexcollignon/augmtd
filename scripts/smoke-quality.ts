@@ -287,7 +287,11 @@ function sq4() {
     /const hasPrepared = g\.board\.some\(\(b\) => b\.prepared\.length > 0\)/.test(b2));
   ok('   …and hasAsk from the asks that SURVIVED the editor',
     /hasAsk: liveAsks\.length > mooted/.test(b2));
-  ok('   …and a fully-degraded brief never overwrites last-good', /if \(!text\) return;/.test(b2));
+  // ⟲ RE-POINTED (Sep 23, W3.5 room first paint): composeAndStore's return type is now
+  // `Promise<RoomResponse | null>` (a caller-checkable degrade signal), so the empty-text guard
+  // spells its refusal `return null;` rather than a bare `return;` — the law itself (a
+  // fully-degraded brief never overwrites last-good) is unchanged; only the return shape moved.
+  ok('   …and a fully-degraded brief never overwrites last-good', /if \(!text\) return null;/.test(b2));
 }
 
 // ── SQ5 · THE SWEEP IS GUARDED ──────────────────────────────────────────────────────────────────
@@ -470,9 +474,18 @@ function sq8() {
   const rail = src('components/home/item-rail.tsx');
   ok('the room renders an offer move as a LINE, never a button',
     /resp\?\.move && !resp\.move\.offer/.test(rail) && /\{ctaOffer && <p/.test(rail));
-  ok('   …and the pre-compose "Next: …" fallback passes the SAME floor',
-    /enforceCtaLaw\(\{ label: `Next: \$\{ent\.nextMove\}`/.test(rail)
-    && /fallbackMove\?\.move && !fallbackMove\.demoted/.test(rail));
+  // ⟲ RE-POINTED (Sep 23, W3.5 room first paint, registry precedence #1): the pre-compose "Next: …"
+  // fallback CTA this gate asserted a floor on is not merely re-shaped — it was RETIRED. The rail's
+  // own comment names it: "THE PRE-COMPOSE FALLBACK (…) IS DEAD (W3.5 (a); registry precedence #1):
+  // it never passed a composer, its target was the room itself, and it stood as an inert CTA under
+  // the reader. The seat carries a composed move or none." A retired CTA needs no floor of its own
+  // — the stronger form of the law is that it cannot render AT ALL, so `ent.nextMove` may still be
+  // read as plain fallback ASK CONTEXT (never a CTA target) but `enforceCtaLaw`/`fallbackMove` must
+  // not exist for it.
+  ok('   …and the pre-compose "Next: …" CTA is RETIRED outright, not merely re-floored',
+    !/fallbackMove/.test(rail)
+    && !/enforceCtaLaw\(\{ label: `Next: /.test(rail)
+    && /No pre-compose fallback card/.test(rail));
   ok('ONE implementation of the law — the surfaces import it, never restate it',
     /from '@\/lib\/room\/cta-law'/.test(rail) && /lib\/room\/cta-law/.test(b));
 }
@@ -743,9 +756,11 @@ function sq14() {
   // nothing else in this file opens a door by string.
   ok('   …and it holds no template-literal fetch at all (the tail reads through the ONE thread-door module)',
     (deck.match(/fetch\(`\/api\/[^`]+`/g) ?? []).length === 0
-    && /import \{ loadThreadTail, peekThreadDoor \} from '@\/lib\/inbox\/thread-door'/.test(deck));
+    // ⟲ RE-POINTED (Sep 22, W3.6): the deck also reads a handed commitment's founding thread through
+    // the SAME door (`loadThreadDoor`); the law is "the ONE door module", not an exact import list.
+    && /import \{[^}]*\bloadThreadTail\b[^}]*\bpeekThreadDoor\b[^}]*\} from '@\/lib\/inbox\/thread-door'/.test(deck));
   ok('   …and the outcome fact still writes itself at the ONE resolver, unchanged',
-    /logPreparedOutcome/.test(src('lib/tools/item-actions.ts'))
+    /logPreparedOutcome|logPendingOutcomes/.test(src('lib/tools/item-actions.ts')) // W3.2: the two-way writer
     && !/logPreparedOutcome|learning_signals/.test(deck) && !/learning_signals/.test(later));
   ok('Z undoes through the EXISTING restore, and the toast is the house toast',
     /restoreEntity\(/.test(deck) && /from '@\/lib\/activity\/restore'/.test(deck)
@@ -772,12 +787,24 @@ function sq14() {
   // ONE STORE, asserted structurally rather than by word-hunting (all three files SAY "snooze" —
   // each one saying it does not have one). The park's only home is the judgment row: the LATER
   // route writes nothing of its own, and the judge's writer names exactly the judgment cache.
+  // ⟲ RE-POINTED (Sep 23, W2.6 lib/store/item-plans.ts typed door): the raw `{ kind: 'judgment',
+  // entity_id: ... }` object literal moved OUT of judge.ts and into the ONE typed door's
+  // `upsertPlan`/`insertPlan` (`{ user_id, kind, entity_id: key, tasks }`, `lib/store/item-plans.ts`
+  // — TABLE = 'item_plans', the single table every kind including 'judgment' writes through). The
+  // law is unchanged — the park writer's only table is still the judgment cache — it's now proven
+  // by judge.ts calling the door with the literal kind 'judgment', plus the door itself owning
+  // exactly one table constant, rather than judge.ts spelling the row object itself.
+  const itemPlansDoor = src('lib/store/item-plans.ts');
   ok('   …no second snooze store exists anywhere (one shape, one home)',
     !/from\('item_snoozes'\)|snoozed_until|kind: 'snooze'|'revisit_store'/.test(later + deck + judge)
     // the LATER route performs NO write of its own — it calls the two existing writers and nothing else
     && !/\.insert\(|\.upsert\(|\.update\(/.test(later)
-    // …and the park writer's only table is the judgment cache
-    && /kind: 'judgment', entity_id: `\$\{input\.kind\}:\$\{input\.id\}`/.test(judge));
+    // …and the park writer calls the ONE typed door with the judgment kind, on its item's own key
+    && /upsertPlan\(client, userId, 'judgment', `\$\{input\.kind\}:\$\{input\.id\}`/.test(judge)
+    // …and that door owns exactly one table for every kind it stores (no second store to drift to)
+    && /const TABLE = 'item_plans';/.test(itemPlansDoor)
+    && (itemPlansDoor.match(/from\(TABLE\)/g) ?? []).length > 0
+    && !/\.from\('item_plans_/.test(itemPlansDoor));
   ok('LATER ALWAYS RECORDS A DATE — a malformed, past or over-horizon day is refused in code',
     /if \(!\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\/\.test\(after\)\) return \{ ok: false/.test(judge)
     && /if \(after <= todayStr\) return \{ ok: false/.test(judge)
@@ -913,7 +940,8 @@ function sq18() {
       // The list branch is reachable only when the reader is NOT in deck mode: every render of the
       // ledger rows sits behind `deckShown`'s own else, never beside a loading state.
       const i = lens.indexOf('{deckMode && !deckShown ?');
-      const j = lens.indexOf('<HeldRow key={r.id}');
+      // (W5b: the list renders FOLDS — same who + subject under one row — through HeldFoldRows.)
+      const j = lens.indexOf('<HeldFoldRows key={g.key}');
       return i > 0 && j > i && /\) : deckShown \? \(/.test(lens);
     })());
   ok('   …the header speaks no total before it has one',
@@ -949,7 +977,8 @@ function sq18() {
     !/react|useState|fetch\(|new Date\(/i.test(queue)
     && /export function mergeQueue</.test(queue) && /export function queueCount\(/.test(queue));
   ok('   …and the lens holds ONE queue, extended in place only while the deck is live',
-    /const waitingRows = deckMode \? mergeQueue\(queueRef\.current, incomingRows\) : incomingRows;/.test(lens)
+    // (W5b: out of deck mode the LIST reads `listRows` — the ledger alone once it has landed.)
+    /const waitingRows = deckMode \? mergeQueue\(queueRef\.current, incomingRows\) : listRows;/.test(lens)
     && /queueRef\.current = deckMode \? waitingRows : \[\];/.test(lens)
     && (lens.match(/const waitingRows/g) ?? []).length === 1);
 
@@ -1125,8 +1154,11 @@ function sq20() {
   // 4 · ONE READING, EVERY SURFACE. The ledger's `who` and the whisper's lead are the same served
   //     fact, resolved by the same function — never a per-renderer re-derivation.
   const home = src('components/home/home-view.tsx');
+  // ⟲ RE-POINTED (Sep 22, W3.6): the handed row now reads the who ONCE into a local (the card's
+  // title composer needs it too — `cardFacts`), then serves that same value onto the row. Still one
+  // reading through `servedWho`, no second derivation; only the literal moved.
   ok('the ledger prints the SAME served who (one reading, no second derivation)',
-    /who: servedWho\(it\),/.test(home)
+    (/who: servedWho\(it\),/.test(home) || (/const who = servedWho\(it\);/.test(home) && /\n\s+who,\n/.test(home)))
     && /servedWho/.test(home.slice(0, home.indexOf('\n\n', home.indexOf("from '@/lib/home/calm'")))));
   ok('   …and the who is SERVED onto the row, never guessed in the renderer',
     /counterparty: c\.counterparty \?\? null/.test(home)
@@ -1232,8 +1264,12 @@ function sq19() {
        === (deck.match(/motion-reduce:transition-none/g) ?? []).length);
 
   // ── 3 · THE CARD IS THE THING ITSELF ──────────────────────────────────────────────────────────
+  // ⟲ RE-POINTED (Sep 22, W3.6 · DECK CARDS WITH CONTEXT): the avatar read `row.who ?? row.title`,
+  // so a who-less card wore the first letter of its TITLE ("S" for "Schedule…") — an invented
+  // initial. The law this assertion always meant is the one below it: the initial is the WHO's own
+  // letter, never an invented one — so a who-less card now wears the neutral glyph.
   ok('the card\'s top row is avatar + counterparty + source word + the contextual chip',
-    /initialOf\(row\.who \?\? row\.title\)/.test(card)
+    /initialOf\(row\.who\)/.test(card) && !/initialOf\(row\.who \?\? row\.title\)/.test(card)
     && /TRIAGE_SOURCE_WORD\[row\.item\.source\] \?\? null/.test(card)
     && /const chip = row\.preparedWord \?\?/.test(card));
   ok('   …and the initial is the counterparty\'s own first letter, never an invented one',
@@ -1249,11 +1285,18 @@ function sq19() {
     && /export const TRIAGE_THREADED: readonly string\[\] = \['reply', 'notice'\];/.test(words));
   ok('   …read LAZILY, on the card in hand',
     /useEffect\(\(\) => \{\s*\n\s*if \(!threaded\) \{ setTail\(null\); return; \}/.test(deck));
+  // ⟲ RE-POINTED (Sep 23, W3.7 room speed — "ONE READ, TWO SHAPES"): the door now caches the RAW
+  // payload (`_raw`/`_rawFlight`) and derives the narrowed `ThreadDoorData` from it, because the
+  // deep-dive's room needs the whole payload the object card doesn't — a second `/thread` fetch on
+  // the same item was the bug this wave closed. The bare `_flight: Map<…, Promise<ThreadDoorData>>`
+  // is gone; the in-flight share now guards the raw fetch (`_rawFlight`), and `_cache` (still typed
+  // `ThreadDoorData`) is filled as a side effect once the raw promise resolves. The law — cached,
+  // in-flight shared, one loader — is unchanged; only which promise is shared moved.
   ok('   …CACHED for the session, and an in-flight read is shared rather than repeated (in the ONE loader, so the deck\'s warm IS the room\'s first paint)',
     (() => {
       const door = src('lib/inbox/thread-door.ts');
       return /const _cache = new Map<string, ThreadDoorData>\(\);/.test(door)
-        && /const _flight = new Map<string, Promise<ThreadDoorData>>\(\);/.test(door)
+        && /const _rawFlight = new Map<string, Promise<ThreadRawPayload \| null>>\(\);/.test(door)
         && /const had = _cache\.get\(itemId\);\s*\n\s*if \(had\) return Promise\.resolve\(had\);/.test(door)
         && !/_tailCache|_tailFlight/.test(deck);
     })());
@@ -1371,9 +1414,11 @@ function sq21() {
     /PREPARED WORK, rendered as its own card/.test(b) && /const preparedRows = g\.board\.filter/.test(b));
 
   // 6 · THE THIRD-PERSON REFUSAL — the belt behind the conservative collapse.
+  // ⟲ RE-POINTED (Sep 23, W3.5 room first paint): same shape move as SQ4's "fully-degraded brief"
+  // gate — the refusal now returns the explicit `null` of `Promise<RoomResponse | null>`.
   ok('a composition still narrating the speaker by name is REFUSED to last-good, never served',
     /refused a composition that narrates the speaker in the third person/.test(b)
-    && /return;\n  \}\n  const claimed = enforceRenderedClaims/.test(b));
+    && /return null;\n  \}\n  const claimed = enforceRenderedClaims/.test(b));
 
   // 7 · THE VERSION IS A FLOOR, NOT A PIN (the pin trap: an exact match breaks on the next bump).
   ok('ROOM_BRIEF_VERSION carries the contract so every cached opening re-authors',

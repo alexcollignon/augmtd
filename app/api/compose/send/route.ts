@@ -8,6 +8,11 @@ import { sendCoworkerEmail } from '@/lib/tools/coworker-email';
 import { logActivity } from '@/lib/activity/log';
 import { checkRateLimit } from '@/lib/utils/rate-limit';
 import { sanitizeHeaderValue } from '@/lib/utils/email-headers';
+import { claimCommit, recordCommitResult, releaseCommitClaim } from '@/lib/work/commit-door';
+
+/** The window a composed message is "the same deed" in: a double-fire inside it sends once; the
+ *  identical message sent deliberately later is a new deed (a weekly reminder is not a duplicate). */
+const COMPOSE_DEED_WINDOW_MS = 10 * 60_000;
 
 export const maxDuration = 30;
 
@@ -16,7 +21,9 @@ export const maxDuration = 30;
 // connected, falls back to the OAuth-free coworker-email channel (Resend, team.augmtd.ai) and flags
 // it so the UI can note "sent via your assistant's address". Logs a `message_sent` activity event.
 //
-// POST /api/compose/send { to[], cc[], subject, bodyHTML, threadId? }
+// POST /api/compose/send { to[], cc[], subject, bodyHTML, threadId?, prepared? }
+//   prepared = { itemKind: 'inbox'|'commitment'|'meeting', itemId, bodyHTML } — the drafter's text the
+//   composer was seeded with (W3.2 — THE TWO-WAY LEDGER: accepted vs edited is measured against it).
 //   → { success, viaCoworker?: boolean }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -34,7 +41,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Too many requests' }, { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } });
     }
 
-    const raw = (await request.json()) as { to?: unknown; cc?: unknown; subject?: string; bodyHTML?: string };
+    const raw = (await request.json()) as { to?: unknown; cc?: unknown; subject?: string; bodyHTML?: string; prepared?: { itemKind?: unknown; itemId?: unknown; bodyHTML?: unknown } | null };
     const to = cleanList(raw.to);
     const cc = cleanList(raw.cc);
     // THE HEADER FLOOR — one line, no control characters (the same class the chat-born door fixed).
@@ -50,9 +57,30 @@ export async function POST(request: NextRequest) {
     // twice inside 2 min — kills a transient double-fire/loop while a genuinely different message still
     // goes through. (Complements the coarse per-user rate limit above; mirrors the send-reply dedup.)
     const dedupHash = createHash('sha1').update(`${to.join(',')}|${cc.join(',')}|${subject}|${plain}`.toLowerCase()).digest('hex').slice(0, 16);
-    if (!checkRateLimit(`compose-send-dedup:${user.id}:${dedupHash}`, 1, 120_000).allowed) {
+
+    // ── THE COMMIT DOOR (W0.4 — EXACTLY-ONCE DEEDS). The old in-memory dedup only caught a burst on
+    // one warm instance; the claim is ONE atomic insert keyed by the message + its time window. The
+    // PREVIOUS window's key is read too, so a double-fire straddling a window edge still sends once.
+    const bucket = Math.floor(Date.now() / COMPOSE_DEED_WINDOW_MS);
+    const idemKey = `compose:${dedupHash}:${bucket}`;
+    {
+      const { data: prev } = await supabase.from('action_commits').select('created_at')
+        .eq('user_id', user.id).eq('idempotency_key', `compose:${dedupHash}:${bucket - 1}`).maybeSingle();
+      if (prev?.created_at && Date.now() - Date.parse(String(prev.created_at)) < 120_000) {
+        return NextResponse.json({ success: true, deduped: true });
+      }
+    }
+    const claim = await claimCommit(supabase, user.id, {
+      idempotencyKey: idemKey, actionType: 'compose_send',
+      payload: { to, cc, subject },
+    });
+    if (claim.status === 'duplicate') {
+      if (claim.priorResult == null) {
+        return NextResponse.json({ error: 'That message is already on its way.' }, { status: 409 });
+      }
       return NextResponse.json({ success: true, deduped: true });
     }
+    const release = async () => { if (claim.status === 'claimed') await releaseCommitClaim(supabase, user.id, idemKey); };
 
     // Prefer sending AS the user via a connected mailbox.
     const { data: connection } = await supabase
@@ -75,8 +103,14 @@ export async function POST(request: NextRequest) {
         subject,
         body: bodyHTML,
       };
-      if (connection.provider === 'gmail') await sendGmailEmail(args);
-      else await sendOutlookEmail(args);
+      try {
+        if (connection.provider === 'gmail') await sendGmailEmail(args);
+        else await sendOutlookEmail(args);
+      } catch (sendErr) {
+        // A FAILED SEND RELEASES ITS CLAIM — nothing left, so a retry must be able to fire.
+        await release();
+        throw sendErr;
+      }
     } else {
       // Fallback: no connected mailbox → send from the coworker (Clara) address, Reply-To the user.
       viaCoworker = true;
@@ -89,8 +123,15 @@ export async function POST(request: NextRequest) {
         .eq('is_worker', true)
         .eq('worker_role', 'personal_assistant')
         .maybeSingle();
-      const res = await sendCoworkerEmail(admin, user.id, pa?.id, { to, cc, subject, body: plain });
-      if (!res.ok) return NextResponse.json({ error: res.error || 'Could not send the message.' }, { status: 502 });
+      const res = await sendCoworkerEmail(admin, user.id, pa?.id, { to, cc, subject, body: plain })
+        .catch(async (e) => { await release(); throw e; });
+      if (!res.ok) {
+        await release();
+        return NextResponse.json({ error: res.error || 'Could not send the message.' }, { status: 502 });
+      }
+    }
+    if (claim.status === 'claimed') {
+      await recordCommitResult(supabase, user.id, idemKey, `Sent to ${to[0]}${viaCoworker ? ' (assistant address)' : ''}`);
     }
 
     // Activity timeline (non-fatal).
@@ -101,6 +142,26 @@ export async function POST(request: NextRequest) {
       entityId: null,
       metadata: { via: viaCoworker ? 'coworker' : (connection?.provider ?? 'mailbox'), recipients: to.length + cc.length },
     });
+
+    // THE OUTCOME LOG (W3.2 — THE TWO-WAY LEDGER): when the composer was seeded by our drafter, the
+    // send is that preparation's fate — as drafted (accepted) or changed (edited). The draft is
+    // on-demand (never stored), so the composer hands back the text it was seeded with; the item it
+    // belongs to is the ledger's key. Absent/garbled → nothing logged (never a guessed row).
+    {
+      const p = raw.prepared;
+      const kind = p && ['inbox', 'commitment', 'meeting'].includes(String(p.itemKind)) ? String(p.itemKind) as 'inbox' | 'commitment' | 'meeting' : null;
+      const itemId = p && typeof p.itemId === 'string' && /^[0-9a-f-]{8,64}$/i.test(p.itemId) ? p.itemId : null;
+      const seeded = p && typeof p.bodyHTML === 'string' ? p.bodyHTML : '';
+      if (kind && itemId && seeded.replace(/<[^>]*>/g, '').trim()) {
+        const { logPreparedOutcome, sendVerdict } = await import('@/lib/prepare/outcome');
+        const v = sendVerdict(seeded, bodyHTML);
+        await logPreparedOutcome(supabase, user.id, {
+          outcome: v.outcome, artifact: 'reply_draft', itemKind: kind, itemId,
+          ...(v.editShare !== undefined ? { editShare: v.editShare } : {}),
+          door: 'compose_send', senderClass: 'unknown',
+        });
+      }
+    }
 
     return NextResponse.json({ success: true, viaCoworker });
   } catch (error) {

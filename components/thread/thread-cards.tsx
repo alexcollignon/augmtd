@@ -4,6 +4,7 @@ import React from 'react';
 import { PaperClipIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { cn } from '@/lib/cn';
 import ReplyEditor from '@/components/inbox/reply-editor';
+import { sanitizeDraftHtml } from '@/lib/utils/sanitize-html';
 // ONE CHIP GRAMMAR, ONE VIEWER (T25.9c) — the chip lives with the lightbox and is never redrawn
 // per surface. The kit mounts the shared chip; the HOST owns the viewer it raises.
 import { AttachmentChip } from '@/components/ui/attachment-lightbox';
@@ -517,7 +518,9 @@ function EmailCardView({ card }: { card: EmailCard }) {
               // must not shove the draft two pixels sideways and one line down.
               card.onEditBody && '-mx-2 cursor-text rounded border border-transparent px-2 py-1.5',
               workingClass(card.busy))}
-            {...(card.bodyHtml ? { dangerouslySetInnerHTML: { __html: card.bodyHtml } } : {})}
+            // RENDER SAFETY (Sep 22): defense in depth — the draft sanitizer at the render too
+            // (no handlers, no remote fetch before approval), whatever lane built bodyHtml.
+            {...(card.bodyHtml ? { dangerouslySetInnerHTML: { __html: sanitizeDraftHtml(card.bodyHtml) } } : {})}
           >
             {card.bodyHtml ? undefined : (card.body || <span className="text-neutral-300">Nothing drafted yet</span>)}
           </div>

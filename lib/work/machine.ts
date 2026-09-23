@@ -18,7 +18,9 @@
 // — the ladder cannot fork.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { PreparedArtifact } from '@/lib/prepare/read';
+import { readPlan, readPlans, asRawResult } from '@/lib/store/item-plans';
+import { isLiveArtifact, type PreparedArtifact, type PreparedState } from '@/lib/prepare/read';
+import { askIsMoot, isEngineAskKey } from '@/lib/room/ask-mootness';
 
 export type WorkLifecycle =
   | 'unjudged'          // spotted, no verdict — may deck, claims nothing
@@ -37,6 +39,37 @@ export type WorkMachineState = {
   verdictWork: string | null;
   /** What the primary affordance is, for renderers that want the word. */
   primary: 'send' | 'decide' | 'supply' | 'review' | 'none';
+  /** THE MOOT ASK BY CODE (W3.5 (d)): dedupe keys of live asks on this item the machine read as
+   *  moot (the draft itself · the item's own inbound · outlived the verdict). Served so the room
+   *  hides the same turns the header ignored — header and room speak ONE claim. */
+  mootAskKeys?: string[];
+};
+
+// ── THE MOOT ASK BY CODE (stabilization W3.5 (d); lib/room/ask-mootness is the ONE predicate) ──
+// The ladder's "OPEN ASK OUTRANKS A STAGED SEND" is right; what fed it was wrong. A requires-ask
+// naming the draft itself, or the item's own inbound, or a label the CURRENT verdict no longer
+// requires, is not an open ask — it is scaffolding the editor would moot in after(), one open too
+// late for the header. So the readers decide liveness HERE, deterministically, from the ask's own
+// labels + the item's title + the verdict's requires. Same inputs in both readers, one predicate.
+type AskRow = { dedupe_key: string | null; component: unknown; archived_at?: string | null };
+function liveAsksOf(
+  asks: AskRow[], facts: { itemTitle: string | null; itemKind: 'inbox' | 'commitment'; verdictRequires: string[] | null },
+): { live: boolean; mootKeys: string[] } {
+  let live = false; const mootKeys: string[] = [];
+  for (const t of asks) {
+    const c = t.component as { key?: string; state?: { proceeded?: boolean; items?: unknown[] } } | null;
+    if (c?.key !== 'input_checklist' || t.archived_at || c?.state?.proceeded) continue;
+    const key = String(t.dedupe_key ?? '');
+    if (askIsMoot(c.state?.items ?? [], { ...facts, engineAsk: isEngineAskKey(key) })) { if (key) mootKeys.push(key); continue; }
+    live = true;
+  }
+  return { live, mootKeys };
+}
+const requiresOf = (v: Verdict): string[] | null => {
+  const r = (v as { requires?: unknown } | null)?.requires;
+  if (!Array.isArray(r)) return null;
+  const out = r.map((x) => (typeof x === 'string' ? x : String((x as { label?: unknown } | null)?.label ?? ''))).filter(Boolean);
+  return out.length ? out : null;
 };
 
 /** THE HUMAN WORDS — every surface that speaks a state uses THIS mapping (one grammar, no
@@ -102,7 +135,9 @@ export function deriveState(input: DeriveInputs): WorkMachineState {
 
   // THE GROUND LAW (Aug 13): a stale artifact (its ground moved — a newer inbound landed) is
   // SUPERSEDED work, not preparation. The machine never lets a dead plan hold a Send primary.
-  const live = input.prepared.filter((p) => !p.stale);
+  // TIME TRUTH (W2.1): an invite past its proposed start is not live either — `isLiveArtifact`
+  // is the reader's ONE predicate, so the machine and every chip agree on what "prepared" means.
+  const live = input.prepared.filter(isLiveArtifact);
   // René sweep (Aug 13): an invite with no time / a forward with no recipient is staged work the
   // send door hard-rejects — NOT send-shaped (a Send primary that cannot fire is a lie).
   const SEND_KINDS = ['reply_draft', 'nudge_draft', 'invite', 'forward'];
@@ -149,48 +184,81 @@ export function deriveState(input: DeriveInputs): WorkMachineState {
 export async function workStateOf(
   client: SupabaseClient, userId: string,
   item: { kind: 'inbox' | 'commitment'; id: string },
+  /** W3.7 ROOM SPEED — what the caller ALREADY read, so the single reader re-reads nothing:
+   *  the item row (`status` + the fields below) and THE ONE READER's state for this item. The
+   *  room's door (GET /api/items/view) holds both on its first wave; before this it paid a second
+   *  full preparedState and a second row read on its critical path. Absent → read here, as before. */
+  held?: {
+    row?: { status?: unknown; source_data?: unknown; source?: unknown; description?: unknown } | null;
+    prepared?: PreparedState | null;
+  },
 ): Promise<WorkMachineState> {
   const none: WorkMachineState = { state: 'settled', verdictWork: null, primary: 'none' };
   try {
     // ── Closed items settle regardless of anything else. ──
     let open = false;
     let sentStamp = false;
+    let itemTitle: string | null = null; // the moot-ask floor's title half (W3.5 (d))
+    let askKind: 'inbox' | 'commitment' = item.kind;
     if (item.kind === 'inbox') {
-      const { data: it } = await client.from('inbox_items').select('status, source_data').eq('id', item.id).eq('user_id', userId).maybeSingle();
+      const it = held?.row !== undefined
+        ? held.row as { status?: unknown; source_data?: unknown; source?: unknown } | null
+        : (await client.from('inbox_items').select('status, source_data, source').eq('id', item.id).eq('user_id', userId).maybeSingle()).data;
       open = !!it && it.status === 'pending';
-      const sd = (it?.source_data ?? {}) as { draft?: { sent_at?: string }; prepared_invite?: { sent_at?: string }; prepared_forward?: { sent_at?: string } };
+      const sd = (it?.source_data ?? {}) as { draft?: { sent_at?: string }; prepared_invite?: { sent_at?: string }; prepared_forward?: { sent_at?: string }; subject?: string };
       sentStamp = !!(sd.draft?.sent_at || sd.prepared_invite?.sent_at || sd.prepared_forward?.sent_at);
+      // The inbound's OWN subject — never the judge's work_title, which phrases the user's obligation
+      // ("Share X with Y") and would make the user's own deliverable read as "the item's inbound".
+      itemTitle = sd.subject || null;
+      // A commitment-lane row (historical mirror) carries the OBLIGATION as its title — not an inbound.
+      if (String(it?.source ?? '') === 'commitment') askKind = 'commitment';
       // KNOWN GAP (René sweep): commitments carry no sent stamp anywhere yet — a sent commitment
       // nudge settles via the resolver instead of passing through `committed`.
     } else {
-      const { data: c } = await client.from('commitments').select('status').eq('id', item.id).eq('user_id', userId).maybeSingle();
+      const c = held?.row !== undefined
+        ? held.row as { status?: unknown; description?: unknown } | null
+        : (await client.from('commitments').select('status, description').eq('id', item.id).eq('user_id', userId).maybeSingle()).data;
       open = !!c && ['pending', 'active', 'open'].includes(String(c.status));
+      itemTitle = (c?.description as string | null) || null;
     }
     if (!open) return none;
 
-    const { data: j } = await client.from('item_plans').select('tasks, updated_at')
-      .eq('user_id', userId).eq('kind', 'judgment')
-      .eq('entity_id', `${item.kind}:${item.id}`).maybeSingle();
+    // W3.7: with a `held` caller (the room's door, on its critical path) the ask read rides BESIDE
+    // the judgment read instead of after it — one round trip, not two. It is only CONSUMED when the
+    // verdict is actionable, exactly as before; the unheld path keeps its original sequencing.
+    const asksRead = () => client.from('room_turns').select('dedupe_key, component, archived_at')
+      .eq('user_id', userId).like('dedupe_key', `%${item.id}%`).limit(6);
+    const [{ data: j }, earlyAsks] = await Promise.all([
+      readPlan(client, userId, 'judgment', `${item.kind}:${item.id}`).then((data) => ({ data })),
+      held ? asksRead() : Promise.resolve(null),
+    ]);
     const verdict = ((j?.tasks ?? null) as { verdict?: Verdict } | null)?.verdict ?? null;
 
-    // ── Prepared truth via THE ONE READER (never a parallel derivation). ──
-    const { getPrepared } = await import('@/lib/prepare/read');
-    const prepared = verdict?.work && verdict.work !== 'none'
-      ? await getPrepared(client, userId, { kind: item.kind === 'inbox' ? 'inbox_item' : 'commitment', id: item.id }).catch(() => [])
-      : [];
-
-    // ── The live ask (awaiting_input outranks preparing; a kept ask IS the preparation). ──
-    let liveAsk = false;
+    // ── Prepared truth via THE ONE READER (never a parallel derivation). W2.1: the reader also
+    // carries the commitment's sent stamp (a pooled invite/nudge the execute door marked spent),
+    // which closes the Aug-13-sweep gap noted above for the single read.
+    const { preparedState } = await import('@/lib/prepare/read');
+    let prepared: PreparedArtifact[] = [];
     if (verdict?.work && verdict.work !== 'none') {
-      const { data: asks } = await client.from('room_turns').select('component, archived_at')
-        .eq('user_id', userId).like('dedupe_key', `%${item.id}%`).limit(6);
-      liveAsk = (asks ?? []).some((t) => {
-        const c = t.component as { key?: string; state?: { proceeded?: boolean } } | null;
-        return c?.key === 'input_checklist' && !t.archived_at && !c?.state?.proceeded;
-      });
+      const st = held?.prepared
+        ?? await preparedState(client, userId, { kind: item.kind === 'inbox' ? 'inbox_item' : 'commitment', id: item.id }).catch(() => null);
+      prepared = st?.all ?? [];
+      if (st?.sentStamp) sentStamp = true;
     }
 
-    return deriveState({ open, verdict, judgedAt: (j?.updated_at as string) ?? null, prepared, liveAsk, sentStamp });
+    // ── The live ask (awaiting_input outranks preparing; a kept ask IS the preparation) — read
+    // through THE MOOT ASK BY CODE: an ask for the draft itself / the item's own inbound / a label
+    // the current verdict dropped is not open, whatever the turn table still holds. ──
+    let liveAsk = false; let mootAskKeys: string[] = [];
+    if (verdict?.work && verdict.work !== 'none') {
+      const { data: asks } = earlyAsks ?? await asksRead();
+      ({ live: liveAsk, mootKeys: mootAskKeys } = liveAsksOf((asks ?? []) as AskRow[], { itemTitle, itemKind: askKind, verdictRequires: requiresOf(verdict) }));
+    }
+
+    return {
+      ...deriveState({ open, verdict, judgedAt: (j?.updated_at as string) ?? null, prepared, liveAsk, sentStamp }),
+      ...(mootAskKeys.length ? { mootAskKeys } : {}),
+    };
   } catch { return none; }
 }
 
@@ -213,69 +281,62 @@ export async function workStatesFor(
     const keyOf = (i: { kind: string; id: string }) => `${i.kind}:${i.id}`;
     const inboxNeedingRows = items.filter((i) => i.kind === 'inbox' && !i.row).map((i) => i.id);
     const commitNeedingRows = items.filter((i) => i.kind === 'commitment' && !i.row).map((i) => i.id);
-    const commitIds = items.filter((i) => i.kind === 'commitment').map((i) => i.id);
-    const [jRes, inboxRes, commitRes, askRes, poolRes] = await Promise.all([
-      client.from('item_plans').select('entity_id, tasks, updated_at, created_at')
-        .eq('user_id', userId).eq('kind', 'judgment').in('entity_id', items.map(keyOf)),
+    const [jRes, inboxRes, commitRes, askRes] = await Promise.all([
+      readPlans(client, userId, 'judgment', { keys: items.map(keyOf) }).then(asRawResult),
       inboxNeedingRows.length
-        ? client.from('inbox_items').select('id, status, source_data, last_activity_at').eq('user_id', userId).in('id', inboxNeedingRows)
+        ? client.from('inbox_items').select('id, status, source_data, last_activity_at, source').eq('user_id', userId).in('id', inboxNeedingRows)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
       commitNeedingRows.length
-        ? client.from('commitments').select('id, status').eq('user_id', userId).in('id', commitNeedingRows)
+        ? client.from('commitments').select('id, status, description').eq('user_id', userId).in('id', commitNeedingRows)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
       client.from('room_turns').select('dedupe_key, component, archived_at')
         .eq('user_id', userId).filter('component->>key', 'eq', 'input_checklist').is('archived_at', null).limit(200),
-      // A commitment's prepared work lives in the deliverable pool, not on the row.
-      commitIds.length
-        ? client.from('item_deliverables').select('entity_id, type, title, content, metadata, created_at')
-            .eq('user_id', userId).eq('kind', 'commitment').in('entity_id', commitIds)
-            .order('created_at', { ascending: false }).limit(200)
-        : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
     ]);
     const judgments = new Map<string, { verdict: Verdict; at: string | null; firstAt: string | null }>();
     for (const j of (jRes.data ?? []) as Array<{ entity_id: string; tasks: unknown; updated_at: string; created_at: string }>) {
       judgments.set(j.entity_id, { verdict: ((j.tasks ?? null) as { verdict?: Verdict } | null)?.verdict ?? null, at: j.updated_at ?? null, firstAt: j.created_at ?? null });
     }
-    const rows = new Map<string, { status?: string | null; source_data?: unknown; last_activity_at?: string | null }>();
+    const rows = new Map<string, { status?: string | null; source_data?: unknown; last_activity_at?: string | null; description?: string | null; source?: string | null }>();
     for (const r of (inboxRes.data ?? []) as Array<Record<string, unknown>>) rows.set(`inbox:${r.id}`, r as never);
     for (const r of (commitRes.data ?? []) as Array<Record<string, unknown>>) rows.set(`commitment:${r.id}`, r as never);
-    const askIds = new Set<string>();
-    for (const t of (askRes.data ?? []) as Array<{ dedupe_key: string | null; component: unknown }>) {
-      const c = t.component as { state?: { proceeded?: boolean } } | null;
-      if (c?.state?.proceeded) continue;
+    // The asks by item — liveness is decided per item below, through THE MOOT ASK BY CODE (a
+    // prefetched row without a title still gets the draft-shape and verdict rules).
+    const asksByItem = new Map<string, AskRow[]>();
+    for (const t of (askRes.data ?? []) as AskRow[]) {
       const m = /^(?:requires|delegate):([0-9a-f-]{36})/.exec(String(t.dedupe_key ?? ''));
-      if (m) askIds.add(m[1]);
+      if (m) asksByItem.set(m[1], [...(asksByItem.get(m[1]) ?? []), t]);
     }
 
-    const { preparedFromSourceData, poolRowsToArtifacts } = await import('@/lib/prepare/read');
-    const poolByCommit = new Map<string, Array<Record<string, unknown>>>();
-    for (const r of (poolRes.data ?? []) as Array<Record<string, unknown>>) {
-      const arr = poolByCommit.get(String(r.entity_id)) ?? [];
-      arr.push(r); poolByCommit.set(String(r.entity_id), arr);
-    }
+    // ONE READER PER OBJECT (W2.1): the batched reader owns the pool read, the source_data read,
+    // the kind mapping, the staleness approximation AND the sent stamp — this loop only consumes.
+    const { preparedStatesFor } = await import('@/lib/prepare/read');
+    const prepStates = await preparedStatesFor(client, userId, items.map((i) => {
+      const row = i.row ?? rows.get(keyOf(i));
+      return { kind: i.kind, id: i.id, ...(row ? { row: { source_data: row.source_data, last_activity_at: row.last_activity_at ?? null } } : {}) };
+    }));
     for (const item of items) {
       const key = keyOf(item);
-      const row = item.row ?? rows.get(key);
+      const row = (item.row ?? rows.get(key)) as { status?: string | null; source_data?: unknown; last_activity_at?: string | null; description?: string | null; source?: string | null } | undefined;
       const open = item.kind === 'inbox'
         ? String(row?.status ?? '') === 'pending'
         : ['pending', 'active', 'open'].includes(String(row?.status ?? ''));
       const j = judgments.get(key);
-      const sd = (row?.source_data ?? {}) as Record<string, unknown> & { draft?: { sent_at?: string }; prepared_invite?: { sent_at?: string }; prepared_forward?: { sent_at?: string } };
-      const prepared = item.kind === 'inbox'
-        ? preparedFromSourceData(sd as never)
-        : poolRowsToArtifacts(poolByCommit.get(item.id) ?? [], 'commitment');
-      // The staleness approximation (see the function doc): last_activity past the stamp.
-      const lastAct = Date.parse(String(row?.last_activity_at ?? '')) || 0;
-      if (lastAct) for (const a of prepared) {
-        const pAt = Date.parse(String(a.ground?.receivedAt ?? '')) || 0;
-        if (pAt && lastAct > pAt + 5000) a.stale = true;
-      }
-      const sentStamp = item.kind === 'inbox' && !!(sd.draft?.sent_at || sd.prepared_invite?.sent_at || sd.prepared_forward?.sent_at);
+      const st = prepStates.get(key);
+      // The inbound's OWN subject for inbox rows (never work_title — see workStateOf); a
+      // commitment's description only reaches the shape rules (ask-mootness itemKind).
+      const itemTitle = item.kind === 'inbox'
+        ? (((row?.source_data ?? {}) as { subject?: string }).subject || null)
+        : ((row?.description as string | null) || null);
+      const asks = liveAsksOf(asksByItem.get(item.id) ?? [], {
+        itemTitle, itemKind: item.kind === 'inbox' && String(row?.source ?? '') !== 'commitment' ? 'inbox' : 'commitment',
+        verdictRequires: requiresOf(j?.verdict ?? null),
+      });
       out.set(key, {
         ...deriveState({
           open, verdict: j?.verdict ?? null, judgedAt: j?.at ?? null,
-          prepared, liveAsk: askIds.has(item.id), sentStamp,
+          prepared: st?.all ?? [], liveAsk: asks.live, sentStamp: st?.sentStamp ?? false,
         }),
+        ...(asks.mootKeys.length ? { mootAskKeys: asks.mootKeys } : {}),
         judgedFirstAt: j?.firstAt ?? null,
       });
     }

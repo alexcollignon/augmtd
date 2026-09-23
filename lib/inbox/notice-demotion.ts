@@ -9,29 +9,14 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { ItemUnderstanding } from '@/lib/inbox/item-understanding';
 import { isOwnCoworkerSender } from '@/lib/inbox/self-echo';
+import { matchesAutomatedSenderPatterns } from '@/lib/core/senders';
 
-/** The strong "do not reply to this mailbox" sender read (moved verbatim from the brief route —
- *  broader than lib/inbox/automated's, tuned for the Home's demotion decisions). */
+/** The strong "do not reply to this mailbox" sender read (moved verbatim from the brief route).
+ *  Pattern lists live in lib/core/senders.ts — ONE list, shared with lib/inbox/automated.ts's
+ *  isAutomatedSender (CLAUDE.md: "BOTH copies"; the two had drifted apart — this function used to
+ *  carry a narrower list than automated.ts's before this consolidation, which is now the union). */
 export function isAutomatedSenderStrong(fromEmail: string | null, fromName: string | null, subject: string | null): boolean {
-  const email = (fromEmail || '').toLowerCase();
-  const localpart = email.split('@')[0] || '';
-  const addrPatterns = [
-    'no-reply', 'noreply', 'no_reply', 'donotreply', 'do-not-reply', 'do_not_reply',
-    'notifications', 'notification', 'notify', 'mailer', 'mailer-daemon', 'bounce', 'bounces',
-    'postmaster', 'automated', 'auto-confirm', 'alerts', 'alert', 'billing', 'invoices', 'receipts',
-    'support+', 'updates', 'newsletter', 'news', 'digest', 'payments', 'failed-payment',
-  ];
-  if (addrPatterns.some((p) => localpart.includes(p))) return true;
-  if (/(^|[.@])(no-?reply|donotreply|notifications?|mailer|bounce|postmaster)([.@])/.test(email)) return true;
-  const text = `${(fromName || '').toLowerCase()} ${(subject || '').toLowerCase()}`;
-  const phrasePatterns = [
-    'payment failed', 'payment unsuccessful', 'was unsuccessful', 'payment declined', 'account suspended',
-    'account restricted', 'account has been', 'your subscription', 'subscription renew',
-    'verify your', 'confirm your email', 'confirm your account', 'security alert', 'security notice',
-    'unusual sign', 'sign-in attempt', 'password reset', 'invoice is', 'your receipt', 'order confirmation',
-  ];
-  if (phrasePatterns.some((p) => text.includes(p))) return true;
-  return false;
+  return matchesAutomatedSenderPatterns(fromEmail, fromName, subject);
 }
 
 /** "Can't reply" ≠ "no action needed" — the dunning/suspension/security/expiry class that must
@@ -86,14 +71,21 @@ export function isNoMoveNotice(args: {
    *  Our own coworker's mail is a POINTER to work that already stands: nobody owes a reply to
    *  their own assistant. The human escape (type_override) is applied by the caller, above. */
   selfEcho?: boolean;
+  /** THE LIST HEADER (W5b, owner walk Sep 23): the message carried List-Unsubscribe (`listMailOf`).
+   *  The address patterns miss a vendor whose notices come from a FIRST-NAME mailbox, and the
+   *  reasoned kind can misfile such a notice as correspondence — the header is the structural fact
+   *  neither can argue with. It only WIDENS `structuralNotice`; the ownership key still decides when
+   *  an understanding exists (a list message the brain says you owe stays protected), so a real
+   *  mailing-list conversation is never silenced by the header alone. */
+  listMail?: boolean;
 }): boolean {
-  const { u, rawKind, fromEmail, fromName, subject, workState, campaignEcho, selfEcho } = args;
+  const { u, rawKind, fromEmail, fromName, subject, workState, campaignEcho, selfEcho, listMail } = args;
   if (campaignEcho === true) return true;
   if (selfEcho === true || (selfEcho === undefined && isOwnCoworkerSender(fromEmail))) return true;
   const auto = isAutomatedSenderStrong(fromEmail, fromName, subject);
   const kind = (u?.mailKind ?? rawKind ?? '').toLowerCase();
   const noticeKind = kind === 'notification' || kind === 'calendar' || kind === 'receipt' || kind === 'newsletter';
-  const structuralNotice = auto || noticeKind;
+  const structuralNotice = auto || noticeKind || listMail === true;
   return (
     (!!u && u.ownership === 'none' && structuralNotice)
     // WAITING ON A PORTAL IS NOT WORK (July 31, found by the standing H-live scan): an automated
@@ -103,6 +95,13 @@ export function isNoMoveNotice(args: {
     || (!!u && u.ownership === 'awaiting' && u.relevance === 'awareness' && structuralNotice)
     || (!u && structuralNotice && !isActionWorthyAutomated(workState, fromName, subject))
   );
+}
+
+/** THE LIST HEADER, read off source_data — ONE reader, so the notice law's header input is never
+ *  re-derived per caller. True only when sync stamped the List-Unsubscribe fact. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function listMailOf(sd: any): boolean {
+  return sd?.has_unsubscribe === true;
 }
 
 /** The raw mailKind straight off source_data — usable even when the full understanding fails

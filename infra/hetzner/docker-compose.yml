@@ -23,6 +23,10 @@ services:
     mem_limit: 5g
     restart: unless-stopped
 
+  # The transcription service (in-person recordings). The container/service name keeps its
+  # historical "meeting-bot" (the box's running container is hetzner_meeting-bot_1); the auto-join
+  # Meet bot itself was REMOVED Sep 23 — no Chromium (so no shm_size), no scheduler volume, no
+  # Google login mount, no bot concurrency cap.
   meeting-bot:
     build:
       context: ../meeting-bot
@@ -32,19 +36,10 @@ services:
       SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
       AUGMTD_WEBHOOK_BASE_URL: https://app.augmtd.ai
-      MAX_CONCURRENT_BOTS: "4"
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      PROXY_URL: ${PROXY_URL}
+      WHISPER_SERVICE_URL: http://172.19.0.1:8000
     ports:
       - "3001:3001"
-    shm_size: "2gb"
     dns:
       - 8.8.8.8
       - 8.8.4.4
-    volumes:
-      - bot-scheduler:/data
-      - /root/augmtd-infra/google-auth.json:/app/google-auth.json:ro
     restart: unless-stopped
-
-volumes:
-  bot-scheduler:

@@ -18,6 +18,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import { threadTail, type TriageMessage } from '@/lib/triage/words';
+import { decodeEntities } from '@/lib/core/text';
 
 /** One file the thread carries, in THE ONE VIEWER's own address shape (the door serves it). */
 export type ThreadDoorFile = {
@@ -40,9 +41,6 @@ export type ThreadDoorData = {
 
 const EMPTY: ThreadDoorData = { subject: null, fromName: null, fromAddress: null, receivedAt: null, tail: [], files: [] };
 
-const _cache = new Map<string, ThreadDoorData>();
-const _flight = new Map<string, Promise<ThreadDoorData>>();
-
 /** What the door serves, narrowed to the fields any consumer here reads. */
 type DoorPayload = {
   subject?: string | null; fromName?: string | null; fromAddress?: string | null; receivedAt?: string | null;
@@ -53,8 +51,9 @@ function readPayload(d: DoorPayload | null): ThreadDoorData {
   if (!d) return EMPTY;
   const files = Array.isArray(d.attachments) ? (d.attachments as ThreadDoorFile[]).filter((f) => !!f?.name) : [];
   return {
-    subject: d.subject ?? null,
-    fromName: d.fromName ?? null,
+    // Plain text for every card that reads it (W5b) — the tail is decoded inside threadTail.
+    subject: d.subject ? decodeEntities(d.subject) : null,
+    fromName: d.fromName ? decodeEntities(d.fromName) : null,
     fromAddress: d.fromAddress ?? null,
     receivedAt: d.receivedAt ?? null,
     tail: threadTail(d.messages as Parameters<typeof threadTail>[0]),
@@ -62,19 +61,51 @@ function readPayload(d: DoorPayload | null): ThreadDoorData {
   };
 }
 
+// ── ONE READ, TWO SHAPES (W3.7 ROOM SPEED) ─────────────────────────────────────────────────────
+// The deep-dive's email room needs the door's WHOLE payload (every message, the relevance, the
+// attachments) while the object card needs the narrowed facts — and each used to fetch it for
+// itself: the same `/api/inbox/<id>/thread` twice on every open. Now there is ONE raw read per item
+// (cached + in-flight shared), and the narrowed door data is DERIVED from it. Whoever asks first
+// pays; everyone else joins.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type ThreadRawPayload = Record<string, any>;
+type RawEntry = { d: ThreadRawPayload | null; at: number };
+const _raw = new Map<string, RawEntry>();
+const _rawFlight = new Map<string, Promise<ThreadRawPayload | null>>();
+const _cache = new Map<string, ThreadDoorData>();
+
+function fetchRaw(itemId: string): Promise<ThreadRawPayload | null> {
+  const flying = _rawFlight.get(itemId);
+  if (flying) return flying;
+  const p = fetch(`/api/inbox/${itemId}/thread`)
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null)
+    .then((d: ThreadRawPayload | null) => {
+      _raw.set(itemId, { d, at: Date.now() });
+      _cache.set(itemId, readPayload(d as DoorPayload | null));
+      _rawFlight.delete(itemId);
+      return d;
+    });
+  _rawFlight.set(itemId, p);
+  return p;
+}
+
+/** THE WHOLE PAYLOAD, read once. `maxAgeMs` is the caller's freshness demand: an ACTION surface (the
+ *  deep-dive, which replies to this thread) asks for a read no older than the open; a read already
+ *  in flight always satisfies it (it started at most a moment ago). Null = the door did not answer. */
+export function loadThreadRaw(itemId: string, opts: { maxAgeMs?: number } = {}): Promise<ThreadRawPayload | null> {
+  const flying = _rawFlight.get(itemId);
+  if (flying) return flying;
+  const had = _raw.get(itemId);
+  if (had && had.d && (opts.maxAgeMs === undefined || Date.now() - had.at < opts.maxAgeMs)) return Promise.resolve(had.d);
+  return fetchRaw(itemId);
+}
+
 /** THE ONE READ. Cached per item for the session; a second caller joins the first's flight. */
 export function loadThreadDoor(itemId: string): Promise<ThreadDoorData> {
   const had = _cache.get(itemId);
   if (had) return Promise.resolve(had);
-  const flying = _flight.get(itemId);
-  if (flying) return flying;
-  const p = fetch(`/api/inbox/${itemId}/thread`)
-    .then((r) => (r.ok ? r.json() : null))
-    .then((d) => readPayload(d as DoorPayload | null))
-    .catch(() => EMPTY)
-    .then((data) => { _cache.set(itemId, data); _flight.delete(itemId); return data; });
-  _flight.set(itemId, p);
-  return p;
+  return loadThreadRaw(itemId).then(() => _cache.get(itemId) ?? EMPTY);
 }
 
 /** The tail alone — the deck's own read, unchanged in behaviour and now one implementation. */

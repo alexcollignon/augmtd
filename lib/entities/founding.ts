@@ -9,6 +9,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { writeRoomTurn } from '@/lib/room/turns';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
 
 export type FoundingCounts = { emails: number; meetings: number; tasks: number; total: number };
 export type FoundingAdoption = { id: string; name: string; count: number };
@@ -36,10 +37,14 @@ export async function proposeFoundingAdoptions(
       const sld = dom.split('.')[0] ?? '';
       if (sld.length > 2) companyTok = sld.toLowerCase();
     } catch { /* non-fatal */ }
-    const { data: ents } = await client.from('work_entities').select('id, name, aliases')
-      .eq('user_id', userId).eq('kind', 'initiative').neq('id', entityId)
-      .in('status', ['active', 'archived']).limit(500);
-    for (const e of (ents ?? []) as Array<{ id: string; name: string; aliases: unknown }>) {
+    // NO SILENT CAPS (invariant 10): every existing initiative is a candidate near-name match —
+    // an unpaged `.limit(500)` would silently miss the near-name sibling for a user past 500
+    // entities and let a duplicate project be founded instead of adopted. Paged, stable `id` order.
+    const ents = await fetchAllRows<{ id: string; name: string; aliases: unknown }>((from, to) =>
+      client.from('work_entities').select('id, name, aliases')
+        .eq('user_id', userId).eq('kind', 'initiative').neq('id', entityId)
+        .in('status', ['active', 'archived']).order('id', { ascending: true }).range(from, to));
+    for (const e of ents) {
       const forms = [e.name, ...(Array.isArray(e.aliases) ? (e.aliases as string[]) : [])];
       const matches = forms.some((f) => {
         const ft = norm(f);

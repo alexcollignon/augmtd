@@ -959,6 +959,9 @@ export interface EventLineItem {
    *  be opened from its own line. Never a button, never a pill; a ref without a handler renders
    *  as plain text (no lying doors). */
   refs?: Array<{ label: string; onClick?: () => void }>;
+  /** Author-absent affordances beneath the line (a chrome first contact's starters) — chips, never
+   *  speech; the line stays faceless (W4.1 — SPEECH IS COMPOSED: a template never wears a face). */
+  cards?: ThreadCard[];
 }
 
 export interface DividerItem {

@@ -26,12 +26,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { groundInviteFromText, type PreparedCalendarInvite } from '@/lib/home/prepare-action';
 import { resolvePersonEmail } from '@/lib/people/suggest';
 import { GROUND_EVIDENCE_RULE } from '@/lib/room/ground-evidence';
-
-const EMAIL_RE = /[^\s<>",;:]+@[^\s<>",;:]+\.[a-z]{2,}/gi;
+import { emailsInDelimited } from '@/lib/core/email';
 
 /** Addresses the conversation itself carries — the literal-evidence half of the attendee floor. */
 export function literalEmailsIn(text: string): string[] {
-  const hits = (text || '').match(EMAIL_RE) ?? [];
+  const hits = emailsInDelimited(text || '');
   return [...new Set(hits.map((e) => e.trim().replace(/[.,;:!?)\]]+$/, '').toLowerCase()))].slice(0, 20);
 }
 

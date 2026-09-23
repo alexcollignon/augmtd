@@ -75,10 +75,11 @@ export async function POST(request: NextRequest) {
     // finds it standing on the next open. POINTERS ONLY — the rows and the verbs are re-derived at
     // that open (`GET /api/collections`, `GET /api/events/[id]/card`), so a reloaded card can
     // never paint a set, or offer a verb, that stopped being true. Non-fatal by construction.
-    if (turn.collection || turn.event) {
+    if (turn.collection || turn.event || turn.change) {
       try {
         const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
         const { collectionTurnComponent, eventTurnComponent } = await import('@/lib/present/pointer');
+        const { changeTurnComponent } = await import('@/lib/present/change');
         const roomKey = kind === 'entity'
           ? id
           : await roomKeyForItem(supabase, user.id,
@@ -99,6 +100,15 @@ export async function POST(request: NextRequest) {
             // card (its verbs are re-derived anyway) instead of stacking a near-identical twin.
             dedupeKey: `event:${turn.event.spec.id}`,
             component: eventTurnComponent(turn.event.spec),
+          });
+        } else if (turn.change) {
+          // THE CONFIRM CARD IN A ROOM (stabilization W0.3b): a POINTER at the change's own row;
+          // the rail re-reads its status on every open, so it never offers Apply twice.
+          await writeRoomTurn(supabase, user.id, roomKey, {
+            role: 'system',
+            text: turn.say?.trim() || turn.change.spec.summary,
+            dedupeKey: `change:${turn.change.spec.id}`,
+            component: changeTurnComponent(turn.change.spec),
           });
         }
       } catch { /* the card is an enhancement — the answer stands without it */ }
@@ -129,6 +139,8 @@ export async function POST(request: NextRequest) {
       // turn written above is what a reload re-reads. Same contract as the Home ask door.
       ...(turn.collection ? { collection: turn.collection } : {}),
       ...(turn.event ? { event: turn.event } : {}),
+      // THE CONFIRM CARD (stabilization W0.3b): the rail paints the served spec; nothing applied.
+      ...(turn.change ? { change: turn.change } : {}),
       ...(turn.options?.length ? { options: turn.options } : {}),
     });
   } catch (e) {

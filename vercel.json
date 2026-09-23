@@ -20,6 +20,7 @@
     { "path": "/api/cron/draft-sweep", "schedule": "20 */2 * * *" },
     { "path": "/api/cron/judgment-sweep", "schedule": "50 */2 * * *" },
     { "path": "/api/cron/label-sweep", "schedule": "40 */2 * * *" },
-    { "path": "/api/cron/status-alerts", "schedule": "10 */6 * * *" }
+    { "path": "/api/cron/status-alerts", "schedule": "10 */6 * * *" },
+    { "path": "/api/cron/retention", "schedule": "30 3 * * *" }
   ]
 }

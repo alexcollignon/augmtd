@@ -28,6 +28,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { DoItem } from '@/lib/home/agenda';
+import { decodeEntities } from '@/lib/core/text';
 
 /** THE DENSITY LAW's number. Above the fold the Home holds at most this many rows. */
 export const CALM_MAX_WHISPERS = 5;
@@ -146,9 +147,26 @@ export function sortDoorRows<T>(rows: T[], itemOf: (r: T) => DoItem, today: Date
 /** MAPPED, never authored: the row's served preparation decides the word.
  *  `prepared` is the deck's own token — 'draft' (in-house) or a coworker's name. */
 export function receiptOf(item: DoItem): string | null {
-  if (!item.prepared) return null;
-  if (item.source === 'reply') return 'reply ready';
-  return item.prepared === 'draft' ? 'drafted' : 'ready to send';
+  return receiptWordOf(item.prepared ?? null, item.preparedKind ?? null, item.source);
+}
+
+/** THE ONE RECEIPT MAPPING (W2.1 — A CLAIM RENDERS · TIME TRUTH): the word is chosen by WHAT is
+ *  prepared (the reader's lead kind), never by the bare fact that a pool row exists. A commitment's
+ *  invite used to read "ready to send" from any draft row — even one whose proposed time had
+ *  passed. The token (`prepared`) says who; the kind says what; this table says the word.
+ *  Both deck printers (calm.receiptOf and attention.receiptWord) read it. */
+export function receiptWordOf(prepared: string | null, preparedKind: string | null, source: DoItem['source']): string | null {
+  if (!prepared) return null;
+  switch (preparedKind) {
+    case 'invite': return 'invite prepared';
+    case 'forward': return 'forward prepared';
+    case 'paste_pack': return 'words ready';
+    case 'decision': return 'decision laid out';
+    case 'deliverable': return prepared === 'draft' ? 'drafted' : 'ready to review';
+    default: break;
+  }
+  if (source === 'reply') return 'reply ready';
+  return prepared === 'draft' ? 'drafted' : 'ready to send';
 }
 
 /** The honest state word for a row with nothing prepared — THE MACHINE'S ONE WORD (STATE_WORDS,
@@ -231,7 +249,8 @@ export function speechRank(item: DoItem): number {
 
 /** The row's own words before the floor — the ask, else the deck's second line. */
 function rawWhisperBody(item: DoItem): string {
-  return (item.ask ?? '').trim() || (item.second ?? '').split(' · ')[0].trim();
+  // Plain text, decoded once (W5b — lib/core/text.ts): a row's words never show `&#39;` as text.
+  return decodeEntities((item.ask ?? '').trim() || (item.second ?? '').split(' · ')[0].trim());
 }
 
 // ── THE ROW LEADS WITH WHO ──────────────────────────────────────────────────────────────────────
@@ -315,11 +334,17 @@ export function whisperProject(item: DoItem, sentence: string): string | null {
   return name;
 }
 
-/** One sentence from the row's OWN fields — who + what. Never a new claim. */
-export function whisperSentence(item: DoItem): string {
+/** THE ROW'S OWN ASK, after the chrome floor — the sentence WITHOUT its who. A surface that shows
+ *  the who in its own header (the triage card, W3.6) titles with this, so the name is said once. */
+export function whisperBody(item: DoItem): string {
   const raw = rawWhisperBody(item);
   // THE FLOOR: derived speech passes through verbatim; anything else serves as a neutral title.
-  const body = isDerivedSpeech(raw) ? raw : neutralizeChrome(raw);
+  return isDerivedSpeech(raw) ? raw : neutralizeChrome(raw);
+}
+
+/** One sentence from the row's OWN fields — who + what. Never a new claim. */
+export function whisperSentence(item: DoItem): string {
+  const body = whisperBody(item);
   const who = whisperWho(item, body) ?? '';
   if (who && body) return `${who} — ${body}`;
   return body || who || 'Open this';

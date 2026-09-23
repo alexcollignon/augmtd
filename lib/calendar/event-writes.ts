@@ -20,9 +20,17 @@
 //
 // Behaviour is byte-for-byte the behaviour the two existing routes had: same selects, same token
 // callbacks, same 403 translation, same "already gone is success" on delete.
+//
+// W0.4 DEED CORRECTNESS (Sep 22) narrowed three things, each a class: a MOVE patches the window only
+// (never the guest list, never an all-day event into a timed one); a NOTE rides the provider's own
+// channel or is not offered (`noteVerbsFor` in lib/present/event.ts); an Outlook SERIES MASTER is
+// refused for cancel/move rather than hitting every occurrence.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { google } from 'googleapis';
+import { getOAuth2Client } from '@/lib/google/oauth';
+import { getGraphClient } from '@/lib/microsoft/outlook';
 import { rsvpGmail, rsvpOutlook } from '@/lib/calendar/rsvp';
 import {
   updateGmailEvent, updateOutlookEvent, deleteGmailEvent, deleteOutlookEvent,
@@ -114,33 +122,136 @@ export async function loadEventWriteTarget(
 }
 
 /** RSVP as the user, on their own connection. Throws `{code:'calendar_scope_required'}` upward
- *  exactly as the underlying senders do — the caller decides what to say about it. */
-export async function applyRsvp(t: EventWriteTarget, response: RsvpResponse): Promise<void> {
+ *  exactly as the underlying senders do — the caller decides what to say about it.
+ *
+ *  THE NOTE IS DELIVERED OR NOT OFFERED (W0.4): a `comment` rides the provider's own RSVP channel —
+ *  Graph's `comment` on accept/tentativelyAccept/decline, Google's self-attendee `comment`. With no
+ *  note the call is the unchanged one the meetings RSVP door has always made. */
+export async function applyRsvp(t: EventWriteTarget, response: RsvpResponse, opts: { comment?: string } = {}): Promise<void> {
+  const comment = (opts.comment ?? '').trim();
   if (t.provider === 'gmail') {
-    await rsvpGmail({
-      encryptedTokens: t.encryptedTokens, onTokenRefresh: t.onGoogleTokenRefresh,
-      eventId: String(t.row.event_id), response, userEmail: t.selfEmail,
+    if (!comment) {
+      await rsvpGmail({
+        encryptedTokens: t.encryptedTokens, onTokenRefresh: t.onGoogleTokenRefresh,
+        eventId: String(t.row.event_id), response, userEmail: t.selfEmail,
+      });
+      return;
+    }
+    const calendar = await googleCalendarOf(t);
+    await asScopeError(async () => {
+      const { data } = await calendar.events.get({ calendarId: 'primary', eventId: String(t.row.event_id) });
+      const self = t.selfEmail.trim().toLowerCase();
+      const attendees = (data.attendees ?? []).map((a) => (
+        (a.email ?? '').toLowerCase() === self || a.self ? { ...a, responseStatus: response, comment } : a
+      ));
+      await calendar.events.patch({
+        calendarId: 'primary', eventId: String(t.row.event_id), sendUpdates: 'all',
+        requestBody: { attendees },
+      });
     });
     return;
   }
-  await rsvpOutlook({
-    encryptedTokens: t.encryptedTokens, onTokenRefresh: t.onOutlookTokenRefresh,
-    eventId: String(t.row.event_id), response,
-  });
+  if (!comment) {
+    await rsvpOutlook({
+      encryptedTokens: t.encryptedTokens, onTokenRefresh: t.onOutlookTokenRefresh,
+      eventId: String(t.row.event_id), response,
+    });
+    return;
+  }
+  const graph = await graphOf(t);
+  const action = response === 'accepted' ? 'accept' : response === 'tentative' ? 'tentativelyAccept' : 'decline';
+  await asScopeError(() => graph.api(`/me/calendar/events/${String(t.row.event_id)}/${action}`)
+    .post({ sendResponse: true, comment }));
 }
 
-/** Move the event. The provider patch takes the WHOLE shape, so the unchanged halves (title,
- *  attendees, timezone) come from the stored row — never from a caller's guess. */
+/**
+ * Move the event — START AND END ONLY (W0.4: THE GUEST LIST IS NOT OURS TO REWRITE).
+ *
+ * This used to route through the editor's full-shape patch, which rebuilt the attendee list from
+ * the local row: Google lost optional flags and any guest added since the last sync, Graph forced
+ * every guest to `required` with their address as their name, and an all-day event came back timed.
+ * A move now PATCHES THE WINDOW and nothing else — the provider keeps every guest exactly as it
+ * holds them — and an all-day event stays all-day (a `date`, never a `dateTime`).
+ *
+ * An Outlook SERIES MASTER is refused (`recurring_series`): the calendar sync reads
+ * `/me/calendar/events`, which returns masters, not occurrences, so moving the row would move the
+ * whole series.
+ */
 export async function applyReschedule(
-  t: EventWriteTarget, args: { startISO: string; endISO: string; notes?: string },
+  t: EventWriteTarget, args: { startISO: string; endISO: string; tz: string },
 ): Promise<void> {
-  await applyEventUpdate(t, {
-    title: t.row.title || 'Meeting',
-    startISO: args.startISO, endISO: args.endISO,
-    timezone: t.row.timezone || 'UTC',
-    attendees: attendeeAddressesOf(t.row),
-    ...(args.notes ? { notes: args.notes } : {}),
-  });
+  const allDay = t.row.is_all_day === true;
+  const zone = t.row.timezone || args.tz || 'UTC';
+  if (t.provider === 'gmail') {
+    const calendar = await googleCalendarOf(t);
+    const win = allDay
+      ? allDayWindow(args.startISO, args.endISO, zone)
+      : null;
+    await asScopeError(() => calendar.events.patch({
+      calendarId: 'primary', eventId: String(t.row.event_id), sendUpdates: 'all',
+      requestBody: win
+        ? { start: { date: win.startDate }, end: { date: win.endDate } }
+        : {
+          start: { dateTime: args.startISO, ...(t.row.timezone ? { timeZone: t.row.timezone } : {}) },
+          end: { dateTime: args.endISO, ...(t.row.timezone ? { timeZone: t.row.timezone } : {}) },
+        },
+    }));
+    return;
+  }
+  await refuseOutlookSeriesMaster(t);
+  const graph = await graphOf(t);
+  const win = allDay ? allDayWindow(args.startISO, args.endISO, zone) : null;
+  await asScopeError(() => graph.api(`/me/calendar/events/${String(t.row.event_id)}`).patch(
+    win
+      ? {
+        start: { dateTime: `${win.startDate}T00:00:00`, timeZone: zone },
+        end: { dateTime: `${win.endDate}T00:00:00`, timeZone: zone },
+      }
+      : {
+        // Graph reads `dateTime` as wall time IN `timeZone` — an instant is stated in UTC.
+        start: { dateTime: utcWall(args.startISO), timeZone: 'UTC' },
+        end: { dateTime: utcWall(args.endISO), timeZone: 'UTC' },
+      },
+  ));
+}
+
+/** An all-day move keeps its shape: the picked start's calendar date in the event's zone, and a
+ *  whole-day span (end-exclusive, the convention both providers use). Pure. */
+export function allDayWindow(startISO: string, endISO: string, zone: string): { startDate: string; endDate: string } {
+  const s = Date.parse(startISO);
+  const e = Date.parse(endISO);
+  const days = Number.isFinite(s) && Number.isFinite(e) ? Math.max(1, Math.round((e - s) / 86_400_000)) : 1;
+  const startDate = dateIn(s, zone);
+  const d = new Date(`${startDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return { startDate, endDate: d.toISOString().slice(0, 10) };
+}
+
+function dateIn(ms: number, zone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' })
+      .format(new Date(ms));
+  } catch {
+    return new Date(ms).toISOString().slice(0, 10);
+  }
+}
+
+/** "2026-09-25T09:00:00.000Z" → "2026-09-25T09:00:00" — the wall clock of an instant in UTC. */
+function utcWall(iso: string): string {
+  return new Date(iso).toISOString().slice(0, 19);
+}
+
+/** THE SERIES REFUSAL (W0.4). A cancel or a move addressed to an Outlook series master would hit
+ *  every occurrence. Until the sync stores occurrence ids, we ASK the provider what the row is and
+ *  refuse a master, honestly — never guess. A probe that cannot answer refuses too (nothing fired). */
+export async function refuseOutlookSeriesMaster(t: EventWriteTarget): Promise<void> {
+  if (t.provider !== 'outlook') return;
+  const graph = await graphOf(t);
+  const probe = await asScopeError(() => graph.api(`/me/calendar/events/${String(t.row.event_id)}`)
+    .select(['type', 'recurrence']).get()) as { type?: string; recurrence?: unknown } | null;
+  if (probe?.type === 'seriesMaster' || (probe?.recurrence && probe?.type !== 'occurrence' && probe?.type !== 'exception')) {
+    throw { code: 'recurring_series' };
+  }
 }
 
 /** The full provider patch — the shape the meeting EDITOR sends (title/attendees/zone may all
@@ -163,8 +274,13 @@ export async function applyEventUpdate(
   await updateOutlookEvent({ ...shape, onTokenRefresh: t.onOutlookTokenRefresh });
 }
 
-/** Cancel the event with the provider (Google/Graph both notify the guests). */
-export async function applyCancel(t: EventWriteTarget): Promise<void> {
+/** Cancel the event with the provider (Google/Graph both notify the guests).
+ *
+ *  THE NOTE IS DELIVERED OR NOT OFFERED (W0.4): on Outlook a note rides Graph's organizer `cancel`
+ *  action as its `comment`; Google's delete carries no message, so the card never offers one there
+ *  (`noteVerbsFor`) and a stray one is ignored rather than claimed. An Outlook series master is
+ *  refused (`recurring_series`) — cancelling the row would cancel the whole series. */
+export async function applyCancel(t: EventWriteTarget, opts: { comment?: string } = {}): Promise<void> {
   if (t.provider === 'gmail') {
     await deleteGmailEvent({
       encryptedTokens: t.encryptedTokens, onTokenRefresh: t.onGoogleTokenRefresh,
@@ -172,10 +288,50 @@ export async function applyCancel(t: EventWriteTarget): Promise<void> {
     });
     return;
   }
+  await refuseOutlookSeriesMaster(t);
+  const comment = (opts.comment ?? '').trim();
+  if (comment) {
+    const graph = await graphOf(t);
+    try {
+      await asScopeError(() => graph.api(`/me/calendar/events/${String(t.row.event_id)}/cancel`).post({ comment }));
+    } catch (err: unknown) {
+      const code = (err as { statusCode?: number })?.statusCode;
+      if (code === 404 || code === 410) return; // already gone — the delete path's own rule
+      throw err;
+    }
+    return;
+  }
   await deleteOutlookEvent({
     encryptedTokens: t.encryptedTokens, onTokenRefresh: t.onOutlookTokenRefresh,
     eventId: String(t.row.event_id),
   });
+}
+
+/** One Google calendar client for this target, token-refreshed the way the senders do it. */
+async function googleCalendarOf(t: EventWriteTarget) {
+  const tokens = JSON.parse(Buffer.from(t.encryptedTokens, 'base64').toString());
+  const oauth2Client = getOAuth2Client();
+  oauth2Client.setCredentials(tokens);
+  if (tokens.expiry_date && tokens.expiry_date < Date.now() + 5 * 60 * 1000) {
+    const { credentials } = await oauth2Client.refreshAccessToken();
+    oauth2Client.setCredentials(credentials);
+    await t.onGoogleTokenRefresh(Buffer.from(JSON.stringify(credentials)).toString('base64'));
+  }
+  return google.calendar({ version: 'v3', auth: oauth2Client });
+}
+
+/** One Graph client for this target (the shared client handles decrypt + refresh). */
+async function graphOf(t: EventWriteTarget) {
+  return asScopeError(() => getGraphClient(t.encryptedTokens, t.onOutlookTokenRefresh));
+}
+
+/** The one 403 translation every sender in this family makes. */
+async function asScopeError<T>(fn: () => Promise<T>): Promise<T> {
+  try { return await fn(); } catch (err: unknown) {
+    const e = err as { code?: unknown; status?: unknown; statusCode?: unknown };
+    if (e?.code === 403 || e?.status === 403 || e?.statusCode === 403) throw { code: 'calendar_scope_required' };
+    throw err;
+  }
 }
 
 /** The addresses on the row, in order, de-duped. Reads BOTH shapes the sync has written over time

@@ -15,7 +15,7 @@ export async function GET() {
     .select('id, name, description, worker_role')
     .eq('user_id', user.id).eq('is_worker', true).eq('is_active', true)
     .order('created_at', { ascending: true });
-  // THE SEEDING SELF-HEAL (Aug 11, found live: an iScore user with ZERO coworkers — seeding was
+  // THE SEEDING SELF-HEAL (Aug 11, found live: a corporate-tier user with ZERO coworkers — seeding was
   // coupled to the email bootstrap, which a sovereign user never triggers; the /workers page
   // that used to backstop it is retired). Any authed visit with an empty roster seeds the team
   // idempotently — the facepile can never again show a dead "no team" to a fresh member.

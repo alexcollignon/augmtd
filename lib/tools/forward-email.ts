@@ -21,6 +21,7 @@ import { sendGmailEmail } from '@/lib/google/gmail';
 import { sendOutlookEmail } from '@/lib/microsoft/outlook';
 import { resolveConnectionForItem } from '@/lib/inbox/resolve-connection';
 import { sendCoworkerEmail } from './coworker-email';
+import { isEmail } from '@/lib/core/email';
 
 export interface ForwardEmailConfig {
   emailId?: string;              // an `emails` row id (fallback source of the original)
@@ -30,9 +31,8 @@ export interface ForwardEmailConfig {
   note?: string;                 // an optional lead-in note above the forwarded content
 }
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const cleanList = (v: unknown): string[] =>
-  [...new Set((Array.isArray(v) ? v : []).map((s) => String(s).trim()).filter((e) => EMAIL_RE.test(e)))].slice(0, 20);
+  [...new Set((Array.isArray(v) ? v : []).map((s) => String(s).trim()).filter((e) => isEmail(e)))].slice(0, 20);
 
 // The forwarded-content block a normal mail client produces. `body` may be HTML or plain text — we
 // escape nothing (it's re-sent as the user's own mail body, HTML-capable via the send-as-user path).

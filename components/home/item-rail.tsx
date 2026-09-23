@@ -34,7 +34,7 @@ import DecisionCard, { type DecisionSpec, type DecisionOutcome } from '@/compone
 // CONTRACT, clause 1): one read of the thread door, one kit card, one viewer, every seat.
 import { SourceObjectMount } from '@/components/room/source-object';
 import { panelPlan } from '@/lib/room/render-plan';
-import { enforceCtaLaw, shapingOffer } from '@/lib/room/cta-law';
+import { offerLineFor } from '@/lib/room/cta-law';
 // THE OPENING'S SPEECH LAWS, imported — the pre-compose stitch obeys exactly what the composed
 // brief obeys (ONE copy of each law; a hand-written second version is how the excerpt law rotted).
 import { collapseSelfVoice } from '@/lib/room/self-voice';
@@ -57,6 +57,9 @@ import CollectionCard, { type CollectionPointer } from '@/components/home/collec
 import EventCard, { type EventPointer } from '@/components/home/event-card';
 import { isCollectionKind, isCollectionSpec, type CollectionSpec } from '@/lib/present/collection';
 import { isEventSpec, type EventProposal, type EventSpec } from '@/lib/present/event';
+// THE CONFIRM CARD (stabilization W0.3b): the same ONE host the Home chat mounts.
+import ChangeCard, { type ChangePointer } from '@/components/home/change-card';
+import { isChangeSpec, type ChangeSpec } from '@/lib/present/change';
 import { useLiveRefresh } from '@/components/workflows/use-live-refresh';
 import { announceDeed, DEED_EVENT } from '@/lib/room/deed-echo';
 // HISTORY LEAVES THE STREAM — the record's seat is the ONE drawer, at every door.
@@ -79,6 +82,15 @@ export type RailView = {
   /** THE GROUND LAW — "narration expires with the brief": the loose brief's composition time.
    *  Engine narration older than it folds under "earlier (N)" (the brief IS its digest). */
   briefAt?: string | null;
+  /** W3.5 (a) — THE BRIEF BEFORE THE PAINT: the server's compose outran its budget; the loader
+   *  re-checks once and the arrival lands as `lateBrief`, rendered as an APPENDED message beneath
+   *  the opening (never a swap of what the reader opened on). */
+  briefPending?: boolean;
+  briefStaleVersion?: boolean;
+  lateBrief?: { text: string; at: string | null } | null;
+  /** W3.5 (d) — THE MOOT ASK BY CODE: dedupe keys of asks the machine read as moot; the room hides
+   *  the same turns the header ignored (one claim). */
+  mootAskKeys?: string[];
   gap: string | null;
   entity: {
     id: string; name: string;
@@ -146,7 +158,11 @@ type Turn =
       /** THE EVENT CARD IN A ROOM (W4-C): one meeting with the verbs ITS state permits. Same two
        *  shapes, and the same reason, sharper: a stored verb ladder goes stale the moment the
        *  organizer moves the meeting. */
-      event?: { eventId: string; spec?: EventSpec; pointer?: EventPointer } };
+      event?: { eventId: string; spec?: EventSpec; pointer?: EventPointer };
+      /** THE CONFIRM CARD IN A ROOM (stabilization W0.3b): a prepared state change awaiting the
+       *  click. A LIVE turn carries the served `spec`; a REHYDRATED one the POINTER, re-read
+       *  through `GET /api/changes/[id]` — a change applied elsewhere never re-offers Apply. */
+      change?: { changeId: string; spec?: ChangeSpec; pointer?: ChangePointer } };
 
 // THE ROOM (P7c-c1 → one-room R1): the conversation is PER-DEAL, not per-item — navigating between
 // a deal's artifacts keeps the chat. The module store is now only the LIVE RENDER CACHE; the durable
@@ -298,6 +314,11 @@ function mapServerTurns(rows: ServerTurnRow[]): Turn[] {
         },
       };
     }
+    // …and THE CONFIRM CARD, as a POINTER and nothing else: the change's id, re-read through its
+    // own door on every open, so a settled change never comes back offering Apply.
+    if (turn.role === 'system' && t.component?.key === 'change_card' && typeof t.component.refId === 'string') {
+      turn.change = { changeId: t.component.refId, pointer: { changeId: t.component.refId } };
+    }
     if (turn.role === 'system' && t.component?.key === 'standing_spec' && t.component.state) {
       const st = t.component.state as unknown as { name?: string; deliverable?: string; cadenceLabel?: string; ownerName?: string; firstRun?: string | null; status?: string; workflowId?: string | null };
       if (st.name) {
@@ -333,17 +354,8 @@ function spokenName(raw: string): string {
   return looksOrg ? name : toks[0];
 }
 
-// Mechanical dedup — plumbing, not judgment: two phrasings of the same move share most of their
-// distinctive words. Normalized content-token overlap ≥ 0.6 (against the shorter set) = an echo.
-function echoesAnchor(nextMove: string, ask: string | null): boolean {
-  if (!ask) return false;
-  const toks = (s: string) => new Set(s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter((w) => w.length > 3));
-  const a = toks(nextMove); const b = toks(ask);
-  if (!a.size || !b.size) return false;
-  let shared = 0;
-  for (const w of a) if (b.has(w)) shared++;
-  return shared / Math.min(a.size, b.size) >= 0.6;
-}
+// (echoesAnchor — the stitched fallback's dedup between the stored next_move and the anchor ask —
+//  died with the stitched fallback: W3.5 (a), registry precedence #1.)
 
 /** ONE PRODUCER for a mounted card's DOM handle — the wrapper writes it, the pinned CTA reads it
  *  (two spellings of one id can only ever agree by luck — the fake-warm lesson, applied here). */
@@ -543,7 +555,12 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
       setTurnsRaw(hydrated);
     } catch { /* private mode — the fetch below is the floor */ }
   }, [roomKey]);
+  // TURNS KEYED ONCE (W3.7 ROOM SPEED): while the host's view is still PENDING the room key is only
+  // a guess — `<kind>:<id>` — and flips to the entity id the moment the view names the deal, so the
+  // conversation used to be fetched TWICE per open (the loose key, then the real one). The fetch now
+  // waits for the key the view resolves; the stamped envelope above still paints meanwhile.
   useEffect(() => {
+    if (pending) return;
     let alive = true;
     fetch(`/api/room/turns?key=${encodeURIComponent(roomKey)}`)
       .then((r) => (r.ok ? r.json() : null))
@@ -579,7 +596,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
       })
       .catch(() => {});
     return () => { alive = false; };
-  }, [roomKey, turnsNonce]);
+  }, [roomKey, turnsNonce, pending]);
   useEffect(() => {
     const onTurn = (ev: Event) => { if ((ev as CustomEvent).detail?.entityId === roomKey) setTurnsRaw(_dealTurns.get(roomKey) ?? []); };
     window.addEventListener('aug:deal-turn', onTurn);
@@ -851,6 +868,10 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
             ? { collection: { collectionId: String(d.collection.id), spec: d.collection.spec as CollectionSpec } } : {}),
           ...(d.event && isEventSpec(d.event.spec)
             ? { event: { eventId: String(d.event.spec.id), spec: d.event.spec as EventSpec } } : {}),
+          // THE CONFIRM CARD paints at once from the served spec; the durable copy is the
+          // component turn the steer door wrote, re-read as a pointer on the next open.
+          ...(d.change && isChangeSpec(d.change.spec)
+            ? { change: { changeId: String(d.change.spec.id), spec: d.change.spec as ChangeSpec } } : {}),
         }]);
       }
     } catch {
@@ -899,8 +920,12 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   // exactly as before. Only the folded PAST changed address, and it changed address at BOTH doors
   // at once, because this computation was always shared. ──
   // The lifted engine ask lives in the brief above — never twice on screen (law 1).
-  const liftedAsk = turns.find((t): t is Extract<Turn, { role: 'system' }> => t.role === 'system' && !t.author?.name && !!t.checklist?.length && !!t.turnId);
-  const stream = turns.filter((t) => t !== liftedAsk);
+  // THE MOOT ASK BY CODE (W3.5 (d), lib/room/ask-mootness — the machine's read, served as
+  // `mootAskKeys`): an ask the header ignored is not shown as live here either. ONE claim per room.
+  const mootAskKeys = new Set(view.mootAskKeys ?? []);
+  const isMootAsk = (t: Turn) => t.role === 'system' && !!t.dkey && mootAskKeys.has(t.dkey);
+  const liftedAsk = turns.find((t): t is Extract<Turn, { role: 'system' }> => t.role === 'system' && !t.author?.name && !!t.checklist?.length && !!t.turnId && !isMootAsk(t));
+  const stream = turns.filter((t) => t !== liftedAsk && !isMootAsk(t));
   // A SETTLED ask's remnant ("To finish this I need…" with its checklist stripped) is
   // history, not news — it folds into "earlier" always, never the default read (law 6).
   const isDeadAsk = (t: Turn) => t.role === 'system' && !!t.dkey && /^(requires:|delegate:)/.test(t.dkey) && !t.checklist?.length;
@@ -1091,27 +1116,27 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
     // A person is introduced once per sentence; the second mention is "they"/"their".
     return line ? nameOncePerSentence(line, [who]) : null;
   })();
+  // ══ THE FALLBACK IS ONE VOICE (W3.5 (a); registry precedence #1: "the stitched field-assembly
+  // fallback is dead"). Found live: with no composed brief the pinned seat spoke as THREE authors
+  // — the anchor line (the understanding's ask), a grey entity-summary line (the state synthesis in
+  // the team's voice), and "You owe:" / "They owe:" debt lines — one fact, three homes. The
+  // composed brief now reaches the first paint from the server path; when it genuinely cannot,
+  // the seat says ONE thing: the item's own ask (a project room: its summary or the welcome line).
   const openingText = composed ?? (inRoom
     ? (ent?.summary ?? (turns.length === 0
       ? `This is the room for ${ent?.name ?? 'this work'} — ask anything, correct me, or hand work off. I hold everything on it.`
       : null))
-    : (anchorLine ?? ent?.summary
+    : (anchorLine
       ?? (!view.anchor?.ask && !pending ? "This isn't tied to a bigger body of work yet — I'll keep it standalone." : null)));
-  // One fact once: the summary only whispers below when the anchor stitch already leads.
-  const secondarySummary = !composed && !inRoom && anchorLine && ent?.summary ? ent.summary : null;
-  // The debt lines speak only when they say something the next move doesn't already say — and
-  // never beside the composed brief (it carries the debts).
-  const owesYou = composed ? null : inRoom
-    ? (ent?.whoOwesYou[0] && !(ent.nextMove && echoesAnchor(ent.nextMove, ent.whoOwesYou[0])) ? ent.whoOwesYou[0] : null)
-    : (!ent?.nextMove ? ent?.whoOwesYou[0] ?? null : null);
-  const owesThem = composed || ent?.nextMove ? null : ent?.whoOwesThem[0] ?? null;
   // THE STRUCTURAL FRAME: the frame is up before the view — a quiet shimmer, never a claim.
   const showShimmer = !inRoom && pending && !ent && !view.anchor?.ask && !view.brief;
 
   // ═══ THE MOVE + THE OFFERS (the one responder): ONE primary action (the single most
   // consequential next thing, board-validated) in the pinned CTA row + the offers as composer
   // chips, each of which literally SPEAKS through the composer (clicks are utterances). ═══
-  const plan = panelPlan({ hasDecision: decisionIsPrimary });
+  // THE MOVE YIELDS TO ANY MOUNTED CARD (W3.5 (b); registry precedence #10): the rail states the
+  // fact (a kit card for the move's target is in this stream), the ONE placement table decides.
+  const plan = panelPlan({ hasDecision: decisionIsPrimary, moveCardMounted: !!cardForMove });
   const resp = composed ? { move: plan.showMove ? respMove : null, offers: plan.showOffers ? ent?.offers ?? view.offers ?? [] : [] } : null;
   // ONE DEED, ONE OBJECT: when the MOVE's target IS a prepared artifact on this rail, the two
   // renderers MERGE — the object rides IN the pinned card (its label + byline), the move's label is
@@ -1157,20 +1182,15 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   // walk found "Next: Confirm Sep 14 call status, send material, lock call time" standing as one —
   // a to-do list in button costume, composed weeks earlier by the state synthesis.
   //
-  // The composed move is already floored at composition (lib/room/brief.ts consults the board and
-  // marks an unstaged move `offer`). THE PRE-COMPOSE FALLBACK NEVER PASSED A COMPOSER AT ALL, so it
-  // is floored HERE against the fact this pane actually holds: does this room mount prepared work?
-  // Same predicate, same offer sentence, one implementation (lib/room/cta-law).
-  const roomHasStagedWork = (artifacts?.length ?? 0) > 0;
-  const fallbackMove = (!resp && ent?.nextMove && !echoesAnchor(ent.nextMove, view.anchor?.ask ?? null))
-    ? enforceCtaLaw({ label: `Next: ${ent.nextMove}`, ref: ent.nextMoveHref ?? null },
-      { targetPrepared: roomHasStagedWork })
-    : null;
-  // THE CoS's OFFER LINE — what stands in the CTA's place when the deed is not staged. One seat,
-  // whether the demotion happened at composition or here.
-  const ctaOffer: string | null = resp?.move?.offer
-    ? (resp.move.offerText ?? shapingOffer(resp.move.label))
-    : (fallbackMove?.demoted ? fallbackMove.offerText : null);
+  // The composed move is floored at composition (lib/room/brief.ts consults the board, binds an
+  // unbound move to the room's SOLE staged entry, and marks an unstaged move `offer`).
+  // THE PRE-COMPOSE FALLBACK ("Next: <the entity's stored next_move>") IS DEAD (W3.5 (a); registry
+  // precedence #1): it never passed a composer, its target was the room itself, and it stood as an
+  // inert CTA under the reader. The seat carries a composed move or none.
+  // THE CoS's OFFER LINE — what stands in the CTA's place when the deed is not staged — and NEVER
+  // beside a mounted prepared card (W3.5 (c): a ready artifact is never demoted to "say the word";
+  // the card IS the deed's surface). One predicate, lib/room/cta-law.
+  const ctaOffer: string | null = offerLineFor(resp?.move, { cardMounted: mountedCards.length > 0 || !!mergedArt });
   // ══════════════════════════════════════════════════════════════════════════════════════════════
   // THE MOVE IS THE KIT'S `proposal` CARD (W4-A, Sep 22 — docs/component-map.md §2).
   //
@@ -1204,17 +1224,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
         ...(busy ? { busy: true } : {}),
       };
     }
-    if (fallbackMove?.move && !fallbackMove.demoted) {
-      // Pre-compose fallback, staged: the legacy next-move line, deed-only, in the SAME seat.
-      const target = ent!.nextMoveHref && !(!inRoom && ent!.nextMoveHref!.includes(`/item/${id}`)) ? ent!.nextMoveHref! : null;
-      return {
-        kind: 'proposal', id: 'move',
-        confirmLabel: fallbackMove.move.label,
-        ...(target ? { onConfirm: () => go(target) } : {}),
-        onSay: (say: string) => { void send(say); },
-        ...(busy ? { busy: true } : {}),
-      };
-    }
+    // (No pre-compose fallback card — a stored next_move never renders as a deed: W3.5 (a).)
     return null;
   })();
   // (No chip-row seat any more — see THE CHIPS ARE RETIRED FROM THE ROOM, at the composer below.
@@ -1307,7 +1317,11 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   const askSeatsObject = !!objectCard && !decisionSeatsObject && !!liftedAsk && !foldedAsk;
   const pinnedSeatsObject = !!objectCard && !decisionSeatsObject && !askSeatsObject;
 
-  const pinnedNode = (showShimmer || secondarySummary || owesYou || owesThem || view.gap || moveCard || mergedArt || foldedAsk || ctaOffer || pinnedSeatsObject) ? (
+  // ONE AUTHOR PER OPENING (W3.5 follow-up, W3.7): `view.gap` is the PLAN's suggestion line — a
+  // second author. Beside a composed brief it restated the gap in other words (the COHERENCE rule
+  // already has the composer name it), so it renders ONLY when no composed brief speaks.
+  const gapLine = composed ? null : (view.gap ?? null);
+  const pinnedNode = (showShimmer || gapLine || moveCard || mergedArt || foldedAsk || ctaOffer || pinnedSeatsObject) ? (
     <div className="space-y-1.5">
       {showShimmer && (
         <div className="space-y-1.5 py-0.5" aria-hidden>
@@ -1316,20 +1330,17 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
         </div>
       )}
       {/* ══ ONE TYPE SCALE PER BUBBLE (THE OPENING CONTRACT, clause 5 — owner: "not a fan") ══════
-          These lines used to render at 12.5px in three colours — a dark headline, a muted middle
-          and a darker offer inside ONE bubble, under a 13px pinned sentence. Four treatments for
-          one voice reads as four voices. They are ONE SIZE (the bubble's own 13px) and ONE muted
-          tone now; hierarchy is SPACING and weight, which is what the kit already defines. */}
-      {secondarySummary && <p className="text-[13px] leading-[1.5] text-neutral-500">{secondarySummary}</p>}
-      {owesYou && <p className="text-[13px] leading-[1.5] text-neutral-500">You owe: {owesYou}</p>}
-      {owesThem && <p className="text-[13px] leading-[1.5] text-neutral-500">They owe: {owesThem}</p>}
+          These lines used to render at 12.5px in three colours under a 13px pinned sentence. Four
+          treatments for one voice reads as four voices. They are ONE SIZE (the bubble's own 13px)
+          and THE BUBBLE'S OWN TONE (text-neutral-800 — the kit's bubble text, W3.5 (e): a muted
+          second tone was still a second colour inside one bubble); hierarchy is SPACING only. */}
       {/* The gap — one plain ask, same channel (never a step list). */}
       {/* ONE ACCENT PER ROOM: the gap is a SENTENCE, not a warning — amber here was a second focus
           point competing with the pinned CTA (owner walk, Sep 7). */}
-      {view.gap && <p className="text-[13px] leading-[1.5] text-neutral-500">{view.gap}</p>}
+      {gapLine && <p className="text-[13px] leading-[1.5] text-neutral-800">{gapLine}</p>}
       {/* Q6 · THE OFFER IN THE CTA'S SEAT: nothing is staged, so the room offers to shape it —
           in the speaker's own first person, sayable, and never dressed as a button. */}
-      {ctaOffer && <p className="text-[13px] leading-[1.5] text-neutral-500">{ctaOffer}</p>}
+      {ctaOffer && <p className="text-[13px] leading-[1.5] text-neutral-800">{ctaOffer}</p>}
       {/* SHOW, between the speech and the offer: the thing the position is ABOUT — the source
           object, in the ONE object card, directly under the words that ask about it. */}
       {pinnedSeatsObject && <div className="pt-0.5">{objectCard}</div>}
@@ -1339,7 +1350,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
       {moveCard && <div className="pt-0.5"><ThreadCardView card={moveCard} /></div>}
       {/* …and when no move stands, a merged artifact still says what is on the board. */}
       {!moveCard && mergedArt && (
-        <p className="text-[13px] leading-[1.5] text-neutral-500">
+        <p className="text-[13px] leading-[1.5] text-neutral-800">
           <span className="font-medium">{mergedArt.label}</span>
           {mergedArt.by && <span className="ml-1.5 font-medium text-indigo-500">by {mergedArt.by.split(' ')[0]}</span>}
         </p>
@@ -1349,7 +1360,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           so only the rows ride; without one the ask's own sentence comes with them, because
           nothing above it has said what is missing. */}
       {foldedAsk && !composed && foldedAsk.text && (
-        <p className="text-[13px] leading-[1.5] text-neutral-500">{foldedAsk.text}</p>
+        <p className="text-[13px] leading-[1.5] text-neutral-800">{foldedAsk.text}</p>
       )}
       {foldedAsk && askCard({ ...foldedAsk, text: '' }, 'folded-ask')}
     </div>
@@ -1391,7 +1402,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   // card on the speaking bubble.
   const turnExtras = (t: Extract<Turn, { role: 'system' }>): React.ReactNode => {
     const shownRefs = (t.refs ?? []).filter((r) => inRoom || !r.href?.includes(`/item/${id}`));
-    const has = !!(t.checklist?.length || t.workflowDraft || t.standingSpec || t.approval || t.collection || t.event || t.actions?.length || shownRefs.length || t.files?.length);
+    const has = !!(t.checklist?.length || t.workflowDraft || t.standingSpec || t.approval || t.collection || t.event || t.change || t.actions?.length || shownRefs.length || t.files?.length);
     if (!has) return null;
     return (
       <div className="min-w-0 space-y-1.5 text-[13px] text-neutral-800 leading-relaxed">
@@ -1421,6 +1432,17 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
               {...(t.event.spec
                 ? { spec: t.event.spec, ...(t.event.pointer ? { pointer: t.event.pointer } : {}) }
                 : { pointer: t.event.pointer ?? { eventId: t.event.eventId } })}
+            />
+          </div>
+        )}
+        {/* THE CONFIRM CARD — ONE host for a prepared state change (a standing instruction, a
+            remembered fact, a run). Apply and Dismiss go through the change's own doors. */}
+        {t.change && (
+          <div className="mt-1.5">
+            <ChangeCard
+              {...(t.change.spec
+                ? { spec: t.change.spec, ...(t.change.pointer ? { pointer: t.change.pointer } : {}) }
+                : { pointer: t.change.pointer ?? { changeId: t.change.changeId } })}
             />
           </div>
         )}
@@ -1557,6 +1579,17 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
     // (No `actions` here any more — the ONE primary deed is the `proposal` card inside the node.)
   });
 
+  // THE LATE BRIEF ARRIVES AS AN APPEND (W3.5 (a); registry precedence #1: "if composition genuinely
+  // cannot land in time, the brief arrives as an appended turn, never a swap"). The opening the
+  // reader met stays exactly as painted; the composed words land beneath it as a new message.
+  const lateBrief = !composed && view.lateBrief?.text ? view.lateBrief.text : null;
+  if (lateBrief) {
+    items.push({
+      type: 'actor_bubble', id: 'late-brief', actorId: seatId, actorName: seatName,
+      actorRoleLabel: seatLabel, text: lateBrief,
+    });
+  }
+
   // THE CoS OPENS — the invitation, in the seat's own first-person voice, directly under the
   // position it deliberately does not repeat. Ephemeral: it exists for as long as the reader has
   // said nothing, and `send` writes it into the record the moment they answer.
@@ -1641,7 +1674,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
     // ONE PREP CLASS at the render too (Sep 8): `anticipate:` narrations are prep narrations.
     if ((((artifacts?.length ?? 0) > 0) || composed) && t.dkey && /^(prep:|meeting-prep:|anticipate:)/.test(t.dkey)) return;
     // A component turn is never narration — it carries a live affordance, so it speaks with a face.
-    const hasComponent = !!(t.checklist?.length || t.actions?.length || t.standingSpec || t.workflowDraft || t.approval || t.collection || t.event || t.key === 'founding-proposal');
+    const hasComponent = !!(t.checklist?.length || t.actions?.length || t.standingSpec || t.workflowDraft || t.approval || t.collection || t.event || t.change || t.key === 'founding-proposal');
     if (!t.author?.name && !hasComponent) {
       // THE EVENT LINE — the narrator's muted one-liner: system, NO author, NO affordance. Its
       // refs survive as quiet inline words (law 8 — the P2d wall, closed kit-side same day),

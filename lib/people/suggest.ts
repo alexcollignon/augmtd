@@ -3,7 +3,7 @@
 //
 // Born as the body of `GET /api/people/suggest` (the typeahead, Aug 4). The card contract's
 // must-refuse ("never an attendee outside the room's people without the user's word") needs the
-// SAME grounded source server-side, so a chat-born invite can turn "with Léa" into a real address
+// SAME grounded source server-side, so a chat-born invite can turn "with Sam" into a real address
 // without inventing one — and a second copy of this query is how the typeahead and the preparer
 // would start disagreeing about who exists.
 //
@@ -63,7 +63,7 @@ export async function suggestPeople(
  * resolvePersonEmail — a NAME the user spoke → one real address, or nothing.
  *
  * AMBIGUITY IS A REFUSAL (the house law, from the workflow member resolver): two people answering
- * to "Léa" means the invite gets NEITHER — the card asks instead of guessing which human to mail.
+ * to "Sam" means the invite gets NEITHER — the card asks instead of guessing which human to mail.
  * A single distinct address wins even when several rows share it (one person, two spellings).
  */
 export async function resolvePersonEmail(

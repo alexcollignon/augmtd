@@ -9,6 +9,7 @@
 import { createBedrockAdapter } from '@/lib/ai/bedrock-adapter';
 import { aiCreate } from '@/lib/ai/factory';
 import { logAIUsage } from '@/lib/ai/log-usage';
+import { clipForPrompt, EXCERPT_MARK, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -376,9 +377,14 @@ async function tavilySearch(query: string, searchDepth: 'basic' | 'advanced' = '
 
     if (!data.results?.length) return `No results for "${query}".`;
 
-    return data.results
-      .map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.published_date ? `Published: ${r.published_date}` : 'Published: unknown — do not assume this is current'}\n   ${r.content?.slice(0, 500) ?? ''}`)
-      .join('\n\n');
+    // EXCERPT HONESTY (invariant 13): a raw `.slice()` on the fetched page content is exactly the
+    // failure the law names — the synthesis step reads a mid-sentence cut as the SOURCE being
+    // truncated. `clipForPrompt` ends at a boundary and declares itself; the rule rides once at
+    // the end of this tool result (it stands alone, so the rule can't depend on a caller).
+    const clippedResults = data.results
+      .map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.published_date ? `Published: ${r.published_date}` : 'Published: unknown — do not assume this is current'}\n   ${r.content ? clipForPrompt(r.content, 500) : ''}`);
+    const body = clippedResults.join('\n\n');
+    return body.includes(EXCERPT_MARK) ? `${body}\n\n${EXCERPT_RULE}` : body;
   } catch (e) {
     return `[web_search error] ${e instanceof Error ? e.message : String(e)}`;
   }

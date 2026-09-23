@@ -26,6 +26,7 @@
 // Failure honesty holds throughout — a failed judgment is never cached and moves nothing.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { readPlan } from '@/lib/store/item-plans';
 import { buildWorkItems } from '@/lib/work-items/model';
 import { judgmentCandidates, toNominatorItem, readJudgmentAges } from '@/lib/prepare/pass';
 import { nominateForJudgment, type Nomination } from '@/lib/work/judgment-nominator';
@@ -51,6 +52,13 @@ export type JudgmentSweepResult = {
 
 const CONCURRENCY = 3;   // the judge is read-heavy + one small call; three in flight is polite
 const DEFAULT_BUDGET_MS = 60_000;
+// BOUNDED-EXPLICIT (invariant 10): the meeting anchor is an ORDERING signal only (never a
+// correctness fact — a stated date in the item's own text always leads), so this is a deliberate
+// bounded window, not a full listing: the most recent 300 meetings in the last 30 days, ordered
+// newest-first, so a saturating account drops its OLDEST anchors first (the least useful ones for
+// "did a meeting with this person just happen").
+const MEETING_ANCHOR_LOOKBACK_DAYS = 30;
+const MEETING_ANCHOR_ROW_LIMIT = 300;
 
 /** THE MEETING ANCHOR (deterministic, one batched read): a meeting with this item's counterparty
  *  that has ALREADY STARTED since the item's own last activity. Agnostic — it names nobody; it
@@ -60,9 +68,9 @@ async function meetingStartsByEmail(admin: SupabaseClient, userId: string): Prom
   try {
     const { data } = await admin.from('calendar_events').select('start_time, attendees')
       .eq('user_id', userId)
-      .gte('start_time', new Date(Date.now() - 30 * 86_400_000).toISOString())
+      .gte('start_time', new Date(Date.now() - MEETING_ANCHOR_LOOKBACK_DAYS * 86_400_000).toISOString())
       .lte('start_time', new Date().toISOString())
-      .order('start_time', { ascending: false }).limit(300);
+      .order('start_time', { ascending: false }).limit(MEETING_ANCHOR_ROW_LIMIT);
     for (const ev of (data ?? []) as Array<{ start_time: string; attendees: unknown }>) {
       const atts = Array.isArray(ev.attendees) ? (ev.attendees as Array<{ email?: string }>) : [];
       for (const a of atts) {
@@ -191,8 +199,7 @@ export async function runJudgmentSweep(
       if (verdict.failed) { out.failed++; return; }
       // A fresh judgment rewrites the cache row; an unchanged updated_at means the day-keyed sig hit.
       // (Cheap, honest accounting — one extra read only on the item we just visited.)
-      const { data: row } = await admin.from('item_plans').select('updated_at')
-        .eq('user_id', userId).eq('kind', 'judgment').eq('entity_id', n.item.key).maybeSingle();
+      const row = await readPlan(admin, userId, 'judgment', n.item.key);
       if (row?.updated_at && String(row.updated_at) !== String(before)) out.fresh++; else out.cached++;
       const cons = await applyVerdictConsequences(admin, userId, input, verdict);
       if (cons.resolved) out.resolved++;

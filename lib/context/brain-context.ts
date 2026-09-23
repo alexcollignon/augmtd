@@ -1,5 +1,5 @@
-// UNIFIED READ-TIME CONTEXT (Step 2) — the single reader that folds the durable BRAINS (person_state +
-// initiative_state) into a compact prose block for any generative surface (the drafter first; brief /
+// UNIFIED READ-TIME CONTEXT (Step 2) — the single reader that folds the durable BRAIN (the entity
+// registry: the person entity + the item's own linked work entity) into a compact prose block for any generative surface (the drafter first; brief /
 // coworker chat later). This is the "context kept at the top" move: surfaces READ precomputed judgment
 // instead of re-deriving it, so a draft/brief reasons WITH the relationship + where the deal stands.
 //
@@ -7,24 +7,46 @@
 // additive, never blocks the caller.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getPersonState } from '@/lib/people/state-store';
-import { canonicalPerson } from '@/lib/projects/identity';
-import type { PersonStateData } from '@/lib/people/brain';
 
 const emailOf = (s?: string | null): string | null =>
   String(s || '').toLowerCase().match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || null;
 
-export type BrainContextOpts = { personEmail?: string | null; personName?: string | null; initiative?: string | null };
+export type BrainContextOpts = {
+  personEmail?: string | null;
+  personName?: string | null;
+  /** THE WIDER WORK comes from the item's OWN entity link (ONE BRAIN — identity, never a label
+   *  match). Pass the item when known; a drafter that only holds `source_data` passes the thread
+   *  id and the link is resolved through the thread's newest inbox row. `understanding.initiative`
+   *  (a string the classifier guessed) is no longer accepted here — W2.2. */
+  item?: { kind: 'inbox_item' | 'commitment' | 'meeting'; id: string } | null;
+  threadId?: string | null;
+};
+
+/** The entity an item is filed under — read off `entity_links`, the registry's own edge. */
+async function linkedEntityId(supabase: SupabaseClient, userId: string, opts: BrainContextOpts): Promise<string | null> {
+  let link = opts.item ?? null;
+  if (!link && opts.threadId) {
+    const { data: it } = await supabase.from('inbox_items').select('id')
+      .eq('user_id', userId).eq('source_data->>thread_id', String(opts.threadId))
+      .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(1).maybeSingle();
+    if (it?.id) link = { kind: 'inbox_item', id: String(it.id) };
+  }
+  if (!link) return null;
+  const { data: el } = await supabase.from('entity_links').select('entity_id')
+    .eq('user_id', userId).eq('item_kind', link.kind).eq('item_id', link.id).not('entity_id', 'is', null).maybeSingle();
+  return (el?.entity_id as string) ?? null;
+}
 
 export async function renderBrainContext(supabase: SupabaseClient, userId: string, opts: BrainContextOpts): Promise<string> {
   const parts: string[] = [];
 
   // ── The PERSON — who they are to you + where you stand + how they write (so the draft matches).
-  // ENTITY-FIRST (One Brain cutover #4): one row per human, alias-matched — no per-address duplicates.
-  // person_state is the fallback until demolition. ──
+  // THE PERSON ENTITY ONLY (One Brain cutover #4; W2.6 demolition): one row per human, alias-matched —
+  // no per-address duplicates. The `person_state` fallback is gone: that table has had no writer since
+  // July, so for a person the registry doesn't know it could only hand the drafter a months-old frozen
+  // relationship as current. No entity → no WHO block (the honest absence). ──
   try {
     const email = emailOf(opts.personEmail);
-    let rendered = false;
     try {
       const { getPersonEntities, findPersonEntity } = await import('@/lib/entities/people');
       const pe = findPersonEntity(await getPersonEntities(supabase, userId), email, opts.personName ?? null);
@@ -35,39 +57,23 @@ export async function renderBrainContext(supabase: SupabaseClient, userId: strin
         if (s.whoOwes?.them?.length) p.push(`They owe you: ${s.whoOwes.them.join('; ')}`);
         if (s.style) p.push(`How they communicate (match this register): ${s.style}`);
         parts.push(p.join('\n'));
-        rendered = true;
       }
-    } catch { /* fall through */ }
-    const key = (email || (opts.personName ? canonicalPerson(opts.personName) : null) || '').toLowerCase();
-    if (!rendered && key) {
-      const ps = await getPersonState(supabase, userId, key);
-      const s = (ps?.state ?? null) as PersonStateData | null;
-      if (s?.summary) {
-        const p = [`[WHO YOU'RE WRITING TO — ${ps!.display_name || key}${s.relationship !== 'unknown' ? ` · ${s.relationship}` : ''}]`, `Where you stand: ${s.summary}`];
-        if (s.whoOwes?.you?.length) p.push(`You owe them: ${s.whoOwes.you.join('; ')}`);
-        if (s.whoOwes?.them?.length) p.push(`They owe you: ${s.whoOwes.them.join('; ')}`);
-        if (s.style) p.push(`How they communicate (match this register): ${s.style}`);
-        parts.push(p.join('\n'));
-      }
-    }
+    } catch { /* non-fatal */ }
   } catch { /* non-fatal */ }
 
-  // ── The INITIATIVE — the wider work this touches, so the reply fits the deal, not just the message. ──
+  // ── The WIDER WORK this touches, so the reply fits the deal, not just the message. Resolved
+  // through the item's ENTITY LINK (the memory already decided what this item is about) — never by
+  // string-matching a classifier's initiative label against entity names. ──
   try {
-    if (opts.initiative) {
-      // ONE BRAIN: resolve the wider work in the ENTITY registry (name/alias match on the label).
-      const nk = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, '');
-      const want = nk(opts.initiative);
-      if (want) {
-        const { data: wents } = await supabase.from('work_entities').select('name, aliases, state')
-          .eq('user_id', userId).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null).limit(400);
-        const hit = ((wents ?? []) as Array<{ name: string; aliases: unknown; state: { summary?: string; stage?: string | null } | null }>)
-          .find((e) => nk(e.name) === want || (Array.isArray(e.aliases) && (e.aliases as string[]).some((a) => nk(a) === want)));
-        if (hit?.state?.summary) {
-          const p = [`[THE WIDER WORK — ${hit.name}]`, `Where it stands: ${hit.state.summary}`];
-          if (hit.state.stage) p.push(`Stage: ${hit.state.stage}`);
-          parts.push(p.join('\n'));
-        }
+    const entityId = await linkedEntityId(supabase, userId, opts);
+    if (entityId) {
+      const { data: hit } = await supabase.from('work_entities').select('name, state')
+        .eq('id', entityId).eq('user_id', userId).eq('kind', 'initiative').maybeSingle();
+      const st = (hit?.state ?? null) as { summary?: string; stage?: string | null } | null;
+      if (hit?.name && st?.summary) {
+        const p = [`[THE WIDER WORK — ${hit.name}]`, `Where it stands: ${st.summary}`];
+        if (st.stage) p.push(`Stage: ${st.stage}`);
+        parts.push(p.join('\n'));
       }
     }
   } catch { /* non-fatal */ }
@@ -76,37 +82,5 @@ export async function renderBrainContext(supabase: SupabaseClient, userId: strin
   return `[RELATIONSHIP & DEAL CONTEXT — what you already know about this person and this work; ground the reply in it, do NOT restate it verbatim]\n${parts.join('\n\n')}`;
 }
 
-// ── Per-USER "your world" summary — for the COWORKER CHAT, so a teammate reasons WITH your live initiatives
-// + the relationships needing attention, instead of a cold prompt. Compact, read-only, no AI. Reads the top
-// active brains, attention-first (needs-you / you-owe / gone-quiet lead). Returns '' when nothing is known.
-const IRANK: Record<string, number> = { needs_you: 0, gone_quiet: 1, stalled: 1, waiting: 2, active: 3 };
-export async function renderWorldContext(supabase: SupabaseClient, userId: string, opts: { maxInitiatives?: number; maxPeople?: number } = {}): Promise<string> {
-  const maxI = opts.maxInitiatives ?? 8, maxP = opts.maxPeople ?? 6;
-  const parts: string[] = [];
-  try {
-    // ONE BRAIN: the user's live work = the ENTITY registry (attention-first).
-    const { data } = await supabase.from('work_entities').select('name, state, last_event_at')
-      .eq('user_id', userId).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null)
-      .order('last_event_at', { ascending: false }).limit(30);
-    const rows = ((data ?? []) as Array<{ name: string; state: { summary?: string; momentum?: string } | null }>).filter((r) => r.state?.summary);
-    rows.sort((a, b) => (IRANK[a.state?.momentum ?? 'active'] ?? 4) - (IRANK[b.state?.momentum ?? 'active'] ?? 4));
-    const top = rows.slice(0, maxI);
-    if (top.length) parts.push(`[YOUR ACTIVE WORK — the user's live work; reason WITH the deals, don't restate them]\n${top.map((r) => `- ${r.name} [${r.state!.momentum}]: ${r.state!.summary}`).join('\n')}`);
-  } catch { /* non-fatal */ }
-  try {
-    // ENTITY-FIRST (cutover #4): one row per human (alias-deduped) — no duplicate relationship lines.
-    const { getPersonEntities } = await import('@/lib/entities/people');
-    const pes = (await getPersonEntities(supabase, userId))
-      .filter((p) => p.state?.summary && (p.state.momentum === 'you_owe' || p.state.momentum === 'gone_quiet'))
-      .sort((a, b) => (b.lastEventAt || '').localeCompare(a.lastEventAt || ''));
-    if (pes.length) {
-      parts.push(`[KEY RELATIONSHIPS NEEDING ATTENTION]\n${pes.slice(0, maxP).map((p) => `- ${p.name} [${p.state!.momentum}]: ${p.state!.summary}`).join('\n')}`);
-    } else {
-      const { data } = await supabase.from('person_state').select('display_name, state, last_touch_at').eq('user_id', userId).order('last_touch_at', { ascending: false }).limit(40);
-      const rows = ((data ?? []) as Array<{ display_name: string | null; state: { summary?: string; momentum?: string } | null }>).filter((r) => r.state?.summary && (r.state.momentum === 'you_owe' || r.state.momentum === 'gone_quiet'));
-      const top = rows.slice(0, maxP);
-      if (top.length) parts.push(`[KEY RELATIONSHIPS NEEDING ATTENTION]\n${top.map((r) => `- ${r.display_name} [${r.state!.momentum}]: ${r.state!.summary}`).join('\n')}`);
-    }
-  } catch { /* non-fatal */ }
-  return parts.join('\n\n');
-}
+// `renderWorldContext` (the coworker chat's private "your world" block) is GONE — W2.2 ONE USER
+// GROUNDING: every user-scope consumer reads `assembleUserGrounding` (lib/room/user-grounding.ts).

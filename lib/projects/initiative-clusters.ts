@@ -11,6 +11,8 @@ import { isAutomatedSender } from '@/lib/inbox/automated';
 import { buildInitiativeMap } from './initiative-resolver';
 import { computeEventUnderstanding } from '@/lib/calendar/event-understanding';
 import { fetchAllRows } from '@/lib/utils/fetch-all';
+// ONE OPEN-STATUS CONSTANT (W2.2) — never a local list.
+import { OPEN_COMMITMENT_STATUSES } from '@/lib/core/statuses';
 
 export type InitiativeCluster = { key: string; label: string; total: number };
 export type ClusterMap = Map<string, InitiativeCluster>; // normalized key → cluster (only clusters with total ≥ 2)
@@ -46,7 +48,7 @@ export async function buildInitiativeClusters(
         .eq('user_id', userId).eq('source', 'email').eq('status', 'pending')
         .order('created_at', { ascending: false }).range(from, to)),
     supabase.from('commitments').select('initiative')
-      .eq('user_id', userId).in('status', ['open', 'pending']).not('initiative', 'is', null).limit(1000),
+      .eq('user_id', userId).in('status', [...OPEN_COMMITMENT_STATUSES]).not('initiative', 'is', null).limit(1000),
   ]);
 
   for (const it of inbox as Array<{ work_title: string | null; source_data: Record<string, unknown> }>) {

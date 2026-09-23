@@ -21,7 +21,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
-  validEventVerbs, EVENT_VERBS,
+  validEventVerbs, noteVerbsFor, EVENT_VERBS,
   type EventFacts, type EventResponse, type EventSeat, type EventSpec, type EventVerb,
 } from '@/lib/present/event';
 import { dayChip } from '@/lib/present/build';
@@ -333,6 +333,8 @@ export function composeEventSpec(
     location: row.location ?? null,
     facts,
     verbs: validEventVerbs(facts),
+    // THE NOTE IS DELIVERED OR NOT OFFERED (W0.4): only verbs this provider carries a note on.
+    noteVerbs: noteVerbsFor(row.provider).filter((v) => validEventVerbs(facts).includes(v)),
   };
 }
 

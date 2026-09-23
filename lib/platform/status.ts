@@ -16,6 +16,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ModelEndpoint, TierType, TaskType } from '@/lib/ai/types';
 import { TIER_DEFAULTS } from '@/lib/ai/defaults';
 import { getEndpointClient, aiCreate } from '@/lib/ai/factory';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
 
 // ── Types ───────────────────────────────────────────────────────────────────────────────────────
 
@@ -201,19 +202,30 @@ const QUIET_AFTER_MS = 36 * 60 * 60 * 1000; // active-in-7d channel silent >36h 
 
 async function usageSignals(admin: SupabaseClient): Promise<{ heartbeats: ChannelHeartbeat[]; burn: PlatformStatus['burn']; spendByWorkspace: PlatformStatus['spendByWorkspace'] }> {
   const since14 = new Date(Date.now() - 14 * 864e5).toISOString();
-  // Paginate past PostgREST's 1000-row cap — minimal columns only.
-  const rows: Array<{ user_id: string; provider: string; tier: string | null; task_type: string | null; source: string; cost_eur: number; created_at: string }> = [];
-  for (let page = 0; page < 60; page++) {
-    const { data, error } = await admin
-      .from('ai_usage_events')
+  const since7 = new Date(Date.now() - 7 * 864e5).toISOString();
+  // NO SILENT CAPS (W1.6): the old single 14-day walk paged NEWEST-FIRST with a 60-page (60,000-row)
+  // backstop — on a high-volume window that silently DROPPED THE OLDEST rows first, which is exactly
+  // the prev-7d half of the comparison (making prev-7d spend read artificially low, biasing every
+  // 7d-vs-prev-7d delta upward). Fixed: the 7d and prev-7d windows are fetched SEPARATELY (each its
+  // own honest cap), so a truncation — if it ever happens — trims each side symmetrically instead of
+  // eating one side of the comparison. A hit against either cap is logged loudly, never silent.
+  type UsageRow = { user_id: string; provider: string; tier: string | null; task_type: string | null; source: string; cost_eur: number; created_at: string };
+  const WINDOW_MAX_ROWS = 60_000;
+  const recentRows = await fetchAllRows<UsageRow>((from, to) =>
+    admin.from('ai_usage_events')
       .select('user_id, provider, tier, task_type, source, cost_eur, created_at')
-      .gte('created_at', since14)
+      .gte('created_at', since7)
       .order('created_at', { ascending: false })
-      .range(page * 1000, page * 1000 + 999);
-    if (error || !data?.length) break;
-    rows.push(...(data as typeof rows));
-    if (data.length < 1000) break;
-  }
+      .range(from, to), { maxRows: WINDOW_MAX_ROWS });
+  const prevRows = await fetchAllRows<UsageRow>((from, to) =>
+    admin.from('ai_usage_events')
+      .select('user_id, provider, tier, task_type, source, cost_eur, created_at')
+      .gte('created_at', since14).lt('created_at', since7)
+      .order('created_at', { ascending: false })
+      .range(from, to), { maxRows: WINDOW_MAX_ROWS });
+  if (recentRows.length >= WINDOW_MAX_ROWS) console.warn(`[platform/status] usageSignals: 7d window hit the ${WINDOW_MAX_ROWS}-row cap — spend/heartbeats for this period are a floor, not the true total.`);
+  if (prevRows.length >= WINDOW_MAX_ROWS) console.warn(`[platform/status] usageSignals: prev-7d window hit the ${WINDOW_MAX_ROWS}-row cap — spend for this period is a floor, not the true total.`);
+  const rows = [...recentRows, ...prevRows];
 
   // user → workspace map, so spend reads per client instead of per anonymous uuid.
   const [{ data: members }, { data: companies }] = await Promise.all([
@@ -282,7 +294,7 @@ async function scheduleHealth(admin: SupabaseClient): Promise<PlatformStatus['sc
     } catch { /* unreadable trigger config is itself a finding */ }
     if (!hasSchedule) continue;
     if (!w.next_run_at) {
-      out.push({ id: w.id, name: w.name, nextRunAt: null, problem: 'scheduled but next_run_at is NULL — the dispatcher will never fire it (the July AHK class)' });
+      out.push({ id: w.id, name: w.name, nextRunAt: null, problem: 'scheduled but next_run_at is NULL — the dispatcher will never fire it (the dead-schedule class)' });
     } else if (new Date(w.next_run_at).getTime() < Date.now() - graceMs) {
       out.push({ id: w.id, name: w.name, nextRunAt: w.next_run_at, problem: `next_run_at is ${w.next_run_at} — over 2h past due` });
     }

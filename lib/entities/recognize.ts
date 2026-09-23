@@ -296,7 +296,7 @@ export async function recognizeItem(
   // 1. STRUCTURAL — the thread is already part of an entity → this item is too… UNLESS the item
   // itself names a DIFFERENT engagement (THE THREAD-DRIFT GUARD, R-class): partner/channel threads
   // get reused and pivoted across end clients, so blind thread inheritance re-imports the
-  // channel-contact over-merge PAST every judge (found live: an "STC Bahrain" email inheriting an
+  // channel-contact over-merge PAST every judge (found live: an "Acme Telecom" email inheriting an
   // Arcapita thread link). Deterministic fast path first — an item whose own text carries the
   // entity's identity tokens inherits at zero cost; only a never-mentions-it item pays ONE cheap
   // named-engagement read. A conflicting name refuses inheritance and falls through to the judged

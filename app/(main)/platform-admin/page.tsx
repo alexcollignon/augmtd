@@ -36,7 +36,6 @@ export default async function PlatformAdminPage({ searchParams }: { searchParams
     ...c,
     features: normalizeFeatures(c.features),
     member_count: countMap[c.id] ?? 0,
-    meeting_assistant: c.settings?.meeting_assistant ?? true,
   }));
 
   return <PlatformAdminClient initialCompanies={companiesWithCount} initialTab={tab} />;

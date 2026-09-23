@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ItemPlanKind } from './item-plan';
+import { firstEmailTrimmed } from '@/lib/core/email';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // ITEM CONTEXT — the SINGLE grounding-context builder for a Home item, reused by:
@@ -20,8 +21,7 @@ export interface ItemContext {
   itemDateISO: string | null;         // the item's own timestamp (received_at / meeting start / due) — anchors relative times
 }
 
-const EMAIL_RE = /[^\s<>"]+@[^\s<>"]+\.[^\s<>"]+/;
-const extractEmail = (s?: string | null): string | null => (s ? (s.match(EMAIL_RE)?.[0]?.replace(/[.,;:!?)\]]+$/, '') ?? null) : null); // B5: trailing-punctuation trim
+const extractEmail = (s?: string | null): string | null => firstEmailTrimmed(s); // B5: trailing-punctuation trim
 
 // INITIATIVE CONTEXT (S5b) — the wider initiative this item belongs to, from the durable Initiative Brain
 // state (where it stands · whoOwes · stage). Read-only, cheap (a keyed lookup, no AI). Lets the planner reason

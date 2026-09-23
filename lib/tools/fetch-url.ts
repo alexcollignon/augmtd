@@ -1,16 +1,16 @@
 // ─── Fetch URL tool (Tavily extract + direct fallback) ────────────────────────
 
-const PRIVATE_IP_RE = /^https?:\/\/(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/i;
+import { checkUrl, safeFetch } from '@/lib/utils/safe-fetch';
+
 const MAX_URLS = 5;
 const MAX_CONTENT_CHARS = 4000;
+// The direct fallback reads at most this much HTML (the head carries the date meta; the stripped
+// text is clipped to MAX_CONTENT_CHARS anyway).
+const MAX_FETCH_BYTES = 3 * 1024 * 1024;
 
-function isValidUrl(url: string): boolean {
-  try {
-    const u = new URL(url);
-    return (u.protocol === 'https:' || u.protocol === 'http:') && !PRIVATE_IP_RE.test(url);
-  } catch {
-    return false;
-  }
+/** THE SAFE FETCH (W0.3): scheme + IP-literal + DNS law — private/loopback/metadata never pass. */
+async function isValidUrl(url: string): Promise<boolean> {
+  return (await checkUrl(url)).ok;
 }
 
 function stripHtml(html: string): string {
@@ -95,11 +95,13 @@ export const fetchUrlDefinition = {
 
 export async function executeFetchUrl(config: Record<string, unknown>): Promise<string> {
   const raw = config.urls;
-  const urls: string[] = (
+  const candidates: string[] = (
     Array.isArray(raw) ? raw.filter(u => typeof u === 'string') :
     typeof raw === 'string' ? raw.split('\n').map(s => s.trim()).filter(Boolean) :
     []
-  ).filter(isValidUrl).slice(0, MAX_URLS);
+  ).slice(0, MAX_URLS * 2);
+  const verdicts = await Promise.all(candidates.map(isValidUrl));
+  const urls = candidates.filter((_, i) => verdicts[i]).slice(0, MAX_URLS);
 
   if (urls.length === 0) return '[fetch_url] No valid URLs provided. URLs must be https:// and not point to private networks.';
 
@@ -138,11 +140,13 @@ export async function executeFetchUrl(config: Record<string, unknown>): Promise<
   // Fallback: direct fetch + HTML strip (HTML available → meta-tag date detection too)
   const results = await Promise.allSettled(
     urls.map(async url => {
-      const res = await fetch(url, {
+      // Every hop (redirects included) re-checked; the socket is pinned to the checked address.
+      const res = await safeFetch(url, {
         headers: { 'User-Agent': 'Mozilla/5.0' },
-        signal: AbortSignal.timeout(10000),
+        timeoutMs: 10000,
+        maxBytes: MAX_FETCH_BYTES,
       });
-      const html = await res.text();
+      const html = res.body;
       const content = stripHtml(html).slice(0, MAX_CONTENT_CHARS);
       return render(url, content, dateFromUrl(url) ?? dateFromHtml(html));
     })

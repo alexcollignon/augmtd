@@ -7,6 +7,7 @@ import type { WorkflowTrigger, WorkflowStep, OutputConfig, WorkflowStatus } from
 import { requireFeature, handleWorkspaceError } from '@/lib/workspace/require-feature';
 import { sanitizeError } from '@/lib/utils/api-error';
 import type { WorkspaceFeatures } from '@/lib/workspace/types';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
 
 export async function GET(
   _request: NextRequest,
@@ -255,9 +256,14 @@ export async function DELETE(
   //   · the standing binding (source='workflow', keyed to the workflow) → dismissed
   // Best-effort, each guarded — a settling failure must never block the delete itself.
   try {
-    const { data: runs } = await supabase.from('workflow_runs')
-      .select('id').eq('workflow_id', id).eq('user_id', user.id).limit(500);
-    const runIds = (runs ?? []).map(r => String(r.id));
+    // NO SILENT CAPS (invariant 10) + THE DELETE DOOR IS A RESOLUTION DOOR: an unpaged, unordered
+    // `.limit(500)` could silently leave a run past #500 uncancelled and its handoff gate ask
+    // un-dismissed — exactly the zombie-ask class this settling code exists to close. Paged,
+    // stable `id` order.
+    const runs = await fetchAllRows<{ id: string }>((from, to) =>
+      supabase.from('workflow_runs')
+        .select('id').eq('workflow_id', id).eq('user_id', user.id).order('id', { ascending: true }).range(from, to));
+    const runIds = runs.map(r => String(r.id));
     if (runIds.length) {
       await supabase.from('workflow_runs')
         .update({ status: 'cancelled' })

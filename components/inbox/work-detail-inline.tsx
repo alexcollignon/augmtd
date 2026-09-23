@@ -25,6 +25,7 @@ import AddToProjectControl from '@/components/entities/add-to-work-control';
 import RsvpButtons from './rsvp-buttons';
 import KbFilePicker from './kb-file-picker';
 import ReplyEditor from './reply-editor';
+import { sanitizeDraftHtml, sanitizeSignatureHtml } from '@/lib/utils/sanitize-html';
 import { ThreadMessages } from './thread-messages';
 import { Button, IconButton } from '@/components/ui';
 import { createClient } from '@/lib/supabase/client';
@@ -292,7 +293,8 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     // in the same batch as setReplyOpen), seed el first so the sig appends to the draft
     // rather than overwriting it.
     if (!el.innerHTML.trim() && replyBody) {
-      el.innerHTML = replyBody;
+      // RENDER SAFETY (Sep 22): a seeded draft is model-authored — sanitized before it mounts.
+      el.innerHTML = sanitizeDraftHtml(replyBody);
     }
 
     const existing = el.querySelector('[data-sig="1"]') as HTMLElement | null;
@@ -301,7 +303,8 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     if (showSignature && signatureHtml) {
       const sigDiv = document.createElement('div');
       sigDiv.setAttribute('data-sig', '1');
-      sigDiv.innerHTML = `<br>-- <br>${signatureHtml}`;
+      // RENDER SAFETY (Sep 22): the user's own signature — the signature profile (their https logo stays).
+      sigDiv.innerHTML = `<br>-- <br>${sanitizeSignatureHtml(signatureHtml)}`;
       el.appendChild(sigDiv);
     }
 
@@ -352,7 +355,7 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     lastExternalReplyBody.current = replyBody;
 
     const existingSig = el.querySelector('[data-sig="1"]')?.outerHTML ?? '';
-    el.innerHTML = replyBody;
+    el.innerHTML = sanitizeDraftHtml(replyBody); // RENDER SAFETY (Sep 22)
     if (existingSig && !el.querySelector('[data-sig="1"]')) {
       el.innerHTML = el.innerHTML + existingSig;
     }

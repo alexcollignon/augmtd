@@ -28,6 +28,8 @@ export interface StoredChatInvite {
   invite: PreparedCalendarInvite;
   roomKey: string | null;
   sentAt: string | null;
+  /** When the invite was prepared (the outcome ledger records its age at send). */
+  createdAt?: string | null;
 }
 
 /** Persist a freshly prepared invite and mint its id. Non-fatal: null = no durable card (the
@@ -53,11 +55,11 @@ export async function readChatInvite(
   try {
     const { data } = await client.from('item_plans').select('entity_id, tasks')
       .eq('user_id', userId).eq('kind', CHAT_INVITE_KIND).eq('entity_id', inviteId).maybeSingle();
-    const t = (data?.tasks ?? null) as { invite?: PreparedCalendarInvite; roomKey?: string | null; sentAt?: string | null } | null;
+    const t = (data?.tasks ?? null) as { invite?: PreparedCalendarInvite; roomKey?: string | null; sentAt?: string | null; createdAt?: string | null } | null;
     if (!t?.invite || typeof t.invite !== 'object') return null;
     return {
       id: String(data!.entity_id), invite: t.invite,
-      roomKey: t.roomKey ?? null, sentAt: t.sentAt ?? null,
+      roomKey: t.roomKey ?? null, sentAt: t.sentAt ?? null, createdAt: t.createdAt ?? null,
     };
   } catch { return null; }
 }

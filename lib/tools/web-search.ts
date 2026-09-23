@@ -1,4 +1,5 @@
 // ─── Web search tool (Tavily) ─────────────────────────────────────────────────
+import { clipForPrompt, EXCERPT_MARK, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 
 export const webSearchDefinition = {
   name: 'web_search',
@@ -36,9 +37,15 @@ export async function executeWebSearch(config: Record<string, unknown>): Promise
     }
     const data = await res.json() as { results?: Array<{ title: string; url: string; content: string; published_date?: string }> };
     if (!data.results?.length) return `No results found for "${query}".`;
-    return data.results.map((r, i) =>
-      `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.published_date ? `Published: ${r.published_date}` : 'Published: unknown — do not assume this is current'}\n   ${r.content?.slice(0, 400) ?? ''}`
-    ).join('\n\n');
+    // EXCERPT HONESTY (invariant 13): a raw `.slice()` on external page content is exactly the
+    // failure the law names — a mid-sentence cut read as the SOURCE PAGE being truncated, not our
+    // clip. `clipForPrompt` ends at a boundary and declares itself; EXCERPT_RULE rides once at the
+    // end (this tool result stands alone as a message, so the rule can't depend on a caller).
+    const clipped = data.results.map((r, i) =>
+      `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.published_date ? `Published: ${r.published_date}` : 'Published: unknown — do not assume this is current'}\n   ${r.content ? clipForPrompt(r.content, 400) : ''}`
+    );
+    const body = clipped.join('\n\n');
+    return body.includes(EXCERPT_MARK) ? `${body}\n\n${EXCERPT_RULE}` : body;
   } catch (e) {
     return `[web_search error] ${e instanceof Error ? e.message : String(e)}`;
   }

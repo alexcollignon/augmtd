@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createAdmin } from '@supabase/supabase-js';
 import { storeTranscriptAndGenerateWork } from '@/lib/integrations/meeting-bot/bot-manager';
+import { hasBearer } from '@/lib/utils/bearer-auth';
 
 export const maxDuration = 300;
 
@@ -17,8 +18,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const secret = process.env.MEETING_BOT_SECRET;
-  if (!secret || request.headers.get('authorization') !== `Bearer ${secret}`) {
+  if (!hasBearer(request, 'MEETING_BOT_SECRET')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -50,8 +50,8 @@ export async function POST(
   let liveNotes = notesStructured?.live_notes || '';
 
   if (transcript.calendar_event_id) {
-    // For scheduled bot meetings: check calendar_events.metadata.live_notes
-    // (LiveNotepad saves there while bot records).
+    // For recordings of a scheduled meeting: check calendar_events.metadata.live_notes
+    // (the live-notes route saves there).
     const { data: calEvent } = await adminClient
       .from('calendar_events')
       .select('metadata')
@@ -62,9 +62,9 @@ export async function POST(
       liveNotes = [liveNotes, calLiveNotes].filter(Boolean).join('\n\n');
     }
 
-    // For ad-hoc bot meetings linked to a text note: also read the text note's
-    // typed content (transcript field). This captures notes the user typed in
-    // InlineNoteView before the UI switched to the bot transcript view.
+    // For recordings linked to a text note: also read the text note's typed content
+    // (transcript field). This captures notes the user typed in InlineNoteView before
+    // the UI switched to the transcript view.
     const { data: linkedTextNote } = await adminClient
       .from('meeting_transcripts')
       .select('transcript')
@@ -82,14 +82,13 @@ export async function POST(
   await storeTranscriptAndGenerateWork(
     transcript.user_id,
     transcript.calendar_event_id ?? null,
-    null,
     transcript.title,
     transcript.start_time,
     transcript.end_time,
     segments,
     adminClient,
     {
-      source: transcript.source ?? 'bot',
+      source: transcript.source ?? 'recording',
       recordingStoragePath: transcript.recording_storage_path ?? undefined,
       existingTranscriptId: transcriptId,
       liveNotes: liveNotesForAI,

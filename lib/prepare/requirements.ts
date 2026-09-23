@@ -407,6 +407,14 @@ export async function resolveRequirements(
 ): Promise<RequirementsResult> {
   const empty: RequirementsResult = { resolutions: [], have: [], missing: [], artifactTruth: '' };
   let requires = (args.requires ?? []).filter((r) => r.label?.trim()).slice(0, 5);
+  // W5c · OUR OWN ARTIFACT IS NEVER THE USER'S INPUT (the moot-ask predicate, one implementation):
+  // a label naming one of our prepared-artifact kinds (a paste pack, a nudge, an invite, a decision
+  // brief) is the team's to produce — it is never retrieved, staged or asked of the user. (The
+  // draft-shaped rule stays render-side only: "the draft agreement" is a real document to stage.)
+  {
+    const { namesOurArtifact } = await import('@/lib/room/ask-mootness');
+    requires = requires.filter((r) => !namesOurArtifact(r.label));
+  }
   if (!requires.length) return empty;
 
   // ── THE ATTACHABILITY FLOOR (Aug 4, found live: "attach a confirmation of the Thursday demo

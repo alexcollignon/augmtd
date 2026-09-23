@@ -10,6 +10,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { readPlans, asRawResult } from '@/lib/store/item-plans';
 import { aiCall } from '@/lib/ai/call';
 import { isAutomatedSender } from '@/lib/inbox/automated';
 import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
@@ -182,7 +183,8 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
     for (const c of (data ?? []) as Array<Record<string, any>>) {
       const owes = String(c.direction || 'you_owe') === 'awaiting' ? 'they owe' : 'you owe';
       if (c.counterparty) humanCounterparty = true;
-      const rr = typeof c.resolved_reason === 'string' && c.resolved_reason.trim() && !MACHINE_REASONS.has(c.resolved_reason.trim()) ? ` — user: "${c.resolved_reason.trim()}"` : '';
+      // EVIDENCE SETTLES (W3.1): 'evidence:<type>' is a machine stamp too — never quoted as the user's words.
+      const rr = typeof c.resolved_reason === 'string' && c.resolved_reason.trim() && !MACHINE_REASONS.has(c.resolved_reason.trim()) && !c.resolved_reason.trim().startsWith('evidence:') ? ` — user: "${c.resolved_reason.trim()}"` : '';
       // LAW 6 (experience spec — found live Aug 2): a SETTLED obligation must never speak in
       // open-debt grammar. "you owe (done): … (due <today>)" led with the debt and a bare
       // due-today date — the synthesis followed the grammar and re-asserted a delivered report
@@ -282,8 +284,7 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
       const keys = ((links ?? []) as Array<{ item_id: string; item_kind: string }>)
         .map((l) => `${l.item_kind === 'inbox_item' ? 'inbox' : 'commitment'}:${l.item_id}`);
       if (keys.length) {
-        const { data: js } = await supabase.from('item_plans').select('entity_id, tasks')
-          .eq('user_id', userId).eq('kind', 'judgment').in('entity_id', keys);
+        const { data: js } = asRawResult(await readPlans(supabase, userId, 'judgment', { keys }));
         const pairs: string[] = [];
         for (const j of (js ?? []) as Array<{ entity_id: string; tasks: unknown }>) {
           const v = (j.tasks as { verdict?: { work?: string; reason?: string } } | null)?.verdict;

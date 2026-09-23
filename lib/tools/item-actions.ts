@@ -40,6 +40,10 @@ export async function executeResolveInboxItem(
   const status = resolution === 'complete' ? 'completed' : 'dismissed';
   const resolvedReason = args.resolutionReason
     ?? (resolution === 'complete' ? 'completed' : 'dismissed');
+  // THE OUTCOME LEDGER (W3.2): capture what is still PREPARED-AND-UNSENT before the flip, through
+  // THE ONE READER — its fate is stamped once the resolve lands (below).
+  const { capturePending, logPendingOutcomes } = await import('@/lib/prepare/outcome');
+  const pending = await capturePending(client, userId, { kind: 'inbox', id: itemId });
   // D2 (work-surface): the user's free-text context ("we'll discuss it Thursday") is a LEDGER fact —
   // stored on the item so assembleLedger surfaces it and the next state synthesis reasons WITH it.
   const { error: updateError } = await client.from('inbox_items')
@@ -71,20 +75,16 @@ export async function executeResolveInboxItem(
     metadata: { ...(args.reason ? { reason: args.reason } : {}), resolution_reason: resolvedReason },
   }).catch(() => {});
 
-  // THE OUTCOME LOG (proactive-team R1) — resolving an item that still carried UNSENT prepared work
-  // means the preparation was DISCARDED. One stamp per artifact, at the one resolver every door
-  // (routes + chief-of-staff tool) already calls. Collect now; the learning arc synthesizes later.
-  try {
-    const { logPreparedOutcome } = await import('@/lib/prepare/outcome');
-    const discards: Array<import('@/lib/prepare/outcome').PreparedArtifactKind> = [];
-    if ((sd.draft as { body?: string } | undefined)?.body) discards.push('reply_draft');
-    if ((sd.nudge_draft as { body?: string } | undefined)?.body) discards.push('nudge_draft');
-    if (sd.prepared_invite && !(sd.prepared_invite as { sent_at?: string }).sent_at) discards.push('invite');
-    if (sd.prepared_forward && !(sd.prepared_forward as { sent_at?: string }).sent_at) discards.push('forward');
-    for (const artifact of discards) {
-      await logPreparedOutcome(client, userId, { outcome: 'discarded', artifact, itemKind: 'inbox', itemId });
-    }
-  } catch { /* the outcome log never breaks the action it observes */ }
+  // THE OUTCOME LOG (proactive-team R1 → W3.2 THE TWO-WAY LEDGER) — resolving an item that still
+  // carried UNSENT prepared work stamps each artifact's fate at the one resolver every door (routes +
+  // chief-of-staff tool) already calls. The two resolutions are DIFFERENT verdicts: a DISMISS is the
+  // user's no to the work (discarded); a MARK DONE is the user having done it themselves outside our
+  // door (done_elsewhere — the work was real, our artifact went unused). The R1 era folded both into
+  // "discarded", which is how the ledger came to hear only no.
+  await logPendingOutcomes(client, userId, pending, {
+    base: resolution === 'complete' ? 'done_elsewhere' : 'discarded',
+    itemKind: 'inbox', itemId, door: 'resolve_inbox', source: sd,
+  }).catch(() => 0);
 
   // Brain + mailbox tails — fire-and-forget (callers may not have after()).
   void (async () => {
@@ -106,12 +106,19 @@ export async function executeResolveCommitment(
   const { data: c } = await client.from('commitments').select('id, description')
     .eq('id', args.commitmentId).eq('user_id', userId).maybeSingle();
   if (!c) return { ok: false, error: 'Commitment not found' };
+  // THE OUTCOME LEDGER (W3.2): what was prepared-and-unsent, captured before the flip.
+  const { capturePending, logPendingOutcomes } = await import('@/lib/prepare/outcome');
+  const pending = await capturePending(client, userId, { kind: 'commitment', id: args.commitmentId });
   const nowIso = new Date().toISOString();
   // D2: a stated reason becomes the resolved_reason (a ledger fact the synthesis reads).
   const { error } = await client.from('commitments')
     .update({ status: args.resolution, resolved_at: nowIso, resolved_reason: args.reason?.trim() ? String(args.reason).trim().slice(0, 200) : 'chat', updated_at: nowIso })
     .eq('id', args.commitmentId).eq('user_id', userId);
   if (error) return { ok: false, error: 'Failed to update commitment' };
+  await logPendingOutcomes(client, userId, pending, {
+    base: args.resolution === 'done' ? 'done_elsewhere' : 'discarded',
+    itemKind: 'commitment', itemId: args.commitmentId, door: 'resolve_commitment',
+  }).catch(() => 0);
 
   import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'commitment', args.commitmentId)).catch(() => {});
   await logActivity(client, userId, {
@@ -142,7 +149,7 @@ export async function executeFindFile(
 export async function executeRememberFact(
   { client, userId }: Ctx,
   args: { fact: string; linkKind?: 'inbox_item' | 'commitment' | 'meeting'; itemId?: string; entityId?: string },
-): Promise<{ ok: boolean; entityName?: string | null }> {
+): Promise<{ ok: boolean; entityName?: string | null; /** false = already present (dedupe no-op) */ wrote?: boolean }> {
   const fact = args.fact.trim().slice(0, 200);
   if (!fact) return { ok: false };
   try {
@@ -157,10 +164,9 @@ export async function executeRememberFact(
     if (!ent) return { ok: false, entityName: null };
     const cur = Array.isArray(ent.rules) ? (ent.rules as string[]) : [];
     const norm = (x: string) => x.toLowerCase().replace(/\s+/g, ' ').trim();
-    if (!cur.some((r) => norm(r) === norm(fact))) {
-      await client.from('work_entities').update({ rules: [...cur, fact].slice(-12) }).eq('id', ent.id as string);
-    }
-    return { ok: true, entityName: String(ent.name) };
+    if (cur.some((r) => norm(r) === norm(fact))) return { ok: true, entityName: String(ent.name), wrote: false };
+    await client.from('work_entities').update({ rules: [...cur, fact].slice(-12) }).eq('id', ent.id as string);
+    return { ok: true, entityName: String(ent.name), wrote: true };
   } catch { return { ok: false }; }
 }
 

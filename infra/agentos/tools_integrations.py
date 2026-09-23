@@ -27,10 +27,17 @@ def _call(action: str, run_context: RunContext, config: dict) -> str:
     if not user_id:
         return "No user context for this run."
     deps = run_context.dependencies or {}
+    # THE FULL ENVELOPE (W4.2 parity with tools_data.py/tools_tasks.py): the user's own words, the
+    # DM thread and the per-run turn token ride every internal call, so any floor the route decides
+    # from the person's sentence reads it (absent, those floors fail closed) and any card this call
+    # leaves in the presentation side-channel is stamped to the turn that made it.
     payload = {
         "action": action,
         "user_id": user_id,
         "agent_id": deps.get("agent_id"),
+        "thread_id": deps.get("thread_id"),
+        "user_text": deps.get("user_text") or "",
+        "turn_id": deps.get("turn_id") or "",
         "config": config,
     }
     try:
@@ -83,8 +90,11 @@ def slack_read_messages(run_context: RunContext, channel: str, limit: int = 20, 
 
 @tool
 def slack_post_message(run_context: RunContext, channel: str, text: str, thread_ts: str = "") -> str:
-    """Post a message to a Slack channel as yourself (your own Slack app). The app
-    must already be in the channel. You can @-mention people and reply in threads.
+    """PREPARE a Slack post for the user to confirm — you do NOT post it. The message is
+    PREPARED as a confirm card showing the channel and the exact text; nothing reaches
+    Slack until the user clicks Apply on that card (it then posts as your own Slack app).
+    Never say it was posted or sent — say it is prepared and waiting for their click.
+    The app must already be in the channel. You can @-mention people and reply in threads.
 
     Args:
         channel: Channel id (e.g. C0123ABCD) or name (e.g. #general). Use "@me" to

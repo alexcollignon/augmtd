@@ -4,6 +4,7 @@ import { executeSendCalendarInvite } from '@/lib/tools/send-calendar-invite';
 import { claimCommit, recordCommitResult, releaseCommitClaim } from '@/lib/work/commit-door';
 import { readChatInvite, updateChatInvitePayload, markChatInviteSent } from '@/lib/prepare/chat-invite-store';
 import { logActivity } from '@/lib/activity/log';
+import { isEmailStrict } from '@/lib/core/email';
 
 export const maxDuration = 60;
 
@@ -27,8 +28,6 @@ export const maxDuration = 60;
 // what the row says. A door that sends the fields a browser handed it is a door that can be told
 // to mail anyone — the words persist first, then the deed.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-
-const EMAIL_RE = /^[^\s<>",;:]+@[^\s<>",;:]+\.[a-z]{2,}$/i;
 
 export async function POST(request: NextRequest) {
   try {
@@ -60,7 +59,7 @@ export async function POST(request: NextRequest) {
       endISO: typeof e.endISO === 'string' && e.endISO.trim() && !isNaN(new Date(e.endISO).getTime())
         ? new Date(e.endISO).toISOString() : stored.invite.endISO,
       attendees: Array.isArray(e.attendees)
-        ? [...new Set(e.attendees.map((a) => String(a).trim()).filter((a) => EMAIL_RE.test(a)))].slice(0, 10)
+        ? [...new Set(e.attendees.map((a) => String(a).trim()).filter((a) => isEmailStrict(a)))].slice(0, 10)
         : stored.invite.attendees,
       description: typeof e.description === 'string' ? e.description.slice(0, 2000) : stored.invite.description,
     };
@@ -105,6 +104,21 @@ export async function POST(request: NextRequest) {
     }
     if (failed) return NextResponse.json({ ok: false, error: result }, { status: 502 });
     await markChatInviteSent(supabase, user.id, inviteId);
+
+    // THE OUTCOME LOG (W3.2 — THE TWO-WAY LEDGER): the chat-born invite's fate — sent as prepared
+    // (accepted) or changed in the card first (edited). Compared on the fields the user can edit,
+    // against the payload the preparer grounded (read BEFORE the edits landed). Non-fatal.
+    {
+      const { logPreparedOutcome } = await import('@/lib/prepare/outcome');
+      const before = stored.invite as unknown as Record<string, unknown>;
+      const after_ = toSend as unknown as Record<string, unknown>;
+      const edited = ['title', 'startISO', 'endISO', 'attendees', 'description']
+        .some((k) => JSON.stringify(before[k] ?? '') !== JSON.stringify(after_[k] ?? ''));
+      await logPreparedOutcome(supabase, user.id, {
+        outcome: edited ? 'edited' : 'accepted', artifact: 'invite', itemKind: 'chat', itemId: inviteId,
+        door: 'invite_send', senderClass: 'unknown', preparedAt: stored.createdAt ?? null,
+      });
+    }
 
     await logActivity(supabase, user.id, {
       type: 'invite_sent',

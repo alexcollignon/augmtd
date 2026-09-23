@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse, after } from 'next/server';
+import { hasBearer } from '@/lib/utils/bearer-auth';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE CATCH-UP KICK (docs/attention-plan.md PART III — instant help, Sep 18).
@@ -23,8 +24,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
-  const secret = process.env.AGENTOS_SECRET;
-  if (!secret || (req.headers.get('authorization') ?? '') !== `Bearer ${secret}`) {
+  if (!hasBearer(req, 'AGENTOS_SECRET')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

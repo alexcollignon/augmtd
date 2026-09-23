@@ -79,6 +79,9 @@ import { heldIntro, heldReceipts } from '@/lib/home/held-words';
 import { TriageDeck, type TriageRow } from '@/components/triage/triage-deck';
 // THE QUEUE'S OWN LAW, pure and gate-assertable: a later arrival EXTENDS the stack, never reorders it.
 import { mergeQueue } from '@/lib/triage/queue';
+// THE LIST'S SHAPE (W5b): the fold, the honest footer, and which handed rows the list reads.
+import { foldHeldRows, foldCountWord, heldFooter, listHanded, type HeldFold } from '@/lib/home/held-list';
+import { warmDeckContexts } from '@/lib/triage/deck-context-door';
 // The stamped-cache idiom: the reader's choice of shape sticks, and a stale blob cannot claim one.
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 
@@ -135,6 +138,15 @@ export type DeckHeldRow = {
   /** The prepared RECEIPT as a word ("drafted"), never an artifact token — the Home promises a
    *  chip here, not a renderer. */
   preparedWord?: string | null;
+  /** THE CARD'S OWN FACTS (W3.6 · lib/triage/deck-context.ts `cardFacts`): the raw ask as the
+   *  card's title (its header already shows the who) and the subline without the receipt (the
+   *  chip carries it — one receipt). The LIST keeps `line` + `why`. */
+  cardTitle?: string | null;
+  cardWhy?: string | null;
+  /** The tracked project the row belongs to — served, never said twice. */
+  project?: string | null;
+  /** THE ONE READER's live prepared kind, as the brief served it. */
+  preparedKind?: string | null;
 };
 
 /** The item's own door — the same address every deck row opens (one fact, one home). */
@@ -157,7 +169,7 @@ const memberItem = (m: HeldMemberOut): DoItem => ({
 /** A deck-handed row keeps ITS OWN kind, so its verbs reach its own door. */
 const deckItem = (r: DeckHeldRow): DoItem => ({
   source: r.source as DoSource, key: r.id, entityId: r.id, href: r.href,
-  primary: null, ask: r.line,
+  primary: null, ask: r.line, initiative: r.project ?? null,
 });
 
 /** ONE LEDGER ROW — a held thing, its why, and the deck's own hover rail.
@@ -196,6 +208,35 @@ function HeldRow({ item, line, why, onRestored }: {
         <button onClick={(e) => { e.stopPropagation(); open(); }}
           className="text-[12px] font-medium text-indigo-600 whitespace-nowrap">Bring forward</button>
       </RowHoverRail>
+    </div>
+  );
+}
+
+/** ONE FOLD — the lead row, and when it stands for several, a quiet count that opens the rest in
+ *  place (W5b). Every member keeps its own row and its own hands: a fold groups, it never hides a
+ *  deed. */
+function HeldFoldRows({ fold, onRestored }: {
+  fold: HeldFold<{ id: string; item: DoItem; line: string; why: string }>; onRestored?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const { lead, members } = fold;
+  const more = foldCountWord(members.length);
+  return (
+    <div className="flex flex-col">
+      <HeldRow item={lead.item} line={lead.line} why={lead.why} onRestored={onRestored} />
+      {more && (
+        <button onClick={() => setOpen((v) => !v)}
+          className="-mt-1 self-start px-3 pb-1 text-left text-[12px] text-neutral-300 transition-colors hover:text-indigo-600">
+          {open ? 'Hide the others' : more}
+        </button>
+      )}
+      {more && open && (
+        <div className="flex flex-col pl-[22px]">
+          {members.slice(1).map((r) => (
+            <HeldRow key={r.id} item={r.item} line={r.line} why={r.why} onRestored={onRestored} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -416,21 +457,34 @@ export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = nul
   // THE HOME'S OWN HELD ROWS lead: the ledger cannot see a commitment or a deal at all (its pool is
   // pending mail), and the WARM rows are the opening of the stack while the account is read.
   const handed = [...deckHeld, ...warmHeld];
-  const deckIds = new Set(handed.map((d) => d.id));
+  // THE FOUNDING CONTEXT, WARMED FOR THE WHOLE HANDED SET (W3.6): one coalesced read for every
+  // handed commitment, so each card's own ask joins the same request (no N+1).
+  const handedCommitKey = handed.filter((d) => d.source === 'commitment').map((d) => d.id).join(',');
+  useEffect(() => {
+    if (handedCommitKey) warmDeckContexts(handedCommitKey.split(','));
+  }, [handedCommitKey]);
   // ONE LIST, TWO RENDERS. `triage` is the SAME row with the card's served essentials attached —
   // the deck is handed exactly this array, in exactly this order, and sorts nothing.
-  const incomingRows: Array<{ id: string; item: DoItem; line: string; why: string; triage: TriageRow }> = [
-    ...handed.map((d) => ({
+  type WaitingRow = { id: string; item: DoItem; line: string; why: string; triage: TriageRow };
+  // ONE ROW BUILDER, TWO HANDED SETS (W5b): the deck opens on the warm stack; the LIST, once the
+  // ledger has landed, reads the ledger alone (lib/home/held-list.ts `listHanded`) — a warm row the
+  // ledger filed elsewhere was rendered AND uncounted ("showing 92 of 91").
+  const rowsOf = (handedSet: DeckHeldRow[]): WaitingRow[] => {
+    const handedIds = new Set(handedSet.map((d) => d.id));
+    return [
+    ...handedSet.map((d) => ({
       id: d.id, item: deckItem(d), line: d.line, why: d.why,
-      // A handed row carries what the HOME has: its counterparty, its due date, its prepared word.
-      // It carries no mail BODY (the Home never held one), so the excerpt is honestly absent.
+      // A handed row carries what the HOME has: its counterparty, its due date, its prepared word
+      // and kind, its project. Its FOUNDING CONTEXT (the thread or the meeting, the judge's reason)
+      // is read by the card through the deck-context door — one batched read for the whole handed
+      // set (W3.6), warmed below — never baked into this row (the queue freezes rows by id).
       triage: {
-        id: d.id, item: deckItem(d), who: d.who ?? null, title: d.line, why: d.why,
-        excerpt: null, dueDate: d.dueDate ?? null, prepared: null,
+        id: d.id, item: deckItem(d), who: d.who ?? null, title: d.cardTitle ?? d.line, why: d.cardWhy ?? d.why,
+        excerpt: null, dueDate: d.dueDate ?? null, prepared: d.preparedKind ?? null,
         preparedWord: d.preparedWord ?? null, cls: null,
       } as TriageRow,
     })),
-    ...(bands?.waiting.rows ?? []).filter((m) => !deckIds.has(m.itemId))
+    ...(bands?.waiting.rows ?? []).filter((m) => !handedIds.has(m.itemId))
       .map((m) => ({
         id: m.itemId, item: memberItem(m), line: m.subject, why: m.why,
         triage: {
@@ -439,7 +493,10 @@ export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = nul
           cls: (m.cls ?? null) as TriageRow['cls'],
         } as TriageRow,
       })),
-  ];
+    ];
+  };
+  const incomingRows: WaitingRow[] = rowsOf(handed);
+  const listRows: WaitingRow[] = rowsOf(listHanded(deckHeld, warmHeld, !!bands));
   const waitingCount = (bands?.waiting.count ?? 0) + deckHeld.length;
   const folded = bands?.handled.classes ?? ledger?.classes ?? [];
   // ── THE DECK OPENS INSTANTLY (owner, live Sep 18: "not opening" — 20–30s of "Reading the
@@ -453,8 +510,14 @@ export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = nul
   // the account as read RIGHT NOW (rows a deed removed must leave it — the merge is append-only by
   // design, which is exactly right under a live cursor and exactly wrong for a settled list).
   const deckMode = shape === 'deck' && !exited;
-  const queueRef = useRef<Array<{ id: string; item: DoItem; line: string; why: string; triage: TriageRow }>>([]);
-  const waitingRows = deckMode ? mergeQueue(queueRef.current, incomingRows) : incomingRows;
+  const queueRef = useRef<WaitingRow[]>([]);
+  const waitingRows = deckMode ? mergeQueue(queueRef.current, incomingRows) : listRows;
+  // ONE CONVERSATION, ONE OBLIGATION on the list (W5b): same who + same subject fold under ONE row
+  // with its count; every member stays one click away with its own hands. The deck is unfolded —
+  // each card is its own decision.
+  const listFolds = foldHeldRows(waitingRows, (r) => ({ who: r.triage.who, subject: r.triage.title }));
+  // THE FOOTER NEVER SAYS FEWER THAN IT SHOWS — every member of every fold is a shown item.
+  const waitingFooter = heldFooter(waitingRows.length, waitingCount);
   queueRef.current = deckMode ? waitingRows : [];
   // THE DECK NEEDS A SERVED DAY (its whens are dates) — the ledger's own, else the BRIEF's, which
   // is the same server clock one route earlier. No served day at all → the deck's own chrome with a
@@ -555,12 +618,12 @@ export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = nul
           ) : (
             <>
               <div className="mt-0.5 flex flex-col">
-                {waitingRows.map((r) => (
-                  <HeldRow key={r.id} item={r.item} line={r.line} why={r.why} onRestored={onRefresh} />
+                {listFolds.map((g) => (
+                  <HeldFoldRows key={g.key} fold={g} onRestored={onRefresh} />
                 ))}
               </div>
-              {bands?.waiting.hasMore && (
-                <p className="px-3 pt-0.5 text-[12px] text-neutral-300">showing {waitingRows.length} of {waitingCount}</p>
+              {waitingFooter && (
+                <p className="px-3 pt-0.5 text-[12px] text-neutral-300">{waitingFooter}</p>
               )}
             </>
           )}
